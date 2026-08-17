@@ -39,9 +39,9 @@ The daemon is decomposed into replaceable bricks: GitHub mailbox, rate-budget go
 - Context frames preserve objectives, checkpoints, constraints, decisions, evidence, and handoffs across model windows.
 - Full local event history is durable; GitHub receives bounded, meaningful summaries rather than log spam.
 
-## Status
+## Initial capability stage
 
-The bootstrap branch establishes the governing architecture, schemas, and a runnable TypeScript vertical slice. Automatic CI is intentionally absent; release and validation activity remain explicit.
+The bootstrap release executes **read-only** locally registered tools against an exact clean checkout. Requests for `workspace.write`, worktree creation, commit, or push are reported as blocked. Those capabilities remain specified but disabled until isolated-worktree creation and post-effect auditing are implemented and natively tested.
 
 ## Requirements
 
@@ -56,10 +56,11 @@ The bootstrap branch establishes the governing architecture, schemas, and a runn
 npm install
 npm run build
 npm test
-node dist/cli.js --config config/example.config.json
+node dist/src/cli.js --check-config --config config/example.config.json
+node dist/src/cli.js --once --config config/local.config.json
 ```
 
-Copy `config/example.config.json` outside the repository or replace placeholder paths before running. Never commit tokens or private keys.
+Copy `config/example.config.json` to a local ignored configuration and replace placeholder paths before running. Never commit tokens or private keys.
 
 ## Governing documents
 

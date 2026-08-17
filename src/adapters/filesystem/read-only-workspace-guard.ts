@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 
 import type { WorkspaceConfig } from "../../config/model.js";
 import type { DispatchTarget } from "../../domain/model.js";
+import type { VerifiedWorkspace, WorkspaceGuard } from "../../ports/workspace-guard.js";
 
 function normalizeRelative(value: string): string {
   return value.replaceAll("\\", "/").replace(/^\.\//u, "");
@@ -56,15 +57,7 @@ function assertNoLinks(root: string, checkout: string): void {
   }
 }
 
-export interface VerifiedWorkspace {
-  readonly workspaceId: string;
-  readonly checkoutPath: string;
-  readonly repository: string;
-  readonly branch: string;
-  readonly head: string;
-}
-
-export class ReadOnlyWorkspaceGuard {
+export class ReadOnlyWorkspaceGuard implements WorkspaceGuard {
   readonly #workspaces: readonly WorkspaceConfig[];
 
   constructor(workspaces: readonly WorkspaceConfig[]) {

@@ -84,6 +84,7 @@ export class NodeProcessRunner implements ToolRunner {
     const startedAt = this.clock.now().toISOString();
     let timedOut = false;
     let lastActivityMs = this.clock.now().getTime();
+    let lastProgressAtMs = Number.NEGATIVE_INFINITY;
 
     request.onProgress({
       kind: "process_started",
@@ -100,9 +101,11 @@ export class NodeProcessRunner implements ToolRunner {
       stdio: ["pipe", "pipe", "pipe"],
     });
 
-    const emitActivity = (tail: BoundedTail): void => {
+    const observeActivity = (tail: BoundedTail): void => {
       const nowMs = this.clock.now().getTime();
       lastActivityMs = nowMs;
+      if (nowMs - lastProgressAtMs < 5000) return;
+      lastProgressAtMs = nowMs;
       request.onProgress({
         kind: "output_activity",
         at: new Date(nowMs).toISOString(),
@@ -112,11 +115,11 @@ export class NodeProcessRunner implements ToolRunner {
     };
     child.stdout.on("data", (chunk: Buffer) => {
       stdout.append(chunk);
-      emitActivity(stdout);
+      observeActivity(stdout);
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderr.append(chunk);
-      emitActivity(stderr);
+      observeActivity(stderr);
     });
 
     child.stdin.on("error", () => undefined);
