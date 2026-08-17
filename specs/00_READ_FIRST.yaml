@@ -1,0 +1,63 @@
+meta:
+  spec_id: patch_poller_foundation_v1
+  version: 1
+  status: active
+  owner: project_governance
+
+north_star: >
+  Provide a durable, account-conscious GitHub mailbox that turns strictly
+  authorized remote dispatches into bounded local capabilities while preserving
+  local ownership of trust, tools, paths, credentials, side effects, progress,
+  recovery, and context continuity.
+
+design_order:
+  - LEGO
+  - SOLID
+  - CUPID
+  - KISS
+
+repository_role:
+  owns:
+    - outbound_github_mailbox_polling
+    - github_rate_budget_governance
+    - dispatch_validation_and_replay_prevention
+    - durable_context_progress_and_handoff
+    - local_cli_tool_registration_and_invocation
+    - workspace_path_head_and_change_guards
+    - execution_recovery_and_operator_feedback
+  must_not_own:
+    - target_project_architecture
+    - issue_or_next_step_selection
+    - arbitrary_remote_shell
+    - implicit_credential_distribution
+    - automatic_merge_release_or_ready_policy
+
+hard_rules:
+  - Remote input names only locally registered tools, workspaces, and capabilities.
+  - Natural-language text outside the validated envelope is never executable authority.
+  - GitHub requests for one credential identity are serialized through one governor.
+  - Authenticated conditional polling with persisted validators is mandatory.
+  - Mutative GitHub requests are spaced by at least one second.
+  - Terminal reporting retains a protected API budget reserve.
+  - Every dispatch, attempt, progress event, context revision, and report is durable.
+  - Expected repository, branch, head, path, capability, and revision guards fail closed.
+  - Secrets and unbounded output never enter GitHub comments or context frames.
+  - Python is forbidden in this repository and its build/test/release workflow.
+  - Automatic CI is disabled unless later active authority explicitly enables a bounded workflow.
+
+authority_order:
+  - current_active_specs
+  - AGENTS.md
+  - .agents/core-standard.md
+  - current_architecture_documents
+  - current_task_issue_or_plan
+  - historical_handoffs_and_comments
+
+completion_requires:
+  - strict_build
+  - focused_tests
+  - full_tests
+  - exact_changed_path_scope
+  - no_secret_or_sensitive_path_leak
+  - failure_and_restart_evidence_when_stateful
+  - exact_tested_commit
