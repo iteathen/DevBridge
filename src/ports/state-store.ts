@@ -14,6 +14,7 @@ export type DispatchClaimResult =
   | { readonly status: "claimed"; readonly attempt: number }
   | { readonly status: "duplicate" }
   | { readonly status: "comment_tampered" }
+  | { readonly status: "dispatch_id_conflict" }
   | { readonly status: "stale_context_revision" };
 
 export interface StateStore {
@@ -28,4 +29,5 @@ export interface StateStore {
   setReportCommentId(dispatchId: string, commentId: number): void;
   getReportCommentId(dispatchId: string): number | undefined;
   recordRateSnapshot(snapshot: RateSnapshot): void;
+  getRateSnapshots(): readonly RateSnapshot[];
 }

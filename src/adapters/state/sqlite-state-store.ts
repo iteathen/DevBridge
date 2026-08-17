@@ -32,13 +32,34 @@ interface ContextRow {
   maximum_revision: number;
 }
 
+interface ProgressRow {
+  report_json: string;
+}
+
+interface RateRow {
+  resource: string;
+  limit_value: number;
+  remaining: number;
+  used: number;
+  reset_at_ms: number;
+  observed_at_ms: number;
+}
+
+interface MetadataRow {
+  value: string;
+}
+
 export class SqliteStateStore implements StateStore {
   readonly #database: DatabaseSync;
 
   constructor(filename: string) {
     const resolved = path.resolve(filename);
     mkdirSync(path.dirname(resolved), { recursive: true });
-    this.#database = new DatabaseSync(resolved, { timeout: 5000 });
+    this.#database = new DatabaseSync(resolved, {
+      timeout: 5000,
+      defensive: true,
+      allowExtension: false,
+    });
   }
 
   initialize(): void {
@@ -46,6 +67,14 @@ export class SqliteStateStore implements StateStore {
       PRAGMA journal_mode = WAL;
       PRAGMA foreign_keys = ON;
       PRAGMA busy_timeout = 5000;
+
+      CREATE TABLE IF NOT EXISTS schema_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      ) STRICT;
+
+      INSERT OR IGNORE INTO schema_metadata (key, value)
+      VALUES ('schema_version', '1');
 
       CREATE TABLE IF NOT EXISTS mailbox_state (
         mailbox_id TEXT PRIMARY KEY,
@@ -81,6 +110,7 @@ export class SqliteStateStore implements StateStore {
         issue_number INTEGER NOT NULL,
         comment_id INTEGER NOT NULL,
         payload_sha256 TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
         context_id TEXT NOT NULL,
         context_revision INTEGER NOT NULL,
         attempt INTEGER NOT NULL DEFAULT 1,
@@ -92,6 +122,16 @@ export class SqliteStateStore implements StateStore {
         UNIQUE (repository, comment_id)
       ) STRICT;
 
+      CREATE TABLE IF NOT EXISTS progress_events (
+        dispatch_id TEXT NOT NULL REFERENCES dispatches(dispatch_id),
+        progress_sequence INTEGER NOT NULL CHECK (progress_sequence >= 0),
+        state TEXT NOT NULL,
+        phase TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        report_json TEXT NOT NULL,
+        PRIMARY KEY (dispatch_id, progress_sequence)
+      ) STRICT;
+
       CREATE TABLE IF NOT EXISTS rate_snapshots (
         resource TEXT PRIMARY KEY,
         limit_value INTEGER NOT NULL,
@@ -101,6 +141,10 @@ export class SqliteStateStore implements StateStore {
         observed_at_ms INTEGER NOT NULL
       ) STRICT;
     `);
+    const version = this.#database.prepare(`
+      SELECT value FROM schema_metadata WHERE key = 'schema_version'
+    `).get() as MetadataRow | undefined;
+    if (version?.value !== "1") throw new Error("unsupported PATCH-POLLER state schema version");
   }
 
   close(): void {
@@ -201,7 +245,9 @@ export class SqliteStateStore implements StateStore {
       `).get(parsed.dispatch.dispatch_id) as DispatchRow | undefined;
       if (byId !== undefined) {
         this.#database.exec("COMMIT");
-        return { status: "duplicate" };
+        return byId.payload_sha256 === parsed.payloadSha256
+          ? { status: "duplicate" }
+          : { status: "dispatch_id_conflict" };
       }
 
       const context = this.#database.prepare(`
@@ -216,14 +262,16 @@ export class SqliteStateStore implements StateStore {
       this.#database.prepare(`
         INSERT INTO dispatches (
           dispatch_id, repository, issue_number, comment_id, payload_sha256,
-          context_id, context_revision, attempt, state, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'accepted', ?, ?)
+          payload_json, context_id, context_revision, attempt, state,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'accepted', ?, ?)
       `).run(
         parsed.dispatch.dispatch_id,
         comment.repository,
         comment.issueNumber,
         comment.id,
         parsed.payloadSha256,
+        parsed.payloadText,
         parsed.dispatch.context.id,
         parsed.dispatch.context.revision,
         now,
@@ -247,11 +295,39 @@ export class SqliteStateStore implements StateStore {
   }
 
   saveLifecycleReport(report: LifecycleReport): void {
-    const result = this.#database.prepare(`
-      UPDATE dispatches SET state = ?, report_json = ?, updated_at = ?
-      WHERE dispatch_id = ?
-    `).run(report.state, JSON.stringify(report), report.updated_at, report.dispatch_id);
-    if (result.changes !== 1) throw new Error(`unknown dispatch: ${report.dispatch_id}`);
+    const reportJson = JSON.stringify(report);
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const existing = this.#database.prepare(`
+        SELECT report_json FROM progress_events
+        WHERE dispatch_id = ? AND progress_sequence = ?
+      `).get(report.dispatch_id, report.progress_sequence) as ProgressRow | undefined;
+      if (existing === undefined) {
+        this.#database.prepare(`
+          INSERT INTO progress_events (
+            dispatch_id, progress_sequence, state, phase, occurred_at, report_json
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          report.dispatch_id,
+          report.progress_sequence,
+          report.state,
+          report.phase,
+          report.updated_at,
+          reportJson,
+        );
+      } else if (existing.report_json !== reportJson) {
+        throw new Error("progress sequence was reused with different lifecycle content");
+      }
+      const result = this.#database.prepare(`
+        UPDATE dispatches SET state = ?, report_json = ?, updated_at = ?
+        WHERE dispatch_id = ?
+      `).run(report.state, reportJson, report.updated_at, report.dispatch_id);
+      if (result.changes !== 1) throw new Error(`unknown dispatch: ${report.dispatch_id}`);
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   getLifecycleReport(dispatchId: string): LifecycleReport | undefined {
@@ -260,7 +336,7 @@ export class SqliteStateStore implements StateStore {
              report_json, report_comment_id
       FROM dispatches WHERE dispatch_id = ?
     `).get(dispatchId) as DispatchRow | undefined;
-    if (row?.report_json === null || row === undefined) return undefined;
+    if (row === undefined || row.report_json === null) return undefined;
     return JSON.parse(row.report_json) as LifecycleReport;
   }
 
@@ -299,5 +375,20 @@ export class SqliteStateStore implements StateStore {
       snapshot.resetAtMs,
       snapshot.observedAtMs,
     );
+  }
+
+  getRateSnapshots(): readonly RateSnapshot[] {
+    const rows = this.#database.prepare(`
+      SELECT resource, limit_value, remaining, used, reset_at_ms, observed_at_ms
+      FROM rate_snapshots
+    `).all() as unknown as readonly RateRow[];
+    return rows.map((row) => ({
+      resource: row.resource,
+      limit: row.limit_value,
+      remaining: row.remaining,
+      used: row.used,
+      resetAtMs: row.reset_at_ms,
+      observedAtMs: row.observed_at_ms,
+    }));
   }
 }

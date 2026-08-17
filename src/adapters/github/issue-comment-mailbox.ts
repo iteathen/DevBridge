@@ -75,19 +75,36 @@ export class IssueCommentMailbox implements GitHubMailbox {
 
   async poll(signal?: AbortSignal): Promise<PollResult> {
     let cache = this.#state.getMailboxCache(this.id);
+    const [owner, repo] = this.repository.split("/");
+    if (owner === undefined || repo === undefined) throw new Error("invalid configured repository");
+
     if (!cache.initialized && this.#config.bootstrap === "ignore_existing") {
+      const baseline = await this.#client.request<IssueCommentWire[]>(
+        "GET",
+        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${this.issueNumber}/comments?per_page=1`,
+        "background",
+        { purpose: `baseline mailbox ${this.id}`, signal },
+      );
+      const cursor = baseline.serverDate ?? this.#clock.now().toISOString();
       cache = {
         initialized: true,
         unchangedStreak: 0,
-        cursorUpdatedAt: this.#clock.now().toISOString(),
+        cursorUpdatedAt: new Date(cursor).toISOString(),
+        ...(baseline.xPollIntervalSeconds === undefined
+          ? {}
+          : { xPollIntervalSeconds: baseline.xPollIntervalSeconds }),
       };
       this.#state.updateMailboxCache(this.id, cache);
-      return { comments: [], notModified: false };
+      return {
+        comments: [],
+        notModified: false,
+        ...(cache.xPollIntervalSeconds === undefined
+          ? {}
+          : { xPollIntervalSeconds: cache.xPollIntervalSeconds }),
+      };
     }
 
-    const [owner, repo] = this.repository.split("/");
-    if (owner === undefined || repo === undefined) throw new Error("invalid configured repository");
-    const params = new URLSearchParams({ per_page: "100", sort: "updated", direction: "asc" });
+    const params = new URLSearchParams({ per_page: "100" });
     if (cache.cursorUpdatedAt !== undefined) {
       const overlap = new Date(Math.max(0, Date.parse(cache.cursorUpdatedAt) - 1000)).toISOString();
       params.set("since", overlap);

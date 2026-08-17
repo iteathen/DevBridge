@@ -43,9 +43,7 @@ function parseArguments(argv: readonly string[]): Arguments {
         checkConfig = true;
         break;
       case "--help":
-        process.stdout.write(
-          "Usage: patch-poller [--config FILE] [--once] [--check-config]\n",
-        );
+        process.stdout.write("Usage: patch-poller [--config FILE] [--once] [--check-config]\n");
         process.exit(0);
       default:
         throw new Error(`unknown argument: ${value}`);
@@ -83,6 +81,7 @@ async function main(): Promise<void> {
     criticalReserveRemaining: config.github.poll.criticalReserveRemaining,
     conservationRatio: config.github.poll.conservationRatio,
   });
+  for (const snapshot of state.getRateSnapshots()) governor.restore(snapshot);
   const github = new GitHubRestClient({
     apiBaseUrl: config.github.apiBaseUrl,
     apiVersion: config.github.apiVersion,
@@ -126,6 +125,7 @@ async function main(): Promise<void> {
     mailboxes: bindings.length,
     tools: config.tools.map((tool) => tool.id),
     mode: args.once ? "once" : "daemon",
+    restoredRateResources: state.getRateSnapshots().map((snapshot) => snapshot.resource),
   });
   try {
     if (args.once) await daemon.runOnce(controller.signal);

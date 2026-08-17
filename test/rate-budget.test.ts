@@ -37,6 +37,21 @@ test("parses rate headers and enters conservation modes", () => {
   assert.equal(governor.canRequest("critical", 1_000_001), true);
 });
 
+test("zero remaining blocks every request until reset", () => {
+  const governor = new RateBudgetGovernor(config);
+  governor.restore({
+    resource: "core",
+    limit: 5000,
+    remaining: 0,
+    used: 5000,
+    resetAtMs: 2_000_000,
+    observedAtMs: 1_000_000,
+  });
+  assert.equal(governor.mode(1_500_000), "blocked");
+  assert.equal(governor.canRequest("critical", 1_500_000), false);
+  assert.equal(governor.mode(2_000_000), "normal");
+});
+
 test("authenticated 304-compatible polling backs off adaptively and honors floor", () => {
   const governor = new RateBudgetGovernor(config);
   assert.equal(governor.pollDelayMs(0, undefined, 0), 30_000);

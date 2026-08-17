@@ -61,8 +61,14 @@ export class RateBudgetGovernor {
 
   observe(headers: RateHeaders, nowMs: number): RateSnapshot | undefined {
     const snapshot = parseRateSnapshot(headers, nowMs);
-    if (snapshot !== undefined) this.#snapshot = snapshot;
+    if (snapshot !== undefined) this.restore(snapshot);
     return snapshot;
+  }
+
+  restore(snapshot: RateSnapshot): void {
+    if (this.#snapshot === undefined || snapshot.observedAtMs >= this.#snapshot.observedAtMs) {
+      this.#snapshot = snapshot;
+    }
   }
 
   snapshot(): RateSnapshot | undefined {
@@ -70,6 +76,7 @@ export class RateBudgetGovernor {
   }
 
   blockUntil(whenMs: number): void {
+    if (!Number.isFinite(whenMs)) throw new Error("rate block deadline must be finite");
     this.#blockedUntilMs = Math.max(this.#blockedUntilMs, whenMs);
   }
 
@@ -77,6 +84,9 @@ export class RateBudgetGovernor {
     if (nowMs < this.#blockedUntilMs) return "blocked";
     const snapshot = this.#snapshot;
     if (snapshot === undefined) return "normal";
+    if (snapshot.remaining === 0) {
+      return nowMs < snapshot.resetAtMs ? "blocked" : "normal";
+    }
     if (snapshot.remaining <= this.config.criticalReserveRemaining) return "terminal_only";
     const ratio = snapshot.limit === 0 ? 0 : snapshot.remaining / snapshot.limit;
     if (snapshot.remaining <= this.config.conservationRemaining || ratio <= this.config.conservationRatio) {
@@ -125,10 +135,10 @@ export class RateBudgetGovernor {
   ): number | undefined {
     if (status !== 403 && status !== 429) return undefined;
     const retryAfter = parseInteger(headers["retry-after"]);
-    if (retryAfter !== undefined) return nowMs + retryAfter * 1000;
+    if (retryAfter !== undefined) return nowMs + Math.max(1000, retryAfter * 1000);
     const remaining = parseInteger(headers["x-ratelimit-remaining"]);
     const reset = parseInteger(headers["x-ratelimit-reset"]);
-    if (remaining === 0 && reset !== undefined) return reset * 1000;
+    if (remaining === 0 && reset !== undefined) return Math.max(nowMs + 1000, reset * 1000);
     const exponent = Math.min(Math.max(consecutiveSecondaryFailures, 0), 6);
     return nowMs + Math.min(60_000 * 2 ** exponent, 3_600_000);
   }

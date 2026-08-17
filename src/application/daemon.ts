@@ -65,7 +65,11 @@ export class PatchPollerDaemon {
   }
 
   async run(signal?: AbortSignal): Promise<void> {
-    const due = new Map(this.#bindings.map((binding) => [binding.config.id, 0]));
+    const startedAt = this.#clock.now().getTime();
+    const initialSpacing = Math.max(1000, Math.floor(this.#poll.activeIntervalMs / this.#bindings.length));
+    const due = new Map(
+      this.#bindings.map((binding, index) => [binding.config.id, startedAt + index * initialSpacing]),
+    );
     while (signal?.aborted !== true) {
       const next = this.#bindings.reduce<MailboxBinding | undefined>((selected, candidate) => {
         if (selected === undefined) return candidate;
@@ -165,6 +169,14 @@ export class PatchPollerDaemon {
           mailboxId: binding.config.id,
           commentId: comment.id,
           dispatchId: parsed.dispatch.dispatch_id,
+        });
+        return;
+      case "dispatch_id_conflict":
+        this.#logger.error("dispatch ID was reused with a different payload", {
+          mailboxId: binding.config.id,
+          commentId: comment.id,
+          dispatchId: parsed.dispatch.dispatch_id,
+          payloadSha256: parsed.payloadSha256,
         });
         return;
       case "stale_context_revision":

@@ -24,6 +24,7 @@ export interface GitHubResponse<T> {
   readonly etag?: string;
   readonly lastModified?: string;
   readonly link?: string;
+  readonly serverDate?: string;
   readonly xPollIntervalSeconds?: number;
 }
 
@@ -82,8 +83,30 @@ function boundedApiMessage(status: number, text: string): string {
   return `GitHub API ${status}: ${message.slice(0, 1024)}`;
 }
 
+function optionalResponseHeaders(response: Response): {
+  readonly etag?: string;
+  readonly lastModified?: string;
+  readonly link?: string;
+  readonly serverDate?: string;
+  readonly xPollIntervalSeconds?: number;
+} {
+  const etag = response.headers.get("etag") ?? undefined;
+  const lastModified = response.headers.get("last-modified") ?? undefined;
+  const link = response.headers.get("link") ?? undefined;
+  const serverDate = response.headers.get("date") ?? undefined;
+  const xPollIntervalSeconds = parseOptionalInteger(response.headers.get("x-poll-interval"));
+  return {
+    ...(etag === undefined ? {} : { etag }),
+    ...(lastModified === undefined ? {} : { lastModified }),
+    ...(link === undefined ? {} : { link }),
+    ...(serverDate === undefined ? {} : { serverDate }),
+    ...(xPollIntervalSeconds === undefined ? {} : { xPollIntervalSeconds }),
+  };
+}
+
 export class GitHubRestClient {
   readonly #config: Required<Pick<GitHubRestClientConfig, "maximumResponseBytes" | "requestTimeoutMs">> & GitHubRestClientConfig;
+  readonly #apiBase: URL;
   readonly #governor: RateBudgetGovernor;
   readonly #clock: Clock;
   readonly #logger: Logger;
@@ -105,6 +128,7 @@ export class GitHubRestClient {
       maximumResponseBytes: config.maximumResponseBytes ?? 10 * 1024 * 1024,
       requestTimeoutMs: config.requestTimeoutMs ?? 120_000,
     };
+    this.#apiBase = new URL(config.apiBaseUrl.endsWith("/") ? config.apiBaseUrl : `${config.apiBaseUrl}/`);
     this.#governor = governor;
     this.#clock = clock;
     this.#logger = logger;
@@ -132,6 +156,16 @@ export class GitHubRestClient {
     return result;
   }
 
+  #resolveUrl(pathOrUrl: string): URL {
+    const url = /^https?:\/\//u.test(pathOrUrl)
+      ? new URL(pathOrUrl)
+      : new URL(pathOrUrl.replace(/^\/+/, ""), this.#apiBase);
+    if (url.origin !== this.#apiBase.origin || !url.pathname.startsWith(this.#apiBase.pathname)) {
+      throw new Error("GitHub request URL escaped the configured API base");
+    }
+    return url;
+  }
+
   async #requestNow<T>(
     method: "GET" | "POST" | "PATCH",
     pathOrUrl: string,
@@ -153,15 +187,9 @@ export class GitHubRestClient {
       this.#governor.noteMutation(this.#clock.now().getTime());
     }
 
-    const url = /^https?:\/\//u.test(pathOrUrl)
-      ? new URL(pathOrUrl)
-      : new URL(pathOrUrl, `${this.#config.apiBaseUrl}/`);
-    if (url.origin !== new URL(this.#config.apiBaseUrl).origin) {
-      throw new Error("GitHub pagination URL changed origin");
-    }
-
+    const url = this.#resolveUrl(pathOrUrl);
     const headers = new Headers({
-      Accept: "application/vnd.github.raw+json",
+      Accept: "application/vnd.github+json",
       Authorization: `Bearer ${this.#config.token}`,
       "User-Agent": this.#config.userAgent,
       "X-GitHub-Api-Version": this.#config.apiVersion,
@@ -174,13 +202,14 @@ export class GitHubRestClient {
     const timeout = setTimeout(() => controller.abort(new Error("GitHub request timed out")), this.#config.requestTimeoutMs);
     const onAbort = (): void => controller.abort(options.signal?.reason);
     options.signal?.addEventListener("abort", onAbort, { once: true });
+    if (options.signal?.aborted === true) onAbort();
 
     let response: Response;
     try {
       response = await this.#fetch(url, {
         method,
         headers,
-        redirect: "follow",
+        redirect: "manual",
         signal: controller.signal,
         ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
       });
@@ -233,16 +262,9 @@ export class GitHubRestClient {
       resource: snapshot?.resource,
     });
 
+    const responseHeaders = optionalResponseHeaders(response);
     if (response.status === 304) {
-      return {
-        status: 304,
-        notModified: true,
-        ...(response.headers.get("etag") === null ? {} : { etag: response.headers.get("etag") ?? undefined }),
-        ...(response.headers.get("last-modified") === null ? {} : { lastModified: response.headers.get("last-modified") ?? undefined }),
-        ...(parseOptionalInteger(response.headers.get("x-poll-interval")) === undefined
-          ? {}
-          : { xPollIntervalSeconds: parseOptionalInteger(response.headers.get("x-poll-interval")) }),
-      };
+      return { status: 304, notModified: true, ...responseHeaders };
     }
     if (!response.ok) throw new GitHubApiError(response.status, boundedApiMessage(response.status, text));
 
@@ -251,12 +273,7 @@ export class GitHubRestClient {
       status: response.status,
       notModified: false,
       ...(data === undefined ? {} : { data }),
-      ...(response.headers.get("etag") === null ? {} : { etag: response.headers.get("etag") ?? undefined }),
-      ...(response.headers.get("last-modified") === null ? {} : { lastModified: response.headers.get("last-modified") ?? undefined }),
-      ...(response.headers.get("link") === null ? {} : { link: response.headers.get("link") ?? undefined }),
-      ...(parseOptionalInteger(response.headers.get("x-poll-interval")) === undefined
-        ? {}
-        : { xPollIntervalSeconds: parseOptionalInteger(response.headers.get("x-poll-interval")) }),
+      ...responseHeaders,
     };
   }
 }
