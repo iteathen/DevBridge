@@ -1,0 +1,21 @@
+{
+  "name": "patch-poller",
+  "version": "0.1.0",
+  "description": "Account-conscious GitHub mailbox for bounded local CLI capabilities",
+  "type": "module",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=24.15.0 <27"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node scripts/run-tests.mjs",
+    "check": "npm test",
+    "start": "node dist/src/cli.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3"
+  }
+}
