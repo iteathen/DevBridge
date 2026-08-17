@@ -1,0 +1,110 @@
+meta:
+  spec_id: patch_poller_protocol_v1
+  version: 1
+  status: active
+  owner: dispatch_protocol
+
+markers:
+  dispatch: PATCH-POLLER-DISPATCH v1
+  report: PATCH-POLLER-REPORT v1
+
+transport:
+  envelope_location: html_comment
+  body_format: strict_json
+  maximum_envelope_utf8_bytes: 262144
+  prose_outside_envelope: ignored_non_authoritative
+  duplicate_marker_policy: reject
+  unknown_protocol_version_policy: reject_without_execution
+
+source_binding:
+  actual_github_repository_issue_comment_and_actor_are_authoritative: true
+  payload_source_claims_must_match_actual_when_present: true
+  accepted_actor_policy_is_local_configuration: true
+  accepted_mailbox_policy_is_local_configuration: true
+
+identity_and_replay:
+  dispatch_id_max_utf8_bytes: 128
+  dispatch_id_unique_forever_within_state_store: true
+  source_comment_id_unique: true
+  payload_sha256_recorded: true
+  edited_dispatch_after_claim: never_reexecute
+  context_revision_must_be_monotonic_per_context_id: true
+  issued_at_and_expires_at_required: true
+
+context_bundle:
+  required:
+    - id
+    - revision
+    - objective
+    - checkpoint
+    - constraints
+  frame_kinds:
+    - objective
+    - checkpoint
+    - constraint
+    - decision
+    - evidence
+    - warning
+    - result
+    - handoff
+  trust_classes:
+    - trusted_instruction
+    - repository_authority
+    - observed_evidence
+    - untrusted_content
+  maximum_frames: 128
+  maximum_frame_utf8_bytes: 16384
+  maximum_total_context_utf8_bytes: 196608
+  every_frame_has_provenance_and_digest: true
+
+operation:
+  kind: tool_sequence
+  maximum_steps: 64
+  remote_selects:
+    - registered_tool_id
+    - schema_bounded_dynamic_arguments
+    - relative_working_directory
+    - allowed_stdin_mode_and_bounded_input
+    - requested_timeout_within_local_maximum
+  remote_never_selects:
+    - raw_executable_path
+    - shell_interpreter
+    - absolute_local_path
+    - credential_or_secret_location
+    - arbitrary_environment_variable_name
+    - progress_parser_implementation
+  local_policy_always_narrows_dispatch: true
+
+target_guards:
+  required:
+    - workspace_id
+    - repository
+    - branch
+    - expected_head
+    - allowed_paths
+  expected_head_format: lowercase_git_sha1_40_hex
+  empty_allowed_paths_means_no_writes: true
+  push_requires_separate_capability: true
+  commit_requires_separate_capability: true
+
+acknowledgement:
+  accepted_dispatch_is_durably_claimed_before_execution: true
+  one_lifecycle_report_comment_per_dispatch: true
+  report_identity_is_persisted_before_subsequent_updates: true
+
+terminal_states:
+  - completed
+  - failed
+  - blocked
+  - cancelled
+  - interrupted
+  - rejected
+
+controller_authority:
+  patch_poller_may_report_safe_continuation_facts: true
+  patch_poller_may_not_invent_next_step: true
+  delegated_tool_may_not_select_next_step: true
+
+schemas:
+  dispatch: schemas/dispatch-v1.schema.json
+  report: schemas/report-v1.schema.json

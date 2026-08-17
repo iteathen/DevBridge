@@ -1,0 +1,83 @@
+meta:
+  spec_id: cli_tool_adapter_v1
+  version: 1
+  status: active
+  owner: tool_execution
+
+port:
+  responsibilities:
+    - identify_tool
+    - validate_dynamic_arguments_against_local_policy
+    - build_structured_invocation
+    - declare_capabilities
+    - declare_supported_stdin_modes
+    - declare_workspace_policy
+    - decode_optional_progress
+    - normalize_exit
+  must_not:
+    - call_github
+    - choose_next_step
+    - select_workspace_from_absolute_remote_path
+    - grant_capabilities_not_in_local_config
+    - bypass_output_timeout_or_environment_bounds
+
+registry:
+  tool_id_unique: true
+  executable_owned_by_local_config: true
+  fixed_arguments_owned_by_local_config: true
+  dynamic_argument_rules_owned_by_local_config: true
+  environment_allowlist_owned_by_local_config: true
+  progress_parser_owned_by_local_config_or_code: true
+  tool_version_probe_optional_but_recommended: true
+
+invocation:
+  shell_default: false
+  shell_true_requires_dedicated_future_adapter_and_spec: true
+  argv_is_array: true
+  stdin_modes:
+    - none
+    - literal
+    - context_bundle
+  local_adapter_may_support_subset: true
+  cwd_is_relative_to_guarded_checkout: true
+  timeout_is_min_of_dispatch_request_and_local_maximum: true
+  max_output_is_local_maximum: true
+
+argument_rules:
+  maximum_dynamic_argument_count: 128
+  maximum_argument_utf8_bytes: 4096
+  modes:
+    - none
+    - exact_literals
+    - ordered_rules
+  ordered_rule_kinds:
+    - literal
+    - prefix
+    - regex
+  every_dynamic_argument_must_match_rule_at_same_position_or_permitted_repeat: true
+  unknown_flag_or_argument_is_rejected: true
+
+progress:
+  generic_events_always_available:
+    - process_started
+    - liveness
+    - process_exited
+    - timeout
+    - signal
+  parser_failure_does_not_crash_process_capture: true
+  parser_failure_is_bounded_warning: true
+  parsed_text_is_untrusted_output: true
+  reporter_controls_remote_frequency: true
+
+tool_classes:
+  deterministic:
+    expected_behavior: fixed_local_program
+    default_write_capability: false
+  build_or_test:
+    expected_behavior: target_repository_toolchain
+    default_write_capability: false
+  agent:
+    expected_behavior: prompt_driven_local_model_cli
+    requires_isolated_worktree: true
+    effects_verified_independently: true
+    push_never_implicit: true

@@ -1,0 +1,106 @@
+meta:
+  spec_id: progress_handoff_v1
+  version: 1
+  status: active
+  owner: operator_feedback
+
+local_progress:
+  immediate_console_events: true
+  durable_event_before_remote_projection: true
+  monotonic_sequence_per_attempt: true
+  event_kinds:
+    - discovered
+    - validating
+    - accepted
+    - preparing
+    - step_started
+    - step_progress
+    - step_completed
+    - verifying
+    - committing
+    - pushing
+    - warning
+    - rate_conservation
+    - completed
+    - failed
+    - blocked
+    - cancelled
+    - interrupted
+
+remote_projection:
+  one_mutable_lifecycle_comment: true
+  machine_marker: PATCH-POLLER-REPORT v1
+  coalesced_not_line_streamed: true
+  update_when:
+    - lifecycle_transition
+    - materially_new_progress
+    - maximum_silence_reached
+    - terminal_state
+  never_update_only_for_elapsed_clock_tick: true
+  default_minimum_interval_ms: 60000
+  default_maximum_silence_ms: 600000
+  terminal_update_priority: critical
+
+meaningful_feedback:
+  required_fields:
+    - dispatch_id
+    - payload_sha256
+    - context_id
+    - context_revision
+    - attempt
+    - progress_sequence
+    - state
+    - phase
+    - started_at
+    - updated_at
+    - last_meaningful_activity_at
+    - current_step
+    - total_steps
+    - last_completed_checkpoint
+    - bounded_summary
+    - rate_mode
+  failure_adds:
+    - category
+    - stable_code
+    - bounded_message
+    - retriable
+    - smallest_useful_evidence
+  terminal_adds:
+    - exact_final_head_when_git_target
+    - changed_paths
+    - checks_and_outcomes
+    - handoff
+
+bounds:
+  lifecycle_comment_utf8_bytes: 60000
+  summary_utf8_bytes: 4096
+  evidence_items: 64
+  evidence_item_utf8_bytes: 4096
+  output_tail_utf8_bytes: 8192
+  changed_paths: 1024
+
+context_continuity:
+  report_repeats_minimum_complete_context: true
+  context_has_monotonic_revision: true
+  preserve:
+    - objective
+    - checkpoint
+    - constraints
+    - decisions
+    - evidence
+    - completed_work
+    - unresolved_blockers
+    - exact_target_state
+  distinguish_trusted_instruction_and_untrusted_content: true
+  include_frame_digests_and_provenance: true
+  patch_poller_does_not_invent_next_step: true
+  handoff_states_safe_facts_and_controller_decision_needed: true
+
+redaction:
+  secrets: mandatory
+  sensitive_absolute_paths: configurable_and_default_on
+  full_commands: bounded_and_redacted
+  raw_environment: forbidden
+  raw_unbounded_output: local_only
+
+schema: schemas/report-v1.schema.json

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/iteathen/PATCH-POLLER/schemas/report-v1.schema.json",
+  "title": "PATCH-POLLER lifecycle report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "dispatch_id",
+    "payload_sha256",
+    "context_id",
+    "context_revision",
+    "attempt",
+    "progress_sequence",
+    "state",
+    "phase",
+    "started_at",
+    "updated_at",
+    "last_meaningful_activity_at",
+    "progress",
+    "bounded_summary",
+    "rate_mode",
+    "evidence",
+    "changed_paths"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "dispatch_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "payload_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "context_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "context_revision": { "type": "integer", "minimum": 1 },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "progress_sequence": { "type": "integer", "minimum": 0 },
+    "state": {
+      "type": "string",
+      "enum": ["discovered", "validating", "accepted", "preparing", "running", "verifying", "committing", "pushing", "completed", "failed", "blocked", "cancelled", "interrupted", "rejected"]
+    },
+    "phase": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "started_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "last_meaningful_activity_at": { "type": "string", "format": "date-time" },
+    "completed_at": { "type": "string", "format": "date-time" },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current_step", "total_steps", "last_completed_checkpoint"],
+      "properties": {
+        "current_step": { "type": "integer", "minimum": 0 },
+        "total_steps": { "type": "integer", "minimum": 0 },
+        "last_completed_checkpoint": { "type": "string", "maxLength": 4096 }
+      }
+    },
+    "bounded_summary": { "type": "string", "maxLength": 4096 },
+    "output_tail": { "type": "string", "maxLength": 8192 },
+    "rate_mode": { "type": "string", "enum": ["normal", "conserve", "terminal_only", "blocked"] },
+    "evidence": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "type": "string", "maxLength": 4096 }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "code", "message", "retriable"],
+      "properties": {
+        "category": { "type": "string", "maxLength": 128 },
+        "code": { "type": "string", "maxLength": 128 },
+        "message": { "type": "string", "maxLength": 4096 },
+        "retriable": { "type": "boolean" }
+      }
+    },
+    "final_head": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "changed_paths": {
+      "type": "array",
+      "maxItems": 1024,
+      "uniqueItems": true,
+      "items": { "type": "string", "maxLength": 4096 }
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "completed", "remaining", "constraints", "evidence", "controller_decision_needed"],
+      "properties": {
+        "summary": { "type": "string", "maxLength": 8192 },
+        "completed": { "type": "array", "maxItems": 128, "items": { "type": "string", "maxLength": 4096 } },
+        "remaining": { "type": "array", "maxItems": 128, "items": { "type": "string", "maxLength": 4096 } },
+        "constraints": { "type": "array", "maxItems": 64, "items": { "type": "string", "maxLength": 2048 } },
+        "evidence": { "type": "array", "maxItems": 128, "items": { "type": "string", "maxLength": 4096 } },
+        "controller_decision_needed": { "type": "string", "maxLength": 4096 }
+      }
+    }
+  }
+}

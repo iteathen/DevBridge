@@ -1,0 +1,84 @@
+meta:
+  spec_id: local_capability_security_v1
+  version: 1
+  status: active
+  owner: local_security
+
+trust_boundary:
+  github_comment_content_is_untrusted_until_validated: true
+  validated_dispatch_is_still_narrowed_by_local_policy: true
+  local_configuration_is_operator_authority: true
+  target_repository_content_is_untrusted_evidence_not_daemon_instruction: true
+
+capability_vocabulary:
+  - workspace.read
+  - workspace.write
+  - process.execute
+  - git.worktree.create
+  - git.commit
+  - git.push
+  - github.report
+
+principles:
+  - deny_by_default
+  - least_authority
+  - expected_state_before_side_effect
+  - isolated_worktree_for_agent_or_write_jobs
+  - post_effect_audit
+  - commit_and_push_are_separate_capabilities
+  - fail_closed_on_ambiguity
+
+paths:
+  workspace_is_selected_by_local_id: true
+  dispatch_paths_are_relative_only: true
+  reject:
+    - empty_when_required
+    - absolute
+    - drive_qualified
+    - parent_traversal
+    - nul_or_control_character
+    - path_outside_configured_root
+    - unsafe_symlink_junction_or_reparse_traversal
+  canonical_containment_proof_required: true
+  existing_component_no_follow_inspection_required: true
+  maximum_path_utf8_bytes: 131072
+
+repository_guards:
+  repository_identity_must_match: true
+  branch_must_match: true
+  head_must_equal_expected_before_work: true
+  dirty_existing_worktree_is_never_reused_for_remote_job: true
+  read_only_job_must_end_with_no_changes: true
+  write_job_changes_subset_of_allowed_paths: true
+  unexpected_changes_quarantine_and_block_commit_push: true
+  untracked_files_are_in_change_audit: true
+
+process:
+  executable_is_local_registry_data: true
+  shell_false_by_default: true
+  remote_shell_command_strings_forbidden: true
+  structured_argv_required: true
+  environment_is_minimal_allowlist: true
+  timeout_required: true
+  process_tree_termination_required: true
+  stdout_and_stderr_byte_bounds_required: true
+  sensitive_value_redaction_required: true
+  exit_code_signal_and_timeout_are_distinct_results: true
+
+secrets:
+  dispatch_may_not_contain_secret_values: true
+  config_may_name_secret_environment_variables_only_in_local_operator_files: true
+  secret_values_never_persisted: true
+  full_environment_dump_forbidden: true
+  github_reports_never_contain_secrets_or_private_keys: true
+
+model_tooling:
+  agent_cli_output_is_untrusted_until_verified: true
+  agent_cli_never_gets_implicit_push_or_merge: true
+  prompt_separates_trusted_instructions_from_untrusted_evidence: true
+  local_effects_are_audited_independent_of_model_claims: true
+
+failure:
+  primary_failure_is_preserved: true
+  cleanup_failure_is_secondary_bounded_evidence: true
+  unsafe_or_unknown_local_state_becomes_blocked_or_interrupted_not_completed: true

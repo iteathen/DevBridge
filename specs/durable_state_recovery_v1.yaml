@@ -1,0 +1,61 @@
+meta:
+  spec_id: durable_state_recovery_v1
+  version: 1
+  status: active
+  owner: durable_state
+
+storage:
+  initial_adapter: node_sqlite
+  sqlite_journal_mode: WAL
+  foreign_keys: true
+  defensive_mode: true
+  busy_timeout_ms: 5000
+  migrations_are_monotonic_and_transactional: true
+  domain_depends_on_state_store_port_not_sqlite: true
+
+unique_claims:
+  - github_repository_and_comment_id
+  - dispatch_id
+  - payload_sha256_for_dispatch_id
+  - context_id_and_revision
+  - dispatch_id_and_attempt_and_progress_sequence
+
+entities:
+  - mailbox_cursor
+  - github_rate_observation
+  - source_comment
+  - dispatch
+  - context_frame
+  - job_attempt
+  - lease
+  - progress_event
+  - lifecycle_report
+  - local_effect_audit
+  - handoff
+
+side_effect_ordering:
+  persist_intent_before_external_mutation: true
+  persist_external_identity_immediately_after_success: true
+  compare_and_swap_expected_state: true
+  terminal_state_is_immutable_except_explicit_supersession: true
+
+leases:
+  owner_instance_id_required: true
+  acquired_at_and_expires_at_required: true
+  heartbeat_is_local_database_write: true
+  expired_lease_does_not_imply_safe_reexecution: true
+
+restart_recovery:
+  terminal_dispatches_never_reexecute: true
+  accepted_unstarted_dispatch_may_start_after_guard_revalidation: true
+  running_attempt_requires_exact_phase_and_local_state_inspection: true
+  resumable_phases_are_explicit_allowlist: true
+  non_resumable_or_ambiguous_attempt_becomes_interrupted: true
+  interrupted_attempt_emits_context_complete_handoff: true
+  committed_or_pushed_side_effect_is_never_repeated_without_remote_and_local_proof: true
+
+retention:
+  raw_process_output_is_local_and_bounded: true
+  github_projection_is_summary_only: true
+  pruning_never_removes_replay_keys_or_terminal_handoff: true
+  retention_policy_is_local_configuration: true

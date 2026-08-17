@@ -1,0 +1,47 @@
+meta:
+  version: 1
+  status: active
+
+specs:
+  - id: patch_poller_foundation_v1
+    path: specs/00_READ_FIRST.yaml
+    status: active
+    owner: project_governance
+  - id: patch_poller_protocol_v1
+    path: specs/patch_poller_protocol_v1.yaml
+    status: active
+    owner: dispatch_protocol
+  - id: github_rate_budget_v1
+    path: specs/github_rate_budget_v1.yaml
+    status: active
+    owner: github_transport
+  - id: local_capability_security_v1
+    path: specs/local_capability_security_v1.yaml
+    status: active
+    owner: local_security
+  - id: progress_handoff_v1
+    path: specs/progress_handoff_v1.yaml
+    status: active
+    owner: operator_feedback
+  - id: cli_tool_adapter_v1
+    path: specs/cli_tool_adapter_v1.yaml
+    status: active
+    owner: tool_execution
+  - id: durable_state_recovery_v1
+    path: specs/durable_state_recovery_v1.yaml
+    status: active
+    owner: durable_state
+
+path_authority:
+  - paths: ["src/domain/**", "src/application/**", "src/ports/**"]
+    required: [patch_poller_foundation_v1, patch_poller_protocol_v1]
+  - paths: ["src/adapters/github/**"]
+    required: [github_rate_budget_v1, patch_poller_protocol_v1, progress_handoff_v1]
+  - paths: ["src/adapters/process/**", "src/adapters/filesystem/**"]
+    required: [local_capability_security_v1, cli_tool_adapter_v1]
+  - paths: ["src/adapters/state/**"]
+    required: [durable_state_recovery_v1]
+  - paths: ["schemas/**"]
+    required: [patch_poller_protocol_v1, progress_handoff_v1, cli_tool_adapter_v1]
+  - paths: ["src/application/progress/**"]
+    required: [progress_handoff_v1, github_rate_budget_v1]
