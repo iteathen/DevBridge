@@ -30,11 +30,17 @@ const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const API_VERSION = /^\d{4}-\d{2}-\d{2}$/u;
 
-function parseStringArray(value: unknown, pathName: string, maximum: number, minimum = 0): string[] {
+function parseStringArray(
+  value: unknown,
+  pathName: string,
+  maximum: number,
+  minimum = 0,
+  unique = true,
+): string[] {
   const result = expectArray(value, pathName, maximum, minimum).map((item, index) =>
     expectString(item, `${pathName}[${index}]`, 1, 4096),
   );
-  assertUnique(result, pathName);
+  if (unique) assertUnique(result, pathName);
   return result;
 }
 
@@ -145,14 +151,19 @@ function parseTool(value: unknown, pathName: string): ToolConfig {
     if (!ENV_NAME.test(name)) throw new ValidationError(`${pathName}.inherit_env`, `invalid environment name: ${name}`);
     return name;
   });
+  const argumentRules = expectArray(record.argument_rules, `${pathName}.argument_rules`, 128).map((item, index) =>
+    parseArgumentRule(item, `${pathName}.argument_rules[${index}]`),
+  );
+  const repeatingIndex = argumentRules.findIndex((rule) => rule.repeat);
+  if (repeatingIndex !== -1 && repeatingIndex !== argumentRules.length - 1) {
+    throw new ValidationError(`${pathName}.argument_rules[${repeatingIndex}].repeat`, "repeating rule must be last");
+  }
   return {
     id: expectPattern(record.id, `${pathName}.id`, ID, 128),
     class: expectOneOf(record.class, ["deterministic", "build_or_test", "agent"] as const, `${pathName}.class`),
     executable: expectString(record.executable, `${pathName}.executable`, 1, 4096),
-    fixedArgs: parseStringArray(record.fixed_args, `${pathName}.fixed_args`, 128),
-    argumentRules: expectArray(record.argument_rules, `${pathName}.argument_rules`, 128).map((item, index) =>
-      parseArgumentRule(item, `${pathName}.argument_rules[${index}]`),
-    ),
+    fixedArgs: parseStringArray(record.fixed_args, `${pathName}.fixed_args`, 128, 0, false),
+    argumentRules,
     capabilities,
     stdinModes,
     workspaceIds: parseStringArray(record.workspace_ids, `${pathName}.workspace_ids`, 100, 1),

@@ -1,4 +1,10 @@
-import type { LifecycleReport, LifecycleState, RateMode } from "./model.js";
+import type {
+  ContinuationContext,
+  Handoff,
+  LifecycleReport,
+  LifecycleState,
+  RateMode,
+} from "./model.js";
 
 export interface ProgressEvent {
   readonly sequence: number;
@@ -78,7 +84,45 @@ export function shouldProjectProgress(
   return elapsed >= policy.maximumSilenceMs;
 }
 
-export function renderLifecycleComment(report: LifecycleReport, maximumBytes = 60_000): string {
+function compactContinuation(continuation: ContinuationContext): ContinuationContext {
+  return {
+    ...continuation,
+    constraints: continuation.constraints.slice(0, 16),
+    frames: continuation.frames
+      .filter((frame) => frame.trust === "trusted_instruction" || frame.trust === "repository_authority")
+      .slice(0, 16)
+      .map((frame) => ({ ...frame, text: frame.text.slice(0, 2048) })),
+    omitted_constraint_sha256: continuation.omitted_constraint_sha256.slice(0, 32),
+    omitted_frame_sha256: continuation.omitted_frame_sha256.slice(0, 64),
+  };
+}
+
+function compactHandoff(handoff: Handoff | undefined): Handoff | undefined {
+  if (handoff === undefined) return undefined;
+  return {
+    summary: handoff.summary.slice(0, 4096),
+    completed: handoff.completed.slice(-32),
+    remaining: handoff.remaining.slice(0, 32),
+    constraints: handoff.constraints.slice(0, 16),
+    evidence: handoff.evidence.slice(-32),
+    controller_decision_needed: handoff.controller_decision_needed.slice(0, 2048),
+  };
+}
+
+function compactReport(report: LifecycleReport): LifecycleReport {
+  const handoff = compactHandoff(report.handoff);
+  return {
+    ...report,
+    bounded_summary: report.bounded_summary.slice(0, 2048),
+    ...(report.output_tail === undefined ? {} : { output_tail: report.output_tail.slice(-2048) }),
+    evidence: report.evidence.slice(-16),
+    changed_paths: report.changed_paths.slice(0, 128),
+    continuation: compactContinuation(report.continuation),
+    ...(handoff === undefined ? {} : { handoff }),
+  };
+}
+
+function humanLines(report: LifecycleReport): string[] {
   const progress = report.progress.total_steps === 0
     ? "not started"
     : `${report.progress.current_step}/${report.progress.total_steps}`;
@@ -104,11 +148,15 @@ export function renderLifecycleComment(report: LifecycleReport, maximumBytes = 6
   if (report.handoff !== undefined) {
     lines.push("", "#### Handoff", "", report.handoff.summary);
   }
-  const machine = `<!-- PATCH-POLLER-REPORT v1\n${JSON.stringify(report)}\n-->`;
-  let rendered = `${lines.join("\n")}\n\n${machine}`;
+  return lines;
+}
+
+export function renderLifecycleComment(report: LifecycleReport, maximumBytes = 60_000): string {
+  const render = (value: LifecycleReport): string =>
+    `${humanLines(value).join("\n")}\n\n<!-- PATCH-POLLER-REPORT v1\n${JSON.stringify(value)}\n-->`;
+  let rendered = render(report);
   if (Buffer.byteLength(rendered, "utf8") <= maximumBytes) return rendered;
-  const reduced: LifecycleReport = { ...report, evidence: report.evidence.slice(-8), changed_paths: report.changed_paths.slice(0, 128) };
-  rendered = `${lines.slice(0, 12).join("\n")}\n\n<!-- PATCH-POLLER-REPORT v1\n${JSON.stringify(reduced)}\n-->`;
+  rendered = render(compactReport(report));
   if (Buffer.byteLength(rendered, "utf8") > maximumBytes) {
     throw new Error("lifecycle report cannot be rendered within configured byte limit");
   }

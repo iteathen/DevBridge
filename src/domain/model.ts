@@ -139,12 +139,39 @@ export interface Handoff {
   readonly controller_decision_needed: string;
 }
 
+export interface ContinuationFrame {
+  readonly id: string;
+  readonly kind: ContextFrameKind;
+  readonly trust: ContextTrustClass;
+  readonly text: string;
+  readonly source: ContextSource;
+  readonly sha256: string;
+}
+
+export interface ContinuationContext {
+  readonly objective: string;
+  readonly checkpoint: string;
+  readonly constraints: readonly string[];
+  readonly omitted_constraint_sha256: readonly string[];
+  readonly frames: readonly ContinuationFrame[];
+  readonly omitted_frame_sha256: readonly string[];
+}
+
+export interface SourceCommentReference {
+  readonly repository: string;
+  readonly issue_number: number;
+  readonly comment_id: number;
+  readonly html_url: string;
+}
+
 export interface LifecycleReport {
   readonly version: 1;
   readonly dispatch_id: string;
   readonly payload_sha256: string;
   readonly context_id: string;
   readonly context_revision: number;
+  readonly source_comment: SourceCommentReference;
+  readonly continuation: ContinuationContext;
   readonly attempt: number;
   readonly progress_sequence: number;
   readonly state: LifecycleState;

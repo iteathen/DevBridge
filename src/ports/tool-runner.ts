@@ -1,7 +1,7 @@
 import type { Capability, ContextBundle, StdinSpec, ToolStep } from "../domain/model.js";
 
 export interface ToolProgress {
-  readonly kind: "process_started" | "output_activity" | "process_exited" | "timeout" | "signal" | "warning";
+  readonly kind: "process_started" | "liveness" | "output_activity" | "process_exited" | "timeout" | "signal" | "warning";
   readonly at: string;
   readonly message: string;
   readonly outputTail?: string;

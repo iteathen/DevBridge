@@ -83,7 +83,7 @@ export class NodeProcessRunner implements ToolRunner {
     const stderr = new BoundedTail(invocation.maximumOutputBytes);
     const startedAt = this.clock.now().toISOString();
     let timedOut = false;
-    let lastActivityMs = 0;
+    let lastActivityMs = this.clock.now().getTime();
 
     request.onProgress({
       kind: "process_started",
@@ -102,7 +102,6 @@ export class NodeProcessRunner implements ToolRunner {
 
     const emitActivity = (tail: BoundedTail): void => {
       const nowMs = this.clock.now().getTime();
-      if (nowMs - lastActivityMs < 5000) return;
       lastActivityMs = nowMs;
       request.onProgress({
         kind: "output_activity",
@@ -123,6 +122,16 @@ export class NodeProcessRunner implements ToolRunner {
     child.stdin.on("error", () => undefined);
     child.stdin.end(invocation.stdin);
 
+    const livenessIntervalMs = Math.max(15_000, Math.min(60_000, Math.floor(invocation.timeoutMs / 4)));
+    const liveness = setInterval(() => {
+      const nowMs = this.clock.now().getTime();
+      request.onProgress({
+        kind: "liveness",
+        at: new Date(nowMs).toISOString(),
+        message: `local tool ${invocation.tool.id} is still running; last output activity ${Math.max(0, nowMs - lastActivityMs)} ms ago`,
+      });
+    }, livenessIntervalMs);
+
     const timeout = setTimeout(() => {
       timedOut = true;
       request.onProgress({
@@ -142,12 +151,14 @@ export class NodeProcessRunner implements ToolRunner {
       if (child.pid !== undefined) void terminateProcessTree(child.pid);
     };
     request.signal?.addEventListener("abort", onAbort, { once: true });
+    if (request.signal?.aborted === true) onAbort();
 
     const completion = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
       child.once("error", reject);
       child.once("close", (code, signal) => resolve({ code, signal }));
     }).finally(() => {
       clearTimeout(timeout);
+      clearInterval(liveness);
       request.signal?.removeEventListener("abort", onAbort);
     });
 

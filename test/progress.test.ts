@@ -10,6 +10,20 @@ const initial: LifecycleReport = {
   payload_sha256: "a".repeat(64),
   context_id: "context",
   context_revision: 1,
+  source_comment: {
+    repository: "iteathen/PATCH-POLLER",
+    issue_number: 1,
+    comment_id: 10,
+    html_url: "https://github.com/iteathen/PATCH-POLLER/issues/1#issuecomment-10",
+  },
+  continuation: {
+    objective: "Prove progress reporting.",
+    checkpoint: "Accepted.",
+    constraints: ["Do not invent next_step."],
+    omitted_constraint_sha256: [],
+    frames: [],
+    omitted_frame_sha256: [],
+  },
   attempt: 1,
   progress_sequence: 0,
   state: "accepted",
@@ -36,13 +50,13 @@ test("progress sequence is monotonic and updates material state", () => {
   }, "normal");
   assert.equal(running.state, "running");
   assert.equal(running.progress.current_step, 1);
-  assert.throws(() => applyProgressEvent(running, { ...({
+  assert.throws(() => applyProgressEvent(running, {
     sequence: 1,
     state: "running",
     phase: "tool",
     at: "2026-08-17T22:01:01.000Z",
     summary: "duplicate",
-  }) }, "normal"), /must increase/u);
+  }, "normal"), /must increase/u);
 });
 
 test("coalesces rapid progress but always projects terminal state", () => {
@@ -70,4 +84,5 @@ test("renders one human and machine-readable lifecycle comment", () => {
   assert.match(body, /PATCH-POLLER — accepted/u);
   assert.match(body, /PATCH-POLLER-REPORT v1/u);
   assert.match(body, /"dispatch_id":"job-1"/u);
+  assert.match(body, /"continuation"/u);
 });

@@ -45,6 +45,8 @@ function git(gitExecutable: string, checkout: string, args: readonly string[]): 
 }
 
 function assertNoLinks(root: string, checkout: string): void {
+  const rootStatus = lstatSync(root);
+  if (rootStatus.isSymbolicLink()) throw new Error("workspace root is a symbolic link or junction");
   const relative = path.relative(root, checkout);
   let current = root;
   for (const segment of relative.split(path.sep).filter((item) => item !== "")) {
@@ -83,10 +85,10 @@ export class ReadOnlyWorkspaceGuard {
     const root = path.resolve(workspace.root);
     const checkoutPath = path.resolve(root, checkout.relativePath);
     if (!contained(root, checkoutPath)) throw new Error("registered checkout escapes workspace root");
+    assertNoLinks(root, checkoutPath);
     const realRoot = realpathSync.native(root);
     const realCheckout = realpathSync.native(checkoutPath);
     if (!contained(realRoot, realCheckout)) throw new Error("checkout real path escapes workspace root");
-    assertNoLinks(root, checkoutPath);
 
     const remote = normalizeRepositoryRemote(git(workspace.gitExecutable, checkoutPath, ["config", "--get", "remote.origin.url"]));
     if (remote?.toLowerCase() !== target.repository.toLowerCase()) throw new Error("local origin does not match dispatch repository");

@@ -4,37 +4,18 @@
   "title": "PATCH-POLLER lifecycle report v1",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "version",
-    "dispatch_id",
-    "payload_sha256",
-    "context_id",
-    "context_revision",
-    "attempt",
-    "progress_sequence",
-    "state",
-    "phase",
-    "started_at",
-    "updated_at",
-    "last_meaningful_activity_at",
-    "progress",
-    "bounded_summary",
-    "rate_mode",
-    "evidence",
-    "changed_paths"
-  ],
+  "required": ["version", "dispatch_id", "payload_sha256", "context_id", "context_revision", "source_comment", "continuation", "attempt", "progress_sequence", "state", "phase", "started_at", "updated_at", "last_meaningful_activity_at", "progress", "bounded_summary", "rate_mode", "evidence", "changed_paths"],
   "properties": {
     "version": { "const": 1 },
     "dispatch_id": { "type": "string", "minLength": 1, "maxLength": 128 },
     "payload_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "context_id": { "type": "string", "minLength": 1, "maxLength": 128 },
     "context_revision": { "type": "integer", "minimum": 1 },
+    "source_comment": { "$ref": "#/$defs/sourceComment" },
+    "continuation": { "$ref": "#/$defs/continuation" },
     "attempt": { "type": "integer", "minimum": 1 },
     "progress_sequence": { "type": "integer", "minimum": 0 },
-    "state": {
-      "type": "string",
-      "enum": ["discovered", "validating", "accepted", "preparing", "running", "verifying", "committing", "pushing", "completed", "failed", "blocked", "cancelled", "interrupted", "rejected"]
-    },
+    "state": { "type": "string", "enum": ["discovered", "validating", "accepted", "preparing", "running", "verifying", "committing", "pushing", "completed", "failed", "blocked", "cancelled", "interrupted", "rejected"] },
     "phase": { "type": "string", "minLength": 1, "maxLength": 128 },
     "started_at": { "type": "string", "format": "date-time" },
     "updated_at": { "type": "string", "format": "date-time" },
@@ -53,11 +34,7 @@
     "bounded_summary": { "type": "string", "maxLength": 4096 },
     "output_tail": { "type": "string", "maxLength": 8192 },
     "rate_mode": { "type": "string", "enum": ["normal", "conserve", "terminal_only", "blocked"] },
-    "evidence": {
-      "type": "array",
-      "maxItems": 64,
-      "items": { "type": "string", "maxLength": 4096 }
-    },
+    "evidence": { "type": "array", "maxItems": 64, "items": { "type": "string", "maxLength": 4096 } },
     "failure": {
       "type": "object",
       "additionalProperties": false,
@@ -70,11 +47,55 @@
       }
     },
     "final_head": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-    "changed_paths": {
-      "type": "array",
-      "maxItems": 1024,
-      "uniqueItems": true,
-      "items": { "type": "string", "maxLength": 4096 }
+    "changed_paths": { "type": "array", "maxItems": 1024, "uniqueItems": true, "items": { "type": "string", "maxLength": 4096 } },
+    "handoff": { "$ref": "#/$defs/handoff" }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "reference"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["controller", "github", "repository", "local_observation", "prior_handoff"] },
+        "reference": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
+    "frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "trust", "text", "source", "sha256"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "kind": { "type": "string", "enum": ["objective", "checkpoint", "constraint", "decision", "evidence", "warning", "result", "handoff"] },
+        "trust": { "type": "string", "enum": ["trusted_instruction", "repository_authority", "observed_evidence", "untrusted_content"] },
+        "text": { "type": "string", "minLength": 1, "maxLength": 16384 },
+        "source": { "$ref": "#/$defs/source" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "continuation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["objective", "checkpoint", "constraints", "omitted_constraint_sha256", "frames", "omitted_frame_sha256"],
+      "properties": {
+        "objective": { "type": "string", "minLength": 1, "maxLength": 8192 },
+        "checkpoint": { "type": "string", "minLength": 1, "maxLength": 8192 },
+        "constraints": { "type": "array", "maxItems": 64, "items": { "type": "string", "maxLength": 2048 } },
+        "omitted_constraint_sha256": { "type": "array", "maxItems": 64, "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" } },
+        "frames": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/frame" } },
+        "omitted_frame_sha256": { "type": "array", "maxItems": 128, "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+      }
+    },
+    "sourceComment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "issue_number", "comment_id", "html_url"],
+      "properties": {
+        "repository": { "type": "string", "maxLength": 200 },
+        "issue_number": { "type": "integer", "minimum": 1 },
+        "comment_id": { "type": "integer", "minimum": 1 },
+        "html_url": { "type": "string", "format": "uri", "maxLength": 4096 }
+      }
     },
     "handoff": {
       "type": "object",
