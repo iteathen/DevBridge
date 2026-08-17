@@ -4,6 +4,7 @@ import type { RateSnapshot } from "../domain/rate-budget.js";
 export interface MailboxCache {
   readonly etag?: string;
   readonly lastModified?: string;
+  readonly cursorUpdatedAt?: string;
   readonly initialized: boolean;
   readonly unchangedStreak: number;
   readonly xPollIntervalSeconds?: number;

@@ -1,8 +1,6 @@
 {
   "version": 1,
-  "state": {
-    "database_path": ".patch-poller/state.sqlite"
-  },
+  "state": { "database_path": ".patch-poller/state.sqlite" },
   "github": {
     "api_base_url": "https://api.github.com",
     "api_version": "2026-03-10",
@@ -35,12 +33,7 @@
       "root": "C:\\chess_engine",
       "worktree_root": "C:\\chess_engine\\patch-poller-worktrees",
       "git_executable": "git",
-      "checkouts": [
-        {
-          "repository": "iteathen/PATCH-POLLER",
-          "relative_path": "PATCH-POLLER"
-        }
-      ]
+      "checkouts": [{ "repository": "iteathen/PATCH-POLLER", "relative_path": "PATCH-POLLER" }]
     }
   ],
   "tools": [

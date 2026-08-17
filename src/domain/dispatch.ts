@@ -20,6 +20,7 @@ import {
   assertUnique,
   expectArray,
   expectBoolean,
+  expectCheckoutRelativePath,
   expectDateTime,
   expectInteger,
   expectOneOf,
@@ -41,10 +42,8 @@ export function sha256Utf8(value: string): string {
 }
 
 export function extractDispatchPayload(body: string): string | null {
-  const expression = new RegExp(
-    `<!--\\s*${DISPATCH_MARKER.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}\\s*\\r?\\n([\\s\\S]*?)-->`,
-    "gu",
-  );
+  const escapedMarker = DISPATCH_MARKER.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const expression = new RegExp(`<!--\\s*${escapedMarker}\\s*\\r?\\n([\\s\\S]*?)-->`, "gu");
   const matches = [...body.matchAll(expression)];
   if (matches.length === 0) return null;
   if (matches.length !== 1) throw new ValidationError("$", "dispatch comment contains multiple markers");
@@ -148,7 +147,7 @@ function parseStep(value: unknown, path: string): ToolStep {
     id: expectPattern(record.id, `${path}.id`, SAFE_ID, 128),
     tool_id: expectPattern(record.tool_id, `${path}.tool_id`, SAFE_ID, 128),
     args,
-    cwd: expectRelativePath(record.cwd, `${path}.cwd`),
+    cwd: expectCheckoutRelativePath(record.cwd, `${path}.cwd`),
     stdin: parseStdin(record.stdin, `${path}.stdin`),
     ...(timeout === undefined ? {} : { timeout_ms: timeout }),
   };
