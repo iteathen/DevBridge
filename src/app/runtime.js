@@ -12,7 +12,7 @@ import { IssueStatusReporter } from '../github/issue-status-reporter.js';
 import { ChatHandoffProjector } from '../github/chat-handoff-projector.js';
 import { WorkspacePolicy } from '../security/workspace-policy.js';
 import { GitClient } from '../git/git-client.js';
-import { GitWorkspaceManager } from '../git/git-workspace-manager.js';
+import { GitWorkspaceManager } from '../git/workspace-manager.js';
 import { ProcessRunner } from '../runtime/process-runner.js';
 import { DeterministicProcessRunner } from '../runtime/deterministic-process-runner.js';
 import { createDeterministicSandboxProvider } from '../runtime/deterministic-sandbox.js';
