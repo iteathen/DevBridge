@@ -14,11 +14,29 @@ function handoffDigest(value) {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
+function contentProvenanceProjection(provenance) {
+  if (!provenance || typeof provenance !== 'object') return null;
+  return {
+    verified: provenance.verified === true,
+    reason: provenance.reason ?? null,
+    contentSha256: provenance.contentSha256 ?? null,
+    creatorActorId: provenance.creatorActorId ?? null,
+    currentEditorActorId: provenance.currentEditorActorId ?? null,
+    editorActorIds: Array.isArray(provenance.editorActorIds) ? provenance.editorActorIds.slice(0, 20) : [],
+    editCount: Number.isInteger(provenance.editCount) ? provenance.editCount : null,
+    redactedEditCount: Number.isInteger(provenance.redactedEditCount) ? provenance.redactedEditCount : null,
+    historyComplete: provenance.historyComplete === true,
+    lastEditedAt: provenance.lastEditedAt ?? null,
+  };
+}
+
 export function buildContextCapsule({ task, sequence = 1, prior = null, runtime = {} }) {
   const context = task.envelope.context ?? {};
   const handoff = typeof context.handoff === 'string' ? context.handoff : null;
   const handoffSha256 = handoffDigest(handoff);
   const receipt = runtime.receipt ?? prior?.receipt ?? null;
+  const taskProvenance = contentProvenanceProjection(task.provenance);
+  const priorProvenance = Array.isArray(prior?.provenance) ? structuredClone(prior.provenance.slice(-20)) : [];
   return {
     protocol: 'patch-poller/context-v1',
     sequence,
@@ -26,6 +44,7 @@ export function buildContextCapsule({ task, sequence = 1, prior = null, runtime 
       queueRepository: task.queueRepository,
       issueNumber: task.issueNumber,
       revision: task.revision,
+      contentSha256: task.contentSha256 ?? taskProvenance?.contentSha256 ?? null,
       targetRepository: task.envelope.target.repository
     },
     objective: task.envelope.instructions,
@@ -53,7 +72,13 @@ export function buildContextCapsule({ task, sequence = 1, prior = null, runtime 
     outputTail: runtime.outputTail ?? null,
     liveness: runtime.liveness ?? prior?.liveness ?? null,
     provenance: [
-      { source: 'github-issue', actorId: task.actorId, issueNumber: task.issueNumber },
+      {
+        source: 'github-issue',
+        actorId: task.actorId,
+        issueNumber: task.issueNumber,
+        ...(taskProvenance ? { content: taskProvenance } : {})
+      },
+      ...priorProvenance,
       { source: 'local-policy', note: 'capabilities are granted only by local operator configuration' }
     ],
     generatedAt: new Date().toISOString()
@@ -71,11 +96,15 @@ export function fitContextCapsule(capsule, maxBytes = 48_000) {
   for (const key of ['decisions', 'progress', 'changedFiles', 'tests', 'blockers']) {
     if (Array.isArray(copy[key]) && copy[key].length > 20) copy[key] = copy[key].slice(-20);
   }
+  if (Array.isArray(copy.provenance) && copy.provenance.length > 22) {
+    copy.provenance = [copy.provenance[0], ...copy.provenance.slice(-21)];
+  }
 
   while (utf8Bytes(copy) > maxBytes && copy.progress?.length > 1) copy.progress.shift();
   while (utf8Bytes(copy) > maxBytes && copy.decisions?.length > 1) copy.decisions.shift();
   while (utf8Bytes(copy) > maxBytes && copy.tests?.length > 1) copy.tests.shift();
   while (utf8Bytes(copy) > maxBytes && copy.blockers?.length > 1) copy.blockers.shift();
+  while (utf8Bytes(copy) > maxBytes && copy.provenance?.length > 2) copy.provenance.splice(1, 1);
   if (utf8Bytes(copy) > maxBytes) copy.outputTail = null;
   if (utf8Bytes(copy) > maxBytes) copy.priorSummary = truncateText(copy.priorSummary, 1_000);
   if (utf8Bytes(copy) > maxBytes) copy.objective = truncateText(copy.objective, 4_000);

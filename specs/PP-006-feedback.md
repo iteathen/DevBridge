@@ -14,15 +14,30 @@ PATCH-POLLER does not poll comment streams for every active task.
 
 Comment polling is enabled only while a run has an outstanding feedback request or checkpoint decision that local policy permits GitHub to resolve. The same authenticated conditional-request cache used by task polling applies, and validators persist across restarts.
 
+Authority verification may require a second GitHub edit-provenance read after the REST comment list is fetched. That read uses the same serialized/rate-budgeted GitHub client. If provenance cannot be verified because of a transient API failure or a REST/GraphQL content race, PATCH-POLLER fails closed, clears the relevant REST conditional validator, and does **not** advance the durable feedback cursor. The exact comment can therefore be fetched and reverified later rather than disappearing behind a cached `304 Not Modified` response.
+
 A pending feedback/decision request is an attention overlay, not automatically a blocked lifecycle state. PATCH-POLLER may continue safe/reversible work under PP-007 while polling economically for a response.
 
 When the safe frontier is exhausted, the run may enter `waiting-decision` or another explicit waiting condition. Polling cadence may then back off within the GitHub-budget policy rather than burning account-wide API credits merely because a human has not replied.
 
 ## Trust
 
-Only comments authored by a locally allowlisted numeric GitHub user ID are eligible for ordinary feedback. Repository collaborators, issue participants, bots, labels, reactions, and quoted text are not trusted merely because they appear on the issue.
+Ordinary feedback authority is bound to the **exact current comment-body bytes**, not merely to the original comment author.
 
-Checkpoint decisions have additional authority matching requirements under PP-007. A user trusted to give ordinary continuation instructions is not automatically trusted to approve every decision class.
+For the GitHub issue-comment adapter:
+
+- the original comment author numeric GitHub actor ID must be locally trusted;
+- the current GraphQL body must exactly match the REST body whose envelope is being consumed;
+- every retained edit actor must resolve to a locally trusted numeric actor ID;
+- edited comments must retain creation provenance and a trusted current editor matching the retained final edit;
+- an untrusted original cannot be made authoritative by a later trusted edit;
+- an untrusted intermediate or current editor invalidates the comment for machine authority;
+- missing, inconsistent, paginated/truncated, or retention-saturated edit provenance fails closed;
+- a deleted historical diff remains attributable only when GitHub still exposes the editor identity and edit time; missing attribution fails closed.
+
+Repository collaborators, issue participants, bots, labels, reactions, and quoted text are not trusted merely because they appear on the issue. Login names are display data; numeric actor IDs remain the durable local trust key.
+
+Checkpoint decisions have additional authority matching requirements under PP-007. A user trusted to give ordinary continuation instructions is not automatically trusted to approve every decision class. Any GitHub-backed `patch-poller/decision-v1` ingestion must apply this same exact-comment provenance check before PP-007 decision-class/digest authority is evaluated.
 
 ## Ordinary feedback envelope
 
@@ -44,11 +59,17 @@ Feedback uses exactly one fenced JSON block:
 
 The `runId` and `taskRevision` must match the run. Feedback for an old run/revision is ignored rather than applied to current work.
 
+PATCH-POLLER computes a SHA-256 digest over the complete exact comment body. Accepted feedback carries that digest plus sanitized edit-provenance evidence. Quoted examples are ordinary discussion: a Markdown blockquote containing a `patch-poller-feedback` fence does not become machine authority.
+
 Ordinary `continue` feedback does not authorize a PP-007 hard gate, approve an architectural decision boundary, or grant local machine capability.
 
 ## Context merge
 
-Accepted continuation feedback is appended to provenance and becomes durable input to the next context capsule. It may change the objective or task-level constraints but cannot grant local capabilities or silently supersede an exact checkpoint decision requirement.
+Accepted continuation feedback is appended to provenance and becomes durable input to the next context capsule. The durable provenance record includes the exact comment digest and bounded editor/history metadata, not the complete comment body or edit diffs.
+
+Authority-shaped feedback that is rejected because creator/editor provenance is untrusted or unverifiable is recorded in sanitized status/provenance output so an operator can distinguish “no response” from “response rejected by policy.”
+
+Accepted continuation may change the objective or task-level constraints but cannot grant local capabilities or silently supersede an exact checkpoint decision requirement.
 
 If ordinary feedback materially changes the subject of an existing checkpoint, PATCH-POLLER marks that checkpoint superseded or creates a new checkpoint as required by PP-007 instead of stretching prior approval.
 

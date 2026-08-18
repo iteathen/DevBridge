@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ProtocolError } from '../errors.js';
 import { normalizeControllerPlan } from '../run/controller-plan.js';
+import { contentSha256 } from './content-provenance.js';
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const MAX_BODY_BYTES = 96_000;
@@ -75,9 +76,13 @@ export function parseTaskEnvelope(body) {
     controllerPlan,
     context: envelope.context ?? null
   };
+  const bodySha256 = contentSha256(body);
 
   return {
     envelope: normalized,
-    revision: createHash('sha256').update(stableEnvelope(normalized)).digest('hex')
+    contentSha256: bodySha256,
+    revision: createHash('sha256')
+      .update(stableEnvelope({ contentSha256: bodySha256, envelope: normalized }))
+      .digest('hex')
   };
 }

@@ -54,6 +54,12 @@ export class GitHubRestClient {
     return this.#rateBudget;
   }
 
+  #absoluteUrl(requestPath) {
+    return requestPath.startsWith('http')
+      ? requestPath
+      : `${this.#baseUrl}${requestPath.startsWith('/') ? '' : '/'}${requestPath}`;
+  }
+
   request(method, requestPath, options = {}) {
     const normalized = method.toUpperCase();
     const work = () => this.#requestNow(normalized, requestPath, options);
@@ -62,15 +68,49 @@ export class GitHubRestClient {
     return result;
   }
 
-  async #requestNow(method, requestPath, { body = null, conditional = false, critical = false } = {}) {
+  async graphql(query, variables = {}, { critical = false } = {}) {
+    if (typeof query !== 'string' || query.trim() === '') throw new TypeError('GraphQL query must be a non-empty string');
+    if (!variables || typeof variables !== 'object' || Array.isArray(variables)) throw new TypeError('GraphQL variables must be an object');
+    const response = await this.request('POST', '/graphql', {
+      body: { query, variables },
+      critical,
+      mutation: false,
+    });
+    if (!response.data || typeof response.data !== 'object' || Array.isArray(response.data)) {
+      throw new HttpError('GitHub GraphQL response is malformed', { status: response.status, body: response.data });
+    }
+    if (Array.isArray(response.data.errors) && response.data.errors.length > 0) {
+      throw new HttpError('GitHub GraphQL query returned errors', {
+        status: response.status,
+        body: { errors: response.data.errors.map((entry) => ({ message: String(entry?.message ?? 'GraphQL error') })) },
+      });
+    }
+    if (!Object.hasOwn(response.data, 'data')) {
+      throw new HttpError('GitHub GraphQL response omitted data', { status: response.status, body: response.data });
+    }
+    return { ...response, data: response.data.data, extensions: response.data.extensions ?? null };
+  }
+
+  async invalidateConditional(requestPath) {
+    if (!this.#stateStore) return;
+    await this.#stateStore.delete(cacheKey(this.#absoluteUrl(requestPath)));
+  }
+
+  async #requestNow(method, requestPath, {
+    body = null,
+    conditional = false,
+    critical = false,
+    mutation = null,
+  } = {}) {
     this.#rateBudget.assertCanRequest({ critical, now: this.#now() });
 
-    if (isMutation(method)) {
+    const mutationRequest = mutation == null ? isMutation(method) : mutation === true;
+    if (mutationRequest) {
       const waitMs = this.#lastMutationAt + this.#mutationIntervalMs - this.#now();
       if (waitMs > 0) await this.#sleep(waitMs);
     }
 
-    const url = requestPath.startsWith('http') ? requestPath : `${this.#baseUrl}${requestPath.startsWith('/') ? '' : '/'}${requestPath}`;
+    const url = this.#absoluteUrl(requestPath);
     const token = await this.#tokenProvider?.();
     if (!token) throw new HttpError('GitHub authentication token is not available', { status: 0 });
 
@@ -95,7 +135,7 @@ export class GitHubRestClient {
     }
 
     const response = await this.#fetch(url, { method, headers, body: payload, redirect: 'follow' });
-    if (isMutation(method)) this.#lastMutationAt = this.#now();
+    if (mutationRequest) this.#lastMutationAt = this.#now();
     this.#rateBudget.record(response.headers);
 
     if (response.status === 304) {
