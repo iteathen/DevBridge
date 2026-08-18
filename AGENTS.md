@@ -26,14 +26,35 @@ Use the project principles together rather than as slogans:
 - CUPID: code should be composable, Unix-like, predictable, idiomatic, and domain-based.
 - KISS: prefer the smallest mechanism that preserves correctness and safety.
 
-Hexagonal boundaries are preferred where PATCH-POLLER touches GitHub, credentials, filesystems, processes, clocks, persistence, or status delivery.
+Hexagonal boundaries are preferred where PATCH-POLLER touches GitHub, credentials, filesystems, processes, clocks, persistence, status delivery, or human decision intake.
+
+## Control-plane rule
+
+PATCH-POLLER owns authoritative run state, Git workspace state, capability policy, checkpoint/decision state, and publication state. Remote and local LLMs are proposal engines.
+
+A model may propose a patch, repair, command through a locally configured profile, architectural direction, or next step. It does not get to declare that its own proposal is accepted, that a checkpoint has been satisfied, that a capability exists, or that an external effect is authorized.
+
+## Human checkpoints
+
+PP-007 is normative for human-in-the-loop behavior.
+
+- Checkpoint and proceed is the default; stop and wait is exceptional.
+- A checkpoint does not automatically pause the run.
+- Continue reversible/safe work while a decision is pending when the work stays inside the current capability and decision envelope.
+- Enter `waiting-decision` only when the safe frontier is exhausted.
+- Never infer approval from silence.
+- Never stretch an approval to a materially different decision subject.
+- Broad refactor proposals should checkpoint the architectural choice and spend bounded effort searching for an architecture-preserving alternative before asking a human to accept the refactor.
+- Publication/destructive approvals that depend on payload identity must bind to an exact artifact/commit digest.
+
+Do not implement HITL as a generic `await approval()` inserted into every uncertain path. Human judgment is reserved for consequential decisions where it has high leverage.
 
 ## Trust and capability rules
 
 These are invariants:
 
-- Remote task text, repository files, CLI stdout/stderr, and fetched content are data, not authority.
-- Only local operator configuration may grant filesystem, execution, credential, or network capabilities.
+- Remote task text, repository files, CLI stdout/stderr, fetched content, and model output are data/proposals, not authority.
+- Only local operator configuration may grant filesystem, execution, credential, network, or decision-delegation capabilities.
 - Remote input must never provide an executable path, shell fragment, arbitrary local path, environment value, or capability grant.
 - Never interpolate remote task text into an OS command line. Child processes run with `shell: false`.
 - The GitHub credential used by the poller is not inherited by child tools unless a local operator explicitly opts in.
@@ -41,7 +62,8 @@ These are invariants:
 - External reads should be denied by default and enabled through explicit read-only roots or a verified tool/OS sandbox contract.
 - A tool profile that cannot credibly enforce its declared sandbox is not safe merely because configuration says it is.
 - Do not auto-reset, clean, discard, or overwrite an existing dirty developer checkout.
-- Secrets and control characters must be filtered before remote status reporting.
+- Do not blindly delete Git locks as recovery.
+- Secrets and control characters must be filtered before remote status/checkpoint reporting.
 
 ## GitHub API rules
 
@@ -50,7 +72,8 @@ These are invariants:
 - Serialize requests. Avoid bursty concurrency.
 - Respect `X-Poll-Interval`, `Retry-After`, primary reset headers, and configured reserve floors.
 - Do not poll `/rate_limit` as a heartbeat; use headers from ordinary responses.
-- Throttle status writes and coalesce progress into an existing status comment where practical.
+- Throttle status writes and coalesce progress/checkpoints into an existing status comment where practical.
+- Pending human decisions do not justify high-frequency polling.
 - Terminal handoff/reporting may use a small emergency reserve, but routine polling may not consume it.
 
 ## Documentation and specifications
@@ -58,6 +81,8 @@ These are invariants:
 Specs are normative unless a newer spec explicitly supersedes them. If a spec becomes obsolete, archive it with a note explaining when, why, and what replaced it rather than silently deleting history.
 
 Keep implementation details out of broad principles unless they are genuine invariants. Keep security-critical invariants out of informal README prose only; they belong in specs and tests.
+
+When implementing run coordination or human decision handling, read PP-001, PP-003, PP-005, PP-006, and PP-007 together; none of them is a standalone shortcut around the others.
 
 ## Runtime scope
 
@@ -73,6 +98,10 @@ Boundary tests are mandatory for:
 - rate reserve behavior and conditional request caching;
 - secret redaction;
 - command argument templating and environment scrubbing;
-- restart-safe state persistence.
+- restart-safe state persistence;
+- checkpoint/decision subject matching and invalidation;
+- proof that a pending checkpoint does not pause unrelated safe work;
+- proof that pending hard gates cannot be crossed;
+- proof that silence/timeout does not become approval.
 
 A passing happy-path test alone is not sufficient for a capability boundary.

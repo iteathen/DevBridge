@@ -6,12 +6,15 @@ Status: active
 
 Remote content can request work; it cannot grant machine authority.
 
+PATCH-POLLER is the control-plane authority. Remote and local models are proposal engines. Human remote input is authoritative only for decision classes that local operator policy explicitly delegates; it is not a general capability override.
+
 ## Filesystem
 
 - Project writes are confined to a poller-managed project/worktree root.
 - A remote task never supplies a local path.
 - Containment checks must account for `..`, absolute paths, and symlink/junction escape where the platform exposes realpath information.
-- PATCH-POLLER itself does not write outside managed state/workspace roots.
+- Canonical-path checks are defense in depth, not a replacement for OS-level access controls where those are available.
+- PATCH-POLLER itself does not write outside managed state/workspace roots except through an explicitly configured operator-owned integration boundary.
 - A user's arbitrary existing checkout is not auto-cleaned or reset.
 
 ### External reads
@@ -38,16 +41,48 @@ The default is therefore **deny arbitrary external reads**. Local configuration 
 
 Network access is a capability because it can fetch executable content and exfiltrate data. The policy model distinguishes denied, restricted/sandbox-enforced, and explicitly unrestricted profiles. Playwright/browser-capable profiles should be separately identifiable from ordinary local coding profiles.
 
+Network policy should be phase-aware where practical. Provisioning, build/test, loopback browser testing, and publication do not require the same network authority. Arbitrary project/test code should not inherit publication credentials or broad network access merely because another phase needs them.
+
+## Human decisions and hard gates
+
+PP-007 defines checkpoints, decision boundaries, and hard gates. These mechanisms do not weaken this security policy.
+
+A trusted human decision may authorize only effects whose decision class is already enabled by local policy. In particular:
+
+- a remote comment cannot add a filesystem root, executable, environment secret, network capability, credential, or trusted actor;
+- an approval cannot convert an unenforced sandbox claim into an enforced one;
+- capability expansion beyond the active profile requires the local operator-policy mechanism, even if a maintainer requests it remotely;
+- approval for a payload-sensitive effect must bind to the exact artifact/commit digest under PP-007;
+- expired, stale, mismatched, or superseded approval has no effect.
+
+Human attention is not itself a reason to halt safe work. While a checkpoint or decision is pending, PATCH-POLLER may continue reversible work that stays within the current capability envelope and does not cross the gated decision boundary.
+
 ## Secrets and reporting
 
-Before data leaves the machine through GitHub status or handoff comments:
+Before data leaves the machine through GitHub status, checkpoint, decision request, or handoff comments:
 
 - redact configured secret values;
 - redact recognizable credential-token forms;
-- strip unsafe control characters;
+- redact additional locally configured sensitive patterns;
+- strip unsafe control/terminal escape characters;
 - bound output size;
-- never include a complete process environment.
+- never include a complete process environment;
+- avoid publishing machine-specific paths when a redacted/relative form is sufficient.
+
+Raw local evidence may be retained under bounded poller-owned state policy, but credentials must not be intentionally recorded there either.
 
 ## Resource containment
 
 Timeout, output limits, task concurrency, and context size are mandatory. Strong process-tree, CPU, memory, disk-growth, and network containment may require platform adapters beyond portable Node APIs; those gaps must be reported honestly rather than represented as enforced.
+
+A timeout must attempt to terminate the whole managed process tree using the platform containment provider rather than assuming termination of the immediate child is sufficient.
+
+## Recovery safety
+
+Recovery code must not become a privileged bypass around normal safety rules.
+
+- Do not blindly delete Git lock files because they appear stale.
+- Do not destructively clean/reset an unmanaged checkout.
+- Prefer replacing a disposable poller-owned worktree over uncertain repair of Git administrative state.
+- Local repair agents remain proposal engines; they do not receive implicit authority to bypass path, file-class, test, or publication policy.
+- Cleanup may delete only state whose PATCH-POLLER ownership and containment can be established.
