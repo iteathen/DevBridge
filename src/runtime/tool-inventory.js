@@ -8,8 +8,8 @@ import { resolveExecutable } from './executable-resolver.js';
 import { sanitizeDiscoveredRegistry } from './tool-discovery.js';
 
 const COMMIT_RE = /^[0-9a-f]{40}$/u;
-const WINDOWS_ABSOLUTE_RE = /(?:^|[\s"'=(])(?:[A-Za-z]:\\|\\\\)[^\s"']*/u;
-const POSIX_HOME_RE = /(?:^|[\s"'=(])\/(?:home|Users|root|private|var\/folders)\//u;
+const WINDOWS_ABSOLUTE_RE = /(?:^|[\s"'=(])(?:[A-Za-z]:[\\/]|\\\\)[^\s"']*/u;
+const POSIX_ABSOLUTE_RE = /(?:^|[\s"'=(])\/(?:usr|opt|nix|etc|bin|sbin|lib|lib64|tmp|mnt|media|Volumes|home|Users|root|private|var)(?:\/|$)/u;
 const MAX_VERSION = 300;
 
 function stable(value) {
@@ -22,10 +22,14 @@ function digest(value) {
   return createHash('sha256').update(JSON.stringify(stable(value)), 'utf8').digest('hex');
 }
 
+function containsMachinePath(value) {
+  return WINDOWS_ABSOLUTE_RE.test(value) || POSIX_ABSOLUTE_RE.test(value) || path.isAbsolute(value);
+}
+
 function bounded(value, max = MAX_VERSION) {
   if (value == null) return null;
   const text = String(value).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
-  if (WINDOWS_ABSOLUTE_RE.test(text) || POSIX_HOME_RE.test(text) || path.isAbsolute(text)) return null;
+  if (containsMachinePath(text)) return null;
   return text.length <= max ? text : text.slice(0, max);
 }
 
@@ -47,14 +51,14 @@ function assertNoSensitivePaths(value, cursor = 'inventory') {
   }
   if (value && typeof value === 'object') {
     for (const [key, entry] of Object.entries(value)) {
-      if (/^(?:executable|path|directory|home|token|secret|credential|environment|args)$/iu.test(key)) {
+      if (/^(?:executable|path|paths|directory|directories|home|token|secret|credential|environment|args|readOnlyRoots|writableRoots)$/iu.test(key)) {
         throw new PolicyError(`tool inventory projection contains forbidden field ${cursor}.${key}`);
       }
       assertNoSensitivePaths(entry, `${cursor}.${key}`);
     }
     return;
   }
-  if (typeof value === 'string' && (WINDOWS_ABSOLUTE_RE.test(value) || POSIX_HOME_RE.test(value) || path.isAbsolute(value))) {
+  if (typeof value === 'string' && containsMachinePath(value)) {
     throw new PolicyError(`tool inventory projection contains an absolute machine path at ${cursor}`);
   }
 }
@@ -117,6 +121,7 @@ async function adapterInventory({ tools, modelAdaptersEnabled, deterministicProf
       declaredPolicy: {
         enforcement: profile.sandbox.enforcement,
         outsideProjectRead: profile.sandbox.outsideProjectRead,
+        readOnlyRootCount: profile.sandbox.readOnlyRoots?.length ?? 0,
         outsideProjectWrite: profile.sandbox.outsideProjectWrite,
         network: profile.sandbox.network,
       },
