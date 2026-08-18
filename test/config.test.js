@@ -63,3 +63,12 @@ test('explicit GitHub auth configuration can constrain the local credential meth
     hostname: 'github.example.com',
   });
 });
+
+test('GitHub auth rejects unsafe environment-variable names', () => {
+  const raw = base();
+  raw.github.auth = {
+    mode: 'auto',
+    environmentVariables: ['GH_TOKEN;evil'],
+  };
+  assert.throws(() => validateConfig(raw), /environment-variable name/u);
+});
