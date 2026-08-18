@@ -1,10 +1,21 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PolicyError } from '../errors.js';
 import { expandProfileArgs } from './cli-profile.js';
 import { resolveExecutable } from './executable-resolver.js';
 import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
+import { WORKER_CONTEXT_FILE, WORKER_RESULT_FILE } from './worker-exchange.js';
+
+const CONTROL_CREDENTIAL_ENVIRONMENT = new Set([
+  'PATCH_POLLER_GITHUB_TOKEN',
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+  'GH_ENTERPRISE_TOKEN',
+  'GITHUB_ENTERPRISE_TOKEN',
+  'GIT_ASKPASS',
+  'SSH_ASKPASS',
+  'SSH_AUTH_SOCK',
+]);
 
 function isWithin(root, candidate) {
   const relative = path.relative(root, candidate);
@@ -17,8 +28,12 @@ function appendTail(current, chunk, maxBytes) {
 }
 function buildEnvironment(profile, source) {
   const env = {};
-  for (const name of profile.environment.pass) if (source[name] != null) env[name] = source[name];
-  Object.assign(env, profile.environment.set);
+  for (const name of profile.environment.pass) {
+    if (!CONTROL_CREDENTIAL_ENVIRONMENT.has(name) && source[name] != null) env[name] = source[name];
+  }
+  for (const [name, value] of Object.entries(profile.environment.set)) {
+    if (!CONTROL_CREDENTIAL_ENVIRONMENT.has(name)) env[name] = value;
+  }
   env.GIT_TERMINAL_PROMPT = '0';
   env.PATCH_POLLER_NONINTERACTIVE = '1';
   env.NO_COLOR ??= '1';
@@ -75,27 +90,71 @@ export function toolBridge(runId, resultFile) {
 export class ProcessRunner {
   #resolver;
   #sourceEnv;
-  constructor({ executableResolver = resolveExecutable, sourceEnv = process.env } = {}) { this.#resolver = executableResolver; this.#sourceEnv = sourceEnv; }
+  #exchange;
+  #sandboxProvider;
+
+  constructor({
+    executableResolver = resolveExecutable,
+    sourceEnv = process.env,
+    workerExchange = null,
+    sandboxProvider = null,
+  } = {}) {
+    this.#resolver = executableResolver;
+    this.#sourceEnv = sourceEnv;
+    this.#exchange = workerExchange;
+    this.#sandboxProvider = sandboxProvider;
+  }
 
   async run({ profile, projectDir, runDir, runId, context }) {
+    if (!this.#exchange) throw new PolicyError('worker execution requires a control-plane-owned worker exchange');
+    if (!this.#sandboxProvider || typeof this.#sandboxProvider.prepareExecution !== 'function') {
+      throw new PolicyError('worker execution requires a verified OS isolation provider');
+    }
+
     const projectRoot = path.resolve(projectDir);
     const resolvedRunDir = path.resolve(runDir);
-    if (!isWithin(projectRoot, resolvedRunDir)) throw new PolicyError('run directory must be inside the project directory');
-    await mkdir(resolvedRunDir, { recursive: true });
-    const contextFile = path.join(resolvedRunDir, 'context.json');
-    const resultFile = path.join(resolvedRunDir, 'result.json');
-    const toolContext = { ...context, bridge: toolBridge(runId, resultFile) };
-    await writeFile(contextFile, `${JSON.stringify(toolContext, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    if (!isWithin(projectRoot, resolvedRunDir)) throw new PolicyError('run identity path must be inside the project directory');
+    const turnId = path.basename(resolvedRunDir);
+
+    const toolContext = { ...context, bridge: toolBridge(runId, WORKER_RESULT_FILE) };
+    const mailbox = await this.#exchange.prepareTurn({ runId, turnId, context: toolContext });
 
     const executable = await this.#resolver(profile.executable, this.#sourceEnv);
-    const args = expandProfileArgs(profile.args, { projectDir: projectRoot, contextFile, resultFile, runId });
+    const args = expandProfileArgs(profile.args, {
+      projectDir: projectRoot,
+      contextFile: WORKER_CONTEXT_FILE,
+      resultFile: WORKER_RESULT_FILE,
+      runId,
+    });
     const env = buildEnvironment(profile, this.#sourceEnv);
     env.PATCH_POLLER_RUN_ID = String(runId);
     let stdin = null;
     if (profile.inputMode === 'stdin-json') stdin = `${JSON.stringify(toolContext)}\n`;
     else if (profile.inputMode === 'stdin-text') stdin = `PATCH-POLLER CONTEXT\n${JSON.stringify(toolContext, null, 2)}\n`;
 
-    const child = spawn(executable, args, containedSpawnOptions({ cwd: projectRoot, env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
+    const prepared = await this.#sandboxProvider.prepareExecution({
+      executable,
+      args,
+      cwd: projectRoot,
+      env,
+      operation: `worker:${profile.name}`,
+      sandbox: {
+        required: true,
+        projectDir: projectRoot,
+        network: profile.sandbox.network,
+        exposeConfiguredReadRoots: profile.sandbox.outsideProjectRead !== 'deny',
+        ipc: mailbox.sandboxIpc(),
+      },
+    });
+    if (!prepared?.evidence?.verified) {
+      throw new PolicyError('worker execution refused because the configured OS isolation provider is not verified');
+    }
+
+    const child = spawn(
+      prepared.executable,
+      prepared.args,
+      containedSpawnOptions({ cwd: prepared.cwd, env: prepared.env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }),
+    );
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
     let outputTruncated = false;
@@ -111,17 +170,32 @@ export class ProcessRunner {
 
     let result = null;
     let resultParseError = null;
-    try {
-      const info = await stat(resultFile);
-      if (info.size > 1_048_576) resultParseError = 'result file exceeds 1 MiB';
-      else {
-        try { result = parseResultJsonText(await readFile(resultFile, 'utf8')); }
-        catch (error) { if (error instanceof SyntaxError) resultParseError = error.message; else throw error; }
+    const consumed = await mailbox.consumeResult({ maxBytes: 1_048_576 });
+    resultParseError = consumed.resultParseError;
+    if (consumed.text != null && !resultParseError) {
+      try { result = parseResultJsonText(consumed.text); }
+      catch (error) {
+        if (error instanceof SyntaxError) resultParseError = error.message;
+        else throw error;
       }
-    } catch (error) {
-      if (error?.code !== 'ENOENT') throw error;
     }
 
-    return { executable, args, exitCode: exit.code, signal: exit.signal, timedOut, outputTruncated, stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8'), result, resultParseError, contextFile, resultFile };
+    return {
+      executable,
+      args,
+      exitCode: exit.code,
+      signal: exit.signal,
+      timedOut,
+      outputTruncated,
+      stdout: stdout.toString('utf8'),
+      stderr: stderr.toString('utf8'),
+      result,
+      resultParseError,
+      contextFile: mailbox.contextFile,
+      resultFile: mailbox.resultFile,
+      workerContextFile: mailbox.workerContextFile,
+      workerResultFile: mailbox.workerResultFile,
+      sandbox: prepared.evidence,
+    };
   }
 }
