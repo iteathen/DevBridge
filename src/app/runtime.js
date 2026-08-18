@@ -19,6 +19,7 @@ import { createCoreOperationRegistry } from '../runtime/deterministic-operation-
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
+import { createSandboxManager } from '../runtime/sandbox-manager.js';
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
 import { LivenessProjectingPlanExecutor } from '../run/liveness-projecting-plan-executor.js';
 import { RunCoordinator } from '../run/run-coordinator.js';
@@ -69,9 +70,18 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     baselineChannels: config.workspace.baselineChannels,
     defaultBaselineChannel: config.workspace.defaultBaselineChannel,
   });
-  const processRunner = new ProcessRunner({ sourceEnv: env });
+  const sandboxManager = createSandboxManager(config.execution.sandbox, {
+    env,
+    allowUnsafeUncontained: config.execution.allowUncontainedTools,
+  });
+  const processRunner = new ProcessRunner({
+    sourceEnv: env,
+    mailboxRoot: path.join(config.state.directory, 'worker-mailboxes'),
+    sandboxManager,
+    allowUncontainedTools: config.execution.allowUncontainedTools,
+  });
   const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
-  const deterministicProcessRunner = new DeterministicProcessRunner({ sourceEnv: env, faultInjector });
+  const deterministicProcessRunner = new DeterministicProcessRunner({ sourceEnv: env, faultInjector, sandboxManager });
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
   const deterministicControllerPlanExecutor = new ControllerPlanExecutor({
@@ -124,6 +134,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     workspacePolicy,
     gitClient,
     workspaceManager,
+    sandboxManager,
     processRunner,
     deterministicProcessRunner,
     faultInjector,
