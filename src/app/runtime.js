@@ -12,6 +12,8 @@ import { GitWorkspaceManager } from '../git/workspace-manager.js';
 import { ProcessRunner } from '../runtime/process-runner.js';
 import { DeterministicProcessRunner } from '../runtime/deterministic-process-runner.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
+import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
+import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
 import { RunCoordinator } from '../run/run-coordinator.js';
@@ -39,12 +41,19 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     fetchTimeoutMs: config.git.fetchTimeoutMs,
     branchPrefix: config.publication.branchPrefix,
     baselineChannels: config.workspace.baselineChannels,
-    defaultBaselineChannel: config.workspace.defaultBaselineChannel
+    defaultBaselineChannel: config.workspace.defaultBaselineChannel,
   });
   const processRunner = new ProcessRunner({ sourceEnv: env });
-  const deterministicProcessRunner = new DeterministicProcessRunner({ sourceEnv: env });
-  const operationRegistry = createCoreOperationRegistry();
-  const controllerPlanExecutor = new ControllerPlanExecutor({ operationRegistry, processRunner: deterministicProcessRunner, workspaceManager });
+  const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
+  const deterministicProcessRunner = new DeterministicProcessRunner({ sourceEnv: env, faultInjector });
+  const toolchainRegistry = createCoreToolchainRegistry({ env });
+  const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
+  const controllerPlanExecutor = new ControllerPlanExecutor({
+    operationRegistry,
+    processRunner: deterministicProcessRunner,
+    workspaceManager,
+    faultInjector,
+  });
 
   const builtIns = builtInToolProfiles();
   for (const name of Object.keys(builtIns)) {
@@ -69,7 +78,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     modelAdaptersEnabled: config.execution.modelAdaptersEnabled,
     deterministicProfileNames: Object.keys(builtIns),
     autoPushTaskBranches: config.publication.autoPushTaskBranches,
-    forceNoOpPublication: config.publication.forceNoOpPublication
+    forceNoOpPublication: config.publication.forceNoOpPublication,
   });
   return {
     config,
@@ -84,8 +93,10 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     workspaceManager,
     processRunner,
     deterministicProcessRunner,
+    faultInjector,
+    toolchainRegistry,
     operationRegistry,
     controllerPlanExecutor,
-    coordinator
+    coordinator,
   };
 }

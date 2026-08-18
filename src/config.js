@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ConfigurationError } from './errors.js';
 import { DEFAULT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES } from './github/auth-provider.js';
+import { validateFaultInjectionConfig } from './runtime/fault-injector.js';
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH_PREFIX_RE = /^[A-Za-z0-9_.-]+$/;
@@ -126,6 +127,14 @@ function normalizeBaselineChannels(workspace) {
   return { channels, defaultChannel };
 }
 
+function normalizeFaultInjection(execution) {
+  try {
+    return validateFaultInjectionConfig(execution.faultInjection ?? {});
+  } catch (error) {
+    throw new ConfigurationError(error.message, { cause: error });
+  }
+}
+
 export function validateConfig(raw) {
   const config = requireObject(raw, 'config');
   if (config.version !== 1) throw new ConfigurationError('config.version must be 1');
@@ -157,6 +166,7 @@ export function validateConfig(raw) {
   const daemon = requireObject(config.daemon ?? {}, 'daemon');
   const branchPrefix = requireString(publication.branchPrefix ?? 'patchpoller', 'publication.branchPrefix');
   if (!BRANCH_PREFIX_RE.test(branchPrefix)) throw new ConfigurationError('publication.branchPrefix must be a safe branch segment');
+  const faultInjection = normalizeFaultInjection(execution);
 
   return {
     version: 1,
@@ -172,8 +182,8 @@ export function validateConfig(raw) {
         reserveRatio: requireNumber(rate.reserveRatio ?? 0.2, 'github.rateLimit.reserveRatio', { min: 0, max: 0.9 }),
         minimumReserve: requireInteger(rate.minimumReserve ?? 250, 'github.rateLimit.minimumReserve'),
         emergencyReserve: requireInteger(rate.emergencyReserve ?? 25, 'github.rateLimit.emergencyReserve'),
-        mutationIntervalMs: requireInteger(rate.mutationIntervalMs ?? 1100, 'github.rateLimit.mutationIntervalMs', { min: 1000 })
-      }
+        mutationIntervalMs: requireInteger(rate.mutationIntervalMs ?? 1100, 'github.rateLimit.mutationIntervalMs', { min: 1000 }),
+      },
     },
     workspace: {
       root: absolutePath(workspace.root, 'workspace.root'),
@@ -183,14 +193,14 @@ export function validateConfig(raw) {
         ? workspace.externalReadRoots.map((entry, index) => absolutePath(entry, `workspace.externalReadRoots[${index}]`))
         : [],
       baselineChannels: baselines.channels,
-      defaultBaselineChannel: baselines.defaultChannel
+      defaultBaselineChannel: baselines.defaultChannel,
     },
     state: { directory: absolutePath(state.directory ?? '~/.patch-poller/state', 'state.directory') },
     git: {
       executable: requireString(git.executable ?? 'git', 'git.executable'),
       cloneBaseUrl: requireString(git.cloneBaseUrl ?? 'https://github.com', 'git.cloneBaseUrl').replace(/\/$/, ''),
       commandTimeoutMs: requireInteger(git.commandTimeoutMs ?? 120_000, 'git.commandTimeoutMs', { min: 5_000 }),
-      fetchTimeoutMs: requireInteger(git.fetchTimeoutMs ?? 300_000, 'git.fetchTimeoutMs', { min: 5_000 })
+      fetchTimeoutMs: requireInteger(git.fetchTimeoutMs ?? 300_000, 'git.fetchTimeoutMs', { min: 5_000 }),
     },
     execution: {
       enabled: execution.enabled === true,
@@ -199,21 +209,22 @@ export function validateConfig(raw) {
       defaultTool: execution.defaultTool == null ? null : requireString(execution.defaultTool, 'execution.defaultTool'),
       maxConcurrentTasks: requireInteger(execution.maxConcurrentTasks ?? 1, 'execution.maxConcurrentTasks', { min: 1 }),
       maxTurns: requireInteger(execution.maxTurns ?? 8, 'execution.maxTurns', { min: 1 }),
-      allowUncontainedTools: execution.allowUncontainedTools === true
+      allowUncontainedTools: execution.allowUncontainedTools === true,
+      faultInjection,
     },
     publication: {
       autoPushTaskBranches: publication.autoPushTaskBranches === true,
       forceNoOpPublication: publication.forceNoOpPublication === true,
-      branchPrefix
+      branchPrefix,
     },
     daemon: {
-      errorBackoffMs: requireInteger(daemon.errorBackoffMs ?? 60_000, 'daemon.errorBackoffMs', { min: 5_000 })
+      errorBackoffMs: requireInteger(daemon.errorBackoffMs ?? 60_000, 'daemon.errorBackoffMs', { min: 5_000 }),
     },
     status: {
       progressIntervalMs: requireInteger(status.progressIntervalMs ?? 300_000, 'status.progressIntervalMs', { min: 30_000 }),
-      maxCommentBytes: requireInteger(status.maxCommentBytes ?? 48_000, 'status.maxCommentBytes', { min: 4_096 })
+      maxCommentBytes: requireInteger(status.maxCommentBytes ?? 48_000, 'status.maxCommentBytes', { min: 4_096 }),
     },
-    tools
+    tools,
   };
 }
 

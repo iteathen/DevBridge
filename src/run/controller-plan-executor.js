@@ -3,6 +3,7 @@ import { lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'n
 import path from 'node:path';
 import { PolicyError } from '../errors.js';
 import { isWithin } from '../security/workspace-policy.js';
+import { ManagedScratchTransaction } from '../runtime/managed-scratch.js';
 
 async function exists(candidate) {
   try { await lstat(candidate); return true; }
@@ -21,30 +22,34 @@ async function assertContainedNoFollow(root, relative, { allowMissing = true } =
   const rootResolved = path.resolve(root);
   const target = path.resolve(rootResolved, relative);
   if (!isWithin(rootResolved, target)) throw new PolicyError(`controller path escaped worktree: ${relative}`);
+  const rootInfo = await lstat(rootResolved);
+  if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) throw new PolicyError('controller worktree root must be a real directory');
   const rootReal = await realpath(rootResolved);
-  let cursor = target;
-  while (!(await exists(cursor))) {
-    if (!allowMissing) throw new PolicyError(`controller path does not exist: ${relative}`);
-    const parent = path.dirname(cursor);
-    if (parent === cursor) throw new PolicyError(`controller path has no contained ancestor: ${relative}`);
-    cursor = parent;
+  const rel = path.relative(rootResolved, target);
+  if (rel === '') return target;
+  const segments = rel.split(path.sep).filter(Boolean);
+  let cursor = rootResolved;
+  let encounteredMissing = false;
+  for (const segment of segments) {
+    cursor = path.join(cursor, segment);
+    if (encounteredMissing || !(await exists(cursor))) {
+      encounteredMissing = true;
+      continue;
+    }
+    const info = await lstat(cursor);
+    if (info.isSymbolicLink()) throw new PolicyError(`controller path crosses a symbolic link/junction: ${relative}`);
+    const canonical = await realpath(cursor);
+    if (!isWithin(rootReal, canonical)) throw new PolicyError(`controller path resolves outside worktree: ${relative}`);
   }
-  const info = await lstat(cursor);
-  if (info.isSymbolicLink()) throw new PolicyError(`controller path crosses a symbolic link/junction: ${relative}`);
-  const ancestorReal = await realpath(cursor);
-  if (!isWithin(rootReal, ancestorReal)) throw new PolicyError(`controller path escapes through filesystem indirection: ${relative}`);
-  if (await exists(target)) {
-    const targetInfo = await lstat(target);
-    if (targetInfo.isSymbolicLink()) throw new PolicyError(`controller path targets a symbolic link/junction: ${relative}`);
-    const targetReal = await realpath(target);
-    if (!isWithin(rootReal, targetReal)) throw new PolicyError(`controller path resolves outside worktree: ${relative}`);
-  }
+  if (!allowMissing && encounteredMissing) throw new PolicyError(`controller path does not exist: ${relative}`);
   return target;
 }
 
 async function atomicWrite(target, content, root) {
+  const parentRelative = path.relative(root, path.dirname(target));
+  await assertContainedNoFollow(root, parentRelative || '.');
   await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
-  await assertContainedNoFollow(root, path.relative(root, path.dirname(target)) || '.');
+  await assertContainedNoFollow(root, parentRelative || '.', { allowMissing: false });
   const temp = `${target}.patch-poller-${process.pid}-${Date.now()}.tmp`;
   await writeFile(temp, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   await rename(temp, target);
@@ -61,7 +66,7 @@ function operationResultEvidence(id, operation, result) {
     stderr: String(result.stderr ?? ''),
     startedAt: result.startedAt ?? null,
     finishedAt: result.finishedAt ?? null,
-    lastOutputAt: result.lastOutputAt ?? null
+    lastOutputAt: result.lastOutputAt ?? null,
   };
 }
 
@@ -78,11 +83,13 @@ export class ControllerPlanExecutor {
   #registry;
   #processRunner;
   #workspace;
+  #faults;
 
-  constructor({ operationRegistry, processRunner, workspaceManager }) {
+  constructor({ operationRegistry, processRunner, workspaceManager, faultInjector = null }) {
     this.#registry = operationRegistry;
     this.#processRunner = processRunner;
     this.#workspace = workspaceManager;
+    this.#faults = faultInjector;
   }
 
   async #applyFile(file, context) {
@@ -100,7 +107,7 @@ export class ControllerPlanExecutor {
     if (file.action === 'create') {
       if (present && currentDigest !== file.contentSha256) throw new PolicyError(`controller create target already exists with different content: ${file.path}`);
       if (!present) await atomicWrite(target, file.content, context.workspace.worktreeDir);
-      return { path: file.path, action: 'create', digest: file.contentSha256 };
+      return { path: file.path, action: 'create', digest: file.contentSha256, reconciled: present };
     }
     if (file.action === 'replace') {
       if (!present) throw new PolicyError(`controller replace target does not exist: ${file.path}`);
@@ -128,9 +135,11 @@ export class ControllerPlanExecutor {
       entry.state = 'cleanup-planned';
       entry.updatedAt = new Date().toISOString();
       await persist();
+      this.#faults?.throwIfTriggered('cleanup.before-remove', { operation: entry.path });
       if (await exists(target)) {
         const info = await lstat(target);
         if (info.isDirectory()) throw new PolicyError(`cleanup ledger entry unexpectedly became a directory: ${entry.path}`);
+        if (info.isSymbolicLink()) throw new PolicyError(`cleanup ledger entry unexpectedly became a symbolic link: ${entry.path}`);
         await rm(target, { force: true });
       }
       entry.state = 'removed';
@@ -187,13 +196,18 @@ export class ControllerPlanExecutor {
       files: [],
       operations: [],
       cleanupLedger: [],
+      scratchLedger: [],
       assertionsPassed: 0,
-      startedAt: new Date().toISOString()
+      startedAt: new Date().toISOString(),
     };
+    state.controllerPlan.scratchLedger ??= [];
     const planState = state.controllerPlan;
-    const results = new Map((planState.operations ?? []).filter((entry) => entry.result).map((entry) => [entry.id, entry.result]));
+    const results = new Map();
+    const scratch = new ManagedScratchTransaction({ workspace, state, persist, faultInjector: this.#faults });
 
     try {
+      planState.phase = 'materializing';
+      await persist();
       for (const file of plan.files) {
         const existing = planState.files.find((entry) => entry.path === file.path);
         if (existing?.state === 'applied') continue;
@@ -202,11 +216,12 @@ export class ControllerPlanExecutor {
           fileState = { path: file.path, scope: file.scope, action: file.action, state: 'planned', updatedAt: new Date().toISOString() };
           planState.files.push(fileState);
           if (file.scope === 'ephemeral') {
-            planState.cleanupLedger.push({ path: file.path, state: 'planned', updatedAt: new Date().toISOString() });
+            planState.cleanupLedger.push({ path: file.path, kind: 'file', state: 'planned', updatedAt: new Date().toISOString() });
           }
           await persist();
         }
         const applied = await this.#applyFile(file, { state, workspace });
+        this.#faults?.throwIfTriggered('file.after-effect', { operation: file.path });
         fileState.state = 'applied';
         fileState.digest = applied.digest;
         fileState.reconciled = applied.reconciled === true;
@@ -222,23 +237,26 @@ export class ControllerPlanExecutor {
       planState.phase = 'running-operations';
       await persist();
       for (const operation of plan.operations) {
-        const prior = planState.operations.find((entry) => entry.id === operation.id);
-        if (prior?.state === 'observed' && prior.result) {
-          results.set(operation.id, prior.result);
-          continue;
-        }
         this.#registry.validate(operation.operation, operation.params);
-        const record = prior ?? { id: operation.id, operation: operation.operation, state: 'planned' };
-        if (!prior) planState.operations.push(record);
+        let record = planState.operations.find((entry) => entry.id === operation.id);
+        if (!record) {
+          record = { id: operation.id, operation: operation.operation, state: 'planned', attempts: 0 };
+          planState.operations.push(record);
+        }
         record.state = 'attempted';
+        record.attempts = (record.attempts ?? 0) + 1;
         record.attemptedAt = new Date().toISOString();
+        record.result = null;
         await persist();
+        this.#faults?.throwIfTriggered('operation.before', { operation: operation.operation });
         const result = await this.#registry.execute(operation.operation, operation.params, {
           projectDir: workspace.worktreeDir,
           processRunner: this.#processRunner,
-          onActivity: (activity) => onLiveness?.({ operationId: operation.id, operation: operation.operation, ...activity })
+          scratch,
+          onActivity: (activity) => onLiveness?.({ operationId: operation.id, operation: operation.operation, ...activity }),
         });
         const evidence = operationResultEvidence(operation.id, operation.operation, result);
+        this.#faults?.throwIfTriggered('operation.after-effect', { operation: operation.operation });
         record.result = evidence;
         record.state = 'observed';
         record.observedAt = new Date().toISOString();
@@ -248,14 +266,18 @@ export class ControllerPlanExecutor {
       }
 
       planState.phase = 'asserting';
+      planState.assertionsPassed = 0;
       await persist();
-      for (let index = planState.assertionsPassed ?? 0; index < plan.assertions.length; index += 1) {
+      for (let index = 0; index < plan.assertions.length; index += 1) {
         await this.#assert(plan.assertions[index], results, workspace);
         planState.assertionsPassed = index + 1;
         await persist();
       }
     } finally {
       planState.phase = 'cleaning';
+      await persist();
+      const scratchCleanup = await scratch.cleanup();
+      planState.scratchCleanup = scratchCleanup;
       await persist();
       await this.#cleanup(state, workspace, persist);
     }
@@ -272,7 +294,9 @@ export class ControllerPlanExecutor {
       created: planState.cleanupLedger.filter((entry) => ['created', 'removed', 'verified-absent'].includes(entry.state)).length,
       removed: planState.cleanupLedger.filter((entry) => ['removed', 'verified-absent'].includes(entry.state)).length,
       verifiedAbsent: planState.cleanupLedger.filter((entry) => entry.state === 'verified-absent').length,
-      leftovers: planState.cleanupLedger.filter((entry) => entry.state !== 'verified-absent').map((entry) => entry.path)
+      leftovers: planState.cleanupLedger.filter((entry) => entry.state !== 'verified-absent').map((entry) => entry.path),
+      scratchVerifiedAbsent: planState.scratchCleanup?.verifiedAbsent ?? 0,
+      scratchLeftovers: planState.scratchCleanup?.leftovers ?? [],
     };
     await persist();
     return {
@@ -280,10 +304,12 @@ export class ControllerPlanExecutor {
       tests: planState.operations.map((entry) => ({
         operation: entry.operation,
         id: entry.id,
+        attempts: entry.attempts ?? 1,
         exitCode: entry.result?.exitCode ?? null,
-        timedOut: entry.result?.timedOut === true
+        timedOut: entry.result?.timedOut === true,
+        outputTruncated: entry.result?.outputTruncated === true,
       })),
-      summary: `Controller plan completed ${planState.operations.length} deterministic operations and ${planState.assertionsPassed} assertions; cleanup verified ${planState.cleanup.verifiedAbsent}/${planState.cleanupLedger.length} ephemeral paths absent.`
+      summary: `Controller plan completed ${planState.operations.length} deterministic operations and ${planState.assertionsPassed} assertions; cleanup verified ${planState.cleanup.verifiedAbsent}/${planState.cleanupLedger.length} ephemeral paths and ${planState.cleanup.scratchVerifiedAbsent}/${planState.scratchLedger.length} scratch directories absent.`,
     };
   }
 }

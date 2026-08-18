@@ -3,6 +3,7 @@ import { PolicyError } from '../errors.js';
 import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
 
 const DEFAULT_OUTPUT_LIMIT = 512 * 1024;
+const FAULT_TRUNCATE_BYTES = 32;
 
 function appendTail(current, chunk, maxBytes) {
   const combined = Buffer.concat([current, Buffer.from(chunk)]);
@@ -20,11 +21,17 @@ function boundedEnvironment(source, pass = [], set = {}) {
   return env;
 }
 
+function truncateFault(buffer) {
+  return buffer.length <= FAULT_TRUNCATE_BYTES ? buffer : buffer.subarray(buffer.length - FAULT_TRUNCATE_BYTES);
+}
+
 export class DeterministicProcessRunner {
   #sourceEnv;
+  #faults;
 
-  constructor({ sourceEnv = process.env } = {}) {
+  constructor({ sourceEnv = process.env, faultInjector = null } = {}) {
     this.#sourceEnv = sourceEnv;
+    this.#faults = faultInjector;
   }
 
   async run({
@@ -35,7 +42,8 @@ export class DeterministicProcessRunner {
     maxOutputBytes = DEFAULT_OUTPUT_LIMIT,
     environment = { pass: [], set: {} },
     stdin = null,
-    onActivity = null
+    onActivity = null,
+    operation = null,
   }) {
     if (typeof executable !== 'string' || executable.length === 0) throw new PolicyError('deterministic operation executable is missing');
     if (!Array.isArray(args) || args.some((value) => typeof value !== 'string')) throw new PolicyError('deterministic operation args must be structural strings');
@@ -82,6 +90,14 @@ export class DeterministicProcessRunner {
       if (termination) await termination;
     });
 
+    const fault = this.#faults?.throwIfTriggered('process.after-exit', { operation }) ?? null;
+    if (fault?.action === 'timeout') timedOut = true;
+    if (fault?.action === 'truncate-output') {
+      stdout = truncateFault(stdout);
+      stderr = truncateFault(stderr);
+      outputTruncated = true;
+    }
+
     return {
       exitCode: exit.code,
       signal: exit.signal,
@@ -91,7 +107,7 @@ export class DeterministicProcessRunner {
       stderr: stderr.toString('utf8'),
       startedAt,
       finishedAt: new Date().toISOString(),
-      lastOutputAt
+      lastOutputAt,
     };
   }
 }

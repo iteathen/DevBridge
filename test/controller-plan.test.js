@@ -14,7 +14,7 @@ function basePlan(overrides = {}) {
     files: [],
     operations: [],
     assertions: [],
-    ...overrides
+    ...overrides,
   };
 }
 
@@ -23,7 +23,7 @@ test('normalizes a bounded controller plan and produces a stable digest', () => 
     baselineChannel: 'testing',
     files: [{ scope: 'persistent', action: 'create', path: 'src/a.mjs', content: 'export const x = 1;\n' }],
     operations: [{ id: 'syntax', operation: 'node.syntax-check', params: { path: 'src/a.mjs' } }],
-    assertions: [{ kind: 'exit-equals', operation: 'syntax', value: 0 }]
+    assertions: [{ kind: 'exit-equals', operation: 'syntax', value: 0 }],
   }));
   assert.equal(plan.baselineChannel, 'testing');
   assert.deepEqual(plan.expectedChangedPaths, ['src/a.mjs']);
@@ -34,21 +34,32 @@ test('normalizes a bounded controller plan and produces a stable digest', () => 
 test('rejects traversal, reserved paths, raw authority, duplicate file paths, and stale-unsafe replace', () => {
   assert.throws(() => normalizeControllerPlan(basePlan({ files: [{ path: '../escape', content: 'x' }] })), /traverse|normalized/u);
   assert.throws(() => normalizeControllerPlan(basePlan({ files: [{ path: '.git/config', content: 'x' }] })), /reserved/u);
-  assert.throws(() => normalizeControllerPlan(basePlan({ command: 'rm -rf /' })), /forbidden controller authority/u);
+  assert.throws(() => normalizeControllerPlan(basePlan({ command: 'rm -rf /' })), /schema|forbidden controller authority/u);
   assert.throws(() => normalizeControllerPlan(basePlan({
-    files: [{ path: 'a.txt', content: 'a' }, { path: 'a.txt', content: 'b' }]
+    files: [{ path: 'a.txt', content: 'a' }, { path: 'a.txt', content: 'b' }],
   })), /duplicate file path/u);
   assert.throws(() => normalizeControllerPlan(basePlan({
-    files: [{ action: 'replace', path: 'a.txt', content: 'b' }]
+    files: [{ action: 'replace', path: 'a.txt', content: 'b' }],
   })), /expectedSha256/u);
+});
+
+test('closed schema rejects unknown fields and recursively rejects nested authority data', () => {
+  assert.throws(() => normalizeControllerPlan(basePlan({ faultInjection: { enabled: true } })), /schema|forbidden controller authority/u);
+  assert.throws(() => normalizeControllerPlan(basePlan({ files: [{ path: 'a.txt', content: 'a', mode: '0777' }] })), /not part of the controller-plan schema/u);
+  assert.throws(() => normalizeControllerPlan(basePlan({
+    operations: [{ id: 'x', operation: 'toolchain.probe', params: { nested: { environment: { SECRET: 'x' } } } }],
+  })), /forbidden controller authority/u);
+  assert.throws(() => normalizeControllerPlan(basePlan({
+    assertions: [{ kind: 'workspace-clean', value: true }],
+  })), /not part of the controller-plan schema/u);
 });
 
 test('rejects operation authority fields and assertions that name unknown operations', () => {
   assert.throws(() => normalizeControllerPlan(basePlan({
-    operations: [{ id: 'x', operation: 'node.run', params: { executable: '/bin/sh' } }]
+    operations: [{ id: 'x', operation: 'node.test', params: { executable: '/bin/sh' } }],
   })), /forbidden controller authority/u);
   assert.throws(() => normalizeControllerPlan(basePlan({
-    assertions: [{ kind: 'exit-equals', operation: 'missing', value: 0 }]
+    assertions: [{ kind: 'exit-equals', operation: 'missing', value: 0 }],
   })), /unknown operation/u);
 });
 
@@ -58,18 +69,18 @@ test('generic controller executor materializes a multi-file project, runs Node t
     const plan = normalizeControllerPlan(basePlan({
       files: [
         { scope: 'persistent', action: 'create', path: 'src/math.mjs', content: 'export function add(a, b) { return a + b; }\n' },
-        { scope: 'ephemeral', action: 'create', path: 'test/generated.test.mjs', content: "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { add } from '../src/math.mjs';\ntest('add', () => assert.equal(add(2, 3), 5));\n" }
+        { scope: 'ephemeral', action: 'create', path: 'test/generated.test.mjs', content: "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { add } from '../src/math.mjs';\ntest('add', () => assert.equal(add(2, 3), 5));\n" },
       ],
       operations: [
         { id: 'syntax', operation: 'node.syntax-check', params: { path: 'src/math.mjs' } },
-        { id: 'tests', operation: 'node.test', params: { paths: ['test/generated.test.mjs'] } }
+        { id: 'tests', operation: 'node.test', params: { paths: ['test/generated.test.mjs'] } },
       ],
       assertions: [
         { kind: 'exit-equals', operation: 'syntax', value: 0 },
         { kind: 'exit-equals', operation: 'tests', value: 0 },
-        { kind: 'file-exists', path: 'test/generated.test.mjs' }
+        { kind: 'file-exists', path: 'test/generated.test.mjs' },
       ],
-      expectedChangedPaths: ['src/math.mjs']
+      expectedChangedPaths: ['src/math.mjs'],
     }));
     const workspace = { worktreeDir: root, branch: 'fixture', baseSha: '1'.repeat(40) };
     const snapshot = () => ({ branch: 'fixture', baseSha: workspace.baseSha, headSha: workspace.baseSha, dirty: true, changedFiles: ['src/math.mjs'], unmergedFiles: [], status: '?? src/math.mjs' });
@@ -77,7 +88,7 @@ test('generic controller executor materializes a multi-file project, runs Node t
     const executor = new ControllerPlanExecutor({
       operationRegistry: createCoreOperationRegistry(),
       processRunner: new DeterministicProcessRunner(),
-      workspaceManager
+      workspaceManager,
     });
     const state = {};
     let persists = 0;

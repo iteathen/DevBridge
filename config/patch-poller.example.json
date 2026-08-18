@@ -50,7 +50,11 @@
     "defaultTool": null,
     "maxConcurrentTasks": 1,
     "maxTurns": 8,
-    "allowUncontainedTools": false
+    "allowUncontainedTools": false,
+    "faultInjection": {
+      "enabled": false,
+      "rules": []
+    }
   },
   "publication": {
     "autoPushTaskBranches": false,
