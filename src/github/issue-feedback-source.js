@@ -1,4 +1,4 @@
-import { authoritySource, isUneditedAuthorityComment } from './authority-source.js';
+import { authoritySource, isExactAuthorityFence, isUneditedAuthorityComment } from './authority-source.js';
 import { parseFeedbackEnvelope } from './feedback-envelope.js';
 
 export class IssueFeedbackSource {
@@ -28,7 +28,7 @@ export class IssueFeedbackSource {
       if (commentId <= afterCommentId) continue;
       highestCommentId = Math.max(highestCommentId, commentId);
       if (!this.#trustedActorIds.has(String(comment?.user?.id ?? ''))) continue;
-      if (!isUneditedAuthorityComment(comment)) continue;
+      if (!isUneditedAuthorityComment(comment) || !isExactAuthorityFence(comment.body, 'feedback')) continue;
 
       try {
         const feedback = parseFeedbackEnvelope(comment.body ?? '');
@@ -47,7 +47,7 @@ export class IssueFeedbackSource {
           highestCommentId
         };
       } catch {
-        // Unstructured comments are ordinary discussion, not machine authority.
+        // Unstructured, quoted, or malformed comments are discussion, not authority.
       }
     }
 
