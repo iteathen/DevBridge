@@ -15,7 +15,7 @@ function base() {
   };
 }
 
-test('uses conservative API, auth, execution, Git, and publication defaults', () => {
+test('uses conservative API, auth, execution, Git, publication, and context-rollover defaults', () => {
   const config = validateConfig(base());
   assert.equal(config.github.apiVersion, '2026-03-10');
   assert.equal(config.github.rateLimit.reserveRatio, 0.2);
@@ -32,6 +32,42 @@ test('uses conservative API, auth, execution, Git, and publication defaults', ()
   assert.equal(config.git.executable, 'git');
   assert.equal(config.publication.autoPushTaskBranches, false);
   assert.equal(config.publication.branchPrefix, 'patchpoller');
+  assert.deepEqual(config.contextRollover, {
+    enabled: true,
+    unit: 'bytes',
+    capacityUnits: 1_000_000,
+    softRatio: 0.55,
+    preferredRatio: 0.65,
+    hardRatio: 0.75,
+    maxHandoffBytes: 32_768,
+    maxRetained: 8,
+  });
+});
+
+test('context rollover policy is local, explicit, and bounded', () => {
+  const raw = base();
+  raw.contextRollover = {
+    enabled: false,
+    unit: 'proxy',
+    capacityUnits: 20_000,
+    softRatio: 0.4,
+    preferredRatio: 0.6,
+    hardRatio: 0.8,
+    maxHandoffBytes: 65_536,
+    maxRetained: 12,
+  };
+  assert.deepEqual(validateConfig(raw).contextRollover, raw.contextRollover);
+
+  raw.contextRollover.softRatio = 0.7;
+  raw.contextRollover.preferredRatio = 0.6;
+  assert.throws(() => validateConfig(raw), /softRatio < preferredRatio < hardRatio/u);
+  raw.contextRollover.softRatio = 0.4;
+  raw.contextRollover.preferredRatio = 0.6;
+  raw.contextRollover.maxHandoffBytes = 262_145;
+  assert.throws(() => validateConfig(raw), /maxHandoffBytes must be <= 262144/u);
+  raw.contextRollover.maxHandoffBytes = 65_536;
+  raw.contextRollover.unit = 'guess';
+  assert.throws(() => validateConfig(raw), /tokens, bytes, or proxy/u);
 });
 
 test('legacy github.tokenEnv remains first while standard environment fallbacks are added', () => {

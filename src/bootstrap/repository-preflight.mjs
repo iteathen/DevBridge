@@ -9,6 +9,10 @@ const SYNTAX_FILES = [
   'src/cli.js',
   'src/config.js',
   'src/app/runtime.js',
+  'src/app/chat-handoff.js',
+  'src/context/chat-handoff.js',
+  'src/context/context-budget.js',
+  'src/github/chat-handoff-projector.js',
   'src/run/controller-plan.js',
   'src/run/run-coordinator.js',
   'src/runtime/deterministic-process-runner.js',
@@ -22,6 +26,12 @@ const JSON_FILES = [
 
 const TARGETED_TESTS = [
   'test/config.test.js',
+  'test/chat-handoff.test.js',
+  'test/chat-handoff-large.test.js',
+  'test/chat-handoff-app.test.js',
+  'test/chat-handoff-projection.test.js',
+  'test/chat-handoff-mailbox.test.js',
+  'test/context-budget.test.js',
   'test/controller-plan.test.js',
   'test/runtime-activation.test.js',
   'test/rate-budget.test.js',
