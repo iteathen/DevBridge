@@ -98,6 +98,7 @@ export async function validateCandidateRuntime({
   runner,
   environment = process.env,
   sandboxManager = null,
+  preflightFn = runRepositoryPreflight,
 } = {}) {
   const cwd = path.resolve(candidateDir);
   const manager = sandboxManager ?? createSandboxManager({
@@ -109,9 +110,10 @@ export async function validateCandidateRuntime({
     throw new Error(`candidate execution requires a verified bootstrap sandbox (${verification.reason ?? 'unverified'})`);
   }
 
-  // This function is imported from the currently trusted runtime. --check and
-  // JSON.parse read candidate bytes but do not execute candidate JavaScript.
-  const preflight = runRepositoryPreflight(cwd, runner, { staticOnly: true });
+  // preflightFn comes from the currently trusted runtime. The production
+  // implementation uses Node --check and JSON.parse, which read candidate bytes
+  // but do not execute candidate JavaScript.
+  const preflight = preflightFn(cwd, runner, { staticOnly: true });
 
   const scratchRoot = mkdtempSync(path.join(os.tmpdir(), 'patch-poller-candidate-validation-'));
   try {
