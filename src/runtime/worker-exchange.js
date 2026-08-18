@@ -74,8 +74,11 @@ export class WorkerExchange {
 
     const contextFile = path.join(exchangeDir, 'context.json');
     const resultFile = path.join(exchangeDir, 'result.json');
+    const resolvedContext = typeof context === 'function'
+      ? context({ exchangeDir, contextFile, resultFile })
+      : context;
     const contextHandle = await open(contextFile, 'wx', 0o600);
-    try { await contextHandle.writeFile(`${JSON.stringify(context, null, 2)}\n`, 'utf8'); }
+    try { await contextHandle.writeFile(`${JSON.stringify(resolvedContext, null, 2)}\n`, 'utf8'); }
     finally { await contextHandle.close(); }
     const resultHandle = await open(resultFile, 'wx', 0o600);
     await resultHandle.close();
@@ -92,6 +95,7 @@ export class WorkerExchange {
       exchangeDir,
       contextFile,
       resultFile,
+      context: resolvedContext,
       async consumeResult({ maxBytes = MAX_RESULT_BYTES } = {}) {
         await assertRealDirectory(exchangeDir, this.#root);
         const current = await lstat(resultFile);
