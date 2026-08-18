@@ -64,9 +64,10 @@ test('doctor never upgrades an os declaration into enforcement when provider pro
     assert.equal(claimed.enforcement.usable, false);
     assert.notEqual(claimed.enforcement.verification, 'boundary-probe');
 
-    const builtIns = report.capabilities.adapters.tools.filter((entry) => entry.source === 'patch-poller-builtin');
+    const builtIns = report.capabilities.adapters.builtIns;
     assert.ok(builtIns.length >= 1);
     for (const entry of builtIns) {
+      assert.equal(entry.source, 'patch-poller-builtin');
       assert.equal(entry.declaredPolicy.toolEnforcement, 'none');
       assert.equal(entry.enforcement.verified, false);
     }
@@ -85,7 +86,7 @@ test('doctor never upgrades an os declaration into enforcement when provider pro
   }
 });
 
-test('doctor exposes actual harmless boundary-probe observations when the platform provider verifies', { timeout: 30_000 }, async (t) => {
+test('doctor exposes actual harmless boundary-probe observations when the platform provider verifies', { timeout: 30_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-doctor-observed-'));
   try {
     const report = await doctor(configFor(root), {
