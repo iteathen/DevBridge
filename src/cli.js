@@ -6,12 +6,13 @@ import { doctor } from './app/doctor.js';
 import { pollOnce } from './app/poll-once.js';
 import { runOnce } from './app/run-once.js';
 import { runDaemon } from './app/daemon.js';
+import { createRuntime } from './app/runtime.js';
 import { chatHandoffSeed, chatHandoffStatus } from './app/chat-handoff.js';
 import { PolicyError } from './errors.js';
 import { daemonStatus, stopDaemon } from './runtime/daemon-lock.js';
 
 function usage() {
-  console.error('Usage: patch-poller <doctor|poll-once|run-once|daemon|status|stop|restart|handoff-status|handoff-seed> --config <path> [--repository owner/name]');
+  console.error('Usage: patch-poller <doctor|poll-once|run-once|daemon|status|stop|restart|handoff-status|handoff-seed|handoff-project> --config <path> [--repository owner/name] [--issue number]');
 }
 
 function optionValue(argv, name) {
@@ -23,6 +24,15 @@ function optionValue(argv, name) {
 function configPath(argv) {
   const value = optionValue(argv, '--config');
   return value ? path.resolve(value) : null;
+}
+
+function integerOption(argv, name) {
+  const value = optionValue(argv, name);
+  if (value == null) return null;
+  if (!/^\d+$/u.test(value)) throw new PolicyError(`${name} must be a positive integer`);
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) throw new PolicyError(`${name} must be a positive safe integer`);
+  return parsed;
 }
 
 function daemonLockPath(config) {
@@ -68,6 +78,19 @@ async function main() {
       return;
     }
     console.log(seed);
+    return;
+  }
+  if (command === 'handoff-project') {
+    const runtime = await createRuntime(config);
+    const latest = await runtime.chatHandoffStore.loadLatest(repository);
+    if (!latest) {
+      console.log(JSON.stringify({ projected: false, reason: 'no-ready-handoff', repository }));
+      process.exitCode = 3;
+      return;
+    }
+    const issueNumber = integerOption(args, '--issue') ?? latest.record.handoff.issueNumber;
+    if (!issueNumber) throw new PolicyError('handoff-project requires --issue or a handoff bound to an issue number');
+    console.log(JSON.stringify(await runtime.chatHandoffProjector.project({ issueNumber, record: latest.record }), null, 2));
     return;
   }
   if (command === 'status') {

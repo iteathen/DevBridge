@@ -9,6 +9,7 @@ import { resolveGitHubCredential } from '../github/auth-provider.js';
 import { IssueTaskSource } from '../github/issue-task-source.js';
 import { IssueFeedbackSource } from '../github/issue-feedback-source.js';
 import { IssueStatusReporter } from '../github/issue-status-reporter.js';
+import { ChatHandoffProjector } from '../github/chat-handoff-projector.js';
 import { WorkspacePolicy } from '../security/workspace-policy.js';
 import { GitClient } from '../git/git-client.js';
 import { GitWorkspaceManager } from '../git/workspace-manager.js';
@@ -50,6 +51,13 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   const feedbackSource = new IssueFeedbackSource({ client, queueRepository: config.github.queueRepository, trustedActorIds: config.github.trustedActorIds });
   const secretValues = credential ? [credential.token] : [];
   const statusReporter = new IssueStatusReporter({ client, stateStore, queueRepository: config.github.queueRepository, progressIntervalMs: config.status.progressIntervalMs, maxCommentBytes: config.status.maxCommentBytes, secretValues });
+  const chatHandoffProjector = new ChatHandoffProjector({
+    client,
+    stateStore,
+    queueRepository: config.github.queueRepository,
+    maxCommentBytes: config.status.maxCommentBytes,
+    secretValues,
+  });
   const gitClient = new GitClient({ executable: config.git.executable, syntheticHome: path.join(config.state.directory, 'git-home'), defaultTimeoutMs: config.git.commandTimeoutMs });
   const workspaceManager = new GitWorkspaceManager({
     workspacePolicy,
@@ -106,6 +114,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     config,
     stateStore,
     chatHandoffStore,
+    chatHandoffProjector,
     contextBudget,
     rateBudget,
     client,
