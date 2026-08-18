@@ -13,6 +13,7 @@ const ENVIRONMENT_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const HOSTNAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 const GITHUB_AUTH_MODES = new Set(['auto', 'environment', 'github-cli']);
 const CONTEXT_BUDGET_UNITS = new Set(['tokens', 'bytes', 'proxy']);
+const SANDBOX_PROVIDERS = new Set(['auto', 'bubblewrap', 'none']);
 
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -141,6 +142,18 @@ function normalizeFaultInjection(execution) {
   }
 }
 
+function normalizeSandbox(execution) {
+  const sandbox = requireObject(execution.sandbox ?? {}, 'execution.sandbox');
+  const provider = requireString(sandbox.provider ?? 'auto', 'execution.sandbox.provider');
+  if (!SANDBOX_PROVIDERS.has(provider)) {
+    throw new ConfigurationError('execution.sandbox.provider must be auto, bubblewrap, or none');
+  }
+  return {
+    provider,
+    executable: requireString(sandbox.executable ?? 'bwrap', 'execution.sandbox.executable'),
+  };
+}
+
 function normalizeContextRollover(config) {
   const rollover = requireObject(config.contextRollover ?? {}, 'contextRollover');
   const unit = requireString(rollover.unit ?? 'bytes', 'contextRollover.unit');
@@ -200,6 +213,7 @@ export function validateConfig(raw) {
   const branchPrefix = requireString(publication.branchPrefix ?? 'patchpoller', 'publication.branchPrefix');
   if (!BRANCH_PREFIX_RE.test(branchPrefix)) throw new ConfigurationError('publication.branchPrefix must be a safe branch segment');
   const faultInjection = normalizeFaultInjection(execution);
+  const sandbox = normalizeSandbox(execution);
 
   return {
     version: 1,
@@ -244,6 +258,7 @@ export function validateConfig(raw) {
       maxConcurrentTasks: requireInteger(execution.maxConcurrentTasks ?? 1, 'execution.maxConcurrentTasks', { min: 1 }),
       maxTurns: requireInteger(execution.maxTurns ?? 8, 'execution.maxTurns', { min: 1 }),
       allowUncontainedTools: execution.allowUncontainedTools === true,
+      sandbox,
       faultInjection,
     },
     publication: {
