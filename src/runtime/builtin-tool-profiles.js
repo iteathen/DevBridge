@@ -4,10 +4,12 @@ import { fileURLToPath } from 'node:url';
 export const NATIVE_COMPILER_DIAGNOSTIC_PROFILE = 'patch-poller-native-compiler';
 export const TRANSIENT_RECOVERY_DIAGNOSTIC_PROFILE = 'patch-poller-transient-recovery';
 export const CHAT_C_PROJECT_DIAGNOSTIC_PROFILE = 'patch-poller-chat-c-project';
+export const LIFECYCLE_ROUNDTRIP_DIAGNOSTIC_PROFILE = 'patch-poller-lifecycle-roundtrip';
 
 const NATIVE_COMPILER_CLI = fileURLToPath(new URL('./native-compiler-probe-cli.js', import.meta.url));
 const TRANSIENT_RECOVERY_CLI = fileURLToPath(new URL('./transient-recovery-probe-cli.js', import.meta.url));
 const CHAT_C_PROJECT_CLI = fileURLToPath(new URL('./chat-c-project-probe-cli.js', import.meta.url));
+const LIFECYCLE_ROUNDTRIP_CLI = fileURLToPath(new URL('./lifecycle-roundtrip-probe-cli.js', import.meta.url));
 
 function windowsToolchainEnvironment() {
   return {
@@ -78,10 +80,29 @@ export function chatCProjectDiagnosticProfile() {
   };
 }
 
+export function lifecycleRoundtripDiagnosticProfile() {
+  return {
+    name: LIFECYCLE_ROUNDTRIP_DIAGNOSTIC_PROFILE,
+    executable: process.execPath,
+    args: [LIFECYCLE_ROUNDTRIP_CLI],
+    inputMode: 'stdin-json',
+    timeoutMs: 60_000,
+    maxOutputBytes: 128 * 1024,
+    environment: { pass: [], set: {} },
+    sandbox: {
+      enforcement: 'os',
+      outsideProjectRead: 'deny',
+      outsideProjectWrite: false,
+      network: 'deny'
+    }
+  };
+}
+
 export function builtInToolProfiles() {
   return {
     [NATIVE_COMPILER_DIAGNOSTIC_PROFILE]: nativeCompilerDiagnosticProfile(),
     [TRANSIENT_RECOVERY_DIAGNOSTIC_PROFILE]: transientRecoveryDiagnosticProfile(),
-    [CHAT_C_PROJECT_DIAGNOSTIC_PROFILE]: chatCProjectDiagnosticProfile()
+    [CHAT_C_PROJECT_DIAGNOSTIC_PROFILE]: chatCProjectDiagnosticProfile(),
+    [LIFECYCLE_ROUNDTRIP_DIAGNOSTIC_PROFILE]: lifecycleRoundtripDiagnosticProfile()
   };
 }
