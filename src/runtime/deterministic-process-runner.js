@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { PolicyError } from '../errors.js';
 import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
+import { deterministicOperationSecurity } from './deterministic-operation-security.js';
 
 const DEFAULT_OUTPUT_LIMIT = 512 * 1024;
 const DEFAULT_ACTIVITY_INTERVAL_MS = 30_000;
@@ -29,10 +30,12 @@ function truncateFault(buffer) {
 export class DeterministicProcessRunner {
   #sourceEnv;
   #faults;
+  #sandboxProvider;
 
-  constructor({ sourceEnv = process.env, faultInjector = null } = {}) {
+  constructor({ sourceEnv = process.env, faultInjector = null, sandboxProvider = null } = {}) {
     this.#sourceEnv = sourceEnv;
     this.#faults = faultInjector;
+    this.#sandboxProvider = sandboxProvider;
   }
 
   async run({
@@ -46,15 +49,59 @@ export class DeterministicProcessRunner {
     onActivity = null,
     activityIntervalMs = DEFAULT_ACTIVITY_INTERVAL_MS,
     operation = null,
+    sandbox = { required: false },
   }) {
     if (typeof executable !== 'string' || executable.length === 0) throw new PolicyError('deterministic operation executable is missing');
     if (!Array.isArray(args) || args.some((value) => typeof value !== 'string')) throw new PolicyError('deterministic operation args must be structural strings');
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 28_800_000) throw new PolicyError('deterministic operation timeout is out of range');
     if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1024 || maxOutputBytes > 16_777_216) throw new PolicyError('deterministic operation output limit is out of range');
     if (!Number.isInteger(activityIntervalMs) || activityIntervalMs < 10 || activityIntervalMs > 300_000) throw new PolicyError('deterministic activity interval is out of range');
+    if (!sandbox || typeof sandbox !== 'object' || Array.isArray(sandbox)) throw new PolicyError('deterministic operation sandbox policy must be an object');
 
     const env = boundedEnvironment(this.#sourceEnv, environment.pass ?? [], environment.set ?? {});
-    const child = spawn(executable, args, containedSpawnOptions({ cwd, env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
+    const operationSecurity = deterministicOperationSecurity(operation);
+    let spawnExecutable = executable;
+    let spawnArgs = args;
+    let spawnCwd = cwd;
+    let spawnEnv = env;
+    let sandboxEvidence = {
+      required: false,
+      provider: 'host',
+      verified: null,
+      verification: 'not-required',
+      filesystem: 'not-applicable',
+      network: 'not-applicable',
+      gitAdministrativeState: 'not-applicable',
+      executionClass: operationSecurity.executionClass,
+    };
+
+    if (operationSecurity.sandboxRequired || sandbox.required === true) {
+      if (!this.#sandboxProvider || typeof this.#sandboxProvider.prepareExecution !== 'function') {
+        throw new PolicyError('repository-code execution requires a verified sandbox provider; none is configured');
+      }
+      const prepared = await this.#sandboxProvider.prepareExecution({
+        executable,
+        args,
+        cwd,
+        env,
+        sandbox: {
+          ...sandbox,
+          required: true,
+          projectDir: sandbox.projectDir ?? cwd,
+        },
+        operation,
+      });
+      if (!prepared?.evidence?.verified) {
+        throw new PolicyError('repository-code execution refused because sandbox enforcement was not verified');
+      }
+      spawnExecutable = prepared.executable;
+      spawnArgs = prepared.args;
+      spawnCwd = prepared.cwd;
+      spawnEnv = prepared.env;
+      sandboxEvidence = { required: true, executionClass: operationSecurity.executionClass, ...prepared.evidence };
+    }
+
+    const child = spawn(spawnExecutable, spawnArgs, containedSpawnOptions({ cwd: spawnCwd, env: spawnEnv, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
     const startedAtMs = Date.now();
     const startedAt = new Date(startedAtMs).toISOString();
     const deadlineAt = new Date(startedAtMs + timeoutMs).toISOString();
@@ -153,6 +200,7 @@ export class DeterministicProcessRunner {
       startedAt,
       finishedAt: new Date().toISOString(),
       lastOutputAt,
+      sandbox: sandboxEvidence,
     };
   }
 }
