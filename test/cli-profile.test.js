@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import { validateToolProfile, expandProfileArgs } from '../src/runtime/cli-profile.js';
 import { PolicyError } from '../src/errors.js';
 
-test('rejects uncontained tools by default', () => {
-  assert.throws(() => validateToolProfile('tool', { executable: 'tool', args: [] }), PolicyError);
+test('a profile may declare no self-sandbox because outer enforcement is owned by ProcessRunner', () => {
+  const profile = validateToolProfile('tool', { executable: 'tool', args: [] });
+  assert.equal(profile.sandbox.enforcement, 'none');
+  assert.equal(profile.sandbox.outsideProjectRead, 'deny');
+  assert.equal(profile.sandbox.outsideProjectWrite, false);
+  assert.equal(profile.sandbox.network, 'deny');
 });
 
 test('allows only structural argv placeholders while ordinary braces stay literal local argv', () => {
@@ -22,6 +26,20 @@ test('allows only structural argv placeholders while ordinary braces stay litera
     args: ['{instructions}'],
     sandbox: { enforcement: 'tool' }
   }), /unsupported placeholder/);
+});
+
+test('outside-project writes still require an explicit local declaration exception', () => {
+  assert.throws(() => validateToolProfile('write-outside', {
+    executable: 'tool',
+    args: [],
+    sandbox: { enforcement: 'os', outsideProjectWrite: true }
+  }), PolicyError);
+  const declared = validateToolProfile('write-outside', {
+    executable: 'tool',
+    args: [],
+    sandbox: { enforcement: 'os', outsideProjectWrite: true }
+  }, { allowUncontainedTools: true });
+  assert.equal(declared.sandbox.outsideProjectWrite, true);
 });
 
 test('shell-like executables need an explicit local exception', () => {

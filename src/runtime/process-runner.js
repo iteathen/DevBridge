@@ -161,6 +161,12 @@ export class ProcessRunner {
     if (!this.#sandboxProvider || typeof this.#sandboxProvider.prepareExecution !== 'function') {
       throw new PolicyError('worker execution requires a verified OS isolation provider');
     }
+    if (profile.sandbox.outsideProjectWrite === true) {
+      throw new PolicyError('worker execution refuses profiles that request writes outside the managed project/run roots');
+    }
+    if (profile.sandbox.network === 'restricted') {
+      throw new PolicyError('worker execution refuses restricted network mode until a verified provider implements that contract');
+    }
 
     const { projectRoot, turnId } = this.#turnIdentity(projectDir, runDir);
     const toolContext = { ...context, bridge: toolBridge(runId, WORKER_RESULT_FILE) };
