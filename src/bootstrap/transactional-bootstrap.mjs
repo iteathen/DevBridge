@@ -156,15 +156,15 @@ function checkedCommand(executable, args, { cwd, env, runner, label, timeout }) 
 export function validateRuntimeCandidate(paths, runtime, runner = defaultRunner, { runDoctorFn = runPollerCli } = {}) {
   const cwd = runtimeDirectory(paths, runtime);
   const env = candidateEnvironment();
-  checkedCommand(process.execPath, ['--check', runtime.cliPath], {
-    cwd, env, runner, label: 'candidate CLI syntax preflight', timeout: 60_000,
+  checkedCommand(process.execPath, [path.join(cwd, 'src', 'bootstrap', 'repository-preflight.mjs')], {
+    cwd, env, runner, label: 'candidate cheap preflight', timeout: 4 * 60_000,
   });
   checkedCommand(process.execPath, ['--test'], {
     cwd, env, runner, label: 'candidate test suite', timeout: 10 * 60_000,
   });
   const doctorStatus = runDoctorFn('doctor', paths, runtime, runner);
   if (doctorStatus !== 0) throw new Error(`candidate doctor failed with exit ${doctorStatus}`);
-  return { syntax: 'passed', tests: 'passed', doctor: 'passed' };
+  return { preflight: 'passed', syntax: 'passed', tests: 'passed', doctor: 'passed' };
 }
 
 export function candidateRuntimePath(paths, head) {
