@@ -15,7 +15,7 @@ function base() {
   };
 }
 
-test('uses conservative API, auth, execution, Git, publication, and context-rollover defaults', () => {
+test('uses conservative API, auth, execution, sandbox, decision, inventory, Git, publication, and context-rollover defaults', () => {
   const config = validateConfig(base());
   assert.equal(config.github.apiVersion, '2026-03-10');
   assert.equal(config.github.rateLimit.reserveRatio, 0.2);
@@ -28,6 +28,10 @@ test('uses conservative API, auth, execution, Git, publication, and context-roll
   assert.equal(config.github.auth.githubCliExecutable, 'gh');
   assert.equal(config.github.auth.hostname, 'github.com');
   assert.equal(config.execution.enabled, false);
+  assert.deepEqual(config.execution.sandbox, { provider: 'auto', executable: 'bwrap', verifyOnStartup: true });
+  assert.deepEqual(config.decisions.authorityClasses, {});
+  assert.equal(config.decisions.ttlMs, 7 * 24 * 60 * 60 * 1000);
+  assert.deepEqual(config.inventory, { enabled: true, projectionIssueNumber: null, discoverPathTools: true });
   assert.deepEqual(config.workspace.externalReadRoots, []);
   assert.equal(config.git.executable, 'git');
   assert.equal(config.publication.autoPushTaskBranches, false);
@@ -42,6 +46,23 @@ test('uses conservative API, auth, execution, Git, publication, and context-roll
     maxHandoffBytes: 32_768,
     maxRetained: 8,
   });
+});
+
+test('sandbox, decision authority, and inventory configuration are local and bounded', () => {
+  const raw = base();
+  raw.execution.sandbox = { provider: 'bubblewrap', executable: '/usr/bin/bwrap', verifyOnStartup: false };
+  raw.decisions = { authorityClasses: { 'security-policy': ['1775584'], 'bootstrap-self-update': ['42', '42'] }, ttlMs: 120_000 };
+  raw.inventory = { enabled: false, projectionIssueNumber: 31, discoverPathTools: false };
+  const config = validateConfig(raw);
+  assert.deepEqual(config.execution.sandbox, raw.execution.sandbox);
+  assert.deepEqual(config.decisions.authorityClasses, { 'security-policy': ['1775584'], 'bootstrap-self-update': ['42'] });
+  assert.deepEqual(config.inventory, raw.inventory);
+
+  raw.execution.sandbox.provider = 'magic';
+  assert.throws(() => validateConfig(raw), /auto, none, or bubblewrap/u);
+  raw.execution.sandbox.provider = 'bubblewrap';
+  raw.decisions.authorityClasses['security-policy'] = ['not-a-user-id'];
+  assert.throws(() => validateConfig(raw), /numeric GitHub actor IDs/u);
 });
 
 test('context rollover policy is local, explicit, and bounded', () => {
