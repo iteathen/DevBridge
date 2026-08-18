@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { buildContextCapsule } from '../context/context-capsule.js';
 import { CandidateValidationError, PolicyError } from '../errors.js';
 import { validateToolProfile } from '../runtime/cli-profile.js';
@@ -39,6 +38,7 @@ export class RunCoordinator {
   #planExecutor;
   #reporter;
   #feedback;
+  #decisionGate;
   #queueRepository;
   #tools;
   #defaultTool;
@@ -59,6 +59,7 @@ export class RunCoordinator {
     controllerPlanExecutor = null,
     statusReporter = null,
     feedbackSource = null,
+    decisionGate = null,
     queueRepository,
     tools,
     defaultTool = null,
@@ -78,6 +79,7 @@ export class RunCoordinator {
     this.#planExecutor = controllerPlanExecutor;
     this.#reporter = statusReporter;
     this.#feedback = feedbackSource;
+    this.#decisionGate = decisionGate;
     this.#queueRepository = queueRepository;
     this.#tools = tools;
     this.#defaultTool = defaultTool;
@@ -111,7 +113,8 @@ export class RunCoordinator {
       throw new PolicyError(`no locally configured coding tool is available for task ${task.issueNumber}`);
     }
     return validateToolProfile(name, this.#tools[name], {
-      allowUncontainedTools: this.#allowUncontainedTools
+      allowUncontainedTools: this.#allowUncontainedTools,
+      allowControlOwnedTools: this.#deterministicProfileNames.has(name)
     });
   }
 
@@ -133,7 +136,8 @@ export class RunCoordinator {
         nextStep: state.prior.nextStep,
         outputTail: state.prior.outputTail,
         receipt: state.prior.receipt ?? null,
-        liveness: state.prior.liveness ?? null
+        liveness: state.prior.liveness ?? null,
+        decisionGate: state.decisionGate ?? null
       }
     });
   }
@@ -219,11 +223,92 @@ export class RunCoordinator {
     return null;
   }
 
+  #recordAcceptedDecision(state, checkpoint) {
+    const decision = checkpoint?.acceptedDecision;
+    if (!decision) return;
+    const already = state.prior.decisions.some((entry) => entry.source === 'trusted-decision' && entry.commentId === decision.commentId);
+    if (already) return;
+    state.prior.decisions.push({
+      source: 'trusted-decision',
+      checkpointId: checkpoint.checkpointId,
+      decisionClass: checkpoint.decisionClass,
+      bindingMode: checkpoint.bindingMode,
+      subjectDigest: checkpoint.subjectDigest,
+      action: decision.action,
+      actorId: decision.actorId,
+      commentId: decision.commentId,
+      instructions: decision.instructions ?? null,
+      recordedAt: nowIso()
+    });
+  }
+
+  async #gateCandidate(key, state, workspace) {
+    if (!this.#decisionGate) return { authorized: true, required: false };
+    const result = await this.#decisionGate.evaluate({
+      state,
+      task: state.task,
+      workspace,
+      persist: () => this.#save(key, state)
+    });
+    if (result.checkpoint?.acceptedDecision) this.#recordAcceptedDecision(state, result.checkpoint);
+    if (result.authorized) {
+      state.prior.blockers = [];
+      await this.#save(key, state);
+      return result;
+    }
+
+    const checkpoint = result.checkpoint;
+    if (result.terminal || checkpoint?.state === 'rejected') {
+      state.stage = 'waiting-feedback';
+      const summary = `Trusted decision rejected candidate checkpoint ${checkpoint.checkpointId}; PATCH-POLLER will not seal or publish it.`;
+      state.prior.blockers = [summary];
+      state.prior.nextStep = checkpoint.acceptedDecision?.instructions ?? 'Await trusted continuation feedback describing a revised safe direction.';
+      await this.#save(key, state);
+      await this.#publish(state, 'DECISION_REJECTED', summary, result.snapshot ?? null, { force: true });
+      return { blockedResult: { runId: state.runId, issueNumber: state.task.issueNumber, status: 'waiting-feedback', waiting: true, decisionState: 'rejected' } };
+    }
+    if (result.redirected || checkpoint?.state === 'redirected') {
+      state.stage = 'waiting-feedback';
+      const summary = `Trusted decision redirected candidate checkpoint ${checkpoint.checkpointId}; the gated candidate remains unsealed.`;
+      state.prior.blockers = [summary];
+      state.prior.nextStep = checkpoint.acceptedDecision?.instructions ?? 'Await trusted continuation feedback for the redirected approach.';
+      await this.#save(key, state);
+      await this.#publish(state, 'DECISION_REDIRECTED', summary, result.snapshot ?? null, { force: true });
+      return { blockedResult: { runId: state.runId, issueNumber: state.task.issueNumber, status: 'waiting-feedback', waiting: true, decisionState: 'redirected' } };
+    }
+
+    state.stage = 'waiting-decision';
+    const summary = checkpoint
+      ? `Hard gate pending: class=${checkpoint.decisionClass} binding=${checkpoint.bindingMode} checkpoint=${checkpoint.checkpointId} subject=${checkpoint.subjectDigest}. Silence is not approval.`
+      : 'Hard gate pending; no authorized decision is available.';
+    state.prior.blockers = [summary];
+    state.prior.nextStep = null;
+    await this.#save(key, state);
+    await this.#publish(state, 'HARD_GATE_PENDING', summary, result.snapshot ?? null, { force: true });
+    return {
+      blockedResult: {
+        runId: state.runId,
+        issueNumber: state.task.issueNumber,
+        status: 'waiting-decision',
+        waiting: true,
+        checkpointId: checkpoint?.checkpointId ?? null,
+        decisionClass: checkpoint?.decisionClass ?? null,
+        bindingMode: checkpoint?.bindingMode ?? null,
+        subjectDigest: checkpoint?.subjectDigest ?? null,
+        expiresAt: checkpoint?.expiresAt ?? null
+      }
+    };
+  }
+
   async #finalize(key, state, workspace) {
     let finalSnapshot = state.finalSnapshot;
     if (state.stage !== 'publishing' || !finalSnapshot) {
       state.stage = 'verifying';
       await this.#save(key, state);
+
+      const gate = await this.#gateCandidate(key, state, workspace);
+      if (gate.blockedResult) return gate.blockedResult;
+
       try {
         finalSnapshot = await this.#workspace.sealCandidate(workspace, {
           issueNumber: state.task.issueNumber,
@@ -249,6 +334,29 @@ export class RunCoordinator {
       state.prior.blockers = [];
       state.prior.nextStep = null;
       await this.#save(key, state);
+    }
+
+    if (this.#decisionGate && state.decisionGate) {
+      const recheck = await this.#decisionGate.verifyAuthorized({
+        state,
+        task: state.task,
+        workspace,
+        persist: () => this.#save(key, state)
+      });
+      if (!recheck.authorized) {
+        state.stage = 'waiting-decision';
+        const summary = `Previously accepted hard-gate subject changed before publication; approval is invalidated for checkpoint ${recheck.checkpoint?.checkpointId ?? 'unknown'}.`;
+        state.prior.blockers = [summary];
+        await this.#save(key, state);
+        await this.#publish(state, 'HARD_GATE_PENDING', summary, recheck.snapshot ?? finalSnapshot, { force: true });
+        return {
+          runId: state.runId,
+          issueNumber: state.task.issueNumber,
+          status: 'waiting-decision',
+          waiting: true,
+          subjectDigest: recheck.checkpoint?.subjectDigest ?? null
+        };
+      }
     }
 
     const noProjectDiff = finalSnapshot.headSha === finalSnapshot.baseSha && finalSnapshot.changedFiles.length === 0;
@@ -339,7 +447,7 @@ export class RunCoordinator {
       }
 
       state = {
-        version: 1,
+        version: 2,
         runId: runIdForTask(task),
         task: structuredClone(task),
         stage: 'preparing',
@@ -361,7 +469,9 @@ export class RunCoordinator {
         },
         lastFeedbackCommentId: 0,
         publication: { published: false },
-        transientRetry: null
+        transientRetry: null,
+        decisionGate: null,
+        decisionHistory: []
       };
       await this.#save(key, state);
     } else if (!Number.isInteger(state.turnLimit) || state.turnLimit < state.turn) {
@@ -370,6 +480,7 @@ export class RunCoordinator {
     }
     state.prior.receipt ??= null;
     state.prior.liveness ??= null;
+    state.decisionHistory ??= [];
 
     try {
       if (state.stage === 'waiting-feedback') {
@@ -453,7 +564,7 @@ export class RunCoordinator {
         await this.#save(key, state);
       }
 
-      if (state.stage === 'verifying' || state.stage === 'publishing') {
+      if (state.stage === 'verifying' || state.stage === 'publishing' || state.stage === 'waiting-decision') {
         const finalized = await this.#finalize(key, state, workspace);
         if (finalized) return finalized;
       }
@@ -515,8 +626,8 @@ export class RunCoordinator {
         const run = await this.#runner.run({
           profile,
           projectDir: workspace.worktreeDir,
-          runDir: path.join(workspace.worktreeDir, '.patch-poller', state.runId, `turn-${nextTurn}`),
           runId: state.runId,
+          turn: nextTurn,
           context
         });
         const snapshot = await this.#workspace.validate(workspace);
@@ -629,7 +740,7 @@ export class RunCoordinator {
         branch: state.workspace?.branch ?? null
       };
     } catch (error) {
-      if (state.stage === 'verifying' || state.stage === 'publishing') throw error;
+      if (state.stage === 'verifying' || state.stage === 'publishing' || state.stage === 'waiting-decision') throw error;
 
       state.stage = 'failed';
       state.error = { classification: error.name, message: error.message, at: nowIso() };
