@@ -61,6 +61,10 @@
     "maxConcurrentTasks": 1,
     "maxTurns": 8,
     "allowUncontainedTools": false,
+    "decisionAuthorities": {},
+    "decisionApprovalTtlMs": 86400000,
+    "architectureGateFileThreshold": 20,
+    "architectureGateOwnerThreshold": 4,
     "faultInjection": {
       "enabled": false,
       "rules": []
