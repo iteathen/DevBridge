@@ -2,9 +2,13 @@ import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { ConfigurationError } from './errors.js';
+import { DEFAULT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES } from './github/auth-provider.js';
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH_PREFIX_RE = /^[A-Za-z0-9_.-]+$/;
+const ENVIRONMENT_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const HOSTNAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
+const GITHUB_AUTH_MODES = new Set(['auto', 'environment', 'github-cli']);
 
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -50,6 +54,53 @@ function absolutePath(value, name) {
   return path.normalize(expanded);
 }
 
+function requireEnvironmentName(value, name) {
+  const result = requireString(value, name);
+  if (!ENVIRONMENT_NAME_RE.test(result)) {
+    throw new ConfigurationError(`${name} must be a valid environment-variable name`);
+  }
+  return result;
+}
+
+function normalizeGitHubAuth(github) {
+  const auth = requireObject(github.auth ?? {}, 'github.auth');
+  const mode = requireString(auth.mode ?? 'auto', 'github.auth.mode');
+  if (!GITHUB_AUTH_MODES.has(mode)) {
+    throw new ConfigurationError('github.auth.mode must be auto, environment, or github-cli');
+  }
+
+  let environmentVariables;
+  if (auth.environmentVariables != null) {
+    if (!Array.isArray(auth.environmentVariables) || auth.environmentVariables.length === 0 ||
+        auth.environmentVariables.length > 8) {
+      throw new ConfigurationError('github.auth.environmentVariables must contain 1-8 environment-variable names');
+    }
+    environmentVariables = auth.environmentVariables.map((value, index) =>
+      requireEnvironmentName(value, `github.auth.environmentVariables[${index}]`));
+  } else {
+    const preferred = github.tokenEnv == null
+      ? null
+      : requireEnvironmentName(github.tokenEnv, 'github.tokenEnv');
+    environmentVariables = [
+      ...(preferred ? [preferred] : []),
+      ...DEFAULT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES,
+    ];
+  }
+  environmentVariables = [...new Set(environmentVariables)];
+
+  const hostname = requireString(auth.hostname ?? 'github.com', 'github.auth.hostname');
+  if (!HOSTNAME_RE.test(hostname)) {
+    throw new ConfigurationError('github.auth.hostname must be a safe hostname');
+  }
+
+  return {
+    mode,
+    environmentVariables,
+    githubCliExecutable: requireString(auth.githubCliExecutable ?? 'gh', 'github.auth.githubCliExecutable'),
+    hostname: hostname.toLowerCase(),
+  };
+}
+
 export function validateConfig(raw) {
   const config = requireObject(raw, 'config');
   if (config.version !== 1) throw new ConfigurationError('config.version must be 1');
@@ -63,6 +114,7 @@ export function validateConfig(raw) {
     throw new ConfigurationError('github.trustedActorIds must contain at least one numeric GitHub user ID');
   }
 
+  const githubAuth = normalizeGitHubAuth(github);
   const rate = requireObject(github.rateLimit ?? {}, 'github.rateLimit');
   const workspace = requireObject(config.workspace, 'workspace');
   const allowedOwners = workspace.allowedOwners;
@@ -86,7 +138,9 @@ export function validateConfig(raw) {
       queueRepository,
       taskLabel: requireString(github.taskLabel ?? 'patch-poller:ready', 'github.taskLabel'),
       trustedActorIds: trustedActorIds.map(String),
-      tokenEnv: requireString(github.tokenEnv ?? 'PATCH_POLLER_GITHUB_TOKEN', 'github.tokenEnv'),
+      // Retained as a compatibility projection for older callers. New code uses auth.
+      tokenEnv: githubAuth.environmentVariables[0],
+      auth: githubAuth,
       apiVersion: requireString(github.apiVersion ?? '2026-03-10', 'github.apiVersion'),
       pollIntervalMs: requireInteger(github.pollIntervalMs ?? 60_000, 'github.pollIntervalMs', { min: 15_000 }),
       rateLimit: {
