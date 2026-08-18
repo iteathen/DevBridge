@@ -24,6 +24,20 @@ For a single controlled cycle instead of the daemon:
 node patch-poller.mjs run-once
 ```
 
+## Daemon control
+
+A daemon started by the current v0.1 testing build can be controlled without access to its original console:
+
+```text
+node patch-poller.mjs status
+node patch-poller.mjs stop
+node patch-poller.mjs restart
+```
+
+`stop` does not kill a PID or delete `daemon.lock`. It creates a local token-bound stop request tied to the exact current daemon lock. The daemon consumes that request, exits its normal loop, and releases only its own lock. If the daemon is busy inside an active task, the stop request is honored when that cycle returns; a timeout reports that the request is still pending rather than forcing cleanup.
+
+`status` and `stop` bypass `doctor` so they remain usable for recovering or controlling an already-running daemon even when an unrelated runtime prerequisite is unhealthy. `restart` performs the normal `doctor` gate and then requests a clean daemon replacement.
+
 Other supported commands are `doctor` and `poll-once`. `--no-update` uses the already-managed runtime without fetching. `--home <path>` and `--config <path>` are local operator overrides. `--channel stable` follows `main`; the default `testing` channel follows the current v0.1 integration branch while PR #3 is open and falls back to `main` after that branch is removed.
 
 ## Trust boundary
@@ -36,5 +50,6 @@ This launcher is an alpha-testing convenience, not the final release-integrity m
 - The managed runtime must have the expected origin and a clean worktree before it is updated. The launcher refuses to overwrite a modified runtime automatically.
 - The operator config is stored outside the managed runtime and is never replaced by an update.
 - Child PATCH-POLLER CLI execution uses the current Node executable with `shell: false`.
+- Daemon control uses the random token already bound to the local daemon lock; remote task content cannot manufacture or authorize daemon-control requests.
 
 The `testing` and `stable` channels are mutable Git branches. Following them means deliberately accepting newer code from the trusted PATCH-POLLER repository. That is appropriate for the present v0.1 test loop, but unattended production deployment should move to an immutable, digest-bound/signature-verified release channel before being represented as production-safe.
