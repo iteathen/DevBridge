@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { ProcessRunner, parseResultJsonText, toolBridge } from '../src/runtime/process-runner.js';
@@ -52,6 +52,7 @@ test('tool bridge tells workers the mandatory result fields and Git authority bo
   assert.equal(bridge.resultSchema.protocol, 'patch-poller/result-v1');
   assert.ok(bridge.resultSchema.status.includes('complete'));
   assert.match(bridge.resultSchema.summary, /Required non-empty string/u);
+  assert.match(bridge.requirement, /overwrite the existing resultFile in place/u);
   assert.equal(bridge.resultFile, WORKER_RESULT_FILE);
   assert.equal(bridge.gitAuthority.owner, 'patch-poller');
   assert.match(bridge.gitAuthority.rule, /Do not stage, commit, reset/u);
@@ -119,6 +120,44 @@ test('runs without a shell, keeps IPC outside the proposal tree, and scrubs cont
     assert.equal(path.relative(projectDir, result.resultFile).startsWith('..'), true);
     assert.equal(result.sandbox.verified, true);
     assert.equal(result.sandbox.workerIpc, 'control-owned-exact-file-bindings');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('recovers an interrupted worker result from the exact control-owned run/turn mailbox without launching a child', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'pp-process-runner-recovery-'));
+  const projectDir = path.join(root, 'project');
+  const stateDirectory = path.join(root, 'state');
+  await mkdir(projectDir);
+  try {
+    const exchange = new WorkerExchange({ stateDirectory });
+    const mailbox = await exchange.prepareTurn({
+      runId: 'r1',
+      turnId: 'turn-1',
+      context: { objective: 'interrupted worker' },
+    });
+    await writeFile(mailbox.resultFile, `${JSON.stringify({
+      protocol: 'patch-poller/result-v1',
+      status: 'continue',
+      summary: 'recoverable checkpoint result',
+      nextStep: 'continue from durable candidate bytes',
+    })}\n`, { encoding: 'utf8' });
+
+    const recoveredRunner = new ProcessRunner({
+      workerExchange: new WorkerExchange({ stateDirectory }),
+    });
+    const recovered = await recoveredRunner.recoverResult({
+      projectDir,
+      runDir: path.join(projectDir, '.patch-poller', 'r1', 'turn-1'),
+      runId: 'r1',
+    });
+    assert.equal(recovered.recovered, true);
+    assert.equal(recovered.resultPresent, true);
+    assert.equal(recovered.resultParseError, null);
+    assert.equal(recovered.result.status, 'continue');
+    assert.equal(recovered.result.summary, 'recoverable checkpoint result');
+    assert.equal(path.relative(projectDir, recovered.resultFile).startsWith('..'), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
