@@ -152,6 +152,69 @@ export class ControllerPlanExecutor {
     }
   }
 
+  async #verifyPersistentFiles(plan, planState, workspace, persist) {
+    const persistentFiles = plan.files.filter((file) => file.scope === 'persistent');
+    planState.phase = 'verifying-persistent-files';
+    planState.persistentVerification = {
+      required: persistentFiles.length,
+      verified: 0,
+      files: [],
+      startedAt: new Date().toISOString(),
+      completedAt: null,
+    };
+    await persist();
+
+    for (const file of persistentFiles) {
+      const record = {
+        path: file.path,
+        action: file.action,
+        expectedSha256: file.action === 'delete' ? null : file.contentSha256,
+        observedSha256: null,
+        state: 'checking',
+        checkedAt: new Date().toISOString(),
+      };
+      planState.persistentVerification.files.push(record);
+      await persist();
+
+      try {
+        const target = await assertContainedNoFollow(workspace.worktreeDir, file.path);
+        const present = await exists(target);
+
+        if (file.action === 'delete') {
+          if (present) {
+            record.observedSha256 = await fileDigest(target).catch(() => null);
+            throw new PolicyError(`controller persistent delete target was recreated after operations/cleanup: ${file.path}`);
+          }
+          record.state = 'verified-absent';
+        } else {
+          if (!present) throw new PolicyError(`controller persistent ${file.action} target is missing after operations/cleanup: ${file.path}`);
+          const info = await lstat(target);
+          if (info.isSymbolicLink() || !info.isFile()) {
+            throw new PolicyError(`controller persistent ${file.action} target is not a regular file after operations/cleanup: ${file.path}`);
+          }
+          record.observedSha256 = await fileDigest(target);
+          if (record.observedSha256 !== file.contentSha256) {
+            throw new PolicyError(`controller persistent ${file.action} target SHA-256 differs from the plan after operations/cleanup: ${file.path}`);
+          }
+          record.state = 'verified-exact';
+        }
+      } catch (error) {
+        record.state = 'mismatch';
+        record.reason = error.message;
+        record.checkedAt = new Date().toISOString();
+        await persist();
+        throw error;
+      }
+
+      record.checkedAt = new Date().toISOString();
+      planState.persistentVerification.verified += 1;
+      await persist();
+    }
+
+    planState.persistentVerification.completedAt = new Date().toISOString();
+    await persist();
+  }
+
   async #assert(assertion, results, workspace) {
     const result = assertion.operation ? results.get(assertion.operation) : null;
     const fail = (message) => { throw new PolicyError(`controller assertion failed: ${message}`); };
@@ -282,6 +345,11 @@ export class ControllerPlanExecutor {
       await this.#cleanup(state, workspace, persist);
     }
 
+    // Never trust the earlier applied state after executable operations. A
+    // repository-controlled test/build may have changed or recreated a planned
+    // persistent path while retaining the same changed-path set.
+    await this.#verifyPersistentFiles(plan, planState, workspace, persist);
+
     const snapshot = await this.#workspace.validate(workspace);
     const actual = [...snapshot.changedFiles].sort();
     const expected = [...plan.expectedChangedPaths].sort();
@@ -309,7 +377,7 @@ export class ControllerPlanExecutor {
         timedOut: entry.result?.timedOut === true,
         outputTruncated: entry.result?.outputTruncated === true,
       })),
-      summary: `Controller plan completed ${planState.operations.length} deterministic operations and ${planState.assertionsPassed} assertions; cleanup verified ${planState.cleanup.verifiedAbsent}/${planState.cleanupLedger.length} ephemeral paths and ${planState.cleanup.scratchVerifiedAbsent}/${planState.scratchLedger.length} scratch directories absent.`,
+      summary: `Controller plan completed ${planState.operations.length} deterministic operations and ${planState.assertionsPassed} assertions; reverified ${planState.persistentVerification.verified}/${planState.persistentVerification.required} persistent file proposals; cleanup verified ${planState.cleanup.verifiedAbsent}/${planState.cleanupLedger.length} ephemeral paths and ${planState.cleanup.scratchVerifiedAbsent}/${planState.scratchLedger.length} scratch directories absent.`,
     };
   }
 }
