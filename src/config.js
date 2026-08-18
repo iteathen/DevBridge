@@ -14,6 +14,7 @@ const HOSTNAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 const GITHUB_AUTH_MODES = new Set(['auto', 'environment', 'github-cli']);
 const CONTEXT_BUDGET_UNITS = new Set(['tokens', 'bytes', 'proxy']);
 const SANDBOX_PROVIDERS = new Set(['auto', 'bubblewrap', 'none']);
+const DECISION_CLASSES = ['control-plane', 'contract', 'architecture', 'destructive'];
 
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -154,6 +155,29 @@ function normalizeSandbox(execution) {
   };
 }
 
+function normalizeDecisionPolicy(config, trustedActorIds) {
+  const decisions = requireObject(config.decisions ?? {}, 'decisions');
+  const rawAuthorities = requireObject(decisions.authorities ?? {}, 'decisions.authorities');
+  for (const name of Object.keys(rawAuthorities)) {
+    if (!DECISION_CLASSES.includes(name)) throw new ConfigurationError(`decisions.authorities.${name} is not a supported local decision class`);
+  }
+  const authorities = {};
+  for (const decisionClass of DECISION_CLASSES) {
+    const actorIds = rawAuthorities[decisionClass] ?? trustedActorIds;
+    if (!Array.isArray(actorIds) || actorIds.length > 32 || actorIds.some((id) => !/^\d+$/.test(String(id)))) {
+      throw new ConfigurationError(`decisions.authorities.${decisionClass} must contain at most 32 numeric GitHub user IDs`);
+    }
+    authorities[decisionClass] = [...new Set(actorIds.map(String))];
+  }
+  const expiryMs = requireInteger(decisions.expiryMs ?? 86_400_000, 'decisions.expiryMs', { min: 60_000 });
+  if (expiryMs > 604_800_000) throw new ConfigurationError('decisions.expiryMs must be <= 604800000');
+  return {
+    enabled: decisions.enabled !== false,
+    expiryMs,
+    authorities,
+  };
+}
+
 function normalizeContextRollover(config) {
   const rollover = requireObject(config.contextRollover ?? {}, 'contextRollover');
   const unit = requireString(rollover.unit ?? 'bytes', 'contextRollover.unit');
@@ -192,6 +216,7 @@ export function validateConfig(raw) {
   if (!Array.isArray(trustedActorIds) || trustedActorIds.length === 0 || trustedActorIds.some((id) => !/^\d+$/.test(String(id)))) {
     throw new ConfigurationError('github.trustedActorIds must contain at least one numeric GitHub user ID');
   }
+  const normalizedTrustedActorIds = trustedActorIds.map(String);
 
   const githubAuth = normalizeGitHubAuth(github);
   const rate = requireObject(github.rateLimit ?? {}, 'github.rateLimit');
@@ -214,13 +239,14 @@ export function validateConfig(raw) {
   if (!BRANCH_PREFIX_RE.test(branchPrefix)) throw new ConfigurationError('publication.branchPrefix must be a safe branch segment');
   const faultInjection = normalizeFaultInjection(execution);
   const sandbox = normalizeSandbox(execution);
+  const decisions = normalizeDecisionPolicy(config, normalizedTrustedActorIds);
 
   return {
     version: 1,
     github: {
       queueRepository,
       taskLabel: requireString(github.taskLabel ?? 'patch-poller:ready', 'github.taskLabel'),
-      trustedActorIds: trustedActorIds.map(String),
+      trustedActorIds: normalizedTrustedActorIds,
       tokenEnv: githubAuth.environmentVariables[0],
       auth: githubAuth,
       apiVersion: requireString(github.apiVersion ?? '2026-03-10', 'github.apiVersion'),
@@ -244,6 +270,7 @@ export function validateConfig(raw) {
     },
     state: { directory: absolutePath(state.directory ?? '~/.patch-poller/state', 'state.directory') },
     contextRollover,
+    decisions,
     git: {
       executable: requireString(git.executable ?? 'git', 'git.executable'),
       cloneBaseUrl: requireString(git.cloneBaseUrl ?? 'https://github.com', 'git.cloneBaseUrl').replace(/\/$/, ''),
