@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
 import { PolicyError } from '../errors.js';
 import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
-import { deterministicOperationSecurity } from './deterministic-operation-security.js';
 
 const DEFAULT_OUTPUT_LIMIT = 512 * 1024;
 const DEFAULT_ACTIVITY_INTERVAL_MS = 30_000;
 const FAULT_TRUNCATE_BYTES = 32;
+const EXECUTION_CLASSES = new Set(['control-process', 'static-inspection', 'repository-code']);
 
 function appendTail(current, chunk, maxBytes) {
   const combined = Buffer.concat([current, Buffer.from(chunk)]);
@@ -49,6 +49,7 @@ export class DeterministicProcessRunner {
     onActivity = null,
     activityIntervalMs = DEFAULT_ACTIVITY_INTERVAL_MS,
     operation = null,
+    executionClass = 'control-process',
     sandbox = { required: false },
   }) {
     if (typeof executable !== 'string' || executable.length === 0) throw new PolicyError('deterministic operation executable is missing');
@@ -56,10 +57,10 @@ export class DeterministicProcessRunner {
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 28_800_000) throw new PolicyError('deterministic operation timeout is out of range');
     if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1024 || maxOutputBytes > 16_777_216) throw new PolicyError('deterministic operation output limit is out of range');
     if (!Number.isInteger(activityIntervalMs) || activityIntervalMs < 10 || activityIntervalMs > 300_000) throw new PolicyError('deterministic activity interval is out of range');
+    if (!EXECUTION_CLASSES.has(executionClass)) throw new PolicyError('deterministic operation execution class is invalid');
     if (!sandbox || typeof sandbox !== 'object' || Array.isArray(sandbox)) throw new PolicyError('deterministic operation sandbox policy must be an object');
 
     const env = boundedEnvironment(this.#sourceEnv, environment.pass ?? [], environment.set ?? {});
-    const operationSecurity = deterministicOperationSecurity(operation);
     let spawnExecutable = executable;
     let spawnArgs = args;
     let spawnCwd = cwd;
@@ -72,10 +73,10 @@ export class DeterministicProcessRunner {
       filesystem: 'not-applicable',
       network: 'not-applicable',
       gitAdministrativeState: 'not-applicable',
-      executionClass: operationSecurity.executionClass,
+      executionClass,
     };
 
-    if (operationSecurity.sandboxRequired || sandbox.required === true) {
+    if (executionClass === 'repository-code' || sandbox.required === true) {
       if (!this.#sandboxProvider || typeof this.#sandboxProvider.prepareExecution !== 'function') {
         throw new PolicyError('repository-code execution requires a verified sandbox provider; none is configured');
       }
@@ -98,7 +99,7 @@ export class DeterministicProcessRunner {
       spawnArgs = prepared.args;
       spawnCwd = prepared.cwd;
       spawnEnv = prepared.env;
-      sandboxEvidence = { required: true, executionClass: operationSecurity.executionClass, ...prepared.evidence };
+      sandboxEvidence = { required: true, executionClass, ...prepared.evidence };
     }
 
     const child = spawn(spawnExecutable, spawnArgs, containedSpawnOptions({ cwd: spawnCwd, env: spawnEnv, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
