@@ -5,23 +5,18 @@ const REVISION_RE = /^[0-9a-f]{64}$/;
 
 export function parseFeedbackEnvelope(body) {
   if (typeof body !== 'string') throw new ProtocolError('feedback body must be a string');
-  const matches = [...body.matchAll(/```patch-poller-feedback\s*\r?\n([\s\S]*?)\r?\n```/g)];
-  if (matches.length !== 1) throw new ProtocolError('feedback must contain exactly one patch-poller-feedback block');
+  const match = body.trim().match(/^```patch-poller-feedback[ \t]*\r?\n([\s\S]*?)\r?\n```$/u);
+  if (!match) throw new ProtocolError('feedback authority comment must contain exactly one standalone patch-poller-feedback block');
 
   let value;
-  try {
-    value = JSON.parse(matches[0][1]);
-  } catch (error) {
-    throw new ProtocolError('feedback envelope is not valid JSON', { cause: error });
-  }
+  try { value = JSON.parse(match[1]); }
+  catch (error) { throw new ProtocolError('feedback envelope is not valid JSON', { cause: error }); }
 
   if (value?.protocol !== 'patch-poller/feedback-v1') throw new ProtocolError('unsupported feedback protocol');
   if (!RUN_ID_RE.test(value.runId ?? '')) throw new ProtocolError('feedback runId is invalid');
   if (!REVISION_RE.test(value.taskRevision ?? '')) throw new ProtocolError('feedback taskRevision is invalid');
   if (!['continue', 'cancel'].includes(value.action)) throw new ProtocolError('feedback action must be continue or cancel');
-  if (value.action === 'continue' && (typeof value.instructions !== 'string' || value.instructions.trim() === '')) {
-    throw new ProtocolError('continue feedback requires instructions');
-  }
+  if (value.action === 'continue' && (typeof value.instructions !== 'string' || value.instructions.trim() === '')) throw new ProtocolError('continue feedback requires instructions');
   if (value.instructions != null && (typeof value.instructions !== 'string' || Buffer.byteLength(value.instructions, 'utf8') > 32_000)) {
     throw new ProtocolError('feedback instructions are invalid or too large');
   }
