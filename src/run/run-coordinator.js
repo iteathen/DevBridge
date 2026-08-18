@@ -28,6 +28,35 @@ function outputTail(run) {
   return text.length <= 8000 ? text : text.slice(-8000);
 }
 
+function feedbackProvenanceProjection(provenance) {
+  if (!provenance || typeof provenance !== 'object') return null;
+  return {
+    verified: provenance.verified === true,
+    reason: provenance.reason ?? null,
+    contentSha256: provenance.contentSha256 ?? null,
+    creatorActorId: provenance.creatorActorId ?? null,
+    currentEditorActorId: provenance.currentEditorActorId ?? null,
+    editorActorIds: Array.isArray(provenance.editorActorIds) ? provenance.editorActorIds.slice(0, 20) : [],
+    editCount: Number.isInteger(provenance.editCount) ? provenance.editCount : null,
+    redactedEditCount: Number.isInteger(provenance.redactedEditCount) ? provenance.redactedEditCount : null,
+    historyComplete: provenance.historyComplete === true,
+    lastEditedAt: provenance.lastEditedAt ?? null,
+  };
+}
+
+function feedbackProvenanceRecord(entry, { accepted = false, action = null } = {}) {
+  return {
+    source: accepted ? 'github-feedback' : 'github-feedback-rejected',
+    accepted,
+    action,
+    commentId: entry.commentId ?? null,
+    actorId: entry.actorId ?? null,
+    reason: accepted ? null : (entry.reason ?? entry.provenance?.reason ?? 'provenance-rejected'),
+    content: feedbackProvenanceProjection(entry.provenance),
+    recordedAt: nowIso(),
+  };
+}
+
 export function runIdForTask(task) {
   return `pp-${task.issueNumber}-${task.revision.slice(0, 16)}`;
 }
@@ -349,6 +378,7 @@ export class RunCoordinator {
         prior: {
           summary: task.envelope.context?.summary ?? null,
           decisions: [],
+          provenance: [],
           progress: [],
           changedFiles: [],
           tests: [],
@@ -370,6 +400,7 @@ export class RunCoordinator {
     }
     state.prior.receipt ??= null;
     state.prior.liveness ??= null;
+    state.prior.provenance ??= [];
 
     try {
       if (state.stage === 'waiting-feedback') {
@@ -382,11 +413,33 @@ export class RunCoordinator {
           taskRevision: task.revision,
           afterCommentId: state.lastFeedbackCommentId ?? 0
         });
+        const rejectedFeedback = Array.isArray(polled.rejected) ? polled.rejected : [];
+        if (rejectedFeedback.length > 0) {
+          state.prior.provenance.push(...rejectedFeedback.map((entry) => feedbackProvenanceRecord(entry)));
+          state.prior.provenance = state.prior.provenance.slice(-100);
+        }
         state.lastFeedbackCommentId = polled.highestCommentId ?? state.lastFeedbackCommentId ?? 0;
         if (!polled.feedback) {
           await this.#save(key, state);
-          return { runId: state.runId, issueNumber: task.issueNumber, status: state.stage, waiting: true };
+          if (rejectedFeedback.length > 0) {
+            const summary = polled.provenanceRetryRequired
+              ? `Ignored ${rejectedFeedback.length} authority-shaped feedback comment(s) because exact edit provenance is temporarily unverifiable; the feedback cursor was not advanced and PATCH-POLLER will retry.`
+              : `Ignored ${rejectedFeedback.length} authority-shaped feedback comment(s) because creator/editor provenance did not satisfy local trust policy.`;
+            await this.#publish(state, 'WAITING_FEEDBACK', summary, null);
+          }
+          return {
+            runId: state.runId,
+            issueNumber: task.issueNumber,
+            status: state.stage,
+            waiting: true,
+            rejectedFeedbackCount: rejectedFeedback.length
+          };
         }
+        state.prior.provenance.push(feedbackProvenanceRecord(polled.feedback, {
+          accepted: true,
+          action: polled.feedback.action,
+        }));
+        state.prior.provenance = state.prior.provenance.slice(-100);
         if (polled.feedback.action === 'cancel') {
           state.stage = 'cancelled';
           state.prior.decisions.push({
@@ -394,10 +447,12 @@ export class RunCoordinator {
             action: 'cancel',
             actorId: polled.feedback.actorId,
             commentId: polled.feedback.commentId,
+            contentSha256: polled.feedback.contentSha256,
+            contentProvenance: feedbackProvenanceProjection(polled.feedback.provenance),
             note: polled.feedback.instructions ?? null
           });
           await this.#save(key, state);
-          await this.#publish(state, 'CANCELLED', 'Run cancelled by trusted feedback.', null, {
+          await this.#publish(state, 'CANCELLED', 'Run cancelled by trusted exact-content feedback.', null, {
             terminal: true,
             force: true
           });
@@ -408,6 +463,8 @@ export class RunCoordinator {
           action: 'continue',
           actorId: polled.feedback.actorId,
           commentId: polled.feedback.commentId,
+          contentSha256: polled.feedback.contentSha256,
+          contentProvenance: feedbackProvenanceProjection(polled.feedback.provenance),
           instructions: polled.feedback.instructions
         });
         state.prior.blockers = [];
