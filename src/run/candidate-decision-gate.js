@@ -59,18 +59,22 @@ export class CandidateDecisionGate {
     };
 
     let checkpoint = state.decisionGate ?? null;
-    const sameSubject = checkpoint &&
+    const sameIdentity = checkpoint &&
       checkpoint.checkpointId === expected.checkpointId &&
       checkpoint.subjectDigest === expected.subjectDigest &&
       checkpoint.decisionClass === expected.decisionClass &&
       checkpoint.bindingMode === expected.bindingMode;
+    const reusableState = sameIdentity && !['expired', 'superseded'].includes(checkpoint.state);
 
-    if (!sameSubject) {
-      if (checkpoint && !['superseded', 'expired'].includes(checkpoint.state)) {
-        checkpoint.state = 'superseded';
-        checkpoint.supersededAt = nowIso(this.#now);
+    if (!reusableState) {
+      const previousHighWater = checkpoint?.lastDecisionCommentId ?? 0;
+      if (checkpoint) {
+        if (!['superseded', 'expired'].includes(checkpoint.state)) {
+          checkpoint.state = 'superseded';
+          checkpoint.supersededAt = nowIso(this.#now);
+        }
         state.decisionHistory ??= [];
-        state.decisionHistory.push(checkpoint);
+        state.decisionHistory.push(structuredClone(checkpoint));
       }
       const createdAtMs = this.#now();
       checkpoint = {
@@ -78,7 +82,7 @@ export class CandidateDecisionGate {
         state: 'pending',
         createdAt: new Date(createdAtMs).toISOString(),
         expiresAt: new Date(createdAtMs + this.#expiryMs).toISOString(),
-        lastDecisionCommentId: 0,
+        lastDecisionCommentId: previousHighWater,
         acceptedDecision: null,
       };
       state.decisionGate = checkpoint;
