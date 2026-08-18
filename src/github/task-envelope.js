@@ -12,21 +12,21 @@ function byteLength(value) {
   return Buffer.byteLength(value, 'utf8');
 }
 
-function stableEnvelope(value) {
-  return JSON.stringify(value);
+function authorityPayload(body) {
+  const normalized = body.trim();
+  const match = normalized.match(/^```patch-poller-task[ \t]*\r?\n([\s\S]*?)\r?\n```$/u);
+  if (!match) throw new ProtocolError('task authority comment must contain exactly one standalone patch-poller-task block and no surrounding discussion');
+  return match[1];
 }
 
 export function parseTaskEnvelope(body) {
-  if (typeof body !== 'string') throw new ProtocolError('issue body must be a string');
-  if (byteLength(body) > MAX_BODY_BYTES) throw new ProtocolError('issue body is too large');
-
-  const matches = [...body.matchAll(/```patch-poller-task\s*\r?\n([\s\S]*?)\r?\n```/g)];
-  if (matches.length !== 1) throw new ProtocolError('issue body must contain exactly one patch-poller-task block');
+  if (typeof body !== 'string') throw new ProtocolError('task body must be a string');
+  if (byteLength(body) > MAX_BODY_BYTES) throw new ProtocolError('task body is too large');
 
   let envelope;
-  try {
-    envelope = JSON.parse(matches[0][1]);
-  } catch (error) {
+  try { envelope = JSON.parse(authorityPayload(body)); }
+  catch (error) {
+    if (error instanceof ProtocolError) throw error;
     throw new ProtocolError('task envelope is not valid JSON', { cause: error });
   }
 
@@ -35,9 +35,7 @@ export function parseTaskEnvelope(body) {
   if (!envelope.target || typeof envelope.target !== 'object' || !REPOSITORY_RE.test(envelope.target.repository ?? '')) {
     throw new ProtocolError('target.repository must be owner/name');
   }
-  if (typeof envelope.instructions !== 'string' || envelope.instructions.trim() === '') {
-    throw new ProtocolError('instructions must be a non-empty string');
-  }
+  if (typeof envelope.instructions !== 'string' || envelope.instructions.trim() === '') throw new ProtocolError('instructions must be a non-empty string');
   if (byteLength(envelope.instructions) > MAX_INSTRUCTION_BYTES) throw new ProtocolError('instructions exceed task limit');
 
   if (envelope.context != null) {
@@ -53,18 +51,14 @@ export function parseTaskEnvelope(body) {
     throw new ProtocolError('requestedCapabilities must be an array of strings');
   }
 
-  if (envelope.preferredTool != null && !/^[A-Za-z0-9_.-]+$/.test(envelope.preferredTool)) {
-    throw new ProtocolError('preferredTool must be a safe local profile name');
-  }
+  if (envelope.preferredTool != null && !/^[A-Za-z0-9_.-]+$/u.test(envelope.preferredTool)) throw new ProtocolError('preferredTool must be a safe local profile name');
 
   for (const forbidden of ['command', 'shell', 'cwd', 'localPath', 'executable', 'environment', 'credentials']) {
     if (Object.hasOwn(envelope, forbidden)) throw new ProtocolError(`remote task field ${forbidden} is forbidden`);
   }
 
   const controllerPlan = envelope.controllerPlan == null ? null : normalizeControllerPlan(envelope.controllerPlan);
-  if (controllerPlan && envelope.preferredTool != null) {
-    throw new ProtocolError('controller-plan tasks cannot also select a preferred coding tool');
-  }
+  if (controllerPlan && envelope.preferredTool != null) throw new ProtocolError('controller-plan tasks cannot also select a preferred coding tool');
 
   const normalized = {
     protocol: envelope.protocol,
@@ -78,6 +72,6 @@ export function parseTaskEnvelope(body) {
 
   return {
     envelope: normalized,
-    revision: createHash('sha256').update(stableEnvelope(normalized)).digest('hex')
+    revision: createHash('sha256').update(body, 'utf8').digest('hex')
   };
 }
