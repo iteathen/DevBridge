@@ -33,6 +33,9 @@ test('bootstrap accepts one safe command and local-only switches', () => {
       update: false,
     },
   );
+  for (const command of ['status', 'stop', 'restart']) {
+    assert.equal(parseBootstrapArgs([command]).command, command);
+  }
   assert.throws(() => parseBootstrapArgs(['--channel', 'evil']), /Unknown PATCH-POLLER channel/u);
   assert.throws(() => parseBootstrapArgs(['daemon', 'run-once']), /Only one/u);
   assert.throws(() => parseBootstrapArgs(['--repository', 'attacker/repo']), /Unknown bootstrap argument/u);
