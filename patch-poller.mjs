@@ -15,7 +15,7 @@ import { pathToFileURL } from 'node:url';
 
 const SOURCE_REPOSITORY = 'https://github.com/iteathen/PATCH-POLLER.git';
 const MINIMUM_NODE = Object.freeze([22, 16, 0]);
-const COMMANDS = new Set(['doctor', 'poll-once', 'run-once', 'daemon']);
+const COMMANDS = new Set(['doctor', 'poll-once', 'run-once', 'daemon', 'status', 'stop', 'restart']);
 const CHANNELS = Object.freeze({
   // While v0.1 is still in PR #3, testing follows that branch. Once that
   // branch is removed after integration, the launcher falls back to main.
@@ -305,6 +305,10 @@ export function bootstrap(argv = process.argv.slice(2), runner = defaultRunner) 
       '[patch-poller-bootstrap] Then run this same command again.\n',
     );
     return 0;
+  }
+
+  if (args.command === 'status' || args.command === 'stop') {
+    return runPollerCli(args.command, paths, runtime, runner);
   }
 
   const doctorStatus = runPollerCli('doctor', paths, runtime, runner);
