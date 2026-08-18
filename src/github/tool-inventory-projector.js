@@ -71,6 +71,9 @@ export class ToolInventoryProjector {
     }
     const rawBody = bodyFor(record);
     const body = redactText(rawBody, this.#secrets);
+    if (body !== rawBody) {
+      throw new ProtocolError('tool inventory projection contains a secret-bearing value; refusing to publish a redacted payload whose embedded digest no longer matches');
+    }
     if (Buffer.byteLength(body, 'utf8') > this.#maxCommentBytes) throw new RangeError('tool inventory projection exceeds configured GitHub comment budget');
     const key = this.#key(issue);
     const previous = (await this.#store.get(key)) ?? {};
