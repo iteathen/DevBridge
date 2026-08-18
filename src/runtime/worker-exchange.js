@@ -35,7 +35,7 @@ function identityOf(info) {
 function sameIdentity(info, expected) {
   if (!expected || typeof expected !== 'object') return false;
   const actual = identityOf(info);
-  return actual.dev === expected.dev && actual.ino === expected.ino;
+  return actual.dev === String(expected.dev) && actual.ino === String(expected.ino);
 }
 
 function expectedUid() {
