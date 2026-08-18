@@ -1,0 +1,113 @@
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import process from 'node:process';
+import * as transactional from './transactional-bootstrap.mjs';
+import { validateCandidateRuntime } from './candidate-validator.mjs';
+import { loadBootstrapReleasePolicy, verifyRuntimeRelease } from './release-integrity.mjs';
+
+export * from './transactional-bootstrap.mjs';
+
+const CAPTURE_LIMIT = 4 * 1024 * 1024;
+
+function defaultRunner(executable, args, options) {
+  return spawnSync(executable, args, {
+    ...options,
+    shell: false,
+    encoding: options.stdio === 'inherit' ? undefined : 'utf8',
+    maxBuffer: CAPTURE_LIMIT,
+  });
+}
+
+function candidateTreeSha(paths, runtimeDir, runner) {
+  const result = transactional.runGit(['rev-parse', 'HEAD^{tree}'], { paths, cwd: runtimeDir, runner });
+  const tree = String(result.stdout ?? '').trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/u.test(tree)) throw new Error('candidate tree identity is invalid');
+  return tree;
+}
+
+export async function prepareRuntimeCandidate(args, paths, {
+  desiredRef,
+  desiredHead,
+  runner = defaultRunner,
+  ensureRuntimeFn = transactional.ensureRuntime,
+  validateCandidateFn = validateCandidateRuntime,
+  loadPolicyFn = loadBootstrapReleasePolicy,
+  verifyReleaseFn = verifyRuntimeRelease,
+  environment = process.env,
+  sandboxManager = null,
+} = {}) {
+  if (!desiredRef || !/^[0-9a-f]{40}$/iu.test(String(desiredHead))) throw new Error('candidate preparation requires a trusted ref and exact head');
+  const runtimeDir = transactional.candidateRuntimePath(paths, desiredHead);
+  const candidatePaths = { ...paths, runtime: runtimeDir };
+  const candidate = ensureRuntimeFn({ ...args, update: true }, candidatePaths, runner);
+  if (candidate.ref !== desiredRef || candidate.head.toLowerCase() !== String(desiredHead).toLowerCase()) {
+    throw new Error(`candidate changed during preparation; expected ${desiredRef}@${desiredHead}, observed ${candidate.ref}@${candidate.head}`);
+  }
+
+  const head = candidate.head.toLowerCase();
+  const tree = candidateTreeSha(candidatePaths, runtimeDir, runner);
+  const policy = loadPolicyFn({ channel: args.channel, paths, environment });
+  const releaseIntegrity = verifyReleaseFn({ candidateDir: runtimeDir, commitSha: head, treeSha: tree, policy });
+  const validation = await validateCandidateFn({
+    candidateDir: runtimeDir,
+    runner,
+    environment,
+    sandboxManager,
+  });
+  return { ...candidate, runtimeDir, tree, releaseIntegrity, validation };
+}
+
+export async function bootstrap(argv = process.argv.slice(2), runner = defaultRunner) {
+  transactional.assertSupportedNode();
+  const args = transactional.parseBootstrapArgs(argv);
+  const paths = transactional.resolveBootstrapPaths(args);
+  const runtimeExists = existsSync(paths.runtime);
+
+  let runtime = transactional.loadPersistedHealthyRuntime(paths, runner);
+  if (!runtime) {
+    runtime = transactional.ensureRuntime(runtimeExists ? { ...args, update: false } : args, paths, runner);
+    runtime = { ...runtime, runtimeDir: paths.runtime };
+  }
+
+  process.stdout.write(`[patch-poller-bootstrap] channel=${args.channel} ref=${runtime.ref} version=${runtime.version} head=${runtime.head}\n`);
+  if (transactional.prepareLocalConfig(paths, runtime)) {
+    process.stdout.write(
+      `[patch-poller-bootstrap] Created safe local config: ${paths.config}\n` +
+      '[patch-poller-bootstrap] Review execution/controller-plan policy and enable execution only when ready.\n' +
+      '[patch-poller-bootstrap] Then run this same command again.\n',
+    );
+    return 0;
+  }
+
+  if (args.command === 'status' || args.command === 'stop') {
+    return transactional.runPollerCli(args.command, paths, runtime, runner);
+  }
+
+  const doctorStatus = transactional.runPollerCli('doctor', paths, runtime, runner);
+  if (doctorStatus !== 0 || args.command === 'doctor') return doctorStatus;
+  if (args.command !== 'daemon' && args.command !== 'restart') {
+    return transactional.runPollerCli(args.command, paths, runtime, runner);
+  }
+
+  await transactional.stopExistingDaemon(paths, runtime, runner);
+  const controller = new AbortController();
+  const requestStop = () => controller.abort();
+  process.once('SIGINT', requestStop);
+  process.once('SIGTERM', requestStop);
+  try {
+    return await transactional.superviseDaemon(
+      { ...args, command: 'daemon' },
+      paths,
+      runtime,
+      {
+        runner,
+        takeover: false,
+        signal: controller.signal,
+        candidatePrepareFn: (candidateArgs, candidatePaths, options) => prepareRuntimeCandidate(candidateArgs, candidatePaths, options),
+      },
+    );
+  } finally {
+    process.removeListener('SIGINT', requestStop);
+    process.removeListener('SIGTERM', requestStop);
+  }
+}
