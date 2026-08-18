@@ -7,6 +7,8 @@ import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
 
 const OUTPUT_LIMIT = 128 * 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
+const EXECUTABLE_MARKER = 'PATCH-POLLER-NATIVE-LINK-OK';
+const EXECUTABLE_EXIT_CODE = 17;
 
 function appendBounded(current, chunk, maxBytes = OUTPUT_LIMIT) {
   const combined = Buffer.concat([current, Buffer.from(chunk)]);
@@ -53,6 +55,15 @@ async function runnable(candidate) {
   }
 }
 
+async function readableFile(candidate) {
+  try {
+    const info = await stat(candidate);
+    return info.isFile() ? await realpath(candidate) : null;
+  } catch {
+    return null;
+  }
+}
+
 function compilerFamily(executable) {
   const base = path.basename(executable).toLowerCase();
   if (base === 'cl.exe' || base === 'cl') return 'msvc';
@@ -77,16 +88,18 @@ async function versionForPathCompiler(descriptor, env) {
   }
 }
 
-async function findPathCompiler(env) {
-  const candidates = process.platform === 'win32'
-    ? ['clang-cl.exe', 'clang.exe', 'cl.exe', 'gcc.exe', 'cc.exe']
-    : ['cc', 'clang', 'gcc'];
+async function descriptorForExecutable(executable, env, source = 'PATH') {
+  const descriptor = { executable, family: compilerFamily(executable), source, version: 'unknown', linker: null };
+  if (descriptor.family === 'msvc') descriptor.linker = await runnable(path.join(path.dirname(executable), 'link.exe'));
+  descriptor.version = await versionForPathCompiler(descriptor, env);
+  return descriptor;
+}
+
+async function findPathCompiler(env, candidates) {
   for (const name of candidates) {
     try {
       const executable = await resolveExecutable(name, env);
-      const descriptor = { executable, family: compilerFamily(executable), source: 'PATH', version: 'unknown' };
-      descriptor.version = await versionForPathCompiler(descriptor, env);
-      return descriptor;
+      return descriptorForExecutable(executable, env);
     } catch {
       // Try the next locally constrained candidate.
     }
@@ -104,17 +117,24 @@ async function latestMsvcToolset(installationPath) {
     .map((entry) => entry.name)
     .sort((left, right) => right.localeCompare(left, 'en', { numeric: true }));
   for (const version of versions) {
-    const executable = await runnable(path.join(root, version, 'bin', 'Hostx64', 'x64', 'cl.exe'));
-    if (executable) return { executable, family: 'msvc', source: 'visual-studio', version };
+    const binDir = path.join(root, version, 'bin', 'Hostx64', 'x64');
+    const executable = await runnable(path.join(binDir, 'cl.exe'));
+    const linker = await runnable(path.join(binDir, 'link.exe'));
+    if (executable && linker) return { executable, linker, family: 'msvc', source: 'visual-studio', version };
   }
   return null;
 }
 
+function localProgramFilesRoots(env) {
+  const roots = [env['ProgramFiles(x86)'], env.ProgramFiles, env.ProgramW6432];
+  if (env.SystemDrive) roots.push(path.join(env.SystemDrive, 'Program Files (x86)'));
+  return [...new Set(roots.filter(Boolean).map((entry) => path.resolve(entry)))];
+}
+
 async function findVisualStudioCompiler(env) {
-  const roots = [env['ProgramFiles(x86)'], env.ProgramFiles, env.ProgramW6432].filter(Boolean);
   const seen = new Set();
-  for (const root of roots) {
-    const key = path.resolve(root).toLowerCase();
+  for (const root of localProgramFilesRoots(env)) {
+    const key = root.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
     const vswhere = await runnable(path.join(root, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe'));
@@ -138,16 +158,41 @@ async function findVisualStudioCompiler(env) {
   return null;
 }
 
-export async function discoverNativeCompiler({ env = process.env, platform = process.platform } = {}) {
-  const fromPath = await findPathCompiler(env);
-  if (fromPath) return fromPath;
-  if (platform === 'win32') return findVisualStudioCompiler(env);
+async function findWindowsSdkKernel32(env) {
+  const architecture = process.arch === 'arm64' ? 'arm64' : 'x64';
+  for (const programFiles of localProgramFilesRoots(env)) {
+    const libRoot = path.join(programFiles, 'Windows Kits', '10', 'Lib');
+    let entries;
+    try { entries = await readdir(libRoot, { withFileTypes: true }); }
+    catch { continue; }
+    const versions = entries
+      .filter((entry) => entry.isDirectory() && /^\d+(?:\.\d+)+$/u.test(entry.name))
+      .map((entry) => entry.name)
+      .sort((left, right) => right.localeCompare(left, 'en', { numeric: true }));
+    for (const version of versions) {
+      const library = await readableFile(path.join(libRoot, version, 'um', architecture, 'kernel32.lib'));
+      if (library) return { library, version, architecture };
+    }
+  }
   return null;
 }
 
-function compileArguments(compiler, sourceName, objectName, { warnings = false } = {}) {
+export async function discoverNativeCompiler({ env = process.env, platform = process.platform } = {}) {
+  if (platform === 'win32') {
+    const msvcOnPath = await findPathCompiler(env, ['cl.exe']);
+    if (msvcOnPath?.linker) return msvcOnPath;
+    const visualStudio = await findVisualStudioCompiler(env);
+    if (visualStudio) return visualStudio;
+    return findPathCompiler(env, ['clang-cl.exe', 'clang.exe', 'gcc.exe', 'cc.exe']);
+  }
+  return findPathCompiler(env, ['cc', 'clang', 'gcc']);
+}
+
+function compileArguments(compiler, sourceName, objectName, { warnings = false, noRuntime = false } = {}) {
   if (compiler.family === 'msvc' || compiler.family === 'clang-cl') {
-    return ['/nologo', '/c', '/TC', warnings ? '/W4' : '/W0', sourceName, `/Fo${objectName}`];
+    const args = ['/nologo', '/c', '/TC', warnings ? '/W4' : '/W0'];
+    if (noRuntime) args.push('/GS-', '/Zl');
+    return [...args, sourceName, `/Fo${objectName}`];
   }
   return ['-c', '-x', 'c', warnings ? '-Wall' : '-w', sourceName, '-o', objectName];
 }
@@ -179,13 +224,62 @@ function invocationEvidence(name, run, extra = {}, redactions = []) {
   };
 }
 
+function windowsLinkSource({ broken = false } = {}) {
+  if (broken) {
+    return 'void missing_patch_poller_link_symbol(void); void __stdcall patch_poller_entry(void) { missing_patch_poller_link_symbol(); }\n';
+  }
+  return [
+    'typedef void* PP_HANDLE;',
+    'typedef unsigned long PP_DWORD;',
+    '__declspec(dllimport) PP_HANDLE __stdcall GetStdHandle(PP_DWORD);',
+    '__declspec(dllimport) int __stdcall WriteFile(PP_HANDLE, const void*, PP_DWORD, PP_DWORD*, void*);',
+    '__declspec(dllimport) void __stdcall ExitProcess(unsigned int);',
+    `void __stdcall patch_poller_entry(void) { const char message[] = "${EXECUTABLE_MARKER}\\n"; PP_DWORD written = 0; WriteFile(GetStdHandle((PP_DWORD)-11), message, (PP_DWORD)(sizeof(message)-1), &written, 0); ExitProcess(${EXECUTABLE_EXIT_CODE}); }`,
+    ''
+  ].join('\n');
+}
+
+function posixLinkSource({ broken = false } = {}) {
+  if (broken) return 'extern int missing_patch_poller_link_symbol(void); int main(void) { return missing_patch_poller_link_symbol(); }\n';
+  return `#include <stdio.h>\nint main(void) { fputs("${EXECUTABLE_MARKER}\\n", stdout); return ${EXECUTABLE_EXIT_CODE}; }\n`;
+}
+
+async function linkWindowsMsvc({ compiler, probeDir, env, sourcePath, sourceName, objectName, executableName, broken, redactions }) {
+  const sdk = await findWindowsSdkKernel32(env);
+  if (!compiler.linker || !sdk) {
+    return { unavailable: true, reason: !compiler.linker ? 'msvc-linker-unavailable' : 'windows-sdk-kernel32-unavailable' };
+  }
+  redactions.push(compiler.linker, path.dirname(compiler.linker), sdk.library, path.dirname(sdk.library));
+  await writeFile(sourcePath, windowsLinkSource({ broken }), 'utf8');
+  const compile = await runProcess(compiler.executable, compileArguments(compiler, sourceName, objectName, { noRuntime: true }), { cwd: probeDir, env });
+  if (compile.exitCode !== 0 || compile.timedOut) return { compile, sdk, link: null };
+  const link = await runProcess(compiler.linker, [
+    '/nologo', '/nodefaultlib', '/subsystem:console', '/entry:patch_poller_entry',
+    `/out:${executableName}`, objectName, sdk.library
+  ], { cwd: probeDir, env });
+  return { compile, sdk, link };
+}
+
+async function linkPosix({ compiler, probeDir, env, sourcePath, sourceName, executableName, broken }) {
+  await writeFile(sourcePath, posixLinkSource({ broken }), 'utf8');
+  const link = await runProcess(compiler.executable, [sourceName, '-o', executableName], { cwd: probeDir, env });
+  return { compile: null, sdk: null, link };
+}
+
+async function runLinkAttempt(options) {
+  if (process.platform === 'win32' && options.compiler.family === 'msvc') return linkWindowsMsvc(options);
+  return linkPosix(options);
+}
+
 export async function runNativeCompilerProbe({ workDir, env = process.env } = {}) {
   const root = path.resolve(workDir);
   const probeDir = path.join(root, 'native-compiler-probe');
   const sourceName = 'probe.c';
   const objectName = process.platform === 'win32' ? 'probe.obj' : 'probe.o';
+  const executableName = process.platform === 'win32' ? 'probe.exe' : 'probe-executable';
   const sourcePath = path.join(probeDir, sourceName);
   const objectPath = path.join(probeDir, objectName);
+  const executablePath = path.join(probeDir, executableName);
   const tests = [];
   await rm(probeDir, { recursive: true, force: true });
   await mkdir(probeDir, { recursive: true, mode: 0o700 });
@@ -263,11 +357,87 @@ export async function runNativeCompilerProbe({ workDir, env = process.env } = {}
       warningObserved: /warning/iu.test(warningText)
     }, redactions));
 
+    await rm(objectPath, { force: true });
+    await rm(executablePath, { force: true });
+    let linkAttempt = await runLinkAttempt({ compiler, probeDir, env, sourcePath, sourceName, objectName, executableName, broken: false, redactions });
+    if (linkAttempt.unavailable) {
+      tests.push({ name: 'native-linker-discovery', available: false, reason: linkAttempt.reason });
+      return {
+        protocol: 'patch-poller/result-v1', status: 'failed',
+        summary: `Native compiler ${compiler.family} passed, but the fixed local linker diagnostic could not resolve its required local linker components.`,
+        progress: [], tests, nextStep: null, blocker: linkAttempt.reason
+      };
+    }
+    if (linkAttempt.compile) tests.push(invocationEvidence('native-linker-valid-compile', linkAttempt.compile, {}, redactions));
+    const linkedExecutable = await exists(executablePath);
+    tests.push(invocationEvidence('native-linker-valid', linkAttempt.link, { executableCreated: linkedExecutable }, redactions));
+    if (!linkAttempt.link || linkAttempt.link.exitCode !== 0 || linkAttempt.link.timedOut || !linkedExecutable) {
+      return {
+        protocol: 'patch-poller/result-v1', status: 'failed',
+        summary: `Native linker for ${compiler.family} could not produce the valid executable probe.`,
+        progress: [], tests, nextStep: null, blocker: 'native-linker-valid-build-failed'
+      };
+    }
+
+    run = await runProcess(executablePath, [], { cwd: probeDir, env, timeoutMs: 10_000 });
+    const markerObserved = run.stdout.includes(EXECUTABLE_MARKER);
+    tests.push(invocationEvidence('native-executable-run', run, { markerObserved, expectedExitCode: EXECUTABLE_EXIT_CODE }, redactions));
+    if (run.timedOut || run.exitCode !== EXECUTABLE_EXIT_CODE || !markerObserved) {
+      return {
+        protocol: 'patch-poller/result-v1', status: 'failed',
+        summary: 'Linked native executable did not preserve the expected stdout marker and process exit code.',
+        progress: [], tests, nextStep: null, blocker: 'native-executable-run-failed'
+      };
+    }
+
+    await rm(objectPath, { force: true });
+    await rm(executablePath, { force: true });
+    linkAttempt = await runLinkAttempt({ compiler, probeDir, env, sourcePath, sourceName, objectName, executableName, broken: true, redactions });
+    if (linkAttempt.compile) tests.push(invocationEvidence('native-linker-error-compile', linkAttempt.compile, {}, redactions));
+    const linkerErrorText = `${linkAttempt.link?.stdout ?? ''}\n${linkAttempt.link?.stderr ?? ''}`;
+    const linkerDiagnosticObserved = Boolean(linkAttempt.link) && linkAttempt.link.exitCode !== 0 && /(?:unresolved external|undefined reference|undefined symbol|LNK20\d\d|linker command failed|ld: error)/iu.test(linkerErrorText);
+    if (linkAttempt.link) tests.push(invocationEvidence('native-linker-intentional-error', linkAttempt.link, { diagnosticObserved: linkerDiagnosticObserved }, redactions));
+    if (!linkAttempt.link || linkAttempt.link.exitCode === 0 || linkAttempt.link.timedOut || !linkerDiagnosticObserved) {
+      return {
+        protocol: 'patch-poller/result-v1', status: 'failed',
+        summary: `Native linker for ${compiler.family} did not produce trustworthy diagnostics for the intentional unresolved symbol.`,
+        progress: [], tests, nextStep: null, blocker: 'native-linker-diagnostic-missing'
+      };
+    }
+
+    await rm(objectPath, { force: true });
+    await rm(executablePath, { force: true });
+    linkAttempt = await runLinkAttempt({ compiler, probeDir, env, sourcePath, sourceName, objectName, executableName, broken: false, redactions });
+    if (linkAttempt.compile) tests.push(invocationEvidence('native-linker-repair-compile', linkAttempt.compile, {}, redactions));
+    const repairedExecutable = await exists(executablePath);
+    tests.push(invocationEvidence('native-linker-repair', linkAttempt.link, { executableCreated: repairedExecutable }, redactions));
+    if (!linkAttempt.link || linkAttempt.link.exitCode !== 0 || linkAttempt.link.timedOut || !repairedExecutable) {
+      return {
+        protocol: 'patch-poller/result-v1', status: 'failed',
+        summary: `Native linker for ${compiler.family} did not recover after the intentional linker failure.`,
+        progress: [], tests, nextStep: null, blocker: 'native-linker-repair-failed'
+      };
+    }
+
+    run = await runProcess(executablePath, [], { cwd: probeDir, env, timeoutMs: 10_000 });
+    const repairMarkerObserved = run.stdout.includes(EXECUTABLE_MARKER);
+    tests.push(invocationEvidence('native-linker-repair-run', run, { markerObserved: repairMarkerObserved, expectedExitCode: EXECUTABLE_EXIT_CODE }, redactions));
+    if (run.timedOut || run.exitCode !== EXECUTABLE_EXIT_CODE || !repairMarkerObserved) {
+      return {
+        protocol: 'patch-poller/result-v1', status: 'failed',
+        summary: 'Repaired native executable did not preserve the expected stdout marker and process exit code.',
+        progress: [], tests, nextStep: null, blocker: 'native-linker-repair-run-failed'
+      };
+    }
+
     return {
       protocol: 'patch-poller/result-v1',
       status: 'complete',
-      summary: `Native compiler durability probe completed with ${compiler.family}: valid compile, intentional diagnostic failure, and repaired compile all behaved correctly.`,
-      progress: ['Compiler failure was treated as test evidence and the same probe workspace recovered successfully.'],
+      summary: `Native toolchain durability probe completed with ${compiler.family}: compiler error recovery, linker error recovery, and executable stdout/exit propagation all behaved correctly.`,
+      progress: [
+        'Compiler failure was treated as test evidence and the same probe workspace recovered successfully.',
+        'Linker failure was treated as test evidence and the same probe workspace relinked and executed successfully.'
+      ],
       tests,
       nextStep: null,
       blocker: null

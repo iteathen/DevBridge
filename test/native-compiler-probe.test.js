@@ -18,7 +18,7 @@ test('built-in native compiler profile is fixed, shell-free, and validates stand
   assert.equal(validated.sandbox.network, 'deny');
 });
 
-test('native compiler probe recovers in one workspace after an intentional syntax error', async (t) => {
+test('native toolchain probe recovers compiler and linker failures in one workspace', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-native-compiler-'));
   try {
     const result = await runNativeCompilerProbe({ workDir: root, env: process.env });
@@ -35,6 +35,17 @@ test('native compiler probe recovers in one workspace after an intentional synta
     assert.equal(byName.get('native-compiler-intentional-error')?.diagnosticObserved, true);
     assert.equal(byName.get('native-compiler-repair')?.exitCode, 0);
     assert.equal(byName.get('native-compiler-repair')?.objectCreated, true);
+
+    assert.equal(byName.get('native-linker-valid')?.exitCode, 0);
+    assert.equal(byName.get('native-linker-valid')?.executableCreated, true);
+    assert.equal(byName.get('native-executable-run')?.exitCode, 17);
+    assert.equal(byName.get('native-executable-run')?.markerObserved, true);
+    assert.notEqual(byName.get('native-linker-intentional-error')?.exitCode, 0);
+    assert.equal(byName.get('native-linker-intentional-error')?.diagnosticObserved, true);
+    assert.equal(byName.get('native-linker-repair')?.exitCode, 0);
+    assert.equal(byName.get('native-linker-repair')?.executableCreated, true);
+    assert.equal(byName.get('native-linker-repair-run')?.exitCode, 17);
+    assert.equal(byName.get('native-linker-repair-run')?.markerObserved, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

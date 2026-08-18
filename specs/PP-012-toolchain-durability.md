@@ -72,7 +72,7 @@ The normal recovery sequence is:
 
 An intentional failure injected by a durability test is successful test evidence, not a task failure.
 
-Missing/broken compiler installation, inaccessible locally configured toolchain, corrupt build infrastructure, or policy-denied compilation is `INFRASTRUCTURE` or `POLICY_SECURITY` as appropriate, not proposal `CODE`.
+Missing/broken compiler or linker installation, inaccessible locally configured toolchain, corrupt build infrastructure, or policy-denied compilation/linking is `INFRASTRUCTURE` or `POLICY_SECURITY` as appropriate, not proposal `CODE`.
 
 ## Toolchain discovery
 
@@ -80,24 +80,31 @@ Machine-specific compiler/build paths are local authority.
 
 Remote task text may request a compiler/build test but may not grant or choose arbitrary executable paths. Toolchain paths come from trusted local configuration or locally constrained discovery owned by PATCH-POLLER.
 
-No durability test may install a compiler, mutate PATH globally, or weaken sandboxing merely to make the test pass.
+No durability test may install a compiler, linker, SDK, or build system, mutate PATH globally, or weaken sandboxing merely to make the test pass.
 
-### Built-in native compiler diagnostic
+### Built-in native toolchain diagnostic
 
-PATCH-POLLER may expose an enumerated built-in local profile named `patch-poller-native-compiler`. This profile is part of the trusted control plane, not a coding/model profile.
+PATCH-POLLER exposes an enumerated built-in local profile named `patch-poller-native-compiler`. The historical profile name is retained, but the profile validates the native compile/link/execute chain and is part of the trusted control plane, not a coding/model profile.
 
 Selecting that exact profile requests a fixed diagnostic only. Remote content cannot supply or alter:
 
-- compiler executable paths;
-- compiler arguments;
+- compiler or linker executable paths;
+- compiler or linker arguments;
+- SDK/library paths;
 - environment-variable values;
 - shell commands;
 - discovery roots;
 - output paths outside PATCH-POLLER's reserved run directory.
 
-The diagnostic locally discovers only constrained native C compiler candidates, runs with `shell:false`, performs no network access, and compiles only PATCH-POLLER-generated temporary source in the reserved run directory. It must execute the sequence valid compile -> intentional syntax failure -> repair -> valid compile in the same probe workspace and then remove its temporary compiler artifacts.
+The diagnostic locally discovers only constrained native C toolchain candidates, runs with `shell:false`, performs no network access, and operates only on PATCH-POLLER-generated temporary source, objects, executables, and runtime files in the reserved run directory.
 
-On Windows, locally constrained discovery may use the standard Visual Studio Installer `vswhere.exe` location derived from local environment and the VC toolset layout returned by that trusted local discovery. On POSIX systems, discovery may use bounded compiler names resolved from the locally supplied PATH. The remote task never supplies those paths.
+It must execute these stateful recovery sequences in one probe workspace:
+
+1. valid compile -> intentional syntax failure -> repair -> valid compile;
+2. valid link -> execute and verify a fixed stdout marker plus process exit code;
+3. intentional unresolved-symbol link failure -> repair -> valid relink -> execute and verify the same marker/exit code.
+
+On Windows, locally constrained discovery may use the standard Visual Studio Installer `vswhere.exe` location derived from local environment, the VC toolset layout returned by that trusted local discovery, and a locally discovered Windows SDK import library. A custom no-CRT test entry point may be linked using fixed `/ENTRY`, `/SUBSYSTEM`, and `/NODEFAULTLIB` controls so the probe does not depend on a mutable developer-shell environment. On POSIX systems, discovery may use bounded compiler names resolved from the locally supplied PATH and the compiler driver for linking. The remote task never supplies those paths or flags.
 
 The built-in profile name is reserved and cannot be shadowed by local JSON tool configuration.
 
@@ -107,6 +114,8 @@ Every recovery attempt should retain enough bounded evidence to distinguish:
 
 - original proposal failure;
 - repair attempt;
+- compiler failure versus linker failure;
+- executable/runtime failure;
 - tool/wrapper failure;
 - transient availability failure;
 - final verification result.
@@ -124,7 +133,8 @@ Tests must cover at least:
 - the observed model-capacity condition without a structured result is classified transient and retried only within bounded run budget;
 - unrelated nonzero tool exits remain terminal/tool failures;
 - compiler success -> intentional syntax failure -> diagnostic capture -> repair -> successful rebuild in one workspace;
-- the built-in native compiler diagnostic uses only its fixed local profile and does not invoke a coding model;
+- linker success -> executable marker/exit verification -> intentional unresolved-symbol failure -> repair -> relink -> re-execute in one workspace;
+- the built-in native toolchain diagnostic uses only its fixed local profile and does not invoke a coding model;
 - compiler/linker/build/test failures are distinguishable from toolchain infrastructure failure;
 - interrupted build/retest leaves bounded evidence and recoverable workspace state;
 - all non-destructive durability probes finish with their temporary artifacts removed and expected Git state restored.
