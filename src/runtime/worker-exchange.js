@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { chmod, lstat, mkdir, open, readFile, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { PolicyError } from '../errors.js';
@@ -11,6 +11,7 @@ export const WORKER_RESULT_FILE = '/run/patch-poller-exchange/result.json';
 
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const DEFAULT_RESULT_LIMIT = 1_048_576;
+const MANIFEST_LIMIT = 64 * 1024;
 
 function sha256(text) {
   return createHash('sha256').update(text, 'utf8').digest('hex');
@@ -28,15 +29,12 @@ function identityOf(info) {
   return {
     dev: String(info.dev),
     ino: String(info.ino),
-    birthtimeNs: String(info.birthtimeNs ?? 0n),
   };
 }
 
 function sameIdentity(info, expected) {
   const actual = identityOf(info);
-  return actual.dev === expected.dev &&
-    actual.ino === expected.ino &&
-    actual.birthtimeNs === expected.birthtimeNs;
+  return actual.dev === expected.dev && actual.ino === expected.ino;
 }
 
 function expectedUid() {
@@ -105,7 +103,9 @@ async function readExactFile(candidate, expectedIdentity) {
   const handle = await openReadNoFollow(candidate);
   try {
     const opened = await handle.stat({ bigint: true });
-    assertFile(opened, candidate);
+    if (!opened.isFile()) throw new PolicyError(`${candidate} must remain a regular file while opened`);
+    assertOwned(opened, candidate);
+    assertPrivateMode(opened, candidate);
     if (!sameIdentity(opened, expectedIdentity) || !sameIdentity(before, expectedIdentity)) {
       throw new PolicyError(`${candidate} changed identity during privileged worker-exchange read`);
     }
@@ -116,11 +116,28 @@ async function readExactFile(candidate, expectedIdentity) {
 }
 
 async function readControlManifest(candidate) {
-  const info = await secureStat(candidate, 'file');
-  if (info.size > 64n * 1024n) throw new PolicyError('worker-exchange manifest exceeds the control-plane size bound');
+  const before = await secureStat(candidate, 'file');
+  if (before.size > BigInt(MANIFEST_LIMIT)) throw new PolicyError('worker-exchange manifest exceeds the control-plane size bound');
+  const expectedIdentity = identityOf(before);
+  const handle = await openReadNoFollow(candidate);
+  let text;
+  try {
+    const opened = await handle.stat({ bigint: true });
+    if (!opened.isFile()) throw new PolicyError('worker-exchange manifest must remain a regular file while opened');
+    assertOwned(opened, candidate);
+    assertPrivateMode(opened, candidate);
+    if (!sameIdentity(opened, expectedIdentity)) {
+      throw new PolicyError('worker-exchange manifest changed identity during privileged read');
+    }
+    if (opened.size > BigInt(MANIFEST_LIMIT)) throw new PolicyError('worker-exchange manifest exceeds the control-plane size bound');
+    text = await handle.readFile({ encoding: 'utf8' });
+  } finally {
+    await handle.close();
+  }
+
   let parsed;
   try {
-    parsed = JSON.parse(await readFile(candidate, 'utf8'));
+    parsed = JSON.parse(text);
   } catch (error) {
     throw new PolicyError('worker-exchange manifest is malformed', { cause: error });
   }
