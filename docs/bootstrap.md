@@ -16,7 +16,7 @@ The launcher:
 4. never overwrites an existing operator config;
 5. on later runs, executes `doctor` first and then starts `daemon`.
 
-The first-run config keeps execution disabled. Review its coding-tool profile and sandbox behavior, set `PATCH_POLLER_GITHUB_TOKEN`, and enable execution only when the local policy is ready. Then run the same command again.
+The first-run config keeps execution disabled. Review its coding-tool profile and sandbox behavior before enabling execution. GitHub authentication defaults to local `auto` mode: PATCH-POLLER checks `PATCH_POLLER_GITHUB_TOKEN`, `GH_TOKEN`, then `GITHUB_TOKEN`; if none is present it can reuse the active GitHub CLI credential for `github.com`. The selected source is reported by `doctor` without printing the token, and the token is never inherited by the coding tool. Existing configs that still contain `github.tokenEnv` remain compatible and use that variable first, followed by the standard fallbacks.
 
 For a single controlled cycle instead of the daemon:
 
@@ -45,11 +45,12 @@ Other supported commands are `doctor` and `poll-once`. `--no-update` uses the al
 This launcher is an alpha-testing convenience, not the final release-integrity mechanism.
 
 - The source repository is fixed to `https://github.com/iteathen/PATCH-POLLER.git` in the launcher. There is intentionally no remote-repository or arbitrary-ref argument.
-- Remote tasks and repository content cannot select the update channel, local runtime root, operator config, executable, or environment authority.
+- Remote tasks and repository content cannot select the update channel, local runtime root, operator config, executable, environment authority, or GitHub credential source.
 - Bootstrap Git operations suppress system/global Git configuration, hooks, credential helpers, interactive prompting, SSH-agent variables, and `file`/`ext` transports.
 - The managed runtime must have the expected origin and a clean worktree before it is updated. The launcher refuses to overwrite a modified runtime automatically.
 - The operator config is stored outside the managed runtime and is never replaced by an update.
 - Child PATCH-POLLER CLI execution uses the current Node executable with `shell: false`.
+- PATCH-POLLER GitHub credentials stay in the control plane and are not copied into coding-tool environments or context capsules.
 - Daemon control uses the random token already bound to the local daemon lock; remote task content cannot manufacture or authorize daemon-control requests.
 
 The `testing` and `stable` channels are mutable Git branches. Following them means deliberately accepting newer code from the trusted PATCH-POLLER repository. That is appropriate for the present v0.1 test loop, but unattended production deployment should move to an immutable, digest-bound/signature-verified release channel before being represented as production-safe.
