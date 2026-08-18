@@ -65,6 +65,8 @@ export class DeterministicProcessRunner {
     let spawnArgs = args;
     let spawnCwd = cwd;
     let spawnEnv = env;
+    let spawnExtraStdio = [];
+    let releasePreparedLaunch = null;
     let sandboxEvidence = {
       required: false,
       provider: 'host',
@@ -95,14 +97,33 @@ export class DeterministicProcessRunner {
       if (!prepared?.evidence?.verified) {
         throw new PolicyError('repository-code execution refused because sandbox enforcement was not verified');
       }
+      if (prepared.extraStdio != null && !Array.isArray(prepared.extraStdio)) {
+        throw new PolicyError('sandbox provider returned invalid extra stdio descriptors');
+      }
+      if (prepared.release != null && typeof prepared.release !== 'function') {
+        throw new PolicyError('sandbox provider returned an invalid release hook');
+      }
       spawnExecutable = prepared.executable;
       spawnArgs = prepared.args;
       spawnCwd = prepared.cwd;
       spawnEnv = prepared.env;
+      spawnExtraStdio = prepared.extraStdio ?? [];
+      releasePreparedLaunch = prepared.release ?? null;
       sandboxEvidence = { required: true, executionClass, ...prepared.evidence };
     }
 
-    const child = spawn(spawnExecutable, spawnArgs, containedSpawnOptions({ cwd: spawnCwd, env: spawnEnv, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
+    let child;
+    try {
+      child = spawn(spawnExecutable, spawnArgs, containedSpawnOptions({
+        cwd: spawnCwd,
+        env: spawnEnv,
+        shell: false,
+        stdio: ['pipe', 'pipe', 'pipe', ...spawnExtraStdio],
+      }));
+    } catch (error) {
+      if (releasePreparedLaunch) await releasePreparedLaunch();
+      throw error;
+    }
     const startedAtMs = Date.now();
     const startedAt = new Date(startedAtMs).toISOString();
     const deadlineAt = new Date(startedAtMs + timeoutMs).toISOString();
@@ -177,6 +198,7 @@ export class DeterministicProcessRunner {
       clearTimeout(timer);
       if (heartbeat) clearInterval(heartbeat);
       if (termination) await termination;
+      if (releasePreparedLaunch) await releasePreparedLaunch();
     });
 
     emitActivity('finished', { force: true, processAlive: false });
