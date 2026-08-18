@@ -24,52 +24,28 @@ function serializedSize(value) {
   }
 }
 
-export function parseToolResult(raw, {
-  exitCode = 0,
-  timedOut = false,
-  resultParseError = null,
-  stdout = '',
-  stderr = ''
-} = {}) {
-  if (timedOut) {
-    return {
-      protocol: 'patch-poller/result-v1',
-      status: 'failed',
-      summary: 'Local coding tool timed out.',
-      progress: [],
-      tests: [],
-      nextStep: null,
-      blocker: 'tool-timeout',
-      inferred: true
-    };
-  }
-  if (resultParseError) {
-    throw new ProtocolError(`local coding tool produced malformed structured result: ${resultParseError}`);
-  }
-  if (exitCode !== 0) {
-    return {
-      protocol: 'patch-poller/result-v1',
-      status: 'failed',
-      summary: `Local coding tool exited with code ${exitCode}. ${tail(stderr || stdout)}`.trim(),
-      progress: [],
-      tests: [],
-      nextStep: null,
-      blocker: 'tool-exit',
-      inferred: true
-    };
-  }
-  if (raw == null) {
-    return {
-      protocol: 'patch-poller/result-v1',
-      status: 'complete',
-      summary: `Local coding tool exited successfully without a structured result.${stdout ? ` Output tail: ${tail(stdout)}` : ''}`,
-      progress: [],
-      tests: [],
-      nextStep: null,
-      blocker: null,
-      inferred: true
-    };
-  }
+function toolFailure(summary, blocker) {
+  return {
+    protocol: 'patch-poller/result-v1',
+    status: 'failed',
+    summary,
+    progress: [],
+    tests: [],
+    nextStep: null,
+    blocker,
+    checkpoint: null,
+    inferred: true
+  };
+}
+
+function protocolFailure(detail) {
+  return toolFailure(
+    `Local coding tool produced an invalid patch-poller/result-v1 envelope: ${tail(detail)}`,
+    'tool-protocol'
+  );
+}
+
+function parseStructuredResult(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ProtocolError('tool result must be an object');
   if (raw.protocol !== 'patch-poller/result-v1') throw new ProtocolError('tool result protocol must be patch-poller/result-v1');
   if (!STATUSES.has(raw.status)) throw new ProtocolError('tool result status is invalid');
@@ -102,4 +78,41 @@ export function parseToolResult(raw, {
     checkpoint,
     inferred: false
   };
+}
+
+export function parseToolResult(raw, {
+  exitCode = 0,
+  timedOut = false,
+  resultParseError = null,
+  stdout = '',
+  stderr = ''
+} = {}) {
+  if (timedOut) return toolFailure('Local coding tool timed out.', 'tool-timeout');
+  if (resultParseError) return protocolFailure(`malformed JSON/result file: ${resultParseError}`);
+  if (exitCode !== 0) {
+    return toolFailure(
+      `Local coding tool exited with code ${exitCode}. ${tail(stderr || stdout)}`.trim(),
+      'tool-exit'
+    );
+  }
+  if (raw == null) {
+    return {
+      protocol: 'patch-poller/result-v1',
+      status: 'complete',
+      summary: `Local coding tool exited successfully without a structured result.${stdout ? ` Output tail: ${tail(stdout)}` : ''}`,
+      progress: [],
+      tests: [],
+      nextStep: null,
+      blocker: null,
+      checkpoint: null,
+      inferred: true
+    };
+  }
+
+  try {
+    return parseStructuredResult(raw);
+  } catch (error) {
+    if (error instanceof ProtocolError) return protocolFailure(error.message);
+    throw error;
+  }
 }
