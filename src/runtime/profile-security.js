@@ -2,6 +2,34 @@ import { boundedSandboxReason } from './sandbox-status.js';
 
 const OUTER_NETWORK_MODES = new Set(['deny', 'unrestricted']);
 
+export function enforcementProviderReport(providerStatus = null) {
+  const status = providerStatus ?? {};
+  const probeFailed = status.verification === 'boundary-probe-failed';
+  const boundaryProbe = status.boundaryProbe == null
+    ? null
+    : {
+        ...status.boundaryProbe,
+        attempted: probeFailed || status.boundaryProbe.attempted === true,
+        verified: status.verified === true && status.boundaryProbe.verified === true,
+      };
+  return {
+    requestedProvider: status.requestedProvider ?? null,
+    provider: status.provider ?? 'none',
+    platform: status.platform ?? process.platform,
+    available: status.available ?? false,
+    verified: status.verified === true,
+    verification: status.verification ?? 'unavailable',
+    repositoryCodeExecution: status.repositoryCodeExecution === true,
+    filesystem: status.filesystem ?? 'unverified',
+    network: status.network ?? 'unverified',
+    gitAdministrativeState: status.gitAdministrativeState ?? 'unverified',
+    processTree: status.processTree ?? 'unverified',
+    boundaryProbe,
+    verifiedAt: status.verifiedAt ?? null,
+    reason: status.reason ?? null,
+  };
+}
+
 function observedNetwork(profile, providerStatus) {
   if (profile.sandbox.network === 'restricted') return 'unsupported-request';
   if (providerStatus?.verified !== true) return providerStatus?.network ?? 'unverified';
@@ -32,25 +60,23 @@ export function declaredProfilePolicy(profile) {
 }
 
 export function profileSecurityDescription(profile, providerStatus = null) {
-  const reason = unsatisfiedReason(profile, providerStatus);
-  const verified = providerStatus?.verified === true;
+  const provider = enforcementProviderReport(providerStatus);
+  const reason = unsatisfiedReason(profile, provider);
   return {
     declaredPolicy: declaredProfilePolicy(profile),
     enforcement: {
       required: true,
-      provider: providerStatus?.provider ?? 'none',
-      requestedProvider: providerStatus?.requestedProvider ?? null,
-      available: providerStatus?.available ?? false,
-      verified,
-      verification: providerStatus?.verification ?? 'unavailable',
+      provider: provider.provider,
+      requestedProvider: provider.requestedProvider,
+      available: provider.available,
+      verified: provider.verified,
+      verification: provider.verification,
       usable: reason == null,
-      filesystem: verified ? providerStatus.filesystem : (providerStatus?.filesystem ?? 'unverified'),
-      network: observedNetwork(profile, providerStatus),
-      gitAdministrativeState: verified
-        ? providerStatus.gitAdministrativeState
-        : (providerStatus?.gitAdministrativeState ?? 'unverified'),
-      processTree: providerStatus?.processTree ?? 'unverified',
-      boundaryProbe: providerStatus?.boundaryProbe ?? null,
+      filesystem: provider.filesystem,
+      network: observedNetwork(profile, provider),
+      gitAdministrativeState: provider.gitAdministrativeState,
+      processTree: provider.processTree,
+      boundaryProbe: provider.boundaryProbe,
       reason: reason == null ? null : boundedSandboxReason(reason),
     },
   };
