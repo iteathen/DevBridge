@@ -1,3 +1,4 @@
+import { closeSync, openSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -6,6 +7,7 @@ import process from 'node:process';
 import { PolicyError } from '../errors.js';
 import { resolveExecutable } from './executable-resolver.js';
 import { BUBBLEWRAP_PROBE_SCRIPT, captureSandboxProbeProcess } from './bubblewrap-probe.js';
+import { buildNetworkDenySeccompFilter, networkSeccompDescriptor } from './network-seccomp.js';
 import {
   boundedSandboxReason,
   pendingBubblewrapStatus,
@@ -177,6 +179,30 @@ export class BubblewrapSandboxProvider {
     return null;
   }
 
+  async #openNetworkSeccompProgram() {
+    networkSeccompDescriptor(process.arch);
+    await mkdir(this.#stateDirectory, { recursive: true, mode: 0o700 });
+    const filterPath = path.join(this.#stateDirectory, `.sandbox-network-deny-${randomUUID()}.bpf`);
+    await writeFile(filterPath, buildNetworkDenySeccompFilter(process.arch), { flag: 'wx', mode: 0o600 });
+    let fd;
+    try {
+      fd = openSync(filterPath, 'r');
+    } catch (error) {
+      await rm(filterPath, { force: true }).catch(() => {});
+      throw error;
+    }
+    let released = false;
+    return {
+      fd,
+      release: async () => {
+        if (released) return;
+        released = true;
+        closeSync(fd);
+        await rm(filterPath, { force: true }).catch(() => {});
+      },
+    };
+  }
+
   async #buildLaunch({ executable, args, cwd, env, sandbox }) {
     if (!path.isAbsolute(executable)) throw new PolicyError('sandboxed executable must be an absolute locally resolved path');
     const project = await canonicalExisting(sandbox.projectDir, 'sandbox project root');
@@ -200,6 +226,7 @@ export class BubblewrapSandboxProvider {
     const readRoots = await this.#canonicalReadRoots(executable);
     const bwrapArgs = [
       '--unshare-all',
+      '--share-net',
       '--new-session',
       '--die-with-parent',
       '--clearenv',
@@ -238,8 +265,16 @@ export class BubblewrapSandboxProvider {
       bwrapArgs.push('--setenv', name, text);
     }
 
-    bwrapArgs.push('--chdir', cwdResolved, '--', executable, ...args);
-    return { executable: this.#resolvedExecutable, args: bwrapArgs, cwd: '/', env: {} };
+    const seccomp = await this.#openNetworkSeccompProgram();
+    bwrapArgs.push('--seccomp', '3', '--chdir', cwdResolved, '--', executable, ...args);
+    return {
+      executable: this.#resolvedExecutable,
+      args: bwrapArgs,
+      cwd: '/',
+      env: {},
+      extraStdio: [seccomp.fd],
+      release: seccomp.release,
+    };
   }
 
   async #verifyOnce() {
@@ -260,12 +295,13 @@ export class BubblewrapSandboxProvider {
       return this.inspect();
     }
     try {
+      networkSeccompDescriptor(process.arch);
       this.#resolvedExecutable = await resolveExecutable(this.#configuredExecutable, this.#env);
-    } catch {
+    } catch (error) {
       this.#status = unavailableSandboxStatus({
         requestedProvider: this.#requestedProvider,
         provider: 'bubblewrap',
-        reason: 'bubblewrap executable is not available from local operator configuration/PATH',
+        reason: boundedSandboxReason(error?.message ?? 'bubblewrap executable or local network filter is unavailable'),
       });
       return this.inspect();
     }
@@ -296,7 +332,12 @@ export class BubblewrapSandboxProvider {
         env: { PATH: this.#env.PATH ?? '', CI: '1' },
         sandbox: { projectDir, scratchRoot: scratchDir },
       });
-      const outcome = await captureSandboxProbeProcess(launch.executable, launch.args, { cwd: launch.cwd, env: launch.env });
+      const outcome = await captureSandboxProbeProcess(launch.executable, launch.args, {
+        cwd: launch.cwd,
+        env: launch.env,
+        extraStdio: launch.extraStdio,
+        release: launch.release,
+      });
       let observation = null;
       try { observation = JSON.parse(outcome.stdout.trim()); } catch { observation = null; }
       const passed = outcome.code === 0 && !outcome.timedOut && !outcome.truncated && observation &&
@@ -358,6 +399,7 @@ export class BubblewrapSandboxProvider {
         verification: status.verification,
         filesystem: status.filesystem,
         network: status.network,
+        networkMechanism: 'seccomp-cbpf',
         gitAdministrativeState: status.gitAdministrativeState,
       },
     };
