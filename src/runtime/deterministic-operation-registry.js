@@ -29,8 +29,8 @@ function projectPath(projectDir, relative, name) {
 
 function localEnvironment() {
   const pass = process.platform === 'win32'
-    ? ['PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'SystemDrive', 'TEMP', 'TMP', 'TMPDIR', 'USERPROFILE']
-    : ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP'];
+    ? ['PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'SystemDrive', 'TEMP', 'TMP', 'TMPDIR']
+    : ['PATH', 'TMPDIR', 'TMP', 'TEMP'];
   return { pass, set: { CI: '1' } };
 }
 
@@ -77,6 +77,18 @@ function observedResult(stdout, stderr = '', exitCode = 0) {
     startedAt: now,
     finishedAt: now,
     lastOutputAt: stdout || stderr ? now : null,
+    sandboxProvider: 'not-required',
+  };
+}
+
+function repositorySandbox(projectDir, writableRoots = []) {
+  return {
+    required: true,
+    projectRoot: projectDir,
+    projectWritable: false,
+    writableRoots,
+    readOnlyRoots: [],
+    network: 'deny',
   };
 }
 
@@ -89,13 +101,30 @@ export class DeterministicOperationRegistry {
     if (!adapter || typeof adapter.validate !== 'function' || typeof adapter.execute !== 'function') {
       throw new PolicyError(`registered operation ${name} must provide validate and execute`);
     }
-    this.#operations.set(name, adapter);
+    const executionClass = adapter.executionClass ?? 'static-inspection';
+    if (!['static-inspection', 'repository-code'].includes(executionClass)) throw new PolicyError(`registered operation ${name} has invalid executionClass`);
+    const sandboxRequirement = adapter.sandboxRequirement ?? (executionClass === 'repository-code' ? 'verified' : 'none');
+    if (!['none', 'verified'].includes(sandboxRequirement)) throw new PolicyError(`registered operation ${name} has invalid sandboxRequirement`);
+    this.#operations.set(name, { ...adapter, executionClass, sandboxRequirement });
     return this;
   }
 
   has(name) { return this.#operations.has(name); }
   names() { return [...this.#operations.keys()].sort(); }
-  describe() { return this.names().map((name) => ({ name, layer: this.#operations.get(name).layer ?? 'core' })); }
+
+  describe({ sandboxStatus = null } = {}) {
+    return this.names().map((name) => {
+      const operation = this.#operations.get(name);
+      const needsSandbox = operation.sandboxRequirement === 'verified';
+      return {
+        name,
+        layer: operation.layer ?? 'core',
+        executionClass: operation.executionClass,
+        sandboxRequirement: operation.sandboxRequirement,
+        usable: !needsSandbox || sandboxStatus?.verified === true,
+      };
+    });
+  }
 
   validate(name, params) {
     const adapter = this.#operations.get(name);
@@ -112,8 +141,11 @@ export class DeterministicOperationRegistry {
 }
 
 function nodeScriptAdapter({ mode }) {
+  const repositoryCode = mode === 'node.test';
   return {
     layer: 'core',
+    executionClass: repositoryCode ? 'repository-code' : 'static-inspection',
+    sandboxRequirement: repositoryCode ? 'verified' : 'none',
     validate(raw) {
       const params = objectParams(raw, mode);
       const allowed = mode === 'node.test' ? new Set(['paths']) : new Set(['path']);
@@ -136,6 +168,7 @@ function nodeScriptAdapter({ mode }) {
           environment: localEnvironment(),
           onActivity,
           operation: mode,
+          sandbox: repositorySandbox(projectDir),
         });
       }
       await access(projectPath(projectDir, params.path, `${mode} path`).resolved);
@@ -156,6 +189,8 @@ function nodeScriptAdapter({ mode }) {
 function toolchainProbeAdapter(toolchains) {
   return {
     layer: 'core',
+    executionClass: 'static-inspection',
+    sandboxRequirement: 'none',
     validate(raw) {
       const params = objectParams(raw, 'toolchain.probe');
       onlyKeys(params, new Set(['name']), 'toolchain.probe');
@@ -183,6 +218,8 @@ function toolchainProbeAdapter(toolchains) {
 function cmakeConfigureAdapter(toolchains) {
   return {
     layer: 'core',
+    executionClass: 'repository-code',
+    sandboxRequirement: 'verified',
     validate(raw) {
       const params = objectParams(raw, 'cmake.configure');
       onlyKeys(params, new Set(['sourcePath', 'buildId', 'buildType', 'generator', 'architecture']), 'cmake.configure');
@@ -212,6 +249,7 @@ function cmakeConfigureAdapter(toolchains) {
         environment: localEnvironment(),
         onActivity,
         operation: 'cmake.configure',
+        sandbox: repositorySandbox(projectDir, [buildDir]),
       });
     },
   };
@@ -220,6 +258,8 @@ function cmakeConfigureAdapter(toolchains) {
 function cmakeBuildAdapter(toolchains) {
   return {
     layer: 'core',
+    executionClass: 'repository-code',
+    sandboxRequirement: 'verified',
     validate(raw) {
       const params = objectParams(raw, 'cmake.build');
       onlyKeys(params, new Set(['buildId', 'config', 'target']), 'cmake.build');
@@ -244,6 +284,7 @@ function cmakeBuildAdapter(toolchains) {
         environment: localEnvironment(),
         onActivity,
         operation: 'cmake.build',
+        sandbox: repositorySandbox(projectDir, [buildDir]),
       });
     },
   };
@@ -252,6 +293,8 @@ function cmakeBuildAdapter(toolchains) {
 function ctestAdapter(toolchains) {
   return {
     layer: 'core',
+    executionClass: 'repository-code',
+    sandboxRequirement: 'verified',
     validate(raw) {
       const params = objectParams(raw, 'ctest.run');
       onlyKeys(params, new Set(['buildId', 'config']), 'ctest.run');
@@ -274,6 +317,7 @@ function ctestAdapter(toolchains) {
         environment: localEnvironment(),
         onActivity,
         operation: 'ctest.run',
+        sandbox: repositorySandbox(projectDir, [buildDir]),
       });
     },
   };
