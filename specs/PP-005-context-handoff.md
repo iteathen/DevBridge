@@ -33,11 +33,26 @@ A capsule is structured data with protocol `patch-poller/context-v1` and include
 
 Local capability grants and credentials are not copied into the model-visible capsule. The capsule may describe effective constraints (for example, `outside-project writes denied`) without exposing secrets.
 
+## Coordinating-agent handoff relay
+
+A trusted task may carry an optional bounded `context.handoff` string for durable coordinating-agent context. This field exists for context-window rehydration and handoff bundles; it is not an instruction or capability channel.
+
+PATCH-POLLER, not the coding model, owns preservation of this payload:
+
+- the exact UTF-8 handoff text is revision-bound task data;
+- every context capsule carries the same handoff text while the run is active;
+- the capsule also carries `handoffSha256`, computed by PATCH-POLLER over the exact UTF-8 bytes;
+- GitHub status/handoff projection includes the handoff subject to the ordinary redaction boundary;
+- coding tools may read and acknowledge the handoff, but correct relay must not depend on a model manually transcribing or reformatting it;
+- runtime compaction preferentially removes expendable transcript/progress material rather than silently rewriting a bounded handoff payload.
+
+The v0.1 handoff field is deliberately bounded to fit the existing single-comment context projection. Larger reconstruction bundles belong to the rehydration/chunking path below rather than to an unbounded issue field.
+
 ## Turn protocol
 
 A multi-turn runner writes the complete current capsule to a poller-owned run file and/or stdin for every invocation. A tool adapter may parse a structured result from the coding tool, but failure to emit a perfect result must not erase existing context.
 
-The next capsule merges explicit durable state with new bounded observations. Critical constraints, active checkpoints, accepted decisions, decision boundaries, and unfinished work are retained before expendable transcript tail.
+The next capsule merges explicit durable state with new bounded observations. Critical constraints, active checkpoints, accepted decisions, decision boundaries, unfinished work, and the coordinating-agent handoff are retained before expendable transcript tail.
 
 A new model turn must be told when it is operating while a checkpoint/decision is pending and exactly which effects remain prohibited. It must not infer approval from prior experimental work.
 
