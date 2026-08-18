@@ -1,3 +1,4 @@
+import { authoritySource, isUneditedAuthorityComment } from './authority-source.js';
 import { parseFeedbackEnvelope } from './feedback-envelope.js';
 
 export class IssueFeedbackSource {
@@ -27,17 +28,20 @@ export class IssueFeedbackSource {
       if (commentId <= afterCommentId) continue;
       highestCommentId = Math.max(highestCommentId, commentId);
       if (!this.#trustedActorIds.has(String(comment?.user?.id ?? ''))) continue;
+      if (!isUneditedAuthorityComment(comment)) continue;
 
       try {
         const feedback = parseFeedbackEnvelope(comment.body ?? '');
         if (feedback.runId !== runId || feedback.taskRevision !== taskRevision) continue;
+        const source = authoritySource(comment, { issueNumber });
         return {
           feedback: {
             ...feedback,
             commentId,
-            actorId: String(comment.user.id),
-            actorLogin: comment.user?.login ?? null,
-            createdAt: comment.created_at ?? null
+            actorId: source.actorId,
+            actorLogin: source.actorLogin,
+            createdAt: source.createdAt,
+            authority: source,
           },
           unchanged: false,
           highestCommentId
