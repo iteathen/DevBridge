@@ -48,6 +48,16 @@ PATCH-POLLER, not the coding model, owns preservation of this payload:
 
 The v0.1 handoff field is deliberately bounded to fit the existing single-comment context projection. Larger reconstruction bundles belong to the rehydration/chunking path below rather than to an unbounded issue field.
 
+## Coordinating-chat rollover specialization
+
+PP-014 (`specs/PP-014-context-rollover.md`) specializes this context contract for replacing the **coordinating chat/model session itself** rather than only replacing a subordinate coding-tool turn.
+
+That specialization adds a separate bounded `patch-poller/chat-handoff-v1` checkpoint containing exact Git/task identities, stable completed action IDs, one exact next action, governing-document digests, and durable evidence references. It is stored and verified by PATCH-POLLER before being advertised as resumable.
+
+PP-014 does not replace `patch-poller/context-v1`, does not make `context.handoff` unbounded, and does not create a second effect journal. The run/task context capsule remains the model-visible execution context; the chat handoff is a small controller-reconstruction index over durable run/Git/evidence state.
+
+If a governing document changed between coordinating sessions, a fresh controller must reread that document before the chat handoff can release its recorded next action. If the action is already observed complete, the fresh controller checkpoints again rather than inventing a later action.
+
 ## Turn protocol
 
 A multi-turn runner writes the complete current capsule to a poller-owned run file and/or stdin for every invocation. A tool adapter may parse a structured result from the coding tool, but failure to emit a perfect result must not erase existing context.

@@ -37,6 +37,16 @@
   "state": {
     "directory": "~/.patch-poller/state"
   },
+  "contextRollover": {
+    "enabled": true,
+    "unit": "bytes",
+    "capacityUnits": 1000000,
+    "softRatio": 0.55,
+    "preferredRatio": 0.65,
+    "hardRatio": 0.75,
+    "maxHandoffBytes": 32768,
+    "maxRetained": 8
+  },
   "git": {
     "executable": "git",
     "cloneBaseUrl": "https://github.com",

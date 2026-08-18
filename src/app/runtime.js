@@ -1,5 +1,8 @@
 import path from 'node:path';
 import { JsonStateStore } from '../state/json-state-store.js';
+import { stateFileName } from '../state/state-file.js';
+import { ChatHandoffStore } from '../context/chat-handoff.js';
+import { ContextBudgetManager } from '../context/context-budget.js';
 import { RateBudget } from '../github/rate-budget.js';
 import { GitHubRestClient } from '../github/rest-client.js';
 import { resolveGitHubCredential } from '../github/auth-provider.js';
@@ -19,12 +22,26 @@ import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
 import { LivenessProjectingPlanExecutor } from '../run/liveness-projecting-plan-executor.js';
 import { RunCoordinator } from '../run/run-coordinator.js';
 
-export function stateFileName(repository) { return `${repository.replace(/[^A-Za-z0-9_.-]+/g, '__')}.json`; }
+export { stateFileName } from '../state/state-file.js';
 
 export async function createRuntime(config, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
   const workspacePolicy = new WorkspacePolicy(config.workspace);
   await workspacePolicy.ensureRoot();
   const stateStore = new JsonStateStore(path.join(config.state.directory, stateFileName(config.github.queueRepository)));
+  const chatHandoffStore = new ChatHandoffStore({
+    stateStore,
+    maxBytes: config.contextRollover.maxHandoffBytes,
+    maxRetained: config.contextRollover.maxRetained,
+  });
+  const contextBudget = config.contextRollover.enabled
+    ? new ContextBudgetManager({
+        unit: config.contextRollover.unit,
+        capacityUnits: config.contextRollover.capacityUnits,
+        softRatio: config.contextRollover.softRatio,
+        preferredRatio: config.contextRollover.preferredRatio,
+        hardRatio: config.contextRollover.hardRatio,
+      })
+    : null;
   const rateBudget = new RateBudget(config.github.rateLimit);
   const credential = await resolveGitHubCredential(config.github.auth, { env });
   const tokenProvider = async () => credential?.token ?? null;
@@ -88,6 +105,8 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   return {
     config,
     stateStore,
+    chatHandoffStore,
+    contextBudget,
     rateBudget,
     client,
     taskSource,

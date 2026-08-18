@@ -6,17 +6,23 @@ import { doctor } from './app/doctor.js';
 import { pollOnce } from './app/poll-once.js';
 import { runOnce } from './app/run-once.js';
 import { runDaemon } from './app/daemon.js';
+import { chatHandoffSeed, chatHandoffStatus } from './app/chat-handoff.js';
 import { PolicyError } from './errors.js';
 import { daemonStatus, stopDaemon } from './runtime/daemon-lock.js';
 
 function usage() {
-  console.error('Usage: patch-poller <doctor|poll-once|run-once|daemon|status|stop|restart> --config <path>');
+  console.error('Usage: patch-poller <doctor|poll-once|run-once|daemon|status|stop|restart|handoff-status|handoff-seed> --config <path> [--repository owner/name]');
+}
+
+function optionValue(argv, name) {
+  const index = argv.indexOf(name);
+  if (index < 0 || !argv[index + 1]) return null;
+  return argv[index + 1];
 }
 
 function configPath(argv) {
-  const index = argv.indexOf('--config');
-  if (index < 0 || !argv[index + 1]) return null;
-  return path.resolve(argv[index + 1]);
+  const value = optionValue(argv, '--config');
+  return value ? path.resolve(value) : null;
 }
 
 function daemonLockPath(config) {
@@ -49,6 +55,21 @@ async function main() {
   }
 
   const config = await loadConfig(file);
+  const repository = optionValue(args, '--repository') ?? config.github.queueRepository;
+  if (command === 'handoff-status') {
+    console.log(JSON.stringify(await chatHandoffStatus(config, repository), null, 2));
+    return;
+  }
+  if (command === 'handoff-seed') {
+    const seed = await chatHandoffSeed(config, repository);
+    if (!seed) {
+      console.log(JSON.stringify({ ready: false, repository }));
+      process.exitCode = 3;
+      return;
+    }
+    console.log(seed);
+    return;
+  }
   if (command === 'status') {
     console.log(JSON.stringify(await daemonStatus(daemonLockPath(config)), null, 2));
     return;

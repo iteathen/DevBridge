@@ -50,6 +50,25 @@ For the PP-013 implementation campaign documented in `docs/handoffs/PP-HO-0818-0
 
 A controller plan is data, not a remote shell language. It may carry bounded project file proposals and reference locally registered deterministic operations with validated parameters, but it may not grant executable paths, raw shell fragments, arbitrary environment values, arbitrary local paths, arbitrary Git refs, cleanup roots, credentials, or capabilities.
 
+## Context rollover and fresh-controller recovery
+
+A chat/model context is disposable controller state. It must never become the only place where accepted project progress, durable decisions, exact Git identity, or the next intended action exists.
+
+PP-014 is normative for coordinating-agent context rollover:
+
+- checkpoint durable controller state before context pressure becomes a failure mode;
+- use bounded `patch-poller/chat-handoff-v1` state, not an unbounded transcript dump;
+- bind handoffs to exact repository/baseline/head/task identities and a whole-handoff SHA-256;
+- record stable completed action IDs and at most one exact `nextActionId`;
+- on fresh-context resume, observe/reconcile before acting;
+- if the recorded next action already happened, skip it and checkpoint rather than inventing the following action;
+- if governing `AGENTS.md`/spec digests changed, reread those exact documents before continuation;
+- context-budget thresholds are local operational policy and cannot grant machine capability;
+- checkpoint-and-proceed remains the default: a context checkpoint does not become a generic synchronous human gate;
+- large logs/diffs/test output belong behind bounded durable references rather than inside the handoff.
+
+For PP-014 implementation, do not use Codex, Spark, or another coding model unless the user explicitly changes that constraint. Read `specs/PP-014-context-rollover.md` with PP-005 and PP-009.
+
 ## Human checkpoints
 
 PP-007 is normative for human-in-the-loop behavior.
@@ -102,6 +121,8 @@ When implementing run coordination or human decision handling, read PP-001, PP-0
 
 When implementing controller plans, deterministic operation registry/toolchain behavior, baseline channels, self-update activation, cleanup, context receipts, no-op publication, fault injection, capability doctor, or liveness changes, read PP-013 together with PP-003, PP-008, PP-009, PP-010, PP-011, and PP-012.
 
+When implementing coordinating-chat rollover, budget pressure, durable chat handoffs, or fresh-context resume/reconciliation, read PP-014 together with PP-005 and PP-009. PP-014 specializes those existing contracts; it must not become a second effect journal or an unbounded transcript store.
+
 ## Runtime scope
 
 The core runtime is Node.js and should prefer Node standard-library facilities. Do not introduce another language, a shell-dependent core path, or a third-party dependency without documenting why the ownership boundary needs it and what new supply-chain or portability cost it creates.
@@ -129,6 +150,10 @@ Boundary tests are mandatory for:
 - transactional runtime candidate validation/activation with last-known-good preservation;
 - proof that no-diff tasks elide publication by default;
 - proof that context receipts bind to the exact input/task revision;
-- proof that capability doctor distinguishes PATCH-POLLER core behavior from external adapter behavior.
+- proof that capability doctor distinguishes PATCH-POLLER core behavior from external adapter behavior;
+- canonical bounded chat-handoff digests and rejection of authority-shaped/local-path fields;
+- two-phase chat-handoff replacement that preserves the prior verified checkpoint on interruption/corruption;
+- fresh-context resume that rejects stale Git/task identity, requires changed governing documents to be reread, and never repeats/invents action IDs;
+- deterministic context-budget soft/preferred/hard rollover thresholds.
 
 A passing happy-path test alone is not sufficient for a capability boundary.
