@@ -1,6 +1,7 @@
 import { ProtocolError } from '../errors.js';
 
 const STATUSES = new Set(['complete', 'continue', 'blocked', 'failed']);
+const TRANSIENT_CAPACITY_RE = /selected model is at capacity\.\s*please try a different model\./iu;
 
 function boundedString(value, name, max = 20_000, required = false) {
   if (value == null && !required) return null;
@@ -24,7 +25,7 @@ function serializedSize(value) {
   }
 }
 
-function toolFailure(summary, blocker) {
+function toolFailure(summary, blocker, extra = {}) {
   return {
     protocol: 'patch-poller/result-v1',
     status: 'failed',
@@ -34,7 +35,8 @@ function toolFailure(summary, blocker) {
     nextStep: null,
     blocker,
     checkpoint: null,
-    inferred: true
+    inferred: true,
+    ...extra
   };
 }
 
@@ -43,6 +45,22 @@ function protocolFailure(detail) {
     `Local coding tool produced an invalid patch-poller/result-v1 envelope: ${tail(detail)}`,
     'tool-protocol'
   );
+}
+
+function transientCapacityResult(detail) {
+  return {
+    protocol: 'patch-poller/result-v1',
+    status: 'continue',
+    summary: 'Local coding tool reported a transient model-capacity condition; retrying from durable context within the existing turn budget.',
+    progress: [`Transient tool evidence: ${tail(detail)}`],
+    tests: [],
+    nextStep: 'Retry the same task from the durable PATCH-POLLER context without broadening scope or capabilities.',
+    blocker: null,
+    checkpoint: null,
+    inferred: true,
+    retryable: true,
+    failureClassification: 'TRANSIENT'
+  };
 }
 
 function parseStructuredResult(raw) {
@@ -80,6 +98,20 @@ function parseStructuredResult(raw) {
   };
 }
 
+function preserveStructuredResult(result, { exitCode, timedOut }) {
+  if (!timedOut && exitCode === 0) return result;
+  const evidence = timedOut
+    ? 'Tool process timed out after writing this structured result; PATCH-POLLER preserved the result and will still independently validate the workspace.'
+    : `Tool process exited with code ${exitCode} after writing this structured result; PATCH-POLLER preserved the result and will still independently validate the workspace.`;
+  return {
+    ...result,
+    progress: [...result.progress, evidence].slice(-100),
+    processExitMismatch: true,
+    processExitCode: exitCode,
+    processTimedOut: timedOut
+  };
+}
+
 export function parseToolResult(raw, {
   exitCode = 0,
   timedOut = false,
@@ -87,32 +119,39 @@ export function parseToolResult(raw, {
   stdout = '',
   stderr = ''
 } = {}) {
-  if (timedOut) return toolFailure('Local coding tool timed out.', 'tool-timeout');
   if (resultParseError) return protocolFailure(`malformed JSON/result file: ${resultParseError}`);
+
+  if (raw != null) {
+    let structured;
+    try {
+      structured = parseStructuredResult(raw);
+    } catch (error) {
+      if (error instanceof ProtocolError) return protocolFailure(error.message);
+      throw error;
+    }
+    return preserveStructuredResult(structured, { exitCode, timedOut });
+  }
+
+  if (timedOut) return toolFailure('Local coding tool timed out.', 'tool-timeout');
+
   if (exitCode !== 0) {
+    const detail = tail(stderr || stdout);
+    if (TRANSIENT_CAPACITY_RE.test(detail)) return transientCapacityResult(detail);
     return toolFailure(
-      `Local coding tool exited with code ${exitCode}. ${tail(stderr || stdout)}`.trim(),
+      `Local coding tool exited with code ${exitCode}. ${detail}`.trim(),
       'tool-exit'
     );
   }
-  if (raw == null) {
-    return {
-      protocol: 'patch-poller/result-v1',
-      status: 'complete',
-      summary: `Local coding tool exited successfully without a structured result.${stdout ? ` Output tail: ${tail(stdout)}` : ''}`,
-      progress: [],
-      tests: [],
-      nextStep: null,
-      blocker: null,
-      checkpoint: null,
-      inferred: true
-    };
-  }
 
-  try {
-    return parseStructuredResult(raw);
-  } catch (error) {
-    if (error instanceof ProtocolError) return protocolFailure(error.message);
-    throw error;
-  }
+  return {
+    protocol: 'patch-poller/result-v1',
+    status: 'complete',
+    summary: `Local coding tool exited successfully without a structured result.${stdout ? ` Output tail: ${tail(stdout)}` : ''}`,
+    progress: [],
+    tests: [],
+    nextStep: null,
+    blocker: null,
+    checkpoint: null,
+    inferred: true
+  };
 }

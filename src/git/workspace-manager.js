@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, stat } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { CandidateValidationError, PolicyError } from '../errors.js';
 import { splitRepository } from '../security/workspace-policy.js';
@@ -42,6 +42,11 @@ function lines(text) {
 function isReservedRuntimePath(file) {
   const normalized = String(file).replace(/\\/g, '/');
   return normalized === RUNTIME_DIR || normalized.startsWith(`${RUNTIME_DIR}/`);
+}
+
+async function sameFilesystemIdentity(left, right) {
+  const [canonicalLeft, canonicalRight] = await Promise.all([realpath(left), realpath(right)]);
+  return canonicalLeft === canonicalRight;
 }
 
 export class GitWorkspaceManager {
@@ -176,7 +181,7 @@ export class GitWorkspaceManager {
 
     if (await exists(worktreeDir)) {
       const top = (await this.#git.run(['rev-parse', '--show-toplevel'], { cwd: worktreeDir })).stdout.trim();
-      if (path.resolve(top) !== path.resolve(worktreeDir)) throw new PolicyError('existing run worktree identity mismatch');
+      if (!(await sameFilesystemIdentity(top, worktreeDir))) throw new PolicyError('existing run worktree identity mismatch');
       const currentBranch = (await this.#git.run(['branch', '--show-current'], { cwd: worktreeDir })).stdout.trim();
       if (currentBranch !== branch) throw new PolicyError(`existing worktree is on unexpected branch ${currentBranch}`);
     } else {

@@ -25,8 +25,16 @@ function buildEnvironment(profile, source) {
   return env;
 }
 
+function unwrapSingleJsonFence(text) {
+  const match = text.match(/^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/iu);
+  return match ? match[1].trim() : text;
+}
+
 export function parseResultJsonText(text) {
-  const normalized = String(text).charCodeAt(0) === 0xFEFF ? String(text).slice(1) : String(text);
+  let normalized = String(text);
+  if (normalized.charCodeAt(0) === 0xFEFF) normalized = normalized.slice(1);
+  normalized = normalized.trim();
+  normalized = unwrapSingleJsonFence(normalized);
   return JSON.parse(normalized);
 }
 
