@@ -38,6 +38,23 @@ function sameIdentity(info, expected) {
   return actual.dev === String(expected.dev) && actual.ino === String(expected.ino);
 }
 
+function linkCount(info) {
+  if (typeof info.nlink === 'bigint') return info.nlink;
+  if (Number.isSafeInteger(info.nlink) && info.nlink >= 0) return BigInt(info.nlink);
+  return 0n;
+}
+
+function assertAnchoredResult(resultInfo, anchorInfo, resultFile) {
+  if (
+    linkCount(resultInfo) < 2n ||
+    linkCount(anchorInfo) < 2n ||
+    linkCount(resultInfo) !== linkCount(anchorInfo) ||
+    !sameIdentity(resultInfo, anchorInfo)
+  ) {
+    throw new PolicyError(`${resultFile} was replaced after PATCH-POLLER established worker-exchange ownership`);
+  }
+}
+
 function expectedUid() {
   const uid = process.getuid?.();
   return Number.isInteger(uid) ? BigInt(uid) : null;
@@ -179,9 +196,10 @@ class WorkerMailbox {
   async #verifiedResultIdentity() {
     const anchorInfo = await secureStat(this.#resultAnchorFile, 'file', this.#manifest.resultAnchorIdentity);
     const resultInfo = await secureStat(this.#resultFile, 'file');
-    if (!sameIdentity(resultInfo, this.#manifest.resultIdentity) || !sameIdentity(resultInfo, anchorInfo)) {
+    if (!sameIdentity(resultInfo, this.#manifest.resultIdentity)) {
       throw new PolicyError(`${this.#resultFile} was replaced after PATCH-POLLER established worker-exchange ownership`);
     }
+    assertAnchoredResult(resultInfo, anchorInfo, this.#resultFile);
     return resultInfo;
   }
 
@@ -270,9 +288,7 @@ export class WorkerExchange {
     const contextInfo = await secureStat(paths.contextFile, 'file');
     const resultInfo = await secureStat(paths.resultFile, 'file');
     const resultAnchorInfo = await secureStat(paths.resultAnchorFile, 'file');
-    if (!sameIdentity(resultInfo, resultAnchorInfo)) {
-      throw new PolicyError('worker-exchange result anchor did not bind the original result file identity');
-    }
+    assertAnchoredResult(resultInfo, resultAnchorInfo, paths.resultFile);
 
     const manifest = {
       protocol: WORKER_EXCHANGE_PROTOCOL,
@@ -319,9 +335,10 @@ export class WorkerExchange {
     await secureStat(paths.contextFile, 'file', manifest.contextIdentity);
     const anchorInfo = await secureStat(paths.resultAnchorFile, 'file', manifest.resultAnchorIdentity);
     const resultInfo = await secureStat(paths.resultFile, 'file');
-    if (!sameIdentity(resultInfo, manifest.resultIdentity) || !sameIdentity(resultInfo, anchorInfo)) {
+    if (!sameIdentity(resultInfo, manifest.resultIdentity)) {
       throw new PolicyError(`${paths.resultFile} was replaced after PATCH-POLLER established worker-exchange ownership`);
     }
+    assertAnchoredResult(resultInfo, anchorInfo, paths.resultFile);
     return new WorkerMailbox({
       turnRoot: paths.turnRoot,
       contextFile: paths.contextFile,
