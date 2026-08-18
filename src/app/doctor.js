@@ -5,6 +5,8 @@ import { validateToolProfile } from '../runtime/cli-profile.js';
 import { resolveExecutable } from '../runtime/executable-resolver.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
+import { createDeterministicSandboxProvider } from '../runtime/deterministic-sandbox.js';
+import { operationSecurityDescription } from '../runtime/deterministic-operation-security.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { GitClient } from '../git/git-client.js';
 import { resolveGitHubCredential, publicGitHubCredentialStatus } from '../github/auth-provider.js';
@@ -39,6 +41,19 @@ export async function doctor(
 
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
+  const deterministicSandboxProvider = createDeterministicSandboxProvider({
+    externalReadRoots: config.workspace.externalReadRoots,
+    workspaceRoot: config.workspace.root,
+    stateDirectory: config.state.directory,
+    env,
+  });
+  const sandbox = probeCoreCapabilities
+    ? await deterministicSandboxProvider.verify()
+    : deterministicSandboxProvider.inspect();
+  const operations = operationRegistry.describe().map((entry) => ({
+    ...entry,
+    ...operationSecurityDescription(entry.name, sandbox),
+  }));
   const toolchains = probeCoreCapabilities
     ? await toolchainRegistry.inspect()
     : toolchainRegistry.names().map((name) => ({ name, available: null, layer: 'core' }));
@@ -78,7 +93,8 @@ export async function doctor(
       core: {
         controllerPlans: {
           enabled: config.execution.controllerPlansEnabled,
-          operations: operationRegistry.describe(),
+          sandbox,
+          operations,
         },
         toolchains,
         faultInjection,
