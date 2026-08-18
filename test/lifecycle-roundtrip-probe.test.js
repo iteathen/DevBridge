@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -38,7 +38,7 @@ test('built-in lifecycle roundtrip profile is fixed and capability-minimal', () 
 test('lifecycle roundtrip creates/runs a generated test and removes every temporary file', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-lifecycle-roundtrip-'));
   try {
-    const result = await runLifecycleRoundtripProbe({ projectRoot: root, context(), env: process.env });
+    const result = await runLifecycleRoundtripProbe({ projectRoot: root, context: context(), env: process.env });
     assert.equal(result.status, 'complete', result.summary);
     const byName = new Map(result.tests.map((entry) => [entry.name, entry]));
     assert.equal(byName.get('test-files-created')?.status, 'pass');
@@ -49,10 +49,7 @@ test('lifecycle roundtrip creates/runs a generated test and removes every tempor
     assert.equal(byName.get('context-roundtrip-input')?.contextSequence, 3);
     assert.equal(byName.get('cleanup')?.status, 'pass');
     assert.equal(byName.get('cleanup')?.tempRootRemoved, true);
-    await assert.rejects(
-      () => import('node:fs/promises').then(({ access }) => access(path.join(root, LIFECYCLE_TEMP_DIR))),
-      { code: 'ENOENT' }
-    );
+    await assert.rejects(() => access(path.join(root, LIFECYCLE_TEMP_DIR)), { code: 'ENOENT' });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
