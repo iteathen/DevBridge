@@ -2,7 +2,7 @@
 
 Work is organized by ownership boundary so the project stays reviewable and agents do not create half-connected features across the system.
 
-## v0.1 operational checkpoint — implemented on foundation branch
+## v0.1 operational checkpoint — implemented on main
 
 The first usable local bridge now exists:
 
@@ -18,9 +18,10 @@ The first usable local bridge now exists:
 - same-issue active-revision deferral;
 - `run-once` and single-instance `daemon` loop;
 - local end-to-end acceptance fixture;
-- 35/35 local Node tests passing on the v0.1 head.
+- verified Linux Bubblewrap containment for deterministic operations that execute repository code, with fail-closed behavior on unsupported hosts;
+- cross-platform CI covering the normal suite plus mandatory Linux sandbox boundary verification.
 
-This checkpoint is intentionally **not** called production-hardened. PP-007 through PP-010 define remaining decision, sandbox, supply-chain, recovery, and provenance work.
+This checkpoint is intentionally **not** called production-hardened. Critical issue #22's repository-code sandbox stop-ship is resolved for supported Linux hosts. PP-007 through PP-010 still define remaining decision, supply-chain, recovery, and provenance work, and non-Linux repository-code sandbox providers remain explicit platform work.
 
 ## Slice 0 — Foundation — complete
 
@@ -97,7 +98,7 @@ Remaining:
 - complete provenance/replay consumption records (PP-010);
 - optional label mirroring.
 
-## Slice 4 — Sandbox/tool profiles — v0.1 process boundary, OS adapters remain
+## Slice 4 — Sandbox/tool profiles — Linux repository-code boundary complete, other platform/phase work remains
 
 Implemented:
 
@@ -106,16 +107,24 @@ Implemented:
 - allowlisted environment inheritance;
 - timeout/output limits;
 - whole-process-tree termination attempt (POSIX process group; Windows `taskkill /T` fallback);
-- tool-declared sandbox properties;
-- Codex profile guidance.
+- deterministic operation classification into static inspection and repository-code execution;
+- fail-closed refusal of repository-code operations without a verified provider;
+- verified Linux Bubblewrap provider using mount/user/PID/network namespaces;
+- project and current run-scratch as the only ordinary writable roots for repository-code deterministic operations;
+- arbitrary external reads denied by default, with locally configured `workspace.externalReadRoots` and required tool roots exposed read-only;
+- ordinary deterministic build/test network egress denied;
+- PATCH-POLLER state, operator home/credential state, and unrelated host paths left unreachable;
+- `.git` administrative state read-only or unreachable;
+- adversarial provider admission probe covering external read/write, control-state read, network egress, `.git` mutation, project/scratch writes, and effective child capabilities;
+- `doctor` reporting observed provider availability, verification result, and per-operation usability;
+- tool-declared sandbox properties and Codex profile guidance.
 
 Remaining:
 
 - verified Windows OS containment provider (Job Object/AppContainer or equivalent);
-- verified Linux namespace/systemd/bubblewrap provider;
-- explicit external read-root enforcement;
-- phase-aware network enforcement;
-- browser/Playwright profile with contained loopback;
+- verified providers for other supported non-Linux hosts if added;
+- explicit dependency-fetch/install/browser phases with narrowly granted network authority (PP-008), rather than weakening ordinary build/test denial;
+- browser/Playwright profile with contained loopback where justified;
 - CPU/memory/disk/process-count quotas;
 - version/capability probing and profile digests.
 

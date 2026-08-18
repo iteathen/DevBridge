@@ -2,7 +2,7 @@
 
 PATCH-POLLER is a local Node.js bridge between chat-only coding agents and a real development environment. It watches a narrowly configured GitHub issue queue, accepts structured tasks only from locally trusted GitHub identities, carries durable context between model turns, and invokes locally configured coding CLIs under explicit capability policy.
 
-**Status:** v0.1 first usable implementation / pre-production hardening. The end-to-end local execution path is implemented and tested. Deterministic controller-plan operations that execute repository code now require observed OS sandbox enforcement: Linux uses a verified Bubblewrap provider, while unsupported hosts fail closed for those operations. Full PP-007 decision orchestration, additional OS sandbox providers, package-manager phase isolation, GitHub App authentication, and the complete remote-effect journal remain explicit hardening work rather than hidden assumptions.
+**Status:** v0.1 usable for general local operation on verified Linux hosts; pre-production hardening continues. The end-to-end local execution path is implemented and tested. Deterministic controller-plan operations that execute repository code require observed OS sandbox enforcement: Linux uses a verified Bubblewrap provider, while unsupported hosts fail closed for those operations. Full PP-007 decision orchestration, additional OS sandbox providers, package-manager phase isolation, GitHub App authentication, and the complete remote-effect journal remain explicit hardening work rather than hidden assumptions.
 
 ## What v0.1 does
 
@@ -79,7 +79,18 @@ Requested capabilities are descriptive only. Local policy is authoritative.
 
 ## Setup and first run
 
-Requires Node.js 22.16.0 or newer and Git. Linux hosts that will execute repository code through deterministic controller plans also require a locally installed Bubblewrap (`bwrap`) package from the operating-system distribution.
+Requires Node.js 22.16.0 or newer and Git. Run PATCH-POLLER under a dedicated **unprivileged** service account; the built-in repository-code sandbox deliberately refuses to activate when PATCH-POLLER itself is running as root. Linux hosts that will execute repository code through deterministic controller plans also require a locally installed Bubblewrap (`bwrap`) package from the operating-system distribution.
+
+On Ubuntu 24.04 and other systems that restrict unprivileged user namespaces through AppArmor, use a narrowly scoped Bubblewrap policy rather than globally disabling the host restriction. Ubuntu's `apparmor-profiles` package provides `bwrap-userns-restrict`; one supported setup is:
+
+```text
+sudo apt-get update
+sudo apt-get install -y bubblewrap apparmor-profiles
+sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
+sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+```
+
+On other Linux distributions, install Bubblewrap using the distribution package and ensure the dedicated unprivileged PATCH-POLLER account is permitted to create the namespaces Bubblewrap requires. Do not infer safety from package presence: `doctor` must still pass the live boundary probe before repository-code operations are usable.
 
 1. Copy `config/patch-poller.example.json` to a local configuration file **outside watched project repositories**.
 2. Configure `github.queueRepository`, `trustedActorIds`, workspace owners, and `github.tokenEnv`.
@@ -93,7 +104,7 @@ node src/cli.js doctor --config <local-config.json>
 node src/cli.js poll-once --config <local-config.json>
 ```
 
-If deterministic repository-code controller operations will be used, inspect the `doctor` result and require `capabilities.core.controllerPlans.sandbox.verified: true`. On a normal supported Linux deployment this means the reported provider is `bubblewrap` and its boundary probe succeeded. Do not enable repository-code execution by bypassing this gate on an unsupported host.
+If deterministic repository-code controller operations will be used, inspect the `doctor` result and require `capabilities.core.controllerPlans.sandbox.verified: true`. On a supported Linux deployment this means the reported provider is `bubblewrap` and its boundary probe succeeded. Do not enable repository-code execution by bypassing this gate on an unsupported or misconfigured host.
 
 7. Set `execution.enabled` to true and exercise one cycle:
 
