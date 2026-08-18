@@ -27,7 +27,12 @@
     "root": "~/.patch-poller/workspaces",
     "allowCreate": true,
     "allowedOwners": ["iteathen"],
-    "externalReadRoots": []
+    "externalReadRoots": [],
+    "baselineChannels": {
+      "production": "main",
+      "testing": "sol/foundation-bootstrap"
+    },
+    "defaultBaselineChannel": null
   },
   "state": {
     "directory": "~/.patch-poller/state"
@@ -40,6 +45,8 @@
   },
   "execution": {
     "enabled": false,
+    "controllerPlansEnabled": true,
+    "modelAdaptersEnabled": false,
     "defaultTool": null,
     "maxConcurrentTasks": 1,
     "maxTurns": 8,
@@ -47,6 +54,7 @@
   },
   "publication": {
     "autoPushTaskBranches": false,
+    "forceNoOpPublication": false,
     "branchPrefix": "patchpoller"
   },
   "daemon": {

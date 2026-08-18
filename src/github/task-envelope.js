@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { ProtocolError } from '../errors.js';
+import { normalizeControllerPlan } from '../run/controller-plan.js';
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const MAX_BODY_BYTES = 96_000;
@@ -60,12 +61,18 @@ export function parseTaskEnvelope(body) {
     if (Object.hasOwn(envelope, forbidden)) throw new ProtocolError(`remote task field ${forbidden} is forbidden`);
   }
 
+  const controllerPlan = envelope.controllerPlan == null ? null : normalizeControllerPlan(envelope.controllerPlan);
+  if (controllerPlan && envelope.preferredTool != null) {
+    throw new ProtocolError('controller-plan tasks cannot also select a preferred coding tool');
+  }
+
   const normalized = {
     protocol: envelope.protocol,
     target: { repository: envelope.target.repository },
     instructions: envelope.instructions,
     requestedCapabilities: envelope.requestedCapabilities ?? [],
     preferredTool: envelope.preferredTool ?? null,
+    controllerPlan,
     context: envelope.context ?? null
   };
 

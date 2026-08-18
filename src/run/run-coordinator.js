@@ -2,6 +2,7 @@ import path from 'node:path';
 import { buildContextCapsule } from '../context/context-capsule.js';
 import { CandidateValidationError, PolicyError } from '../errors.js';
 import { validateToolProfile } from '../runtime/cli-profile.js';
+import { controllerPlanDigest } from './controller-plan.js';
 import { parseToolResult } from './result-envelope.js';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
@@ -35,6 +36,7 @@ export class RunCoordinator {
   #store;
   #workspace;
   #runner;
+  #planExecutor;
   #reporter;
   #feedback;
   #queueRepository;
@@ -42,7 +44,11 @@ export class RunCoordinator {
   #defaultTool;
   #maxTurns;
   #allowUncontainedTools;
+  #controllerPlansEnabled;
+  #modelAdaptersEnabled;
+  #deterministicProfileNames;
   #autoPush;
+  #forceNoOpPublication;
   #nowMs;
   #sleep;
 
@@ -50,6 +56,7 @@ export class RunCoordinator {
     stateStore,
     workspaceManager,
     processRunner,
+    controllerPlanExecutor = null,
     statusReporter = null,
     feedbackSource = null,
     queueRepository,
@@ -57,13 +64,18 @@ export class RunCoordinator {
     defaultTool = null,
     maxTurns = 8,
     allowUncontainedTools = false,
+    controllerPlansEnabled = true,
+    modelAdaptersEnabled = true,
+    deterministicProfileNames = [],
     autoPushTaskBranches = false,
+    forceNoOpPublication = false,
     nowMs = () => Date.now(),
     sleep = defaultSleep
   }) {
     this.#store = stateStore;
     this.#workspace = workspaceManager;
     this.#runner = processRunner;
+    this.#planExecutor = controllerPlanExecutor;
     this.#reporter = statusReporter;
     this.#feedback = feedbackSource;
     this.#queueRepository = queueRepository;
@@ -71,7 +83,11 @@ export class RunCoordinator {
     this.#defaultTool = defaultTool;
     this.#maxTurns = maxTurns;
     this.#allowUncontainedTools = allowUncontainedTools;
+    this.#controllerPlansEnabled = controllerPlansEnabled === true;
+    this.#modelAdaptersEnabled = modelAdaptersEnabled === true;
+    this.#deterministicProfileNames = new Set(deterministicProfileNames);
     this.#autoPush = autoPushTaskBranches;
+    this.#forceNoOpPublication = forceNoOpPublication === true;
     this.#nowMs = nowMs;
     this.#sleep = sleep;
   }
@@ -88,6 +104,9 @@ export class RunCoordinator {
   #selectProfile(task) {
     const preferred = task.envelope.preferredTool;
     const name = preferred && Object.hasOwn(this.#tools, preferred) ? preferred : this.#defaultTool;
+    if (!this.#modelAdaptersEnabled && !this.#deterministicProfileNames.has(name)) {
+      throw new PolicyError('coding-model adapters are disabled by local policy; submit a controller plan or explicitly enable a compatibility adapter');
+    }
     if (!name || !Object.hasOwn(this.#tools, name)) {
       throw new PolicyError(`no locally configured coding tool is available for task ${task.issueNumber}`);
     }
@@ -112,7 +131,9 @@ export class RunCoordinator {
         } : state.prior.git,
         blockers: state.prior.blockers,
         nextStep: state.prior.nextStep,
-        outputTail: state.prior.outputTail
+        outputTail: state.prior.outputTail,
+        receipt: state.prior.receipt ?? null,
+        liveness: state.prior.liveness ?? null
       }
     });
   }
@@ -210,6 +231,9 @@ export class RunCoordinator {
         });
       } catch (error) {
         if (error instanceof CandidateValidationError) {
+          if (state.task.envelope.controllerPlan) {
+            throw new PolicyError(`deterministic controller-plan candidate failed sealing: ${error.message}`, { cause: error });
+          }
           return this.#recordCandidateRejection(key, state, workspace, error);
         }
         throw error;
@@ -227,25 +251,37 @@ export class RunCoordinator {
       await this.#save(key, state);
     }
 
-    if (this.#autoPush && state.publication?.published !== true) {
-      state.stage = 'publishing';
-      await this.#save(key, state);
-      const publication = await this.#workspace.publishTaskBranch(workspace);
-      state.publication = { published: true, ...publication, publishedAt: nowIso() };
-      await this.#save(key, state);
+    const noProjectDiff = finalSnapshot.headSha === finalSnapshot.baseSha && finalSnapshot.changedFiles.length === 0;
+    if (this.#autoPush && state.publication?.published !== true && !state.publication?.skipped) {
+      if (noProjectDiff && !this.#forceNoOpPublication) {
+        state.publication = {
+          published: false,
+          skipped: true,
+          reason: 'no-project-diff',
+          headSha: finalSnapshot.headSha,
+          recordedAt: nowIso()
+        };
+        await this.#save(key, state);
+      } else {
+        state.stage = 'publishing';
+        await this.#save(key, state);
+        const publication = await this.#workspace.publishTaskBranch(workspace);
+        state.publication = { published: true, ...publication, publishedAt: nowIso() };
+        await this.#save(key, state);
+      }
     }
 
     state.stage = 'completed';
     await this.#save(key, state);
-    await this.#publish(
-      state,
-      'COMPLETED',
-      this.#autoPush
-        ? `Completed, sealed candidate ${finalSnapshot.headSha}, and published task branch ${workspace.branch}.`
-        : `Completed and sealed candidate ${finalSnapshot.headSha} on local task branch ${workspace.branch}; automatic push is disabled.`,
-      finalSnapshot,
-      { terminal: true, force: true }
-    );
+    let summary;
+    if (state.publication?.skipped) {
+      summary = `Completed and verified ${finalSnapshot.headSha}; publication skipped because there is no project diff.`;
+    } else if (this.#autoPush) {
+      summary = `Completed, sealed candidate ${finalSnapshot.headSha}, and published task branch ${workspace.branch}.`;
+    } else {
+      summary = `Completed and sealed candidate ${finalSnapshot.headSha} on local task branch ${workspace.branch}; automatic push is disabled.`;
+    }
+    await this.#publish(state, 'COMPLETED', summary, finalSnapshot, { terminal: true, force: true });
     return {
       runId: state.runId,
       issueNumber: state.task.issueNumber,
@@ -253,7 +289,9 @@ export class RunCoordinator {
       branch: workspace.branch,
       headSha: finalSnapshot.headSha,
       changedFiles: finalSnapshot.changedFiles,
-      published: state.publication?.published === true
+      published: state.publication?.published === true,
+      publicationSkipped: state.publication?.skipped === true,
+      publicationReason: state.publication?.reason ?? null
     };
   }
 
@@ -278,7 +316,9 @@ export class RunCoordinator {
         skipped: true,
         branch: state.workspace?.branch ?? null,
         headSha: state.finalSnapshot?.headSha ?? null,
-        published: state.publication?.published === true
+        published: state.publication?.published === true,
+        publicationSkipped: state.publication?.skipped === true,
+        publicationReason: state.publication?.reason ?? null
       };
     }
 
@@ -315,7 +355,9 @@ export class RunCoordinator {
           git: null,
           blockers: [],
           nextStep: null,
-          outputTail: null
+          outputTail: null,
+          receipt: null,
+          liveness: null
         },
         lastFeedbackCommentId: 0,
         publication: { published: false },
@@ -326,6 +368,8 @@ export class RunCoordinator {
       state.turnLimit = Math.max(this.#maxTurns, state.turn);
       await this.#save(key, state);
     }
+    state.prior.receipt ??= null;
+    state.prior.liveness ??= null;
 
     try {
       if (state.stage === 'waiting-feedback') {
@@ -374,20 +418,34 @@ export class RunCoordinator {
       }
 
       await this.#respectTransientBackoff(key, state);
-      const profile = this.#selectProfile(task);
+      const plan = task.envelope.controllerPlan ?? null;
+      if (plan && !this.#controllerPlansEnabled) throw new PolicyError('controller plans are disabled by local policy');
+      const profile = plan ? null : this.#selectProfile(task);
       const workspace = await this.#workspace.prepareRun(task, state.runId, {
         baseRef: state.workspace?.baseRef ?? null,
-        baseSha: state.workspace?.baseSha ?? null
+        baseSha: state.workspace?.baseSha ?? null,
+        baselineChannel: state.workspace?.baselineChannel ?? plan?.baselineChannel ?? null
       });
       state.workspace = workspace;
+      state.prior.receipt ??= {
+        inputSha256: task.revision,
+        controllerPlanSha256: plan ? controllerPlanDigest(plan) : null,
+        taskRevision: task.revision,
+        inputSequence: 1,
+        handoffSha256: null,
+        runId: state.runId,
+        effectiveBaselineSha: workspace.baseSha
+      };
 
       if (state.stage === 'preparing') {
-        state.stage = 'running';
+        state.stage = plan ? 'controller-plan' : 'running';
         await this.#save(key, state);
         await this.#publish(
           state,
           'STARTED',
-          `Claimed task with local tool profile ${profile.name}.`,
+          plan
+            ? `Claimed task for deterministic controller plan on baseline ${workspace.baselineChannel ?? 'repository-default'}@${workspace.baseSha}.`
+            : `Claimed task with local tool profile ${profile.name}.`,
           await this.#workspace.snapshot(workspace),
           { force: true }
         );
@@ -398,6 +456,51 @@ export class RunCoordinator {
       if (state.stage === 'verifying' || state.stage === 'publishing') {
         const finalized = await this.#finalize(key, state, workspace);
         if (finalized) return finalized;
+      }
+
+      if (plan) {
+        if (!this.#planExecutor) throw new PolicyError('controller plan executor is not configured');
+        state.stage = 'controller-plan';
+        state.turn = Math.max(1, state.turn);
+        state.prior.liveness = {
+          stage: 'controller-plan',
+          startedAt: state.controllerPlan?.startedAt ?? nowIso(),
+          lastActivityAt: nowIso(),
+          attempt: 1
+        };
+        await this.#save(key, state);
+        const execution = await this.#planExecutor.execute({
+          plan,
+          state,
+          workspace,
+          persist: () => this.#save(key, state),
+          onLiveness: (activity) => {
+            state.prior.liveness = {
+              stage: 'deterministic-operation',
+              operationId: activity.operationId,
+              operation: activity.operation,
+              lastActivityAt: activity.at,
+              attempt: 1
+            };
+          }
+        });
+        state.prior.changedFiles = execution.snapshot.changedFiles;
+        state.prior.git = {
+          branch: execution.snapshot.branch,
+          baseSha: execution.snapshot.baseSha,
+          headSha: execution.snapshot.headSha,
+          dirty: execution.snapshot.dirty
+        };
+        state.prior.tests = [...state.prior.tests, ...execution.tests].slice(-100);
+        state.prior.progress.push(execution.summary);
+        state.prior.nextStep = null;
+        state.prior.blockers = [];
+        state.prior.liveness = null;
+        state.stage = 'verifying';
+        await this.#save(key, state);
+        const finalized = await this.#finalize(key, state, workspace);
+        if (finalized) return finalized;
+        throw new PolicyError('deterministic controller plan could not be finalized');
       }
 
       while (state.turn < state.turnLimit) {
@@ -526,13 +629,11 @@ export class RunCoordinator {
         branch: state.workspace?.branch ?? null
       };
     } catch (error) {
-      // Finalization/publishing infrastructure failures are resumable. Keep the
-      // persisted stage so the daemon can report/retry them without rerunning
-      // the model or terminalizing a candidate that may already be sealed.
       if (state.stage === 'verifying' || state.stage === 'publishing') throw error;
 
       state.stage = 'failed';
       state.error = { classification: error.name, message: error.message, at: nowIso() };
+      state.prior.liveness = null;
       await this.#save(key, state);
       await this.#publish(
         state,

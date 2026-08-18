@@ -6,6 +6,8 @@ import { DEFAULT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES } from './github/auth-provid
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH_PREFIX_RE = /^[A-Za-z0-9_.-]+$/;
+const BASELINE_CHANNEL_RE = /^[A-Za-z0-9_.-]{1,40}$/;
+const GIT_BRANCH_RE = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/;
 const ENVIRONMENT_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const HOSTNAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 const GITHUB_AUTH_MODES = new Set(['auto', 'environment', 'github-cli']);
@@ -101,6 +103,29 @@ function normalizeGitHubAuth(github) {
   };
 }
 
+function normalizeBaselineChannels(workspace) {
+  const raw = workspace.baselineChannels ?? {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).length > 16) {
+    throw new ConfigurationError('workspace.baselineChannels must be an object with at most 16 local semantic channels');
+  }
+  const channels = {};
+  for (const [channel, branch] of Object.entries(raw)) {
+    if (!BASELINE_CHANNEL_RE.test(channel)) throw new ConfigurationError(`workspace.baselineChannels channel ${channel} is invalid`);
+    const normalizedBranch = requireString(branch, `workspace.baselineChannels.${channel}`);
+    if (!GIT_BRANCH_RE.test(normalizedBranch) || normalizedBranch.includes('..') || normalizedBranch.includes('@{') || normalizedBranch.endsWith('.lock')) {
+      throw new ConfigurationError(`workspace.baselineChannels.${channel} must be a safe branch name`);
+    }
+    channels[channel] = normalizedBranch;
+  }
+  const defaultChannel = workspace.defaultBaselineChannel == null
+    ? null
+    : requireString(workspace.defaultBaselineChannel, 'workspace.defaultBaselineChannel');
+  if (defaultChannel != null && !Object.hasOwn(channels, defaultChannel)) {
+    throw new ConfigurationError('workspace.defaultBaselineChannel must name a configured local baseline channel');
+  }
+  return { channels, defaultChannel };
+}
+
 export function validateConfig(raw) {
   const config = requireObject(raw, 'config');
   if (config.version !== 1) throw new ConfigurationError('config.version must be 1');
@@ -121,6 +146,7 @@ export function validateConfig(raw) {
   if (!Array.isArray(allowedOwners) || allowedOwners.length === 0 || allowedOwners.some((owner) => !/^[A-Za-z0-9_.-]+$/.test(owner))) {
     throw new ConfigurationError('workspace.allowedOwners must contain at least one safe owner name');
   }
+  const baselines = normalizeBaselineChannels(workspace);
 
   const state = requireObject(config.state ?? {}, 'state');
   const execution = requireObject(config.execution ?? {}, 'execution');
@@ -138,7 +164,6 @@ export function validateConfig(raw) {
       queueRepository,
       taskLabel: requireString(github.taskLabel ?? 'patch-poller:ready', 'github.taskLabel'),
       trustedActorIds: trustedActorIds.map(String),
-      // Retained as a compatibility projection for older callers. New code uses auth.
       tokenEnv: githubAuth.environmentVariables[0],
       auth: githubAuth,
       apiVersion: requireString(github.apiVersion ?? '2026-03-10', 'github.apiVersion'),
@@ -156,7 +181,9 @@ export function validateConfig(raw) {
       allowedOwners: allowedOwners.map((owner) => owner.toLowerCase()),
       externalReadRoots: Array.isArray(workspace.externalReadRoots)
         ? workspace.externalReadRoots.map((entry, index) => absolutePath(entry, `workspace.externalReadRoots[${index}]`))
-        : []
+        : [],
+      baselineChannels: baselines.channels,
+      defaultBaselineChannel: baselines.defaultChannel
     },
     state: { directory: absolutePath(state.directory ?? '~/.patch-poller/state', 'state.directory') },
     git: {
@@ -167,6 +194,8 @@ export function validateConfig(raw) {
     },
     execution: {
       enabled: execution.enabled === true,
+      controllerPlansEnabled: execution.controllerPlansEnabled !== false,
+      modelAdaptersEnabled: execution.modelAdaptersEnabled === true,
       defaultTool: execution.defaultTool == null ? null : requireString(execution.defaultTool, 'execution.defaultTool'),
       maxConcurrentTasks: requireInteger(execution.maxConcurrentTasks ?? 1, 'execution.maxConcurrentTasks', { min: 1 }),
       maxTurns: requireInteger(execution.maxTurns ?? 8, 'execution.maxTurns', { min: 1 }),
@@ -174,6 +203,7 @@ export function validateConfig(raw) {
     },
     publication: {
       autoPushTaskBranches: publication.autoPushTaskBranches === true,
+      forceNoOpPublication: publication.forceNoOpPublication === true,
       branchPrefix
     },
     daemon: {

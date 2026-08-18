@@ -56,6 +56,8 @@ export class GitWorkspaceManager {
   #remoteUrlResolver;
   #fetchTimeoutMs;
   #branchPrefix;
+  #baselineChannels;
+  #defaultBaselineChannel;
 
   constructor({
     workspacePolicy,
@@ -63,7 +65,9 @@ export class GitWorkspaceManager {
     tokenProvider = async () => null,
     remoteUrlResolver = (repository) => `https://github.com/${repository}.git`,
     fetchTimeoutMs = 300_000,
-    branchPrefix = 'patchpoller'
+    branchPrefix = 'patchpoller',
+    baselineChannels = {},
+    defaultBaselineChannel = null
   }) {
     this.#workspace = workspacePolicy;
     this.#git = gitClient;
@@ -71,6 +75,8 @@ export class GitWorkspaceManager {
     this.#remoteUrlResolver = remoteUrlResolver;
     this.#fetchTimeoutMs = fetchTimeoutMs;
     this.#branchPrefix = branchPrefix;
+    this.#baselineChannels = { ...baselineChannels };
+    this.#defaultBaselineChannel = defaultBaselineChannel;
   }
 
   branchName(task) {
@@ -156,8 +162,25 @@ export class GitWorkspaceManager {
       remoteUrl,
       baseRef,
       baseSha,
+      baselineChannel: null,
       defaultBranch: baseRef.slice('origin/'.length)
     };
+  }
+
+  async #resolveBaseline(repo, requestedChannel) {
+    const channel = requestedChannel ?? this.#defaultBaselineChannel;
+    if (!channel) return { baseRef: repo.baseRef, baseSha: repo.baseSha, baselineChannel: null };
+    const branch = this.#baselineChannels[channel];
+    if (!branch) throw new PolicyError(`baseline channel ${channel} is not authorized by local policy`);
+    const baseRef = `origin/${branch}`;
+    const resolved = await this.#git.run(['rev-parse', '--verify', `${baseRef}^{commit}`], {
+      cwd: repo.repoDir,
+      allowFailure: true
+    });
+    if (resolved.exitCode !== 0 || !/^[0-9a-f]{40}$/iu.test(resolved.stdout.trim())) {
+      throw new PolicyError(`authorized baseline channel ${channel} is unavailable for ${repo.repository}`);
+    }
+    return { baseRef, baseSha: resolved.stdout.trim().toLowerCase(), baselineChannel: channel };
   }
 
   async prepareRun(task, runId, resume = {}) {
@@ -165,15 +188,22 @@ export class GitWorkspaceManager {
     const repo = await this.ensureRepository(repository);
     const worktreeDir = this.worktreePath(repository, runId);
     const branch = this.branchName(task);
-    const baseRef = resume.baseRef ?? repo.baseRef;
-    const baseSha = resume.baseSha ?? repo.baseSha;
+    let baseRef;
+    let baseSha;
+    let baselineChannel;
 
     if (resume.baseSha) {
+      baseRef = resume.baseRef ?? repo.baseRef;
+      baseSha = resume.baseSha;
+      baselineChannel = resume.baselineChannel ?? null;
       const existsBase = await this.#git.run(['cat-file', '-e', `${baseSha}^{commit}`], {
         cwd: repo.repoDir,
         allowFailure: true
       });
       if (existsBase.exitCode !== 0) throw new PolicyError(`persisted run baseline is no longer available locally: ${baseSha}`);
+    } else {
+      const baseline = await this.#resolveBaseline(repo, resume.baselineChannel ?? task.envelope.controllerPlan?.baselineChannel ?? null);
+      ({ baseRef, baseSha, baselineChannel } = baseline);
     }
 
     await this.#workspace.assertWriteContained(worktreeDir);
@@ -196,7 +226,7 @@ export class GitWorkspaceManager {
       }
     }
 
-    return { ...repo, baseRef, baseSha, worktreeDir, branch, runId: safeRunId(runId) };
+    return { ...repo, baseRef, baseSha, baselineChannel, worktreeDir, branch, runId: safeRunId(runId) };
   }
 
   async snapshot(workspace) {
@@ -280,9 +310,6 @@ export class GitWorkspaceManager {
     let snapshot = await this.snapshot(workspace);
     if (!snapshot.dirty) return snapshot;
 
-    // The coding tool does not own Git administrative state. Normalize any
-    // staged residue (including from older runtimes) back into the working
-    // tree before independently validating and sealing the proposal.
     await this.#restoreProposalIndex(workspace);
     snapshot = await this.#validateProposal(workspace);
     if (!snapshot.dirty) return snapshot;

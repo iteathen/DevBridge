@@ -10,7 +10,10 @@ import { WorkspacePolicy } from '../security/workspace-policy.js';
 import { GitClient } from '../git/git-client.js';
 import { GitWorkspaceManager } from '../git/workspace-manager.js';
 import { ProcessRunner } from '../runtime/process-runner.js';
+import { DeterministicProcessRunner } from '../runtime/deterministic-process-runner.js';
+import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
 import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
+import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
 import { RunCoordinator } from '../run/run-coordinator.js';
 
 export function stateFileName(repository) { return `${repository.replace(/[^A-Za-z0-9_.-]+/g, '__')}.json`; }
@@ -28,8 +31,20 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   const secretValues = credential ? [credential.token] : [];
   const statusReporter = new IssueStatusReporter({ client, stateStore, queueRepository: config.github.queueRepository, progressIntervalMs: config.status.progressIntervalMs, maxCommentBytes: config.status.maxCommentBytes, secretValues });
   const gitClient = new GitClient({ executable: config.git.executable, syntheticHome: path.join(config.state.directory, 'git-home'), defaultTimeoutMs: config.git.commandTimeoutMs });
-  const workspaceManager = new GitWorkspaceManager({ workspacePolicy, gitClient, tokenProvider, remoteUrlResolver: (repository) => `${config.git.cloneBaseUrl}/${repository}.git`, fetchTimeoutMs: config.git.fetchTimeoutMs, branchPrefix: config.publication.branchPrefix });
+  const workspaceManager = new GitWorkspaceManager({
+    workspacePolicy,
+    gitClient,
+    tokenProvider,
+    remoteUrlResolver: (repository) => `${config.git.cloneBaseUrl}/${repository}.git`,
+    fetchTimeoutMs: config.git.fetchTimeoutMs,
+    branchPrefix: config.publication.branchPrefix,
+    baselineChannels: config.workspace.baselineChannels,
+    defaultBaselineChannel: config.workspace.defaultBaselineChannel
+  });
   const processRunner = new ProcessRunner({ sourceEnv: env });
+  const deterministicProcessRunner = new DeterministicProcessRunner({ sourceEnv: env });
+  const operationRegistry = createCoreOperationRegistry();
+  const controllerPlanExecutor = new ControllerPlanExecutor({ operationRegistry, processRunner: deterministicProcessRunner, workspaceManager });
 
   const builtIns = builtInToolProfiles();
   for (const name of Object.keys(builtIns)) {
@@ -38,6 +53,39 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     }
   }
   const tools = { ...config.tools, ...builtIns };
-  const coordinator = new RunCoordinator({ stateStore, workspaceManager, processRunner, statusReporter, feedbackSource, queueRepository: config.github.queueRepository, tools, defaultTool: config.execution.defaultTool, maxTurns: config.execution.maxTurns, allowUncontainedTools: config.execution.allowUncontainedTools, autoPushTaskBranches: config.publication.autoPushTaskBranches });
-  return { config, stateStore, rateBudget, client, taskSource, feedbackSource, statusReporter, workspacePolicy, gitClient, workspaceManager, processRunner, coordinator };
+  const coordinator = new RunCoordinator({
+    stateStore,
+    workspaceManager,
+    processRunner,
+    controllerPlanExecutor,
+    statusReporter,
+    feedbackSource,
+    queueRepository: config.github.queueRepository,
+    tools,
+    defaultTool: config.execution.defaultTool,
+    maxTurns: config.execution.maxTurns,
+    allowUncontainedTools: config.execution.allowUncontainedTools,
+    controllerPlansEnabled: config.execution.controllerPlansEnabled,
+    modelAdaptersEnabled: config.execution.modelAdaptersEnabled,
+    deterministicProfileNames: Object.keys(builtIns),
+    autoPushTaskBranches: config.publication.autoPushTaskBranches,
+    forceNoOpPublication: config.publication.forceNoOpPublication
+  });
+  return {
+    config,
+    stateStore,
+    rateBudget,
+    client,
+    taskSource,
+    feedbackSource,
+    statusReporter,
+    workspacePolicy,
+    gitClient,
+    workspaceManager,
+    processRunner,
+    deterministicProcessRunner,
+    operationRegistry,
+    controllerPlanExecutor,
+    coordinator
+  };
 }
