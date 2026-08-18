@@ -16,6 +16,7 @@ import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
+import { LivenessProjectingPlanExecutor } from '../run/liveness-projecting-plan-executor.js';
 import { RunCoordinator } from '../run/run-coordinator.js';
 
 export function stateFileName(repository) { return `${repository.replace(/[^A-Za-z0-9_.-]+/g, '__')}.json`; }
@@ -48,11 +49,15 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   const deterministicProcessRunner = new DeterministicProcessRunner({ sourceEnv: env, faultInjector });
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
-  const controllerPlanExecutor = new ControllerPlanExecutor({
+  const deterministicControllerPlanExecutor = new ControllerPlanExecutor({
     operationRegistry,
     processRunner: deterministicProcessRunner,
     workspaceManager,
     faultInjector,
+  });
+  const controllerPlanExecutor = new LivenessProjectingPlanExecutor({
+    delegate: deterministicControllerPlanExecutor,
+    statusReporter,
   });
 
   const builtIns = builtInToolProfiles();
