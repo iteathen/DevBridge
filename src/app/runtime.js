@@ -85,7 +85,8 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   const controllerPlanExecutor = new LivenessProjectingPlanExecutor({ delegate: deterministicControllerPlanExecutor, statusReporter });
 
   const builtIns = builtInToolProfiles();
-  for (const name of Object.keys(builtIns)) {
+  const deterministicProfileNames = Object.keys(builtIns);
+  for (const name of deterministicProfileNames) {
     if (Object.hasOwn(config.tools, name)) throw new Error(`local tool profile name ${name} is reserved by PATCH-POLLER`);
   }
   const tools = { ...config.tools, ...builtIns };
@@ -94,6 +95,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     toolchainRegistry,
     sandboxProvider,
     profiles: tools,
+    deterministicProfileNames,
     modelAdaptersEnabled: config.execution.modelAdaptersEnabled,
     allowUncontainedTools: config.execution.allowUncontainedTools,
     env,
@@ -127,7 +129,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     allowUncontainedTools: config.execution.allowUncontainedTools,
     controllerPlansEnabled: config.execution.controllerPlansEnabled,
     modelAdaptersEnabled: config.execution.modelAdaptersEnabled,
-    deterministicProfileNames: Object.keys(builtIns),
+    deterministicProfileNames,
     autoPushTaskBranches: config.publication.autoPushTaskBranches,
     forceNoOpPublication: config.publication.forceNoOpPublication,
   });
