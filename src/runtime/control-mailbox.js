@@ -89,9 +89,15 @@ export class ControlMailbox {
 
     const contextFile = path.join(exchangeDir, 'context.json');
     const resultFile = path.join(exchangeDir, 'result.json');
-    await writeFile(resultFile, '', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    const resultStats = await lstat(resultFile, { bigint: true });
-    if (resultStats.isSymbolicLink() || !resultStats.isFile()) throw new PolicyError('control mailbox result endpoint is not a regular file');
+    const resultHandle = await open(resultFile, 'wx+', 0o600);
+    let resultStats;
+    try {
+      resultStats = await lstat(resultFile, { bigint: true });
+      if (resultStats.isSymbolicLink() || !resultStats.isFile()) throw new PolicyError('control mailbox result endpoint is not a regular file');
+    } catch (error) {
+      await resultHandle.close();
+      throw error;
+    }
 
     const identity = {
       protocol: 'patch-poller/mailbox-v1',
@@ -101,7 +107,16 @@ export class ControlMailbox {
       result: fileIdentity(resultStats),
     };
     await writeFile(path.join(exchangeDir, 'identity.json'), `${JSON.stringify(identity)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    return { runDigest: digest, turnId: turn, nonce, exchangeDir, contextFile, resultFile, resultIdentity: identity.result };
+    return {
+      runDigest: digest,
+      turnId: turn,
+      nonce,
+      exchangeDir,
+      contextFile,
+      resultFile,
+      resultIdentity: identity.result,
+      resultHandle,
+    };
   }
 
   async writeContext(exchange, text) {
@@ -113,24 +128,29 @@ export class ControlMailbox {
   }
 
   async consumeResult(exchange) {
-    const before = await lstat(exchange.resultFile, { bigint: true });
-    if (before.isSymbolicLink() || !before.isFile()) throw new PolicyError('control mailbox result endpoint was substituted');
-    if (!sameIdentity(exchange.resultIdentity, before)) throw new PolicyError('control mailbox result endpoint identity changed');
-
-    const flags = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
-    const handle = await open(exchange.resultFile, flags);
+    const handle = exchange?.resultHandle;
+    if (!handle || typeof handle.stat !== 'function') throw new PolicyError('control mailbox result handle is unavailable');
     try {
+      const before = await lstat(exchange.resultFile, { bigint: true });
+      if (before.isSymbolicLink() || !before.isFile()) throw new PolicyError('control mailbox result endpoint was substituted');
+      if (!sameIdentity(exchange.resultIdentity, before)) throw new PolicyError('control mailbox result endpoint identity changed');
+
       const opened = await handle.stat({ bigint: true });
-      if (!opened.isFile() || !sameIdentity(exchange.resultIdentity, opened)) throw new PolicyError('control mailbox result endpoint changed during open');
+      if (!opened.isFile()) throw new PolicyError('control mailbox retained result handle is not a regular file');
       if (opened.size > MAX_RESULT_BYTES_BIGINT) throw new PolicyError('result file exceeds 1 MiB');
       if (opened.size === 0n) return { text: null, size: 0 };
+
       const text = await handle.readFile({ encoding: 'utf8' });
-      const after = await handle.stat({ bigint: true });
-      if (!sameIdentity(exchange.resultIdentity, after)) throw new PolicyError('control mailbox result endpoint identity changed during read');
-      if (after.size > MAX_RESULT_BYTES_BIGINT) throw new PolicyError('result file exceeds 1 MiB');
-      return { text, size: Number(after.size) };
+      const afterHandle = await handle.stat({ bigint: true });
+      if (afterHandle.size > MAX_RESULT_BYTES_BIGINT) throw new PolicyError('result file exceeds 1 MiB');
+      const afterPath = await lstat(exchange.resultFile, { bigint: true });
+      if (afterPath.isSymbolicLink() || !afterPath.isFile() || !sameIdentity(exchange.resultIdentity, afterPath)) {
+        throw new PolicyError('control mailbox result endpoint changed during read');
+      }
+      return { text, size: Number(afterHandle.size) };
     } finally {
       await handle.close();
+      exchange.resultHandle = null;
     }
   }
 
