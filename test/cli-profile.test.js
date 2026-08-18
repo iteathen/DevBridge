@@ -3,8 +3,17 @@ import assert from 'node:assert/strict';
 import { validateToolProfile, expandProfileArgs } from '../src/runtime/cli-profile.js';
 import { PolicyError } from '../src/errors.js';
 
-test('rejects uncontained tools by default', () => {
-  assert.throws(() => validateToolProfile('tool', { executable: 'tool', args: [] }), PolicyError);
+test('parsing an uncontained declaration does not misrepresent it as verified enforcement', () => {
+  const profile = validateToolProfile('tool', { executable: 'tool', args: [] });
+  assert.equal(profile.sandbox.enforcement, 'none');
+  assert.equal(profile.containmentRequired, true);
+  assert.equal(profile.uncontainedAllowed, false);
+});
+
+test('local unsafe-development policy is explicit rather than inferred from a sandbox declaration', () => {
+  const profile = validateToolProfile('tool', { executable: 'tool', args: [] }, { allowUncontainedTools: true });
+  assert.equal(profile.containmentRequired, false);
+  assert.equal(profile.uncontainedAllowed, true);
 });
 
 test('allows only structural argv placeholders while ordinary braces stay literal local argv', () => {

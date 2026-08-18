@@ -31,9 +31,10 @@ export function validateToolProfile(name, raw, { allowUncontainedTools = false }
   }
 
   const sandbox = raw.sandbox ?? {};
-  const enforcement = sandbox.enforcement ?? 'none';
-  if (!['tool', 'os', 'none'].includes(enforcement)) throw new ConfigurationError(`tools.${name}.sandbox.enforcement is invalid`);
-  if (enforcement === 'none' && !allowUncontainedTools) throw new PolicyError(`tools.${name} has no declared containment enforcement`);
+  // This field is declared/requested policy only. It is never proof that an
+  // OS/tool boundary is actually active; execution code must verify a provider.
+  const declaredEnforcement = sandbox.enforcement ?? 'none';
+  if (!['tool', 'os', 'none'].includes(declaredEnforcement)) throw new ConfigurationError(`tools.${name}.sandbox.enforcement is invalid`);
   if (sandbox.outsideProjectWrite === true && !allowUncontainedTools) throw new PolicyError(`tools.${name} permits writes outside the project`);
 
   const outsideProjectRead = sandbox.outsideProjectRead ?? 'deny';
@@ -67,8 +68,10 @@ export function validateToolProfile(name, raw, { allowUncontainedTools = false }
     timeoutMs,
     maxOutputBytes,
     environment: { pass: [...pass], set: { ...set } },
+    containmentRequired: allowUncontainedTools !== true,
+    uncontainedAllowed: allowUncontainedTools === true,
     sandbox: {
-      enforcement,
+      enforcement: declaredEnforcement,
       outsideProjectRead,
       outsideProjectWrite: sandbox.outsideProjectWrite === true,
       network

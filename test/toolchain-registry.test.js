@@ -48,16 +48,18 @@ test('core operation registry removes generic node.run and exposes purpose-speci
   ]);
 });
 
-test('CMake operations derive argv locally and put build state only in managed scratch', async () => {
+test('CMake operations derive argv locally, require the sandbox guard, and put build state only in managed scratch', async () => {
   const toolchains = new LocalToolchainRegistry()
     .register('cmake', async () => ({ executable: '/local/cmake', family: 'cmake' }))
     .register('ctest', async () => ({ executable: '/local/ctest', family: 'ctest' }));
   const registry = createCoreOperationRegistry({ toolchainRegistry: toolchains });
   const observed = [];
+  const sandboxChecks = [];
   const context = {
     projectDir: path.resolve('/project'),
     scratch: { directory: async (id) => path.resolve('/managed-scratch', id) },
     processRunner: {
+      assertRepositorySandbox: async (operation) => { sandboxChecks.push(operation); },
       run: async (request) => {
         observed.push(request);
         return { exitCode: 0, timedOut: false, outputTruncated: false, stdout: '', stderr: '' };
@@ -74,6 +76,7 @@ test('CMake operations derive argv locally and put build state only in managed s
   await registry.execute('cmake.build', { buildId: 'release', config: 'Release', target: 'all' }, context);
   await registry.execute('ctest.run', { buildId: 'release', config: 'Release' }, context);
 
+  assert.deepEqual(sandboxChecks, ['cmake.configure', 'cmake.build', 'ctest.run']);
   assert.deepEqual(observed[0].args, [
     '-S', '.', '-B', path.resolve('/managed-scratch', 'cmake-release'), '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
   ]);
