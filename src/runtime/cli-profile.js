@@ -3,8 +3,6 @@ import { ConfigurationError, PolicyError } from '../errors.js';
 
 const ALLOWED_PLACEHOLDERS = new Set(['projectDir', 'contextFile', 'resultFile', 'runId']);
 const SHELL_LIKE = new Set(['cmd', 'cmd.exe', 'powershell', 'powershell.exe', 'pwsh', 'pwsh.exe', 'bash', 'sh', 'zsh', 'fish']);
-// Environment names are passed structurally to spawn(), never through a shell.
-// Parentheses are required for the standard Windows ProgramFiles(x86) name.
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_()]*$/;
 
 function validateArgs(args, name) {
@@ -21,9 +19,12 @@ function validateArgs(args, name) {
   return [...args];
 }
 
-export function validateToolProfile(name, raw, { allowUncontainedTools = false } = {}) {
+export function validateToolProfile(name, raw, { allowUncontainedTools = false, allowControlOwnedTools = false } = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ConfigurationError(`tools.${name} must be an object`);
   if (typeof raw.executable !== 'string' || raw.executable.trim() === '') throw new ConfigurationError(`tools.${name}.executable is required`);
+
+  const controlOwned = raw.controlOwned === true;
+  if (controlOwned && !allowControlOwnedTools) throw new PolicyError(`tools.${name}.controlOwned is reserved for PATCH-POLLER built-in profiles`);
 
   const basename = path.basename(raw.executable).toLowerCase();
   if (SHELL_LIKE.has(basename) && raw.allowShellLikeExecutable !== true) {
@@ -33,8 +34,8 @@ export function validateToolProfile(name, raw, { allowUncontainedTools = false }
   const sandbox = raw.sandbox ?? {};
   const enforcement = sandbox.enforcement ?? 'none';
   if (!['tool', 'os', 'none'].includes(enforcement)) throw new ConfigurationError(`tools.${name}.sandbox.enforcement is invalid`);
-  if (enforcement === 'none' && !allowUncontainedTools) throw new PolicyError(`tools.${name} has no declared containment enforcement`);
-  if (sandbox.outsideProjectWrite === true && !allowUncontainedTools) throw new PolicyError(`tools.${name} permits writes outside the project`);
+  if (enforcement === 'none' && !allowUncontainedTools && !controlOwned) throw new PolicyError(`tools.${name} has no declared containment enforcement`);
+  if (sandbox.outsideProjectWrite === true && !allowUncontainedTools && !controlOwned) throw new PolicyError(`tools.${name} permits writes outside the project`);
 
   const outsideProjectRead = sandbox.outsideProjectRead ?? 'deny';
   if (!['deny', 'allowlist', 'readonly'].includes(outsideProjectRead)) throw new ConfigurationError(`tools.${name}.sandbox.outsideProjectRead is invalid`);
@@ -66,6 +67,7 @@ export function validateToolProfile(name, raw, { allowUncontainedTools = false }
     inputMode,
     timeoutMs,
     maxOutputBytes,
+    controlOwned,
     environment: { pass: [...pass], set: { ...set } },
     sandbox: {
       enforcement,

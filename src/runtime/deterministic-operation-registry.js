@@ -3,6 +3,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { PolicyError } from '../errors.js';
 import { normalizePlanPath } from '../run/controller-plan.js';
+import { EXECUTION_CLASS_REPOSITORY, EXECUTION_CLASS_STATIC } from './sandbox-manager.js';
 import { createCoreToolchainRegistry } from './toolchain-registry.js';
 
 const SAFE_ID = /^[A-Za-z0-9_.-]{1,80}$/u;
@@ -29,8 +30,8 @@ function projectPath(projectDir, relative, name) {
 
 function localEnvironment() {
   const pass = process.platform === 'win32'
-    ? ['PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'SystemDrive', 'TEMP', 'TMP', 'TMPDIR', 'USERPROFILE']
-    : ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP'];
+    ? ['PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'SystemDrive', 'TEMP', 'TMP', 'TMPDIR']
+    : ['PATH', 'TMPDIR', 'TMP', 'TEMP'];
   return { pass, set: { CI: '1' } };
 }
 
@@ -77,6 +78,16 @@ function observedResult(stdout, stderr = '', exitCode = 0) {
     startedAt: now,
     finishedAt: now,
     lastOutputAt: stdout || stderr ? now : null,
+    sandbox: { provider: 'none', configured: false, verified: false, staticSafe: true },
+  };
+}
+
+function operationMetadata(adapter) {
+  const executionClass = adapter.executionClass ?? EXECUTION_CLASS_STATIC;
+  return {
+    layer: adapter.layer ?? 'core',
+    executionClass,
+    requiredEnforcement: executionClass === EXECUTION_CLASS_REPOSITORY ? 'verified-os-sandbox' : 'none',
   };
 }
 
@@ -89,13 +100,16 @@ export class DeterministicOperationRegistry {
     if (!adapter || typeof adapter.validate !== 'function' || typeof adapter.execute !== 'function') {
       throw new PolicyError(`registered operation ${name} must provide validate and execute`);
     }
+    if (![EXECUTION_CLASS_STATIC, EXECUTION_CLASS_REPOSITORY].includes(adapter.executionClass ?? EXECUTION_CLASS_STATIC)) {
+      throw new PolicyError(`registered operation ${name} has an invalid execution class`);
+    }
     this.#operations.set(name, adapter);
     return this;
   }
 
   has(name) { return this.#operations.has(name); }
   names() { return [...this.#operations.keys()].sort(); }
-  describe() { return this.names().map((name) => ({ name, layer: this.#operations.get(name).layer ?? 'core' })); }
+  describe() { return this.names().map((name) => ({ name, ...operationMetadata(this.#operations.get(name)) })); }
 
   validate(name, params) {
     const adapter = this.#operations.get(name);
@@ -112,8 +126,10 @@ export class DeterministicOperationRegistry {
 }
 
 function nodeScriptAdapter({ mode }) {
+  const executionClass = mode === 'node.test' ? EXECUTION_CLASS_REPOSITORY : EXECUTION_CLASS_STATIC;
   return {
     layer: 'core',
+    executionClass,
     validate(raw) {
       const params = objectParams(raw, mode);
       const allowed = mode === 'node.test' ? new Set(['paths']) : new Set(['path']);
@@ -136,6 +152,9 @@ function nodeScriptAdapter({ mode }) {
           environment: localEnvironment(),
           onActivity,
           operation: mode,
+          executionClass,
+          projectDir,
+          projectWrite: false,
         });
       }
       await access(projectPath(projectDir, params.path, `${mode} path`).resolved);
@@ -148,6 +167,8 @@ function nodeScriptAdapter({ mode }) {
         environment: localEnvironment(),
         onActivity,
         operation: mode,
+        executionClass,
+        projectDir,
       });
     },
   };
@@ -156,6 +177,7 @@ function nodeScriptAdapter({ mode }) {
 function toolchainProbeAdapter(toolchains) {
   return {
     layer: 'core',
+    executionClass: EXECUTION_CLASS_STATIC,
     validate(raw) {
       const params = objectParams(raw, 'toolchain.probe');
       onlyKeys(params, new Set(['name']), 'toolchain.probe');
@@ -183,6 +205,7 @@ function toolchainProbeAdapter(toolchains) {
 function cmakeConfigureAdapter(toolchains) {
   return {
     layer: 'core',
+    executionClass: EXECUTION_CLASS_REPOSITORY,
     validate(raw) {
       const params = objectParams(raw, 'cmake.configure');
       onlyKeys(params, new Set(['sourcePath', 'buildId', 'buildType', 'generator', 'architecture']), 'cmake.configure');
@@ -212,6 +235,10 @@ function cmakeConfigureAdapter(toolchains) {
         environment: localEnvironment(),
         onActivity,
         operation: 'cmake.configure',
+        executionClass: EXECUTION_CLASS_REPOSITORY,
+        projectDir,
+        projectWrite: false,
+        writableRoots: [buildDir],
       });
     },
   };
@@ -220,6 +247,7 @@ function cmakeConfigureAdapter(toolchains) {
 function cmakeBuildAdapter(toolchains) {
   return {
     layer: 'core',
+    executionClass: EXECUTION_CLASS_REPOSITORY,
     validate(raw) {
       const params = objectParams(raw, 'cmake.build');
       onlyKeys(params, new Set(['buildId', 'config', 'target']), 'cmake.build');
@@ -244,6 +272,10 @@ function cmakeBuildAdapter(toolchains) {
         environment: localEnvironment(),
         onActivity,
         operation: 'cmake.build',
+        executionClass: EXECUTION_CLASS_REPOSITORY,
+        projectDir,
+        projectWrite: false,
+        writableRoots: [buildDir],
       });
     },
   };
@@ -252,6 +284,7 @@ function cmakeBuildAdapter(toolchains) {
 function ctestAdapter(toolchains) {
   return {
     layer: 'core',
+    executionClass: EXECUTION_CLASS_REPOSITORY,
     validate(raw) {
       const params = objectParams(raw, 'ctest.run');
       onlyKeys(params, new Set(['buildId', 'config']), 'ctest.run');
@@ -274,6 +307,10 @@ function ctestAdapter(toolchains) {
         environment: localEnvironment(),
         onActivity,
         operation: 'ctest.run',
+        executionClass: EXECUTION_CLASS_REPOSITORY,
+        projectDir,
+        projectWrite: false,
+        writableRoots: [buildDir],
       });
     },
   };

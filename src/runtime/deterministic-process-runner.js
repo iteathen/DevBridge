@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { PolicyError } from '../errors.js';
 import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
+import { EXECUTION_CLASS_REPOSITORY, EXECUTION_CLASS_STATIC } from './sandbox-manager.js';
 
 const DEFAULT_OUTPUT_LIMIT = 512 * 1024;
 const DEFAULT_ACTIVITY_INTERVAL_MS = 30_000;
@@ -29,10 +30,12 @@ function truncateFault(buffer) {
 export class DeterministicProcessRunner {
   #sourceEnv;
   #faults;
+  #sandbox;
 
-  constructor({ sourceEnv = process.env, faultInjector = null } = {}) {
+  constructor({ sourceEnv = process.env, faultInjector = null, sandboxManager = null } = {}) {
     this.#sourceEnv = sourceEnv;
     this.#faults = faultInjector;
+    this.#sandbox = sandboxManager;
   }
 
   async run({
@@ -46,15 +49,37 @@ export class DeterministicProcessRunner {
     onActivity = null,
     activityIntervalMs = DEFAULT_ACTIVITY_INTERVAL_MS,
     operation = null,
+    executionClass = EXECUTION_CLASS_STATIC,
+    projectDir = cwd,
+    projectWrite = false,
+    writableRoots = [],
+    readOnlyRoots = [],
   }) {
     if (typeof executable !== 'string' || executable.length === 0) throw new PolicyError('deterministic operation executable is missing');
     if (!Array.isArray(args) || args.some((value) => typeof value !== 'string')) throw new PolicyError('deterministic operation args must be structural strings');
+    if (![EXECUTION_CLASS_STATIC, EXECUTION_CLASS_REPOSITORY].includes(executionClass)) throw new PolicyError('deterministic operation execution class is invalid');
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 28_800_000) throw new PolicyError('deterministic operation timeout is out of range');
     if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1024 || maxOutputBytes > 16_777_216) throw new PolicyError('deterministic operation output limit is out of range');
     if (!Number.isInteger(activityIntervalMs) || activityIntervalMs < 10 || activityIntervalMs > 300_000) throw new PolicyError('deterministic activity interval is out of range');
 
     const env = boundedEnvironment(this.#sourceEnv, environment.pass ?? [], environment.set ?? {});
-    const child = spawn(executable, args, containedSpawnOptions({ cwd, env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
+    let launch = { executable, args, cwd, env, sandbox: { provider: 'none', configured: false, verified: false, staticSafe: executionClass === EXECUTION_CLASS_STATIC } };
+    if (executionClass === EXECUTION_CLASS_REPOSITORY) {
+      if (!this.#sandbox) throw new PolicyError('repository-code execution is disabled because no sandbox manager is configured');
+      launch = await this.#sandbox.prepareLaunch({
+        executionClass,
+        executable,
+        args,
+        cwd,
+        env,
+        projectDir,
+        projectWrite,
+        writableRoots,
+        readOnlyRoots,
+      });
+    }
+
+    const child = spawn(launch.executable, launch.args, containedSpawnOptions({ cwd: launch.cwd, env: launch.env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
     const startedAtMs = Date.now();
     const startedAt = new Date(startedAtMs).toISOString();
     const deadlineAt = new Date(startedAtMs + timeoutMs).toISOString();
@@ -81,6 +106,7 @@ export class DeterministicProcessRunner {
         deadlineAt,
         timeoutMs,
         processAlive,
+        sandbox: launch.sandbox,
       };
       if (stream) payload.stream = stream;
       if (bytes != null) payload.bytes = bytes;
@@ -153,6 +179,7 @@ export class DeterministicProcessRunner {
       startedAt,
       finishedAt: new Date().toISOString(),
       lastOutputAt,
+      sandbox: launch.sandbox,
     };
   }
 }

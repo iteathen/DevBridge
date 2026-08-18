@@ -23,6 +23,15 @@ function windowsToolchainEnvironment() {
   };
 }
 
+function controlOwnedSandbox({ outsideProjectRead = 'deny' } = {}) {
+  return {
+    enforcement: 'none',
+    outsideProjectRead,
+    outsideProjectWrite: false,
+    network: 'deny'
+  };
+}
+
 export function nativeCompilerDiagnosticProfile() {
   return {
     name: NATIVE_COMPILER_DIAGNOSTIC_PROFILE,
@@ -32,15 +41,10 @@ export function nativeCompilerDiagnosticProfile() {
     timeoutMs: 120_000,
     maxOutputBytes: 256 * 1024,
     environment: windowsToolchainEnvironment(),
-    // This launches PATCH-POLLER-owned deterministic code, not an untrusted
-    // proposal engine. It still runs shell:false and performs only fixed local
-    // discovery/compile operations with no network access.
-    sandbox: {
-      enforcement: 'os',
-      outsideProjectRead: 'readonly',
-      outsideProjectWrite: false,
-      network: 'deny'
-    }
+    controlOwned: true,
+    // This is fixed PATCH-POLLER control code. It is intentionally reported as
+    // control-owned rather than falsely claiming an OS sandbox.
+    sandbox: controlOwnedSandbox({ outsideProjectRead: 'readonly' })
   };
 }
 
@@ -53,12 +57,8 @@ export function transientRecoveryDiagnosticProfile() {
     timeoutMs: 30_000,
     maxOutputBytes: 64 * 1024,
     environment: { pass: [], set: {} },
-    sandbox: {
-      enforcement: 'os',
-      outsideProjectRead: 'deny',
-      outsideProjectWrite: false,
-      network: 'deny'
-    }
+    controlOwned: true,
+    sandbox: controlOwnedSandbox()
   };
 }
 
@@ -71,12 +71,8 @@ export function chatCProjectDiagnosticProfile() {
     timeoutMs: 180_000,
     maxOutputBytes: 512 * 1024,
     environment: windowsToolchainEnvironment(),
-    sandbox: {
-      enforcement: 'os',
-      outsideProjectRead: 'readonly',
-      outsideProjectWrite: false,
-      network: 'deny'
-    }
+    controlOwned: true,
+    sandbox: controlOwnedSandbox({ outsideProjectRead: 'readonly' })
   };
 }
 
@@ -89,12 +85,8 @@ export function lifecycleRoundtripDiagnosticProfile() {
     timeoutMs: 60_000,
     maxOutputBytes: 128 * 1024,
     environment: { pass: [], set: {} },
-    sandbox: {
-      enforcement: 'os',
-      outsideProjectRead: 'deny',
-      outsideProjectWrite: false,
-      network: 'deny'
-    }
+    controlOwned: true,
+    sandbox: controlOwnedSandbox()
   };
 }
 
