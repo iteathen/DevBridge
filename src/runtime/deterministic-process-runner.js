@@ -3,6 +3,7 @@ import { PolicyError } from '../errors.js';
 import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
 
 const DEFAULT_OUTPUT_LIMIT = 512 * 1024;
+const DEFAULT_ACTIVITY_INTERVAL_MS = 30_000;
 const FAULT_TRUNCATE_BYTES = 32;
 
 function appendTail(current, chunk, maxBytes) {
@@ -43,22 +44,62 @@ export class DeterministicProcessRunner {
     environment = { pass: [], set: {} },
     stdin = null,
     onActivity = null,
+    activityIntervalMs = DEFAULT_ACTIVITY_INTERVAL_MS,
     operation = null,
   }) {
     if (typeof executable !== 'string' || executable.length === 0) throw new PolicyError('deterministic operation executable is missing');
     if (!Array.isArray(args) || args.some((value) => typeof value !== 'string')) throw new PolicyError('deterministic operation args must be structural strings');
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 28_800_000) throw new PolicyError('deterministic operation timeout is out of range');
     if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1024 || maxOutputBytes > 16_777_216) throw new PolicyError('deterministic operation output limit is out of range');
+    if (!Number.isInteger(activityIntervalMs) || activityIntervalMs < 10 || activityIntervalMs > 300_000) throw new PolicyError('deterministic activity interval is out of range');
 
     const env = boundedEnvironment(this.#sourceEnv, environment.pass ?? [], environment.set ?? {});
     const child = spawn(executable, args, containedSpawnOptions({ cwd, env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
+    const startedAtMs = Date.now();
+    const startedAt = new Date(startedAtMs).toISOString();
+    const deadlineAt = new Date(startedAtMs + timeoutMs).toISOString();
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
     let outputTruncated = false;
     let lastOutputAt = null;
+    let lastActivityEmitAt = 0;
+    let activityError = null;
+    let activityQueue = Promise.resolve();
+
+    const emitActivity = (kind, { force = false, stream = null, bytes = null, processAlive = child.exitCode == null } = {}) => {
+      if (typeof onActivity !== 'function') return;
+      const atMs = Date.now();
+      if (!force && lastActivityEmitAt !== 0 && atMs - lastActivityEmitAt < activityIntervalMs) return;
+      lastActivityEmitAt = atMs;
+      const at = new Date(atMs).toISOString();
+      const payload = {
+        kind,
+        at,
+        startedAt,
+        elapsedMs: Math.max(0, atMs - startedAtMs),
+        lastOutputAt,
+        deadlineAt,
+        timeoutMs,
+        processAlive,
+      };
+      if (stream) payload.stream = stream;
+      if (bytes != null) payload.bytes = bytes;
+      activityQueue = activityQueue.then(async () => {
+        if (activityError) return;
+        try { await onActivity(payload); }
+        catch (error) { activityError = error; }
+      });
+    };
+
+    emitActivity('started', { force: true, processAlive: true });
+    const heartbeat = typeof onActivity === 'function'
+      ? setInterval(() => emitActivity('heartbeat', { force: true, processAlive: child.exitCode == null }), activityIntervalMs)
+      : null;
+    heartbeat?.unref?.();
+
     const observe = (stream, chunk) => {
       lastOutputAt = new Date().toISOString();
-      onActivity?.({ stream, at: lastOutputAt, bytes: Buffer.byteLength(chunk) });
+      emitActivity('output', { stream, bytes: Buffer.byteLength(chunk) });
     };
     child.stdout.on('data', (chunk) => {
       const next = appendTail(stdout, chunk, maxOutputBytes);
@@ -76,7 +117,6 @@ export class DeterministicProcessRunner {
 
     let timedOut = false;
     let termination = null;
-    const startedAt = new Date().toISOString();
     const timer = setTimeout(() => {
       timedOut = true;
       termination = terminateProcessTree(child);
@@ -87,8 +127,13 @@ export class DeterministicProcessRunner {
       child.once('exit', (code, signal) => resolve({ code, signal }));
     }).finally(async () => {
       clearTimeout(timer);
+      if (heartbeat) clearInterval(heartbeat);
       if (termination) await termination;
     });
+
+    emitActivity('finished', { force: true, processAlive: false });
+    await activityQueue;
+    if (activityError) throw activityError;
 
     const fault = this.#faults?.throwIfTriggered('process.after-exit', { operation }) ?? null;
     if (fault?.action === 'timeout') timedOut = true;
