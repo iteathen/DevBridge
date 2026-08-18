@@ -7,6 +7,7 @@ import {
   mkdirSync,
   readFileSync,
   statSync,
+  unlinkSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -24,6 +25,8 @@ const CAPTURE_LIMIT = 4 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 5 * 60 * 1000;
 const UPDATE_CHECK_INTERVAL_MS = 60_000;
 const CHILD_RESTART_BACKOFF_MS = 5_000;
+const LEGACY_TAKEOVER_GRACE_ATTEMPTS = 2;
+const LEGACY_LOCK_PROTOCOL = 'patch-poller/daemon-lock-v1';
 
 function fail(message) { throw new Error(message); }
 
@@ -210,6 +213,101 @@ export function runPollerCliCaptured(command, paths, runtime, runner = defaultRu
   };
 }
 
+function daemonStateDirectory(paths) {
+  let raw;
+  try { raw = JSON.parse(readFileSync(paths.config, 'utf8')); }
+  catch { fail(`Cannot parse local PATCH-POLLER config while adopting legacy daemon: ${paths.config}`); }
+  const configured = raw?.state?.directory ?? '~/.patch-poller/state';
+  if (typeof configured !== 'string' || configured.trim() === '') fail('Local PATCH-POLLER state.directory is invalid during legacy takeover.');
+  const expanded = expandHome(configured);
+  if (!path.isAbsolute(expanded)) fail('Local PATCH-POLLER state.directory must be absolute or start with ~/.');
+  return path.normalize(expanded);
+}
+
+function legacyLockPath(paths) { return path.join(daemonStateDirectory(paths), 'daemon.lock'); }
+
+function readLegacyLock(filePath) {
+  if (!existsSync(filePath)) return null;
+  let value;
+  try { value = JSON.parse(readFileSync(filePath, 'utf8')); }
+  catch { fail(`Legacy PATCH-POLLER daemon lock is malformed at ${filePath}`); }
+  if (value?.protocol !== LEGACY_LOCK_PROTOCOL || !Number.isSafeInteger(value.pid) || value.pid <= 0 || typeof value.token !== 'string' || !/^[0-9a-f-]{36}$/iu.test(value.token)) {
+    fail(`Legacy PATCH-POLLER daemon lock is malformed at ${filePath}`);
+  }
+  return value;
+}
+
+export function validateLegacyDaemonIdentity(record, { paths, runtime }) {
+  if (!record || Number(record.processId) <= 0) fail('Legacy daemon process identity is missing.');
+  const expectedCli = path.resolve(runtime.cliPath).toLowerCase();
+  const expectedConfig = path.resolve(paths.config).toLowerCase();
+  const commandLine = String(record.commandLine ?? '').toLowerCase();
+  if (String(record.name ?? '').toLowerCase() !== 'node.exe' || !commandLine.includes(expectedCli) || !commandLine.includes(expectedConfig) || !/\bdaemon\b/iu.test(commandLine)) {
+    fail('Legacy daemon PID does not identify the expected PATCH-POLLER daemon; refusing forced takeover.');
+  }
+  return true;
+}
+
+function windowsLegacyProcess(pid, runner) {
+  const script = `$p = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' -ErrorAction SilentlyContinue; if ($null -eq $p) { exit 4 }; [pscustomobject]@{processId=[int]$p.ProcessId;name=[string]$p.Name;commandLine=[string]$p.CommandLine} | ConvertTo-Json -Compress`;
+  const result = runner('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    env: process.env,
+    stdio: 'pipe',
+    timeout: 15_000,
+    shell: false,
+    windowsHide: true,
+  });
+  if (result.status === 4) return null;
+  if (result.error || result.status !== 0) fail(formatFailure('powershell.exe', ['<legacy-daemon-identity-check>'], result));
+  try { return JSON.parse(String(result.stdout || '')); }
+  catch { fail('Could not parse Windows legacy daemon process identity.'); }
+}
+
+function processExists(pid) {
+  try { process.kill(pid, 0); return true; }
+  catch (error) {
+    if (error?.code === 'ESRCH') return false;
+    if (error?.code === 'EPERM') return true;
+    throw error;
+  }
+}
+
+function cleanupExactLegacyLock(filePath, original) {
+  const current = readLegacyLock(filePath);
+  if (!current) return;
+  if (current.pid !== original.pid || current.token !== original.token) fail('Legacy daemon lock ownership changed during takeover; refusing cleanup.');
+  unlinkSync(filePath);
+  const stopPath = `${filePath}.stop-${original.token}`;
+  if (existsSync(stopPath)) unlinkSync(stopPath);
+}
+
+export async function forceTerminateLegacyDaemon(paths, runtime, runner = defaultRunner, { platform = process.platform, delayFn = delay } = {}) {
+  const filePath = legacyLockPath(paths);
+  const lock = readLegacyLock(filePath);
+  if (!lock) return { forced: false, alreadyStopped: true };
+  if (platform !== 'win32') fail('Legacy forced takeover is currently implemented only for Windows; refusing an unverifiable PID termination.');
+
+  const identity = windowsLegacyProcess(lock.pid, runner);
+  if (identity) {
+    validateLegacyDaemonIdentity(identity, { paths, runtime });
+    process.stdout.write(`[patch-poller-supervisor] verified legacy daemon pid=${lock.pid}; forcing one-time takeover after cooperative stop timeout\n`);
+    const killed = runner('taskkill.exe', ['/PID', String(lock.pid), '/T', '/F'], {
+      env: process.env,
+      stdio: 'pipe',
+      timeout: 15_000,
+      shell: false,
+      windowsHide: true,
+    });
+    if ((killed.error || killed.status !== 0) && processExists(lock.pid)) fail(formatFailure('taskkill.exe', ['/PID', String(lock.pid), '/T', '/F'], killed));
+  }
+
+  const deadline = Date.now() + 10_000;
+  while (processExists(lock.pid) && Date.now() < deadline) await delayFn(100);
+  if (processExists(lock.pid)) fail(`Verified legacy PATCH-POLLER daemon pid=${lock.pid} did not terminate.`);
+  cleanupExactLegacyLock(filePath, lock);
+  return { forced: true, pid: lock.pid };
+}
+
 export function spawnPollerDaemon(paths, runtime, spawnImpl = spawn) {
   return spawnImpl(process.execPath, [runtime.cliPath, 'daemon', '--config', paths.config], {
     cwd: paths.runtime,
@@ -242,17 +340,25 @@ export function decideSupervisorAction({ childExitCode, updatePending, operatorS
   return 'restart';
 }
 
-async function stopExistingDaemon(paths, runtime, runner) {
-  while (true) {
-    const result = runPollerCliCaptured('stop', paths, runtime, runner);
-    if (result.status === 0) return;
+export async function stopExistingDaemon(paths, runtime, runner = defaultRunner, {
+  maxGraceAttempts = LEGACY_TAKEOVER_GRACE_ATTEMPTS,
+  stopCommandFn = () => runPollerCliCaptured('stop', paths, runtime, runner),
+  forceLegacyStopFn = () => forceTerminateLegacyDaemon(paths, runtime, runner),
+  delayFn = delay,
+} = {}) {
+  for (let attempt = 1; attempt <= maxGraceAttempts; attempt += 1) {
+    const result = stopCommandFn();
+    if (result.status === 0) return { forced: false };
     if (result.status !== 3) {
       const detail = (result.stderr || result.stdout).trim();
       fail(`Could not stop existing PATCH-POLLER daemon (exit ${result.status})${detail ? `: ${detail.slice(0, 2000)}` : ''}`);
     }
-    process.stdout.write('[patch-poller-supervisor] existing daemon is finishing an active cycle; waiting for safe stop boundary\n');
-    await delay(1000);
+    if (attempt < maxGraceAttempts) {
+      process.stdout.write(`[patch-poller-supervisor] existing daemon is finishing an active cycle; cooperative stop attempt ${attempt}/${maxGraceAttempts}\n`);
+      await delayFn(1000);
+    }
   }
+  return forceLegacyStopFn();
 }
 
 export async function superviseDaemon(args, paths, initialRuntime, {
