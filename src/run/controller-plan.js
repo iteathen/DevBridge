@@ -220,9 +220,24 @@ export function normalizeControllerPlan(raw) {
     }
   }
 
-  const rawExpected = plan.expectedChangedPaths ?? files.filter((file) => file.scope === 'persistent').map((file) => file.path);
-  if (!Array.isArray(rawExpected) || rawExpected.length > MAX_FILES) throw new ProtocolError('controllerPlan.expectedChangedPaths exceeds limit');
-  const expectedChangedPaths = [...new Set(rawExpected.map((value, index) => normalizePlanPath(value, `controllerPlan.expectedChangedPaths[${index}]`)))].sort();
+  const persistentProposalPaths = files
+    .filter((file) => file.scope === 'persistent')
+    .map((file) => file.path)
+    .sort();
+  let expectedChangedPaths = persistentProposalPaths;
+  if (plan.expectedChangedPaths != null) {
+    if (!Array.isArray(plan.expectedChangedPaths) || plan.expectedChangedPaths.length > MAX_FILES) {
+      throw new ProtocolError('controllerPlan.expectedChangedPaths exceeds limit');
+    }
+    const requested = [...new Set(plan.expectedChangedPaths.map((value, index) =>
+      normalizePlanPath(value, `controllerPlan.expectedChangedPaths[${index}]`)))].sort();
+    if (JSON.stringify(requested) !== JSON.stringify(persistentProposalPaths)) {
+      throw new ProtocolError(
+        'controllerPlan.expectedChangedPaths must exactly equal persistent file proposal paths; operation-generated persistent outputs require a separate locally registered output contract',
+      );
+    }
+    expectedChangedPaths = requested;
+  }
 
   return {
     protocol: CONTROLLER_PLAN_PROTOCOL,
