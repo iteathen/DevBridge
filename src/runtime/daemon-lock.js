@@ -98,9 +98,14 @@ export async function daemonStatus(filePath) {
   };
 }
 
-export async function requestDaemonStop(filePath) {
+async function createDaemonStopRequest(filePath) {
   const lock = await readDaemonLock(filePath);
-  if (!lock) return { activeLock: false, requested: false, stopped: true };
+  if (!lock) {
+    return {
+      result: { activeLock: false, requested: false, stopped: true },
+      token: null,
+    };
+  }
   const stopPath = stopFilePath(filePath, lock.token);
   let handle;
   try { handle = await open(stopPath, 'wx', 0o600); }
@@ -108,11 +113,14 @@ export async function requestDaemonStop(filePath) {
     if (error?.code !== 'EEXIST') throw error;
     const existing = await readStopRequest(filePath, lock.token);
     return {
-      activeLock: true,
-      requested: true,
-      alreadyRequested: Boolean(existing),
-      pid: lock.pid,
-      createdAt: lock.createdAt,
+      result: {
+        activeLock: true,
+        requested: true,
+        alreadyRequested: Boolean(existing),
+        pid: lock.pid,
+        createdAt: lock.createdAt,
+      },
+      token: lock.token,
     };
   }
   const request = {
@@ -124,12 +132,19 @@ export async function requestDaemonStop(filePath) {
   await handle.writeFile(`${JSON.stringify(request)}\n`, 'utf8');
   await handle.close();
   return {
-    activeLock: true,
-    requested: true,
-    alreadyRequested: false,
-    pid: lock.pid,
-    createdAt: lock.createdAt,
+    result: {
+      activeLock: true,
+      requested: true,
+      alreadyRequested: false,
+      pid: lock.pid,
+      createdAt: lock.createdAt,
+    },
+    token: lock.token,
   };
+}
+
+export async function requestDaemonStop(filePath) {
+  return (await createDaemonStopRequest(filePath)).result;
 }
 
 export async function consumeDaemonStopRequest(filePath, lockRecord) {
@@ -163,19 +178,17 @@ export async function waitForDaemonStopRequest(filePath, lockRecord, delayMs, si
 }
 
 export async function stopDaemon(filePath, { timeoutMs = 15000, pollMs = 100 } = {}) {
-  const request = await requestDaemonStop(filePath);
-  if (!request.activeLock) return request;
-  const lock = await readDaemonLock(filePath);
-  if (!lock) return { ...request, stopped: true };
-  const token = lock.token;
+  const requested = await createDaemonStopRequest(filePath);
+  if (!requested.result.activeLock) return requested.result;
+  const token = requested.token;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await pause(Math.min(pollMs, Math.max(1, deadline - Date.now())));
     const current = await readDaemonLock(filePath);
-    if (!current) return { ...request, stopped: true };
+    if (!current) return { ...requested.result, stopped: true };
     if (current.token !== token) {
       throw new PolicyError('daemon lock ownership changed while waiting for stop');
     }
   }
-  return { ...request, stopped: false };
+  return { ...requested.result, stopped: false };
 }
