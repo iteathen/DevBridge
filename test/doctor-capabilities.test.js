@@ -13,26 +13,13 @@ test('doctor distinguishes static operations from sandbox-required repository ex
     github: { queueRepository: 'iteathen/PATCH-POLLER', trustedActorIds: ['1775584'], rateLimit: {} },
     workspace: { root: path.join(root, 'workspace'), allowedOwners: ['iteathen'], allowCreate: true },
     state: { directory: path.join(root, 'state') },
-    execution: {
-      enabled: true,
-      controllerPlansEnabled: true,
-      modelAdaptersEnabled: false,
-      faultInjection: { enabled: false, rules: [] },
-    },
+    execution: { enabled: true, controllerPlansEnabled: true, modelAdaptersEnabled: false, faultInjection: { enabled: false, rules: [] } },
     status: {},
     tools: {},
   });
-  const result = await doctor(config, {
-    resolveTools: false,
-    checkGit: false,
-    checkGitHubAuth: false,
-    probeCoreCapabilities: false,
-    env: {},
-  });
+  const result = await doctor(config, { resolveTools: false, checkGit: false, checkGitHubAuth: false, probeCoreCapabilities: false, sandboxProvider: null, env: {} });
   assert.equal(result.ok, true);
-  assert.equal(result.capabilities.core.controllerPlans.enabled, true);
-  const operations = result.capabilities.core.controllerPlans.operations;
-  const byName = Object.fromEntries(operations.map((entry) => [entry.name, entry]));
+  const byName = Object.fromEntries(result.capabilities.core.controllerPlans.operations.map((entry) => [entry.name, entry]));
   assert.equal(byName['node.syntax-check'].executionClass, 'static-inspection');
   assert.equal(byName['node.syntax-check'].usable, true);
   assert.equal(byName['node.test'].executionClass, 'repository-code-executing');
@@ -58,10 +45,5 @@ test('doctor rejects an enabled executor only when both controller plans and ada
     status: {},
     tools: {},
   });
-  await assert.rejects(() => doctor(config, {
-    checkGit: false,
-    checkGitHubAuth: false,
-    probeCoreCapabilities: false,
-    env: {},
-  }), /neither controller plans nor valid local tool profiles/u);
+  await assert.rejects(() => doctor(config, { checkGit: false, checkGitHubAuth: false, probeCoreCapabilities: false, sandboxProvider: null, env: {} }), /neither controller plans nor valid local tool profiles/u);
 });

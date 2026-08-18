@@ -18,6 +18,7 @@ import { DeterministicProcessRunner } from '../runtime/deterministic-process-run
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
 import { WorkerIsolatingOperationRegistry } from '../runtime/worker-isolating-operation-registry.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
+import { createExecutionSandboxProvider } from '../runtime/sandbox-provider.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
@@ -31,19 +32,9 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   const workspacePolicy = new WorkspacePolicy(config.workspace);
   await workspacePolicy.ensureRoot();
   const stateStore = new JsonStateStore(path.join(config.state.directory, stateFileName(config.github.queueRepository)));
-  const chatHandoffStore = new ChatHandoffStore({
-    stateStore,
-    maxBytes: config.contextRollover.maxHandoffBytes,
-    maxRetained: config.contextRollover.maxRetained,
-  });
+  const chatHandoffStore = new ChatHandoffStore({ stateStore, maxBytes: config.contextRollover.maxHandoffBytes, maxRetained: config.contextRollover.maxRetained });
   const contextBudget = config.contextRollover.enabled
-    ? new ContextBudgetManager({
-        unit: config.contextRollover.unit,
-        capacityUnits: config.contextRollover.capacityUnits,
-        softRatio: config.contextRollover.softRatio,
-        preferredRatio: config.contextRollover.preferredRatio,
-        hardRatio: config.contextRollover.hardRatio,
-      })
+    ? new ContextBudgetManager({ unit: config.contextRollover.unit, capacityUnits: config.contextRollover.capacityUnits, softRatio: config.contextRollover.softRatio, preferredRatio: config.contextRollover.preferredRatio, hardRatio: config.contextRollover.hardRatio })
     : null;
   const rateBudget = new RateBudget(config.github.rateLimit);
   const credential = await resolveGitHubCredential(config.github.auth, { env });
@@ -53,13 +44,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   const feedbackSource = new IssueFeedbackSource({ client, queueRepository: config.github.queueRepository, trustedActorIds: config.github.trustedActorIds });
   const secretValues = credential ? [credential.token] : [];
   const statusReporter = new IssueStatusReporter({ client, stateStore, queueRepository: config.github.queueRepository, progressIntervalMs: config.status.progressIntervalMs, maxCommentBytes: config.status.maxCommentBytes, secretValues });
-  const chatHandoffProjector = new ChatHandoffProjector({
-    client,
-    stateStore,
-    queueRepository: config.github.queueRepository,
-    maxCommentBytes: config.status.maxCommentBytes,
-    secretValues,
-  });
+  const chatHandoffProjector = new ChatHandoffProjector({ client, stateStore, queueRepository: config.github.queueRepository, maxCommentBytes: config.status.maxCommentBytes, secretValues });
   const gitClient = new GitClient({ executable: config.git.executable, syntheticHome: path.join(config.state.directory, 'git-home'), defaultTimeoutMs: config.git.commandTimeoutMs });
   const workspaceManager = new GitWorkspaceManager({
     workspacePolicy,
@@ -71,32 +56,19 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     baselineChannels: config.workspace.baselineChannels,
     defaultBaselineChannel: config.workspace.defaultBaselineChannel,
   });
+  const sandboxProvider = createExecutionSandboxProvider(config.execution.sandbox, { env, protectedRoots: [config.state.directory] });
   const processRunner = new ProcessRunner({ sourceEnv: env, exchangeRoot: path.join(config.state.directory, 'exchange') });
   const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
-  const deterministicProcessRunner = new DeterministicProcessRunner({ sourceEnv: env, faultInjector });
+  const deterministicProcessRunner = new DeterministicProcessRunner({ sourceEnv: env, faultInjector, sandboxProvider });
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const coreOperationRegistry = createCoreOperationRegistry({ toolchainRegistry });
   const operationRegistry = new WorkerIsolatingOperationRegistry({ delegate: coreOperationRegistry });
-  const deterministicControllerPlanExecutor = new ControllerPlanExecutor({
-    operationRegistry,
-    processRunner: deterministicProcessRunner,
-    workspaceManager,
-    faultInjector,
-  });
-  const byteVerifyingControllerPlanExecutor = new PersistentPlanVerifyingExecutor({
-    delegate: deterministicControllerPlanExecutor,
-  });
-  const controllerPlanExecutor = new LivenessProjectingPlanExecutor({
-    delegate: byteVerifyingControllerPlanExecutor,
-    statusReporter,
-  });
+  const deterministicControllerPlanExecutor = new ControllerPlanExecutor({ operationRegistry, processRunner: deterministicProcessRunner, workspaceManager, faultInjector });
+  const byteVerifyingControllerPlanExecutor = new PersistentPlanVerifyingExecutor({ delegate: deterministicControllerPlanExecutor });
+  const controllerPlanExecutor = new LivenessProjectingPlanExecutor({ delegate: byteVerifyingControllerPlanExecutor, statusReporter });
 
   const builtIns = builtInToolProfiles();
-  for (const name of Object.keys(builtIns)) {
-    if (Object.hasOwn(config.tools, name)) {
-      throw new Error(`local tool profile name ${name} is reserved by PATCH-POLLER`);
-    }
-  }
+  for (const name of Object.keys(builtIns)) if (Object.hasOwn(config.tools, name)) throw new Error(`local tool profile name ${name} is reserved by PATCH-POLLER`);
   const tools = { ...config.tools, ...builtIns };
   const coordinator = new RunCoordinator({
     stateStore,
@@ -132,6 +104,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     workspaceManager,
     processRunner,
     deterministicProcessRunner,
+    sandboxProvider,
     faultInjector,
     toolchainRegistry,
     operationRegistry,

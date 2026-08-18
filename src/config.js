@@ -13,6 +13,7 @@ const ENVIRONMENT_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const HOSTNAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 const GITHUB_AUTH_MODES = new Set(['auto', 'environment', 'github-cli']);
 const CONTEXT_BUDGET_UNITS = new Set(['tokens', 'bytes', 'proxy']);
+const SANDBOX_PROVIDERS = new Set(['auto', 'none', 'bubblewrap', 'windows-sandbox']);
 
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -49,59 +50,39 @@ function requireBoolean(value, name) {
 
 function expandHome(value) {
   if (value === '~') return os.homedir();
-  if (value.startsWith('~/') || value.startsWith('~\\')) {
-    return path.join(os.homedir(), value.slice(2));
-  }
+  if (value.startsWith('~/') || value.startsWith('~\\')) return path.join(os.homedir(), value.slice(2));
   return value;
 }
 
 function absolutePath(value, name) {
   const expanded = expandHome(requireString(value, name));
-  if (!path.isAbsolute(expanded)) {
-    throw new ConfigurationError(`${name} must be an absolute path or start with ~/`);
-  }
+  if (!path.isAbsolute(expanded)) throw new ConfigurationError(`${name} must be an absolute path or start with ~/`);
   return path.normalize(expanded);
 }
 
 function requireEnvironmentName(value, name) {
   const result = requireString(value, name);
-  if (!ENVIRONMENT_NAME_RE.test(result)) {
-    throw new ConfigurationError(`${name} must be a valid environment-variable name`);
-  }
+  if (!ENVIRONMENT_NAME_RE.test(result)) throw new ConfigurationError(`${name} must be a valid environment-variable name`);
   return result;
 }
 
 function normalizeGitHubAuth(github) {
   const auth = requireObject(github.auth ?? {}, 'github.auth');
   const mode = requireString(auth.mode ?? 'auto', 'github.auth.mode');
-  if (!GITHUB_AUTH_MODES.has(mode)) {
-    throw new ConfigurationError('github.auth.mode must be auto, environment, or github-cli');
-  }
-
+  if (!GITHUB_AUTH_MODES.has(mode)) throw new ConfigurationError('github.auth.mode must be auto, environment, or github-cli');
   let environmentVariables;
   if (auth.environmentVariables != null) {
-    if (!Array.isArray(auth.environmentVariables) || auth.environmentVariables.length === 0 ||
-        auth.environmentVariables.length > 8) {
+    if (!Array.isArray(auth.environmentVariables) || auth.environmentVariables.length === 0 || auth.environmentVariables.length > 8) {
       throw new ConfigurationError('github.auth.environmentVariables must contain 1-8 environment-variable names');
     }
-    environmentVariables = auth.environmentVariables.map((value, index) =>
-      requireEnvironmentName(value, `github.auth.environmentVariables[${index}]`));
+    environmentVariables = auth.environmentVariables.map((value, index) => requireEnvironmentName(value, `github.auth.environmentVariables[${index}]`));
   } else {
-    const preferred = github.tokenEnv == null
-      ? null
-      : requireEnvironmentName(github.tokenEnv, 'github.tokenEnv');
-    environmentVariables = [
-      ...(preferred ? [preferred] : []),
-      ...DEFAULT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES,
-    ];
+    const preferred = github.tokenEnv == null ? null : requireEnvironmentName(github.tokenEnv, 'github.tokenEnv');
+    environmentVariables = [...(preferred ? [preferred] : []), ...DEFAULT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES];
   }
   environmentVariables = [...new Set(environmentVariables)];
-
   const hostname = requireString(auth.hostname ?? 'github.com', 'github.auth.hostname');
-  if (!HOSTNAME_RE.test(hostname)) {
-    throw new ConfigurationError('github.auth.hostname must be a safe hostname');
-  }
-
+  if (!HOSTNAME_RE.test(hostname)) throw new ConfigurationError('github.auth.hostname must be a safe hostname');
   return {
     mode,
     environmentVariables,
@@ -124,9 +105,7 @@ function normalizeBaselineChannels(workspace) {
     }
     channels[channel] = normalizedBranch;
   }
-  const defaultChannel = workspace.defaultBaselineChannel == null
-    ? null
-    : requireString(workspace.defaultBaselineChannel, 'workspace.defaultBaselineChannel');
+  const defaultChannel = workspace.defaultBaselineChannel == null ? null : requireString(workspace.defaultBaselineChannel, 'workspace.defaultBaselineChannel');
   if (defaultChannel != null && !Object.hasOwn(channels, defaultChannel)) {
     throw new ConfigurationError('workspace.defaultBaselineChannel must name a configured local baseline channel');
   }
@@ -134,11 +113,25 @@ function normalizeBaselineChannels(workspace) {
 }
 
 function normalizeFaultInjection(execution) {
-  try {
-    return validateFaultInjectionConfig(execution.faultInjection ?? {});
-  } catch (error) {
-    throw new ConfigurationError(error.message, { cause: error });
+  try { return validateFaultInjectionConfig(execution.faultInjection ?? {}); }
+  catch (error) { throw new ConfigurationError(error.message, { cause: error }); }
+}
+
+function normalizeSandbox(execution) {
+  const sandbox = requireObject(execution.sandbox ?? {}, 'execution.sandbox');
+  const provider = requireString(sandbox.provider ?? 'auto', 'execution.sandbox.provider');
+  if (!SANDBOX_PROVIDERS.has(provider)) {
+    throw new ConfigurationError('execution.sandbox.provider must be auto, none, bubblewrap, or windows-sandbox');
   }
+  const readRoots = sandbox.readRoots ?? [];
+  if (!Array.isArray(readRoots) || readRoots.length > 64) throw new ConfigurationError('execution.sandbox.readRoots must contain at most 64 local paths');
+  return {
+    provider,
+    readRoots: readRoots.map((entry, index) => absolutePath(entry, `execution.sandbox.readRoots[${index}]`)),
+    bubblewrapExecutable: requireString(sandbox.bubblewrapExecutable ?? 'bwrap', 'execution.sandbox.bubblewrapExecutable'),
+    windowsSandboxExecutable: requireString(sandbox.windowsSandboxExecutable ?? 'wsb', 'execution.sandbox.windowsSandboxExecutable'),
+    verificationTimeoutMs: requireInteger(sandbox.verificationTimeoutMs ?? 120_000, 'execution.sandbox.verificationTimeoutMs', { min: 5_000 }),
+  };
 }
 
 function normalizeContextRollover(config) {
@@ -148,9 +141,7 @@ function normalizeContextRollover(config) {
   const softRatio = requireNumber(rollover.softRatio ?? 0.55, 'contextRollover.softRatio', { min: Number.EPSILON, max: 0.999999 });
   const preferredRatio = requireNumber(rollover.preferredRatio ?? 0.65, 'contextRollover.preferredRatio', { min: Number.EPSILON, max: 0.999999 });
   const hardRatio = requireNumber(rollover.hardRatio ?? 0.75, 'contextRollover.hardRatio', { min: Number.EPSILON, max: 0.999999 });
-  if (!(softRatio < preferredRatio && preferredRatio < hardRatio)) {
-    throw new ConfigurationError('contextRollover ratios must satisfy softRatio < preferredRatio < hardRatio');
-  }
+  if (!(softRatio < preferredRatio && preferredRatio < hardRatio)) throw new ConfigurationError('contextRollover ratios must satisfy softRatio < preferredRatio < hardRatio');
   const maxHandoffBytes = requireInteger(rollover.maxHandoffBytes ?? 32_768, 'contextRollover.maxHandoffBytes', { min: 4_096 });
   if (maxHandoffBytes > 262_144) throw new ConfigurationError('contextRollover.maxHandoffBytes must be <= 262144');
   const maxRetained = requireInteger(rollover.maxRetained ?? 8, 'contextRollover.maxRetained', { min: 2 });
@@ -170,16 +161,13 @@ function normalizeContextRollover(config) {
 export function validateConfig(raw) {
   const config = requireObject(raw, 'config');
   if (config.version !== 1) throw new ConfigurationError('config.version must be 1');
-
   const github = requireObject(config.github, 'github');
   const queueRepository = requireString(github.queueRepository, 'github.queueRepository');
   if (!REPOSITORY_RE.test(queueRepository)) throw new ConfigurationError('github.queueRepository must be owner/name');
-
   const trustedActorIds = github.trustedActorIds;
   if (!Array.isArray(trustedActorIds) || trustedActorIds.length === 0 || trustedActorIds.some((id) => !/^\d+$/.test(String(id)))) {
     throw new ConfigurationError('github.trustedActorIds must contain at least one numeric GitHub user ID');
   }
-
   const githubAuth = normalizeGitHubAuth(github);
   const rate = requireObject(github.rateLimit ?? {}, 'github.rateLimit');
   const workspace = requireObject(config.workspace, 'workspace');
@@ -188,7 +176,6 @@ export function validateConfig(raw) {
     throw new ConfigurationError('workspace.allowedOwners must contain at least one safe owner name');
   }
   const baselines = normalizeBaselineChannels(workspace);
-
   const state = requireObject(config.state ?? {}, 'state');
   const execution = requireObject(config.execution ?? {}, 'execution');
   const status = requireObject(config.status ?? {}, 'status');
@@ -200,6 +187,7 @@ export function validateConfig(raw) {
   const branchPrefix = requireString(publication.branchPrefix ?? 'patchpoller', 'publication.branchPrefix');
   if (!BRANCH_PREFIX_RE.test(branchPrefix)) throw new ConfigurationError('publication.branchPrefix must be a safe branch segment');
   const faultInjection = normalizeFaultInjection(execution);
+  const sandbox = normalizeSandbox(execution);
 
   return {
     version: 1,
@@ -244,6 +232,7 @@ export function validateConfig(raw) {
       maxConcurrentTasks: requireInteger(execution.maxConcurrentTasks ?? 1, 'execution.maxConcurrentTasks', { min: 1 }),
       maxTurns: requireInteger(execution.maxTurns ?? 8, 'execution.maxTurns', { min: 1 }),
       allowUncontainedTools: execution.allowUncontainedTools === true,
+      sandbox,
       faultInjection,
     },
     publication: {
@@ -251,9 +240,7 @@ export function validateConfig(raw) {
       forceNoOpPublication: publication.forceNoOpPublication === true,
       branchPrefix,
     },
-    daemon: {
-      errorBackoffMs: requireInteger(daemon.errorBackoffMs ?? 60_000, 'daemon.errorBackoffMs', { min: 5_000 }),
-    },
+    daemon: { errorBackoffMs: requireInteger(daemon.errorBackoffMs ?? 60_000, 'daemon.errorBackoffMs', { min: 5_000 }) },
     status: {
       progressIntervalMs: requireInteger(status.progressIntervalMs ?? 300_000, 'status.progressIntervalMs', { min: 30_000 }),
       maxCommentBytes: requireInteger(status.maxCommentBytes ?? 48_000, 'status.maxCommentBytes', { min: 4_096 }),
@@ -265,10 +252,7 @@ export function validateConfig(raw) {
 export async function loadConfig(filePath) {
   const text = await readFile(filePath, 'utf8');
   let raw;
-  try {
-    raw = JSON.parse(text);
-  } catch (error) {
-    throw new ConfigurationError(`invalid JSON in ${filePath}`, { cause: error });
-  }
+  try { raw = JSON.parse(text); }
+  catch (error) { throw new ConfigurationError(`invalid JSON in ${filePath}`, { cause: error }); }
   return validateConfig(raw);
 }

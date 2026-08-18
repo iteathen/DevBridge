@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 import { PolicyError } from '../errors.js';
 import { assertVerifiedRepositorySandbox, sandboxStatus, verifySandboxProvider } from './execution-sandbox.js';
 import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
@@ -24,6 +25,20 @@ function boundedEnvironment(source, pass = [], set = {}) {
   return env;
 }
 
+function sandboxRequest(value) {
+  const raw = value ?? {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new PolicyError('deterministic sandbox request must be an object');
+  const normalized = {};
+  for (const key of ['writableRoots', 'readOnlyRoots']) {
+    const entries = raw[key] ?? [];
+    if (!Array.isArray(entries) || entries.length > 32 || entries.some((entry) => typeof entry !== 'string' || !path.isAbsolute(entry))) {
+      throw new PolicyError(`deterministic sandbox ${key} must contain at most 32 absolute local paths`);
+    }
+    normalized[key] = [...new Set(entries.map((entry) => path.resolve(entry)))];
+  }
+  return normalized;
+}
+
 function truncateFault(value) {
   const buffer = Buffer.from(String(value ?? ''), 'utf8');
   const tail = buffer.length <= FAULT_TRUNCATE_BYTES ? buffer : buffer.subarray(buffer.length - FAULT_TRUNCATE_BYTES);
@@ -41,30 +56,16 @@ export class DeterministicProcessRunner {
     this.#sandboxProvider = sandboxProvider;
   }
 
-  enforcementStatus() {
-    return sandboxStatus(this.#sandboxProvider);
-  }
+  enforcementStatus() { return sandboxStatus(this.#sandboxProvider); }
 
   async assertRepositorySandbox(operation = 'repository-code operation') {
     const status = await verifySandboxProvider(this.#sandboxProvider);
     assertVerifiedRepositorySandbox(status, operation);
-    if (typeof this.#sandboxProvider?.run !== 'function') {
-      throw new PolicyError(`verified sandbox provider ${status.provider} does not implement execution`);
-    }
+    if (typeof this.#sandboxProvider?.run !== 'function') throw new PolicyError(`verified sandbox provider ${status.provider} does not implement execution`);
     return status;
   }
 
-  async #runDirect({
-    executable,
-    args,
-    cwd,
-    timeoutMs,
-    maxOutputBytes,
-    env,
-    stdin,
-    onActivity,
-    activityIntervalMs,
-  }) {
+  async #runDirect({ executable, args, cwd, timeoutMs, maxOutputBytes, env, stdin, onActivity, activityIntervalMs }) {
     const child = spawn(executable, args, containedSpawnOptions({ cwd, env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
     const startedAtMs = Date.now();
     const startedAt = new Date(startedAtMs).toISOString();
@@ -76,87 +77,40 @@ export class DeterministicProcessRunner {
     let lastActivityEmitAt = 0;
     let activityError = null;
     let activityQueue = Promise.resolve();
-
     const emitActivity = (kind, { force = false, stream = null, bytes = null, processAlive = child.exitCode == null } = {}) => {
       if (typeof onActivity !== 'function') return;
       const atMs = Date.now();
       if (!force && lastActivityEmitAt !== 0 && atMs - lastActivityEmitAt < activityIntervalMs) return;
       lastActivityEmitAt = atMs;
       const at = new Date(atMs).toISOString();
-      const payload = {
-        kind,
-        at,
-        startedAt,
-        elapsedMs: Math.max(0, atMs - startedAtMs),
-        lastOutputAt,
-        deadlineAt,
-        timeoutMs,
-        processAlive,
-      };
+      const payload = { kind, at, startedAt, elapsedMs: Math.max(0, atMs - startedAtMs), lastOutputAt, deadlineAt, timeoutMs, processAlive };
       if (stream) payload.stream = stream;
       if (bytes != null) payload.bytes = bytes;
       activityQueue = activityQueue.then(async () => {
         if (activityError) return;
-        try { await onActivity(payload); }
-        catch (error) { activityError = error; }
+        try { await onActivity(payload); } catch (error) { activityError = error; }
       });
     };
-
     emitActivity('started', { force: true, processAlive: true });
-    const heartbeat = typeof onActivity === 'function'
-      ? setInterval(() => emitActivity('heartbeat', { force: true, processAlive: child.exitCode == null }), activityIntervalMs)
-      : null;
+    const heartbeat = typeof onActivity === 'function' ? setInterval(() => emitActivity('heartbeat', { force: true, processAlive: child.exitCode == null }), activityIntervalMs) : null;
     heartbeat?.unref?.();
-
-    const observe = (stream, chunk) => {
-      lastOutputAt = new Date().toISOString();
-      emitActivity('output', { stream, bytes: Buffer.byteLength(chunk) });
-    };
-    child.stdout.on('data', (chunk) => {
-      const next = appendTail(stdout, chunk, maxOutputBytes);
-      stdout = next.buffer;
-      outputTruncated ||= next.truncated;
-      observe('stdout', chunk);
-    });
-    child.stderr.on('data', (chunk) => {
-      const next = appendTail(stderr, chunk, maxOutputBytes);
-      stderr = next.buffer;
-      outputTruncated ||= next.truncated;
-      observe('stderr', chunk);
-    });
+    const observe = (stream, chunk) => { lastOutputAt = new Date().toISOString(); emitActivity('output', { stream, bytes: Buffer.byteLength(chunk) }); };
+    child.stdout.on('data', (chunk) => { const next = appendTail(stdout, chunk, maxOutputBytes); stdout = next.buffer; outputTruncated ||= next.truncated; observe('stdout', chunk); });
+    child.stderr.on('data', (chunk) => { const next = appendTail(stderr, chunk, maxOutputBytes); stderr = next.buffer; outputTruncated ||= next.truncated; observe('stderr', chunk); });
     if (stdin == null) child.stdin.end(); else child.stdin.end(String(stdin));
-
     let timedOut = false;
     let termination = null;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      termination = terminateProcessTree(child);
-    }, timeoutMs);
+    const timer = setTimeout(() => { timedOut = true; termination = terminateProcessTree(child); }, timeoutMs);
     timer.unref?.();
-    const exit = await new Promise((resolve, reject) => {
-      child.once('error', reject);
-      child.once('exit', (code, signal) => resolve({ code, signal }));
-    }).finally(async () => {
+    const exit = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', (code, signal) => resolve({ code, signal })); }).finally(async () => {
       clearTimeout(timer);
       if (heartbeat) clearInterval(heartbeat);
       if (termination) await termination;
     });
-
     emitActivity('finished', { force: true, processAlive: false });
     await activityQueue;
     if (activityError) throw activityError;
-
-    return {
-      exitCode: exit.code,
-      signal: exit.signal,
-      timedOut,
-      outputTruncated,
-      stdout: stdout.toString('utf8'),
-      stderr: stderr.toString('utf8'),
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      lastOutputAt,
-    };
+    return { exitCode: exit.code, signal: exit.signal, timedOut, outputTruncated, stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8'), startedAt, finishedAt: new Date().toISOString(), lastOutputAt };
   }
 
   async run({
@@ -171,6 +125,7 @@ export class DeterministicProcessRunner {
     activityIntervalMs = DEFAULT_ACTIVITY_INTERVAL_MS,
     operation = null,
     executionClass = 'static-inspection',
+    sandbox = {},
   }) {
     if (typeof executable !== 'string' || executable.length === 0) throw new PolicyError('deterministic operation executable is missing');
     if (!Array.isArray(args) || args.some((value) => typeof value !== 'string')) throw new PolicyError('deterministic operation args must be structural strings');
@@ -178,7 +133,6 @@ export class DeterministicProcessRunner {
     if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1024 || maxOutputBytes > 16_777_216) throw new PolicyError('deterministic operation output limit is out of range');
     if (!Number.isInteger(activityIntervalMs) || activityIntervalMs < 10 || activityIntervalMs > 300_000) throw new PolicyError('deterministic activity interval is out of range');
     if (!EXECUTION_CLASSES.has(executionClass)) throw new PolicyError(`deterministic execution class is unsupported: ${executionClass}`);
-
     const request = {
       executable,
       args: [...args],
@@ -191,8 +145,8 @@ export class DeterministicProcessRunner {
       activityIntervalMs,
       operation,
       executionClass,
+      sandbox: sandboxRequest(sandbox),
     };
-
     let result;
     if (executionClass === 'repository-code-executing') {
       await this.assertRepositorySandbox(operation ?? 'repository-code operation');
@@ -200,17 +154,9 @@ export class DeterministicProcessRunner {
     } else {
       result = await this.#runDirect(request);
     }
-
     const fault = this.#faults?.throwIfTriggered('process.after-exit', { operation }) ?? null;
     if (fault?.action === 'timeout') result = { ...result, timedOut: true };
-    if (fault?.action === 'truncate-output') {
-      result = {
-        ...result,
-        stdout: truncateFault(result.stdout),
-        stderr: truncateFault(result.stderr),
-        outputTruncated: true,
-      };
-    }
+    if (fault?.action === 'truncate-output') result = { ...result, stdout: truncateFault(result.stdout), stderr: truncateFault(result.stderr), outputTruncated: true };
     return result;
   }
 }
