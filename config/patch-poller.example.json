@@ -4,7 +4,16 @@
     "queueRepository": "iteathen/PATCH-POLLER",
     "taskLabel": "patch-poller:ready",
     "trustedActorIds": ["1775584"],
-    "tokenEnv": "PATCH_POLLER_GITHUB_TOKEN",
+    "auth": {
+      "mode": "auto",
+      "environmentVariables": [
+        "PATCH_POLLER_GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN"
+      ],
+      "githubCliExecutable": "gh",
+      "hostname": "github.com"
+    },
     "apiVersion": "2026-03-10",
     "pollIntervalMs": 60000,
     "rateLimit": {
