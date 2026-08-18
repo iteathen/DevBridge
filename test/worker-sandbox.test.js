@@ -54,6 +54,7 @@ process.stdin.on('end', async () => {
       fs.writeFileSync(replacement, '{}');
       fs.renameSync(replacement, resultFile);
     }),
+    runtimeWriteDenied: denied(() => fs.writeFileSync(process.argv[1], 'mutated-runtime')),
     networkDenied: await networkDenied(),
     ghTokenAbsent: process.env.GH_TOKEN === undefined,
     githubTokenAbsent: process.env.GITHUB_TOKEN === undefined,
@@ -79,10 +80,13 @@ test('verified proposal worker cannot reach control state, credentials, Git admi
   const projectDir = path.join(root, 'project');
   const stateDirectory = path.join(root, 'state');
   const credentialDirectory = path.join(root, 'credential-store');
+  const trustedRuntime = path.join(root, 'trusted-runtime');
+  const workerScript = path.join(trustedRuntime, 'worker-fixture.mjs');
   try {
     await mkdir(path.join(projectDir, '.git'), { recursive: true, mode: 0o700 });
     await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
     await mkdir(credentialDirectory, { recursive: true, mode: 0o700 });
+    await mkdir(trustedRuntime, { recursive: true, mode: 0o700 });
 
     const stateRead = path.join(stateDirectory, 'authoritative-run-state.json');
     const stateWrite = path.join(stateDirectory, 'worker-escape.txt');
@@ -93,7 +97,7 @@ test('verified proposal worker cannot reach control state, credentials, Git admi
     await writeFile(daemonRead, 'daemon-control-sentinel\n', { mode: 0o600 });
     await writeFile(credentialRead, 'github-credential-sentinel\n', { mode: 0o600 });
     await writeFile(gitConfig, 'git-admin-sentinel\n', { mode: 0o600 });
-    await writeFile(path.join(projectDir, 'worker-fixture.mjs'), workerFixture, { mode: 0o600 });
+    await writeFile(workerScript, workerFixture, { mode: 0o600 });
 
     const sourceEnv = {
       ...process.env,
@@ -121,12 +125,15 @@ test('verified proposal worker cannot reach control state, credentials, Git admi
       sourceEnv,
       workerExchange: exchange,
       sandboxProvider: provider,
+      trustedReadRootsByProfile: {
+        'contained-worker-fixture': [trustedRuntime],
+      },
     });
     const profile = {
       name: 'contained-worker-fixture',
       executable: process.execPath,
       args: [
-        'worker-fixture.mjs',
+        workerScript,
         '{contextFile}',
         stateRead,
         stateWrite,
@@ -166,6 +173,7 @@ test('verified proposal worker cannot reach control state, credentials, Git admi
       contextWriteDenied: true,
       resultUnlinkDenied: true,
       resultReplaceDenied: true,
+      runtimeWriteDenied: true,
       networkDenied: true,
       ghTokenAbsent: true,
       githubTokenAbsent: true,
@@ -181,6 +189,7 @@ test('verified proposal worker cannot reach control state, credentials, Git admi
     assert.equal(await readFile(daemonRead, 'utf8'), 'daemon-control-sentinel\n');
     assert.equal(await readFile(credentialRead, 'utf8'), 'github-credential-sentinel\n');
     assert.equal(await readFile(gitConfig, 'utf8'), 'git-admin-sentinel\n');
+    assert.equal(await readFile(workerScript, 'utf8'), workerFixture);
     assert.equal(await readFile(path.join(projectDir, 'worker-project-write.txt'), 'utf8'), 'project-ok\n');
     await assert.rejects(readFile(stateWrite), { code: 'ENOENT' });
     await assert.rejects(stat(path.join(projectDir, '.patch-poller')), { code: 'ENOENT' });
