@@ -13,8 +13,8 @@ function appendTail(current, chunk, maxBytes) {
 }
 function buildEnvironment(profile, source) {
   const env = {};
-  for (const name of profile.environment.pass) if (source[name] != null) env[name] = source[name];
-  Object.assign(env, profile.environment.set);
+  for (const name of profile.environment?.pass ?? []) if (source[name] != null) env[name] = source[name];
+  Object.assign(env, profile.environment?.set ?? {});
   env.GIT_TERMINAL_PROMPT = '0';
   env.PATCH_POLLER_NONINTERACTIVE = '1';
   env.NO_COLOR ??= '1';
@@ -102,18 +102,19 @@ export class ProcessRunner {
 
     try {
       const executable = await this.#resolver(profile.executable, this.#sourceEnv);
-      const args = expandProfileArgs(profile.args, { projectDir: projectRoot, contextFile: prepared.contextFile, resultFile: prepared.resultFile, runId });
+      const args = expandProfileArgs(profile.args ?? [], { projectDir: projectRoot, contextFile: prepared.contextFile, resultFile: prepared.resultFile, runId });
       const env = buildEnvironment(profile, this.#sourceEnv);
       env.PATCH_POLLER_RUN_ID = String(runId);
       let stdin = null;
       if (profile.inputMode === 'stdin-json') stdin = `${JSON.stringify(toolContext)}\n`;
       else if (profile.inputMode === 'stdin-text') stdin = `PATCH-POLLER CONTEXT\n${JSON.stringify(toolContext, null, 2)}\n`;
 
+      const sandboxPolicy = profile.sandbox ?? { requiresVerifiedSandbox: true, network: 'deny' };
       let launch = { executable, args, cwd: projectRoot, environment: env, provider: 'direct-development-override' };
-      if (profile.sandbox.requiresVerifiedSandbox !== false || !this.#allowUncontained) {
+      if (sandboxPolicy.requiresVerifiedSandbox !== false || !this.#allowUncontained) {
         const status = this.sandboxStatus();
         if (!status.verified || !this.#sandbox?.prepareSpawn) {
-          throw new PolicyError(`tool profile ${profile.name} requires verified containment but no verified sandbox provider is active`);
+          throw new PolicyError(`tool profile ${profile.name ?? 'unnamed'} requires verified containment but no verified sandbox provider is active`);
         }
         launch = await this.#sandbox.prepareSpawn({
           executable,
@@ -127,7 +128,7 @@ export class ProcessRunner {
             readOnlyRoots: [],
             exchangeDir: prepared.exchangeDir,
             resultFile: prepared.resultFile,
-            network: profile.sandbox.network,
+            network: sandboxPolicy.network ?? 'deny',
           },
         });
       }
