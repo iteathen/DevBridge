@@ -130,12 +130,19 @@ export function decisionScopeSubjectDigest({ decisionClasses, scopePaths, bounds
   }));
 }
 
-export function checkpointIdFor({ runId, taskRevision, bindingMode, subjectDigest, decisionClasses }) {
+export function checkpointIdFor({ runId, taskRevision, bindingMode, subjectDigest, decisionClasses, generation = null }) {
   if (!DIGEST_RE.test(String(taskRevision))) throw new PolicyError('checkpoint task revision is invalid');
   if (!DIGEST_RE.test(String(subjectDigest))) throw new PolicyError('checkpoint subject digest is invalid');
   if (!['artifact-exact', 'decision-scope'].includes(bindingMode)) throw new PolicyError('checkpoint binding mode is invalid');
   const classes = normalizeDecisionClasses(decisionClasses);
-  const digest = sha256(JSON.stringify({ runId: String(runId), taskRevision, bindingMode, subjectDigest, decisionClasses: classes }));
+  const digest = sha256(JSON.stringify({
+    runId: String(runId),
+    taskRevision,
+    bindingMode,
+    subjectDigest,
+    decisionClasses: classes,
+    generation: generation == null ? null : String(generation),
+  }));
   return `checkpoint-${digest.slice(0, 32)}`;
 }
 
@@ -159,6 +166,7 @@ export function createHardGateCheckpoint({
     bindingMode: 'artifact-exact',
     subjectDigest,
     decisionClasses: classes,
+    generation: String(nowMs),
   });
   return {
     protocol: 'patch-poller/checkpoint-v1',
