@@ -9,6 +9,18 @@ export class ConfigurationError extends PatchPollerError {}
 export class ProtocolError extends PatchPollerError {}
 export class PolicyError extends PatchPollerError {}
 
+export class GitCommandError extends PatchPollerError {
+  constructor(message, { args = [], cwd = null, exitCode = null, signal = null, stdout = '', stderr = '', cause } = {}) {
+    super(message, cause ? { cause } : undefined);
+    this.args = [...args];
+    this.cwd = cwd;
+    this.exitCode = exitCode;
+    this.signal = signal;
+    this.stdout = stdout;
+    this.stderr = stderr;
+  }
+}
+
 export class RateLimitError extends PatchPollerError {
   constructor(message, { retryAt = null, cause } = {}) {
     super(message, cause ? { cause } : undefined);

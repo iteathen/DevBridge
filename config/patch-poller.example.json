@@ -23,12 +23,25 @@
   "state": {
     "directory": "~/.patch-poller/state"
   },
+  "git": {
+    "executable": "git",
+    "cloneBaseUrl": "https://github.com",
+    "commandTimeoutMs": 120000,
+    "fetchTimeoutMs": 300000
+  },
   "execution": {
     "enabled": false,
     "defaultTool": null,
     "maxConcurrentTasks": 1,
     "maxTurns": 8,
     "allowUncontainedTools": false
+  },
+  "publication": {
+    "autoPushTaskBranches": false,
+    "branchPrefix": "patchpoller"
+  },
+  "daemon": {
+    "errorBackoffMs": 60000
   },
   "status": {
     "progressIntervalMs": 300000,

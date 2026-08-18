@@ -6,15 +6,8 @@ import { validateConfig } from '../src/config.js';
 function base() {
   return {
     version: 1,
-    github: {
-      queueRepository: 'iteathen/PATCH-POLLER',
-      trustedActorIds: ['1775584'],
-      rateLimit: {}
-    },
-    workspace: {
-      root: path.resolve('/tmp/patch-poller-workspace'),
-      allowedOwners: ['iteathen']
-    },
+    github: { queueRepository: 'iteathen/PATCH-POLLER', trustedActorIds: ['1775584'], rateLimit: {} },
+    workspace: { root: path.resolve('/tmp/patch-poller-workspace'), allowedOwners: ['iteathen'] },
     state: { directory: path.resolve('/tmp/patch-poller-state') },
     execution: {},
     status: {},
@@ -22,10 +15,13 @@ function base() {
   };
 }
 
-test('uses conservative API and execution defaults', () => {
+test('uses conservative API, execution, Git, and publication defaults', () => {
   const config = validateConfig(base());
   assert.equal(config.github.apiVersion, '2026-03-10');
   assert.equal(config.github.rateLimit.reserveRatio, 0.2);
   assert.equal(config.execution.enabled, false);
   assert.deepEqual(config.workspace.externalReadRoots, []);
+  assert.equal(config.git.executable, 'git');
+  assert.equal(config.publication.autoPushTaskBranches, false);
+  assert.equal(config.publication.branchPrefix, 'patchpoller');
 });

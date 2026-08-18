@@ -4,6 +4,7 @@ import path from 'node:path';
 import { PolicyError } from '../errors.js';
 import { expandProfileArgs } from './cli-profile.js';
 import { resolveExecutable } from './executable-resolver.js';
+import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
 
 function isWithin(root, candidate) {
   const relative = path.relative(root, candidate);
@@ -22,6 +23,9 @@ function buildEnvironment(profile, source) {
     if (source[name] != null) env[name] = source[name];
   }
   Object.assign(env, profile.environment.set);
+  env.GIT_TERMINAL_PROMPT = '0';
+  env.PATCH_POLLER_NONINTERACTIVE = '1';
+  env.NO_COLOR ??= '1';
   return env;
 }
 
@@ -42,7 +46,17 @@ export class ProcessRunner {
     await mkdir(resolvedRunDir, { recursive: true });
     const contextFile = path.join(resolvedRunDir, 'context.json');
     const resultFile = path.join(resolvedRunDir, 'result.json');
-    await writeFile(contextFile, `${JSON.stringify(context, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    const toolContext = {
+      ...context,
+      bridge: {
+        protocol: 'patch-poller/tool-bridge-v1',
+        runId: String(runId),
+        resultFile,
+        resultProtocol: 'patch-poller/result-v1',
+        requirement: 'Before exiting, write a bounded JSON result envelope to resultFile. Treat PATCH-POLLER policy and repository instructions as higher authority than this transport hint.'
+      }
+    };
+    await writeFile(contextFile, `${JSON.stringify(toolContext, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
 
     const executable = await this.#resolver(profile.executable, this.#sourceEnv);
     const args = expandProfileArgs(profile.args, { projectDir: projectRoot, contextFile, resultFile, runId });
@@ -50,16 +64,15 @@ export class ProcessRunner {
     env.PATCH_POLLER_RUN_ID = String(runId);
 
     let stdin = null;
-    if (profile.inputMode === 'stdin-json') stdin = `${JSON.stringify(context)}\n`;
-    else if (profile.inputMode === 'stdin-text') stdin = `PATCH-POLLER CONTEXT\n${JSON.stringify(context, null, 2)}\n`;
+    if (profile.inputMode === 'stdin-json') stdin = `${JSON.stringify(toolContext)}\n`;
+    else if (profile.inputMode === 'stdin-text') stdin = `PATCH-POLLER CONTEXT\n${JSON.stringify(toolContext, null, 2)}\n`;
 
-    const child = spawn(executable, args, {
+    const child = spawn(executable, args, containedSpawnOptions({
       cwd: projectRoot,
       env,
       shell: false,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true
-    });
+      stdio: ['pipe', 'pipe', 'pipe']
+    }));
 
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
@@ -80,16 +93,20 @@ export class ProcessRunner {
     else child.stdin.end();
 
     let timedOut = false;
+    let termination = null;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGTERM');
+      termination = terminateProcessTree(child);
     }, profile.timeoutMs);
     timer.unref?.();
 
     const exit = await new Promise((resolve, reject) => {
       child.once('error', reject);
       child.once('exit', (code, signal) => resolve({ code, signal }));
-    }).finally(() => clearTimeout(timer));
+    }).finally(async () => {
+      clearTimeout(timer);
+      if (termination) await termination;
+    });
 
     let result = null;
     try {
