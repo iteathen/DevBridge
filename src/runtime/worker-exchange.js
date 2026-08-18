@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, readFile, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { PolicyError } from '../errors.js';
@@ -73,6 +73,17 @@ async function secureStat(candidate, kind, expectedIdentity = null) {
     throw new PolicyError(`${candidate} was replaced after PATCH-POLLER established worker-exchange ownership`);
   }
   return info;
+}
+
+async function ensurePrivateDirectory(candidate) {
+  await mkdir(candidate, { recursive: true, mode: 0o700 });
+  const initial = await lstat(candidate, { bigint: true });
+  if (initial.isSymbolicLink() || !initial.isDirectory()) {
+    throw new PolicyError(`${candidate} must be a real PATCH-POLLER-owned directory`);
+  }
+  assertOwned(initial, candidate);
+  if ((initial.mode & 0o077n) !== 0n) await chmod(candidate, 0o700);
+  return secureStat(candidate, 'directory');
 }
 
 async function openReadNoFollow(candidate) {
@@ -179,10 +190,8 @@ export class WorkerExchange {
   get rootDirectory() { return this.#rootDirectory; }
 
   async #ensureRoot() {
-    await mkdir(this.#stateDirectory, { recursive: true, mode: 0o700 });
-    await secureStat(this.#stateDirectory, 'directory');
-    await mkdir(this.#rootDirectory, { recursive: true, mode: 0o700 });
-    await secureStat(this.#rootDirectory, 'directory');
+    await ensurePrivateDirectory(this.#stateDirectory);
+    await ensurePrivateDirectory(this.#rootDirectory);
   }
 
   #paths(runId, turnId) {
