@@ -12,6 +12,7 @@ const GIT_BRANCH_RE = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/;
 const ENVIRONMENT_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const HOSTNAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 const GITHUB_AUTH_MODES = new Set(['auto', 'environment', 'github-cli']);
+const CONTEXT_BUDGET_UNITS = new Set(['tokens', 'bytes', 'proxy']);
 
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -28,8 +29,8 @@ function requireString(value, name) {
 }
 
 function requireInteger(value, name, { min = 0 } = {}) {
-  if (!Number.isInteger(value) || value < min) {
-    throw new ConfigurationError(`${name} must be an integer >= ${min}`);
+  if (!Number.isInteger(value) || value < min || !Number.isSafeInteger(value)) {
+    throw new ConfigurationError(`${name} must be a safe integer >= ${min}`);
   }
   return value;
 }
@@ -38,6 +39,11 @@ function requireNumber(value, name, { min = 0, max = Number.POSITIVE_INFINITY } 
   if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
     throw new ConfigurationError(`${name} must be a finite number between ${min} and ${max}`);
   }
+  return value;
+}
+
+function requireBoolean(value, name) {
+  if (typeof value !== 'boolean') throw new ConfigurationError(`${name} must be a boolean`);
   return value;
 }
 
@@ -135,6 +141,32 @@ function normalizeFaultInjection(execution) {
   }
 }
 
+function normalizeContextRollover(config) {
+  const rollover = requireObject(config.contextRollover ?? {}, 'contextRollover');
+  const unit = requireString(rollover.unit ?? 'bytes', 'contextRollover.unit');
+  if (!CONTEXT_BUDGET_UNITS.has(unit)) throw new ConfigurationError('contextRollover.unit must be tokens, bytes, or proxy');
+  const softRatio = requireNumber(rollover.softRatio ?? 0.55, 'contextRollover.softRatio', { min: Number.EPSILON, max: 0.999999 });
+  const preferredRatio = requireNumber(rollover.preferredRatio ?? 0.65, 'contextRollover.preferredRatio', { min: Number.EPSILON, max: 0.999999 });
+  const hardRatio = requireNumber(rollover.hardRatio ?? 0.75, 'contextRollover.hardRatio', { min: Number.EPSILON, max: 0.999999 });
+  if (!(softRatio < preferredRatio && preferredRatio < hardRatio)) {
+    throw new ConfigurationError('contextRollover ratios must satisfy softRatio < preferredRatio < hardRatio');
+  }
+  const maxHandoffBytes = requireInteger(rollover.maxHandoffBytes ?? 32_768, 'contextRollover.maxHandoffBytes', { min: 4_096 });
+  if (maxHandoffBytes > 262_144) throw new ConfigurationError('contextRollover.maxHandoffBytes must be <= 262144');
+  const maxRetained = requireInteger(rollover.maxRetained ?? 8, 'contextRollover.maxRetained', { min: 2 });
+  if (maxRetained > 64) throw new ConfigurationError('contextRollover.maxRetained must be <= 64');
+  return {
+    enabled: rollover.enabled == null ? true : requireBoolean(rollover.enabled, 'contextRollover.enabled'),
+    unit,
+    capacityUnits: requireInteger(rollover.capacityUnits ?? 1_000_000, 'contextRollover.capacityUnits', { min: 1 }),
+    softRatio,
+    preferredRatio,
+    hardRatio,
+    maxHandoffBytes,
+    maxRetained,
+  };
+}
+
 export function validateConfig(raw) {
   const config = requireObject(raw, 'config');
   if (config.version !== 1) throw new ConfigurationError('config.version must be 1');
@@ -164,6 +196,7 @@ export function validateConfig(raw) {
   const git = requireObject(config.git ?? {}, 'git');
   const publication = requireObject(config.publication ?? {}, 'publication');
   const daemon = requireObject(config.daemon ?? {}, 'daemon');
+  const contextRollover = normalizeContextRollover(config);
   const branchPrefix = requireString(publication.branchPrefix ?? 'patchpoller', 'publication.branchPrefix');
   if (!BRANCH_PREFIX_RE.test(branchPrefix)) throw new ConfigurationError('publication.branchPrefix must be a safe branch segment');
   const faultInjection = normalizeFaultInjection(execution);
@@ -196,6 +229,7 @@ export function validateConfig(raw) {
       defaultBaselineChannel: baselines.defaultChannel,
     },
     state: { directory: absolutePath(state.directory ?? '~/.patch-poller/state', 'state.directory') },
+    contextRollover,
     git: {
       executable: requireString(git.executable ?? 'git', 'git.executable'),
       cloneBaseUrl: requireString(git.cloneBaseUrl ?? 'https://github.com', 'git.cloneBaseUrl').replace(/\/$/, ''),
