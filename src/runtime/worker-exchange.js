@@ -50,7 +50,9 @@ function assertOwned(info, name) {
 }
 
 function assertPrivateMode(info, name) {
-  if ((info.mode & 0o077n) !== 0n) throw new PolicyError(`${name} is accessible outside the PATCH-POLLER service identity`);
+  if (expectedUid() != null && (info.mode & 0o077n) !== 0n) {
+    throw new PolicyError(`${name} is accessible outside the PATCH-POLLER service identity`);
+  }
 }
 
 function assertDirectory(info, name) {
@@ -82,7 +84,7 @@ async function ensurePrivateDirectory(candidate) {
     throw new PolicyError(`${candidate} must be a real PATCH-POLLER-owned directory`);
   }
   assertOwned(initial, candidate);
-  if ((initial.mode & 0o077n) !== 0n) await chmod(candidate, 0o700);
+  if (expectedUid() != null && (initial.mode & 0o077n) !== 0n) await chmod(candidate, 0o700);
   return secureStat(candidate, 'directory');
 }
 
