@@ -160,6 +160,10 @@ Checkpoint decisions use a protocol separate from ordinary continuation feedback
 
 The actor, run ID, task revision, checkpoint ID, subject digest, and locally configured decision authority must all match. Stale, quoted, malformed, or mismatched decisions are ignored rather than applied to current work.
 
+When GitHub issue comments carry `patch-poller/decision-v1`, the **exact current comment-body bytes and edit provenance must be verified before any decision authority is evaluated**. The original comment author and every retained editor must satisfy the locally configured authority requirements for that decision class, the GraphQL body must match the REST bytes being consumed, and ambiguous/truncated/retention-saturated provenance fails closed under the same policy used by PP-006. A later trusted editor cannot launder an untrusted original or intermediate edit. The exact comment SHA-256 and sanitized edit provenance become part of the durable accepted/rejected decision evidence.
+
+This provenance requirement is necessary but not sufficient: verified comment authorship/editorship does not bypass run/task/checkpoint/subject-digest matching or local decision-class delegation.
+
 Accepted decisions become durable provenance and are injected into subsequent context capsules under PP-005.
 
 ## Status semantics
@@ -200,6 +204,7 @@ Implementation of this spec requires tests proving at minimum:
 - a decision boundary cannot be crossed while pending;
 - a hard-gated effect cannot occur without matching trusted approval;
 - stale or mismatched run/task/checkpoint/digest decisions are rejected;
+- GitHub-backed decisions reject untrusted or unverifiable edit provenance before decision authority is evaluated;
 - `artifact-exact` approval is invalidated by any payload change;
 - `decision-scope` approval survives in-scope descendant edits but not a material scope change;
 - silence/timeout never becomes approval;
