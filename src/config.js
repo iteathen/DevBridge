@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ConfigurationError } from './errors.js';
 import { DEFAULT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES } from './github/auth-provider.js';
+import { normalizeDecisionPolicy } from './run/decision-policy.js';
 import { validateFaultInjectionConfig } from './runtime/fault-injector.js';
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -16,50 +17,35 @@ const CONTEXT_BUDGET_UNITS = new Set(['tokens', 'bytes', 'proxy']);
 const SANDBOX_PROVIDERS = new Set(['auto', 'none', 'bubblewrap', 'windows-sandbox']);
 
 function requireObject(value, name) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new ConfigurationError(`${name} must be an object`);
-  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ConfigurationError(`${name} must be an object`);
   return value;
 }
-
 function requireString(value, name) {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new ConfigurationError(`${name} must be a non-empty string`);
-  }
+  if (typeof value !== 'string' || value.trim() === '') throw new ConfigurationError(`${name} must be a non-empty string`);
   return value;
 }
-
 function requireInteger(value, name, { min = 0 } = {}) {
-  if (!Number.isInteger(value) || value < min || !Number.isSafeInteger(value)) {
-    throw new ConfigurationError(`${name} must be a safe integer >= ${min}`);
-  }
+  if (!Number.isInteger(value) || value < min || !Number.isSafeInteger(value)) throw new ConfigurationError(`${name} must be a safe integer >= ${min}`);
   return value;
 }
-
 function requireNumber(value, name, { min = 0, max = Number.POSITIVE_INFINITY } = {}) {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
-    throw new ConfigurationError(`${name} must be a finite number between ${min} and ${max}`);
-  }
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) throw new ConfigurationError(`${name} must be a finite number between ${min} and ${max}`);
   return value;
 }
-
 function requireBoolean(value, name) {
   if (typeof value !== 'boolean') throw new ConfigurationError(`${name} must be a boolean`);
   return value;
 }
-
 function expandHome(value) {
   if (value === '~') return os.homedir();
   if (value.startsWith('~/') || value.startsWith('~\\')) return path.join(os.homedir(), value.slice(2));
   return value;
 }
-
 function absolutePath(value, name) {
   const expanded = expandHome(requireString(value, name));
   if (!path.isAbsolute(expanded)) throw new ConfigurationError(`${name} must be an absolute path or start with ~/`);
   return path.normalize(expanded);
 }
-
 function requireEnvironmentName(value, name) {
   const result = requireString(value, name);
   if (!ENVIRONMENT_NAME_RE.test(result)) throw new ConfigurationError(`${name} must be a valid environment-variable name`);
@@ -72,9 +58,7 @@ function normalizeGitHubAuth(github) {
   if (!GITHUB_AUTH_MODES.has(mode)) throw new ConfigurationError('github.auth.mode must be auto, environment, or github-cli');
   let environmentVariables;
   if (auth.environmentVariables != null) {
-    if (!Array.isArray(auth.environmentVariables) || auth.environmentVariables.length === 0 || auth.environmentVariables.length > 8) {
-      throw new ConfigurationError('github.auth.environmentVariables must contain 1-8 environment-variable names');
-    }
+    if (!Array.isArray(auth.environmentVariables) || auth.environmentVariables.length === 0 || auth.environmentVariables.length > 8) throw new ConfigurationError('github.auth.environmentVariables must contain 1-8 environment-variable names');
     environmentVariables = auth.environmentVariables.map((value, index) => requireEnvironmentName(value, `github.auth.environmentVariables[${index}]`));
   } else {
     const preferred = github.tokenEnv == null ? null : requireEnvironmentName(github.tokenEnv, 'github.tokenEnv');
@@ -83,32 +67,21 @@ function normalizeGitHubAuth(github) {
   environmentVariables = [...new Set(environmentVariables)];
   const hostname = requireString(auth.hostname ?? 'github.com', 'github.auth.hostname');
   if (!HOSTNAME_RE.test(hostname)) throw new ConfigurationError('github.auth.hostname must be a safe hostname');
-  return {
-    mode,
-    environmentVariables,
-    githubCliExecutable: requireString(auth.githubCliExecutable ?? 'gh', 'github.auth.githubCliExecutable'),
-    hostname: hostname.toLowerCase(),
-  };
+  return { mode, environmentVariables, githubCliExecutable: requireString(auth.githubCliExecutable ?? 'gh', 'github.auth.githubCliExecutable'), hostname: hostname.toLowerCase() };
 }
 
 function normalizeBaselineChannels(workspace) {
   const raw = workspace.baselineChannels ?? {};
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).length > 16) {
-    throw new ConfigurationError('workspace.baselineChannels must be an object with at most 16 local semantic channels');
-  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).length > 16) throw new ConfigurationError('workspace.baselineChannels must be an object with at most 16 local semantic channels');
   const channels = {};
   for (const [channel, branch] of Object.entries(raw)) {
     if (!BASELINE_CHANNEL_RE.test(channel)) throw new ConfigurationError(`workspace.baselineChannels channel ${channel} is invalid`);
     const normalizedBranch = requireString(branch, `workspace.baselineChannels.${channel}`);
-    if (!GIT_BRANCH_RE.test(normalizedBranch) || normalizedBranch.includes('..') || normalizedBranch.includes('@{') || normalizedBranch.endsWith('.lock')) {
-      throw new ConfigurationError(`workspace.baselineChannels.${channel} must be a safe branch name`);
-    }
+    if (!GIT_BRANCH_RE.test(normalizedBranch) || normalizedBranch.includes('..') || normalizedBranch.includes('@{') || normalizedBranch.endsWith('.lock')) throw new ConfigurationError(`workspace.baselineChannels.${channel} must be a safe branch name`);
     channels[channel] = normalizedBranch;
   }
   const defaultChannel = workspace.defaultBaselineChannel == null ? null : requireString(workspace.defaultBaselineChannel, 'workspace.defaultBaselineChannel');
-  if (defaultChannel != null && !Object.hasOwn(channels, defaultChannel)) {
-    throw new ConfigurationError('workspace.defaultBaselineChannel must name a configured local baseline channel');
-  }
+  if (defaultChannel != null && !Object.hasOwn(channels, defaultChannel)) throw new ConfigurationError('workspace.defaultBaselineChannel must name a configured local baseline channel');
   return { channels, defaultChannel };
 }
 
@@ -120,9 +93,7 @@ function normalizeFaultInjection(execution) {
 function normalizeSandbox(execution) {
   const sandbox = requireObject(execution.sandbox ?? {}, 'execution.sandbox');
   const provider = requireString(sandbox.provider ?? 'auto', 'execution.sandbox.provider');
-  if (!SANDBOX_PROVIDERS.has(provider)) {
-    throw new ConfigurationError('execution.sandbox.provider must be auto, none, bubblewrap, or windows-sandbox');
-  }
+  if (!SANDBOX_PROVIDERS.has(provider)) throw new ConfigurationError('execution.sandbox.provider must be auto, none, bubblewrap, or windows-sandbox');
   const readRoots = sandbox.readRoots ?? [];
   if (!Array.isArray(readRoots) || readRoots.length > 64) throw new ConfigurationError('execution.sandbox.readRoots must contain at most 64 local paths');
   return {
@@ -146,16 +117,7 @@ function normalizeContextRollover(config) {
   if (maxHandoffBytes > 262_144) throw new ConfigurationError('contextRollover.maxHandoffBytes must be <= 262144');
   const maxRetained = requireInteger(rollover.maxRetained ?? 8, 'contextRollover.maxRetained', { min: 2 });
   if (maxRetained > 64) throw new ConfigurationError('contextRollover.maxRetained must be <= 64');
-  return {
-    enabled: rollover.enabled == null ? true : requireBoolean(rollover.enabled, 'contextRollover.enabled'),
-    unit,
-    capacityUnits: requireInteger(rollover.capacityUnits ?? 1_000_000, 'contextRollover.capacityUnits', { min: 1 }),
-    softRatio,
-    preferredRatio,
-    hardRatio,
-    maxHandoffBytes,
-    maxRetained,
-  };
+  return { enabled: rollover.enabled == null ? true : requireBoolean(rollover.enabled, 'contextRollover.enabled'), unit, capacityUnits: requireInteger(rollover.capacityUnits ?? 1_000_000, 'contextRollover.capacityUnits', { min: 1 }), softRatio, preferredRatio, hardRatio, maxHandoffBytes, maxRetained };
 }
 
 export function validateConfig(raw) {
@@ -165,16 +127,13 @@ export function validateConfig(raw) {
   const queueRepository = requireString(github.queueRepository, 'github.queueRepository');
   if (!REPOSITORY_RE.test(queueRepository)) throw new ConfigurationError('github.queueRepository must be owner/name');
   const trustedActorIds = github.trustedActorIds;
-  if (!Array.isArray(trustedActorIds) || trustedActorIds.length === 0 || trustedActorIds.some((id) => !/^\d+$/.test(String(id)))) {
-    throw new ConfigurationError('github.trustedActorIds must contain at least one numeric GitHub user ID');
-  }
+  if (!Array.isArray(trustedActorIds) || trustedActorIds.length === 0 || trustedActorIds.some((id) => !/^\d+$/.test(String(id)))) throw new ConfigurationError('github.trustedActorIds must contain at least one numeric GitHub user ID');
+  const normalizedTrustedActorIds = trustedActorIds.map(String);
   const githubAuth = normalizeGitHubAuth(github);
   const rate = requireObject(github.rateLimit ?? {}, 'github.rateLimit');
   const workspace = requireObject(config.workspace, 'workspace');
   const allowedOwners = workspace.allowedOwners;
-  if (!Array.isArray(allowedOwners) || allowedOwners.length === 0 || allowedOwners.some((owner) => !/^[A-Za-z0-9_.-]+$/.test(owner))) {
-    throw new ConfigurationError('workspace.allowedOwners must contain at least one safe owner name');
-  }
+  if (!Array.isArray(allowedOwners) || allowedOwners.length === 0 || allowedOwners.some((owner) => !/^[A-Za-z0-9_.-]+$/.test(owner))) throw new ConfigurationError('workspace.allowedOwners must contain at least one safe owner name');
   const baselines = normalizeBaselineChannels(workspace);
   const state = requireObject(config.state ?? {}, 'state');
   const execution = requireObject(config.execution ?? {}, 'execution');
@@ -188,13 +147,14 @@ export function validateConfig(raw) {
   if (!BRANCH_PREFIX_RE.test(branchPrefix)) throw new ConfigurationError('publication.branchPrefix must be a safe branch segment');
   const faultInjection = normalizeFaultInjection(execution);
   const sandbox = normalizeSandbox(execution);
+  const decisions = normalizeDecisionPolicy(config.decisions ?? {}, { fallbackActorIds: normalizedTrustedActorIds });
 
   return {
     version: 1,
     github: {
       queueRepository,
       taskLabel: requireString(github.taskLabel ?? 'patch-poller:ready', 'github.taskLabel'),
-      trustedActorIds: trustedActorIds.map(String),
+      trustedActorIds: normalizedTrustedActorIds,
       tokenEnv: githubAuth.environmentVariables[0],
       auth: githubAuth,
       apiVersion: requireString(github.apiVersion ?? '2026-03-10', 'github.apiVersion'),
@@ -210,14 +170,13 @@ export function validateConfig(raw) {
       root: absolutePath(workspace.root, 'workspace.root'),
       allowCreate: workspace.allowCreate === true,
       allowedOwners: allowedOwners.map((owner) => owner.toLowerCase()),
-      externalReadRoots: Array.isArray(workspace.externalReadRoots)
-        ? workspace.externalReadRoots.map((entry, index) => absolutePath(entry, `workspace.externalReadRoots[${index}]`))
-        : [],
+      externalReadRoots: Array.isArray(workspace.externalReadRoots) ? workspace.externalReadRoots.map((entry, index) => absolutePath(entry, `workspace.externalReadRoots[${index}]`)) : [],
       baselineChannels: baselines.channels,
       defaultBaselineChannel: baselines.defaultChannel,
     },
     state: { directory: absolutePath(state.directory ?? '~/.patch-poller/state', 'state.directory') },
     contextRollover,
+    decisions,
     git: {
       executable: requireString(git.executable ?? 'git', 'git.executable'),
       cloneBaseUrl: requireString(git.cloneBaseUrl ?? 'https://github.com', 'git.cloneBaseUrl').replace(/\/$/, ''),
@@ -235,16 +194,9 @@ export function validateConfig(raw) {
       sandbox,
       faultInjection,
     },
-    publication: {
-      autoPushTaskBranches: publication.autoPushTaskBranches === true,
-      forceNoOpPublication: publication.forceNoOpPublication === true,
-      branchPrefix,
-    },
+    publication: { autoPushTaskBranches: publication.autoPushTaskBranches === true, forceNoOpPublication: publication.forceNoOpPublication === true, branchPrefix },
     daemon: { errorBackoffMs: requireInteger(daemon.errorBackoffMs ?? 60_000, 'daemon.errorBackoffMs', { min: 5_000 }) },
-    status: {
-      progressIntervalMs: requireInteger(status.progressIntervalMs ?? 300_000, 'status.progressIntervalMs', { min: 30_000 }),
-      maxCommentBytes: requireInteger(status.maxCommentBytes ?? 48_000, 'status.maxCommentBytes', { min: 4_096 }),
-    },
+    status: { progressIntervalMs: requireInteger(status.progressIntervalMs ?? 300_000, 'status.progressIntervalMs', { min: 30_000 }), maxCommentBytes: requireInteger(status.maxCommentBytes ?? 48_000, 'status.maxCommentBytes', { min: 4_096 }) },
     tools,
   };
 }
