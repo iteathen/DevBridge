@@ -10,6 +10,7 @@ import { IssueTaskSource } from '../github/issue-task-source.js';
 import { IssueFeedbackSource } from '../github/issue-feedback-source.js';
 import { IssueStatusReporter } from '../github/issue-status-reporter.js';
 import { ChatHandoffProjector } from '../github/chat-handoff-projector.js';
+import { ToolInventoryProjector } from '../github/tool-inventory-projector.js';
 import { WorkspacePolicy } from '../security/workspace-policy.js';
 import { GitClient } from '../git/git-client.js';
 import { GitWorkspaceManager } from '../git/workspace-manager.js';
@@ -17,10 +18,14 @@ import { ProcessRunner } from '../runtime/process-runner.js';
 import { DeterministicProcessRunner } from '../runtime/deterministic-process-runner.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
+import { createSandboxProvider } from '../runtime/sandbox-provider.js';
+import { WorkerExchange } from '../runtime/worker-exchange.js';
+import { ToolInventoryService } from '../runtime/tool-inventory.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
 import { LivenessProjectingPlanExecutor } from '../run/liveness-projecting-plan-executor.js';
+import { DecisionGate } from '../run/decision-gate.js';
 import { RunCoordinator } from '../run/run-coordinator.js';
 
 export { stateFileName } from '../state/state-file.js';
@@ -29,11 +34,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   const workspacePolicy = new WorkspacePolicy(config.workspace);
   await workspacePolicy.ensureRoot();
   const stateStore = new JsonStateStore(path.join(config.state.directory, stateFileName(config.github.queueRepository)));
-  const chatHandoffStore = new ChatHandoffStore({
-    stateStore,
-    maxBytes: config.contextRollover.maxHandoffBytes,
-    maxRetained: config.contextRollover.maxRetained,
-  });
+  const chatHandoffStore = new ChatHandoffStore({ stateStore, maxBytes: config.contextRollover.maxHandoffBytes, maxRetained: config.contextRollover.maxRetained });
   const contextBudget = config.contextRollover.enabled
     ? new ContextBudgetManager({
         unit: config.contextRollover.unit,
@@ -51,13 +52,9 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   const feedbackSource = new IssueFeedbackSource({ client, queueRepository: config.github.queueRepository, trustedActorIds: config.github.trustedActorIds });
   const secretValues = credential ? [credential.token] : [];
   const statusReporter = new IssueStatusReporter({ client, stateStore, queueRepository: config.github.queueRepository, progressIntervalMs: config.status.progressIntervalMs, maxCommentBytes: config.status.maxCommentBytes, secretValues });
-  const chatHandoffProjector = new ChatHandoffProjector({
-    client,
-    stateStore,
-    queueRepository: config.github.queueRepository,
-    maxCommentBytes: config.status.maxCommentBytes,
-    secretValues,
-  });
+  const chatHandoffProjector = new ChatHandoffProjector({ client, stateStore, queueRepository: config.github.queueRepository, maxCommentBytes: config.status.maxCommentBytes, secretValues });
+  const toolInventoryProjector = new ToolInventoryProjector({ client, stateStore, queueRepository: config.github.queueRepository, maxCommentBytes: config.status.maxCommentBytes, secretValues });
+
   const gitClient = new GitClient({ executable: config.git.executable, syntheticHome: path.join(config.state.directory, 'git-home'), defaultTimeoutMs: config.git.commandTimeoutMs });
   const workspaceManager = new GitWorkspaceManager({
     workspacePolicy,
@@ -69,29 +66,51 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     baselineChannels: config.workspace.baselineChannels,
     defaultBaselineChannel: config.workspace.defaultBaselineChannel,
   });
-  const processRunner = new ProcessRunner({ sourceEnv: env });
+
+  const sandboxProvider = createSandboxProvider(config.execution.sandbox, { env, externalReadRoots: config.workspace.externalReadRoots });
+  if (config.execution.sandbox.verifyOnStartup) await sandboxProvider.verify();
+  const workerExchange = new WorkerExchange({ root: path.join(config.state.directory, 'worker-exchange') });
+  await workerExchange.ensureRoot();
+  const processRunner = new ProcessRunner({
+    sourceEnv: env,
+    sandboxProvider,
+    workerExchange,
+    allowUncontainedTools: config.execution.allowUncontainedTools,
+  });
   const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
-  const deterministicProcessRunner = new DeterministicProcessRunner({ sourceEnv: env, faultInjector });
+  const deterministicProcessRunner = new DeterministicProcessRunner({ sourceEnv: env, faultInjector, sandboxProvider });
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
-  const deterministicControllerPlanExecutor = new ControllerPlanExecutor({
-    operationRegistry,
-    processRunner: deterministicProcessRunner,
-    workspaceManager,
-    faultInjector,
-  });
-  const controllerPlanExecutor = new LivenessProjectingPlanExecutor({
-    delegate: deterministicControllerPlanExecutor,
-    statusReporter,
-  });
+  const deterministicControllerPlanExecutor = new ControllerPlanExecutor({ operationRegistry, processRunner: deterministicProcessRunner, workspaceManager, faultInjector });
+  const controllerPlanExecutor = new LivenessProjectingPlanExecutor({ delegate: deterministicControllerPlanExecutor, statusReporter });
 
   const builtIns = builtInToolProfiles();
   for (const name of Object.keys(builtIns)) {
-    if (Object.hasOwn(config.tools, name)) {
-      throw new Error(`local tool profile name ${name} is reserved by PATCH-POLLER`);
-    }
+    if (Object.hasOwn(config.tools, name)) throw new Error(`local tool profile name ${name} is reserved by PATCH-POLLER`);
   }
   const tools = { ...config.tools, ...builtIns };
+  const toolInventory = new ToolInventoryService({
+    operationRegistry,
+    toolchainRegistry,
+    sandboxProvider,
+    profiles: tools,
+    modelAdaptersEnabled: config.execution.modelAdaptersEnabled,
+    allowUncontainedTools: config.execution.allowUncontainedTools,
+    env,
+    discoverPathToolsEnabled: config.inventory.discoverPathTools,
+  });
+  if (config.inventory.enabled) {
+    const record = await toolInventory.refresh({ probeVersions: false });
+    if (config.inventory.projectionIssueNumber) {
+      await toolInventoryProjector.project({ issueNumber: config.inventory.projectionIssueNumber, record });
+    }
+  }
+
+  const decisionGate = new DecisionGate({
+    decisionSource: feedbackSource,
+    authorityClasses: config.decisions.authorityClasses,
+    ttlMs: config.decisions.ttlMs,
+  });
   const coordinator = new RunCoordinator({
     stateStore,
     workspaceManager,
@@ -99,6 +118,8 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     controllerPlanExecutor,
     statusReporter,
     feedbackSource,
+    decisionGate,
+    toolInventory,
     queueRepository: config.github.queueRepository,
     tools,
     defaultTool: config.execution.defaultTool,
@@ -121,6 +142,10 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     taskSource,
     feedbackSource,
     statusReporter,
+    toolInventoryProjector,
+    toolInventory,
+    sandboxProvider,
+    workerExchange,
     workspacePolicy,
     gitClient,
     workspaceManager,
@@ -130,6 +155,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     toolchainRegistry,
     operationRegistry,
     controllerPlanExecutor,
+    decisionGate,
     coordinator,
   };
 }
