@@ -60,7 +60,19 @@ If a governing document changed between coordinating sessions, a fresh controlle
 
 ## Turn protocol
 
-A multi-turn runner writes the complete current capsule to a poller-owned run file and/or stdin for every invocation. A tool adapter may parse a structured result from the coding tool, but failure to emit a perfect result must not erase existing context.
+A multi-turn runner supplies the complete current capsule through stdin and/or an exact **control-owned** context endpoint for every invocation. A tool adapter may parse a structured result from the coding tool, but failure to emit a perfect result must not erase existing context.
+
+Proposal-worker file IPC is not stored under the proposal worktree. For each exact `runId`/turn identity PATCH-POLLER creates a private mailbox below the configured control-state directory. The control plane owns:
+
+- a manifest binding protocol, run ID, turn ID, filesystem identities, fixed worker-visible endpoints, and the SHA-256 of the exact context bytes;
+- a pre-created context file;
+- a pre-created bounded result file.
+
+The worker does **not** receive the mailbox root or manifest. A verified OS isolation provider projects only the exact context file read-only and exact result file writable in place. The worker-visible paths are stable sandbox endpoints rather than host/project paths. Result writers must overwrite the existing file; replacing its inode by rename, symlink, junction, or another filesystem object is invalid.
+
+Before a result is consumed as proposal data, PATCH-POLLER revalidates the control-owned turn directory, context/result identities, unchanged context digest, file type/ownership constraints, and result-size bound. No result path in the candidate tree is trusted during this operation.
+
+An interrupted turn can be reopened by its exact run/turn identity from the control-owned manifest. Reopening revalidates the same invariants before returning any result. This makes abrupt-worker recovery independent of project-authored `.patch-poller` files. A recovered result is still merely proposal data; candidate validation and control-plane effects remain authoritative.
 
 The next capsule merges explicit durable state with new bounded observations. Critical constraints, active checkpoints, accepted decisions, decision boundaries, unfinished work, and the coordinating-agent handoff are retained before expendable transcript tail.
 
