@@ -32,6 +32,10 @@ export function toolBridge(runId, resultFile) {
     resultFile,
     resultProtocol: 'patch-poller/result-v1',
     requirement: 'Before exiting, write one JSON result envelope to resultFile when the CLI can do so. PATCH-POLLER independently validates the workspace; never claim completion unless the requested work and checks are complete.',
+    gitAuthority: {
+      owner: 'patch-poller',
+      rule: 'Project edits are proposals. Do not stage, commit, reset, checkout, clean, push, or otherwise write Git administrative state. Do not write .git or linked-worktree metadata. Read-only Git inspection is allowed. Leave accepted project edits in the working tree; PATCH-POLLER validates, stages, seals, commits, and publishes them.'
+    },
     resultSchema: {
       required: ['protocol', 'status', 'summary'],
       protocol: 'patch-poller/result-v1',
