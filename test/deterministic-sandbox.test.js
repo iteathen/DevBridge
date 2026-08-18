@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createCoreOperationRegistry } from '../src/runtime/deterministic-operation-registry.js';
@@ -21,6 +21,12 @@ function providerFor(root, options = {}) {
 test('deterministic operations classify static inspection separately and unknown named operations fail into the sandboxed class', () => {
   assert.deepEqual(deterministicOperationSecurity('node.syntax-check'), {
     executionClass: 'static-inspection',
+    repositoryCode: false,
+    sandboxRequired: false,
+    enforcementRequirement: 'none',
+  });
+  assert.deepEqual(deterministicOperationSecurity('toolchain.probe'), {
+    executionClass: 'control-process',
     repositoryCode: false,
     sandboxRequired: false,
     enforcementRequirement: 'none',
@@ -52,6 +58,36 @@ test('repository-code execution fails closed before process launch when no verif
     assert.equal(syntax.exitCode, 0);
     assert.equal(syntax.sandbox.required, false);
     assert.equal(syntax.sandbox.executionClass, 'static-inspection');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('static Node syntax inspection refuses a project symlink that would escape external-read policy', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'patch-poller-static-read-boundary-'));
+  const projectDir = path.join(root, 'project');
+  try {
+    await mkdir(projectDir, { recursive: true });
+    const outside = path.join(root, 'outside-secret.mjs');
+    await writeFile(outside, 'export const secret = 1;\n');
+    try {
+      await symlink(outside, path.join(projectDir, 'linked.mjs'));
+    } catch (error) {
+      if (error?.code === 'EPERM' || error?.code === 'EACCES') {
+        t.skip(`filesystem symlink fixture unavailable on this host: ${error.code}`);
+        return;
+      }
+      throw error;
+    }
+
+    const runner = new DeterministicProcessRunner({ sourceEnv: { PATH: process.env.PATH ?? '' } });
+    await assert.rejects(
+      () => createCoreOperationRegistry().execute('node.syntax-check', { path: 'linked.mjs' }, {
+        projectDir,
+        processRunner: runner,
+      }),
+      /crosses filesystem indirection/u,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
