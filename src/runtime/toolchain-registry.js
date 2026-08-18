@@ -1,5 +1,6 @@
 import process from 'node:process';
-import { access, constants } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access } from 'node:fs/promises';
 import { PolicyError } from '../errors.js';
 import { discoverNativeCompiler } from './native-compiler-probe.js';
 import { resolveExecutable } from './executable-resolver.js';
