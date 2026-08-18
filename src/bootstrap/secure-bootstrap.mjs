@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import path from 'node:path';
 import process from 'node:process';
 import * as transactional from './transactional-bootstrap.mjs';
 import { validateCandidateRuntime } from './candidate-validator.mjs';
@@ -8,6 +9,7 @@ import { loadBootstrapReleasePolicy, verifyRuntimeRelease } from './release-inte
 export * from './transactional-bootstrap.mjs';
 
 const CAPTURE_LIMIT = 4 * 1024 * 1024;
+const ACTIVATION_PROTOCOL = 'patch-poller/runtime-activation-v1';
 
 function defaultRunner(executable, args, options) {
   return spawnSync(executable, args, {
@@ -23,6 +25,46 @@ function candidateTreeSha(paths, runtimeDir, runner) {
   const tree = String(result.stdout ?? '').trim().toLowerCase();
   if (!/^[0-9a-f]{40}$/u.test(tree)) throw new Error('candidate tree identity is invalid');
   return tree;
+}
+
+async function establishRuntimeTrust(args, paths, runtime, {
+  runner = defaultRunner,
+  validateCandidateFn = validateCandidateRuntime,
+  loadPolicyFn = loadBootstrapReleasePolicy,
+  verifyReleaseFn = verifyRuntimeRelease,
+  environment = process.env,
+  sandboxManager = null,
+} = {}) {
+  const runtimeDir = path.resolve(runtime.runtimeDir);
+  const head = String(runtime.head).toLowerCase();
+  if (!/^[0-9a-f]{40}$/u.test(head)) throw new Error('runtime trust establishment requires an exact commit SHA');
+  const tree = candidateTreeSha({ ...paths, runtime: runtimeDir }, runtimeDir, runner);
+  const policy = loadPolicyFn({ channel: args.channel, paths, environment });
+  const releaseIntegrity = verifyReleaseFn({ candidateDir: runtimeDir, commitSha: head, treeSha: tree, policy });
+  const validation = await validateCandidateFn({ candidateDir: runtimeDir, runner, environment, sandboxManager });
+  return { ...runtime, head, runtimeDir, tree, releaseIntegrity, validation };
+}
+
+function healthyBaselineRecord(runtime) {
+  const current = {
+    ref: runtime.ref,
+    head: runtime.head,
+    version: runtime.version,
+    runtimeDir: path.resolve(runtime.runtimeDir),
+    cliPath: path.resolve(runtime.cliPath),
+  };
+  return {
+    protocol: ACTIVATION_PROTOCOL,
+    state: 'healthy',
+    previous: null,
+    candidate: null,
+    current,
+    failedCandidate: null,
+    error: null,
+    integrity: runtime.releaseIntegrity ?? null,
+    validation: runtime.validation?.sandbox ? { sandbox: runtime.validation.sandbox } : null,
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 export async function prepareRuntimeCandidate(args, paths, {
@@ -43,18 +85,14 @@ export async function prepareRuntimeCandidate(args, paths, {
   if (candidate.ref !== desiredRef || candidate.head.toLowerCase() !== String(desiredHead).toLowerCase()) {
     throw new Error(`candidate changed during preparation; expected ${desiredRef}@${desiredHead}, observed ${candidate.ref}@${candidate.head}`);
   }
-
-  const head = candidate.head.toLowerCase();
-  const tree = candidateTreeSha(candidatePaths, runtimeDir, runner);
-  const policy = loadPolicyFn({ channel: args.channel, paths, environment });
-  const releaseIntegrity = verifyReleaseFn({ candidateDir: runtimeDir, commitSha: head, treeSha: tree, policy });
-  const validation = await validateCandidateFn({
-    candidateDir: runtimeDir,
+  return establishRuntimeTrust(args, paths, { ...candidate, runtimeDir }, {
     runner,
+    validateCandidateFn,
+    loadPolicyFn,
+    verifyReleaseFn,
     environment,
     sandboxManager,
   });
-  return { ...candidate, runtimeDir, tree, releaseIntegrity, validation };
 }
 
 export async function bootstrap(argv = process.argv.slice(2), runner = defaultRunner) {
@@ -66,7 +104,8 @@ export async function bootstrap(argv = process.argv.slice(2), runner = defaultRu
   let runtime = transactional.loadPersistedHealthyRuntime(paths, runner);
   if (!runtime) {
     runtime = transactional.ensureRuntime(runtimeExists ? { ...args, update: false } : args, paths, runner);
-    runtime = { ...runtime, runtimeDir: paths.runtime };
+    runtime = await establishRuntimeTrust(args, paths, { ...runtime, runtimeDir: paths.runtime }, { runner });
+    transactional.writeRuntimeActivationState(paths, healthyBaselineRecord(runtime));
   }
 
   process.stdout.write(`[patch-poller-bootstrap] channel=${args.channel} ref=${runtime.ref} version=${runtime.version} head=${runtime.head}\n`);
