@@ -5,6 +5,7 @@ const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const MAX_BODY_BYTES = 96_000;
 const MAX_INSTRUCTION_BYTES = 48_000;
 const MAX_CONTEXT_BYTES = 32_000;
+const MAX_HANDOFF_BYTES = 16_000;
 
 function byteLength(value) {
   return Buffer.byteLength(value, 'utf8');
@@ -41,6 +42,10 @@ export function parseTaskEnvelope(body) {
   if (envelope.context != null) {
     if (typeof envelope.context !== 'object' || Array.isArray(envelope.context)) throw new ProtocolError('context must be an object');
     if (byteLength(JSON.stringify(envelope.context)) > MAX_CONTEXT_BYTES) throw new ProtocolError('context exceeds task limit');
+    if (envelope.context.handoff != null) {
+      if (typeof envelope.context.handoff !== 'string') throw new ProtocolError('context.handoff must be a string');
+      if (byteLength(envelope.context.handoff) > MAX_HANDOFF_BYTES) throw new ProtocolError('context.handoff exceeds handoff limit');
+    }
   }
 
   if (envelope.requestedCapabilities != null && (!Array.isArray(envelope.requestedCapabilities) || envelope.requestedCapabilities.some((entry) => typeof entry !== 'string'))) {
