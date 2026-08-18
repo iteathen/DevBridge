@@ -6,6 +6,7 @@ import {
   waitForDaemonStopRequest,
 } from '../runtime/daemon-lock.js';
 import { createRuntime } from './runtime.js';
+import { reportActiveRunRuntimeError } from './runtime-error-report.js';
 import { runCycle } from './run-once.js';
 
 export async function runDaemon(config, { env = process.env, fetchImpl = globalThis.fetch, signal = null, onEvent = () => {} } = {}) {
@@ -29,7 +30,30 @@ export async function runDaemon(config, { env = process.env, fetchImpl = globalT
       } catch (error) {
         if (error instanceof RateLimitError && error.retryAt) delay = Math.max(delay, error.retryAt - Date.now());
         else delay = Math.max(delay, config.daemon.errorBackoffMs);
-        onEvent({ type: 'cycle-error', at: new Date().toISOString(), error: { name: error.name, message: error.message }, retryInMs: delay });
+
+        let remoteReport = null;
+        if (!(error instanceof RateLimitError)) {
+          try {
+            remoteReport = await reportActiveRunRuntimeError(runtime, error);
+          } catch (reportError) {
+            remoteReport = {
+              reported: false,
+              reason: 'runtime-error-report-failed',
+              error: {
+                name: reportError?.name ?? 'Error',
+                message: reportError?.message ?? String(reportError),
+              },
+            };
+          }
+        }
+
+        onEvent({
+          type: 'cycle-error',
+          at: new Date().toISOString(),
+          error: { name: error.name, message: error.message },
+          retryInMs: delay,
+          remoteReport,
+        });
       }
 
       if (!signal?.aborted) {
