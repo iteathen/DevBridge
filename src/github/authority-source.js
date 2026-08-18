@@ -10,6 +10,13 @@ export function isUneditedAuthorityComment(comment) {
   return typeof createdAt === 'string' && createdAt !== '' && createdAt === updatedAt;
 }
 
+export function isExactAuthorityFence(body, kind) {
+  if (typeof body !== 'string' || !/^[a-z0-9-]+$/u.test(kind)) return false;
+  const normalized = body.trim();
+  return normalized.startsWith(`\`\`\`patch-poller-${kind}\n`) && normalized.endsWith('\n```') &&
+    !normalized.startsWith('>') && !normalized.includes('\n> ```patch-poller-');
+}
+
 export function authorityBodyDigest(body) {
   return sha256(typeof body === 'string' ? body : '');
 }
