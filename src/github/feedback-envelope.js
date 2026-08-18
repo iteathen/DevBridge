@@ -1,4 +1,5 @@
 import { ProtocolError } from '../errors.js';
+import { contentSha256 } from './content-provenance.js';
 
 const RUN_ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
 const REVISION_RE = /^[0-9a-f]{64}$/;
@@ -31,6 +32,7 @@ export function parseFeedbackEnvelope(body) {
     runId: value.runId,
     taskRevision: value.taskRevision,
     action: value.action,
-    instructions: value.instructions ?? null
+    instructions: value.instructions ?? null,
+    contentSha256: contentSha256(body)
   };
 }
