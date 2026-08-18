@@ -1,4 +1,4 @@
-import { lstat, mkdir, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { PolicyError } from '../errors.js';
 
@@ -12,6 +12,21 @@ async function exists(candidate) {
 function safeId(value, name) {
   if (typeof value !== 'string' || !ID_RE.test(value) || value === '.' || value === '..') throw new PolicyError(`${name} must be a safe local scratch identifier`);
   return value;
+}
+
+async function assertDirectoryPathNoFollow(candidate) {
+  const resolved = path.resolve(candidate);
+  const root = path.parse(resolved).root;
+  const relative = path.relative(root, resolved);
+  const segments = relative.split(path.sep).filter(Boolean);
+  let cursor = root;
+  for (const segment of segments) {
+    cursor = path.join(cursor, segment);
+    const info = await lstat(cursor);
+    if (info.isSymbolicLink()) throw new PolicyError('managed scratch parent crosses filesystem indirection');
+    if (!info.isDirectory()) throw new PolicyError('managed scratch parent contains a non-directory path component');
+  }
+  return resolved;
 }
 
 export class ManagedScratchTransaction {
@@ -36,8 +51,7 @@ export class ManagedScratchTransaction {
 
   async #ensureRoot() {
     const parent = path.dirname(this.#root);
-    const parentReal = await realpath(parent);
-    if (path.resolve(parentReal) !== path.resolve(parent)) throw new PolicyError('managed scratch parent resolves through filesystem indirection');
+    await assertDirectoryPathNoFollow(parent);
     if (await exists(this.#root)) {
       const info = await lstat(this.#root);
       if (info.isSymbolicLink() || !info.isDirectory()) throw new PolicyError('managed scratch root is not a real directory');
