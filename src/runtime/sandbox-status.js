@@ -5,7 +5,21 @@ export function boundedSandboxReason(value) {
   return text.length <= 180 ? text : `${text.slice(0, 177)}...`;
 }
 
-export function unavailableSandboxStatus({ requestedProvider, provider = 'none', reason, platform = process.platform }) {
+function boundaryProbe({ attempted = false, verified = false, observations = null } = {}) {
+  return {
+    attempted,
+    verified,
+    observations: observations == null ? null : { ...observations },
+  };
+}
+
+export function unavailableSandboxStatus({
+  requestedProvider,
+  provider = 'none',
+  reason,
+  platform = process.platform,
+  probeAttempted = false,
+} = {}) {
   return {
     requestedProvider,
     provider,
@@ -18,6 +32,7 @@ export function unavailableSandboxStatus({ requestedProvider, provider = 'none',
     network: 'unenforced',
     gitAdministrativeState: 'unenforced',
     processTree: 'managed-by-parent-runner',
+    boundaryProbe: boundaryProbe({ attempted: probeAttempted, verified: false }),
     verifiedAt: null,
     reason: boundedSandboxReason(reason),
   };
@@ -36,6 +51,7 @@ export function pendingBubblewrapStatus({ requestedProvider }) {
     network: 'unverified',
     gitAdministrativeState: 'unverified',
     processTree: 'bubblewrap-pid-namespace-plus-parent-runner',
+    boundaryProbe: boundaryProbe(),
     verifiedAt: null,
     reason: null,
   };
@@ -54,6 +70,20 @@ export function verifiedBubblewrapStatus({ requestedProvider }) {
     network: 'denied',
     gitAdministrativeState: 'read-only-or-unreachable',
     processTree: 'bubblewrap-pid-namespace-plus-parent-runner',
+    boundaryProbe: boundaryProbe({
+      attempted: true,
+      verified: true,
+      observations: {
+        projectWriteAllowed: true,
+        runScratchWriteAllowed: true,
+        arbitraryOutsideReadDenied: true,
+        arbitraryOutsideWriteDenied: true,
+        controlStateReadDenied: true,
+        gitAdministrativeWriteDenied: true,
+        networkEgressDenied: true,
+        effectiveCapabilitiesDropped: true,
+      },
+    }),
     verifiedAt: new Date().toISOString(),
     reason: null,
   };
