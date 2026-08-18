@@ -10,7 +10,7 @@ function validateArgs(args, name) {
     throw new ConfigurationError(`tools.${name}.args must be an array of strings`);
   }
   for (const arg of args) {
-    for (const match of arg.matchAll(/\{([^{}]+)\}/g)) {
+    for (const match of arg.matchAll(/\{([A-Za-z][A-Za-z0-9]*)\}/g)) {
       if (!ALLOWED_PLACEHOLDERS.has(match[1])) {
         throw new ConfigurationError(`tools.${name}.args uses unsupported placeholder {${match[1]}}`);
       }
@@ -31,12 +31,8 @@ export function validateToolProfile(name, raw, { allowUncontainedTools = false }
   const sandbox = raw.sandbox ?? {};
   const enforcement = sandbox.enforcement ?? 'none';
   if (!['tool', 'os', 'none'].includes(enforcement)) throw new ConfigurationError(`tools.${name}.sandbox.enforcement is invalid`);
-  if (enforcement === 'none' && !allowUncontainedTools) {
-    throw new PolicyError(`tools.${name} has no declared containment enforcement`);
-  }
-  if (sandbox.outsideProjectWrite === true && !allowUncontainedTools) {
-    throw new PolicyError(`tools.${name} permits writes outside the project`);
-  }
+  if (enforcement === 'none' && !allowUncontainedTools) throw new PolicyError(`tools.${name} has no declared containment enforcement`);
+  if (sandbox.outsideProjectWrite === true && !allowUncontainedTools) throw new PolicyError(`tools.${name} permits writes outside the project`);
 
   const outsideProjectRead = sandbox.outsideProjectRead ?? 'deny';
   if (!['deny', 'allowlist', 'readonly'].includes(outsideProjectRead)) throw new ConfigurationError(`tools.${name}.sandbox.outsideProjectRead is invalid`);

@@ -7,15 +7,15 @@ test('rejects uncontained tools by default', () => {
   assert.throws(() => validateToolProfile('tool', { executable: 'tool', args: [] }), PolicyError);
 });
 
-test('allows only structural argv placeholders', () => {
+test('allows only structural argv placeholders while ordinary braces stay literal local argv', () => {
   const profile = validateToolProfile('tool', {
     executable: 'tool',
-    args: ['--cwd', '{projectDir}', '--context', '{contextFile}'],
+    args: ['--cwd', '{projectDir}', '--context', '{contextFile}', '--literal', "const x = { name: 'fixture' };"],
     sandbox: { enforcement: 'tool', outsideProjectWrite: false }
   });
   assert.deepEqual(expandProfileArgs(profile.args, {
     projectDir: '/project', contextFile: '/project/context.json', resultFile: '/project/result.json', runId: 'r1'
-  }), ['--cwd', '/project', '--context', '/project/context.json']);
+  }), ['--cwd', '/project', '--context', '/project/context.json', '--literal', "const x = { name: 'fixture' };"]);
 
   assert.throws(() => validateToolProfile('bad', {
     executable: 'tool',
