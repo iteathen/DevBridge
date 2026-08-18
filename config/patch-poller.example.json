@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "github": {
+    "queueRepository": "iteathen/PATCH-POLLER",
+    "taskLabel": "patch-poller:ready",
+    "trustedActorIds": ["1775584"],
+    "tokenEnv": "PATCH_POLLER_GITHUB_TOKEN",
+    "apiVersion": "2026-03-10",
+    "pollIntervalMs": 60000,
+    "rateLimit": {
+      "reserveRatio": 0.2,
+      "minimumReserve": 250,
+      "emergencyReserve": 25,
+      "mutationIntervalMs": 1100
+    }
+  },
+  "workspace": {
+    "root": "~/.patch-poller/workspaces",
+    "allowCreate": true,
+    "allowedOwners": ["iteathen"],
+    "externalReadRoots": []
+  },
+  "state": {
+    "directory": "~/.patch-poller/state"
+  },
+  "execution": {
+    "enabled": false,
+    "defaultTool": null,
+    "maxConcurrentTasks": 1,
+    "maxTurns": 8,
+    "allowUncontainedTools": false
+  },
+  "status": {
+    "progressIntervalMs": 300000,
+    "maxCommentBytes": 48000
+  },
+  "tools": {}
+}

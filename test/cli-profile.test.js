@@ -1,0 +1,33 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { validateToolProfile, expandProfileArgs } from '../src/runtime/cli-profile.js';
+import { PolicyError } from '../src/errors.js';
+
+test('rejects uncontained tools by default', () => {
+  assert.throws(() => validateToolProfile('tool', { executable: 'tool', args: [] }), PolicyError);
+});
+
+test('allows only structural argv placeholders', () => {
+  const profile = validateToolProfile('tool', {
+    executable: 'tool',
+    args: ['--cwd', '{projectDir}', '--context', '{contextFile}'],
+    sandbox: { enforcement: 'tool', outsideProjectWrite: false }
+  });
+  assert.deepEqual(expandProfileArgs(profile.args, {
+    projectDir: '/project', contextFile: '/project/context.json', resultFile: '/project/result.json', runId: 'r1'
+  }), ['--cwd', '/project', '--context', '/project/context.json']);
+
+  assert.throws(() => validateToolProfile('bad', {
+    executable: 'tool',
+    args: ['{instructions}'],
+    sandbox: { enforcement: 'tool' }
+  }), /unsupported placeholder/);
+});
+
+test('shell-like executables need an explicit local exception', () => {
+  assert.throws(() => validateToolProfile('shell', {
+    executable: 'bash',
+    args: [],
+    sandbox: { enforcement: 'tool' }
+  }), PolicyError);
+});
