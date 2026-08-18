@@ -5,12 +5,17 @@ import { validateToolProfile } from '../runtime/cli-profile.js';
 import { parseToolResult } from './result-envelope.js';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
+
 function nowIso() { return new Date().toISOString(); }
-function outputTail(run) { const text = [run.stdout, run.stderr].filter(Boolean).join('\n'); return text.length <= 8000 ? text : text.slice(-8000); }
+function outputTail(run) {
+  const text = [run.stdout, run.stderr].filter(Boolean).join('\n');
+  return text.length <= 8000 ? text : text.slice(-8000);
+}
 export function runIdForTask(task) { return `pp-${task.issueNumber}-${task.revision.slice(0, 16)}`; }
 
 export class RunCoordinator {
   #store; #workspace; #runner; #reporter; #feedback; #queueRepository; #tools; #defaultTool; #maxTurns; #allowUncontainedTools; #autoPush;
+
   constructor({ stateStore, workspaceManager, processRunner, statusReporter = null, feedbackSource = null, queueRepository, tools, defaultTool = null, maxTurns = 8, allowUncontainedTools = false, autoPushTaskBranches = false }) {
     this.#store = stateStore; this.#workspace = workspaceManager; this.#runner = processRunner; this.#reporter = statusReporter; this.#feedback = feedbackSource; this.#queueRepository = queueRepository; this.#tools = tools; this.#defaultTool = defaultTool; this.#maxTurns = maxTurns; this.#allowUncontainedTools = allowUncontainedTools; this.#autoPush = autoPushTaskBranches;
   }
@@ -28,10 +33,13 @@ export class RunCoordinator {
   }
   async #publish(state, stage, summary, snapshot = null, { terminal = false, force = false } = {}) {
     if (!this.#reporter) return null;
-    try { return await this.#reporter.publish({ issueNumber: state.task.issueNumber, runId: state.runId, revision: state.task.revision, stage, summary, capsule: this.#capsule(state, snapshot), terminal, force }); }
-    catch (error) { state.statusError = { name: error.name, message: error.message, at: nowIso() }; return null; }
+    try {
+      return await this.#reporter.publish({ issueNumber: state.task.issueNumber, runId: state.runId, revision: state.task.revision, stage, summary, capsule: this.#capsule(state, snapshot), terminal, force });
+    } catch (error) {
+      state.statusError = { name: error.name, message: error.message, at: nowIso() };
+      return null;
+    }
   }
-
   async resumePending() {
     const entries = await this.#store.entries(`run.${this.#queueRepository}#`);
     const pending = entries.map(([, value]) => value).filter((state) => state?.task && !TERMINAL.has(state.stage)).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
@@ -60,38 +68,36 @@ export class RunCoordinator {
           return { runId: state.runId, issueNumber: task.issueNumber, status: 'cancelled' };
         }
         state.prior.decisions.push({ source: 'trusted-feedback', action: 'continue', actorId: polled.feedback.actorId, commentId: polled.feedback.commentId, instructions: polled.feedback.instructions });
-        state.prior.blockers = [];
-        state.stage = 'running';
-        await this.#save(key, state);
+        state.prior.blockers = []; state.stage = 'running'; await this.#save(key, state);
       }
 
       const profile = this.#selectProfile(task);
-      const workspace = await this.#workspace.prepareRun(task, state.runId);
+      const workspace = await this.#workspace.prepareRun(task, state.runId, { baseRef: state.workspace?.baseRef ?? null, baseSha: state.workspace?.baseSha ?? null });
       state.workspace = workspace;
-      if (state.stage === 'preparing') { state.stage = 'running'; await this.#save(key, state); await this.#publish(state, 'STARTED', `Claimed task with local tool profile ${profile.name}.`, await this.#workspace.snapshot(workspace), { force: true }); }
+      if (state.stage === 'preparing') {
+        state.stage = 'running'; await this.#save(key, state);
+        await this.#publish(state, 'STARTED', `Claimed task with local tool profile ${profile.name}.`, await this.#workspace.snapshot(workspace), { force: true });
+      } else {
+        await this.#save(key, state);
+      }
 
       while (state.turn < this.#maxTurns) {
         const before = await this.#workspace.validate(workspace);
         const context = this.#capsule(state, before);
         const nextTurn = state.turn + 1;
-        state.stage = 'invoking'; state.turn = nextTurn;
-        await this.#save(key, state);
+        state.stage = 'invoking'; state.turn = nextTurn; await this.#save(key, state);
         const run = await this.#runner.run({ profile, projectDir: workspace.worktreeDir, runDir: path.join(workspace.worktreeDir, '.patch-poller', state.runId, `turn-${nextTurn}`), runId: state.runId, context });
         const snapshot = await this.#workspace.validate(workspace);
         const result = parseToolResult(run.result, { exitCode: run.exitCode, timedOut: run.timedOut, resultParseError: run.resultParseError, stdout: run.stdout, stderr: run.stderr });
-
         state.prior.changedFiles = snapshot.changedFiles;
         state.prior.git = { branch: snapshot.branch, baseSha: snapshot.baseSha, headSha: snapshot.headSha, dirty: snapshot.dirty };
-        state.prior.outputTail = outputTail(run);
-        state.prior.nextStep = result.nextStep;
+        state.prior.outputTail = outputTail(run); state.prior.nextStep = result.nextStep;
         if (result.summary) state.prior.progress.push(result.summary);
         if (result.progress.length) state.prior.progress.push(...result.progress);
         if (result.tests.length) state.prior.tests = [...state.prior.tests, ...result.tests].slice(-100);
         if (result.checkpoint) state.prior.decisions.push({ source: 'proposal-checkpoint', ...result.checkpoint, recordedAt: nowIso() });
 
-        if (result.status === 'continue') {
-          state.stage = 'running'; await this.#save(key, state); await this.#publish(state, 'RUNNING', result.summary, snapshot); continue;
-        }
+        if (result.status === 'continue') { state.stage = 'running'; await this.#save(key, state); await this.#publish(state, 'RUNNING', result.summary, snapshot); continue; }
         if (result.status === 'blocked') {
           state.stage = 'waiting-feedback'; state.prior.blockers = [result.blocker ?? result.summary]; await this.#save(key, state); await this.#publish(state, 'WAITING_FEEDBACK', result.summary, snapshot, { force: true });
           return { runId: state.runId, issueNumber: task.issueNumber, status: 'waiting-feedback', waiting: true, branch: workspace.branch, headSha: snapshot.headSha };
@@ -102,22 +108,26 @@ export class RunCoordinator {
         }
 
         state.stage = 'verifying'; await this.#save(key, state);
-        const finalSnapshot = await this.#workspace.validate(workspace);
+        const finalSnapshot = await this.#workspace.sealCandidate(workspace, { issueNumber: task.issueNumber, revision: task.revision });
         state.finalSnapshot = finalSnapshot;
+        state.prior.changedFiles = finalSnapshot.changedFiles;
+        state.prior.git = { branch: finalSnapshot.branch, baseSha: finalSnapshot.baseSha, headSha: finalSnapshot.headSha, dirty: finalSnapshot.dirty };
         if (this.#autoPush) {
           state.stage = 'publishing'; await this.#save(key, state);
           const publication = await this.#workspace.publishTaskBranch(workspace);
           state.publication = { published: true, ...publication, publishedAt: nowIso() };
         }
         state.stage = 'completed'; await this.#save(key, state);
-        await this.#publish(state, 'COMPLETED', this.#autoPush ? `Completed and published task branch ${workspace.branch}.` : `Completed locally on task branch ${workspace.branch}; automatic push is disabled.`, finalSnapshot, { terminal: true, force: true });
+        await this.#publish(state, 'COMPLETED', this.#autoPush ? `Completed, sealed candidate ${finalSnapshot.headSha}, and published task branch ${workspace.branch}.` : `Completed and sealed candidate ${finalSnapshot.headSha} on local task branch ${workspace.branch}; automatic push is disabled.`, finalSnapshot, { terminal: true, force: true });
         return { runId: state.runId, issueNumber: task.issueNumber, status: 'completed', branch: workspace.branch, headSha: finalSnapshot.headSha, changedFiles: finalSnapshot.changedFiles, published: state.publication.published === true };
       }
 
-      state.stage = 'waiting-feedback'; state.prior.blockers = [`Maximum turn budget (${this.#maxTurns}) reached.`]; await this.#save(key, state); await this.#publish(state, 'WAITING_FEEDBACK', `Maximum turn budget (${this.#maxTurns}) reached; trusted continuation feedback is required.`, state.finalSnapshot ?? null, { force: true });
+      state.stage = 'waiting-feedback'; state.prior.blockers = [`Maximum turn budget (${this.#maxTurns}) reached.`]; await this.#save(key, state);
+      await this.#publish(state, 'WAITING_FEEDBACK', `Maximum turn budget (${this.#maxTurns}) reached; trusted continuation feedback is required.`, state.finalSnapshot ?? null, { force: true });
       return { runId: state.runId, issueNumber: task.issueNumber, status: 'waiting-feedback', waiting: true, branch: state.workspace?.branch ?? null };
     } catch (error) {
-      state.stage = 'failed'; state.error = { classification: error.name, message: error.message, at: nowIso() }; await this.#save(key, state); await this.#publish(state, 'FAILED', `${error.name}: ${error.message}`, state.finalSnapshot ?? null, { terminal: true, force: true });
+      state.stage = 'failed'; state.error = { classification: error.name, message: error.message, at: nowIso() }; await this.#save(key, state);
+      await this.#publish(state, 'FAILED', `${error.name}: ${error.message}`, state.finalSnapshot ?? null, { terminal: true, force: true });
       return { runId: state.runId, issueNumber: task.issueNumber, status: 'failed', branch: state.workspace?.branch ?? null, error: state.error };
     }
   }
