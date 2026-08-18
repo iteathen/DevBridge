@@ -3,8 +3,6 @@ import { ConfigurationError, PolicyError } from '../errors.js';
 
 const ALLOWED_PLACEHOLDERS = new Set(['projectDir', 'contextFile', 'resultFile', 'runId']);
 const SHELL_LIKE = new Set(['cmd', 'cmd.exe', 'powershell', 'powershell.exe', 'pwsh', 'pwsh.exe', 'bash', 'sh', 'zsh', 'fish']);
-// Environment names are passed structurally to spawn(), never through a shell.
-// Parentheses are required for the standard Windows ProgramFiles(x86) name.
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_()]*$/;
 
 function validateArgs(args, name) {
@@ -31,9 +29,12 @@ export function validateToolProfile(name, raw, { allowUncontainedTools = false }
   }
 
   const sandbox = raw.sandbox ?? {};
-  const enforcement = sandbox.enforcement ?? 'none';
-  if (!['tool', 'os', 'none'].includes(enforcement)) throw new ConfigurationError(`tools.${name}.sandbox.enforcement is invalid`);
-  if (enforcement === 'none' && !allowUncontainedTools) throw new PolicyError(`tools.${name} has no declared containment enforcement`);
+  const declaredEnforcement = sandbox.enforcement ?? 'none';
+  if (!['tool', 'os', 'none'].includes(declaredEnforcement)) throw new ConfigurationError(`tools.${name}.sandbox.enforcement is invalid`);
+  const requiresVerifiedSandbox = sandbox.requiresVerifiedSandbox !== false;
+  if (!requiresVerifiedSandbox && !allowUncontainedTools) {
+    throw new PolicyError(`tools.${name} disables verified containment; execution.allowUncontainedTools is required for this development-only exception`);
+  }
   if (sandbox.outsideProjectWrite === true && !allowUncontainedTools) throw new PolicyError(`tools.${name} permits writes outside the project`);
 
   const outsideProjectRead = sandbox.outsideProjectRead ?? 'deny';
@@ -68,7 +69,8 @@ export function validateToolProfile(name, raw, { allowUncontainedTools = false }
     maxOutputBytes,
     environment: { pass: [...pass], set: { ...set } },
     sandbox: {
-      enforcement,
+      declaredEnforcement,
+      requiresVerifiedSandbox,
       outsideProjectRead,
       outsideProjectWrite: sandbox.outsideProjectWrite === true,
       network
