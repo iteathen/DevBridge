@@ -206,6 +206,7 @@ export class DecisionGatedRunCoordinator {
     }
 
     if (polled.status === 'rejected' || polled.status === 'redirected') {
+      if (state.decisionGates) state.decisionGates.currentCheckpointId = null;
       if (task.envelope.controllerPlan) {
         state.stage = 'failed';
         state.error = {
