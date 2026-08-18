@@ -16,6 +16,7 @@ import { GitWorkspaceManager } from '../git/workspace-manager.js';
 import { ProcessRunner } from '../runtime/process-runner.js';
 import { DeterministicProcessRunner } from '../runtime/deterministic-process-runner.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
+import { WorkerIsolatingOperationRegistry } from '../runtime/worker-isolating-operation-registry.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
@@ -74,7 +75,8 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
   const deterministicProcessRunner = new DeterministicProcessRunner({ sourceEnv: env, faultInjector });
   const toolchainRegistry = createCoreToolchainRegistry({ env });
-  const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
+  const coreOperationRegistry = createCoreOperationRegistry({ toolchainRegistry });
+  const operationRegistry = new WorkerIsolatingOperationRegistry({ delegate: coreOperationRegistry });
   const deterministicControllerPlanExecutor = new ControllerPlanExecutor({
     operationRegistry,
     processRunner: deterministicProcessRunner,
