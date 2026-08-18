@@ -1,13 +1,9 @@
-import { authoritySource, isUneditedAuthorityComment, sourceBoundRevision } from './authority-source.js';
+import { authoritySource, isExactAuthorityFence, isUneditedAuthorityComment, sourceBoundRevision } from './authority-source.js';
 import { parseTaskEnvelope } from './task-envelope.js';
 
 function commentIssueNumber(comment) {
   const match = String(comment?.issue_url ?? '').match(/\/issues\/(\d+)$/u);
   return match ? Number(match[1]) : null;
-}
-
-function taskMarker(body) {
-  return typeof body === 'string' && body.includes('```patch-poller-task');
 }
 
 export class IssueTaskSource {
@@ -67,7 +63,7 @@ export class IssueTaskSource {
     for (const issue of response.data) {
       if (issue?.pull_request) continue;
       const candidates = (commentsByIssue.get(issue.number) ?? [])
-        .filter((comment) => this.#trustedActorIds.has(String(comment?.user?.id ?? '')) && taskMarker(comment?.body))
+        .filter((comment) => this.#trustedActorIds.has(String(comment?.user?.id ?? '')) && isExactAuthorityFence(comment?.body, 'task'))
         .sort((a, b) => Number(b.id ?? 0) - Number(a.id ?? 0));
       const comment = candidates[0] ?? null;
       if (!comment) {
