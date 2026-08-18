@@ -25,6 +25,11 @@ function buildEnvironment(profile, source) {
   return env;
 }
 
+export function parseResultJsonText(text) {
+  const normalized = String(text).charCodeAt(0) === 0xFEFF ? String(text).slice(1) : String(text);
+  return JSON.parse(normalized);
+}
+
 export function toolBridge(runId, resultFile) {
   return {
     protocol: 'patch-poller/tool-bridge-v1',
@@ -102,7 +107,7 @@ export class ProcessRunner {
       const info = await stat(resultFile);
       if (info.size > 1_048_576) resultParseError = 'result file exceeds 1 MiB';
       else {
-        try { result = JSON.parse(await readFile(resultFile, 'utf8')); }
+        try { result = parseResultJsonText(await readFile(resultFile, 'utf8')); }
         catch (error) { if (error instanceof SyntaxError) resultParseError = error.message; else throw error; }
       }
     } catch (error) {
