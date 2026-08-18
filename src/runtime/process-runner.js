@@ -25,6 +25,36 @@ function buildEnvironment(profile, source) {
   return env;
 }
 
+export function toolBridge(runId, resultFile) {
+  return {
+    protocol: 'patch-poller/tool-bridge-v1',
+    runId: String(runId),
+    resultFile,
+    resultProtocol: 'patch-poller/result-v1',
+    requirement: 'Before exiting, write one JSON result envelope to resultFile when the CLI can do so. PATCH-POLLER independently validates the workspace; never claim completion unless the requested work and checks are complete.',
+    resultSchema: {
+      required: ['protocol', 'status', 'summary'],
+      protocol: 'patch-poller/result-v1',
+      status: ['complete', 'continue', 'blocked', 'failed'],
+      summary: 'Required non-empty string, maximum 20000 characters.',
+      progress: 'Optional array of at most 100 strings, each at most 4000 characters.',
+      tests: 'Optional array of at most 100 bounded JSON values describing checks actually run.',
+      nextStep: 'Optional string of at most 8000 characters or null.',
+      blocker: 'Optional string of at most 8000 characters or null; use for a concrete blocked/failed cause.',
+      checkpoint: 'Optional bounded JSON object for a proposal checkpoint; it is not human authorization.'
+    },
+    example: {
+      protocol: 'patch-poller/result-v1',
+      status: 'complete',
+      summary: 'Implemented and verified the requested change.',
+      progress: [],
+      tests: [],
+      nextStep: null,
+      blocker: null
+    }
+  };
+}
+
 export class ProcessRunner {
   #resolver;
   #sourceEnv;
@@ -37,7 +67,7 @@ export class ProcessRunner {
     await mkdir(resolvedRunDir, { recursive: true });
     const contextFile = path.join(resolvedRunDir, 'context.json');
     const resultFile = path.join(resolvedRunDir, 'result.json');
-    const toolContext = { ...context, bridge: { protocol: 'patch-poller/tool-bridge-v1', runId: String(runId), resultFile, resultProtocol: 'patch-poller/result-v1', requirement: 'Before exiting, write a bounded JSON result envelope to resultFile when the CLI can do so. PATCH-POLLER independently validates the workspace.' } };
+    const toolContext = { ...context, bridge: toolBridge(runId, resultFile) };
     await writeFile(contextFile, `${JSON.stringify(toolContext, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
 
     const executable = await this.#resolver(profile.executable, this.#sourceEnv);
