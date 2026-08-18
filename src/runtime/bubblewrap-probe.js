@@ -52,13 +52,34 @@ function canConnect() {
 });
 `;
 
-export async function captureSandboxProbeProcess(executable, args, { cwd = '/', env = {}, timeoutMs = PROBE_TIMEOUT_MS } = {}) {
-  const child = spawn(executable, args, containedSpawnOptions({
-    cwd,
-    env,
-    shell: false,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }));
+export async function captureSandboxProbeProcess(executable, args, {
+  cwd = '/',
+  env = {},
+  timeoutMs = PROBE_TIMEOUT_MS,
+  extraStdio = [],
+  release = null,
+} = {}) {
+  let child;
+  try {
+    child = spawn(executable, args, containedSpawnOptions({
+      cwd,
+      env,
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe', ...extraStdio],
+    }));
+  } catch (error) {
+    await release?.();
+    throw error;
+  }
+  if (release) {
+    try {
+      await release();
+    } catch (error) {
+      await terminateProcessTree(child);
+      throw error;
+    }
+  }
+
   let stdout = Buffer.alloc(0);
   let stderr = Buffer.alloc(0);
   let truncated = false;
