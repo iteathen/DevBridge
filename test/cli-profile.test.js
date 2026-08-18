@@ -3,8 +3,20 @@ import assert from 'node:assert/strict';
 import { validateToolProfile, expandProfileArgs } from '../src/runtime/cli-profile.js';
 import { PolicyError } from '../src/errors.js';
 
-test('rejects uncontained tools by default', () => {
-  assert.throws(() => validateToolProfile('tool', { executable: 'tool', args: [] }), PolicyError);
+test('sandbox declarations do not grant enforcement and verified containment is required by default', () => {
+  const profile = validateToolProfile('tool', { executable: 'tool', args: [] });
+  assert.equal(profile.sandbox.declaredEnforcement, 'none');
+  assert.equal(profile.sandbox.requiresVerifiedSandbox, true);
+  assert.throws(() => validateToolProfile('unsafe', {
+    executable: 'tool',
+    args: [],
+    sandbox: { requiresVerifiedSandbox: false }
+  }), PolicyError);
+  assert.equal(validateToolProfile('unsafe-dev', {
+    executable: 'tool',
+    args: [],
+    sandbox: { requiresVerifiedSandbox: false }
+  }, { allowUncontainedTools: true }).sandbox.requiresVerifiedSandbox, false);
 });
 
 test('allows only structural argv placeholders while ordinary braces stay literal local argv', () => {
