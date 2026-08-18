@@ -25,6 +25,20 @@ function validateArgs(args, name) {
   return [...args];
 }
 
+function validateReadOnlyRoots(value, name) {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > 32) {
+    throw new ConfigurationError(`tools.${name}.sandbox.readOnlyRoots must contain at most 32 absolute local paths`);
+  }
+  const roots = value.map((entry, index) => {
+    if (typeof entry !== 'string' || entry.trim() === '' || !path.isAbsolute(entry)) {
+      throw new ConfigurationError(`tools.${name}.sandbox.readOnlyRoots[${index}] must be an absolute local path`);
+    }
+    return path.normalize(entry);
+  });
+  return [...new Set(roots)];
+}
+
 export function validateToolProfile(name, raw, { allowUncontainedTools = false, allowControlOwnedTools = false } = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ConfigurationError(`tools.${name} must be an object`);
   if (typeof raw.executable !== 'string' || raw.executable.trim() === '') throw new ConfigurationError(`tools.${name}.executable is required`);
@@ -51,6 +65,10 @@ export function validateToolProfile(name, raw, { allowUncontainedTools = false, 
 
   const outsideProjectRead = sandbox.outsideProjectRead ?? 'deny';
   if (!['deny', 'allowlist', 'readonly'].includes(outsideProjectRead)) throw new ConfigurationError(`tools.${name}.sandbox.outsideProjectRead is invalid`);
+  const readOnlyRoots = validateReadOnlyRoots(sandbox.readOnlyRoots, name);
+  if (readOnlyRoots.length > 0 && outsideProjectRead !== 'allowlist' && !controlOwned) {
+    throw new PolicyError(`tools.${name}.sandbox.readOnlyRoots requires outsideProjectRead=allowlist`);
+  }
   const network = sandbox.network ?? 'deny';
   if (!['deny', 'restricted', 'unrestricted'].includes(network)) throw new ConfigurationError(`tools.${name}.sandbox.network is invalid`);
 
@@ -84,6 +102,7 @@ export function validateToolProfile(name, raw, { allowUncontainedTools = false, 
     sandbox: {
       enforcement,
       outsideProjectRead,
+      readOnlyRoots,
       outsideProjectWrite: sandbox.outsideProjectWrite === true,
       network
     }
