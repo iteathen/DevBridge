@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises';
+import { access, lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { PolicyError } from '../errors.js';
@@ -20,12 +20,35 @@ function onlyKeys(value, allowed, operation) {
   for (const key of Object.keys(value)) if (!allowed.has(key)) throw new PolicyError(`${operation} parameter ${key} is not allowed`);
 }
 
+function isWithin(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
 function projectPath(projectDir, relative, name) {
   const safe = normalizePlanPath(relative, name);
   const resolved = path.resolve(projectDir, safe);
   const rel = path.relative(path.resolve(projectDir), resolved);
   if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new PolicyError(`${name} escaped project root`);
   return { safe, resolved };
+}
+
+async function assertStaticProjectPathNoFollow(projectDir, relative, name) {
+  const target = projectPath(projectDir, relative, name);
+  const root = path.resolve(projectDir);
+  const rootInfo = await lstat(root);
+  if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) throw new PolicyError(`${name} project root must be a real directory`);
+  const rootReal = await realpath(root);
+  const rel = path.relative(root, target.resolved);
+  let cursor = root;
+  for (const segment of rel.split(path.sep).filter(Boolean)) {
+    cursor = path.join(cursor, segment);
+    const info = await lstat(cursor);
+    if (info.isSymbolicLink()) throw new PolicyError(`${name} crosses filesystem indirection`);
+    const canonical = await realpath(cursor);
+    if (!isWithin(rootReal, canonical)) throw new PolicyError(`${name} resolves outside project root`);
+  }
+  return target;
 }
 
 function localEnvironment() {
@@ -155,10 +178,10 @@ function nodeScriptAdapter({ mode }) {
           operation: mode,
         });
       }
-      await access(projectPath(projectDir, params.path, `${mode} path`).resolved);
+      const checked = await assertStaticProjectPathNoFollow(projectDir, params.path, `${mode} path`);
       return processRunner.run({
         executable: process.execPath,
-        args: ['--check', params.path],
+        args: ['--check', checked.safe],
         cwd: projectDir,
         timeoutMs: 60_000,
         maxOutputBytes: 1024 * 1024,
