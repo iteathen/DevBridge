@@ -15,6 +15,7 @@ import { GitClient } from '../git/git-client.js';
 import { GitWorkspaceManager } from '../git/workspace-manager.js';
 import { ProcessRunner } from '../runtime/process-runner.js';
 import { DeterministicProcessRunner } from '../runtime/deterministic-process-runner.js';
+import { createDeterministicSandboxProvider } from '../runtime/deterministic-sandbox.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
@@ -71,7 +72,17 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   });
   const processRunner = new ProcessRunner({ sourceEnv: env });
   const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
-  const deterministicProcessRunner = new DeterministicProcessRunner({ sourceEnv: env, faultInjector });
+  const deterministicSandboxProvider = createDeterministicSandboxProvider({
+    externalReadRoots: config.workspace.externalReadRoots,
+    workspaceRoot: config.workspace.root,
+    stateDirectory: config.state.directory,
+    env,
+  });
+  const deterministicProcessRunner = new DeterministicProcessRunner({
+    sourceEnv: env,
+    faultInjector,
+    sandboxProvider: deterministicSandboxProvider,
+  });
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
   const deterministicControllerPlanExecutor = new ControllerPlanExecutor({
@@ -126,6 +137,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     workspaceManager,
     processRunner,
     deterministicProcessRunner,
+    deterministicSandboxProvider,
     faultInjector,
     toolchainRegistry,
     operationRegistry,
