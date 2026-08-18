@@ -82,6 +82,25 @@ Remote task text may request a compiler/build test but may not grant or choose a
 
 No durability test may install a compiler, mutate PATH globally, or weaken sandboxing merely to make the test pass.
 
+### Built-in native compiler diagnostic
+
+PATCH-POLLER may expose an enumerated built-in local profile named `patch-poller-native-compiler`. This profile is part of the trusted control plane, not a coding/model profile.
+
+Selecting that exact profile requests a fixed diagnostic only. Remote content cannot supply or alter:
+
+- compiler executable paths;
+- compiler arguments;
+- environment-variable values;
+- shell commands;
+- discovery roots;
+- output paths outside PATCH-POLLER's reserved run directory.
+
+The diagnostic locally discovers only constrained native C compiler candidates, runs with `shell:false`, performs no network access, and compiles only PATCH-POLLER-generated temporary source in the reserved run directory. It must execute the sequence valid compile -> intentional syntax failure -> repair -> valid compile in the same probe workspace and then remove its temporary compiler artifacts.
+
+On Windows, locally constrained discovery may use the standard Visual Studio Installer `vswhere.exe` location derived from local environment and the VC toolset layout returned by that trusted local discovery. On POSIX systems, discovery may use bounded compiler names resolved from the locally supplied PATH. The remote task never supplies those paths.
+
+The built-in profile name is reserved and cannot be shadowed by local JSON tool configuration.
+
 ## Evidence and cleanup
 
 Every recovery attempt should retain enough bounded evidence to distinguish:
@@ -105,6 +124,7 @@ Tests must cover at least:
 - the observed model-capacity condition without a structured result is classified transient and retried only within bounded run budget;
 - unrelated nonzero tool exits remain terminal/tool failures;
 - compiler success -> intentional syntax failure -> diagnostic capture -> repair -> successful rebuild in one workspace;
+- the built-in native compiler diagnostic uses only its fixed local profile and does not invoke a coding model;
 - compiler/linker/build/test failures are distinguishable from toolchain infrastructure failure;
 - interrupted build/retest leaves bounded evidence and recoverable workspace state;
 - all non-destructive durability probes finish with their temporary artifacts removed and expected Git state restored.

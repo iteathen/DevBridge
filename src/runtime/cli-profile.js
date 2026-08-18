@@ -3,7 +3,9 @@ import { ConfigurationError, PolicyError } from '../errors.js';
 
 const ALLOWED_PLACEHOLDERS = new Set(['projectDir', 'contextFile', 'resultFile', 'runId']);
 const SHELL_LIKE = new Set(['cmd', 'cmd.exe', 'powershell', 'powershell.exe', 'pwsh', 'pwsh.exe', 'bash', 'sh', 'zsh', 'fish']);
-const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+// Environment names are passed structurally to spawn(), never through a shell.
+// Parentheses are required for the standard Windows ProgramFiles(x86) name.
+const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_()]*$/;
 
 function validateArgs(args, name) {
   if (!Array.isArray(args) || args.some((arg) => typeof arg !== 'string')) {
