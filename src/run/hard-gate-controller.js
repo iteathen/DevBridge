@@ -55,6 +55,21 @@ function acceptedDecisionRecord(decision, checkpoint, at) {
   };
 }
 
+function checkpointRecord(checkpoint, state, at) {
+  return {
+    source: 'hard-gate-checkpoint',
+    checkpointId: checkpoint.checkpointId,
+    type: checkpoint.type,
+    bindingMode: checkpoint.bindingMode,
+    state,
+    subjectDigest: checkpoint.subjectDigest,
+    decisionClasses: [...checkpoint.decisionClasses],
+    changedFiles: [...checkpoint.changedFiles],
+    expiresAt: checkpoint.expiresAt,
+    recordedAt: at,
+  };
+}
+
 export class HardGateController {
   #source;
   #authorities;
@@ -94,7 +109,10 @@ export class HardGateController {
 
   currentCheckpoint(state) {
     const gates = this.#state(state);
-    return gates.checkpoints.find((entry) => entry.checkpointId === gates.currentCheckpointId) ?? null;
+    for (let index = gates.checkpoints.length - 1; index >= 0; index -= 1) {
+      if (gates.checkpoints[index].checkpointId === gates.currentCheckpointId) return gates.checkpoints[index];
+    }
+    return null;
   }
 
   authorityActors(checkpoint) {
@@ -122,6 +140,7 @@ export class HardGateController {
         current.state = 'superseded';
         current.supersededAt = nowIso(now);
         current.resolvedAt = current.supersededAt;
+        state.prior.decisions.push(checkpointRecord(current, 'superseded', current.supersededAt));
       }
       gates.currentCheckpointId = null;
       await persist();
@@ -132,6 +151,7 @@ export class HardGateController {
       if (['pending', 'approved'].includes(current.state)) {
         current.state = 'expired';
         current.resolvedAt = nowIso(now);
+        state.prior.decisions.push(checkpointRecord(current, 'expired', current.resolvedAt));
         gates.currentCheckpointId = null;
         await persist();
       }
@@ -154,6 +174,8 @@ export class HardGateController {
       gates.checkpoints.push(current);
       gates.checkpoints = gates.checkpoints.slice(-32);
       gates.currentCheckpointId = current.checkpointId;
+      state.prior.decisions.push(checkpointRecord(current, 'pending', current.createdAt));
+      state.prior.decisions = state.prior.decisions.slice(-100);
       await persist();
     }
 
@@ -173,6 +195,8 @@ export class HardGateController {
     if (Date.parse(checkpoint.expiresAt) <= now) {
       checkpoint.state = 'expired';
       checkpoint.resolvedAt = nowIso(now);
+      state.prior.decisions.push(checkpointRecord(checkpoint, 'expired', checkpoint.resolvedAt));
+      state.prior.decisions = state.prior.decisions.slice(-100);
       gates.currentCheckpointId = null;
       await persist();
       return { status: 'expired', checkpoint, decision: null, rejected: [] };
@@ -260,6 +284,7 @@ export class HardGateController {
       instructions: decision.instructions ?? null,
       recordedAt: checkpoint.resolvedAt,
     });
+    state.prior.decisions = state.prior.decisions.slice(-100);
     state.prior.provenance.push(acceptedDecisionRecord(decision, checkpoint, checkpoint.resolvedAt));
     state.prior.provenance = state.prior.provenance.slice(-100);
     await persist();
