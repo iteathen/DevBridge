@@ -6,6 +6,7 @@ import { PolicyError } from '../errors.js';
 
 const SAFE_TURN = /^[A-Za-z0-9_.-]{1,80}$/u;
 const MAX_RESULT_BYTES = 1_048_576;
+const MAX_RESULT_BYTES_BIGINT = BigInt(MAX_RESULT_BYTES);
 
 async function exists(candidate) {
   try { await lstat(candidate); return true; }
@@ -18,11 +19,14 @@ async function assertRealDirectory(candidate, label) {
   return realpath(candidate);
 }
 
+function fileIdentity(stats) {
+  return { dev: String(stats.dev), ino: String(stats.ino) };
+}
+
 function sameIdentity(expected, observed) {
   if (!expected || !observed) return false;
-  // dev/ino are stable on supported Node filesystems, including NTFS. Keep
-  // size/mode out of identity because the worker is expected to change size.
-  return expected.dev === observed.dev && expected.ino === observed.ino;
+  const identity = fileIdentity(observed);
+  return expected.dev === identity.dev && expected.ino === identity.ino;
 }
 
 function runKey(runId) {
@@ -86,15 +90,15 @@ export class ControlMailbox {
     const contextFile = path.join(exchangeDir, 'context.json');
     const resultFile = path.join(exchangeDir, 'result.json');
     await writeFile(resultFile, '', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    const resultIdentity = await lstat(resultFile);
-    if (resultIdentity.isSymbolicLink() || !resultIdentity.isFile()) throw new PolicyError('control mailbox result endpoint is not a regular file');
+    const resultStats = await lstat(resultFile, { bigint: true });
+    if (resultStats.isSymbolicLink() || !resultStats.isFile()) throw new PolicyError('control mailbox result endpoint is not a regular file');
 
     const identity = {
       protocol: 'patch-poller/mailbox-v1',
       runDigest: digest,
       turnId: turn,
       nonce,
-      result: { dev: resultIdentity.dev, ino: resultIdentity.ino },
+      result: fileIdentity(resultStats),
     };
     await writeFile(path.join(exchangeDir, 'identity.json'), `${JSON.stringify(identity)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     return { runDigest: digest, turnId: turn, nonce, exchangeDir, contextFile, resultFile, resultIdentity: identity.result };
@@ -109,22 +113,22 @@ export class ControlMailbox {
   }
 
   async consumeResult(exchange) {
-    const before = await lstat(exchange.resultFile);
+    const before = await lstat(exchange.resultFile, { bigint: true });
     if (before.isSymbolicLink() || !before.isFile()) throw new PolicyError('control mailbox result endpoint was substituted');
     if (!sameIdentity(exchange.resultIdentity, before)) throw new PolicyError('control mailbox result endpoint identity changed');
 
     const flags = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
     const handle = await open(exchange.resultFile, flags);
     try {
-      const opened = await handle.stat();
+      const opened = await handle.stat({ bigint: true });
       if (!opened.isFile() || !sameIdentity(exchange.resultIdentity, opened)) throw new PolicyError('control mailbox result endpoint changed during open');
-      if (opened.size > MAX_RESULT_BYTES) throw new PolicyError('result file exceeds 1 MiB');
-      if (opened.size === 0) return { text: null, size: 0 };
+      if (opened.size > MAX_RESULT_BYTES_BIGINT) throw new PolicyError('result file exceeds 1 MiB');
+      if (opened.size === 0n) return { text: null, size: 0 };
       const text = await handle.readFile({ encoding: 'utf8' });
-      const after = await handle.stat();
+      const after = await handle.stat({ bigint: true });
       if (!sameIdentity(exchange.resultIdentity, after)) throw new PolicyError('control mailbox result endpoint identity changed during read');
-      if (after.size > MAX_RESULT_BYTES) throw new PolicyError('result file exceeds 1 MiB');
-      return { text, size: after.size };
+      if (after.size > MAX_RESULT_BYTES_BIGINT) throw new PolicyError('result file exceeds 1 MiB');
+      return { text, size: Number(after.size) };
     } finally {
       await handle.close();
     }
