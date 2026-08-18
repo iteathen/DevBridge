@@ -9,13 +9,28 @@ const SYNTAX_FILES = [
   'src/cli.js',
   'src/config.js',
   'src/app/runtime.js',
-  'src/app/chat-handoff.js',
-  'src/context/chat-handoff.js',
-  'src/context/context-budget.js',
-  'src/github/chat-handoff-projector.js',
+  'src/app/doctor.js',
+  'src/context/context-capsule.js',
+  'src/github/authority-source.js',
+  'src/github/issue-task-source.js',
+  'src/github/issue-feedback-source.js',
+  'src/github/issue-decision-source.js',
+  'src/github/tool-inventory-projector.js',
   'src/run/controller-plan.js',
+  'src/run/controller-plan-executor.js',
+  'src/run/candidate-decision-gate.js',
+  'src/run/candidate-subject.js',
   'src/run/run-coordinator.js',
+  'src/runtime/cli-profile.js',
+  'src/runtime/control-mailbox.js',
   'src/runtime/deterministic-process-runner.js',
+  'src/runtime/deterministic-operation-registry.js',
+  'src/runtime/process-runner.js',
+  'src/runtime/sandbox-manager.js',
+  'src/runtime/tool-discovery.js',
+  'src/runtime/tool-inventory.js',
+  'src/runtime/tool-inventory-service.js',
+  'src/bootstrap/release-integrity.mjs',
   'src/bootstrap/transactional-bootstrap.mjs',
 ];
 
@@ -53,7 +68,7 @@ function checked(runner, args, { cwd, label, timeoutMs }) {
   }
 }
 
-export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync) {
+export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync, { staticOnly = false } = {}) {
   const cwd = path.resolve(root);
   for (const relative of SYNTAX_FILES) {
     const file = path.join(cwd, relative);
@@ -68,6 +83,15 @@ export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync)
     catch (error) { throw new Error(`JSON ${relative} is invalid: ${error.message}`, { cause: error }); }
   }
 
+  if (staticOnly) {
+    return {
+      syntaxFiles: SYNTAX_FILES.length,
+      jsonFiles: JSON_FILES.length,
+      targetedTests: 0,
+      staticOnly: true,
+    };
+  }
+
   const targeted = TARGETED_TESTS.filter((relative) => existsSync(path.join(cwd, relative)));
   if (targeted.length !== TARGETED_TESTS.length) {
     const missing = TARGETED_TESTS.filter((relative) => !targeted.includes(relative));
@@ -79,14 +103,34 @@ export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync)
     syntaxFiles: SYNTAX_FILES.length,
     jsonFiles: JSON_FILES.length,
     targetedTests: targeted.length,
+    staticOnly: false,
   };
+}
+
+function parseArgs(argv) {
+  let root = process.cwd();
+  let staticOnly = false;
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === '--static-only') { staticOnly = true; continue; }
+    if (value === '--root') {
+      const next = argv[index + 1];
+      if (!next) throw new Error('--root requires a path');
+      root = next;
+      index += 1;
+      continue;
+    }
+    throw new Error(`unknown preflight argument: ${value}`);
+  }
+  return { root, staticOnly };
 }
 
 const thisFile = path.resolve(fileURLToPath(import.meta.url));
 const entryFile = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (entryFile === thisFile) {
   try {
-    const result = runRepositoryPreflight();
+    const options = parseArgs(process.argv.slice(2));
+    const result = runRepositoryPreflight(options.root, spawnSync, { staticOnly: options.staticOnly });
     process.stdout.write(`${JSON.stringify({ status: 'passed', ...result })}\n`);
   } catch (error) {
     process.stderr.write(`[patch-poller-preflight] ${error.name}: ${error.message}\n`);
