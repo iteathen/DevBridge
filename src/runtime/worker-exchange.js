@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { chmod, lstat, mkdir, open, writeFile } from 'node:fs/promises';
+import { chmod, link, lstat, mkdir, open, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { PolicyError } from '../errors.js';
@@ -33,6 +33,7 @@ function identityOf(info) {
 }
 
 function sameIdentity(info, expected) {
+  if (!expected || typeof expected !== 'object') return false;
   const actual = identityOf(info);
   return actual.dev === expected.dev && actual.ino === expected.ino;
 }
@@ -149,12 +150,14 @@ class WorkerMailbox {
   #turnRoot;
   #contextFile;
   #resultFile;
+  #resultAnchorFile;
   #manifest;
 
-  constructor({ turnRoot, contextFile, resultFile, manifest }) {
+  constructor({ turnRoot, contextFile, resultFile, resultAnchorFile, manifest }) {
     this.#turnRoot = turnRoot;
     this.#contextFile = contextFile;
     this.#resultFile = resultFile;
+    this.#resultAnchorFile = resultAnchorFile;
     this.#manifest = manifest;
   }
 
@@ -173,6 +176,15 @@ class WorkerMailbox {
     };
   }
 
+  async #verifiedResultIdentity() {
+    const anchorInfo = await secureStat(this.#resultAnchorFile, 'file', this.#manifest.resultAnchorIdentity);
+    const resultInfo = await secureStat(this.#resultFile, 'file');
+    if (!sameIdentity(resultInfo, this.#manifest.resultIdentity) || !sameIdentity(resultInfo, anchorInfo)) {
+      throw new PolicyError(`${this.#resultFile} was replaced after PATCH-POLLER established worker-exchange ownership`);
+    }
+    return resultInfo;
+  }
+
   async consumeResult({ maxBytes = DEFAULT_RESULT_LIMIT } = {}) {
     if (!Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > 16_777_216) {
       throw new PolicyError('worker result size bound is invalid');
@@ -184,12 +196,12 @@ class WorkerMailbox {
       throw new PolicyError('worker modified its control-plane-owned context file');
     }
 
-    const resultInfo = await secureStat(this.#resultFile, 'file', this.#manifest.resultIdentity);
+    const resultInfo = await this.#verifiedResultIdentity();
     if (resultInfo.size > BigInt(maxBytes)) {
       return { text: null, resultParseError: `result file exceeds ${maxBytes} bytes` };
     }
     if (resultInfo.size === 0n) return { text: null, resultParseError: null };
-    const result = await readExactFile(this.#resultFile, this.#manifest.resultIdentity);
+    const result = await readExactFile(this.#resultFile, this.#manifest.resultAnchorIdentity);
     return { text: result.text, resultParseError: null };
   }
 }
@@ -225,6 +237,7 @@ export class WorkerExchange {
       turnRoot,
       contextFile: path.join(turnRoot, 'context.json'),
       resultFile: path.join(turnRoot, 'result.json'),
+      resultAnchorFile: path.join(turnRoot, '.result-anchor'),
       manifestFile: path.join(turnRoot, 'manifest.json'),
     };
   }
@@ -253,8 +266,13 @@ export class WorkerExchange {
     const contextText = `${JSON.stringify(context, null, 2)}\n`;
     await writeFile(paths.contextFile, contextText, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     await writeFile(paths.resultFile, '', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    await link(paths.resultFile, paths.resultAnchorFile);
     const contextInfo = await secureStat(paths.contextFile, 'file');
     const resultInfo = await secureStat(paths.resultFile, 'file');
+    const resultAnchorInfo = await secureStat(paths.resultAnchorFile, 'file');
+    if (!sameIdentity(resultInfo, resultAnchorInfo)) {
+      throw new PolicyError('worker-exchange result anchor did not bind the original result file identity');
+    }
 
     const manifest = {
       protocol: WORKER_EXCHANGE_PROTOCOL,
@@ -265,6 +283,7 @@ export class WorkerExchange {
       turnIdentity: identityOf(turnInfo),
       contextIdentity: identityOf(contextInfo),
       resultIdentity: identityOf(resultInfo),
+      resultAnchorIdentity: identityOf(resultAnchorInfo),
       workerContextFile: WORKER_CONTEXT_FILE,
       workerResultFile: WORKER_RESULT_FILE,
     };
@@ -279,6 +298,7 @@ export class WorkerExchange {
       turnRoot: paths.turnRoot,
       contextFile: paths.contextFile,
       resultFile: paths.resultFile,
+      resultAnchorFile: paths.resultAnchorFile,
       manifest,
     });
   }
@@ -297,11 +317,16 @@ export class WorkerExchange {
     }
     await secureStat(paths.turnRoot, 'directory', manifest.turnIdentity);
     await secureStat(paths.contextFile, 'file', manifest.contextIdentity);
-    await secureStat(paths.resultFile, 'file', manifest.resultIdentity);
+    const anchorInfo = await secureStat(paths.resultAnchorFile, 'file', manifest.resultAnchorIdentity);
+    const resultInfo = await secureStat(paths.resultFile, 'file');
+    if (!sameIdentity(resultInfo, manifest.resultIdentity) || !sameIdentity(resultInfo, anchorInfo)) {
+      throw new PolicyError(`${paths.resultFile} was replaced after PATCH-POLLER established worker-exchange ownership`);
+    }
     return new WorkerMailbox({
       turnRoot: paths.turnRoot,
       contextFile: paths.contextFile,
       resultFile: paths.resultFile,
+      resultAnchorFile: paths.resultAnchorFile,
       manifest,
     });
   }
