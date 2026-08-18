@@ -5,6 +5,7 @@ import { GitCommandError } from '../errors.js';
 import { containedSpawnOptions, terminateProcessTree } from '../runtime/process-tree.js';
 
 const SAFE_HOST_ENV = new Set(['PATH', 'SYSTEMROOT', 'COMSPEC', 'TEMP', 'TMP', 'TMPDIR', 'WINDIR']);
+const CONTROL_PLANE_WHITESPACE = 'blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol';
 
 function appendTail(current, chunk, maxBytes) {
   const combined = Buffer.concat([current, Buffer.from(chunk)]);
@@ -67,7 +68,14 @@ export class GitClient {
       env.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
     }
 
-    const safeArgs = ['-c', `core.hooksPath=${hooksDir}`, '-c', 'credential.helper=', '-c', 'protocol.ext.allow=never', '-c', `protocol.file.allow=${this.#allowFileProtocol ? 'always' : 'never'}`, ...args];
+    const safeArgs = [
+      '-c', `core.hooksPath=${hooksDir}`,
+      '-c', 'credential.helper=',
+      '-c', 'protocol.ext.allow=never',
+      '-c', `protocol.file.allow=${this.#allowFileProtocol ? 'always' : 'never'}`,
+      '-c', `core.whitespace=${CONTROL_PLANE_WHITESPACE}`,
+      ...args
+    ];
     const child = spawn(this.#executable, safeArgs, containedSpawnOptions({ cwd, env, shell: false, stdio: ['ignore', 'pipe', 'pipe'] }));
 
     let stdout = Buffer.alloc(0);
