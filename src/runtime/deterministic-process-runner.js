@@ -65,6 +65,8 @@ export class DeterministicProcessRunner {
     let spawnArgs = args;
     let spawnCwd = cwd;
     let spawnEnv = env;
+    let extraStdio = [];
+    let releasePreparedResources = null;
     let sandboxEvidence = {
       required: false,
       provider: 'host',
@@ -95,14 +97,39 @@ export class DeterministicProcessRunner {
       if (!prepared?.evidence?.verified) {
         throw new PolicyError('repository-code execution refused because sandbox enforcement was not verified');
       }
+      if (prepared.extraStdio != null && (!Array.isArray(prepared.extraStdio) || prepared.extraStdio.some((fd) => !Number.isInteger(fd) || fd < 0))) {
+        throw new PolicyError('sandbox provider returned invalid inherited file descriptors');
+      }
       spawnExecutable = prepared.executable;
       spawnArgs = prepared.args;
       spawnCwd = prepared.cwd;
       spawnEnv = prepared.env;
+      extraStdio = prepared.extraStdio ?? [];
+      releasePreparedResources = typeof prepared.release === 'function' ? prepared.release : null;
       sandboxEvidence = { required: true, executionClass, ...prepared.evidence };
     }
 
-    const child = spawn(spawnExecutable, spawnArgs, containedSpawnOptions({ cwd: spawnCwd, env: spawnEnv, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
+    let child;
+    try {
+      child = spawn(spawnExecutable, spawnArgs, containedSpawnOptions({
+        cwd: spawnCwd,
+        env: spawnEnv,
+        shell: false,
+        stdio: ['pipe', 'pipe', 'pipe', ...extraStdio],
+      }));
+    } catch (error) {
+      await releasePreparedResources?.();
+      throw error;
+    }
+    if (releasePreparedResources) {
+      try {
+        await releasePreparedResources();
+      } catch (error) {
+        await terminateProcessTree(child);
+        throw error;
+      }
+    }
+
     const startedAtMs = Date.now();
     const startedAt = new Date(startedAtMs).toISOString();
     const deadlineAt = new Date(startedAtMs + timeoutMs).toISOString();
