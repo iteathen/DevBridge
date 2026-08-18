@@ -136,7 +136,7 @@ export class ProcessRunner {
         env,
         projectDir: projectRoot,
         projectWrite: true,
-        readOnlyRoots: [mailbox.inputDir],
+        readOnlyRoots: [...(profile.sandbox.readOnlyRoots ?? []), mailbox.inputDir],
         writableRoots: [mailbox.outputDir],
         allowUnsafeUncontained: profile.sandbox.enforcement === 'none' && this.#allowUncontainedTools,
       });
