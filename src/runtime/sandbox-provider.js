@@ -128,6 +128,9 @@ export class BubblewrapSandboxProvider {
   }
 
   async #mountArgs({ executable, projectRoot, projectWritable, writableRoots, readOnlyRoots, exchangeDir, resultFile, network, environment, cwd }) {
+    if (network !== 'deny') {
+      throw new PolicyError(`bubblewrap provider has verified only network deny; requested ${network} is unsupported`);
+    }
     const args = [
       '--die-with-parent',
       '--new-session',
@@ -137,7 +140,6 @@ export class BubblewrapSandboxProvider {
       '--dev', '/dev',
       '--tmpfs', '/tmp',
     ];
-    if (network !== 'deny') args.push('--share-net');
 
     const readRoots = new Set();
     for (const root of ['/usr', '/bin', '/lib', '/lib64']) if (await exists(root)) readRoots.add(path.resolve(root));
