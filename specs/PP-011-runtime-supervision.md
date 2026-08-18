@@ -25,7 +25,7 @@ When the trusted channel head changes:
 
 1. record the currently running exact runtime SHA;
 2. send the daemon's existing token-bound local stop request;
-3. allow the active cycle/tool turn to reach its normal safe boundary; do not force-kill merely to update;
+3. allow the active cycle/tool turn to reach its normal safe boundary; do not force-kill an ordinarily supervised daemon merely to update;
 4. wait for the daemon child to exit;
 5. fetch and check out the newly resolved trusted channel head;
 6. validate the managed runtime origin and clean state;
@@ -35,6 +35,22 @@ When the trusted channel head changes:
 10. if both update and rollback fail, stop rather than widening authority or continuing with uncertain runtime state.
 
 The supervisor re-resolves the logical channel on every update check so a temporary integration branch can disappear and fall back to `main` without operator intervention.
+
+### Legacy pre-supervisor adoption exception
+
+A daemon created before PP-011 supervision is not a normal supervised child. It may be unable to reach the newer cooperative takeover boundary, and an unbounded wait would permanently prevent migration.
+
+For this one compatibility case, the supervisor may escalate after a bounded number of cooperative stop attempts only when all of the following hold:
+
+1. the local daemon lock still exists and has a valid PATCH-POLLER daemon-lock protocol, PID, and random ownership token;
+2. the operating system confirms that exact PID is still present;
+3. the process identity is verified as the expected local Node executable invocation of the exact managed PATCH-POLLER `src/cli.js daemon` using the exact local config path;
+4. the forced termination targets that verified PID/process tree only;
+5. after termination, the supervisor waits for the PID to disappear;
+6. stale lock/stop files are removed only if their PID and random token still exactly match the record observed before termination;
+7. any PID reuse, changed lock token, malformed identity, or unverifiable process causes refusal rather than termination.
+
+This is a migration mechanism for a pre-supervisor daemon, not a general timeout policy. Once the supervisor owns the daemon child, ordinary updates remain cooperative and preserve the safe-boundary rule above.
 
 ## Crash behavior
 
@@ -87,4 +103,7 @@ Tests must cover at least:
 - operator stop outranks pending update/restart behavior;
 - channel re-resolution handles integration-branch removal/fallback;
 - `status`/`stop` do not mutate the active runtime;
-- remote task/feedback content cannot alter update source/channel/local runtime authority.
+- remote task/feedback content cannot alter update source/channel/local runtime authority;
+- pre-supervisor takeover does not wait forever when the legacy daemon never exits;
+- legacy forced termination occurs only after bounded cooperative attempts and exact process/lock identity verification;
+- PID reuse or changed lock ownership refuses forced takeover.
