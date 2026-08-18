@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { validateToolProfile, expandProfileArgs } from '../src/runtime/cli-profile.js';
 import { PolicyError } from '../src/errors.js';
 
@@ -30,4 +31,40 @@ test('shell-like executables need an explicit local exception', () => {
     args: [],
     sandbox: { enforcement: 'tool' }
   }), PolicyError);
+});
+
+test('outside-project worker reads require explicit absolute allowlist roots', () => {
+  const runtimeRoot = path.resolve('fixture-tool-runtime');
+  const profile = validateToolProfile('agent', {
+    executable: 'agent',
+    args: [],
+    sandbox: {
+      enforcement: 'os',
+      outsideProjectRead: 'allowlist',
+      readOnlyRoots: [runtimeRoot, runtimeRoot],
+      outsideProjectWrite: false,
+      network: 'deny'
+    }
+  });
+  assert.deepEqual(profile.sandbox.readOnlyRoots, [runtimeRoot]);
+
+  assert.throws(() => validateToolProfile('bad-read', {
+    executable: 'agent',
+    args: [],
+    sandbox: {
+      enforcement: 'os',
+      outsideProjectRead: 'deny',
+      readOnlyRoots: [runtimeRoot]
+    }
+  }), /outsideProjectRead=allowlist/u);
+
+  assert.throws(() => validateToolProfile('relative-read', {
+    executable: 'agent',
+    args: [],
+    sandbox: {
+      enforcement: 'os',
+      outsideProjectRead: 'allowlist',
+      readOnlyRoots: ['relative/path']
+    }
+  }), /absolute local path/u);
 });
