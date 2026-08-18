@@ -14,9 +14,9 @@ export const EXECUTION_CLASS_REPOSITORY = 'repository-code-executing';
 
 const VERIFY_TIMEOUT_MS = 15_000;
 const CAPTURE_LIMIT = 256 * 1024;
-// Only the conventional runtime/library roots needed to start system executables
-// are visible by default. User-local/optional tool roots must be explicitly
-// allowlisted by the local tool profile.
+// Only conventional runtime/library roots and PATCH-POLLER's current Node
+// installation are visible by default. User-local/optional tool roots must be
+// explicitly allowlisted by the local tool profile.
 const DEFAULT_SYSTEM_READ_ROOTS = ['/usr', '/bin', '/lib', '/lib64'];
 
 async function exists(candidate) {
@@ -28,6 +28,11 @@ async function realDirectory(candidate, label) {
   const info = await lstat(candidate);
   if (info.isSymbolicLink() || !info.isDirectory()) throw new PolicyError(`${label} must be a real directory`);
   return path.resolve(candidate);
+}
+
+function containedBy(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 function captureTail(current, chunk) {
@@ -109,9 +114,13 @@ export class BubblewrapSandboxProvider {
   async #systemRoots() {
     const roots = [];
     for (const candidate of DEFAULT_SYSTEM_READ_ROOTS) {
-      if (await exists(candidate)) roots.push(candidate);
+      if (await exists(candidate)) roots.push(path.resolve(candidate));
     }
-    return roots;
+    const runtimeRoot = path.dirname(path.dirname(path.resolve(process.execPath)));
+    if (await exists(runtimeRoot) && !roots.some((root) => containedBy(root, runtimeRoot))) {
+      roots.push(await realDirectory(runtimeRoot, 'PATCH-POLLER Node runtime root'));
+    }
+    return [...new Set(roots)];
   }
 
   async buildLaunch({
@@ -135,9 +144,12 @@ export class BubblewrapSandboxProvider {
       '--tmpfs', '/tmp',
     ];
 
-    for (const root of await this.#systemRoots()) sandboxArgs.push('--ro-bind', root, root);
+    const mountedReadRoots = await this.#systemRoots();
+    for (const root of mountedReadRoots) sandboxArgs.push('--ro-bind', root, root);
     for (const root of readOnlyRoots) {
       const safe = await realDirectory(root, 'sandbox read-only root');
+      if (mountedReadRoots.some((mounted) => containedBy(mounted, safe))) continue;
+      mountedReadRoots.push(safe);
       sandboxArgs.push('--ro-bind', safe, safe);
     }
     sandboxArgs.push(projectWrite ? '--bind' : '--ro-bind', project, project);
