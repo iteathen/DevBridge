@@ -59,6 +59,29 @@ export class RateBudget {
     return Math.max(this.#minimumReserve, proportional, this.#emergencyReserve);
   }
 
+  recommendedPollIntervalMs(configuredMs, {
+    now = Date.now(),
+    estimatedRequestsPerCycle = 2,
+  } = {}) {
+    if (!Number.isInteger(configuredMs) || configuredMs < 1_000) throw new TypeError('configured polling interval must be an integer >= 1000 ms');
+    if (!Number.isInteger(estimatedRequestsPerCycle) || estimatedRequestsPerCycle < 1 || estimatedRequestsPerCycle > 100) {
+      throw new TypeError('estimatedRequestsPerCycle must be an integer between 1 and 100');
+    }
+
+    let recommended = Math.max(configuredMs, this.#snapshot.pollIntervalMs ?? 0);
+    const { remaining, resetAt } = this.#snapshot;
+    if (remaining == null || resetAt == null || resetAt <= now) return recommended;
+
+    const windowMs = resetAt - now;
+    const spendable = Math.max(0, remaining - this.reserveFloor());
+    const safeCycles = Math.floor(spendable / estimatedRequestsPerCycle);
+    if (safeCycles <= 0) return Math.max(recommended, windowMs);
+
+    const sustainableIntervalMs = Math.ceil(windowMs / safeCycles);
+    recommended = Math.max(recommended, sustainableIntervalMs);
+    return recommended;
+  }
+
   assertCanRequest({ critical = false, now = Date.now() } = {}) {
     if (this.#snapshot.resetAt != null && now >= this.#snapshot.resetAt) {
       this.#snapshot.remaining = null;

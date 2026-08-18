@@ -3,9 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { ConfigurationError } from './errors.js';
 import { DEFAULT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES } from './github/auth-provider.js';
+import { validateFaultInjectionConfig } from './runtime/fault-injector.js';
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH_PREFIX_RE = /^[A-Za-z0-9_.-]+$/;
+const BASELINE_CHANNEL_RE = /^[A-Za-z0-9_.-]{1,40}$/;
+const GIT_BRANCH_RE = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/;
 const ENVIRONMENT_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const HOSTNAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 const GITHUB_AUTH_MODES = new Set(['auto', 'environment', 'github-cli']);
@@ -101,6 +104,37 @@ function normalizeGitHubAuth(github) {
   };
 }
 
+function normalizeBaselineChannels(workspace) {
+  const raw = workspace.baselineChannels ?? {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).length > 16) {
+    throw new ConfigurationError('workspace.baselineChannels must be an object with at most 16 local semantic channels');
+  }
+  const channels = {};
+  for (const [channel, branch] of Object.entries(raw)) {
+    if (!BASELINE_CHANNEL_RE.test(channel)) throw new ConfigurationError(`workspace.baselineChannels channel ${channel} is invalid`);
+    const normalizedBranch = requireString(branch, `workspace.baselineChannels.${channel}`);
+    if (!GIT_BRANCH_RE.test(normalizedBranch) || normalizedBranch.includes('..') || normalizedBranch.includes('@{') || normalizedBranch.endsWith('.lock')) {
+      throw new ConfigurationError(`workspace.baselineChannels.${channel} must be a safe branch name`);
+    }
+    channels[channel] = normalizedBranch;
+  }
+  const defaultChannel = workspace.defaultBaselineChannel == null
+    ? null
+    : requireString(workspace.defaultBaselineChannel, 'workspace.defaultBaselineChannel');
+  if (defaultChannel != null && !Object.hasOwn(channels, defaultChannel)) {
+    throw new ConfigurationError('workspace.defaultBaselineChannel must name a configured local baseline channel');
+  }
+  return { channels, defaultChannel };
+}
+
+function normalizeFaultInjection(execution) {
+  try {
+    return validateFaultInjectionConfig(execution.faultInjection ?? {});
+  } catch (error) {
+    throw new ConfigurationError(error.message, { cause: error });
+  }
+}
+
 export function validateConfig(raw) {
   const config = requireObject(raw, 'config');
   if (config.version !== 1) throw new ConfigurationError('config.version must be 1');
@@ -121,6 +155,7 @@ export function validateConfig(raw) {
   if (!Array.isArray(allowedOwners) || allowedOwners.length === 0 || allowedOwners.some((owner) => !/^[A-Za-z0-9_.-]+$/.test(owner))) {
     throw new ConfigurationError('workspace.allowedOwners must contain at least one safe owner name');
   }
+  const baselines = normalizeBaselineChannels(workspace);
 
   const state = requireObject(config.state ?? {}, 'state');
   const execution = requireObject(config.execution ?? {}, 'execution');
@@ -131,6 +166,7 @@ export function validateConfig(raw) {
   const daemon = requireObject(config.daemon ?? {}, 'daemon');
   const branchPrefix = requireString(publication.branchPrefix ?? 'patchpoller', 'publication.branchPrefix');
   if (!BRANCH_PREFIX_RE.test(branchPrefix)) throw new ConfigurationError('publication.branchPrefix must be a safe branch segment');
+  const faultInjection = normalizeFaultInjection(execution);
 
   return {
     version: 1,
@@ -138,7 +174,6 @@ export function validateConfig(raw) {
       queueRepository,
       taskLabel: requireString(github.taskLabel ?? 'patch-poller:ready', 'github.taskLabel'),
       trustedActorIds: trustedActorIds.map(String),
-      // Retained as a compatibility projection for older callers. New code uses auth.
       tokenEnv: githubAuth.environmentVariables[0],
       auth: githubAuth,
       apiVersion: requireString(github.apiVersion ?? '2026-03-10', 'github.apiVersion'),
@@ -147,8 +182,8 @@ export function validateConfig(raw) {
         reserveRatio: requireNumber(rate.reserveRatio ?? 0.2, 'github.rateLimit.reserveRatio', { min: 0, max: 0.9 }),
         minimumReserve: requireInteger(rate.minimumReserve ?? 250, 'github.rateLimit.minimumReserve'),
         emergencyReserve: requireInteger(rate.emergencyReserve ?? 25, 'github.rateLimit.emergencyReserve'),
-        mutationIntervalMs: requireInteger(rate.mutationIntervalMs ?? 1100, 'github.rateLimit.mutationIntervalMs', { min: 1000 })
-      }
+        mutationIntervalMs: requireInteger(rate.mutationIntervalMs ?? 1100, 'github.rateLimit.mutationIntervalMs', { min: 1000 }),
+      },
     },
     workspace: {
       root: absolutePath(workspace.root, 'workspace.root'),
@@ -156,34 +191,40 @@ export function validateConfig(raw) {
       allowedOwners: allowedOwners.map((owner) => owner.toLowerCase()),
       externalReadRoots: Array.isArray(workspace.externalReadRoots)
         ? workspace.externalReadRoots.map((entry, index) => absolutePath(entry, `workspace.externalReadRoots[${index}]`))
-        : []
+        : [],
+      baselineChannels: baselines.channels,
+      defaultBaselineChannel: baselines.defaultChannel,
     },
     state: { directory: absolutePath(state.directory ?? '~/.patch-poller/state', 'state.directory') },
     git: {
       executable: requireString(git.executable ?? 'git', 'git.executable'),
       cloneBaseUrl: requireString(git.cloneBaseUrl ?? 'https://github.com', 'git.cloneBaseUrl').replace(/\/$/, ''),
       commandTimeoutMs: requireInteger(git.commandTimeoutMs ?? 120_000, 'git.commandTimeoutMs', { min: 5_000 }),
-      fetchTimeoutMs: requireInteger(git.fetchTimeoutMs ?? 300_000, 'git.fetchTimeoutMs', { min: 5_000 })
+      fetchTimeoutMs: requireInteger(git.fetchTimeoutMs ?? 300_000, 'git.fetchTimeoutMs', { min: 5_000 }),
     },
     execution: {
       enabled: execution.enabled === true,
+      controllerPlansEnabled: execution.controllerPlansEnabled !== false,
+      modelAdaptersEnabled: execution.modelAdaptersEnabled === true,
       defaultTool: execution.defaultTool == null ? null : requireString(execution.defaultTool, 'execution.defaultTool'),
       maxConcurrentTasks: requireInteger(execution.maxConcurrentTasks ?? 1, 'execution.maxConcurrentTasks', { min: 1 }),
       maxTurns: requireInteger(execution.maxTurns ?? 8, 'execution.maxTurns', { min: 1 }),
-      allowUncontainedTools: execution.allowUncontainedTools === true
+      allowUncontainedTools: execution.allowUncontainedTools === true,
+      faultInjection,
     },
     publication: {
       autoPushTaskBranches: publication.autoPushTaskBranches === true,
-      branchPrefix
+      forceNoOpPublication: publication.forceNoOpPublication === true,
+      branchPrefix,
     },
     daemon: {
-      errorBackoffMs: requireInteger(daemon.errorBackoffMs ?? 60_000, 'daemon.errorBackoffMs', { min: 5_000 })
+      errorBackoffMs: requireInteger(daemon.errorBackoffMs ?? 60_000, 'daemon.errorBackoffMs', { min: 5_000 }),
     },
     status: {
       progressIntervalMs: requireInteger(status.progressIntervalMs ?? 300_000, 'status.progressIntervalMs', { min: 30_000 }),
-      maxCommentBytes: requireInteger(status.maxCommentBytes ?? 48_000, 'status.maxCommentBytes', { min: 4_096 })
+      maxCommentBytes: requireInteger(status.maxCommentBytes ?? 48_000, 'status.maxCommentBytes', { min: 4_096 }),
     },
-    tools
+    tools,
   };
 }
 

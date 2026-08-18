@@ -17,6 +17,8 @@ function handoffDigest(value) {
 export function buildContextCapsule({ task, sequence = 1, prior = null, runtime = {} }) {
   const context = task.envelope.context ?? {};
   const handoff = typeof context.handoff === 'string' ? context.handoff : null;
+  const handoffSha256 = handoffDigest(handoff);
+  const receipt = runtime.receipt ?? prior?.receipt ?? null;
   return {
     protocol: 'patch-poller/context-v1',
     sequence,
@@ -30,7 +32,17 @@ export function buildContextCapsule({ task, sequence = 1, prior = null, runtime 
     constraints: Array.isArray(context.constraints) ? context.constraints : [],
     priorSummary: context.summary ?? prior?.summary ?? null,
     handoff,
-    handoffSha256: handoffDigest(handoff),
+    handoffSha256,
+    receipt: receipt ? {
+      protocol: 'patch-poller/context-receipt-v1',
+      inputSha256: receipt.inputSha256 ?? task.revision,
+      controllerPlanSha256: receipt.controllerPlanSha256 ?? null,
+      taskRevision: receipt.taskRevision ?? task.revision,
+      inputSequence: receipt.inputSequence ?? sequence,
+      handoffSha256: receipt.handoffSha256 ?? handoffSha256,
+      runId: receipt.runId ?? null,
+      effectiveBaselineSha: receipt.effectiveBaselineSha ?? null
+    } : null,
     decisions: prior?.decisions ?? [],
     progress: prior?.progress ?? [],
     changedFiles: runtime.changedFiles ?? prior?.changedFiles ?? [],
@@ -39,6 +51,7 @@ export function buildContextCapsule({ task, sequence = 1, prior = null, runtime 
     blockers: runtime.blockers ?? prior?.blockers ?? [],
     nextStep: runtime.nextStep ?? prior?.nextStep ?? null,
     outputTail: runtime.outputTail ?? null,
+    liveness: runtime.liveness ?? prior?.liveness ?? null,
     provenance: [
       { source: 'github-issue', actorId: task.actorId, issueNumber: task.issueNumber },
       { source: 'local-policy', note: 'capabilities are granted only by local operator configuration' }
