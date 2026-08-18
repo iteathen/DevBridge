@@ -42,6 +42,9 @@ test('doctor distinguishes static controller operations from repository-code ope
     assert.equal(byName.get('node.syntax-check').executionClass, 'static-inspection');
     assert.equal(byName.get('node.syntax-check').sandboxRequired, false);
     assert.equal(byName.get('node.syntax-check').usable, true);
+    assert.equal(byName.get('toolchain.probe').executionClass, 'control-process');
+    assert.equal(byName.get('toolchain.probe').sandboxRequired, false);
+    assert.equal(byName.get('toolchain.probe').usable, true);
     assert.equal(byName.get('node.test').executionClass, 'repository-code');
     assert.equal(byName.get('node.test').sandboxRequired, true);
     assert.equal(byName.get('node.test').usable, false);
