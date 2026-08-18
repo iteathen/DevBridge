@@ -5,6 +5,7 @@ export const CHAT_HANDOFF_PROTOCOL = 'patch-poller/chat-handoff-v1';
 const STORE_PROTOCOL = 'patch-poller/chat-handoff-store-v1';
 const POINTER_PROTOCOL = 'patch-poller/chat-handoff-pointer-v1';
 const DEFAULT_MAX_BYTES = 32 * 1024;
+const MAX_PROTOCOL_HANDOFF_BYTES = 256 * 1024;
 const SHA256_RE = /^[0-9a-f]{64}$/u;
 const GIT_SHA_RE = /^[0-9a-f]{40}$/u;
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
@@ -166,7 +167,7 @@ export function canonicalJson(value) {
 }
 
 export function normalizeChatHandoff(input, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 4_096 || maxBytes > 256 * 1024) throw new ProtocolError('chat handoff maxBytes must be between 4096 and 262144');
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 4_096 || maxBytes > MAX_PROTOCOL_HANDOFF_BYTES) throw new ProtocolError('chat handoff maxBytes must be between 4096 and 262144');
   const value = closedObject(input, new Set([
     'protocol', 'handoffId', 'sequence', 'repository', 'baselineSha', 'headSha', 'branch',
     'issueNumber', 'prNumber', 'runId', 'phase', 'completedActionIds', 'nextActionId',
@@ -304,6 +305,10 @@ export class ChatHandoffStore {
     return verifyStoreRecord(raw, { expectedDigest: ref.digest, expectedState: 'ready', maxBytes: this.#maxBytes });
   }
 
+  #seed(record) {
+    return buildChatResumeSeed(record, null, { maxBytes: this.#maxBytes });
+  }
+
   async loadLatest(repositoryName, { allowFallback = true } = {}) {
     const repo = repository(repositoryName);
     const keys = this.#keys(repo);
@@ -312,12 +317,12 @@ export class ChatHandoffStore {
     try {
       const record = await this.#loadRef(pointer.current);
       if (record.handoff.repository !== repo) throw new ProtocolError('chat handoff record repository does not match pointer repository');
-      return { record, ref: pointer.current, recoveredFromPrevious: false, seed: buildChatResumeSeed(record) };
+      return { record, ref: pointer.current, recoveredFromPrevious: false, seed: this.#seed(record) };
     } catch (error) {
       if (!allowFallback || !pointer.previous) throw error;
       const record = await this.#loadRef(pointer.previous);
       if (record.handoff.repository !== repo) throw new ProtocolError('fallback chat handoff repository does not match pointer repository');
-      return { record, ref: pointer.previous, recoveredFromPrevious: true, recoveryError: { name: error.name, message: error.message }, seed: buildChatResumeSeed(record) };
+      return { record, ref: pointer.previous, recoveredFromPrevious: true, recoveryError: { name: error.name, message: error.message }, seed: this.#seed(record) };
     }
   }
 
@@ -328,7 +333,7 @@ export class ChatHandoffStore {
     const pointer = verifyPointer(await this.#store.get(keys.pointer));
     if (pointer?.current?.digest === digest) {
       const record = await this.#loadRef(pointer.current);
-      return { record, ref: pointer.current, previousDigest: pointer.previous?.digest ?? null, idempotent: true, seed: buildChatResumeSeed(record) };
+      return { record, ref: pointer.current, previousDigest: pointer.previous?.digest ?? null, idempotent: true, seed: this.#seed(record) };
     }
     if (pointer?.current && handoff.sequence <= pointer.current.sequence) {
       throw new PolicyError('chat handoff replacement sequence must advance beyond the current verified handoff');
@@ -359,7 +364,7 @@ export class ChatHandoffStore {
     if (observedPointer.current?.digest !== digest) throw new ProtocolError('chat handoff pointer verification failed');
     await this.#loadRef(observedPointer.current);
     await this.#prune(handoff.repository, observedPointer);
-    return { record: verified, ref, previousDigest: nextPointer.previous?.digest ?? null, idempotent: false, seed: buildChatResumeSeed(verified) };
+    return { record: verified, ref, previousDigest: nextPointer.previous?.digest ?? null, idempotent: false, seed: this.#seed(verified) };
   }
 
   async #prune(repositoryName, pointer) {
@@ -376,10 +381,10 @@ export class ChatHandoffStore {
   }
 }
 
-export function buildChatResumeSeed(recordOrHandoff, digestOverride = null) {
+export function buildChatResumeSeed(recordOrHandoff, digestOverride = null, { maxBytes = MAX_PROTOCOL_HANDOFF_BYTES } = {}) {
   const handoff = recordOrHandoff?.handoff ?? recordOrHandoff;
-  const normalized = normalizeChatHandoff(handoff);
-  const digest = digestOverride ?? recordOrHandoff?.digest ?? chatHandoffDigest(normalized);
+  const normalized = normalizeChatHandoff(handoff, { maxBytes });
+  const digest = digestOverride ?? recordOrHandoff?.digest ?? chatHandoffDigest(normalized, { maxBytes });
   sha256(digest, 'chat resume seed digest');
   return `PATCH-POLLER-RESUME v1 repo=${normalized.repository} handoff=${normalized.handoffId} sha256=${digest}`;
 }
@@ -406,7 +411,7 @@ function normalizeObservedResume(input) {
 }
 
 export function reconcileChatResume({ handoff, observed, acknowledgedRereadPaths = [] }) {
-  const expected = normalizeChatHandoff(handoff);
+  const expected = normalizeChatHandoff(handoff, { maxBytes: MAX_PROTOCOL_HANDOFF_BYTES });
   const actual = normalizeObservedResume(observed);
   if (!Array.isArray(acknowledgedRereadPaths) || acknowledgedRereadPaths.length > 32) throw new ProtocolError('acknowledgedRereadPaths must contain at most 32 repository paths');
   const acknowledged = new Set(acknowledgedRereadPaths.map((entry, index) => repoPath(entry, `acknowledgedRereadPaths[${index}]`)));

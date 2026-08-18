@@ -27,6 +27,7 @@ const JSON_FILES = [
 const TARGETED_TESTS = [
   'test/config.test.js',
   'test/chat-handoff.test.js',
+  'test/chat-handoff-large.test.js',
   'test/chat-handoff-app.test.js',
   'test/chat-handoff-projection.test.js',
   'test/context-budget.test.js',

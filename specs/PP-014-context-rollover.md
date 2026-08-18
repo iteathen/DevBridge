@@ -48,7 +48,7 @@ The normalized handoff has deterministic object-key ordering and set-like collec
 
 The digest binds reconstruction facts; it is not authorization.
 
-Default maximum serialized handoff size is 32 KiB. Local policy MAY configure another value within implementation safety ceilings. Large logs, diffs, build output, and other evidence belong behind durable references/digests rather than inside the handoff.
+Default maximum serialized handoff size is 32 KiB. Local policy MAY configure another value within the 256 KiB protocol safety ceiling. Large logs, diffs, build output, and other evidence belong behind durable references/digests rather than inside the handoff.
 
 A handoff that exceeds its configured byte ceiling is rejected rather than silently losing critical fields.
 
@@ -160,13 +160,17 @@ These constraints prevent an old context window from overwriting a newer durable
 
 ## 11. Resume seed
 
-For a human/UI-controlled chat, PATCH-POLLER may emit a compact line:
+For a human/UI-controlled chat, PATCH-POLLER may emit a compact local line:
 
 `PATCH-POLLER-RESUME v1 repo=<owner/name> handoff=<id> sha256=<digest>`
 
 The seed is an address/identity, not the handoff itself. A new controller must retrieve and verify the matching handoff before use.
 
-Current chat UIs may require the human to open the new window and provide the seed. Future API/CLI session launchers SHOULD consume the same protocol so the rollover contract does not change when automatic session creation becomes available.
+When a verified handoff is deliberately projected to a GitHub issue for cross-chat recovery, PATCH-POLLER emits:
+
+`PATCH-POLLER-RESUME-GITHUB v1 repo=<owner/name> issue=<number> handoff=<id> sha256=<digest>`
+
+Current chat UIs may require the human to open the new window and provide the seed. Future API/CLI session launchers SHOULD consume the same identity/digest contract so the rollover model does not change when automatic session creation becomes available.
 
 ## 12. Resume reconciliation
 
@@ -216,6 +220,7 @@ PP-014 MUST preserve all existing trust boundaries:
 - Current Git/task identity mismatches: resume is stale and no next action is released.
 - Recorded next action already happened: return `checkpoint-required`; do not replay or invent.
 - Handoff too large: reject and require references/compaction before rollover.
+- Remote projection would require redaction: retain the verified local handoff but refuse the projection, because changing a digest-bound payload would make the remote reconstruction unverifiable.
 
 ## 16. Acceptance tests
 
@@ -230,13 +235,35 @@ Implementation is not complete until tests cover at least:
 7. corrupt newest record can surface bounded previous-record recovery;
 8. stale sequence and wrong previous digest are rejected;
 9. exact-current checkpoint replay is idempotent;
-10. compact resume seed round trip;
+10. compact local and GitHub resume seed round trips;
 11. repository/head/task mismatch returns stale before next-action release;
 12. governing-document changes force reread;
 13. already-completed next action is skipped without inventing another;
 14. large evidence remains references rather than payload transcript;
-15. Windows/Ubuntu cheap preflight, full tests, and doctor pass at the exact PR head.
+15. configured handoffs above the 32 KiB default remain resumable within the protocol ceiling;
+16. GitHub projection edits/coalesces one recovery comment and reconciles crash-after-create without duplicate comments;
+17. a fresh controller verifies a projected digest before recovering the exact recorded phase/next action;
+18. tampered or redaction-requiring projections fail closed;
+19. Windows/Ubuntu cheap preflight, full tests, and doctor pass at the exact PR head.
 
 ## 17. Runtime and dependency boundary
 
-PP-014 uses Node.js standard-library facilities and the existing `StateStore` port. It adds no coding-model dependency, no new runtime dependency, and no Python.
+PP-014 uses Node.js standard-library facilities and the existing `StateStore`/GitHub ports. It adds no coding-model dependency, no new runtime dependency, and no Python.
+
+## 18. Optional GitHub recovery projection
+
+Local verified handoff state is authoritative for PATCH-POLLER itself. A GitHub projection is optional and exists specifically to bridge environments such as a mobile/new ChatGPT window that cannot directly read the local StateStore.
+
+Projection rules:
+
+- projection is an explicit local action, never automatic remote authority;
+- the handoff must already be locally `ready` and verified;
+- the target issue is locally/operator selected or already bound in the handoff;
+- PATCH-POLLER uses one stable marker/comment slot per repository+issue and edits/coalesces later checkpoints instead of appending heartbeat-style comments;
+- after a crash between comment creation and local correlation persistence, the projector searches the stable marker before creating another comment;
+- the projection embeds the exact normalized handoff plus its original local digest and GitHub resume seed;
+- a fresh controller parses the bounded fence and recomputes the handoff digest before trusting reconstruction facts;
+- if redaction would alter any byte of the digest-bound projection, the remote publication is refused rather than emitting a mismatched digest;
+- GitHub projection is evidence/reconstruction transport only. It does not make GitHub issue text a capability channel.
+
+The CLI exposes local read-only `handoff-status` and `handoff-seed` commands without requiring GitHub credentials. `handoff-project` is the explicit authenticated mutation that projects the latest verified handoff to its bound or specified issue.
