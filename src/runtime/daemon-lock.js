@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, unlink } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { PolicyError } from '../errors.js';
 
@@ -51,6 +51,38 @@ async function readStopRequest(filePath, token) {
     throw new PolicyError(`PATCH-POLLER daemon stop request is malformed at ${stopPath}`);
   }
   return { record, stopPath };
+}
+
+async function publishStopRequest(stopPath, request) {
+  const tempPath = `${stopPath}.tmp-${randomUUID()}`;
+  let handle = null;
+  try {
+    handle = await open(tempPath, 'wx', 0o600);
+    await handle.writeFile(`${JSON.stringify(request)}\n`, 'utf8');
+    await handle.sync();
+    await handle.close();
+    handle = null;
+
+    try {
+      await rename(tempPath, stopPath);
+      return true;
+    } catch (error) {
+      if (!['EEXIST', 'EPERM', 'EACCES'].includes(error?.code)) throw error;
+      try {
+        await readFile(stopPath, 'utf8');
+      } catch (readError) {
+        if (readError?.code === 'ENOENT') throw error;
+        throw readError;
+      }
+      return false;
+    }
+  } finally {
+    if (handle) {
+      try { await handle.close(); } catch {}
+    }
+    try { await unlink(tempPath); }
+    catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  }
 }
 
 export async function acquireDaemonLock(filePath) {
@@ -107,30 +139,41 @@ async function createDaemonStopRequest(filePath) {
     };
   }
   const stopPath = stopFilePath(filePath, lock.token);
-  let handle;
-  try { handle = await open(stopPath, 'wx', 0o600); }
-  catch (error) {
-    if (error?.code !== 'EEXIST') throw error;
-    const existing = await readStopRequest(filePath, lock.token);
+  const existing = await readStopRequest(filePath, lock.token);
+  if (existing) {
     return {
       result: {
         activeLock: true,
         requested: true,
-        alreadyRequested: Boolean(existing),
+        alreadyRequested: true,
         pid: lock.pid,
         createdAt: lock.createdAt,
       },
       token: lock.token,
     };
   }
+
   const request = {
     protocol: STOP_PROTOCOL,
     pid: lock.pid,
     token: lock.token,
     requestedAt: new Date().toISOString(),
   };
-  await handle.writeFile(`${JSON.stringify(request)}\n`, 'utf8');
-  await handle.close();
+  const published = await publishStopRequest(stopPath, request);
+  if (!published) {
+    const raced = await readStopRequest(filePath, lock.token);
+    return {
+      result: {
+        activeLock: true,
+        requested: true,
+        alreadyRequested: Boolean(raced),
+        pid: lock.pid,
+        createdAt: lock.createdAt,
+      },
+      token: lock.token,
+    };
+  }
+
   return {
     result: {
       activeLock: true,
