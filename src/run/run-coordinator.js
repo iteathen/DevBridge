@@ -194,6 +194,21 @@ export class RunCoordinator {
     }
 
     if (!state) {
+      const siblings = await this.#store.entries(`run.${this.#queueRepository}#${task.issueNumber}.`);
+      const activeSibling = siblings
+        .map(([, value]) => value)
+        .find((candidate) => candidate?.task?.revision !== task.revision && !TERMINAL.has(candidate?.stage));
+      if (activeSibling) {
+        return {
+          runId: activeSibling.runId,
+          issueNumber: task.issueNumber,
+          status: 'deferred-active-revision',
+          deferred: true,
+          activeRevision: activeSibling.task.revision,
+          requestedRevision: task.revision
+        };
+      }
+
       state = {
         version: 1,
         runId: runIdForTask(task),
@@ -280,8 +295,6 @@ export class RunCoordinator {
           { force: true }
         );
       } else {
-        // Persist the original baseline again after a restart so any newly fetched
-        // upstream state cannot silently redefine this run.
         await this.#save(key, state);
       }
 
