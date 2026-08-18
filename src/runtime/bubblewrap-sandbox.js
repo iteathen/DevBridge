@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -13,7 +13,8 @@ import {
   verifiedBubblewrapStatus,
 } from './sandbox-status.js';
 
-const STANDARD_READ_ROOTS = ['/usr', '/bin', '/sbin', '/lib', '/lib64'];
+const STANDARD_READ_ROOTS = ['/usr'];
+const COMPATIBILITY_READ_PATHS = ['/bin', '/sbin', '/lib', '/lib64'];
 const STANDARD_READ_FILES = ['/etc/ld.so.cache', '/etc/localtime'];
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 
@@ -116,7 +117,8 @@ export class BubblewrapSandboxProvider {
     }
 
     const executablePath = path.resolve(executable);
-    const alreadyVisible = STANDARD_READ_ROOTS.some((root) => isWithin(root, executablePath)) ||
+    const standardPaths = [...STANDARD_READ_ROOTS, ...COMPATIBILITY_READ_PATHS];
+    const alreadyVisible = standardPaths.some((root) => isWithin(root, executablePath)) ||
       roots.some((root) => isWithin(root, executablePath));
     if (!alreadyVisible) {
       const binDir = path.dirname(executablePath);
@@ -129,6 +131,24 @@ export class BubblewrapSandboxProvider {
       roots.push(toolRoot);
     }
     return [...new Set(roots)];
+  }
+
+  async #appendSystemFilesystem(bwrapArgs) {
+    for (const root of STANDARD_READ_ROOTS) {
+      if (await exists(root)) bwrapArgs.push('--ro-bind', root, root);
+    }
+    for (const candidate of COMPATIBILITY_READ_PATHS) {
+      if (!(await exists(candidate))) continue;
+      const info = await lstat(candidate);
+      if (info.isSymbolicLink()) {
+        bwrapArgs.push('--symlink', await readlink(candidate), candidate);
+      } else {
+        bwrapArgs.push('--ro-bind', candidate, candidate);
+      }
+    }
+    for (const file of STANDARD_READ_FILES) {
+      if (await exists(file)) bwrapArgs.push('--ro-bind', file, file);
+    }
   }
 
   async #derivedScratchRoot(projectDir, args) {
@@ -186,8 +206,7 @@ export class BubblewrapSandboxProvider {
       '--dir', '/tmp/patch-poller-home',
       '--dir', '/run',
     ];
-    for (const root of STANDARD_READ_ROOTS) bwrapArgs.push('--ro-bind-try', root, root);
-    for (const file of STANDARD_READ_FILES) bwrapArgs.push('--ro-bind-try', file, file);
+    await this.#appendSystemFilesystem(bwrapArgs);
     for (const root of readRoots) bwrapArgs.push('--ro-bind', root, root);
 
     bwrapArgs.push('--bind', project.path, project.path);
@@ -278,11 +297,14 @@ export class BubblewrapSandboxProvider {
         await readFile(gitConfig, 'utf8') === 'git-control-sentinel\n' &&
         await readFile(stateProbe, 'utf8') === 'state-control-sentinel\n';
       if (!passed) {
+        const detail = outcome.stderr.trim() ||
+          (observation ? JSON.stringify(observation) : outcome.stdout.trim()) ||
+          `exit=${outcome.code} signal=${outcome.signal ?? 'none'} timeout=${outcome.timedOut}`;
         this.#status = {
           ...unavailableSandboxStatus({
             requestedProvider: this.#requestedProvider,
             provider: 'bubblewrap',
-            reason: 'bubblewrap was found but failed the required filesystem/network/control-state boundary probe',
+            reason: `bubblewrap was found but failed the required filesystem/network/control-state boundary probe: ${boundedSandboxReason(detail)}`,
           }),
           available: true,
           verification: 'boundary-probe-failed',
