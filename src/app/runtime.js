@@ -16,10 +16,11 @@ import { GitWorkspaceManager } from '../git/workspace-manager.js';
 import { ProcessRunner } from '../runtime/process-runner.js';
 import { DeterministicProcessRunner } from '../runtime/deterministic-process-runner.js';
 import { createDeterministicSandboxProvider } from '../runtime/deterministic-sandbox.js';
+import { WorkerExchange } from '../runtime/worker-exchange.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
-import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
+import { builtInToolProfiles, builtInToolReadRoots } from '../runtime/builtin-tool-profiles.js';
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
 import { LivenessProjectingPlanExecutor } from '../run/liveness-projecting-plan-executor.js';
 import { RunCoordinator } from '../run/run-coordinator.js';
@@ -70,13 +71,19 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     baselineChannels: config.workspace.baselineChannels,
     defaultBaselineChannel: config.workspace.defaultBaselineChannel,
   });
-  const processRunner = new ProcessRunner({ sourceEnv: env });
   const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
   const deterministicSandboxProvider = createDeterministicSandboxProvider({
     externalReadRoots: config.workspace.externalReadRoots,
     workspaceRoot: config.workspace.root,
     stateDirectory: config.state.directory,
     env,
+  });
+  const workerExchange = new WorkerExchange({ stateDirectory: config.state.directory });
+  const processRunner = new ProcessRunner({
+    sourceEnv: env,
+    workerExchange,
+    sandboxProvider: deterministicSandboxProvider,
+    trustedReadRootsByProfile: builtInToolReadRoots(),
   });
   const deterministicProcessRunner = new DeterministicProcessRunner({
     sourceEnv: env,
@@ -136,6 +143,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     gitClient,
     workspaceManager,
     processRunner,
+    workerExchange,
     deterministicProcessRunner,
     deterministicSandboxProvider,
     faultInjector,

@@ -3,11 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { runChatCProjectProbe } from './chat-c-project-probe.js';
-
-function isWithin(root, candidate) {
-  const relative = path.relative(root, candidate);
-  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
-}
+import { WORKER_RESULT_FILE } from './worker-exchange.js';
 
 async function readStdin() {
   let text = '';
@@ -21,27 +17,17 @@ async function main() {
   if (context?.protocol !== 'patch-poller/context-v1') {
     throw new Error('chat C project diagnostic requires patch-poller/context-v1');
   }
-
-  const resultFile = context?.bridge?.resultFile;
-  if (typeof resultFile !== 'string' || !path.isAbsolute(resultFile)) {
-    throw new Error('chat C project diagnostic requires an absolute PATCH-POLLER resultFile');
+  if (context?.bridge?.resultFile !== WORKER_RESULT_FILE) {
+    throw new Error('chat C project diagnostic requires the fixed PATCH-POLLER worker result endpoint');
   }
 
   const projectRoot = path.resolve(process.cwd());
-  const resolvedResult = path.resolve(resultFile);
-  if (!isWithin(projectRoot, resolvedResult)) {
-    throw new Error('chat C project diagnostic resultFile must remain inside the managed project');
-  }
-
   // This profile ignores free-form task instructions for file contents, paths,
   // executable selection, process arguments, and verification policy. The C
   // project is authored in trusted PATCH-POLLER runtime code by the chat-only
   // controller and materialized deterministically into the managed worktree.
   const result = await runChatCProjectProbe({ projectRoot, env: process.env });
-  await writeFile(resolvedResult, `${JSON.stringify(result, null, 2)}\n`, {
-    encoding: 'utf8',
-    mode: 0o600
-  });
+  await writeFile(WORKER_RESULT_FILE, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8' });
   process.stdout.write(`${JSON.stringify({ diagnostic: 'chat-c-project', status: result.status })}\n`);
 }
 

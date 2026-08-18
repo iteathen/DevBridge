@@ -31,6 +31,8 @@ At minimum a run records:
 - feedback/checkpoint state;
 - known external-effect identifiers.
 
+Proposal-worker context/result mailboxes are also poller-owned restart evidence. They live under the control-state directory, outside proposal bytes, and carry a control-only manifest binding the exact run/turn and context/result filesystem identities. Worker-authored project files are never used to reconstruct mailbox authority.
+
 ## Effect journal model
 
 The hardened design uses an operation record with a stable operation ID and states equivalent to:
@@ -77,7 +79,9 @@ Recovery behavior is stage-aware:
 - `waiting-feedback`/future decision states: poll only the bound feedback/decision channel;
 - `verifying`: seal/revalidate the candidate rather than invoking another model merely to repeat finalization;
 - `publishing`: reconcile/push the already sealed candidate rather than requesting another model turn;
-- uncertain interrupted tool invocation: preserve the worktree, inspect resulting state, and continue conservatively; full invocation-level reconciliation is a future hardening area.
+- uncertain interrupted tool invocation: preserve the worktree, inspect resulting state, and continue conservatively. If the exact control-owned run/turn mailbox exists, `ProcessRunner.recoverResult()` may reopen it and return a bounded structured result only after revalidating the manifest/file identities and unchanged context. Full automatic invocation-level replay/reconciliation remains a future hardening area.
+
+A recovered worker result is not authoritative run state. It is proposal evidence subject to the same result protocol and independent candidate validation as a result returned before interruption. An empty, malformed, missing, or identity-invalid mailbox never expands authority; policy/identity violations fail closed, while ordinary missing proposal output may lead to the existing bounded fresh-turn recovery path.
 
 A verification attempt that proves the **proposal itself** invalid is different from a verification infrastructure failure. Candidate-content rejection (for example whitespace/check failures, unresolved proposal state, or another repairable candidate invariant) must:
 
@@ -117,6 +121,8 @@ Failed, waiting, uncertain, or checkpointed worktrees are evidence and may be ne
 
 Successful terminal worktrees may be retained for a bounded period or disposed under configured retention policy after required evidence has been sealed.
 
+Control-owned worker exchange directories are not proposal-tree cleanup targets. Their retention/reconciliation follows run ownership and may outlive an interrupted worker long enough for exact run/turn recovery.
+
 ## Remote status is not run authority
 
 A failed GitHub status update must not retroactively make successful local validation fail or erase the run. Conversely a `COMPLETED` comment does not create completion authority if local state/candidate validation did not reach completion.
@@ -135,11 +141,13 @@ Tests must cover at least:
 - a newer revision of one issue is deferred while an older revision remains active;
 - upstream movement does not redefine an active run baseline;
 - feedback replay/mismatch cannot resume another run;
+- interrupted worker result recovery is bound to the exact control-owned run/turn mailbox and does not trust project paths;
+- mailbox identity/substitution failure cannot be converted into a privileged recovery read;
 - crash windows around remote comment/PR creation are reconciled without unbounded duplication once those operations are implemented;
 - retries stop at policy/rate/attempt bounds.
 
 ## v0.1 boundary
 
-v0.1 implements atomic JSON run state, immutable baseline persistence, duplicate-revision suppression, active-revision deferral, resumable feedback, transactional candidate sealing, repair-turn recovery for rejected candidate content, and stage-aware finalization/publication recovery. A repeated task-branch push uses the same sealed local SHA.
+v0.1 implements atomic JSON run state, immutable baseline persistence, duplicate-revision suppression, active-revision deferral, resumable feedback, transactional candidate sealing, repair-turn recovery for rejected candidate content, stage-aware finalization/publication recovery, and recoverable control-owned worker context/result mailboxes. A repeated task-branch push uses the same sealed local SHA.
 
-v0.1 does **not** yet implement the complete generic effect journal. In particular, a crash after GitHub accepts a newly created status comment but before its ID is persisted can still require future reconciliation logic, and an interrupted model invocation may be followed by another bounded model turn after workspace inspection. Those limitations are explicit rather than hidden.
+v0.1 does **not** yet implement the complete generic effect journal. In particular, a crash after GitHub accepts a newly created status comment but before its ID is persisted can still require future reconciliation logic, and an interrupted model invocation may be followed by another bounded model turn after workspace inspection when no usable exact mailbox result is reconciled. Those limitations are explicit rather than hidden.

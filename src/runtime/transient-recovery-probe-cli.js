@@ -2,14 +2,11 @@
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { WORKER_RESULT_FILE } from './worker-exchange.js';
 
 const CAPACITY_ERROR = 'ERROR: Selected model is at capacity. Please try a different model.';
 const STATE_PROTOCOL = 'patch-poller/transient-recovery-probe-v1';
-
-function isWithin(root, candidate) {
-  const relative = path.relative(root, candidate);
-  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
-}
+const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 
 async function readStdin() {
   let text = '';
@@ -34,17 +31,20 @@ async function readAttempt(stateFile) {
 async function main() {
   const context = JSON.parse(await readStdin());
   if (context?.protocol !== 'patch-poller/context-v1') throw new Error('transient recovery diagnostic requires patch-poller/context-v1');
-  const resultFile = context?.bridge?.resultFile;
-  if (typeof resultFile !== 'string' || !path.isAbsolute(resultFile)) throw new Error('transient recovery diagnostic requires an absolute PATCH-POLLER resultFile');
+  if (context?.bridge?.resultFile !== WORKER_RESULT_FILE) {
+    throw new Error('transient recovery diagnostic requires the fixed PATCH-POLLER worker result endpoint');
+  }
 
+  const runId = String(context?.bridge?.runId ?? '');
+  if (!SAFE_RUN_ID.test(runId) || runId === '.' || runId === '..') {
+    throw new Error('transient recovery diagnostic requires a safe PATCH-POLLER runId');
+  }
+
+  // This is disposable probe progress only, not control-plane authority or IPC.
+  // It lives in the proposal tree so it survives the first two synthetic
+  // failures, and is removed before the successful candidate is sealed.
   const projectRoot = path.resolve(process.cwd());
-  const resolvedResult = path.resolve(resultFile);
-  if (!isWithin(projectRoot, resolvedResult)) throw new Error('transient recovery diagnostic resultFile must remain inside the managed project');
-
-  const turnDir = path.dirname(resolvedResult);
-  const runRoot = path.dirname(turnDir);
-  if (!isWithin(projectRoot, runRoot)) throw new Error('transient recovery diagnostic state must remain inside the managed project');
-  const stateFile = path.join(runRoot, 'transient-recovery-state.json');
+  const stateFile = path.join(projectRoot, `.patch-poller-transient-recovery-${runId}.json`);
   const attempt = (await readAttempt(stateFile)) + 1;
   await writeFile(stateFile, `${JSON.stringify({ protocol: STATE_PROTOCOL, attempt })}\n`, { encoding: 'utf8', mode: 0o600 });
 
@@ -63,7 +63,7 @@ async function main() {
     nextStep: null,
     blocker: null
   };
-  await writeFile(resolvedResult, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  await writeFile(WORKER_RESULT_FILE, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8' });
   await rm(stateFile, { force: true });
   process.stdout.write(`${JSON.stringify({ diagnostic: 'transient-recovery', attempt, status: 'complete' })}\n`);
 }

@@ -12,6 +12,11 @@ import {
   unavailableSandboxStatus,
   verifiedBubblewrapStatus,
 } from './sandbox-status.js';
+import {
+  WORKER_CONTEXT_FILE,
+  WORKER_EXCHANGE_PROTOCOL,
+  WORKER_RESULT_FILE,
+} from './worker-exchange.js';
 
 const STANDARD_READ_ROOTS = ['/usr'];
 const COMPATIBILITY_READ_PATHS = ['/bin', '/sbin', '/lib', '/lib64'];
@@ -99,25 +104,39 @@ export class BubblewrapSandboxProvider {
     ].map((entry) => path.resolve(entry));
   }
 
-  #assertExternalReadRootAllowed(root) {
+  #assertReadRootAllowed(root) {
     const home = path.resolve(os.homedir());
     if (root === home || isWithin(root, home)) {
-      throw new PolicyError('sandbox externalReadRoots may not expose the operator home root or its parent');
+      throw new PolicyError('sandbox read roots may not expose the operator home root or its parent');
     }
     for (const sensitive of this.#sensitiveRoots()) {
       if (overlaps(root, sensitive)) {
-        throw new PolicyError('sandbox externalReadRoots may not overlap PATCH-POLLER or credential control state');
+        throw new PolicyError('sandbox read roots may not overlap PATCH-POLLER or credential control state');
       }
     }
   }
 
-  async #canonicalReadRoots(executable) {
+  async #canonicalReadRoots(executable, {
+    includeConfiguredReadRoots = true,
+    trustedReadRoots = [],
+  } = {}) {
     const roots = [];
-    for (const candidate of this.#externalReadRoots) {
-      if (!(await exists(candidate))) throw new PolicyError('configured sandbox external read root does not exist');
-      const canonical = await realpath(path.resolve(candidate));
-      this.#assertExternalReadRootAllowed(canonical);
-      roots.push(canonical);
+    if (includeConfiguredReadRoots) {
+      for (const candidate of this.#externalReadRoots) {
+        if (!(await exists(candidate))) throw new PolicyError('configured sandbox external read root does not exist');
+        const canonical = await realpath(path.resolve(candidate));
+        this.#assertReadRootAllowed(canonical);
+        roots.push(canonical);
+      }
+    }
+
+    for (const candidate of trustedReadRoots) {
+      const trusted = await canonicalExisting(candidate, 'trusted worker runtime read root');
+      if (!trusted.info.isDirectory() && !trusted.info.isFile()) {
+        throw new PolicyError('trusted worker runtime read root must be a regular file or directory');
+      }
+      this.#assertReadRootAllowed(trusted.path);
+      roots.push(trusted.path);
     }
 
     const executablePath = path.resolve(executable);
@@ -127,11 +146,7 @@ export class BubblewrapSandboxProvider {
     if (!alreadyVisible) {
       const binDir = path.dirname(executablePath);
       const toolRoot = path.dirname(binDir) === path.parse(binDir).root ? binDir : path.dirname(binDir);
-      for (const sensitive of this.#sensitiveRoots()) {
-        if (overlaps(toolRoot, sensitive)) {
-          throw new PolicyError('sandbox executable resolves inside protected control/credential state');
-        }
-      }
+      this.#assertReadRootAllowed(toolRoot);
       roots.push(toolRoot);
     }
     return [...new Set(roots)];
@@ -153,6 +168,25 @@ export class BubblewrapSandboxProvider {
     for (const file of STANDARD_READ_FILES) {
       if (await exists(file)) bwrapArgs.push('--ro-bind', file, file);
     }
+  }
+
+  async #appendWorkerIpc(bwrapArgs, ipc) {
+    if (ipc?.protocol !== WORKER_EXCHANGE_PROTOCOL) throw new PolicyError('worker sandbox IPC protocol is invalid');
+    if (ipc.contextTarget !== WORKER_CONTEXT_FILE || ipc.resultTarget !== WORKER_RESULT_FILE) {
+      throw new PolicyError('worker sandbox IPC targets are not the fixed PATCH-POLLER exchange endpoints');
+    }
+
+    const context = await canonicalExisting(ipc.contextSource, 'worker context source');
+    const result = await canonicalExisting(ipc.resultSource, 'worker result source');
+    if (!context.info.isFile() || !result.info.isFile()) throw new PolicyError('worker sandbox IPC sources must be regular files');
+    const exchangeRoot = path.join(this.#stateDirectory, 'worker-exchange');
+    if (!isWithin(exchangeRoot, context.path) || !isWithin(exchangeRoot, result.path)) {
+      throw new PolicyError('worker sandbox IPC sources must remain under the dedicated control-owned worker exchange');
+    }
+
+    bwrapArgs.push('--dir', '/run/patch-poller-exchange');
+    bwrapArgs.push('--ro-bind', context.path, WORKER_CONTEXT_FILE);
+    bwrapArgs.push('--bind', result.path, WORKER_RESULT_FILE);
   }
 
   async #derivedScratchRoot(projectDir, args) {
@@ -182,6 +216,11 @@ export class BubblewrapSandboxProvider {
     const project = await canonicalExisting(sandbox.projectDir, 'sandbox project root');
     if (!project.info.isDirectory()) throw new PolicyError('sandbox project root must be a directory');
 
+    const network = sandbox.network ?? 'deny';
+    if (!['deny', 'unrestricted'].includes(network)) {
+      throw new PolicyError('verified Bubblewrap worker isolation supports network deny or unrestricted sharing; restricted network requires another verified provider');
+    }
+
     let scratchRoot = await this.#derivedScratchRoot(project.path, args);
     if (sandbox.scratchRoot && await exists(sandbox.scratchRoot)) {
       const scratch = await canonicalExisting(sandbox.scratchRoot, 'sandbox scratch root');
@@ -197,7 +236,10 @@ export class BubblewrapSandboxProvider {
       throw new PolicyError('sandbox cwd must be inside the project or current run scratch root');
     }
 
-    const readRoots = await this.#canonicalReadRoots(executable);
+    const readRoots = await this.#canonicalReadRoots(executable, {
+      includeConfiguredReadRoots: sandbox.exposeConfiguredReadRoots !== false,
+      trustedReadRoots: sandbox.trustedReadRoots ?? [],
+    });
     const bwrapArgs = [
       '--unshare-all',
       '--new-session',
@@ -209,6 +251,7 @@ export class BubblewrapSandboxProvider {
       '--dir', '/tmp/patch-poller-home',
       '--dir', '/run',
     ];
+    if (network === 'unrestricted') bwrapArgs.push('--share-net');
     await this.#appendSystemFilesystem(bwrapArgs);
     for (const root of readRoots) bwrapArgs.push('--ro-bind', root, root);
 
@@ -220,6 +263,7 @@ export class BubblewrapSandboxProvider {
       if (info.isSymbolicLink()) throw new PolicyError('sandbox refuses a symbolic-link .git administrative path');
       bwrapArgs.push('--ro-bind', gitAdmin, gitAdmin);
     }
+    if (sandbox.ipc) await this.#appendWorkerIpc(bwrapArgs, sandbox.ipc);
 
     const controlledEnvironment = { ...env };
     delete controlledEnvironment.HOME;
@@ -346,7 +390,7 @@ export class BubblewrapSandboxProvider {
     const status = await this.verify();
     if (!status.verified || !this.#resolvedExecutable) {
       throw new PolicyError(
-        `repository-code execution requires a verified sandbox provider; ${status.reason ?? 'provider is not verified'}`,
+        `sandboxed execution requires a verified sandbox provider; ${status.reason ?? 'provider is not verified'}`,
       );
     }
     const launch = await this.#buildLaunch({ executable, args, cwd, env, sandbox });
@@ -357,8 +401,9 @@ export class BubblewrapSandboxProvider {
         verified: true,
         verification: status.verification,
         filesystem: status.filesystem,
-        network: status.network,
+        network: sandbox.network === 'unrestricted' ? 'unrestricted' : status.network,
         gitAdministrativeState: status.gitAdministrativeState,
+        workerIpc: sandbox.ipc ? 'control-owned-exact-file-bindings' : 'none',
       },
     };
   }

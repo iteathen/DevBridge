@@ -10,6 +10,14 @@ const NATIVE_COMPILER_CLI = fileURLToPath(new URL('./native-compiler-probe-cli.j
 const TRANSIENT_RECOVERY_CLI = fileURLToPath(new URL('./transient-recovery-probe-cli.js', import.meta.url));
 const CHAT_C_PROJECT_CLI = fileURLToPath(new URL('./chat-c-project-probe-cli.js', import.meta.url));
 const LIFECYCLE_ROUNDTRIP_CLI = fileURLToPath(new URL('./lifecycle-roundtrip-probe-cli.js', import.meta.url));
+const BUILTIN_RUNTIME_ROOT = fileURLToPath(new URL('../', import.meta.url));
+
+const BUILTIN_PROFILE_NAMES = [
+  NATIVE_COMPILER_DIAGNOSTIC_PROFILE,
+  TRANSIENT_RECOVERY_DIAGNOSTIC_PROFILE,
+  CHAT_C_PROJECT_DIAGNOSTIC_PROFILE,
+  LIFECYCLE_ROUNDTRIP_DIAGNOSTIC_PROFILE,
+];
 
 function windowsToolchainEnvironment() {
   return {
@@ -105,4 +113,8 @@ export function builtInToolProfiles() {
     [CHAT_C_PROJECT_DIAGNOSTIC_PROFILE]: chatCProjectDiagnosticProfile(),
     [LIFECYCLE_ROUNDTRIP_DIAGNOSTIC_PROFILE]: lifecycleRoundtripDiagnosticProfile()
   };
+}
+
+export function builtInToolReadRoots() {
+  return Object.fromEntries(BUILTIN_PROFILE_NAMES.map((name) => [name, [BUILTIN_RUNTIME_ROOT]]));
 }

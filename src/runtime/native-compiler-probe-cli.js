@@ -1,13 +1,10 @@
 #!/usr/bin/env node
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { runNativeCompilerProbe } from './native-compiler-probe.js';
-
-function isWithin(root, candidate) {
-  const relative = path.relative(root, candidate);
-  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
-}
+import { WORKER_RESULT_FILE } from './worker-exchange.js';
 
 async function readStdin() {
   let text = '';
@@ -20,20 +17,21 @@ async function main() {
   const raw = await readStdin();
   const context = JSON.parse(raw);
   if (context?.protocol !== 'patch-poller/context-v1') throw new Error('native compiler diagnostic requires patch-poller/context-v1');
-  const resultFile = context?.bridge?.resultFile;
-  if (typeof resultFile !== 'string' || !path.isAbsolute(resultFile)) throw new Error('native compiler diagnostic requires an absolute PATCH-POLLER resultFile');
-  const projectRoot = path.resolve(process.cwd());
-  const resolvedResult = path.resolve(resultFile);
-  if (!isWithin(projectRoot, resolvedResult)) throw new Error('native compiler diagnostic resultFile must remain inside the managed project');
+  if (context?.bridge?.resultFile !== WORKER_RESULT_FILE) {
+    throw new Error('native compiler diagnostic requires the fixed PATCH-POLLER worker result endpoint');
+  }
 
   // The diagnostic ignores free-form task instructions for process selection.
   // Compiler discovery and all compiler arguments are fixed control-plane code.
-  const result = await runNativeCompilerProbe({
-    workDir: path.dirname(resolvedResult),
-    env: process.env
-  });
-  await writeFile(resolvedResult, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-  process.stdout.write(`${JSON.stringify({ diagnostic: 'native-compiler', status: result.status })}\n`);
+  // Build scratch is sandbox-local and separate from the control-owned mailbox.
+  const workDir = await mkdtemp(path.join(os.tmpdir(), 'patch-poller-native-compiler-'));
+  try {
+    const result = await runNativeCompilerProbe({ workDir, env: process.env });
+    await writeFile(WORKER_RESULT_FILE, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8' });
+    process.stdout.write(`${JSON.stringify({ diagnostic: 'native-compiler', status: result.status })}\n`);
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
 }
 
 main().catch(async (error) => {

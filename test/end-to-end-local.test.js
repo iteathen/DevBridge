@@ -9,6 +9,7 @@ import { WorkspacePolicy } from '../src/security/workspace-policy.js';
 import { GitClient } from '../src/git/git-client.js';
 import { GitWorkspaceManager } from '../src/git/workspace-manager.js';
 import { ProcessRunner } from '../src/runtime/process-runner.js';
+import { WorkerExchange } from '../src/runtime/worker-exchange.js';
 import { JsonStateStore } from '../src/state/json-state-store.js';
 import { RunCoordinator } from '../src/run/run-coordinator.js';
 
@@ -27,8 +28,33 @@ test('first-version local pipeline turns a task into a sealed candidate commit',
   await policy.ensureRoot();
   const gitClient = new GitClient({ syntheticHome: path.join(root, 'git-home'), allowFileProtocol: true });
   const workspaceManager = new GitWorkspaceManager({ workspacePolicy: policy, gitClient, remoteUrlResolver: () => source });
-  const stateStore = new JsonStateStore(path.join(root, 'state', 'queue.json'));
-  const processRunner = new ProcessRunner();
+  const stateDirectory = path.join(root, 'state');
+  const stateStore = new JsonStateStore(path.join(stateDirectory, 'queue.json'));
+  const processRunner = new ProcessRunner({
+    workerExchange: new WorkerExchange({ stateDirectory }),
+    sandboxProvider: {
+      async prepareExecution({ executable, args, cwd, env, sandbox }) {
+        assert.equal(sandbox.required, true);
+        assert.equal(typeof sandbox.ipc?.resultSource, 'string');
+        assert.equal(typeof sandbox.ipc?.resultTarget, 'string');
+        return {
+          executable,
+          args: args.map((value) => value === sandbox.ipc.resultTarget ? sandbox.ipc.resultSource : value),
+          cwd,
+          env,
+          evidence: {
+            provider: 'e2e-test-boundary',
+            verified: true,
+            verification: 'test-fixture',
+            filesystem: 'test-only-exact-result-path-translation',
+            network: 'denied',
+            gitAdministrativeState: 'test-fixture',
+            workerIpc: 'control-owned-exact-file-bindings',
+          },
+        };
+      },
+    },
+  });
 
   const fixtureCode = `
     const fs = require('node:fs');
@@ -36,9 +62,9 @@ test('first-version local pipeline turns a task into a sealed candidate commit',
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', chunk => input += chunk);
     process.stdin.on('end', () => {
-      const context = JSON.parse(input);
+      JSON.parse(input);
       fs.writeFileSync('README.md', 'after\\n');
-      fs.writeFileSync(context.bridge.resultFile, JSON.stringify({
+      fs.writeFileSync(process.argv[1], JSON.stringify({
         protocol: 'patch-poller/result-v1',
         status: 'complete',
         summary: 'fixture finished',
@@ -50,7 +76,7 @@ test('first-version local pipeline turns a task into a sealed candidate commit',
   `;
   const profile = {
     executable: process.execPath,
-    args: ['-e', fixtureCode],
+    args: ['-e', fixtureCode, '{resultFile}'],
     inputMode: 'stdin-json',
     timeoutMs: 10_000,
     maxOutputBytes: 64 * 1024,

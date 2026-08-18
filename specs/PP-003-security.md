@@ -37,6 +37,37 @@ The default is therefore **deny arbitrary external reads**. Local configuration 
 
 `cwd` is not a sandbox. A coding-tool profile is executable only when local configuration identifies a real containment mechanism supplied by the tool or operating system, unless the operator explicitly enables an unsafe development override.
 
+### Credentialed control plane versus proposal workers
+
+Untrusted proposal/model workers, and any repository-controlled subprocesses they launch, are separated from the credentialed control plane by a **verified OS isolation boundary**. A profile declaration is not sufficient evidence. If the active host has no verified worker-isolation provider, proposal-worker execution fails closed.
+
+The current Linux provider uses the verified Bubblewrap boundary defined by the deterministic execution layer. Other platforms may inspect/configure PATCH-POLLER, but they do not gain proposal-worker execution merely because a tool profile says `sandbox.enforcement: os` or `tool`.
+
+The worker boundary has these ownership rules:
+
+- PATCH-POLLER control state, daemon lock/stop authority, GitHub CLI credential storage, SSH/user credential state, and other operator-home credential sources stay outside the worker mount namespace;
+- worker `HOME` and temporary directories are synthetic sandbox-owned locations rather than the operator home;
+- control-plane GitHub token variables (`PATCH_POLLER_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, enterprise variants, Git/SSH askpass variables, and `SSH_AUTH_SOCK`) are stripped even when a local tool profile requests them;
+- a non-control credential required by a coding service must be granted explicitly and narrowly by local tool configuration; stored operator-home coding-tool credentials are not made visible as a convenience;
+- project/candidate bytes are writable proposal state, but authoritative `.git` / linked-worktree administrative state is read-only or unreachable from the worker;
+- control-plane Git operations, state persistence, GitHub status/publication, and daemon control execute outside this worker boundary;
+- worker-visible candidate state is poller-owned disposable/reconstructable state. A worker never receives authority merely because it can edit those bytes.
+
+#### Worker IPC ownership
+
+Worker context/result exchange is **control-plane state**, not a reserved project directory.
+
+For every run/turn PATCH-POLLER creates a private exchange root under the configured state directory with exclusive run/turn ownership. The control-only manifest binds the exact run/turn to the context/result file identities and the SHA-256 of the context bytes. That manifest and mailbox root are never exposed to the worker.
+
+Only two exact endpoints are projected into the worker namespace:
+
+- the pre-created context file, read-only;
+- the pre-created result file, writable in place.
+
+The worker is instructed to overwrite the existing result file in place. It may not unlink, rename over, symlink, junction, or otherwise replace the mailbox object. Before privileged result consumption PATCH-POLLER revalidates the control-owned directory/file type, service ownership where the host exposes a UID, private permissions on POSIX, recorded filesystem identity, context digest, and bounded result size. Reads use no-follow semantics where the platform exposes them and verify the opened file identity again.
+
+This means `.patch-poller/<run>/<turn>` inside the proposal tree is not an IPC security mechanism and need not exist. Project cleanup/Git exclusion is independent of control-plane mailbox ownership.
+
 ## GitHub control-plane authentication
 
 GitHub authentication is local control-plane authority. Repository content, issue text, model output, and coding-tool configuration cannot select a credential source or cause a credential to be copied into the worker environment.
@@ -63,6 +94,8 @@ Rules:
 Network access is a capability because it can fetch executable content and exfiltrate data. The policy model distinguishes denied, restricted/sandbox-enforced, and explicitly unrestricted profiles. Playwright/browser-capable profiles should be separately identifiable from ordinary local coding profiles.
 
 Network policy should be phase-aware where practical. Provisioning, build/test, loopback browser testing, and publication do not require the same network authority. Arbitrary project/test code should not inherit publication credentials or broad network access merely because another phase needs them.
+
+A worker network mode is usable only when the verified isolation provider can actually enforce the requested mode. The current Bubblewrap worker adapter enforces `deny` by retaining the unshared network namespace and supports explicitly `unrestricted` networking by sharing the host network namespace; a declared `restricted` mode fails closed until a provider can enforce a real restricted policy.
 
 ## Human decisions and hard gates
 
@@ -107,3 +140,4 @@ Recovery code must not become a privileged bypass around normal safety rules.
 - Prefer replacing a disposable poller-owned worktree over uncertain repair of Git administrative state.
 - Local repair agents remain proposal engines; they do not receive implicit authority to bypass path, file-class, test, or publication policy.
 - Cleanup may delete only state whose PATCH-POLLER ownership and containment can be established.
+- Interrupted worker mailboxes are reopened only from control-owned run/turn state; their manifest/file identities and unchanged context are revalidated before any result is treated as a proposal.
