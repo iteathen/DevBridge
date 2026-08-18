@@ -107,17 +107,22 @@ export class ProcessRunner {
   #sourceEnv;
   #exchange;
   #sandboxProvider;
+  #trustedReadRootsByProfile;
 
   constructor({
     executableResolver = resolveExecutable,
     sourceEnv = process.env,
     workerExchange = null,
     sandboxProvider = null,
+    trustedReadRootsByProfile = {},
   } = {}) {
     this.#resolver = executableResolver;
     this.#sourceEnv = sourceEnv;
     this.#exchange = workerExchange;
     this.#sandboxProvider = sandboxProvider;
+    this.#trustedReadRootsByProfile = Object.fromEntries(
+      Object.entries(trustedReadRootsByProfile).map(([name, roots]) => [name, [...roots]]),
+    );
   }
 
   #turnIdentity(projectDir, runDir) {
@@ -179,12 +184,13 @@ export class ProcessRunner {
       args,
       cwd: projectRoot,
       env,
-      operation: `worker:${profile.name}`,
+      operation: `worker:${profile.name ?? 'local-profile'}`,
       sandbox: {
         required: true,
         projectDir: projectRoot,
         network: profile.sandbox.network,
         exposeConfiguredReadRoots: profile.sandbox.outsideProjectRead !== 'deny',
+        trustedReadRoots: this.#trustedReadRootsByProfile[profile.name] ?? [],
         ipc: mailbox.sandboxIpc(),
       },
     });
