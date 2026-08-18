@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { ProcessRunner, toolBridge } from '../src/runtime/process-runner.js';
+import { ProcessRunner, parseResultJsonText, toolBridge } from '../src/runtime/process-runner.js';
 
 const profile = {
   name: 'node-fixture',
@@ -28,6 +28,13 @@ test('tool bridge tells workers the mandatory result fields and Git authority bo
   assert.equal(bridge.example.protocol, 'patch-poller/result-v1');
   assert.equal(bridge.example.status, 'complete');
   assert.ok(bridge.example.summary.length > 0);
+});
+
+test('accepts a single UTF-8 BOM before otherwise valid tool result JSON', () => {
+  const parsed = parseResultJsonText('\uFEFF{"protocol":"patch-poller/result-v1","status":"complete","summary":"ok"}');
+  assert.equal(parsed.protocol, 'patch-poller/result-v1');
+  assert.equal(parsed.status, 'complete');
+  assert.equal(parsed.summary, 'ok');
 });
 
 test('runs without a shell, uses bounded context stdin, and scrubs environment', async () => {
