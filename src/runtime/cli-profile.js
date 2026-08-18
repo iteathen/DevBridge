@@ -4,6 +4,12 @@ import { ConfigurationError, PolicyError } from '../errors.js';
 const ALLOWED_PLACEHOLDERS = new Set(['projectDir', 'contextFile', 'resultFile', 'runId']);
 const SHELL_LIKE = new Set(['cmd', 'cmd.exe', 'powershell', 'powershell.exe', 'pwsh', 'pwsh.exe', 'bash', 'sh', 'zsh', 'fish']);
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_()]*$/;
+const CONTROL_OWNED_PROFILE_NAMES = new Set([
+  'patch-poller-native-compiler',
+  'patch-poller-transient-recovery',
+  'patch-poller-chat-c-project',
+  'patch-poller-lifecycle-roundtrip',
+]);
 
 function validateArgs(args, name) {
   if (!Array.isArray(args) || args.some((arg) => typeof arg !== 'string')) {
@@ -24,7 +30,13 @@ export function validateToolProfile(name, raw, { allowUncontainedTools = false, 
   if (typeof raw.executable !== 'string' || raw.executable.trim() === '') throw new ConfigurationError(`tools.${name}.executable is required`);
 
   const controlOwned = raw.controlOwned === true;
-  if (controlOwned && !allowControlOwnedTools) throw new PolicyError(`tools.${name}.controlOwned is reserved for PATCH-POLLER built-in profiles`);
+  const reservedControlProfile = CONTROL_OWNED_PROFILE_NAMES.has(name);
+  if (controlOwned && !allowControlOwnedTools && !reservedControlProfile) {
+    throw new PolicyError(`tools.${name}.controlOwned is reserved for PATCH-POLLER built-in profiles`);
+  }
+  if (reservedControlProfile && !controlOwned) {
+    throw new PolicyError(`reserved PATCH-POLLER profile ${name} must remain control-owned`);
+  }
 
   const basename = path.basename(raw.executable).toLowerCase();
   if (SHELL_LIKE.has(basename) && raw.allowShellLikeExecutable !== true) {
