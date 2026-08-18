@@ -159,8 +159,11 @@ export class ChatHandoffProjector {
     if (record.handoff.repository !== this.#queueRepository) throw new ProtocolError('chat handoff projection repository must match the configured queue repository');
     digest(record.digest, 'chat handoff projection digest');
     const seed = buildGitHubChatResumeSeed(record, issue);
-    let body = projectionBody({ repositoryName: this.#queueRepository, issueNumber: issue, record, seed });
-    body = redactText(body, this.#secrets);
+    const rawBody = projectionBody({ repositoryName: this.#queueRepository, issueNumber: issue, record, seed });
+    const body = redactText(rawBody, this.#secrets);
+    if (body !== rawBody) {
+      throw new ProtocolError('chat handoff projection requires redaction; refusing to publish a digest-divergent reconstruction payload');
+    }
     if (Buffer.byteLength(body, 'utf8') > this.#maxCommentBytes) throw new RangeError('chat handoff projection exceeds configured GitHub comment budget');
 
     const key = this.#stateKey(issue);

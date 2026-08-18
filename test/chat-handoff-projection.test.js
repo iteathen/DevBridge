@@ -146,7 +146,7 @@ test('tampered GitHub projection is rejected before a fresh controller can resum
   assert.throws(() => parseChatHandoffProjectionBody(tampered), /digest mismatch/u);
 });
 
-test('projection redacts configured secrets and refuses a handoff larger than the remote comment budget', async () => {
+test('projection fails closed instead of publishing a digest-divergent redacted handoff', async () => {
   const client = fakeGitHub();
   const projector = new ChatHandoffProjector({
     client,
@@ -156,9 +156,11 @@ test('projection redacts configured secrets and refuses a handoff larger than th
     secretValues: ['SUPER-SECRET-MARKER'],
   });
   const withSecret = record(1, { blockers: ['SUPER-SECRET-MARKER'] });
-  await projector.project({ issueNumber: 20, record: withSecret });
-  assert.equal(client.comments[0].body.includes('SUPER-SECRET-MARKER'), false);
+  await assert.rejects(() => projector.project({ issueNumber: 20, record: withSecret }), /requires redaction/u);
+  assert.equal(client.comments.length, 0);
+});
 
+test('projection refuses a handoff larger than the remote comment budget', async () => {
   const tiny = new ChatHandoffProjector({ client: fakeGitHub(), stateStore: memoryStore(), queueRepository: 'iteathen/PATCH-POLLER', maxCommentBytes: 4096 });
   await assert.rejects(() => tiny.project({ issueNumber: 20, record: record(1, { blockers: ['x'.repeat(2000), 'y'.repeat(2000)] }) }), /comment budget/u);
 });
