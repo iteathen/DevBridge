@@ -43,6 +43,7 @@ export class ToolInventoryService {
   #toolchains;
   #sandbox;
   #profiles;
+  #deterministicProfiles;
   #modelAdaptersEnabled;
   #allowUncontained;
   #env;
@@ -55,6 +56,7 @@ export class ToolInventoryService {
     toolchainRegistry,
     sandboxProvider,
     profiles = {},
+    deterministicProfileNames = [],
     modelAdaptersEnabled = false,
     allowUncontainedTools = false,
     env = process.env,
@@ -64,6 +66,7 @@ export class ToolInventoryService {
     this.#toolchains = toolchainRegistry;
     this.#sandbox = sandboxProvider;
     this.#profiles = profiles;
+    this.#deterministicProfiles = new Set(deterministicProfileNames);
     this.#modelAdaptersEnabled = modelAdaptersEnabled === true;
     this.#allowUncontained = allowUncontainedTools === true;
     this.#env = env;
@@ -77,21 +80,24 @@ export class ToolInventoryService {
   async #adapterInventory(sandboxStatus) {
     const entries = [];
     for (const [name, raw] of Object.entries(this.#profiles)) {
+      const adapterClass = this.#deterministicProfiles.has(name) ? 'deterministic-diagnostic' : 'model-adapter';
       let profile;
       try { profile = validateToolProfile(name, raw, { allowUncontainedTools: this.#allowUncontained }); }
       catch (error) {
-        entries.push({ name, enabled: false, available: false, usable: false, errorClass: error.name, inputMode: null, declaredPolicy: null, enforcement: sandboxStatus });
+        entries.push({ name, adapterClass, enabled: false, available: false, usable: false, errorClass: error.name, inputMode: null, declaredPolicy: null, enforcement: sandboxStatus });
         continue;
       }
       let available = false;
       try { await resolveExecutable(profile.executable, this.#env); available = true; }
       catch { available = false; }
+      const enabled = adapterClass === 'deterministic-diagnostic' || this.#modelAdaptersEnabled;
       const containmentSatisfied = profile.sandbox.requiresVerifiedSandbox === false ? this.#allowUncontained : sandboxStatus.verified === true;
       entries.push({
         name,
-        enabled: this.#modelAdaptersEnabled,
+        adapterClass,
+        enabled,
         available,
-        usable: this.#modelAdaptersEnabled && available && containmentSatisfied,
+        usable: enabled && available && containmentSatisfied,
         inputMode: profile.inputMode,
         declaredPolicy: profile.sandbox,
         enforcement: sandboxStatus,
