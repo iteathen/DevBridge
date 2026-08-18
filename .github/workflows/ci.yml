@@ -22,9 +22,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.16.0
+      - name: Install Bubblewrap sandbox provider
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap apparmor-profiles
+          test -f /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
       - name: Cheap preflight
         run: npm run preflight
       - name: Tests
+        env:
+          PATCH_POLLER_REQUIRE_SANDBOX_TEST: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: npm test
       - name: Doctor smoke test
         run: node src/cli.js doctor --config config/patch-poller.example.json

@@ -2,7 +2,7 @@
 
 PATCH-POLLER is a local Node.js bridge between chat-only coding agents and a real development environment. It watches a narrowly configured GitHub issue queue, accepts structured tasks only from locally trusted GitHub identities, carries durable context between model turns, and invokes locally configured coding CLIs under explicit capability policy.
 
-**Status:** v0.1 first usable implementation / pre-production hardening. The end-to-end local execution path is implemented and tested. Full PP-007 decision orchestration, universal OS sandbox adapters, package-manager phase isolation, GitHub App authentication, and the complete remote-effect journal remain explicit hardening work rather than hidden assumptions.
+**Status:** v0.1 first usable implementation / pre-production hardening. The end-to-end local execution path is implemented and tested. Deterministic controller-plan operations that execute repository code now require observed OS sandbox enforcement: Linux uses a verified Bubblewrap provider, while unsupported hosts fail closed for those operations. Full PP-007 decision orchestration, additional OS sandbox providers, package-manager phase isolation, GitHub App authentication, and the complete remote-effect journal remain explicit hardening work rather than hidden assumptions.
 
 ## What v0.1 does
 
@@ -12,6 +12,9 @@ PATCH-POLLER is a local Node.js bridge between chat-only coding agents and a rea
 - Uses a controlled Git environment with hooks, inherited credential helpers, interactive prompts, and dangerous transports disabled for control-plane Git operations.
 - Creates an isolated task branch/worktree and persists the exact starting SHA for the life of the run.
 - Invokes a locally configured coding CLI with `shell: false`, bounded environment/output/time, and a complete context capsule on every turn.
+- Classifies deterministic controller operations as static inspection or repository-code execution. Repository-code operations cannot launch without a verified OS sandbox provider.
+- On Linux, verifies Bubblewrap with an adversarial filesystem/network/control-state probe before allowing `node.test`, CMake configure/build, or CTest execution.
+- Keeps deterministic repository-code execution fail-closed on hosts without a verified provider while preserving static inspection operations.
 - Supports optional structured `patch-poller/result-v1` output for `complete`, `continue`, `blocked`, and `failed` turns; clean legacy CLI exits can still complete a first-version run.
 - Persists run/context state and resumes trusted `patch-poller/feedback-v1` continuation/cancel feedback without relying on model conversation memory.
 - Defers a newer revision of one issue while an older revision is still active.
@@ -42,11 +45,17 @@ The normative HITL model is **checkpoint and proceed**, not stop and wait. PP-00
 
 v0.1 implements durable ordinary continuation/cancel feedback and can record a proposal checkpoint, but it does **not yet** implement the complete `decision-v1`/safe-frontier orchestration. Do not treat a v0.1 model-produced checkpoint object as human authorization.
 
-## Safety default outside the project
+## Repository-code sandbox boundary
 
 PATCH-POLLER does not default to arbitrary read-only access to the whole machine. Read access alone can expose credentials/private files that malicious project code could exfiltrate.
 
-The intended deployment is project read/write plus only required toolchain roots, backed by a verified coding-tool or OS sandbox. v0.1 validates tool sandbox declarations and process-tree/time/output boundaries, but universal OS filesystem/network adapters are not implemented yet. Run v0.1 under a dedicated unprivileged OS account with a minimal home and use the configured coding CLI's own workspace sandbox.
+Deterministic controller operations are split by execution class. Static inspection such as `node.syntax-check` can run without a repository-code sandbox. Operations that can execute repository-controlled code (`node.test`, `cmake.configure`, `cmake.build`, and `ctest.run`) are refused before process launch unless the locally selected provider has passed its boundary verification. Unknown future registered deterministic operations default to the repository-code class until deliberately classified otherwise.
+
+On Linux the built-in provider auto-discovers the local `bwrap` executable and verifies the actual boundary before use. The sandbox exposes the project and current PATCH-POLLER run scratch as writable, keeps `.git` administrative state read-only or unreachable, mounts required OS/tool roots read-only, mounts locally configured `workspace.externalReadRoots` read-only, uses a private temporary home, does not inherit GitHub credentials, and creates a separate network namespace with no external network path. PATCH-POLLER state, operator home data, SSH/GitHub credential directories, and unrelated host paths are not mounted.
+
+Provider presence is not sufficient. `doctor` reports both provider availability and the result of the adversarial boundary probe. If `capabilities.core.controllerPlans.sandbox.verified` is not `true`, repository-code controller operations remain disabled.
+
+Current built-in repository-code sandbox support is Linux/Bubblewrap. Windows and other unsupported hosts fail closed for repository-code controller operations; they do not fall back to unsandboxed execution. Coding-model adapter profiles retain their separate local sandbox declarations and policy.
 
 ## Task example
 
@@ -70,12 +79,12 @@ Requested capabilities are descriptive only. Local policy is authoritative.
 
 ## Setup and first run
 
-Requires Node.js 22.16.0 or newer and Git.
+Requires Node.js 22.16.0 or newer and Git. Linux hosts that will execute repository code through deterministic controller plans also require a locally installed Bubblewrap (`bwrap`) package from the operating-system distribution.
 
 1. Copy `config/patch-poller.example.json` to a local configuration file **outside watched project repositories**.
 2. Configure `github.queueRepository`, `trustedActorIds`, workspace owners, and `github.tokenEnv`.
-3. Configure at least one local coding-tool profile. See `docs/tool-profiles.md`.
-4. Keep `execution.enabled` false while reviewing the profile and its real sandbox behavior.
+3. If using coding-model adapters, configure the required local coding-tool profiles. See `docs/tool-profiles.md`.
+4. Keep `execution.enabled` false while reviewing local authority and sandbox behavior.
 5. Set the GitHub token environment variable for the PATCH-POLLER service account.
 6. Run local checks:
 
@@ -83,6 +92,8 @@ Requires Node.js 22.16.0 or newer and Git.
 node src/cli.js doctor --config <local-config.json>
 node src/cli.js poll-once --config <local-config.json>
 ```
+
+If deterministic repository-code controller operations will be used, inspect the `doctor` result and require `capabilities.core.controllerPlans.sandbox.verified: true`. On a normal supported Linux deployment this means the reported provider is `bubblewrap` and its boundary probe succeeded. Do not enable repository-code execution by bypassing this gate on an unsupported host.
 
 7. Set `execution.enabled` to true and exercise one cycle:
 
@@ -123,7 +134,7 @@ It does not merge to the default branch or close issues in v0.1.
 The following are deliberately not represented as complete:
 
 - full PP-007 checkpoint/decision/safe-frontier orchestration;
-- OS-level filesystem/network sandbox providers such as dedicated Windows Job/AppContainer or Linux namespace adapters;
+- repository-code OS sandbox providers for Windows and other non-Linux hosts; those deterministic operations fail closed there rather than running unsandboxed;
 - first-class dependency-fetch/install/build/test capability phases from PP-008;
 - generic operation journal/reconciliation for every GitHub mutation from PP-009;
 - numeric GitHub repository-ID pinning, decision replay journal, baseline instruction snapshots, and tool-version/profile digests from PP-010;
@@ -158,7 +169,7 @@ These are hardening/feature boundaries, not permission for an implementation to 
 npm test
 ```
 
-The v0.1 suite covers 35 Node tests, including the original protocol/security/rate/context boundaries plus real local Git worktree provisioning, candidate sealing, immutable baseline recovery, process execution, daemon locking, feedback resumption, finalization recovery, active-revision deferral, and a complete local task -> coding CLI -> sealed Git commit acceptance path.
+The v0.1 suite covers the protocol/security/rate/context boundaries plus real local Git worktree provisioning, candidate sealing, immutable baseline recovery, process execution, daemon locking, feedback resumption, finalization recovery, active-revision deferral, deterministic sandbox fail-closed behavior, Linux Bubblewrap boundary verification, and complete local task acceptance paths.
 
 ## License
 

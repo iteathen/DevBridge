@@ -3,6 +3,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { PolicyError } from '../errors.js';
 import { normalizePlanPath } from '../run/controller-plan.js';
+import { deterministicOperationSecurity } from './deterministic-operation-security.js';
 import { createCoreToolchainRegistry } from './toolchain-registry.js';
 
 const SAFE_ID = /^[A-Za-z0-9_.-]{1,80}$/u;
@@ -80,6 +81,18 @@ function observedResult(stdout, stderr = '', exitCode = 0) {
   };
 }
 
+function scopedProcessRunner(processRunner, security) {
+  if (!processRunner || typeof processRunner.run !== 'function') return processRunner;
+  return {
+    run(request) {
+      return processRunner.run({
+        ...request,
+        executionClass: security.executionClass,
+      });
+    },
+  };
+}
+
 export class DeterministicOperationRegistry {
   #operations = new Map();
 
@@ -107,7 +120,11 @@ export class DeterministicOperationRegistry {
     const adapter = this.#operations.get(name);
     if (!adapter) throw new PolicyError(`controller plan references unregistered operation ${name}`);
     const validated = adapter.validate(params);
-    return adapter.execute(validated, context);
+    const security = deterministicOperationSecurity(name);
+    const securedContext = context && context.processRunner
+      ? { ...context, processRunner: scopedProcessRunner(context.processRunner, security) }
+      : context;
+    return adapter.execute(validated, securedContext);
   }
 }
 
