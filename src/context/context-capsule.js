@@ -14,6 +14,22 @@ function handoffDigest(value) {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
+function taskProvenance(task) {
+  if (task.authority?.kind === 'github-issue-comment') {
+    return {
+      source: 'github-issue-comment',
+      actorId: task.authority.actorId,
+      actorLogin: task.authority.actorLogin ?? null,
+      issueNumber: task.issueNumber,
+      commentId: task.authority.commentId,
+      createdAt: task.authority.createdAt,
+      bodySha256: task.authority.bodySha256,
+      edited: false,
+    };
+  }
+  return { source: 'github-issue-legacy', actorId: task.actorId, issueNumber: task.issueNumber };
+}
+
 export function buildContextCapsule({ task, sequence = 1, prior = null, runtime = {} }) {
   const context = task.envelope.context ?? {};
   const handoff = typeof context.handoff === 'string' ? context.handoff : null;
@@ -44,6 +60,8 @@ export function buildContextCapsule({ task, sequence = 1, prior = null, runtime 
       effectiveBaselineSha: receipt.effectiveBaselineSha ?? null
     } : null,
     decisions: prior?.decisions ?? [],
+    decisionGate: runtime.decisionGate ?? prior?.decisionGate ?? null,
+    toolInventory: runtime.toolInventory ?? prior?.toolInventory ?? null,
     progress: prior?.progress ?? [],
     changedFiles: runtime.changedFiles ?? prior?.changedFiles ?? [],
     tests: runtime.tests ?? prior?.tests ?? [],
@@ -53,8 +71,8 @@ export function buildContextCapsule({ task, sequence = 1, prior = null, runtime 
     outputTail: runtime.outputTail ?? null,
     liveness: runtime.liveness ?? prior?.liveness ?? null,
     provenance: [
-      { source: 'github-issue', actorId: task.actorId, issueNumber: task.issueNumber },
-      { source: 'local-policy', note: 'capabilities are granted only by local operator configuration' }
+      taskProvenance(task),
+      { source: 'local-policy', note: 'capabilities and decision authority are granted only by local operator configuration' }
     ],
     generatedAt: new Date().toISOString()
   };
