@@ -6,6 +6,18 @@ Status: active
 
 Provide a durable bridge between trusted GitHub-issued coding tasks and a locally controlled development environment without making GitHub, a coding model, repository content, or human-authored remote text the security authority for the machine.
 
+## Reference deployment and cost baseline
+
+The reference deployment is a **GitHub Free personal account plus a locally controlled development machine**. PATCH-POLLER's core task intake, local execution, validation, checkpoint/feedback, recovery, and publication-control model must remain usable on that baseline.
+
+Paid GitHub plan features are optional capabilities, not architectural prerequisites. Correctness or safety must not depend on private-repository protected branches, rulesets, required reviewers, paid Actions capacity, Codespaces, Packages capacity, enterprise policy, or another feature that is unavailable or materially restricted on GitHub Free.
+
+When a richer GitHub plan exposes additional protections or coordination features, adapters may detect and use them as redundant defense, ergonomics, or scale improvements. Losing or lacking such a feature must degrade to PATCH-POLLER's locally enforced control policy rather than weakening an invariant or making the core workflow unusable.
+
+Metered GitHub products are a separate capability from ordinary API/Git operations. The default product posture is **free-first / no intentional paid usage**. PATCH-POLLER must not opt into a chargeable GitHub service, runner, storage tier, or other metered effect merely because an account could pay for it. Indirect cost effects of publication, such as a push triggering GitHub Actions, must be represented in publication/checkpoint policy where they can be identified.
+
+Prefer capability detection over branching on marketing plan names. Feature availability changes over time and can differ by repository visibility. PP-004 owns the GitHub API, plan-capability, and cost-budget details.
+
 ## Control-plane authority
 
 PATCH-POLLER owns authoritative run state, Git workspace ownership, capability policy, publication state, and lifecycle transitions.
