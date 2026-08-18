@@ -1,24 +1,26 @@
 import path from 'node:path';
 import { RateLimitError } from '../errors.js';
-import { acquireDaemonLock } from '../runtime/daemon-lock.js';
+import {
+  acquireDaemonLock,
+  consumeDaemonStopRequest,
+  waitForDaemonStopRequest,
+} from '../runtime/daemon-lock.js';
 import { createRuntime } from './runtime.js';
 import { runCycle } from './run-once.js';
 
-function sleep(ms, signal) {
-  if (signal?.aborted) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
-    signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
-  });
-}
-
 export async function runDaemon(config, { env = process.env, fetchImpl = globalThis.fetch, signal = null, onEvent = () => {} } = {}) {
-  const release = await acquireDaemonLock(path.join(config.state.directory, 'daemon.lock'));
+  const lockPath = path.join(config.state.directory, 'daemon.lock');
+  const release = await acquireDaemonLock(lockPath);
+  const lockRecord = release.record;
   try {
     const runtime = await createRuntime(config, { env, fetchImpl });
-    onEvent({ type: 'daemon-started', at: new Date().toISOString() });
+    onEvent({ type: 'daemon-started', at: new Date().toISOString(), pid: lockRecord.pid });
     while (!signal?.aborted) {
+      if (await consumeDaemonStopRequest(lockPath, lockRecord)) {
+        onEvent({ type: 'daemon-stop-requested', at: new Date().toISOString() });
+        break;
+      }
+
       let delay = config.github.pollIntervalMs;
       try {
         const result = await runCycle(runtime);
@@ -29,8 +31,22 @@ export async function runDaemon(config, { env = process.env, fetchImpl = globalT
         else delay = Math.max(delay, config.daemon.errorBackoffMs);
         onEvent({ type: 'cycle-error', at: new Date().toISOString(), error: { name: error.name, message: error.message }, retryInMs: delay });
       }
-      if (!signal?.aborted) await sleep(Math.max(1000, delay), signal);
+
+      if (!signal?.aborted) {
+        const stopRequested = await waitForDaemonStopRequest(
+          lockPath,
+          lockRecord,
+          Math.max(1000, delay),
+          signal,
+        );
+        if (stopRequested) {
+          onEvent({ type: 'daemon-stop-requested', at: new Date().toISOString() });
+          break;
+        }
+      }
     }
     onEvent({ type: 'daemon-stopped', at: new Date().toISOString() });
-  } finally { await release(); }
+  } finally {
+    await release();
+  }
 }
