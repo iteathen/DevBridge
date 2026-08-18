@@ -5,9 +5,21 @@ import { validateToolProfile } from '../runtime/cli-profile.js';
 import { parseToolResult } from './result-envelope.js';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
+const TRANSIENT_RETRY_BASE_MS = 5_000;
+const TRANSIENT_RETRY_MAX_MS = 60_000;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function defaultSleep(ms) {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function transientRetryDelay(attempt) {
+  const exponent = Math.max(0, Math.min(20, attempt - 1));
+  return Math.min(TRANSIENT_RETRY_MAX_MS, TRANSIENT_RETRY_BASE_MS * (2 ** exponent));
 }
 
 function outputTail(run) {
@@ -31,6 +43,8 @@ export class RunCoordinator {
   #maxTurns;
   #allowUncontainedTools;
   #autoPush;
+  #nowMs;
+  #sleep;
 
   constructor({
     stateStore,
@@ -43,7 +57,9 @@ export class RunCoordinator {
     defaultTool = null,
     maxTurns = 8,
     allowUncontainedTools = false,
-    autoPushTaskBranches = false
+    autoPushTaskBranches = false,
+    nowMs = () => Date.now(),
+    sleep = defaultSleep
   }) {
     this.#store = stateStore;
     this.#workspace = workspaceManager;
@@ -56,6 +72,8 @@ export class RunCoordinator {
     this.#maxTurns = maxTurns;
     this.#allowUncontainedTools = allowUncontainedTools;
     this.#autoPush = autoPushTaskBranches;
+    this.#nowMs = nowMs;
+    this.#sleep = sleep;
   }
 
   #key(task) {
@@ -116,6 +134,48 @@ export class RunCoordinator {
       state.statusError = { name: error.name, message: error.message, at: nowIso() };
       return null;
     }
+  }
+
+  async #respectTransientBackoff(key, state) {
+    const retry = state.transientRetry;
+    if (!retry?.notBefore) return;
+    const notBefore = Date.parse(retry.notBefore);
+    if (!Number.isFinite(notBefore)) throw new PolicyError('persisted transient retry deadline is malformed');
+    const remaining = notBefore - this.#nowMs();
+    if (remaining > 0) await this.#sleep(remaining);
+    if (state.transientRetry?.notBefore === retry.notBefore) {
+      state.transientRetry = { ...state.transientRetry, notBefore: null, delayMs: 0 };
+      await this.#save(key, state);
+    }
+  }
+
+  #scheduleTransientRetry(state, result) {
+    const attempts = (state.transientRetry?.attempts ?? 0) + 1;
+    const turnLimit = state.turnLimit ?? this.#maxTurns;
+    if (state.turn >= turnLimit) {
+      state.transientRetry = {
+        classification: result.failureClassification ?? 'TRANSIENT',
+        kind: result.retryKind ?? 'tool-availability',
+        attempts,
+        delayMs: 0,
+        notBefore: null,
+        exhausted: true,
+        lastAt: new Date(this.#nowMs()).toISOString()
+      };
+      return null;
+    }
+    const delayMs = transientRetryDelay(attempts);
+    const notBefore = new Date(this.#nowMs() + delayMs).toISOString();
+    state.transientRetry = {
+      classification: result.failureClassification ?? 'TRANSIENT',
+      kind: result.retryKind ?? 'tool-availability',
+      attempts,
+      delayMs,
+      notBefore,
+      exhausted: false,
+      lastAt: new Date(this.#nowMs()).toISOString()
+    };
+    return { attempts, delayMs, notBefore };
   }
 
   async #recordCandidateRejection(key, state, workspace, error) {
@@ -244,6 +304,7 @@ export class RunCoordinator {
         task: structuredClone(task),
         stage: 'preparing',
         turn: 0,
+        turnLimit: this.#maxTurns,
         createdAt: nowIso(),
         prior: {
           summary: task.envelope.context?.summary ?? null,
@@ -257,8 +318,12 @@ export class RunCoordinator {
           outputTail: null
         },
         lastFeedbackCommentId: 0,
-        publication: { published: false }
+        publication: { published: false },
+        transientRetry: null
       };
+      await this.#save(key, state);
+    } else if (!Number.isInteger(state.turnLimit) || state.turnLimit < state.turn) {
+      state.turnLimit = Math.max(this.#maxTurns, state.turn);
       await this.#save(key, state);
     }
 
@@ -302,10 +367,13 @@ export class RunCoordinator {
           instructions: polled.feedback.instructions
         });
         state.prior.blockers = [];
+        if (state.turn >= state.turnLimit) state.turnLimit = state.turn + this.#maxTurns;
+        state.transientRetry = null;
         state.stage = 'running';
         await this.#save(key, state);
       }
 
+      await this.#respectTransientBackoff(key, state);
       const profile = this.#selectProfile(task);
       const workspace = await this.#workspace.prepareRun(task, state.runId, {
         baseRef: state.workspace?.baseRef ?? null,
@@ -332,7 +400,8 @@ export class RunCoordinator {
         if (finalized) return finalized;
       }
 
-      while (state.turn < this.#maxTurns) {
+      while (state.turn < state.turnLimit) {
+        await this.#respectTransientBackoff(key, state);
         const before = await this.#workspace.validate(workspace);
         const context = this.#capsule(state, before);
         const nextTurn = state.turn + 1;
@@ -378,10 +447,24 @@ export class RunCoordinator {
 
         if (result.status === 'continue') {
           state.stage = 'running';
+          let summary = result.summary;
+          if (result.retryable && result.failureClassification === 'TRANSIENT') {
+            const scheduled = this.#scheduleTransientRetry(state, result);
+            if (scheduled) {
+              summary = `${result.summary} Transient retry ${scheduled.attempts} is scheduled after ${scheduled.delayMs} ms.`;
+              state.prior.progress.push(`Transient retry ${scheduled.attempts} scheduled for ${scheduled.notBefore}.`);
+            } else {
+              state.prior.progress.push(`Transient retry budget exhausted after ${state.transientRetry.attempts} attempts.`);
+            }
+          } else {
+            state.transientRetry = null;
+          }
           await this.#save(key, state);
-          await this.#publish(state, 'RUNNING', result.summary, snapshot);
+          await this.#publish(state, 'RUNNING', summary, snapshot);
           continue;
         }
+
+        state.transientRetry = null;
         if (result.status === 'blocked') {
           state.stage = 'waiting-feedback';
           state.prior.blockers = [result.blocker ?? result.summary];
@@ -422,12 +505,16 @@ export class RunCoordinator {
       }
 
       state.stage = 'waiting-feedback';
-      state.prior.blockers = [`Maximum turn budget (${this.#maxTurns}) reached.`];
+      const transientExhausted = state.transientRetry?.exhausted === true;
+      const blocker = transientExhausted
+        ? `Transient tool failure persisted through the bounded ${this.#maxTurns}-turn retry window; trusted continuation feedback is required.`
+        : `Maximum turn budget window (${this.#maxTurns} turns) reached; trusted continuation feedback is required.`;
+      state.prior.blockers = [blocker];
       await this.#save(key, state);
       await this.#publish(
         state,
         'WAITING_FEEDBACK',
-        `Maximum turn budget (${this.#maxTurns}) reached; trusted continuation feedback is required.`,
+        blocker,
         state.finalSnapshot ?? null,
         { force: true }
       );

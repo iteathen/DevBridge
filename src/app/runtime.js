@@ -10,7 +10,7 @@ import { WorkspacePolicy } from '../security/workspace-policy.js';
 import { GitClient } from '../git/git-client.js';
 import { GitWorkspaceManager } from '../git/workspace-manager.js';
 import { ProcessRunner } from '../runtime/process-runner.js';
-import { NATIVE_COMPILER_DIAGNOSTIC_PROFILE, nativeCompilerDiagnosticProfile } from '../runtime/builtin-tool-profiles.js';
+import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
 import { RunCoordinator } from '../run/run-coordinator.js';
 
 export function stateFileName(repository) { return `${repository.replace(/[^A-Za-z0-9_.-]+/g, '__')}.json`; }
@@ -30,10 +30,14 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   const gitClient = new GitClient({ executable: config.git.executable, syntheticHome: path.join(config.state.directory, 'git-home'), defaultTimeoutMs: config.git.commandTimeoutMs });
   const workspaceManager = new GitWorkspaceManager({ workspacePolicy, gitClient, tokenProvider, remoteUrlResolver: (repository) => `${config.git.cloneBaseUrl}/${repository}.git`, fetchTimeoutMs: config.git.fetchTimeoutMs, branchPrefix: config.publication.branchPrefix });
   const processRunner = new ProcessRunner({ sourceEnv: env });
-  if (Object.hasOwn(config.tools, NATIVE_COMPILER_DIAGNOSTIC_PROFILE)) {
-    throw new Error(`local tool profile name ${NATIVE_COMPILER_DIAGNOSTIC_PROFILE} is reserved by PATCH-POLLER`);
+
+  const builtIns = builtInToolProfiles();
+  for (const name of Object.keys(builtIns)) {
+    if (Object.hasOwn(config.tools, name)) {
+      throw new Error(`local tool profile name ${name} is reserved by PATCH-POLLER`);
+    }
   }
-  const tools = { ...config.tools, [NATIVE_COMPILER_DIAGNOSTIC_PROFILE]: nativeCompilerDiagnosticProfile() };
+  const tools = { ...config.tools, ...builtIns };
   const coordinator = new RunCoordinator({ stateStore, workspaceManager, processRunner, statusReporter, feedbackSource, queueRepository: config.github.queueRepository, tools, defaultTool: config.execution.defaultTool, maxTurns: config.execution.maxTurns, allowUncontainedTools: config.execution.allowUncontainedTools, autoPushTaskBranches: config.publication.autoPushTaskBranches });
   return { config, stateStore, rateBudget, client, taskSource, feedbackSource, statusReporter, workspacePolicy, gitClient, workspaceManager, processRunner, coordinator };
 }

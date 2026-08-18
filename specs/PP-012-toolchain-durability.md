@@ -47,7 +47,7 @@ The initial v0.1 recognized condition is the observed local tool diagnostic equi
 
 `Selected model is at capacity. Please try a different model.`
 
-When no valid structured result exists, this condition may produce an automatic continuation from durable context. Retry remains bounded by the existing run turn budget and must not:
+When no valid structured result exists, this condition may produce an automatic continuation from durable context. Retry remains bounded by the current local turn window and must not:
 
 - switch tool/model/profile automatically;
 - expand capabilities;
@@ -55,7 +55,35 @@ When no valid structured result exists, this condition may produce an automatic 
 - change the immutable baseline;
 - duplicate already reconciled external effects.
 
-Persistent transient failure eventually reaches the normal bounded waiting/failure frontier rather than retrying forever.
+### Persisted retry backoff
+
+A retryable transient condition is state, not an in-memory sleep hint. Before another tool invocation PATCH-POLLER durably records at least:
+
+- failure classification/kind;
+- attempt count;
+- chosen delay;
+- absolute `notBefore` time;
+- whether the current bounded turn window is exhausted.
+
+For the initial model-capacity class, v0.1 uses exponential delays of 5 seconds, 10 seconds, 20 seconds, 40 seconds, then a 60-second cap. The absolute turn window remains the hard attempt bound.
+
+If PATCH-POLLER or the host restarts during backoff, recovery must honor the remaining persisted delay before another invocation. It must not forget prior attempts, retry immediately merely because memory was lost, or sleep again for the full original interval after the deadline has partially elapsed.
+
+The final allowed attempt does not schedule a useless delay after the window is already exhausted. Persistent transient failure reaches `waiting-feedback` rather than retrying forever. A matching trusted continuation may grant another bounded turn window under PP-006 without changing capabilities or resetting absolute turn identity.
+
+### Deterministic transient diagnostic
+
+PATCH-POLLER exposes a reserved built-in profile `patch-poller-transient-recovery` for black-box validation of this behavior without consuming a coding-model/provider budget.
+
+The diagnostic is fixed control-plane code. It:
+
+1. emits the exact recognized capacity diagnostic and exits nonzero without a structured result for its first two invocations;
+2. persists only its bounded synthetic attempt marker inside the reserved run directory;
+3. writes a valid completion result on the third invocation;
+4. removes its synthetic state marker on success;
+5. accepts no remote executable path, command, delay, failure count, or capability grant.
+
+The live run therefore proves the real coordinator classification/backoff/multi-turn path while remaining independent of actual provider capacity.
 
 ## Compiler/build/test failures
 
@@ -118,6 +146,7 @@ Every recovery attempt should retain enough bounded evidence to distinguish:
 - executable/runtime failure;
 - tool/wrapper failure;
 - transient availability failure;
+- retry/backoff attempt and deadline;
 - final verification result.
 
 Temporary probes and compiler/build artifacts created solely for a non-destructive smoke must be removed, and final Git state must be independently checked. Failed, uncertain, or interrupted managed worktrees remain recovery evidence under PP-009.
@@ -130,7 +159,10 @@ Tests must cover at least:
 - prose around JSON and multiple fenced payloads remain protocol failures;
 - a valid conservative structured result survives a later nonzero wrapper exit;
 - a structured completion with wrapper-exit mismatch still passes through independent candidate verification;
-- the observed model-capacity condition without a structured result is classified transient and retried only within bounded run budget;
+- the observed model-capacity condition without a structured result is classified transient;
+- transient retries use persisted exponential backoff, honor remaining delay after restart, and do not delay after the final bounded attempt;
+- trusted continuation at an exhausted turn-window frontier grants another bounded window without resetting absolute turn identity;
+- the built-in transient diagnostic completes only after exercising the real multi-turn retry path and does not invoke a coding model;
 - unrelated nonzero tool exits remain terminal/tool failures;
 - compiler success -> intentional syntax failure -> diagnostic capture -> repair -> successful rebuild in one workspace;
 - linker success -> executable marker/exit verification -> intentional unresolved-symbol failure -> repair -> relink -> re-execute in one workspace;

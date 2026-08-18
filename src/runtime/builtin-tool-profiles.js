@@ -2,8 +2,10 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 export const NATIVE_COMPILER_DIAGNOSTIC_PROFILE = 'patch-poller-native-compiler';
+export const TRANSIENT_RECOVERY_DIAGNOSTIC_PROFILE = 'patch-poller-transient-recovery';
 
 const NATIVE_COMPILER_CLI = fileURLToPath(new URL('./native-compiler-probe-cli.js', import.meta.url));
+const TRANSIENT_RECOVERY_CLI = fileURLToPath(new URL('./transient-recovery-probe-cli.js', import.meta.url));
 
 export function nativeCompilerDiagnosticProfile() {
   return {
@@ -31,5 +33,30 @@ export function nativeCompilerDiagnosticProfile() {
       outsideProjectWrite: false,
       network: 'deny'
     }
+  };
+}
+
+export function transientRecoveryDiagnosticProfile() {
+  return {
+    name: TRANSIENT_RECOVERY_DIAGNOSTIC_PROFILE,
+    executable: process.execPath,
+    args: [TRANSIENT_RECOVERY_CLI],
+    inputMode: 'stdin-json',
+    timeoutMs: 30_000,
+    maxOutputBytes: 64 * 1024,
+    environment: { pass: [], set: {} },
+    sandbox: {
+      enforcement: 'os',
+      outsideProjectRead: 'deny',
+      outsideProjectWrite: false,
+      network: 'deny'
+    }
+  };
+}
+
+export function builtInToolProfiles() {
+  return {
+    [NATIVE_COMPILER_DIAGNOSTIC_PROFILE]: nativeCompilerDiagnosticProfile(),
+    [TRANSIENT_RECOVERY_DIAGNOSTIC_PROFILE]: transientRecoveryDiagnosticProfile()
   };
 }

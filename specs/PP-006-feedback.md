@@ -52,6 +52,21 @@ Accepted continuation feedback is appended to provenance and becomes durable inp
 
 If ordinary feedback materially changes the subject of an existing checkpoint, PATCH-POLLER marks that checkpoint superseded or creates a new checkpoint as required by PP-007 instead of stretching prior approval.
 
+## Bounded continuation windows
+
+The local `maxTurns` setting is an automatic turn-window bound, not an absolute lifetime counter that makes trusted continuation ineffective.
+
+When a run exhausts its current turn window, PATCH-POLLER may enter `waiting-feedback`. If a matching trusted `continue` is accepted at that frontier:
+
+- the absolute run turn number remains monotonic and is never reset;
+- PATCH-POLLER grants one additional local-policy-sized turn window;
+- existing run/worktree/baseline identity is preserved;
+- prior transient-retry state may be cleared so the new trusted window starts with fresh bounded retry accounting;
+- no result/run directory is reused merely to make the counter fit;
+- no capability, credential, network, Git, or decision authority is expanded.
+
+This keeps autonomous work bounded while ensuring the continuation mechanism can actually continue a run after the automatic frontier is reached.
+
 ## Non-blocking clarification
 
 A proposal engine may ask a question while still having useful work available. PATCH-POLLER should record and publish the question, then continue safe work that does not depend on the answer.

@@ -59,6 +59,7 @@ function transientCapacityResult(detail) {
     checkpoint: null,
     inferred: true,
     retryable: true,
+    retryKind: 'model-capacity',
     failureClassification: 'TRANSIENT'
   };
 }
