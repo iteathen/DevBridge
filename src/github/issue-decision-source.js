@@ -36,6 +36,7 @@ export class IssueDecisionSource {
     if (response.notModified) return { decision: null, unchanged: true, highestCommentId: afterCommentId, reason: 'no-change' };
     if (!Array.isArray(response.data)) throw new TypeError('GitHub issue comments response must be an array');
 
+    const createdAtMs = Date.parse(checkpoint.createdAt ?? '');
     let highestCommentId = afterCommentId;
     for (const comment of response.data) {
       const commentId = Number(comment?.id ?? 0);
@@ -43,6 +44,8 @@ export class IssueDecisionSource {
       highestCommentId = Math.max(highestCommentId, commentId);
       if (!allowed.has(String(comment?.user?.id ?? ''))) continue;
       if (!isUneditedAuthorityComment(comment) || !isExactAuthorityFence(comment.body, 'decision')) continue;
+      const commentCreatedAtMs = Date.parse(comment.created_at ?? '');
+      if (!Number.isFinite(commentCreatedAtMs) || (Number.isFinite(createdAtMs) && commentCreatedAtMs < createdAtMs)) continue;
 
       try {
         const decision = parseDecisionEnvelope(comment.body);
