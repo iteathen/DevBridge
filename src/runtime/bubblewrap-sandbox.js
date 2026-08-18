@@ -37,6 +37,10 @@ async function exists(candidate) {
   }
 }
 
+function effectiveCapabilitiesAreZero(value) {
+  return typeof value === 'string' && /^0+$/u.test(value);
+}
+
 async function canonicalExisting(candidate, name) {
   const resolved = path.resolve(candidate);
   const info = await lstat(resolved);
@@ -199,7 +203,6 @@ export class BubblewrapSandboxProvider {
       '--new-session',
       '--die-with-parent',
       '--clearenv',
-      '--cap-drop', 'ALL',
       '--proc', '/proc',
       '--dev', '/dev',
       '--tmpfs', '/tmp',
@@ -248,6 +251,14 @@ export class BubblewrapSandboxProvider {
       });
       return this.inspect();
     }
+    if (process.getuid?.() === 0 || process.geteuid?.() === 0) {
+      this.#status = unavailableSandboxStatus({
+        requestedProvider: this.#requestedProvider,
+        provider: 'bubblewrap',
+        reason: 'repository-code sandboxing is refused while PATCH-POLLER is running as root; run it under the dedicated unprivileged service account',
+      });
+      return this.inspect();
+    }
     try {
       this.#resolvedExecutable = await resolveExecutable(this.#configuredExecutable, this.#env);
     } catch {
@@ -292,6 +303,7 @@ export class BubblewrapSandboxProvider {
         observation.projectWrite === true && observation.scratchWrite === true &&
         observation.outsideRead === false && observation.outsideWrite === false &&
         observation.stateRead === false && observation.gitWrite === false && observation.networkEgress === false &&
+        effectiveCapabilitiesAreZero(observation.effectiveCapabilities) &&
         await exists(path.join(projectDir, 'sandbox-project-write.txt')) &&
         await exists(path.join(scratchDir, 'sandbox-scratch-write.txt')) && !(await exists(outsideWrite)) &&
         await readFile(gitConfig, 'utf8') === 'git-control-sentinel\n' &&
