@@ -16,8 +16,8 @@ function positiveInteger(value, name) {
   return value;
 }
 
-function repository(value) {
-  if (typeof value !== 'string' || !REPOSITORY_RE.test(value)) throw new ProtocolError('GitHub chat handoff repository must be owner/name');
+function repository(value, name = 'repository') {
+  if (typeof value !== 'string' || !REPOSITORY_RE.test(value)) throw new ProtocolError(`${name} must be owner/name`);
   return value;
 }
 
@@ -31,12 +31,12 @@ function digest(value, name) {
   return value;
 }
 
-function projectionSlot(repositoryName, issueNumber) {
-  return createHash('sha256').update(`${repositoryName}#${issueNumber}`, 'utf8').digest('hex').slice(0, 24);
+function projectionSlot(mailboxRepository, issueNumber) {
+  return createHash('sha256').update(`${mailboxRepository}#${issueNumber}`, 'utf8').digest('hex').slice(0, 24);
 }
 
-function marker(repositoryName, issueNumber) {
-  return `<!-- patch-poller-chat-handoff slot=${projectionSlot(repositoryName, issueNumber)} -->`;
+function marker(mailboxRepository, issueNumber) {
+  return `<!-- patch-poller-chat-handoff slot=${projectionSlot(mailboxRepository, issueNumber)} -->`;
 }
 
 function lastPage(headers) {
@@ -50,9 +50,9 @@ function lastPage(headers) {
   return 1;
 }
 
-function projectionBody({ repositoryName, issueNumber, record, seed }) {
+function projectionBody({ mailboxRepository, issueNumber, record, seed }) {
   return [
-    marker(repositoryName, issueNumber),
+    marker(mailboxRepository, issueNumber),
     '## PATCH-POLLER — CHAT HANDOFF READY',
     '',
     seed,
@@ -67,26 +67,28 @@ function projectionBody({ repositoryName, issueNumber, record, seed }) {
   ].join('\n');
 }
 
-export function buildGitHubChatResumeSeed(recordOrHandoff, issueNumber, digestOverride = null) {
+export function buildGitHubChatResumeSeed(recordOrHandoff, issueNumber, digestOverride = null, { mailboxRepository = null } = {}) {
   const handoff = recordOrHandoff?.handoff ?? recordOrHandoff;
   if (!handoff || typeof handoff !== 'object' || Array.isArray(handoff)) throw new ProtocolError('GitHub chat resume seed requires a handoff object');
-  const repositoryName = repository(handoff.repository);
+  const targetRepository = repository(handoff.repository, 'GitHub chat resume target repository');
+  const mailbox = repository(mailboxRepository ?? targetRepository, 'GitHub chat resume mailbox repository');
   const handoffId = safeId(handoff.handoffId, 'GitHub chat resume handoffId');
   const sha256 = digest(digestOverride ?? recordOrHandoff?.digest, 'GitHub chat resume digest');
   const issue = positiveInteger(issueNumber, 'GitHub chat resume issueNumber');
-  return `PATCH-POLLER-RESUME-GITHUB v1 repo=${repositoryName} issue=${issue} handoff=${handoffId} sha256=${sha256}`;
+  return `PATCH-POLLER-RESUME-GITHUB v1 mailbox=${mailbox} issue=${issue} repo=${targetRepository} handoff=${handoffId} sha256=${sha256}`;
 }
 
 export function parseGitHubChatResumeSeed(seed) {
-  if (typeof seed !== 'string' || seed.length > 512) throw new ProtocolError('GitHub chat resume seed must be a bounded string');
-  const match = seed.match(/^PATCH-POLLER-RESUME-GITHUB v1 repo=([^ ]+) issue=(\d+) handoff=([^ ]+) sha256=([0-9a-f]{64})$/u);
+  if (typeof seed !== 'string' || seed.length > 768) throw new ProtocolError('GitHub chat resume seed must be a bounded string');
+  const match = seed.match(/^PATCH-POLLER-RESUME-GITHUB v1 mailbox=([^ ]+) issue=(\d+) repo=([^ ]+) handoff=([^ ]+) sha256=([0-9a-f]{64})$/u);
   if (!match) throw new ProtocolError('GitHub chat resume seed is malformed');
   return {
     protocol: SEED_PROTOCOL,
-    repository: repository(match[1]),
+    mailboxRepository: repository(match[1], 'GitHub chat resume mailbox repository'),
     issueNumber: positiveInteger(Number.parseInt(match[2], 10), 'GitHub chat resume issueNumber'),
-    handoffId: safeId(match[3], 'GitHub chat resume handoffId'),
-    digest: digest(match[4], 'GitHub chat resume digest'),
+    repository: repository(match[3], 'GitHub chat resume target repository'),
+    handoffId: safeId(match[4], 'GitHub chat resume handoffId'),
+    digest: digest(match[5], 'GitHub chat resume digest'),
   };
 }
 
@@ -112,6 +114,9 @@ export function parseChatHandoffProjectionBody(body) {
   if (seed.repository !== handoff.repository || seed.handoffId !== handoff.handoffId || seed.digest !== expectedDigest) {
     throw new ProtocolError('GitHub chat handoff projection seed does not match the payload');
   }
+  if (!body.includes(marker(seed.mailboxRepository, seed.issueNumber))) {
+    throw new ProtocolError('GitHub chat handoff projection mailbox marker does not match the resume seed');
+  }
   return { protocol: PROJECTION_PROTOCOL, digest: expectedDigest, handoff, seed };
 }
 
@@ -127,7 +132,7 @@ export class ChatHandoffProjector {
     if (!stateStore || typeof stateStore.get !== 'function' || typeof stateStore.set !== 'function') throw new TypeError('ChatHandoffProjector requires a StateStore');
     this.#client = client;
     this.#store = stateStore;
-    this.#queueRepository = repository(queueRepository);
+    this.#queueRepository = repository(queueRepository, 'chat handoff projection mailbox repository');
     if (!Number.isSafeInteger(maxCommentBytes) || maxCommentBytes < 4096) throw new ProtocolError('chat handoff projection maxCommentBytes must be >= 4096');
     this.#maxCommentBytes = maxCommentBytes;
     this.#secrets = secretValues;
@@ -156,10 +161,10 @@ export class ChatHandoffProjector {
   async project({ issueNumber, record, critical = false }) {
     const issue = positiveInteger(issueNumber, 'chat handoff projection issueNumber');
     if (!record || record.state !== 'ready' || !record.handoff) throw new ProtocolError('chat handoff projection requires a verified ready handoff record');
-    if (record.handoff.repository !== this.#queueRepository) throw new ProtocolError('chat handoff projection repository must match the configured queue repository');
+    repository(record.handoff.repository, 'chat handoff projection target repository');
     digest(record.digest, 'chat handoff projection digest');
-    const seed = buildGitHubChatResumeSeed(record, issue);
-    const rawBody = projectionBody({ repositoryName: this.#queueRepository, issueNumber: issue, record, seed });
+    const seed = buildGitHubChatResumeSeed(record, issue, null, { mailboxRepository: this.#queueRepository });
+    const rawBody = projectionBody({ mailboxRepository: this.#queueRepository, issueNumber: issue, record, seed });
     const body = redactText(rawBody, this.#secrets);
     if (body !== rawBody) {
       throw new ProtocolError('chat handoff projection requires redaction; refusing to publish a digest-divergent reconstruction payload');

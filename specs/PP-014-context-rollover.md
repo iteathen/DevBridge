@@ -168,7 +168,9 @@ The seed is an address/identity, not the handoff itself. A new controller must r
 
 When a verified handoff is deliberately projected to a GitHub issue for cross-chat recovery, PATCH-POLLER emits:
 
-`PATCH-POLLER-RESUME-GITHUB v1 repo=<owner/name> issue=<number> handoff=<id> sha256=<digest>`
+`PATCH-POLLER-RESUME-GITHUB v1 mailbox=<queue-owner/name> issue=<number> repo=<target-owner/name> handoff=<id> sha256=<digest>`
+
+The mailbox repository identifies where the recovery comment lives; the target repository identifies the project/Git state to reconcile. They may be the same for self-hosting, but PP-014 MUST NOT assume they are identical.
 
 Current chat UIs may require the human to open the new window and provide the seed. Future API/CLI session launchers SHOULD consume the same identity/digest contract so the rollover model does not change when automatic session creation becomes available.
 
@@ -244,7 +246,8 @@ Implementation is not complete until tests cover at least:
 16. GitHub projection edits/coalesces one recovery comment and reconciles crash-after-create without duplicate comments;
 17. a fresh controller verifies a projected digest before recovering the exact recorded phase/next action;
 18. tampered or redaction-requiring projections fail closed;
-19. Windows/Ubuntu cheap preflight, full tests, and doctor pass at the exact PR head.
+19. GitHub recovery keeps mailbox and target repository identities distinct;
+20. Windows/Ubuntu cheap preflight, full tests, and doctor pass at the exact PR head.
 
 ## 17. Runtime and dependency boundary
 
@@ -258,12 +261,14 @@ Projection rules:
 
 - projection is an explicit local action, never automatic remote authority;
 - the handoff must already be locally `ready` and verified;
-- the target issue is locally/operator selected or already bound in the handoff;
-- PATCH-POLLER uses one stable marker/comment slot per repository+issue and edits/coalesces later checkpoints instead of appending heartbeat-style comments;
+- the mailbox issue is locally/operator selected or already bound by controller policy;
+- the handoff target repository may differ from the mailbox repository;
+- PATCH-POLLER uses one stable marker/comment slot per mailbox-repository+issue and edits/coalesces later checkpoints instead of appending heartbeat-style comments;
 - after a crash between comment creation and local correlation persistence, the projector searches the stable marker before creating another comment;
 - the projection embeds the exact normalized handoff plus its original local digest and GitHub resume seed;
 - a fresh controller parses the bounded fence and recomputes the handoff digest before trusting reconstruction facts;
+- the resume seed and stable marker bind the mailbox repository/issue separately from the handoff target repository;
 - if redaction would alter any byte of the digest-bound projection, the remote publication is refused rather than emitting a mismatched digest;
 - GitHub projection is evidence/reconstruction transport only. It does not make GitHub issue text a capability channel.
 
-The CLI exposes local read-only `handoff-status` and `handoff-seed` commands without requiring GitHub credentials. `handoff-project` is the explicit authenticated mutation that projects the latest verified handoff to its bound or specified issue.
+The CLI exposes local read-only `handoff-status` and `handoff-seed` commands without requiring GitHub credentials. `handoff-project` is the explicit authenticated mutation that projects the latest verified handoff to its bound or specified mailbox issue.

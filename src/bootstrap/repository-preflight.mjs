@@ -30,6 +30,7 @@ const TARGETED_TESTS = [
   'test/chat-handoff-large.test.js',
   'test/chat-handoff-app.test.js',
   'test/chat-handoff-projection.test.js',
+  'test/chat-handoff-mailbox.test.js',
   'test/context-budget.test.js',
   'test/controller-plan.test.js',
   'test/runtime-activation.test.js',
