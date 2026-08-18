@@ -34,6 +34,22 @@ PATCH-POLLER owns authoritative run state, Git workspace state, capability polic
 
 A model may propose a patch, repair, command through a locally configured profile, architectural direction, or next step. It does not get to declare that its own proposal is accepted, that a checkpoint has been satisfied, that a capability exists, or that an external effect is authorized.
 
+## Preferred execution path
+
+The preferred architecture is now:
+
+`Primary chat controller -> PATCH-POLLER -> deterministic local operations -> verify -> seal/publish`
+
+The primary chat controller may author source text, tests, expected outputs, and structured intent. PATCH-POLLER owns materialization, local execution authority, cleanup, recovery, Git state, validation, and publication.
+
+Do not delegate deterministic machine work to a coding model merely because a model adapter exists. Compiler/tool discovery, process exit/stream capture, test execution, protocol fixtures, context receipts, cleanup, Git auditing, and publication reconciliation belong to PATCH-POLLER or deterministic registered adapters.
+
+Coding-model adapters such as Codex-family clients, Spark, or other external LLM tools are optional compatibility surfaces and should be disabled by default. Use them only when local policy explicitly enables them and the task genuinely requires model inference or specifically tests that adapter.
+
+For the PP-013 implementation campaign documented in `docs/handoffs/PP-HO-0818-0910.md`, do **not** use Codex, Spark, or another coding model unless the user explicitly changes that constraint. Read `specs/PP-013-controller-plans.md` before implementing that campaign.
+
+A controller plan is data, not a remote shell language. It may carry bounded project file proposals and reference locally registered deterministic operations with validated parameters, but it may not grant executable paths, raw shell fragments, arbitrary environment values, arbitrary local paths, arbitrary Git refs, cleanup roots, credentials, or capabilities.
+
 ## Human checkpoints
 
 PP-007 is normative for human-in-the-loop behavior.
@@ -84,9 +100,13 @@ Keep implementation details out of broad principles unless they are genuine inva
 
 When implementing run coordination or human decision handling, read PP-001, PP-003, PP-005, PP-006, and PP-007 together; none of them is a standalone shortcut around the others.
 
+When implementing controller plans, deterministic operation registry/toolchain behavior, baseline channels, self-update activation, cleanup, context receipts, no-op publication, fault injection, capability doctor, or liveness changes, read PP-013 together with PP-003, PP-008, PP-009, PP-010, PP-011, and PP-012.
+
 ## Runtime scope
 
 The core runtime is Node.js and should prefer Node standard-library facilities. Do not introduce another language, a shell-dependent core path, or a third-party dependency without documenting why the ownership boundary needs it and what new supply-chain or portability cost it creates.
+
+Do not introduce Python into PATCH-POLLER or its project workflow.
 
 ## Testing
 
@@ -102,6 +122,13 @@ Boundary tests are mandatory for:
 - checkpoint/decision subject matching and invalidation;
 - proof that a pending checkpoint does not pause unrelated safe work;
 - proof that pending hard gates cannot be crossed;
-- proof that silence/timeout does not become approval.
+- proof that silence/timeout does not become approval;
+- controller-plan/file-bundle containment, size, reserved-path, stale-digest, and operation-registry boundaries;
+- cleanup-ledger recovery after success, failure, timeout, and restart;
+- local baseline-channel resolution and immutable resolved baseline SHA;
+- transactional runtime candidate validation/activation with last-known-good preservation;
+- proof that no-diff tasks elide publication by default;
+- proof that context receipts bind to the exact input/task revision;
+- proof that capability doctor distinguishes PATCH-POLLER core behavior from external adapter behavior.
 
 A passing happy-path test alone is not sufficient for a capability boundary.
