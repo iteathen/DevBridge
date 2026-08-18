@@ -11,6 +11,14 @@ const path = require('node:path');
 const [projectDir, scratchDir, outsideRead, outsideWrite, stateRead] = process.argv.slice(1);
 function canRead(target) { try { fs.readFileSync(target); return true; } catch { return false; } }
 function canWrite(target, value = 'mutated') { try { fs.writeFileSync(target, value); return true; } catch { return false; } }
+function effectiveCapabilities() {
+  try {
+    const match = /^CapEff:\s+([0-9a-fA-F]+)$/mu.exec(fs.readFileSync('/proc/self/status', 'utf8'));
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
 function canConnect() {
   return new Promise((resolve) => {
     let settled = false;
@@ -35,6 +43,7 @@ function canConnect() {
     stateRead: canRead(stateRead),
     gitWrite: canWrite(path.join(projectDir, '.git', 'config')),
     networkEgress: await canConnect(),
+    effectiveCapabilities: effectiveCapabilities(),
   };
   process.stdout.write(JSON.stringify(result));
 })().catch((error) => {
