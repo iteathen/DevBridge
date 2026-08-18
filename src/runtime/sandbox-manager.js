@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,7 +14,10 @@ export const EXECUTION_CLASS_REPOSITORY = 'repository-code-executing';
 
 const VERIFY_TIMEOUT_MS = 15_000;
 const CAPTURE_LIMIT = 256 * 1024;
-const DEFAULT_SYSTEM_READ_ROOTS = ['/usr', '/bin', '/lib', '/lib64', '/etc', '/opt', '/nix/store'];
+// Only the conventional runtime/library roots needed to start system executables
+// are visible by default. User-local/optional tool roots must be explicitly
+// allowlisted by the local tool profile.
+const DEFAULT_SYSTEM_READ_ROOTS = ['/usr', '/bin', '/lib', '/lib64'];
 
 async function exists(candidate) {
   try { await lstat(candidate); return true; }
