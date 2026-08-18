@@ -1,0 +1,10 @@
+node_modules/
+.patch-poller/
+*.log
+*.tmp
+.env
+.env.*
+!*.example
+coverage/
+.DS_Store
+Thumbs.db

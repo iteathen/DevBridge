@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "github": {
+    "queueRepository": "iteathen/PATCH-POLLER",
+    "taskLabel": "patch-poller:ready",
+    "trustedActorIds": ["1775584"],
+    "auth": {
+      "mode": "auto",
+      "environmentVariables": [
+        "PATCH_POLLER_GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN"
+      ],
+      "githubCliExecutable": "gh",
+      "hostname": "github.com"
+    },
+    "apiVersion": "2026-03-10",
+    "pollIntervalMs": 60000,
+    "rateLimit": {
+      "reserveRatio": 0.2,
+      "minimumReserve": 250,
+      "emergencyReserve": 25,
+      "mutationIntervalMs": 1100
+    }
+  },
+  "workspace": {
+    "root": "~/.patch-poller/workspaces",
+    "allowCreate": true,
+    "allowedOwners": ["iteathen"],
+    "externalReadRoots": [],
+    "baselineChannels": {
+      "production": "main",
+      "testing": "sol/foundation-bootstrap"
+    },
+    "defaultBaselineChannel": null
+  },
+  "state": {
+    "directory": "~/.patch-poller/state"
+  },
+  "git": {
+    "executable": "git",
+    "cloneBaseUrl": "https://github.com",
+    "commandTimeoutMs": 120000,
+    "fetchTimeoutMs": 300000
+  },
+  "execution": {
+    "enabled": false,
+    "controllerPlansEnabled": true,
+    "modelAdaptersEnabled": false,
+    "defaultTool": null,
+    "maxConcurrentTasks": 1,
+    "maxTurns": 8,
+    "allowUncontainedTools": false,
+    "faultInjection": {
+      "enabled": false,
+      "rules": []
+    }
+  },
+  "publication": {
+    "autoPushTaskBranches": false,
+    "forceNoOpPublication": false,
+    "branchPrefix": "patchpoller"
+  },
+  "daemon": {
+    "errorBackoffMs": 60000
+  },
+  "status": {
+    "progressIntervalMs": 300000,
+    "maxCommentBytes": 48000
+  },
+  "tools": {}
+}
