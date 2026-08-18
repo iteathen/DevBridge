@@ -25,6 +25,8 @@ import { builtInToolProfiles, builtInToolReadRoots } from '../runtime/builtin-to
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
 import { LivenessProjectingPlanExecutor } from '../run/liveness-projecting-plan-executor.js';
 import { RunCoordinator } from '../run/run-coordinator.js';
+import { HardGateController } from '../run/hard-gate-controller.js';
+import { DecisionGatedRunCoordinator, DecisionGatedWorkspaceManager } from '../run/decision-gated-coordinator.js';
 
 export { stateFileName } from '../state/state-file.js';
 
@@ -73,6 +75,19 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     baselineChannels: config.workspace.baselineChannels,
     defaultBaselineChannel: config.workspace.defaultBaselineChannel,
   });
+  const hardGateController = new HardGateController({
+    decisionSource,
+    decisionAuthorities: config.execution.decisionAuthorities,
+    approvalTtlMs: config.execution.decisionApprovalTtlMs,
+    architectureFileThreshold: config.execution.architectureGateFileThreshold,
+    architectureOwnerThreshold: config.execution.architectureGateOwnerThreshold,
+  });
+  const gatedWorkspaceManager = new DecisionGatedWorkspaceManager({
+    delegate: workspaceManager,
+    stateStore,
+    queueRepository: config.github.queueRepository,
+    gateController: hardGateController,
+  });
   const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
   const deterministicSandboxProvider = createDeterministicSandboxProvider({
     externalReadRoots: config.workspace.externalReadRoots,
@@ -97,6 +112,8 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   const deterministicControllerPlanExecutor = new ControllerPlanExecutor({
     operationRegistry,
     processRunner: deterministicProcessRunner,
+    // Deterministic plan work uses the raw workspace manager. The hard gate is
+    // deliberately applied only at the final candidate-sealing frontier.
     workspaceManager,
     faultInjector,
   });
@@ -112,14 +129,13 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     }
   }
   const tools = { ...config.tools, ...builtIns };
-  const coordinator = new RunCoordinator({
+  const baseCoordinator = new RunCoordinator({
     stateStore,
-    workspaceManager,
+    workspaceManager: gatedWorkspaceManager,
     processRunner,
     controllerPlanExecutor,
     statusReporter,
     feedbackSource,
-    decisionSource,
     queueRepository: config.github.queueRepository,
     tools,
     defaultTool: config.execution.defaultTool,
@@ -130,10 +146,14 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     deterministicProfileNames: Object.keys(builtIns),
     autoPushTaskBranches: config.publication.autoPushTaskBranches,
     forceNoOpPublication: config.publication.forceNoOpPublication,
-    decisionAuthorities: config.execution.decisionAuthorities,
-    decisionApprovalTtlMs: config.execution.decisionApprovalTtlMs,
-    architectureGateFileThreshold: config.execution.architectureGateFileThreshold,
-    architectureGateOwnerThreshold: config.execution.architectureGateOwnerThreshold,
+  });
+  const coordinator = new DecisionGatedRunCoordinator({
+    delegate: baseCoordinator,
+    stateStore,
+    statusReporter,
+    gateController: hardGateController,
+    queueRepository: config.github.queueRepository,
+    maxTurns: config.execution.maxTurns,
   });
   return {
     config,
@@ -150,6 +170,8 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     workspacePolicy,
     gitClient,
     workspaceManager,
+    gatedWorkspaceManager,
+    hardGateController,
     processRunner,
     workerExchange,
     deterministicProcessRunner,
@@ -158,6 +180,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     toolchainRegistry,
     operationRegistry,
     controllerPlanExecutor,
+    baseCoordinator,
     coordinator,
   };
 }
