@@ -17,13 +17,14 @@ const profile = {
 };
 
 test('tool bridge tells workers the mandatory result fields and Git authority boundary', () => {
-  const bridge = toolBridge('r1', '/project/.patch-poller/r1/result.json');
+  const bridge = toolBridge('r1', '/control/exchange/result.json');
   assert.deepEqual(bridge.resultSchema.required, ['protocol', 'status', 'summary']);
   assert.equal(bridge.resultSchema.protocol, 'patch-poller/result-v1');
   assert.ok(bridge.resultSchema.status.includes('complete'));
   assert.match(bridge.resultSchema.summary, /Required non-empty string/u);
   assert.equal(bridge.gitAuthority.owner, 'patch-poller');
   assert.match(bridge.gitAuthority.rule, /Do not stage, commit, reset/u);
+  assert.match(bridge.gitAuthority.rule, /Git administrative state is intentionally not part/u);
   assert.match(bridge.gitAuthority.rule, /PATCH-POLLER validates, stages, seals, commits, and publishes/u);
   assert.equal(bridge.example.protocol, 'patch-poller/result-v1');
   assert.equal(bridge.example.status, 'complete');
@@ -37,18 +38,27 @@ test('accepts a single UTF-8 BOM before otherwise valid tool result JSON', () =>
   assert.equal(parsed.summary, 'ok');
 });
 
-test('runs without a shell, uses bounded context stdin, and scrubs environment', async () => {
-  const projectDir = await mkdtemp(path.join(os.tmpdir(), 'pp-project-'));
-  const runner = new ProcessRunner({ sourceEnv: { ...process.env, SHOULD_NOT_PASS: 'secret' } });
+test('runs without a shell, uses bounded context stdin, scrubs environment, and keeps IPC out of the proposal tree', async () => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), 'pp-process-runner-'));
+  const projectDir = path.join(parent, 'project');
+  const exchangeRoot = path.join(parent, 'control-state', 'exchange');
+  const { mkdir } = await import('node:fs/promises');
+  await mkdir(projectDir, { recursive: true });
+  const runner = new ProcessRunner({ sourceEnv: { ...process.env, SHOULD_NOT_PASS: 'secret' }, exchangeRoot });
   const result = await runner.run({
     profile,
     projectDir,
-    runDir: path.join(projectDir, '.patch-poller', 'r1'),
+    runDir: path.join(projectDir, '.patch-poller', 'r1', 'turn-1'),
     runId: 'r1',
+    turnId: 1,
     context: { objective: 'hello' }
   });
   assert.equal(result.exitCode, 0);
   assert.match(result.stdout, /hello/);
   assert.match(result.stdout, /clean/);
   assert.doesNotMatch(result.stdout, /secret/);
+  assert.equal(result.contextFile.startsWith(`${projectDir}${path.sep}`), false);
+  assert.equal(result.resultFile.startsWith(`${projectDir}${path.sep}`), false);
+  assert.equal(result.contextFile.startsWith(path.resolve(exchangeRoot)), true);
+  assert.equal(result.mailbox.turnId, 'turn-1');
 });

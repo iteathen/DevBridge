@@ -71,7 +71,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     baselineChannels: config.workspace.baselineChannels,
     defaultBaselineChannel: config.workspace.defaultBaselineChannel,
   });
-  const processRunner = new ProcessRunner({ sourceEnv: env });
+  const processRunner = new ProcessRunner({ sourceEnv: env, exchangeRoot: path.join(config.state.directory, 'exchange') });
   const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
   const deterministicProcessRunner = new DeterministicProcessRunner({ sourceEnv: env, faultInjector });
   const toolchainRegistry = createCoreToolchainRegistry({ env });

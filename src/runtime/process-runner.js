@@ -1,15 +1,12 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import os from 'node:os';
 import path from 'node:path';
-import { PolicyError } from '../errors.js';
 import { expandProfileArgs } from './cli-profile.js';
+import { ControlMailbox } from './control-mailbox.js';
 import { resolveExecutable } from './executable-resolver.js';
 import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
 
-function isWithin(root, candidate) {
-  const relative = path.relative(root, candidate);
-  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
-}
 function appendTail(current, chunk, maxBytes) {
   const combined = Buffer.concat([current, Buffer.from(chunk)]);
   if (combined.length <= maxBytes) return { buffer: combined, truncated: false };
@@ -44,10 +41,10 @@ export function toolBridge(runId, resultFile) {
     runId: String(runId),
     resultFile,
     resultProtocol: 'patch-poller/result-v1',
-    requirement: 'Before exiting, write one JSON result envelope to resultFile when the CLI can do so. PATCH-POLLER independently validates the workspace; never claim completion unless the requested work and checks are complete.',
+    requirement: 'Before exiting, overwrite the pre-created resultFile with one JSON result envelope when the CLI can do so. PATCH-POLLER independently validates the workspace; never claim completion unless the requested work and checks are complete.',
     gitAuthority: {
       owner: 'patch-poller',
-      rule: 'Project edits are proposals. Do not stage, commit, reset, checkout, clean, push, or otherwise write Git administrative state. Do not write .git or linked-worktree metadata. Read-only Git inspection is allowed. Leave accepted project edits in the working tree; PATCH-POLLER validates, stages, seals, commits, and publishes them.'
+      rule: 'Project edits are proposals. Git administrative state is intentionally not part of the worker contract. Do not stage, commit, reset, checkout, clean, push, or access/write .git or linked-worktree metadata. PATCH-POLLER validates, stages, seals, commits, and publishes accepted project edits.'
     },
     resultSchema: {
       required: ['protocol', 'status', 'summary'],
@@ -72,23 +69,37 @@ export function toolBridge(runId, resultFile) {
   };
 }
 
+function resolvedTurnId(turnId, runDir) {
+  if (turnId != null) return `turn-${String(turnId)}`;
+  if (typeof runDir === 'string' && runDir) return path.basename(path.resolve(runDir));
+  return 'turn-0';
+}
+
 export class ProcessRunner {
   #resolver;
   #sourceEnv;
-  constructor({ executableResolver = resolveExecutable, sourceEnv = process.env } = {}) { this.#resolver = executableResolver; this.#sourceEnv = sourceEnv; }
+  #mailbox;
 
-  async run({ profile, projectDir, runDir, runId, context }) {
+  constructor({ executableResolver = resolveExecutable, sourceEnv = process.env, exchangeRoot = null, mailbox = null } = {}) {
+    this.#resolver = executableResolver;
+    this.#sourceEnv = sourceEnv;
+    const root = exchangeRoot ?? path.join(os.tmpdir(), `patch-poller-control-exchange-${process.pid}-${randomUUID()}`);
+    this.#mailbox = mailbox ?? new ControlMailbox({ root: path.resolve(root) });
+  }
+
+  async run({ profile, projectDir, runDir = null, runId, turnId = null, context }) {
     const projectRoot = path.resolve(projectDir);
-    const resolvedRunDir = path.resolve(runDir);
-    if (!isWithin(projectRoot, resolvedRunDir)) throw new PolicyError('run directory must be inside the project directory');
-    await mkdir(resolvedRunDir, { recursive: true });
-    const contextFile = path.join(resolvedRunDir, 'context.json');
-    const resultFile = path.join(resolvedRunDir, 'result.json');
-    const toolContext = { ...context, bridge: toolBridge(runId, resultFile) };
-    await writeFile(contextFile, `${JSON.stringify(toolContext, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    const exchange = await this.#mailbox.prepare({ runId, turnId: resolvedTurnId(turnId, runDir) });
+    const toolContext = { ...context, bridge: toolBridge(runId, exchange.resultFile) };
+    await this.#mailbox.writeContext(exchange, `${JSON.stringify(toolContext, null, 2)}\n`);
 
     const executable = await this.#resolver(profile.executable, this.#sourceEnv);
-    const args = expandProfileArgs(profile.args, { projectDir: projectRoot, contextFile, resultFile, runId });
+    const args = expandProfileArgs(profile.args, {
+      projectDir: projectRoot,
+      contextFile: exchange.contextFile,
+      resultFile: exchange.resultFile,
+      runId,
+    });
     const env = buildEnvironment(profile, this.#sourceEnv);
     env.PATCH_POLLER_RUN_ID = String(runId);
     let stdin = null;
@@ -111,17 +122,26 @@ export class ProcessRunner {
 
     let result = null;
     let resultParseError = null;
-    try {
-      const info = await stat(resultFile);
-      if (info.size > 1_048_576) resultParseError = 'result file exceeds 1 MiB';
-      else {
-        try { result = parseResultJsonText(await readFile(resultFile, 'utf8')); }
-        catch (error) { if (error instanceof SyntaxError) resultParseError = error.message; else throw error; }
-      }
-    } catch (error) {
-      if (error?.code !== 'ENOENT') throw error;
+    const consumed = await this.#mailbox.consumeResult(exchange);
+    if (consumed.text != null) {
+      try { result = parseResultJsonText(consumed.text); }
+      catch (error) { if (error instanceof SyntaxError) resultParseError = error.message; else throw error; }
     }
 
-    return { executable, args, exitCode: exit.code, signal: exit.signal, timedOut, outputTruncated, stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8'), result, resultParseError, contextFile, resultFile };
+    return {
+      executable,
+      args,
+      exitCode: exit.code,
+      signal: exit.signal,
+      timedOut,
+      outputTruncated,
+      stdout: stdout.toString('utf8'),
+      stderr: stderr.toString('utf8'),
+      result,
+      resultParseError,
+      contextFile: exchange.contextFile,
+      resultFile: exchange.resultFile,
+      mailbox: { runDigest: exchange.runDigest, turnId: exchange.turnId, nonce: exchange.nonce },
+    };
   }
 }
