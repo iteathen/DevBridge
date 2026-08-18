@@ -29,10 +29,22 @@ function truncateFault(buffer) {
 export class DeterministicProcessRunner {
   #sourceEnv;
   #faults;
+  #sandbox;
 
-  constructor({ sourceEnv = process.env, faultInjector = null } = {}) {
+  constructor({ sourceEnv = process.env, faultInjector = null, sandboxProvider = null } = {}) {
     this.#sourceEnv = sourceEnv;
     this.#faults = faultInjector;
+    this.#sandbox = sandboxProvider;
+  }
+
+  sandboxStatus() {
+    return this.#sandbox?.inspect?.() ?? {
+      provider: 'none',
+      configured: false,
+      verified: false,
+      verification: 'unavailable',
+      reason: 'no sandbox provider attached to deterministic process runner',
+    };
   }
 
   async run({
@@ -46,6 +58,7 @@ export class DeterministicProcessRunner {
     onActivity = null,
     activityIntervalMs = DEFAULT_ACTIVITY_INTERVAL_MS,
     operation = null,
+    sandbox = null,
   }) {
     if (typeof executable !== 'string' || executable.length === 0) throw new PolicyError('deterministic operation executable is missing');
     if (!Array.isArray(args) || args.some((value) => typeof value !== 'string')) throw new PolicyError('deterministic operation args must be structural strings');
@@ -54,7 +67,20 @@ export class DeterministicProcessRunner {
     if (!Number.isInteger(activityIntervalMs) || activityIntervalMs < 10 || activityIntervalMs > 300_000) throw new PolicyError('deterministic activity interval is out of range');
 
     const env = boundedEnvironment(this.#sourceEnv, environment.pass ?? [], environment.set ?? {});
-    const child = spawn(executable, args, containedSpawnOptions({ cwd, env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
+    let launch = { executable, args, cwd, environment: env, provider: 'direct' };
+    if (sandbox?.required === true) {
+      const status = this.sandboxStatus();
+      if (!status.verified || !this.#sandbox?.prepareSpawn) {
+        throw new PolicyError(`deterministic operation ${operation ?? 'unknown'} executes repository code but no verified sandbox provider is active`);
+      }
+      launch = await this.#sandbox.prepareSpawn({ executable, args, cwd, environment: env, sandbox });
+    }
+
+    const child = spawn(
+      launch.executable,
+      launch.args,
+      containedSpawnOptions({ cwd: launch.cwd, env: launch.environment, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }),
+    );
     const startedAtMs = Date.now();
     const startedAt = new Date(startedAtMs).toISOString();
     const deadlineAt = new Date(startedAtMs + timeoutMs).toISOString();
@@ -81,6 +107,7 @@ export class DeterministicProcessRunner {
         deadlineAt,
         timeoutMs,
         processAlive,
+        sandboxProvider: launch.provider ?? 'direct',
       };
       if (stream) payload.stream = stream;
       if (bytes != null) payload.bytes = bytes;
@@ -153,6 +180,7 @@ export class DeterministicProcessRunner {
       startedAt,
       finishedAt: new Date().toISOString(),
       lastOutputAt,
+      sandboxProvider: launch.provider ?? 'direct',
     };
   }
 }
