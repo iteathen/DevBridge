@@ -4,10 +4,10 @@ import { parseTaskEnvelope } from '../src/github/task-envelope.js';
 import { ProtocolError } from '../src/errors.js';
 
 function body(object) {
-  return `Task description\n\n\`\`\`patch-poller-task\n${JSON.stringify(object)}\n\`\`\``;
+  return `\`\`\`patch-poller-task\n${JSON.stringify(object)}\n\`\`\``;
 }
 
-test('parses a bounded task envelope and produces a stable revision', () => {
+test('parses a bounded standalone task envelope and produces an exact-byte revision', () => {
   const task = {
     protocol: 'patch-poller/task-v1',
     target: { repository: 'iteathen/example' },
@@ -15,11 +15,13 @@ test('parses a bounded task envelope and produces a stable revision', () => {
     requestedCapabilities: ['project.write'],
     preferredTool: 'codex'
   };
-  const a = parseTaskEnvelope(body(task));
-  const b = parseTaskEnvelope(body(task));
+  const exact = body(task);
+  const a = parseTaskEnvelope(exact);
+  const b = parseTaskEnvelope(exact);
   assert.equal(a.envelope.target.repository, 'iteathen/example');
   assert.equal(a.revision, b.revision);
-  assert.match(a.revision, /^[0-9a-f]{64}$/);
+  assert.match(a.revision, /^[0-9a-f]{64}$/u);
+  assert.notEqual(parseTaskEnvelope(`${exact}\n`).revision, a.revision);
 });
 
 test('preserves bounded context handoff text as revision-bound task data', () => {
@@ -55,7 +57,9 @@ test('rejects remote command authority', () => {
   })), ProtocolError);
 });
 
-test('requires exactly one machine envelope', () => {
+test('surrounding discussion, quoted authority, and multiple envelopes are rejected', () => {
   const one = body({ protocol: 'patch-poller/task-v1', target: { repository: 'iteathen/example' }, instructions: 'A' });
-  assert.throws(() => parseTaskEnvelope(`${one}\n${one}`), /exactly one/);
+  assert.throws(() => parseTaskEnvelope(`Task description\n\n${one}`), /standalone/u);
+  assert.throws(() => parseTaskEnvelope(`> ${one.replaceAll('\n', '\n> ')}`), /standalone/u);
+  assert.throws(() => parseTaskEnvelope(`${one}\n${one}`), /standalone/u);
 });
