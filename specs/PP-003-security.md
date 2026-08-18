@@ -37,6 +37,27 @@ The default is therefore **deny arbitrary external reads**. Local configuration 
 
 `cwd` is not a sandbox. A coding-tool profile is executable only when local configuration identifies a real containment mechanism supplied by the tool or operating system, unless the operator explicitly enables an unsafe development override.
 
+## GitHub control-plane authentication
+
+GitHub authentication is local control-plane authority. Repository content, issue text, model output, and coding-tool configuration cannot select a credential source or cause a credential to be copied into the worker environment.
+
+The v0.1 control plane supports these local credential sources:
+
+1. an explicit bounded list of environment-variable names, with the default precedence `PATCH_POLLER_GITHUB_TOKEN`, `GH_TOKEN`, then `GITHUB_TOKEN`;
+2. when local policy uses `auto` or `github-cli`, the active credential already stored for the configured host by GitHub CLI, retrieved through `gh auth token --hostname <host>` with `shell: false`.
+
+Rules:
+
+- do not scan arbitrary environment-variable names looking for token-like values;
+- do not read repository files, arbitrary home-directory files, shell history, or coding-tool state to discover GitHub credentials;
+- environment-variable names are configuration; their values are secrets and are never serialized into config, run state, context capsules, diagnostics, or GitHub status;
+- the GitHub CLI fallback is a local credential broker only; its token stdout is consumed by PATCH-POLLER and never forwarded to the coding tool;
+- one resolved credential is shared by PATCH-POLLER's GitHub REST and controlled Git adapters for the process lifetime;
+- resolved credential values are included only in the local redaction set before outbound reporting;
+- `doctor` may report provider/source identity such as `GH_TOKEN` or `github-cli:github.com`, but never credential contents;
+- remote tasks cannot reorder providers, add environment-variable names, select a GitHub CLI account, or enable a broader auth mechanism;
+- future GitHub App authentication belongs behind this same local credential-provider boundary and must not weaken these rules.
+
 ## Network
 
 Network access is a capability because it can fetch executable content and exfiltrate data. The policy model distinguishes denied, restricted/sandbox-enforced, and explicitly unrestricted profiles. Playwright/browser-capable profiles should be separately identifiable from ordinary local coding profiles.
