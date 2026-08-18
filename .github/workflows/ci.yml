@@ -26,12 +26,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap
-      - name: Enable unprivileged user namespaces for Bubblewrap CI
-        if: runner.os == 'Linux'
-        run: |
-          echo "kernel.apparmor_restrict_unprivileged_userns = 0" | sudo tee /etc/sysctl.d/99-patch-poller-userns.conf
-          sudo sysctl --system
+          sudo apt-get install -y bubblewrap apparmor-profiles
+          test -f /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
       - name: Cheap preflight
         run: npm run preflight
       - name: Tests
