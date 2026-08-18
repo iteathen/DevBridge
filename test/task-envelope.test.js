@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseTaskEnvelope } from '../src/github/task-envelope.js';
+import { contentSha256 } from '../src/github/content-provenance.js';
 import { ProtocolError } from '../src/errors.js';
 
 function body(object) {
   return `Task description\n\n\`\`\`patch-poller-task\n${JSON.stringify(object)}\n\`\`\``;
 }
 
-test('parses a bounded task envelope and produces a stable revision', () => {
+test('parses a bounded task envelope and produces a stable exact-body-bound revision', () => {
   const task = {
     protocol: 'patch-poller/task-v1',
     target: { repository: 'iteathen/example' },
@@ -15,11 +16,19 @@ test('parses a bounded task envelope and produces a stable revision', () => {
     requestedCapabilities: ['project.write'],
     preferredTool: 'codex'
   };
-  const a = parseTaskEnvelope(body(task));
-  const b = parseTaskEnvelope(body(task));
+  const raw = body(task);
+  const a = parseTaskEnvelope(raw);
+  const b = parseTaskEnvelope(raw);
   assert.equal(a.envelope.target.repository, 'iteathen/example');
   assert.equal(a.revision, b.revision);
+  assert.equal(a.contentSha256, contentSha256(raw));
   assert.match(a.revision, /^[0-9a-f]{64}$/);
+
+  const surroundingBodyChanged = raw.replace('Task description', 'Task description changed');
+  const changed = parseTaskEnvelope(surroundingBodyChanged);
+  assert.deepEqual(changed.envelope, a.envelope);
+  assert.notEqual(changed.contentSha256, a.contentSha256);
+  assert.notEqual(changed.revision, a.revision);
 });
 
 test('preserves bounded context handoff text as revision-bound task data', () => {
@@ -55,7 +64,10 @@ test('rejects remote command authority', () => {
   })), ProtocolError);
 });
 
-test('requires exactly one machine envelope', () => {
+test('requires exactly one unquoted machine envelope', () => {
   const one = body({ protocol: 'patch-poller/task-v1', target: { repository: 'iteathen/example' }, instructions: 'A' });
   assert.throws(() => parseTaskEnvelope(`${one}\n${one}`), /exactly one/);
+
+  const quoted = one.split('\n').map((line) => `> ${line}`).join('\n');
+  assert.throws(() => parseTaskEnvelope(quoted), /exactly one/);
 });
