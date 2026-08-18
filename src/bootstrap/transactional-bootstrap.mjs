@@ -1,18 +1,25 @@
+import { createHash, verify as verifySignature } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import * as legacy from './legacy-bootstrap.mjs';
+import { createSandboxProvider } from '../runtime/sandbox-provider.js';
 
 export * from './legacy-bootstrap.mjs';
 
 const ACTIVATION_PROTOCOL = 'patch-poller/runtime-activation-v1';
+const RELEASE_MANIFEST_PROTOCOL = 'patch-poller/release-manifest-v1';
+const RELEASE_REPOSITORY = 'iteathen/PATCH-POLLER';
 const CAPTURE_LIMIT = 4 * 1024 * 1024;
 const DEFAULT_HEALTH_WINDOW_MS = 2_000;
 const CHILD_RESTART_BACKOFF_MS = 5_000;
@@ -34,15 +41,8 @@ function updateCheckDelay(ms) {
     timer.unref?.();
   });
 }
-
-function runtimeDirectory(paths, runtime) {
-  return path.resolve(runtime?.runtimeDir ?? paths.runtime);
-}
-
-function runtimePaths(paths, runtime) {
-  return { ...paths, runtime: runtimeDirectory(paths, runtime) };
-}
-
+function runtimeDirectory(paths, runtime) { return path.resolve(runtime?.runtimeDir ?? paths.runtime); }
+function runtimePaths(paths, runtime) { return { ...paths, runtime: runtimeDirectory(paths, runtime) }; }
 function isWithin(root, candidate) {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
   return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
@@ -56,6 +56,8 @@ function runtimeRecord(runtime, paths) {
     version: runtime.version,
     runtimeDir: runtimeDirectory(paths, runtime),
     cliPath: path.resolve(runtime.cliPath),
+    artifactSha256: runtime.artifactSha256 ?? null,
+    releaseMode: runtime.releaseMode ?? null,
   };
 }
 
@@ -74,11 +76,7 @@ function activationRecord(state, paths, previous, candidate = null, extra = {}) 
 
 export function resolveBootstrapPaths(args, environment = process.env) {
   const base = legacy.resolveBootstrapPaths(args, environment);
-  return {
-    ...base,
-    runtimeCandidates: path.join(base.home, 'runtime-candidates'),
-    activationStateFile: path.join(base.home, 'runtime-activation.json'),
-  };
+  return { ...base, runtimeCandidates: path.join(base.home, 'runtime-candidates'), activationStateFile: path.join(base.home, 'runtime-activation.json') };
 }
 
 export function writeRuntimeActivationState(paths, value) {
@@ -96,27 +94,13 @@ export function readRuntimeActivationState(paths) {
   try {
     const parsed = JSON.parse(readFileSync(filePath, 'utf8'));
     return parsed?.protocol === ACTIVATION_PROTOCOL ? parsed : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
-export function runPollerCli(command, paths, runtime, runner = defaultRunner) {
-  return legacy.runPollerCli(command, runtimePaths(paths, runtime), runtime, runner);
-}
-
-export function runPollerCliCaptured(command, paths, runtime, runner = defaultRunner) {
-  return legacy.runPollerCliCaptured(command, runtimePaths(paths, runtime), runtime, runner);
-}
-
-export function prepareLocalConfig(paths, runtime = null) {
-  return legacy.prepareLocalConfig(runtime ? runtimePaths(paths, runtime) : paths);
-}
-
-export function spawnPollerDaemon(paths, runtime, spawnImpl = spawn) {
-  return legacy.spawnPollerDaemon(runtimePaths(paths, runtime), runtime, spawnImpl);
-}
-
+export function runPollerCli(command, paths, runtime, runner = defaultRunner) { return legacy.runPollerCli(command, runtimePaths(paths, runtime), runtime, runner); }
+export function runPollerCliCaptured(command, paths, runtime, runner = defaultRunner) { return legacy.runPollerCliCaptured(command, runtimePaths(paths, runtime), runtime, runner); }
+export function prepareLocalConfig(paths, runtime = null) { return legacy.prepareLocalConfig(runtime ? runtimePaths(paths, runtime) : paths); }
+export function spawnPollerDaemon(paths, runtime, spawnImpl = spawn) { return legacy.spawnPollerDaemon(runtimePaths(paths, runtime), runtime, spawnImpl); }
 export async function stopExistingDaemon(paths, runtime, runner = defaultRunner, options = {}) {
   return legacy.stopExistingDaemon(paths, runtime, runner, {
     ...options,
@@ -125,27 +109,25 @@ export async function stopExistingDaemon(paths, runtime, runner = defaultRunner,
   });
 }
 
-function candidateEnvironment(source = process.env) {
+function candidateEnvironment(source = process.env, isolatedHome = null) {
   const allowed = process.platform === 'win32'
-    ? ['PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'SystemDrive', 'TEMP', 'TMP', 'TMPDIR', 'USERPROFILE']
-    : ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP'];
+    ? ['PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'SystemDrive', 'TEMP', 'TMP', 'TMPDIR']
+    : ['PATH', 'TMPDIR', 'TMP', 'TEMP'];
   const env = {};
   for (const name of allowed) if (source[name] != null) env[name] = source[name];
+  if (isolatedHome) {
+    env.HOME = isolatedHome;
+    env.USERPROFILE = isolatedHome;
+  }
   env.CI = '1';
   env.NO_COLOR = '1';
   env.GIT_TERMINAL_PROMPT = '0';
+  env.PATCH_POLLER_NONINTERACTIVE = '1';
   return env;
 }
 
 function checkedCommand(executable, args, { cwd, env, runner, label, timeout }) {
-  const result = runner(executable, args, {
-    cwd,
-    env,
-    stdio: 'pipe',
-    timeout,
-    shell: false,
-    windowsHide: true,
-  });
+  const result = runner(executable, args, { cwd, env, stdio: 'pipe', timeout, shell: false, windowsHide: true });
   if (result.error || result.status !== 0) {
     const detail = String(result.stderr || result.stdout || result.error?.message || '').trim();
     throw new Error(`${label} failed (exit ${result.status ?? 'spawn-error'})${detail ? `: ${detail.slice(-4000)}` : ''}`);
@@ -153,18 +135,123 @@ function checkedCommand(executable, args, { cwd, env, runner, label, timeout }) 
   return result;
 }
 
-export function validateRuntimeCandidate(paths, runtime, runner = defaultRunner, { runDoctorFn = runPollerCli } = {}) {
+function canonicalReleasePayload(manifest) {
+  return JSON.stringify({
+    protocol: RELEASE_MANIFEST_PROTOCOL,
+    repository: manifest.repository,
+    commit: manifest.commit,
+    treeSha256: manifest.treeSha256,
+    createdAt: manifest.createdAt,
+  });
+}
+
+export function candidateTreeSha256(runtimeDir) {
+  const root = path.resolve(runtimeDir);
+  const entries = [];
+  const walk = (directory, prefix = '') => {
+    for (const name of readdirSync(directory).sort()) {
+      if (prefix === '' && name === '.git') continue;
+      const absolute = path.join(directory, name);
+      const relative = prefix ? `${prefix}/${name}` : name;
+      const info = lstatSync(absolute);
+      if (info.isSymbolicLink()) throw new Error(`release candidate contains symbolic link ${relative}`);
+      if (info.isDirectory()) { walk(absolute, relative); continue; }
+      if (!info.isFile()) throw new Error(`release candidate contains unsupported filesystem object ${relative}`);
+      const bytes = readFileSync(absolute);
+      entries.push(`${relative}\0${info.mode & 0o777}\0${bytes.length}\0${createHash('sha256').update(bytes).digest('hex')}`);
+    }
+  };
+  walk(root);
+  return createHash('sha256').update(entries.join('\n'), 'utf8').digest('hex');
+}
+
+export function verifyProductionReleaseManifest(paths, runtime, environment = process.env) {
+  const manifestFile = environment.PATCH_POLLER_RELEASE_MANIFEST_FILE;
+  const publicKeyFile = environment.PATCH_POLLER_RELEASE_PUBLIC_KEY_FILE;
+  if (!manifestFile || !publicKeyFile || !path.isAbsolute(manifestFile) || !path.isAbsolute(publicKeyFile)) {
+    throw new Error('stable production updates require absolute PATCH_POLLER_RELEASE_MANIFEST_FILE and PATCH_POLLER_RELEASE_PUBLIC_KEY_FILE local paths');
+  }
+  let manifest;
+  try { manifest = JSON.parse(readFileSync(manifestFile, 'utf8')); }
+  catch (error) { throw new Error(`could not parse trusted release manifest: ${error.message}`); }
+  if (manifest?.protocol !== RELEASE_MANIFEST_PROTOCOL || manifest.repository !== RELEASE_REPOSITORY) throw new Error('trusted release manifest identity is invalid');
+  if (!/^[0-9a-f]{40}$/u.test(manifest.commit ?? '') || !/^[0-9a-f]{64}$/u.test(manifest.treeSha256 ?? '') || typeof manifest.createdAt !== 'string') {
+    throw new Error('trusted release manifest fields are invalid');
+  }
+  if (String(runtime.head).toLowerCase() !== manifest.commit) throw new Error(`release manifest commit ${manifest.commit} does not match candidate ${runtime.head}`);
+  if (typeof manifest.signature !== 'string' || !/^[A-Za-z0-9+/=]+$/u.test(manifest.signature)) throw new Error('trusted release manifest signature is invalid');
+  const publicKey = readFileSync(publicKeyFile, 'utf8');
+  const valid = verifySignature(null, Buffer.from(canonicalReleasePayload(manifest), 'utf8'), publicKey, Buffer.from(manifest.signature, 'base64'));
+  if (!valid) throw new Error('trusted release manifest signature verification failed');
+  const observedTree = candidateTreeSha256(runtimeDirectory(paths, runtime));
+  if (observedTree !== manifest.treeSha256) throw new Error(`release manifest tree digest mismatch; expected ${manifest.treeSha256}, observed ${observedTree}`);
+  return { mode: 'production', manifest: { repository: manifest.repository, commit: manifest.commit, treeSha256: manifest.treeSha256, createdAt: manifest.createdAt } };
+}
+
+function validationConfig(paths, scratch) {
+  return {
+    version: 1,
+    github: {
+      queueRepository: RELEASE_REPOSITORY,
+      trustedActorIds: ['1'],
+      auth: { mode: 'environment', environmentVariables: ['PATCH_POLLER_VALIDATION_TOKEN'], githubCliExecutable: 'gh', hostname: 'github.com' },
+      rateLimit: {},
+    },
+    workspace: { root: path.join(scratch, 'workspaces'), allowCreate: true, allowedOwners: ['iteathen'], externalReadRoots: [] },
+    state: { directory: path.join(scratch, 'state') },
+    execution: { enabled: false, controllerPlansEnabled: true, modelAdaptersEnabled: false, sandbox: { provider: 'none' } },
+    publication: { autoPushTaskBranches: false },
+    status: {},
+    tools: {},
+  };
+}
+
+async function sandboxedCandidateCommand(provider, executable, args, { cwd, env, scratch, runner, label, timeout }) {
+  const launch = await provider.prepareSpawn({
+    executable,
+    args,
+    cwd,
+    environment: env,
+    sandbox: { projectRoot: cwd, projectWritable: false, writableRoots: [scratch], readOnlyRoots: [], network: 'deny' },
+  });
+  return checkedCommand(launch.executable, launch.args, { cwd: launch.cwd, env: launch.environment, runner, label, timeout });
+}
+
+export async function validateRuntimeCandidate(paths, runtime, runner = defaultRunner, {
+  environment = process.env,
+  sandboxProvider = null,
+} = {}) {
   const cwd = runtimeDirectory(paths, runtime);
-  const env = candidateEnvironment();
-  checkedCommand(process.execPath, [path.join(cwd, 'src', 'bootstrap', 'repository-preflight.mjs')], {
-    cwd, env, runner, label: 'candidate cheap preflight', timeout: 4 * 60_000,
-  });
-  checkedCommand(process.execPath, ['--test'], {
-    cwd, env, runner, label: 'candidate test suite', timeout: 10 * 60_000,
-  });
-  const doctorStatus = runDoctorFn('doctor', paths, runtime, runner);
-  if (doctorStatus !== 0) throw new Error(`candidate doctor failed with exit ${doctorStatus}`);
-  return { preflight: 'passed', syntax: 'passed', tests: 'passed', doctor: 'passed' };
+  const scratch = path.join(paths.home, 'candidate-validation', String(runtime.head).toLowerCase());
+  rmSync(scratch, { recursive: true, force: true });
+  mkdirSync(scratch, { recursive: true, mode: 0o700 });
+  mkdirSync(path.join(scratch, 'home'), { recursive: true, mode: 0o700 });
+  const env = candidateEnvironment(environment, path.join(scratch, 'home'));
+  const provider = sandboxProvider ?? createSandboxProvider({
+    provider: environment.PATCH_POLLER_BOOTSTRAP_SANDBOX_PROVIDER ?? 'auto',
+    executable: environment.PATCH_POLLER_BOOTSTRAP_SANDBOX_EXECUTABLE ?? 'bwrap',
+  }, { env: environment, externalReadRoots: [] });
+  const status = await provider.verify();
+  if (!status.verified) throw new Error(`candidate validation requires verified sandbox containment: ${status.reason ?? status.verification}`);
+  const beforeDigest = candidateTreeSha256(cwd);
+  const validationConfigFile = path.join(scratch, 'config.json');
+  writeFileSync(validationConfigFile, `${JSON.stringify(validationConfig(paths, scratch), null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  try {
+    await sandboxedCandidateCommand(provider, process.execPath, [path.join(cwd, 'src', 'bootstrap', 'repository-preflight.mjs')], {
+      cwd, env, scratch, runner, label: 'candidate cheap preflight', timeout: 4 * 60_000,
+    });
+    await sandboxedCandidateCommand(provider, process.execPath, ['--test'], {
+      cwd, env, scratch, runner, label: 'candidate test suite', timeout: 10 * 60_000,
+    });
+    await sandboxedCandidateCommand(provider, process.execPath, [path.join(cwd, 'src', 'cli.js'), 'doctor', '--config', validationConfigFile], {
+      cwd, env, scratch, runner, label: 'candidate isolated doctor', timeout: 4 * 60_000,
+    });
+    const afterDigest = candidateTreeSha256(cwd);
+    if (afterDigest !== beforeDigest) throw new Error(`candidate validation changed tested runtime bytes: ${beforeDigest} -> ${afterDigest}`);
+    return { preflight: 'passed', tests: 'passed', doctor: 'passed', sandbox: status.provider, artifactSha256: afterDigest };
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 export function candidateRuntimePath(paths, head) {
@@ -179,6 +266,8 @@ export async function prepareRuntimeCandidate(args, paths, {
   runner = defaultRunner,
   ensureRuntimeFn = legacy.ensureRuntime,
   validateCandidateFn = validateRuntimeCandidate,
+  verifyProductionReleaseFn = verifyProductionReleaseManifest,
+  environment = process.env,
 } = {}) {
   if (!desiredRef || !/^[0-9a-f]{40}$/iu.test(String(desiredHead))) throw new Error('candidate preparation requires a trusted ref and exact head');
   const runtimeDir = candidateRuntimePath(paths, desiredHead);
@@ -187,8 +276,13 @@ export async function prepareRuntimeCandidate(args, paths, {
   if (candidate.ref !== desiredRef || candidate.head.toLowerCase() !== String(desiredHead).toLowerCase()) {
     throw new Error(`candidate changed during preparation; expected ${desiredRef}@${desiredHead}, observed ${candidate.ref}@${candidate.head}`);
   }
-  const runtime = { ...candidate, runtimeDir };
-  validateCandidateFn(paths, runtime, runner);
+  let runtime = { ...candidate, runtimeDir, releaseMode: args.channel === 'stable' ? 'production' : 'development' };
+  const release = args.channel === 'stable' ? verifyProductionReleaseFn(paths, runtime, environment) : { mode: 'development' };
+  const validation = await validateCandidateFn(paths, runtime, runner, { environment });
+  const exactDigest = candidateTreeSha256(runtimeDir);
+  if (validation?.artifactSha256 && validation.artifactSha256 !== exactDigest) throw new Error('validated artifact digest no longer matches exact candidate bytes');
+  if (release.manifest?.treeSha256 && release.manifest.treeSha256 !== exactDigest) throw new Error('signed release artifact digest no longer matches exact candidate bytes');
+  runtime = { ...runtime, artifactSha256: exactDigest, releaseMode: release.mode };
   return runtime;
 }
 
@@ -202,10 +296,10 @@ export function loadPersistedHealthyRuntime(paths, runner = defaultRunner, { ens
   try {
     const observed = ensureRuntimeFn({ channel: 'testing', update: false }, { ...paths, runtime: runtimeDir }, runner);
     if (observed.head.toLowerCase() !== String(current.head).toLowerCase()) return null;
-    return { ...observed, ref: current.ref, runtimeDir };
-  } catch {
-    return null;
-  }
+    const artifactSha256 = candidateTreeSha256(runtimeDir);
+    if (current.artifactSha256 && artifactSha256 !== current.artifactSha256) return null;
+    return { ...observed, ref: current.ref, runtimeDir, artifactSha256, releaseMode: current.releaseMode ?? null };
+  } catch { return null; }
 }
 
 function childExit(child) {
@@ -214,10 +308,7 @@ function childExit(child) {
     child.once('exit', (code, signal) => resolve({ code, signal }));
   });
 }
-
-async function recordActivation(recordActivationFn, paths, record) {
-  return recordActivationFn(paths, record);
-}
+async function recordActivation(recordActivationFn, paths, record) { return recordActivationFn(paths, record); }
 
 export async function superviseDaemon(args, paths, initialRuntime, {
   runner = defaultRunner,
@@ -320,9 +411,7 @@ export async function superviseDaemon(args, paths, initialRuntime, {
         if (!operatorStopPending) {
           operatorStopPending = true;
           const stopStatus = runPollerCliFn('stop', paths, runtime, runner);
-          if (stopStatus !== 0 && stopStatus !== 3) {
-            process.stderr.write(`[patch-poller-supervisor] operator-stop-request-exit=${stopStatus}; waiting for daemon boundary\n`);
-          }
+          if (stopStatus !== 0 && stopStatus !== 3) process.stderr.write(`[patch-poller-supervisor] operator-stop-request-exit=${stopStatus}; waiting for daemon boundary\n`);
         }
         continue;
       }
@@ -341,18 +430,14 @@ export async function superviseDaemon(args, paths, initialRuntime, {
         }
         if (!remoteHead || (remoteHead === runtime.head && desiredRef === ref) || remoteHead === failedCandidateHead) continue;
 
-        const planned = { ref: desiredRef, head: remoteHead, version: runtime.version, runtimeDir: candidateRuntimePath(paths, remoteHead), cliPath: path.join(candidateRuntimePath(paths, remoteHead), 'src', 'cli.js') };
+        const planned = { ref: desiredRef, head: remoteHead, version: runtime.version, runtimeDir: candidateRuntimePath(paths, remoteHead), cliPath: path.join(candidateRuntimePath(paths, remoteHead), 'src', 'cli.js'), releaseMode: args.channel === 'stable' ? 'production' : 'development' };
         await recordActivation(recordActivationFn, paths, activationRecord('candidate-planned', paths, runtime, planned, { current: runtime }));
         let candidate;
         try {
           candidate = await candidatePrepareFn(args, paths, { desiredRef, desiredHead: remoteHead, previousRuntime: runtime, runner });
         } catch (error) {
           failedCandidateHead = remoteHead;
-          await recordActivation(recordActivationFn, paths, activationRecord('candidate-failed', paths, runtime, planned, {
-            current: runtime,
-            failedCandidate: planned,
-            error,
-          }));
+          await recordActivation(recordActivationFn, paths, activationRecord('candidate-failed', paths, runtime, planned, { current: runtime, failedCandidate: planned, error }));
           process.stderr.write(`[patch-poller-supervisor] candidate-validation-failed ${error.message}; current runtime remains ${runtime.head}\n`);
           continue;
         }
@@ -370,9 +455,7 @@ export async function superviseDaemon(args, paths, initialRuntime, {
         await recordActivation(recordActivationFn, paths, activationRecord('drain-requested', paths, runtime, candidate, { current: runtime }));
         process.stdout.write(`[patch-poller-supervisor] candidate-validated current=${runtime.head} next=${candidate.head}; requesting daemon drain\n`);
         const stopStatus = runPollerCliFn('stop', paths, runtime, runner);
-        if (stopStatus !== 0 && stopStatus !== 3) {
-          process.stderr.write(`[patch-poller-supervisor] stop-request-exit=${stopStatus}; waiting for daemon boundary\n`);
-        }
+        if (stopStatus !== 0 && stopStatus !== 3) process.stderr.write(`[patch-poller-supervisor] stop-request-exit=${stopStatus}; waiting for daemon boundary\n`);
         continue;
       }
 
@@ -408,29 +491,30 @@ export async function bootstrap(argv = process.argv.slice(2), runner = defaultRu
   let runtime = loadPersistedHealthyRuntime(paths, runner);
   if (!runtime) {
     runtime = legacy.ensureRuntime(runtimeExists ? { ...args, update: false } : args, paths, runner);
-    runtime = { ...runtime, runtimeDir: paths.runtime };
+    runtime = { ...runtime, runtimeDir: paths.runtime, releaseMode: args.channel === 'stable' ? 'production' : 'development' };
+  }
+  if (args.channel === 'stable') {
+    const release = verifyProductionReleaseManifest(paths, runtime, process.env);
+    runtime = { ...runtime, artifactSha256: release.manifest.treeSha256, releaseMode: 'production' };
+  } else {
+    runtime = { ...runtime, artifactSha256: runtime.artifactSha256 ?? candidateTreeSha256(runtimeDirectory(paths, runtime)), releaseMode: 'development' };
   }
 
-  process.stdout.write(`[patch-poller-bootstrap] channel=${args.channel} ref=${runtime.ref} version=${runtime.version} head=${runtime.head}\n`);
+  process.stdout.write(`[patch-poller-bootstrap] channel=${args.channel} release-mode=${runtime.releaseMode} ref=${runtime.ref} version=${runtime.version} head=${runtime.head} artifact=${runtime.artifactSha256}\n`);
   if (prepareLocalConfig(paths, runtime)) {
     process.stdout.write(
       `[patch-poller-bootstrap] Created safe local config: ${paths.config}\n` +
       '[patch-poller-bootstrap] Review execution/controller-plan policy and enable execution only when ready.\n' +
+      '[patch-poller-bootstrap] Stable production mode additionally requires a locally trusted signed release manifest and public key.\n' +
       '[patch-poller-bootstrap] Then run this same command again.\n',
     );
     return 0;
   }
 
-  if (args.command === 'status' || args.command === 'stop') {
-    return runPollerCli(args.command, paths, runtime, runner);
-  }
-
+  if (args.command === 'status' || args.command === 'stop') return runPollerCli(args.command, paths, runtime, runner);
   const doctorStatus = runPollerCli('doctor', paths, runtime, runner);
   if (doctorStatus !== 0 || args.command === 'doctor') return doctorStatus;
-
-  if (args.command !== 'daemon' && args.command !== 'restart') {
-    return runPollerCli(args.command, paths, runtime, runner);
-  }
+  if (args.command !== 'daemon' && args.command !== 'restart') return runPollerCli(args.command, paths, runtime, runner);
 
   await stopExistingDaemon(paths, runtime, runner);
   const controller = new AbortController();
@@ -438,12 +522,7 @@ export async function bootstrap(argv = process.argv.slice(2), runner = defaultRu
   process.once('SIGINT', requestStop);
   process.once('SIGTERM', requestStop);
   try {
-    return await superviseDaemon(
-      { ...args, command: 'daemon' },
-      paths,
-      runtime,
-      { runner, takeover: false, signal: controller.signal },
-    );
+    return await superviseDaemon({ ...args, command: 'daemon' }, paths, runtime, { runner, takeover: false, signal: controller.signal });
   } finally {
     process.removeListener('SIGINT', requestStop);
     process.removeListener('SIGTERM', requestStop);
