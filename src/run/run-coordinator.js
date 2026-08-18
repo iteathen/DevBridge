@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { buildContextCapsule } from '../context/context-capsule.js';
-import { PolicyError } from '../errors.js';
+import { CandidateValidationError, PolicyError } from '../errors.js';
 import { validateToolProfile } from '../runtime/cli-profile.js';
 import { parseToolResult } from './result-envelope.js';
 
@@ -118,15 +118,42 @@ export class RunCoordinator {
     }
   }
 
+  async #recordCandidateRejection(key, state, workspace, error) {
+    const snapshot = await this.#workspace.snapshot(workspace);
+    const summary = `PATCH-POLLER candidate validation rejected the proposal: ${error.message}`;
+    state.stage = 'running';
+    state.finalSnapshot = null;
+    state.prior.changedFiles = snapshot.changedFiles;
+    state.prior.git = {
+      branch: snapshot.branch,
+      baseSha: snapshot.baseSha,
+      headSha: snapshot.headSha,
+      dirty: snapshot.dirty
+    };
+    state.prior.blockers = [summary];
+    state.prior.nextStep = 'Repair the candidate validation issues in the working tree, re-run relevant read-only checks, and report complete only when correct. Do not stage or commit; PATCH-POLLER owns Git administrative state.';
+    state.prior.progress.push(summary);
+    await this.#save(key, state);
+    await this.#publish(state, 'REPAIRING', summary, snapshot, { force: true });
+    return null;
+  }
+
   async #finalize(key, state, workspace) {
     let finalSnapshot = state.finalSnapshot;
     if (state.stage !== 'publishing' || !finalSnapshot) {
       state.stage = 'verifying';
       await this.#save(key, state);
-      finalSnapshot = await this.#workspace.sealCandidate(workspace, {
-        issueNumber: state.task.issueNumber,
-        revision: state.task.revision
-      });
+      try {
+        finalSnapshot = await this.#workspace.sealCandidate(workspace, {
+          issueNumber: state.task.issueNumber,
+          revision: state.task.revision
+        });
+      } catch (error) {
+        if (error instanceof CandidateValidationError) {
+          return this.#recordCandidateRejection(key, state, workspace, error);
+        }
+        throw error;
+      }
       state.finalSnapshot = finalSnapshot;
       state.prior.changedFiles = finalSnapshot.changedFiles;
       state.prior.git = {
@@ -135,6 +162,8 @@ export class RunCoordinator {
         headSha: finalSnapshot.headSha,
         dirty: finalSnapshot.dirty
       };
+      state.prior.blockers = [];
+      state.prior.nextStep = null;
       await this.#save(key, state);
     }
 
@@ -299,7 +328,8 @@ export class RunCoordinator {
       }
 
       if (state.stage === 'verifying' || state.stage === 'publishing') {
-        return this.#finalize(key, state, workspace);
+        const finalized = await this.#finalize(key, state, workspace);
+        if (finalized) return finalized;
       }
 
       while (state.turn < this.#maxTurns) {
@@ -387,7 +417,8 @@ export class RunCoordinator {
 
         state.stage = 'verifying';
         await this.#save(key, state);
-        return this.#finalize(key, state, workspace);
+        const finalized = await this.#finalize(key, state, workspace);
+        if (finalized) return finalized;
       }
 
       state.stage = 'waiting-feedback';
@@ -408,6 +439,11 @@ export class RunCoordinator {
         branch: state.workspace?.branch ?? null
       };
     } catch (error) {
+      // Finalization/publishing infrastructure failures are resumable. Keep the
+      // persisted stage so the daemon can report/retry them without rerunning
+      // the model or terminalizing a candidate that may already be sealed.
+      if (state.stage === 'verifying' || state.stage === 'publishing') throw error;
+
       state.stage = 'failed';
       state.error = { classification: error.name, message: error.message, at: nowIso() };
       await this.#save(key, state);
