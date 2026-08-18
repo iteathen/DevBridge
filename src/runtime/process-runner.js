@@ -53,16 +53,31 @@ export function parseResultJsonText(text) {
   return JSON.parse(normalized);
 }
 
+async function consumeMailboxResult(mailbox) {
+  let result = null;
+  let resultParseError = null;
+  const consumed = await mailbox.consumeResult({ maxBytes: 1_048_576 });
+  resultParseError = consumed.resultParseError;
+  if (consumed.text != null && !resultParseError) {
+    try { result = parseResultJsonText(consumed.text); }
+    catch (error) {
+      if (error instanceof SyntaxError) resultParseError = error.message;
+      else throw error;
+    }
+  }
+  return { result, resultParseError, resultPresent: consumed.text != null };
+}
+
 export function toolBridge(runId, resultFile) {
   return {
     protocol: 'patch-poller/tool-bridge-v1',
     runId: String(runId),
     resultFile,
     resultProtocol: 'patch-poller/result-v1',
-    requirement: 'Before exiting, write one JSON result envelope to resultFile when the CLI can do so. PATCH-POLLER independently validates the workspace; never claim completion unless the requested work and checks are complete.',
+    requirement: 'Before exiting, overwrite the existing resultFile in place with one JSON result envelope when the CLI can do so. Do not unlink, rename over, symlink, or replace the mailbox file. PATCH-POLLER independently validates the workspace; never claim completion unless the requested work and checks are complete.',
     gitAuthority: {
       owner: 'patch-poller',
-      rule: 'Project edits are proposals. Do not stage, commit, reset, checkout, clean, push, or otherwise write Git administrative state. Do not write .git or linked-worktree metadata. Read-only Git inspection is allowed. Leave accepted project edits in the working tree; PATCH-POLLER validates, stages, seals, commits, and publishes them.'
+      rule: 'Project edits are proposals. Do not stage, commit, reset, checkout, clean, push, or otherwise write Git administrative state. Do not write .git or linked-worktree metadata. Do not rely on Git administrative state being available inside the worker boundary; any available read-only Git inspection is observational only. Leave accepted project edits in the working tree; PATCH-POLLER validates, stages, seals, commits, and publishes them.'
     },
     resultSchema: {
       required: ['protocol', 'status', 'summary'],
@@ -105,17 +120,44 @@ export class ProcessRunner {
     this.#sandboxProvider = sandboxProvider;
   }
 
+  #turnIdentity(projectDir, runDir) {
+    const projectRoot = path.resolve(projectDir);
+    const resolvedRunDir = path.resolve(runDir);
+    if (!isWithin(projectRoot, resolvedRunDir)) throw new PolicyError('run identity path must be inside the project directory');
+    return { projectRoot, turnId: path.basename(resolvedRunDir) };
+  }
+
+  async recoverResult({ projectDir, runDir, runId }) {
+    if (!this.#exchange) throw new PolicyError('worker recovery requires a control-plane-owned worker exchange');
+    const { turnId } = this.#turnIdentity(projectDir, runDir);
+    const mailbox = await this.#exchange.openTurn({ runId, turnId });
+    const consumed = await consumeMailboxResult(mailbox);
+    return {
+      executable: null,
+      args: [],
+      exitCode: null,
+      signal: null,
+      timedOut: false,
+      outputTruncated: false,
+      stdout: '',
+      stderr: '',
+      recovered: true,
+      ...consumed,
+      contextFile: mailbox.contextFile,
+      resultFile: mailbox.resultFile,
+      workerContextFile: mailbox.workerContextFile,
+      workerResultFile: mailbox.workerResultFile,
+      sandbox: null,
+    };
+  }
+
   async run({ profile, projectDir, runDir, runId, context }) {
     if (!this.#exchange) throw new PolicyError('worker execution requires a control-plane-owned worker exchange');
     if (!this.#sandboxProvider || typeof this.#sandboxProvider.prepareExecution !== 'function') {
       throw new PolicyError('worker execution requires a verified OS isolation provider');
     }
 
-    const projectRoot = path.resolve(projectDir);
-    const resolvedRunDir = path.resolve(runDir);
-    if (!isWithin(projectRoot, resolvedRunDir)) throw new PolicyError('run identity path must be inside the project directory');
-    const turnId = path.basename(resolvedRunDir);
-
+    const { projectRoot, turnId } = this.#turnIdentity(projectDir, runDir);
     const toolContext = { ...context, bridge: toolBridge(runId, WORKER_RESULT_FILE) };
     const mailbox = await this.#exchange.prepareTurn({ runId, turnId, context: toolContext });
 
@@ -168,18 +210,7 @@ export class ProcessRunner {
     timer.unref?.();
     const exit = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', (code, signal) => resolve({ code, signal })); }).finally(async () => { clearTimeout(timer); if (termination) await termination; });
 
-    let result = null;
-    let resultParseError = null;
-    const consumed = await mailbox.consumeResult({ maxBytes: 1_048_576 });
-    resultParseError = consumed.resultParseError;
-    if (consumed.text != null && !resultParseError) {
-      try { result = parseResultJsonText(consumed.text); }
-      catch (error) {
-        if (error instanceof SyntaxError) resultParseError = error.message;
-        else throw error;
-      }
-    }
-
+    const consumed = await consumeMailboxResult(mailbox);
     return {
       executable,
       args,
@@ -189,8 +220,8 @@ export class ProcessRunner {
       outputTruncated,
       stdout: stdout.toString('utf8'),
       stderr: stderr.toString('utf8'),
-      result,
-      resultParseError,
+      recovered: false,
+      ...consumed,
       contextFile: mailbox.contextFile,
       resultFile: mailbox.resultFile,
       workerContextFile: mailbox.workerContextFile,
