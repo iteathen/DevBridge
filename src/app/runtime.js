@@ -22,6 +22,7 @@ import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
 import { createSandboxManager } from '../runtime/sandbox-manager.js';
+import { InventoryAwareProcessRunner, InventoryAwareStatusReporter } from '../runtime/inventory-aware-runtime.js';
 import { ToolInventoryService } from '../runtime/tool-inventory-service.js';
 import { CandidateDecisionGate } from '../run/candidate-decision-gate.js';
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
@@ -56,7 +57,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   const feedbackSource = new IssueFeedbackSource({ client, queueRepository: config.github.queueRepository, trustedActorIds: config.github.trustedActorIds });
   const decisionSource = new IssueDecisionSource({ client, queueRepository: config.github.queueRepository, authorities: config.decisions.authorities });
   const secretValues = credential ? [credential.token] : [];
-  const statusReporter = new IssueStatusReporter({ client, stateStore, queueRepository: config.github.queueRepository, progressIntervalMs: config.status.progressIntervalMs, maxCommentBytes: config.status.maxCommentBytes, secretValues });
+  const rawStatusReporter = new IssueStatusReporter({ client, stateStore, queueRepository: config.github.queueRepository, progressIntervalMs: config.status.progressIntervalMs, maxCommentBytes: config.status.maxCommentBytes, secretValues });
   const chatHandoffProjector = new ChatHandoffProjector({
     client,
     stateStore,
@@ -86,7 +87,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     env,
     allowUnsafeUncontained: config.execution.allowUncontainedTools,
   });
-  const processRunner = new ProcessRunner({
+  const rawProcessRunner = new ProcessRunner({
     sourceEnv: env,
     mailboxRoot: path.join(config.state.directory, 'worker-mailboxes'),
     sandboxManager,
@@ -101,10 +102,6 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     processRunner: deterministicProcessRunner,
     workspaceManager,
     faultInjector,
-  });
-  const controllerPlanExecutor = new LivenessProjectingPlanExecutor({
-    delegate: deterministicControllerPlanExecutor,
-    statusReporter,
   });
   const decisionGate = config.decisions.enabled
     ? new CandidateDecisionGate({ workspaceManager, decisionSource, expiryMs: config.decisions.expiryMs })
@@ -128,6 +125,12 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     env,
   });
   await toolInventoryService.initialize();
+  const statusReporter = new InventoryAwareStatusReporter({ delegate: rawStatusReporter, inventoryService: toolInventoryService, projector: toolInventoryProjector });
+  const processRunner = new InventoryAwareProcessRunner({ delegate: rawProcessRunner, inventoryService: toolInventoryService });
+  const controllerPlanExecutor = new LivenessProjectingPlanExecutor({
+    delegate: deterministicControllerPlanExecutor,
+    statusReporter,
+  });
 
   const coordinator = new RunCoordinator({
     stateStore,
@@ -137,8 +140,6 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     statusReporter,
     feedbackSource,
     decisionGate,
-    toolInventoryService,
-    toolInventoryProjector,
     queueRepository: config.github.queueRepository,
     tools,
     defaultTool: config.execution.defaultTool,
@@ -161,6 +162,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     taskSource,
     feedbackSource,
     decisionSource,
+    rawStatusReporter,
     statusReporter,
     toolInventoryProjector,
     toolInventoryService,
@@ -168,6 +170,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     gitClient,
     workspaceManager,
     sandboxManager,
+    rawProcessRunner,
     processRunner,
     deterministicProcessRunner,
     faultInjector,
