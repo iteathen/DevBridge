@@ -374,24 +374,49 @@ export async function bootstrap(argv = process.argv.slice(2), runner = defaultRu
   const paths = resolveBootstrapPaths(args);
   const runtimeExists = existsSync(paths.runtime);
 
-  if (args.command === 'restart') {
+  if (args.command === 'daemon' || args.command === 'restart') {
+    let runtime = null;
     if (runtimeExists) {
       const existing = ensureRuntime({ ...args, update: false }, paths, runner);
       await stopExistingDaemon(paths, existing, runner);
+      runtime = args.update ? ensureRuntime({ ...args, command: 'daemon' }, paths, runner) : existing;
+    } else {
+      runtime = ensureRuntime({ ...args, command: 'daemon' }, paths, runner);
     }
-    const runtime = ensureRuntime(args, paths, runner);
+
     process.stdout.write(`[patch-poller-bootstrap] channel=${args.channel} ref=${runtime.ref} version=${runtime.version} head=${runtime.head}\n`);
-    if (prepareLocalConfig(paths)) return 0;
+    if (prepareLocalConfig(paths)) {
+      process.stdout.write(
+        `[patch-poller-bootstrap] Created safe local config: ${paths.config}\n` +
+        '[patch-poller-bootstrap] Review the tool profile and set execution.enabled only when ready.\n' +
+        '[patch-poller-bootstrap] Then run this same command again.\n',
+      );
+      return 0;
+    }
     const doctorStatus = runPollerCli('doctor', paths, runtime, runner);
     if (doctorStatus !== 0) return doctorStatus;
-    return superviseDaemon({ ...args, command: 'daemon' }, paths, runtime, { runner, takeover: false });
+
+    const controller = new AbortController();
+    const requestStop = () => controller.abort();
+    process.once('SIGINT', requestStop);
+    process.once('SIGTERM', requestStop);
+    try {
+      return await superviseDaemon(
+        { ...args, command: 'daemon' },
+        paths,
+        runtime,
+        { runner, takeover: false, signal: controller.signal },
+      );
+    } finally {
+      process.removeListener('SIGINT', requestStop);
+      process.removeListener('SIGTERM', requestStop);
+    }
   }
 
-  // Only the long-lived supervisor mutates the managed runtime. One-shot
-  // inspection/control commands use the exact currently installed runtime.
-  const ownsUpdates = args.command === 'daemon';
+  // One-shot inspection/control commands use the exact currently installed
+  // runtime and never mutate files beneath an active daemon.
   const runtime = ensureRuntime(
-    runtimeExists && !ownsUpdates ? { ...args, update: false } : args,
+    runtimeExists ? { ...args, update: false } : args,
     paths,
     runner,
   );
@@ -412,17 +437,7 @@ export async function bootstrap(argv = process.argv.slice(2), runner = defaultRu
 
   const doctorStatus = runPollerCli('doctor', paths, runtime, runner);
   if (doctorStatus !== 0 || args.command === 'doctor') return doctorStatus;
-  if (args.command !== 'daemon') return runPollerCli(args.command, paths, runtime, runner);
-  const controller = new AbortController();
-  const requestStop = () => controller.abort();
-  process.once('SIGINT', requestStop);
-  process.once('SIGTERM', requestStop);
-  try {
-    return await superviseDaemon(args, paths, runtime, { runner, takeover: true, signal: controller.signal });
-  } finally {
-    process.removeListener('SIGINT', requestStop);
-    process.removeListener('SIGTERM', requestStop);
-  }
+  return runPollerCli(args.command, paths, runtime, runner);
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
