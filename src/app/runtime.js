@@ -8,6 +8,7 @@ import { GitHubRestClient } from '../github/rest-client.js';
 import { resolveGitHubCredential } from '../github/auth-provider.js';
 import { IssueTaskSource } from '../github/issue-task-source.js';
 import { IssueFeedbackSource } from '../github/issue-feedback-source.js';
+import { IssueDecisionSource } from '../github/issue-decision-source.js';
 import { IssueStatusReporter } from '../github/issue-status-reporter.js';
 import { ChatHandoffProjector } from '../github/chat-handoff-projector.js';
 import { WorkspacePolicy } from '../security/workspace-policy.js';
@@ -20,6 +21,7 @@ import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
 import { createSandboxManager } from '../runtime/sandbox-manager.js';
+import { CandidateDecisionGate } from '../run/candidate-decision-gate.js';
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
 import { LivenessProjectingPlanExecutor } from '../run/liveness-projecting-plan-executor.js';
 import { RunCoordinator } from '../run/run-coordinator.js';
@@ -50,6 +52,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   const client = new GitHubRestClient({ apiVersion: config.github.apiVersion, tokenProvider, stateStore, rateBudget, mutationIntervalMs: config.github.rateLimit.mutationIntervalMs, fetchImpl });
   const taskSource = new IssueTaskSource({ client, queueRepository: config.github.queueRepository, taskLabel: config.github.taskLabel, trustedActorIds: config.github.trustedActorIds });
   const feedbackSource = new IssueFeedbackSource({ client, queueRepository: config.github.queueRepository, trustedActorIds: config.github.trustedActorIds });
+  const decisionSource = new IssueDecisionSource({ client, queueRepository: config.github.queueRepository, authorities: config.decisions.authorities });
   const secretValues = credential ? [credential.token] : [];
   const statusReporter = new IssueStatusReporter({ client, stateStore, queueRepository: config.github.queueRepository, progressIntervalMs: config.status.progressIntervalMs, maxCommentBytes: config.status.maxCommentBytes, secretValues });
   const chatHandoffProjector = new ChatHandoffProjector({
@@ -94,6 +97,9 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     delegate: deterministicControllerPlanExecutor,
     statusReporter,
   });
+  const decisionGate = config.decisions.enabled
+    ? new CandidateDecisionGate({ workspaceManager, decisionSource, expiryMs: config.decisions.expiryMs })
+    : null;
 
   const builtIns = builtInToolProfiles();
   for (const name of Object.keys(builtIns)) {
@@ -109,6 +115,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     controllerPlanExecutor,
     statusReporter,
     feedbackSource,
+    decisionGate,
     queueRepository: config.github.queueRepository,
     tools,
     defaultTool: config.execution.defaultTool,
@@ -130,6 +137,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     client,
     taskSource,
     feedbackSource,
+    decisionSource,
     statusReporter,
     workspacePolicy,
     gitClient,
@@ -141,6 +149,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     toolchainRegistry,
     operationRegistry,
     controllerPlanExecutor,
+    decisionGate,
     coordinator,
   };
 }
