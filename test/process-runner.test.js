@@ -16,12 +16,15 @@ const profile = {
   sandbox: { enforcement: 'os', outsideProjectRead: 'deny', outsideProjectWrite: false, network: 'deny' }
 };
 
-test('tool bridge tells workers the mandatory result fields', () => {
+test('tool bridge tells workers the mandatory result fields and Git authority boundary', () => {
   const bridge = toolBridge('r1', '/project/.patch-poller/r1/result.json');
   assert.deepEqual(bridge.resultSchema.required, ['protocol', 'status', 'summary']);
   assert.equal(bridge.resultSchema.protocol, 'patch-poller/result-v1');
   assert.ok(bridge.resultSchema.status.includes('complete'));
   assert.match(bridge.resultSchema.summary, /Required non-empty string/u);
+  assert.equal(bridge.gitAuthority.owner, 'patch-poller');
+  assert.match(bridge.gitAuthority.rule, /Do not stage, commit, reset/u);
+  assert.match(bridge.gitAuthority.rule, /PATCH-POLLER validates, stages, seals, commits, and publishes/u);
   assert.equal(bridge.example.protocol, 'patch-poller/result-v1');
   assert.equal(bridge.example.status, 'complete');
   assert.ok(bridge.example.summary.length > 0);
