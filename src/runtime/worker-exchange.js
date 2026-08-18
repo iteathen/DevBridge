@@ -44,14 +44,14 @@ function linkCount(info) {
   return 0n;
 }
 
-function assertAnchoredResult(resultInfo, anchorInfo, resultFile) {
+function assertAnchoredPair(primaryInfo, anchorInfo, primaryFile) {
   if (
-    linkCount(resultInfo) < 2n ||
+    linkCount(primaryInfo) < 2n ||
     linkCount(anchorInfo) < 2n ||
-    linkCount(resultInfo) !== linkCount(anchorInfo) ||
-    !sameIdentity(resultInfo, anchorInfo)
+    linkCount(primaryInfo) !== linkCount(anchorInfo) ||
+    !sameIdentity(primaryInfo, anchorInfo)
   ) {
-    throw new PolicyError(`${resultFile} was replaced after PATCH-POLLER established worker-exchange ownership`);
+    throw new PolicyError(`${primaryFile} was replaced after PATCH-POLLER established worker-exchange ownership`);
   }
 }
 
@@ -79,6 +79,12 @@ function assertDirectory(info, name) {
 
 function assertFile(info, name) {
   if (info.isSymbolicLink() || !info.isFile()) throw new PolicyError(`${name} must be a real regular file, not filesystem indirection`);
+  assertOwned(info, name);
+  assertPrivateMode(info, name);
+}
+
+function assertOpenedFile(info, name) {
+  if (!info.isFile()) throw new PolicyError(`${name} must remain a regular file while opened`);
   assertOwned(info, name);
   assertPrivateMode(info, name);
 }
@@ -116,46 +122,56 @@ async function openReadNoFollow(candidate) {
   }
 }
 
-async function readExactFile(candidate, expectedIdentity) {
-  const before = await secureStat(candidate, 'file', expectedIdentity);
-  const handle = await openReadNoFollow(candidate);
+async function readAnchoredFile({
+  candidate,
+  anchor,
+  expectedCandidateIdentity = null,
+  expectedAnchorIdentity = null,
+  maxBytes = null,
+}) {
+  const beforeCandidate = await secureStat(candidate, 'file', expectedCandidateIdentity);
+  const beforeAnchor = await secureStat(anchor, 'file', expectedAnchorIdentity);
+  assertAnchoredPair(beforeCandidate, beforeAnchor, candidate);
+
+  const candidateIdentity = expectedCandidateIdentity ?? identityOf(beforeCandidate);
+  const anchorIdentity = expectedAnchorIdentity ?? identityOf(beforeAnchor);
+  const candidateHandle = await openReadNoFollow(candidate);
+  const anchorHandle = await openReadNoFollow(anchor);
   try {
-    const opened = await handle.stat({ bigint: true });
-    if (!opened.isFile()) throw new PolicyError(`${candidate} must remain a regular file while opened`);
-    assertOwned(opened, candidate);
-    assertPrivateMode(opened, candidate);
-    if (!sameIdentity(opened, expectedIdentity) || !sameIdentity(before, expectedIdentity)) {
-      throw new PolicyError(`${candidate} changed identity during privileged worker-exchange read`);
-    }
-    return { info: opened, text: await handle.readFile({ encoding: 'utf8' }) };
+    const openedCandidate = await candidateHandle.stat({ bigint: true });
+    const openedAnchor = await anchorHandle.stat({ bigint: true });
+    assertOpenedFile(openedCandidate, candidate);
+    assertOpenedFile(openedAnchor, anchor);
+
+    // Do not compare path-based stat identity to handle-based stat identity here.
+    // On Windows those are not guaranteed to use the same filesystem identity
+    // representation. Comparing the two simultaneously opened hard links keeps
+    // the TOCTOU proof while remaining portable.
+    assertAnchoredPair(openedCandidate, openedAnchor, candidate);
+
+    const tooLarge = maxBytes != null && openedCandidate.size > BigInt(maxBytes);
+    const text = tooLarge ? null : await candidateHandle.readFile({ encoding: 'utf8' });
+
+    const afterCandidate = await secureStat(candidate, 'file', candidateIdentity);
+    const afterAnchor = await secureStat(anchor, 'file', anchorIdentity);
+    assertAnchoredPair(afterCandidate, afterAnchor, candidate);
+
+    return { info: openedCandidate, text, tooLarge };
   } finally {
-    await handle.close();
+    await Promise.all([
+      candidateHandle.close().catch(() => {}),
+      anchorHandle.close().catch(() => {}),
+    ]);
   }
 }
 
-async function readControlManifest(candidate) {
-  const before = await secureStat(candidate, 'file');
-  if (before.size > BigInt(MANIFEST_LIMIT)) throw new PolicyError('worker-exchange manifest exceeds the control-plane size bound');
-  const expectedIdentity = identityOf(before);
-  const handle = await openReadNoFollow(candidate);
-  let text;
-  try {
-    const opened = await handle.stat({ bigint: true });
-    if (!opened.isFile()) throw new PolicyError('worker-exchange manifest must remain a regular file while opened');
-    assertOwned(opened, candidate);
-    assertPrivateMode(opened, candidate);
-    if (!sameIdentity(opened, expectedIdentity)) {
-      throw new PolicyError('worker-exchange manifest changed identity during privileged read');
-    }
-    if (opened.size > BigInt(MANIFEST_LIMIT)) throw new PolicyError('worker-exchange manifest exceeds the control-plane size bound');
-    text = await handle.readFile({ encoding: 'utf8' });
-  } finally {
-    await handle.close();
-  }
+async function readControlManifest(candidate, anchor) {
+  const read = await readAnchoredFile({ candidate, anchor, maxBytes: MANIFEST_LIMIT });
+  if (read.tooLarge) throw new PolicyError('worker-exchange manifest exceeds the control-plane size bound');
 
   let parsed;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(read.text);
   } catch (error) {
     throw new PolicyError('worker-exchange manifest is malformed', { cause: error });
   }
@@ -166,13 +182,15 @@ async function readControlManifest(candidate) {
 class WorkerMailbox {
   #turnRoot;
   #contextFile;
+  #contextAnchorFile;
   #resultFile;
   #resultAnchorFile;
   #manifest;
 
-  constructor({ turnRoot, contextFile, resultFile, resultAnchorFile, manifest }) {
+  constructor({ turnRoot, contextFile, contextAnchorFile, resultFile, resultAnchorFile, manifest }) {
     this.#turnRoot = turnRoot;
     this.#contextFile = contextFile;
+    this.#contextAnchorFile = contextAnchorFile;
     this.#resultFile = resultFile;
     this.#resultAnchorFile = resultAnchorFile;
     this.#manifest = manifest;
@@ -193,33 +211,33 @@ class WorkerMailbox {
     };
   }
 
-  async #verifiedResultIdentity() {
-    const anchorInfo = await secureStat(this.#resultAnchorFile, 'file', this.#manifest.resultAnchorIdentity);
-    const resultInfo = await secureStat(this.#resultFile, 'file');
-    if (!sameIdentity(resultInfo, this.#manifest.resultIdentity)) {
-      throw new PolicyError(`${this.#resultFile} was replaced after PATCH-POLLER established worker-exchange ownership`);
-    }
-    assertAnchoredResult(resultInfo, anchorInfo, this.#resultFile);
-    return resultInfo;
-  }
-
   async consumeResult({ maxBytes = DEFAULT_RESULT_LIMIT } = {}) {
     if (!Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > 16_777_216) {
       throw new PolicyError('worker result size bound is invalid');
     }
     await secureStat(this.#turnRoot, 'directory', this.#manifest.turnIdentity);
 
-    const context = await readExactFile(this.#contextFile, this.#manifest.contextIdentity);
+    const context = await readAnchoredFile({
+      candidate: this.#contextFile,
+      anchor: this.#contextAnchorFile,
+      expectedCandidateIdentity: this.#manifest.contextIdentity,
+      expectedAnchorIdentity: this.#manifest.contextAnchorIdentity,
+    });
     if (sha256(context.text) !== this.#manifest.contextSha256) {
       throw new PolicyError('worker modified its control-plane-owned context file');
     }
 
-    const resultInfo = await this.#verifiedResultIdentity();
-    if (resultInfo.size > BigInt(maxBytes)) {
+    const result = await readAnchoredFile({
+      candidate: this.#resultFile,
+      anchor: this.#resultAnchorFile,
+      expectedCandidateIdentity: this.#manifest.resultIdentity,
+      expectedAnchorIdentity: this.#manifest.resultAnchorIdentity,
+      maxBytes,
+    });
+    if (result.tooLarge) {
       return { text: null, resultParseError: `result file exceeds ${maxBytes} bytes` };
     }
-    if (resultInfo.size === 0n) return { text: null, resultParseError: null };
-    const result = await readExactFile(this.#resultFile, this.#manifest.resultAnchorIdentity);
+    if (result.info.size === 0n) return { text: null, resultParseError: null };
     return { text: result.text, resultParseError: null };
   }
 }
@@ -254,9 +272,11 @@ export class WorkerExchange {
       runRoot,
       turnRoot,
       contextFile: path.join(turnRoot, 'context.json'),
+      contextAnchorFile: path.join(turnRoot, '.context-anchor'),
       resultFile: path.join(turnRoot, 'result.json'),
       resultAnchorFile: path.join(turnRoot, '.result-anchor'),
       manifestFile: path.join(turnRoot, 'manifest.json'),
+      manifestAnchorFile: path.join(turnRoot, '.manifest-anchor'),
     };
   }
 
@@ -283,12 +303,16 @@ export class WorkerExchange {
 
     const contextText = `${JSON.stringify(context, null, 2)}\n`;
     await writeFile(paths.contextFile, contextText, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    await link(paths.contextFile, paths.contextAnchorFile);
     await writeFile(paths.resultFile, '', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     await link(paths.resultFile, paths.resultAnchorFile);
+
     const contextInfo = await secureStat(paths.contextFile, 'file');
+    const contextAnchorInfo = await secureStat(paths.contextAnchorFile, 'file');
+    assertAnchoredPair(contextInfo, contextAnchorInfo, paths.contextFile);
     const resultInfo = await secureStat(paths.resultFile, 'file');
     const resultAnchorInfo = await secureStat(paths.resultAnchorFile, 'file');
-    assertAnchoredResult(resultInfo, resultAnchorInfo, paths.resultFile);
+    assertAnchoredPair(resultInfo, resultAnchorInfo, paths.resultFile);
 
     const manifest = {
       protocol: WORKER_EXCHANGE_PROTOCOL,
@@ -298,6 +322,7 @@ export class WorkerExchange {
       contextSha256: sha256(contextText),
       turnIdentity: identityOf(turnInfo),
       contextIdentity: identityOf(contextInfo),
+      contextAnchorIdentity: identityOf(contextAnchorInfo),
       resultIdentity: identityOf(resultInfo),
       resultAnchorIdentity: identityOf(resultAnchorInfo),
       workerContextFile: WORKER_CONTEXT_FILE,
@@ -308,11 +333,15 @@ export class WorkerExchange {
       mode: 0o600,
       flag: 'wx',
     });
-    await secureStat(paths.manifestFile, 'file');
+    await link(paths.manifestFile, paths.manifestAnchorFile);
+    const manifestInfo = await secureStat(paths.manifestFile, 'file');
+    const manifestAnchorInfo = await secureStat(paths.manifestAnchorFile, 'file');
+    assertAnchoredPair(manifestInfo, manifestAnchorInfo, paths.manifestFile);
 
     return new WorkerMailbox({
       turnRoot: paths.turnRoot,
       contextFile: paths.contextFile,
+      contextAnchorFile: paths.contextAnchorFile,
       resultFile: paths.resultFile,
       resultAnchorFile: paths.resultAnchorFile,
       manifest,
@@ -324,7 +353,7 @@ export class WorkerExchange {
     const paths = this.#paths(runId, turnId);
     await secureStat(paths.runRoot, 'directory');
     await secureStat(paths.turnRoot, 'directory');
-    const manifest = await readControlManifest(paths.manifestFile);
+    const manifest = await readControlManifest(paths.manifestFile, paths.manifestAnchorFile);
     if (manifest.runId !== paths.safeRunId || manifest.turnId !== paths.safeTurnId) {
       throw new PolicyError('worker-exchange manifest does not match the requested run/turn identity');
     }
@@ -332,16 +361,19 @@ export class WorkerExchange {
       throw new PolicyError('worker-exchange manifest uses unexpected sandbox-visible IPC paths');
     }
     await secureStat(paths.turnRoot, 'directory', manifest.turnIdentity);
-    await secureStat(paths.contextFile, 'file', manifest.contextIdentity);
-    const anchorInfo = await secureStat(paths.resultAnchorFile, 'file', manifest.resultAnchorIdentity);
-    const resultInfo = await secureStat(paths.resultFile, 'file');
-    if (!sameIdentity(resultInfo, manifest.resultIdentity)) {
-      throw new PolicyError(`${paths.resultFile} was replaced after PATCH-POLLER established worker-exchange ownership`);
-    }
-    assertAnchoredResult(resultInfo, anchorInfo, paths.resultFile);
+
+    const contextInfo = await secureStat(paths.contextFile, 'file', manifest.contextIdentity);
+    const contextAnchorInfo = await secureStat(paths.contextAnchorFile, 'file', manifest.contextAnchorIdentity);
+    assertAnchoredPair(contextInfo, contextAnchorInfo, paths.contextFile);
+
+    const resultInfo = await secureStat(paths.resultFile, 'file', manifest.resultIdentity);
+    const resultAnchorInfo = await secureStat(paths.resultAnchorFile, 'file', manifest.resultAnchorIdentity);
+    assertAnchoredPair(resultInfo, resultAnchorInfo, paths.resultFile);
+
     return new WorkerMailbox({
       turnRoot: paths.turnRoot,
       contextFile: paths.contextFile,
+      contextAnchorFile: paths.contextAnchorFile,
       resultFile: paths.resultFile,
       resultAnchorFile: paths.resultAnchorFile,
       manifest,
