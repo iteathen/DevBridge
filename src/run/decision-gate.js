@@ -94,7 +94,7 @@ export class DecisionGate {
     const candidate = await buildCandidateManifest(workspace, snapshot);
     state.checkpoints ??= [];
     state.lastDecisionCommentId ??= 0;
-    let checkpoint = [...state.checkpoints].reverse().find((entry) => entry.decisionClass === decisionClass && !['superseded'].includes(entry.status));
+    let checkpoint = [...state.checkpoints].reverse().find((entry) => entry.decisionClass === decisionClass && entry.status !== 'superseded');
     const nowMs = this.#now();
 
     if (checkpoint && checkpoint.subjectDigest !== candidate.digest) {
@@ -121,13 +121,14 @@ export class DecisionGate {
       state.checkpoints.push(checkpoint);
     }
 
-    if (Date.parse(checkpoint.expiresAt) <= nowMs && checkpoint.status === 'pending') {
+    if (Date.parse(checkpoint.expiresAt) <= nowMs && ['pending', 'approved'].includes(checkpoint.status)) {
       checkpoint.status = 'expired';
       checkpoint.expiredAt = new Date(nowMs).toISOString();
     }
     if (checkpoint.status === 'approved') {
       if (!decisionSubjectMatches(checkpoint, { artifactDigest: candidate.digest })) {
         checkpoint.status = 'superseded';
+        checkpoint.supersededAt = new Date(nowMs).toISOString();
         return this.evaluate({ state, task, workspace, snapshot });
       }
       return { allowed: true, decisionClass, checkpoint, manifest: candidate };
