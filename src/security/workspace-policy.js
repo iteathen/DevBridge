@@ -36,15 +36,16 @@ async function nearestExistingAncestor(candidate) {
 export class WorkspacePolicy {
   #root;
   #allowedOwners;
+  #allowCreate;
 
-  constructor({ root, allowedOwners }) {
+  constructor({ root, allowedOwners, allowCreate = false }) {
     this.#root = path.resolve(root);
     this.#allowedOwners = new Set(allowedOwners.map((owner) => owner.toLowerCase()));
+    this.#allowCreate = allowCreate === true;
   }
 
-  get root() {
-    return this.#root;
-  }
+  get root() { return this.#root; }
+  get allowCreate() { return this.#allowCreate; }
 
   async ensureRoot() {
     await mkdir(this.#root, { recursive: true, mode: 0o700 });
@@ -53,9 +54,7 @@ export class WorkspacePolicy {
 
   projectPath(repository) {
     const [owner, name] = splitRepository(repository);
-    if (!this.#allowedOwners.has(owner.toLowerCase())) {
-      throw new PolicyError(`repository owner ${owner} is not allowed by local policy`);
-    }
+    if (!this.#allowedOwners.has(owner.toLowerCase())) throw new PolicyError(`repository owner ${owner} is not allowed by local policy`);
     const candidate = path.join(this.#root, 'repositories', owner, name);
     if (!isWithin(this.#root, candidate)) throw new PolicyError('resolved project path escaped workspace root');
     return candidate;
@@ -64,15 +63,11 @@ export class WorkspacePolicy {
   async assertWriteContained(candidate) {
     const rootReal = await this.ensureRoot();
     const resolvedCandidate = path.resolve(candidate);
-    if (!isWithin(this.#root, resolvedCandidate)) {
-      throw new PolicyError(`write path escapes managed workspace: ${candidate}`);
-    }
+    if (!isWithin(this.#root, resolvedCandidate)) throw new PolicyError(`write path escapes managed workspace: ${candidate}`);
 
     const existingAncestor = await nearestExistingAncestor(resolvedCandidate);
     const ancestorReal = await realpath(existingAncestor);
-    if (!isWithin(rootReal, ancestorReal)) {
-      throw new PolicyError(`write path escapes managed workspace through symlink/junction: ${candidate}`);
-    }
+    if (!isWithin(rootReal, ancestorReal)) throw new PolicyError(`write path escapes managed workspace through symlink/junction: ${candidate}`);
 
     try {
       const info = await lstat(resolvedCandidate);
@@ -83,7 +78,6 @@ export class WorkspacePolicy {
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error;
     }
-
     return resolvedCandidate;
   }
 }

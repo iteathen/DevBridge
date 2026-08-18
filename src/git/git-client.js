@@ -33,17 +33,19 @@ export class GitClient {
   #syntheticHome;
   #maxOutputBytes;
   #allowFileProtocol;
+  #defaultTimeoutMs;
 
-  constructor({ executable = 'git', sourceEnv = process.env, syntheticHome, maxOutputBytes = 2 * 1024 * 1024, allowFileProtocol = false } = {}) {
+  constructor({ executable = 'git', sourceEnv = process.env, syntheticHome, maxOutputBytes = 2 * 1024 * 1024, allowFileProtocol = false, defaultTimeoutMs = 120_000 } = {}) {
     if (!syntheticHome) throw new TypeError('GitClient syntheticHome is required');
     this.#executable = executable;
     this.#sourceEnv = sourceEnv;
     this.#syntheticHome = path.resolve(syntheticHome);
     this.#maxOutputBytes = maxOutputBytes;
     this.#allowFileProtocol = allowFileProtocol;
+    this.#defaultTimeoutMs = defaultTimeoutMs;
   }
 
-  async run(args, { cwd = undefined, token = null, authBaseUrl = null, timeoutMs = 120_000, allowFailure = false } = {}) {
+  async run(args, { cwd = undefined, token = null, authBaseUrl = null, timeoutMs = this.#defaultTimeoutMs, allowFailure = false } = {}) {
     await mkdir(this.#syntheticHome, { recursive: true, mode: 0o700 });
     const hooksDir = path.join(this.#syntheticHome, 'disabled-hooks');
     await mkdir(hooksDir, { recursive: true, mode: 0o700 });
@@ -65,20 +67,8 @@ export class GitClient {
       env.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
     }
 
-    const safeArgs = [
-      '-c', `core.hooksPath=${hooksDir}`,
-      '-c', 'credential.helper=',
-      '-c', 'protocol.ext.allow=never',
-      '-c', `protocol.file.allow=${this.#allowFileProtocol ? 'always' : 'never'}`,
-      ...args
-    ];
-
-    const child = spawn(this.#executable, safeArgs, containedSpawnOptions({
-      cwd,
-      env,
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe']
-    }));
+    const safeArgs = ['-c', `core.hooksPath=${hooksDir}`, '-c', 'credential.helper=', '-c', 'protocol.ext.allow=never', '-c', `protocol.file.allow=${this.#allowFileProtocol ? 'always' : 'never'}`, ...args];
+    const child = spawn(this.#executable, safeArgs, containedSpawnOptions({ cwd, env, shell: false, stdio: ['ignore', 'pipe', 'pipe'] }));
 
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
@@ -87,10 +77,7 @@ export class GitClient {
 
     let timedOut = false;
     let termination = null;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      termination = terminateProcessTree(child);
-    }, timeoutMs);
+    const timer = setTimeout(() => { timedOut = true; termination = terminateProcessTree(child); }, timeoutMs);
     timer.unref?.();
 
     let exit;
@@ -104,21 +91,9 @@ export class GitClient {
       if (termination) await termination;
     }
 
-    const result = {
-      args: [...args],
-      cwd: cwd ?? null,
-      exitCode: exit.exitCode,
-      signal: exit.signal,
-      timedOut,
-      stdout: stdout.toString('utf8'),
-      stderr: stderr.toString('utf8')
-    };
-
+    const result = { args: [...args], cwd: cwd ?? null, exitCode: exit.exitCode, signal: exit.signal, timedOut, stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8') };
     if (!allowFailure && (timedOut || exit.exitCode !== 0)) {
-      throw new GitCommandError(
-        timedOut ? 'git command timed out' : `git command failed with exit code ${exit.exitCode}`,
-        result
-      );
+      throw new GitCommandError(timedOut ? 'git command timed out' : `git command failed with exit code ${exit.exitCode}`, result);
     }
     return result;
   }

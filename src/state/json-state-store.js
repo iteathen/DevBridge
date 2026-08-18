@@ -29,6 +29,13 @@ export class JsonStateStore {
     return structuredClone(this.#data[key]);
   }
 
+  async entries(prefix = '') {
+    await this.#load();
+    return Object.entries(this.#data)
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([key, value]) => [key, structuredClone(value)]);
+  }
+
   async set(key, value) {
     await this.#load();
     this.#data[key] = structuredClone(value);

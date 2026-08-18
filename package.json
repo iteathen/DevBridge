@@ -4,16 +4,14 @@
   "private": true,
   "description": "Rate-conscious GitHub task poller and local coding-agent bridge.",
   "type": "module",
-  "engines": {
-    "node": ">=22.16.0"
-  },
-  "bin": {
-    "patch-poller": "./src/cli.js"
-  },
+  "engines": { "node": ">=22.16.0" },
+  "bin": { "patch-poller": "./src/cli.js" },
   "scripts": {
     "test": "node --test",
     "doctor": "node ./src/cli.js doctor",
-    "poll-once": "node ./src/cli.js poll-once"
+    "poll-once": "node ./src/cli.js poll-once",
+    "run-once": "node ./src/cli.js run-once",
+    "daemon": "node ./src/cli.js daemon"
   },
   "license": "AGPL-3.0-only"
 }
