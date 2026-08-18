@@ -67,6 +67,7 @@ function operationResultEvidence(id, operation, result) {
     startedAt: result.startedAt ?? null,
     finishedAt: result.finishedAt ?? null,
     lastOutputAt: result.lastOutputAt ?? null,
+    sandbox: result.sandbox ?? null,
   };
 }
 
@@ -148,6 +149,38 @@ export class ControllerPlanExecutor {
       if (await exists(target)) throw new PolicyError(`cleanup failed to remove ${entry.path}`);
       entry.state = 'verified-absent';
       entry.updatedAt = new Date().toISOString();
+      await persist();
+    }
+  }
+
+  async #reverifyPersistentBytes(plan, state, workspace, persist) {
+    const planState = state.controllerPlan;
+    planState.phase = 'verifying-persistent-bytes';
+    await persist();
+    for (const file of plan.files.filter((candidate) => candidate.scope === 'project')) {
+      const target = await assertContainedNoFollow(workspace.worktreeDir, file.path);
+      const present = await exists(target);
+      const record = planState.files.find((entry) => entry.path === file.path && entry.scope === 'project');
+      if (file.action === 'delete') {
+        if (present) throw new PolicyError(`controller persistent-byte verification failed: deleted path reappeared: ${file.path}`);
+        if (record) {
+          record.verifiedDigest = null;
+          record.verifiedAt = new Date().toISOString();
+        }
+        await persist();
+        continue;
+      }
+      if (!present) throw new PolicyError(`controller persistent-byte verification failed: expected path is absent: ${file.path}`);
+      const info = await lstat(target);
+      if (info.isSymbolicLink() || !info.isFile()) throw new PolicyError(`controller persistent-byte verification failed: expected regular file: ${file.path}`);
+      const digest = await fileDigest(target);
+      if (digest !== file.contentSha256) {
+        throw new PolicyError(`controller persistent-byte verification failed: ${file.path} changed after materialization`);
+      }
+      if (record) {
+        record.verifiedDigest = digest;
+        record.verifiedAt = new Date().toISOString();
+      }
       await persist();
     }
   }
@@ -282,6 +315,7 @@ export class ControllerPlanExecutor {
       await this.#cleanup(state, workspace, persist);
     }
 
+    await this.#reverifyPersistentBytes(plan, state, workspace, persist);
     const snapshot = await this.#workspace.validate(workspace);
     const actual = [...snapshot.changedFiles].sort();
     const expected = [...plan.expectedChangedPaths].sort();
@@ -308,8 +342,9 @@ export class ControllerPlanExecutor {
         exitCode: entry.result?.exitCode ?? null,
         timedOut: entry.result?.timedOut === true,
         outputTruncated: entry.result?.outputTruncated === true,
+        sandbox: entry.result?.sandbox ?? null,
       })),
-      summary: `Controller plan completed ${planState.operations.length} deterministic operations and ${planState.assertionsPassed} assertions; cleanup verified ${planState.cleanup.verifiedAbsent}/${planState.cleanupLedger.length} ephemeral paths and ${planState.cleanup.scratchVerifiedAbsent}/${planState.scratchLedger.length} scratch directories absent.`,
+      summary: `Controller plan completed ${planState.operations.length} deterministic operations and ${planState.assertionsPassed} assertions; persistent project bytes were reverified; cleanup verified ${planState.cleanup.verifiedAbsent}/${planState.cleanupLedger.length} ephemeral paths and ${planState.cleanup.scratchVerifiedAbsent}/${planState.scratchLedger.length} scratch directories absent.`,
     };
   }
 }
