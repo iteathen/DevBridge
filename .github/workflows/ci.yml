@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - 'sol/**'
+      - 'agent/**'
   pull_request:
 
 permissions:
@@ -22,9 +23,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.16.0
+      - name: Install verified sandbox provider
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - name: Cheap preflight
         run: npm run preflight
       - name: Tests
+        env:
+          PATCH_POLLER_TEST_REAL_SANDBOX: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: npm test
       - name: Doctor smoke test
         run: node src/cli.js doctor --config config/patch-poller.example.json
