@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { WorkspacePolicy } from '../src/security/workspace-policy.js';
 import { GitClient } from '../src/git/git-client.js';
-import { GitWorkspaceManager } from '../src/git/git-workspace-manager.js';
+import { GitWorkspaceManager } from '../src/git/workspace-manager.js';
 import { ProcessRunner } from '../src/runtime/process-runner.js';
 import { WorkerExchange } from '../src/runtime/worker-exchange.js';
 import { JsonStateStore } from '../src/state/json-state-store.js';
