@@ -13,6 +13,25 @@ import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { GitClient } from '../git/git-client.js';
 import { resolveGitHubCredential, publicGitHubCredentialStatus } from '../github/auth-provider.js';
 
+async function describeProfile(name, raw, {
+  source,
+  allowUncontainedTools,
+  resolveTools,
+  env,
+  enforcementProvider,
+}) {
+  const profile = validateToolProfile(name, raw, { allowUncontainedTools });
+  const executable = resolveTools ? await resolveExecutable(profile.executable, env) : profile.executable;
+  return {
+    name,
+    executable,
+    inputMode: profile.inputMode,
+    layer: 'adapter',
+    source,
+    ...profileSecurityDescription(profile, enforcementProvider),
+  };
+}
+
 export async function doctor(
   config,
   {
@@ -46,27 +65,32 @@ export async function doctor(
       throw new Error(`local tool profile name ${name} is reserved by PATCH-POLLER`);
     }
   }
-  const rawTools = { ...config.tools, ...builtIns };
-  const builtInNames = new Set(Object.keys(builtIns));
+
   const tools = [];
-  for (const [name, raw] of Object.entries(rawTools)) {
-    const profile = validateToolProfile(name, raw, { allowUncontainedTools: config.execution.allowUncontainedTools });
-    const executable = resolveTools ? await resolveExecutable(profile.executable, env) : profile.executable;
-    const security = profileSecurityDescription(profile, enforcementProvider);
-    tools.push({
-      name,
-      executable,
-      inputMode: profile.inputMode,
-      layer: 'adapter',
-      source: builtInNames.has(name) ? 'patch-poller-builtin' : 'local-profile',
-      ...security,
-    });
+  for (const [name, raw] of Object.entries(config.tools)) {
+    tools.push(await describeProfile(name, raw, {
+      source: 'local-profile',
+      allowUncontainedTools: config.execution.allowUncontainedTools,
+      resolveTools,
+      env,
+      enforcementProvider,
+    }));
+  }
+  const builtInTools = [];
+  for (const [name, raw] of Object.entries(builtIns)) {
+    builtInTools.push(await describeProfile(name, raw, {
+      source: 'patch-poller-builtin',
+      allowUncontainedTools: false,
+      resolveTools,
+      env,
+      enforcementProvider,
+    }));
   }
 
-  if (config.execution.enabled && !config.execution.controllerPlansEnabled && Object.keys(config.tools).length === 0) {
-    throw new Error('execution.enabled is true but neither controller plans nor local task tool profiles are enabled');
+  if (config.execution.enabled && !config.execution.controllerPlansEnabled && tools.length === 0) {
+    throw new Error('execution.enabled is true but neither controller plans nor valid local tool profiles are enabled');
   }
-  if (config.execution.defaultTool && !Object.hasOwn(rawTools, config.execution.defaultTool)) {
+  if (config.execution.defaultTool && !Object.hasOwn(config.tools, config.execution.defaultTool) && !Object.hasOwn(builtIns, config.execution.defaultTool)) {
     throw new Error(`execution.defaultTool does not exist: ${config.execution.defaultTool}`);
   }
 
@@ -115,6 +139,9 @@ export async function doctor(
         controllerPlans: {
           enabled: config.execution.controllerPlansEnabled,
           enforcementProvider,
+          // Backward-compatible alias. This has always described the observed
+          // PATCH-POLLER provider, never a profile's sandbox declaration.
+          sandbox: enforcementProvider,
           operations,
         },
         toolchains,
@@ -124,6 +151,7 @@ export async function doctor(
         enabled: config.execution.modelAdaptersEnabled,
         enforcementProvider,
         tools,
+        builtIns: builtInTools,
       },
     },
     tools,
