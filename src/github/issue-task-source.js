@@ -1,3 +1,4 @@
+import { bindRevision, verifyContentProvenance } from './content-provenance.js';
 import { parseTaskEnvelope } from './task-envelope.js';
 
 export class IssueTaskSource {
@@ -17,27 +18,13 @@ export class IssueTaskSource {
 
   async poll() {
     const [owner, repo] = this.#queueRepository.split('/');
-    const query = new URLSearchParams({
-      state: 'open',
-      labels: this.#taskLabel,
-      per_page: String(this.#maxTasks),
-      sort: 'created',
-      direction: 'asc'
-    });
-    const response = await this.#client.request(
-      'GET',
-      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?${query}`,
-      { conditional: true }
-    );
-
-    if (response.notModified) {
-      return { tasks: [], unchanged: true, pollIntervalMs: this.#client.rateBudget.snapshot().pollIntervalMs };
-    }
-
+    const query = new URLSearchParams({ state: 'open', labels: this.#taskLabel, per_page: String(this.#maxTasks), sort: 'created', direction: 'asc' });
+    const response = await this.#client.request('GET', `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?${query}`, { conditional: true });
+    if (response.notModified) return { tasks: [], unchanged: true, pollIntervalMs: this.#client.rateBudget.snapshot().pollIntervalMs };
     if (!Array.isArray(response.data)) throw new TypeError('GitHub issues response must be an array');
+
     const tasks = [];
     const rejected = [];
-
     for (const issue of response.data) {
       if (issue?.pull_request) continue;
       const actorId = String(issue?.user?.id ?? '');
@@ -45,30 +32,39 @@ export class IssueTaskSource {
         rejected.push({ issueNumber: issue?.number ?? null, reason: 'untrusted-actor', actorId });
         continue;
       }
-
+      let parsed;
+      try { parsed = parseTaskEnvelope(issue.body ?? ''); }
+      catch (error) {
+        rejected.push({ issueNumber: issue?.number ?? null, reason: 'invalid-envelope', detail: error.message });
+        continue;
+      }
       try {
-        const parsed = parseTaskEnvelope(issue.body ?? '');
+        const provenance = await verifyContentProvenance({
+          client: this.#client,
+          nodeId: issue.node_id,
+          expectedBody: issue.body ?? '',
+          creatorId: actorId,
+          trustedActorIds: this.#trustedActorIds,
+          expectedType: 'Issue',
+        });
         tasks.push({
           queueRepository: this.#queueRepository,
           issueNumber: issue.number,
           issueId: String(issue.id),
+          issueNodeId: issue.node_id,
           actorId,
           actorLogin: issue.user?.login ?? null,
           title: issue.title ?? '',
           updatedAt: issue.updated_at ?? null,
           envelope: parsed.envelope,
-          revision: parsed.revision
+          envelopeRevision: parsed.revision,
+          revision: bindRevision(parsed.revision, provenance),
+          authorityProvenance: provenance,
         });
       } catch (error) {
-        rejected.push({ issueNumber: issue?.number ?? null, reason: 'invalid-envelope', detail: error.message });
+        rejected.push({ issueNumber: issue?.number ?? null, reason: 'unverifiable-content-provenance', detail: error.message });
       }
     }
-
-    return {
-      tasks,
-      rejected,
-      unchanged: false,
-      pollIntervalMs: this.#client.rateBudget.snapshot().pollIntervalMs
-    };
+    return { tasks, rejected, unchanged: false, pollIntervalMs: this.#client.rateBudget.snapshot().pollIntervalMs };
   }
 }
