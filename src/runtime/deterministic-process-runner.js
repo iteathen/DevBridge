@@ -71,7 +71,7 @@ export class DeterministicProcessRunner {
     if (sandbox?.required === true) {
       const status = this.sandboxStatus();
       if (!status.verified || !this.#sandbox?.prepareSpawn) {
-        throw new PolicyError(`deterministic operation ${operation ?? 'unknown'} executes repository code but no verified sandbox provider is active`);
+        throw new PolicyError(`deterministic operation ${operation ?? 'unknown'} executes repository code and requires a verified sandbox provider; none is active`);
       }
       launch = await this.#sandbox.prepareSpawn({ executable, args, cwd, environment: env, sandbox });
     }
