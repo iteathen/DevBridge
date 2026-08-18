@@ -76,6 +76,29 @@ test('worker exchange rejects path traversal and a pre-created turn mailbox', as
   });
 });
 
+test('exact run and turn identities prevent cross-run result confusion', async () => {
+  await withRoot('pp-worker-exchange-cross-run-', async (root) => {
+    const stateDirectory = path.join(root, 'state');
+    const exchange = new WorkerExchange({ stateDirectory });
+    const first = await exchange.prepareTurn({ runId: 'run-1', turnId: 'turn-1', context: { run: 1 } });
+    const second = await exchange.prepareTurn({ runId: 'run-2', turnId: 'turn-1', context: { run: 2 } });
+    const secondEnvelope = `${JSON.stringify({
+      protocol: 'patch-poller/result-v1',
+      status: 'complete',
+      summary: 'run two only',
+    })}\n`;
+    await writeFile(second.resultFile, secondEnvelope, { encoding: 'utf8' });
+
+    const reopenedFirst = await exchange.openTurn({ runId: 'run-1', turnId: 'turn-1' });
+    const reopenedSecond = await exchange.openTurn({ runId: 'run-2', turnId: 'turn-1' });
+    const firstConsumed = await reopenedFirst.consumeResult();
+    const secondConsumed = await reopenedSecond.consumeResult();
+    assert.equal(firstConsumed.text, null);
+    assert.equal(secondConsumed.text, secondEnvelope);
+    assert.notEqual(first.resultFile, second.resultFile);
+  });
+});
+
 test('result consumption rejects regular-file replacement and directory substitution', async () => {
   await withRoot('pp-worker-exchange-replace-', async (root) => {
     const stateDirectory = path.join(root, 'state');
