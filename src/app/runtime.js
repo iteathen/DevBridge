@@ -11,6 +11,7 @@ import { IssueFeedbackSource } from '../github/issue-feedback-source.js';
 import { IssueDecisionSource } from '../github/issue-decision-source.js';
 import { IssueStatusReporter } from '../github/issue-status-reporter.js';
 import { ChatHandoffProjector } from '../github/chat-handoff-projector.js';
+import { ToolInventoryProjector } from '../github/tool-inventory-projector.js';
 import { WorkspacePolicy } from '../security/workspace-policy.js';
 import { GitClient } from '../git/git-client.js';
 import { GitWorkspaceManager } from '../git/workspace-manager.js';
@@ -21,6 +22,7 @@ import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
 import { createSandboxManager } from '../runtime/sandbox-manager.js';
+import { ToolInventoryService } from '../runtime/tool-inventory-service.js';
 import { CandidateDecisionGate } from '../run/candidate-decision-gate.js';
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
 import { LivenessProjectingPlanExecutor } from '../run/liveness-projecting-plan-executor.js';
@@ -56,6 +58,13 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   const secretValues = credential ? [credential.token] : [];
   const statusReporter = new IssueStatusReporter({ client, stateStore, queueRepository: config.github.queueRepository, progressIntervalMs: config.status.progressIntervalMs, maxCommentBytes: config.status.maxCommentBytes, secretValues });
   const chatHandoffProjector = new ChatHandoffProjector({
+    client,
+    stateStore,
+    queueRepository: config.github.queueRepository,
+    maxCommentBytes: config.status.maxCommentBytes,
+    secretValues,
+  });
+  const toolInventoryProjector = new ToolInventoryProjector({
     client,
     stateStore,
     queueRepository: config.github.queueRepository,
@@ -108,6 +117,18 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     }
   }
   const tools = { ...config.tools, ...builtIns };
+  const toolInventoryService = new ToolInventoryService({
+    operationRegistry,
+    toolchainRegistry,
+    tools,
+    deterministicProfileNames: Object.keys(builtIns),
+    modelAdaptersEnabled: config.execution.modelAdaptersEnabled,
+    allowUncontainedTools: config.execution.allowUncontainedTools,
+    sandboxManager,
+    env,
+  });
+  await toolInventoryService.initialize();
+
   const coordinator = new RunCoordinator({
     stateStore,
     workspaceManager,
@@ -116,6 +137,8 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     statusReporter,
     feedbackSource,
     decisionGate,
+    toolInventoryService,
+    toolInventoryProjector,
     queueRepository: config.github.queueRepository,
     tools,
     defaultTool: config.execution.defaultTool,
@@ -139,6 +162,8 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     feedbackSource,
     decisionSource,
     statusReporter,
+    toolInventoryProjector,
+    toolInventoryService,
     workspacePolicy,
     gitClient,
     workspaceManager,
