@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import process from 'node:process';
 import { normalizeControllerPlan, controllerPlanDigest } from '../src/run/controller-plan.js';
 import { ControllerPlanExecutor } from '../src/run/controller-plan-executor.js';
 import { DeterministicProcessRunner } from '../src/runtime/deterministic-process-runner.js';
@@ -15,6 +16,24 @@ function basePlan(overrides = {}) {
     operations: [],
     assertions: [],
     ...overrides,
+  };
+}
+
+function verifiedTestSandbox() {
+  const status = {
+    provider: 'test-passthrough',
+    configured: true,
+    verified: true,
+    filesystem: true,
+    network: true,
+    workerIdentity: true,
+    reason: null,
+  };
+  return {
+    name: status.provider,
+    status: () => ({ ...status }),
+    verify: async () => ({ ...status }),
+    run: async (request, delegate) => delegate(request),
   };
 }
 
@@ -63,7 +82,23 @@ test('rejects operation authority fields and assertions that name unknown operat
   })), /unknown operation/u);
 });
 
-test('generic controller executor materializes a multi-file project, runs Node tests, and removes ephemeral files', async () => {
+test('repository-code execution fails closed when no verified sandbox provider is active', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'patch-poller-controller-sandbox-'));
+  try {
+    const runner = new DeterministicProcessRunner();
+    await assert.rejects(() => runner.run({
+      executable: process.execPath,
+      args: ['-e', 'process.exit(0)'],
+      cwd: root,
+      operation: 'fixture.test',
+      executionClass: 'repository-code-executing',
+    }), /requires a verified filesystem\/network\/worker-identity sandbox/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('generic controller executor materializes a multi-file project, runs Node tests through verified sandbox, and removes ephemeral files', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'patch-poller-controller-plan-'));
   try {
     const plan = normalizeControllerPlan(basePlan({
@@ -87,7 +122,7 @@ test('generic controller executor materializes a multi-file project, runs Node t
     const workspaceManager = { snapshot: async () => snapshot(), validate: async () => snapshot() };
     const executor = new ControllerPlanExecutor({
       operationRegistry: createCoreOperationRegistry(),
-      processRunner: new DeterministicProcessRunner(),
+      processRunner: new DeterministicProcessRunner({ sandboxProvider: verifiedTestSandbox() }),
       workspaceManager,
     });
     const state = {};

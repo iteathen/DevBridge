@@ -20,6 +20,7 @@ import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
+import { PersistentPlanVerifyingExecutor } from '../run/persistent-plan-verifier.js';
 import { LivenessProjectingPlanExecutor } from '../run/liveness-projecting-plan-executor.js';
 import { RunCoordinator } from '../run/run-coordinator.js';
 
@@ -80,8 +81,11 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     workspaceManager,
     faultInjector,
   });
-  const controllerPlanExecutor = new LivenessProjectingPlanExecutor({
+  const byteVerifyingControllerPlanExecutor = new PersistentPlanVerifyingExecutor({
     delegate: deterministicControllerPlanExecutor,
+  });
+  const controllerPlanExecutor = new LivenessProjectingPlanExecutor({
+    delegate: byteVerifyingControllerPlanExecutor,
     statusReporter,
   });
 

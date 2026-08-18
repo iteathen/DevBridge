@@ -6,7 +6,7 @@ import path from 'node:path';
 import { validateConfig } from '../src/config.js';
 import { doctor } from '../src/app/doctor.js';
 
-test('doctor distinguishes controller core capabilities from optional external adapters', async () => {
+test('doctor distinguishes static operations from sandbox-required repository execution and reports verification honestly', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-doctor-capabilities-'));
   const config = validateConfig({
     version: 1,
@@ -31,10 +31,17 @@ test('doctor distinguishes controller core capabilities from optional external a
   });
   assert.equal(result.ok, true);
   assert.equal(result.capabilities.core.controllerPlans.enabled, true);
-  const operations = result.capabilities.core.controllerPlans.operations.map((entry) => entry.name);
-  assert.ok(operations.includes('node.test'));
-  assert.ok(operations.includes('cmake.configure'));
-  assert.equal(operations.includes('node.run'), false);
+  const operations = result.capabilities.core.controllerPlans.operations;
+  const byName = Object.fromEntries(operations.map((entry) => [entry.name, entry]));
+  assert.equal(byName['node.syntax-check'].executionClass, 'static-inspection');
+  assert.equal(byName['node.syntax-check'].usable, true);
+  assert.equal(byName['node.test'].executionClass, 'repository-code-executing');
+  assert.equal(byName['node.test'].requiredEnforcement, 'verified-sandbox');
+  assert.equal(byName['node.test'].usable, false);
+  assert.equal(byName['cmake.configure'].usable, false);
+  assert.equal(Object.hasOwn(byName, 'node.run'), false);
+  assert.equal(result.enforcement.provider.provider, 'none');
+  assert.equal(result.enforcement.provider.verified, false);
   assert.deepEqual(result.capabilities.core.toolchains.map((entry) => entry.name), ['cmake', 'ctest', 'native.c', 'native.linker', 'node']);
   assert.equal(result.capabilities.adapters.enabled, false);
   assert.deepEqual(result.capabilities.adapters.tools, []);

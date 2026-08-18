@@ -9,6 +9,7 @@ const SAFE_ID = /^[A-Za-z0-9_.-]{1,80}$/u;
 const SAFE_TARGET = /^[A-Za-z0-9_.:+-]{1,120}$/u;
 const BUILD_TYPES = new Set(['Debug', 'Release', 'RelWithDebInfo', 'MinSizeRel']);
 const ARCHITECTURES = new Set(['x64', 'Win32', 'ARM64']);
+const EXECUTION_CLASSES = new Set(['static-inspection', 'repository-code-executing']);
 
 function objectParams(value, operation) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new PolicyError(`${operation} params must be an object`);
@@ -29,8 +30,8 @@ function projectPath(projectDir, relative, name) {
 
 function localEnvironment() {
   const pass = process.platform === 'win32'
-    ? ['PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'SystemDrive', 'TEMP', 'TMP', 'TMPDIR', 'USERPROFILE']
-    : ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP'];
+    ? ['PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'SystemDrive', 'TEMP', 'TMP', 'TMPDIR']
+    : ['PATH', 'TMPDIR', 'TMP', 'TEMP'];
   return { pass, set: { CI: '1' } };
 }
 
@@ -80,6 +81,11 @@ function observedResult(stdout, stderr = '', exitCode = 0) {
   };
 }
 
+function enforcementSatisfied(executionClass, status) {
+  if (executionClass === 'static-inspection') return true;
+  return status?.verified === true && status.filesystem === true && status.network === true && status.workerIdentity === true;
+}
+
 export class DeterministicOperationRegistry {
   #operations = new Map();
 
@@ -89,13 +95,31 @@ export class DeterministicOperationRegistry {
     if (!adapter || typeof adapter.validate !== 'function' || typeof adapter.execute !== 'function') {
       throw new PolicyError(`registered operation ${name} must provide validate and execute`);
     }
+    if (!EXECUTION_CLASSES.has(adapter.executionClass)) {
+      throw new PolicyError(`registered operation ${name} must declare static-inspection or repository-code-executing`);
+    }
     this.#operations.set(name, adapter);
     return this;
   }
 
   has(name) { return this.#operations.has(name); }
   names() { return [...this.#operations.keys()].sort(); }
-  describe() { return this.names().map((name) => ({ name, layer: this.#operations.get(name).layer ?? 'core' })); }
+  describe({ enforcementStatus = null } = {}) {
+    return this.names().map((name) => {
+      const adapter = this.#operations.get(name);
+      const executionClass = adapter.executionClass;
+      const requiredEnforcement = executionClass === 'repository-code-executing' ? 'verified-sandbox' : 'none';
+      const usable = enforcementSatisfied(executionClass, enforcementStatus);
+      return {
+        name,
+        layer: adapter.layer ?? 'core',
+        executionClass,
+        requiredEnforcement,
+        enforcementSatisfied: usable,
+        usable,
+      };
+    });
+  }
 
   validate(name, params) {
     const adapter = this.#operations.get(name);
@@ -107,13 +131,21 @@ export class DeterministicOperationRegistry {
     const adapter = this.#operations.get(name);
     if (!adapter) throw new PolicyError(`controller plan references unregistered operation ${name}`);
     const validated = adapter.validate(params);
+    if (adapter.executionClass === 'repository-code-executing') {
+      if (typeof context?.processRunner?.assertRepositorySandbox !== 'function') {
+        throw new PolicyError(`repository-code operation ${name} has no sandbox enforcement guard`);
+      }
+      await context.processRunner.assertRepositorySandbox(name);
+    }
     return adapter.execute(validated, context);
   }
 }
 
 function nodeScriptAdapter({ mode }) {
+  const executionClass = mode === 'node.test' ? 'repository-code-executing' : 'static-inspection';
   return {
     layer: 'core',
+    executionClass,
     validate(raw) {
       const params = objectParams(raw, mode);
       const allowed = mode === 'node.test' ? new Set(['paths']) : new Set(['path']);
@@ -136,6 +168,7 @@ function nodeScriptAdapter({ mode }) {
           environment: localEnvironment(),
           onActivity,
           operation: mode,
+          executionClass,
         });
       }
       await access(projectPath(projectDir, params.path, `${mode} path`).resolved);
@@ -148,6 +181,7 @@ function nodeScriptAdapter({ mode }) {
         environment: localEnvironment(),
         onActivity,
         operation: mode,
+        executionClass,
       });
     },
   };
@@ -156,6 +190,7 @@ function nodeScriptAdapter({ mode }) {
 function toolchainProbeAdapter(toolchains) {
   return {
     layer: 'core',
+    executionClass: 'static-inspection',
     validate(raw) {
       const params = objectParams(raw, 'toolchain.probe');
       onlyKeys(params, new Set(['name']), 'toolchain.probe');
@@ -183,6 +218,7 @@ function toolchainProbeAdapter(toolchains) {
 function cmakeConfigureAdapter(toolchains) {
   return {
     layer: 'core',
+    executionClass: 'repository-code-executing',
     validate(raw) {
       const params = objectParams(raw, 'cmake.configure');
       onlyKeys(params, new Set(['sourcePath', 'buildId', 'buildType', 'generator', 'architecture']), 'cmake.configure');
@@ -212,6 +248,7 @@ function cmakeConfigureAdapter(toolchains) {
         environment: localEnvironment(),
         onActivity,
         operation: 'cmake.configure',
+        executionClass: 'repository-code-executing',
       });
     },
   };
@@ -220,6 +257,7 @@ function cmakeConfigureAdapter(toolchains) {
 function cmakeBuildAdapter(toolchains) {
   return {
     layer: 'core',
+    executionClass: 'repository-code-executing',
     validate(raw) {
       const params = objectParams(raw, 'cmake.build');
       onlyKeys(params, new Set(['buildId', 'config', 'target']), 'cmake.build');
@@ -244,6 +282,7 @@ function cmakeBuildAdapter(toolchains) {
         environment: localEnvironment(),
         onActivity,
         operation: 'cmake.build',
+        executionClass: 'repository-code-executing',
       });
     },
   };
@@ -252,6 +291,7 @@ function cmakeBuildAdapter(toolchains) {
 function ctestAdapter(toolchains) {
   return {
     layer: 'core',
+    executionClass: 'repository-code-executing',
     validate(raw) {
       const params = objectParams(raw, 'ctest.run');
       onlyKeys(params, new Set(['buildId', 'config']), 'ctest.run');
@@ -274,6 +314,7 @@ function ctestAdapter(toolchains) {
         environment: localEnvironment(),
         onActivity,
         operation: 'ctest.run',
+        executionClass: 'repository-code-executing',
       });
     },
   };

@@ -5,6 +5,7 @@ import { validateToolProfile } from '../runtime/cli-profile.js';
 import { resolveExecutable } from '../runtime/executable-resolver.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
+import { verifySandboxProvider } from '../runtime/execution-sandbox.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { GitClient } from '../git/git-client.js';
 import { resolveGitHubCredential, publicGitHubCredentialStatus } from '../github/auth-provider.js';
@@ -16,6 +17,7 @@ export async function doctor(
     checkGit = true,
     checkGitHubAuth = true,
     probeCoreCapabilities = true,
+    sandboxProvider = null,
     env = process.env,
   } = {},
 ) {
@@ -23,11 +25,23 @@ export async function doctor(
   const workspaceRoot = await workspace.ensureRoot();
   await mkdir(config.state.directory, { recursive: true, mode: 0o700 });
 
+  const enforcement = await verifySandboxProvider(sandboxProvider);
   const tools = [];
   for (const [name, raw] of Object.entries(config.tools)) {
     const profile = validateToolProfile(name, raw, { allowUncontainedTools: config.execution.allowUncontainedTools });
-    const executable = resolveTools ? await resolveExecutable(profile.executable) : profile.executable;
-    tools.push({ name, executable, sandbox: profile.sandbox, inputMode: profile.inputMode, layer: 'adapter' });
+    let available = null;
+    if (resolveTools) {
+      await resolveExecutable(profile.executable);
+      available = true;
+    }
+    tools.push({
+      name,
+      available,
+      declaredSandbox: profile.sandbox,
+      enforcement: { ...enforcement },
+      inputMode: profile.inputMode,
+      layer: 'adapter',
+    });
   }
 
   if (config.execution.enabled && !config.execution.controllerPlansEnabled && tools.length === 0) {
@@ -74,11 +88,19 @@ export async function doctor(
     executionEnabled: config.execution.enabled,
     autoPushTaskBranches: config.publication.autoPushTaskBranches,
     gitVersion,
+    enforcement: {
+      requestedPolicy: {
+        repositoryCode: 'verified-sandbox-required',
+        network: 'deny-by-default',
+        outsideProjectWrite: false,
+      },
+      provider: enforcement,
+    },
     capabilities: {
       core: {
         controllerPlans: {
           enabled: config.execution.controllerPlansEnabled,
-          operations: operationRegistry.describe(),
+          operations: operationRegistry.describe({ enforcementStatus: enforcement }),
         },
         toolchains,
         faultInjection,

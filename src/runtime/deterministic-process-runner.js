@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
 import { PolicyError } from '../errors.js';
+import { assertVerifiedRepositorySandbox, sandboxStatus, verifySandboxProvider } from './execution-sandbox.js';
 import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
 
 const DEFAULT_OUTPUT_LIMIT = 512 * 1024;
 const DEFAULT_ACTIVITY_INTERVAL_MS = 30_000;
 const FAULT_TRUNCATE_BYTES = 32;
+const EXECUTION_CLASSES = new Set(['static-inspection', 'repository-code-executing']);
 
 function appendTail(current, chunk, maxBytes) {
   const combined = Buffer.concat([current, Buffer.from(chunk)]);
@@ -22,38 +24,47 @@ function boundedEnvironment(source, pass = [], set = {}) {
   return env;
 }
 
-function truncateFault(buffer) {
-  return buffer.length <= FAULT_TRUNCATE_BYTES ? buffer : buffer.subarray(buffer.length - FAULT_TRUNCATE_BYTES);
+function truncateFault(value) {
+  const buffer = Buffer.from(String(value ?? ''), 'utf8');
+  const tail = buffer.length <= FAULT_TRUNCATE_BYTES ? buffer : buffer.subarray(buffer.length - FAULT_TRUNCATE_BYTES);
+  return tail.toString('utf8');
 }
 
 export class DeterministicProcessRunner {
   #sourceEnv;
   #faults;
+  #sandboxProvider;
 
-  constructor({ sourceEnv = process.env, faultInjector = null } = {}) {
+  constructor({ sourceEnv = process.env, faultInjector = null, sandboxProvider = null } = {}) {
     this.#sourceEnv = sourceEnv;
     this.#faults = faultInjector;
+    this.#sandboxProvider = sandboxProvider;
   }
 
-  async run({
-    executable,
-    args = [],
-    cwd,
-    timeoutMs = 120_000,
-    maxOutputBytes = DEFAULT_OUTPUT_LIMIT,
-    environment = { pass: [], set: {} },
-    stdin = null,
-    onActivity = null,
-    activityIntervalMs = DEFAULT_ACTIVITY_INTERVAL_MS,
-    operation = null,
-  }) {
-    if (typeof executable !== 'string' || executable.length === 0) throw new PolicyError('deterministic operation executable is missing');
-    if (!Array.isArray(args) || args.some((value) => typeof value !== 'string')) throw new PolicyError('deterministic operation args must be structural strings');
-    if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 28_800_000) throw new PolicyError('deterministic operation timeout is out of range');
-    if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1024 || maxOutputBytes > 16_777_216) throw new PolicyError('deterministic operation output limit is out of range');
-    if (!Number.isInteger(activityIntervalMs) || activityIntervalMs < 10 || activityIntervalMs > 300_000) throw new PolicyError('deterministic activity interval is out of range');
+  enforcementStatus() {
+    return sandboxStatus(this.#sandboxProvider);
+  }
 
-    const env = boundedEnvironment(this.#sourceEnv, environment.pass ?? [], environment.set ?? {});
+  async assertRepositorySandbox(operation = 'repository-code operation') {
+    const status = await verifySandboxProvider(this.#sandboxProvider);
+    assertVerifiedRepositorySandbox(status, operation);
+    if (typeof this.#sandboxProvider?.run !== 'function') {
+      throw new PolicyError(`verified sandbox provider ${status.provider} does not implement execution`);
+    }
+    return status;
+  }
+
+  async #runDirect({
+    executable,
+    args,
+    cwd,
+    timeoutMs,
+    maxOutputBytes,
+    env,
+    stdin,
+    onActivity,
+    activityIntervalMs,
+  }) {
     const child = spawn(executable, args, containedSpawnOptions({ cwd, env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
     const startedAtMs = Date.now();
     const startedAt = new Date(startedAtMs).toISOString();
@@ -135,14 +146,6 @@ export class DeterministicProcessRunner {
     await activityQueue;
     if (activityError) throw activityError;
 
-    const fault = this.#faults?.throwIfTriggered('process.after-exit', { operation }) ?? null;
-    if (fault?.action === 'timeout') timedOut = true;
-    if (fault?.action === 'truncate-output') {
-      stdout = truncateFault(stdout);
-      stderr = truncateFault(stderr);
-      outputTruncated = true;
-    }
-
     return {
       exitCode: exit.code,
       signal: exit.signal,
@@ -154,5 +157,60 @@ export class DeterministicProcessRunner {
       finishedAt: new Date().toISOString(),
       lastOutputAt,
     };
+  }
+
+  async run({
+    executable,
+    args = [],
+    cwd,
+    timeoutMs = 120_000,
+    maxOutputBytes = DEFAULT_OUTPUT_LIMIT,
+    environment = { pass: [], set: {} },
+    stdin = null,
+    onActivity = null,
+    activityIntervalMs = DEFAULT_ACTIVITY_INTERVAL_MS,
+    operation = null,
+    executionClass = 'static-inspection',
+  }) {
+    if (typeof executable !== 'string' || executable.length === 0) throw new PolicyError('deterministic operation executable is missing');
+    if (!Array.isArray(args) || args.some((value) => typeof value !== 'string')) throw new PolicyError('deterministic operation args must be structural strings');
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 28_800_000) throw new PolicyError('deterministic operation timeout is out of range');
+    if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1024 || maxOutputBytes > 16_777_216) throw new PolicyError('deterministic operation output limit is out of range');
+    if (!Number.isInteger(activityIntervalMs) || activityIntervalMs < 10 || activityIntervalMs > 300_000) throw new PolicyError('deterministic activity interval is out of range');
+    if (!EXECUTION_CLASSES.has(executionClass)) throw new PolicyError(`deterministic execution class is unsupported: ${executionClass}`);
+
+    const request = {
+      executable,
+      args: [...args],
+      cwd,
+      timeoutMs,
+      maxOutputBytes,
+      env: boundedEnvironment(this.#sourceEnv, environment.pass ?? [], environment.set ?? {}),
+      stdin,
+      onActivity,
+      activityIntervalMs,
+      operation,
+      executionClass,
+    };
+
+    let result;
+    if (executionClass === 'repository-code-executing') {
+      await this.assertRepositorySandbox(operation ?? 'repository-code operation');
+      result = await this.#sandboxProvider.run(request, (candidate = request) => this.#runDirect({ ...request, ...candidate }));
+    } else {
+      result = await this.#runDirect(request);
+    }
+
+    const fault = this.#faults?.throwIfTriggered('process.after-exit', { operation }) ?? null;
+    if (fault?.action === 'timeout') result = { ...result, timedOut: true };
+    if (fault?.action === 'truncate-output') {
+      result = {
+        ...result,
+        stdout: truncateFault(result.stdout),
+        stderr: truncateFault(result.stderr),
+        outputTruncated: true,
+      };
+    }
+    return result;
   }
 }
