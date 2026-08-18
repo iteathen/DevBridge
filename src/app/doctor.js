@@ -7,6 +7,8 @@ import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
 import { createDeterministicSandboxProvider } from '../runtime/deterministic-sandbox.js';
 import { operationSecurityDescription } from '../runtime/deterministic-operation-security.js';
+import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
+import { enforcementProviderReport, profileSecurityDescription } from '../runtime/profile-security.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { GitClient } from '../git/git-client.js';
 import { resolveGitHubCredential, publicGitHubCredentialStatus } from '../github/auth-provider.js';
@@ -25,20 +27,6 @@ export async function doctor(
   const workspaceRoot = await workspace.ensureRoot();
   await mkdir(config.state.directory, { recursive: true, mode: 0o700 });
 
-  const tools = [];
-  for (const [name, raw] of Object.entries(config.tools)) {
-    const profile = validateToolProfile(name, raw, { allowUncontainedTools: config.execution.allowUncontainedTools });
-    const executable = resolveTools ? await resolveExecutable(profile.executable) : profile.executable;
-    tools.push({ name, executable, sandbox: profile.sandbox, inputMode: profile.inputMode, layer: 'adapter' });
-  }
-
-  if (config.execution.enabled && !config.execution.controllerPlansEnabled && tools.length === 0) {
-    throw new Error('execution.enabled is true but neither controller plans nor valid local tool profiles are enabled');
-  }
-  if (config.execution.defaultTool && !Object.hasOwn(config.tools, config.execution.defaultTool)) {
-    throw new Error(`execution.defaultTool does not exist: ${config.execution.defaultTool}`);
-  }
-
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
   const deterministicSandboxProvider = createDeterministicSandboxProvider({
@@ -47,12 +35,44 @@ export async function doctor(
     stateDirectory: config.state.directory,
     env,
   });
-  const sandbox = probeCoreCapabilities
+  const observedSandbox = probeCoreCapabilities
     ? await deterministicSandboxProvider.verify()
     : deterministicSandboxProvider.inspect();
+  const enforcementProvider = enforcementProviderReport(observedSandbox);
+
+  const builtIns = builtInToolProfiles();
+  for (const name of Object.keys(builtIns)) {
+    if (Object.hasOwn(config.tools, name)) {
+      throw new Error(`local tool profile name ${name} is reserved by PATCH-POLLER`);
+    }
+  }
+  const rawTools = { ...config.tools, ...builtIns };
+  const builtInNames = new Set(Object.keys(builtIns));
+  const tools = [];
+  for (const [name, raw] of Object.entries(rawTools)) {
+    const profile = validateToolProfile(name, raw, { allowUncontainedTools: config.execution.allowUncontainedTools });
+    const executable = resolveTools ? await resolveExecutable(profile.executable, env) : profile.executable;
+    const security = profileSecurityDescription(profile, enforcementProvider);
+    tools.push({
+      name,
+      executable,
+      inputMode: profile.inputMode,
+      layer: 'adapter',
+      source: builtInNames.has(name) ? 'patch-poller-builtin' : 'local-profile',
+      ...security,
+    });
+  }
+
+  if (config.execution.enabled && !config.execution.controllerPlansEnabled && Object.keys(config.tools).length === 0) {
+    throw new Error('execution.enabled is true but neither controller plans nor local task tool profiles are enabled');
+  }
+  if (config.execution.defaultTool && !Object.hasOwn(rawTools, config.execution.defaultTool)) {
+    throw new Error(`execution.defaultTool does not exist: ${config.execution.defaultTool}`);
+  }
+
   const operations = operationRegistry.describe().map((entry) => ({
     ...entry,
-    ...operationSecurityDescription(entry.name, sandbox),
+    ...operationSecurityDescription(entry.name, enforcementProvider),
   }));
   const toolchains = probeCoreCapabilities
     ? await toolchainRegistry.inspect()
@@ -90,10 +110,11 @@ export async function doctor(
     autoPushTaskBranches: config.publication.autoPushTaskBranches,
     gitVersion,
     capabilities: {
+      enforcementProvider,
       core: {
         controllerPlans: {
           enabled: config.execution.controllerPlansEnabled,
-          sandbox,
+          enforcementProvider,
           operations,
         },
         toolchains,
@@ -101,6 +122,7 @@ export async function doctor(
       },
       adapters: {
         enabled: config.execution.modelAdaptersEnabled,
+        enforcementProvider,
         tools,
       },
     },
