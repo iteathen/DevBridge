@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { PolicyError } from '../errors.js';
+import { CandidateValidationError, PolicyError } from '../errors.js';
 import { splitRepository } from '../security/workspace-policy.js';
 
 const RUNTIME_DIR = '.patch-poller';
@@ -196,8 +196,6 @@ export class GitWorkspaceManager {
 
   async snapshot(workspace) {
     const { worktreeDir, baseSha } = workspace;
-    // Keep Git operations serial even for read-only inspection so this adapter
-    // preserves one simple per-worktree ordering model.
     const head = await this.#git.run(['rev-parse', 'HEAD'], { cwd: worktreeDir });
     const status = await this.#git.run(['status', '--porcelain=v1', '--untracked-files=all'], { cwd: worktreeDir });
     const committed = await this.#git.run(['diff', '--name-only', `${baseSha}...HEAD`], { cwd: worktreeDir });
@@ -252,34 +250,72 @@ export class GitWorkspaceManager {
     return snapshot;
   }
 
-  async sealCandidate(workspace, { issueNumber, revision }) {
-    let snapshot = await this.validate(workspace);
-    if (!snapshot.dirty) return snapshot;
-
-    await this.#git.run(['add', '-A', '--', '.'], { cwd: workspace.worktreeDir });
-    const staged = await this.#git.run(['diff', '--cached', '--name-only'], { cwd: workspace.worktreeDir });
-    const stagedFiles = lines(staged.stdout);
-    const reserved = stagedFiles.filter(isReservedRuntimePath);
-    if (reserved.length > 0) {
-      throw new PolicyError(`refusing to seal reserved PATCH-POLLER runtime paths: ${reserved.join(', ')}`);
-    }
-    if (stagedFiles.length === 0) return this.validate(workspace);
-
-    const check = await this.#git.run(['diff', '--cached', '--check'], {
+  async #restoreProposalIndex(workspace) {
+    const reset = await this.#git.run(['reset', '--quiet', 'HEAD', '--', '.'], {
       cwd: workspace.worktreeDir,
       allowFailure: true
     });
-    if (check.exitCode !== 0) {
-      throw new PolicyError(`staged candidate failed git diff --check: ${(check.stderr || check.stdout).trim()}`);
+    if (reset.exitCode !== 0) {
+      throw new PolicyError(`failed to restore PATCH-POLLER-owned candidate index after rejected seal: ${(reset.stderr || reset.stdout).trim()}`);
     }
+  }
 
-    const message = `PATCH-POLLER issue #${issueNumber} ${String(revision).slice(0, 12)}`;
-    await this.#git.run([
-      '-c', 'user.name=PATCH-POLLER',
-      '-c', 'user.email=patch-poller@localhost',
-      '-c', 'commit.gpgSign=false',
-      'commit', '--no-gpg-sign', '-m', message
-    ], { cwd: workspace.worktreeDir });
+  async #validateProposal(workspace) {
+    try {
+      return await this.validate(workspace);
+    } catch (error) {
+      if (error instanceof PolicyError) {
+        throw new CandidateValidationError(error.message, { cause: error });
+      }
+      throw error;
+    }
+  }
+
+  async sealCandidate(workspace, { issueNumber, revision }) {
+    let snapshot = await this.snapshot(workspace);
+    if (!snapshot.dirty) return snapshot;
+
+    // The coding tool does not own Git administrative state. Normalize any
+    // staged residue (including from older runtimes) back into the working
+    // tree before independently validating and sealing the proposal.
+    await this.#restoreProposalIndex(workspace);
+    snapshot = await this.#validateProposal(workspace);
+    if (!snapshot.dirty) return snapshot;
+
+    let committed = false;
+    try {
+      await this.#git.run(['add', '-A', '--', '.'], { cwd: workspace.worktreeDir });
+      const staged = await this.#git.run(['diff', '--cached', '--name-only'], { cwd: workspace.worktreeDir });
+      const stagedFiles = lines(staged.stdout);
+      const reserved = stagedFiles.filter(isReservedRuntimePath);
+      if (reserved.length > 0) {
+        throw new CandidateValidationError(`refusing to seal reserved PATCH-POLLER runtime paths: ${reserved.join(', ')}`);
+      }
+      if (stagedFiles.length === 0) {
+        await this.#restoreProposalIndex(workspace);
+        return this.#validateProposal(workspace);
+      }
+
+      const check = await this.#git.run(['diff', '--cached', '--check'], {
+        cwd: workspace.worktreeDir,
+        allowFailure: true
+      });
+      if (check.exitCode !== 0) {
+        throw new CandidateValidationError(`staged candidate failed git diff --check: ${(check.stderr || check.stdout).trim()}`);
+      }
+
+      const message = `PATCH-POLLER issue #${issueNumber} ${String(revision).slice(0, 12)}`;
+      await this.#git.run([
+        '-c', 'user.name=PATCH-POLLER',
+        '-c', 'user.email=patch-poller@localhost',
+        '-c', 'commit.gpgSign=false',
+        'commit', '--no-gpg-sign', '-m', message
+      ], { cwd: workspace.worktreeDir });
+      committed = true;
+    } catch (error) {
+      if (!committed) await this.#restoreProposalIndex(workspace);
+      throw error;
+    }
 
     snapshot = await this.validate(workspace);
     if (snapshot.dirty) throw new PolicyError('candidate remained dirty after PATCH-POLLER sealed it');
