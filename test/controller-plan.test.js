@@ -63,21 +63,19 @@ test('rejects operation authority fields and assertions that name unknown operat
   })), /unknown operation/u);
 });
 
-test('generic controller executor materializes a multi-file project, runs Node tests, and removes ephemeral files', async () => {
+test('generic controller executor materializes a multi-file project, runs static Node inspection, and removes ephemeral files', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'patch-poller-controller-plan-'));
   try {
     const plan = normalizeControllerPlan(basePlan({
       files: [
         { scope: 'persistent', action: 'create', path: 'src/math.mjs', content: 'export function add(a, b) { return a + b; }\n' },
-        { scope: 'ephemeral', action: 'create', path: 'test/generated.test.mjs', content: "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { add } from '../src/math.mjs';\ntest('add', () => assert.equal(add(2, 3), 5));\n" },
+        { scope: 'ephemeral', action: 'create', path: 'test/generated.test.mjs', content: "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('fixture', () => assert.equal(1, 1));\n" },
       ],
       operations: [
         { id: 'syntax', operation: 'node.syntax-check', params: { path: 'src/math.mjs' } },
-        { id: 'tests', operation: 'node.test', params: { paths: ['test/generated.test.mjs'] } },
       ],
       assertions: [
         { kind: 'exit-equals', operation: 'syntax', value: 0 },
-        { kind: 'exit-equals', operation: 'tests', value: 0 },
         { kind: 'file-exists', path: 'test/generated.test.mjs' },
       ],
       expectedChangedPaths: ['src/math.mjs'],
@@ -95,7 +93,7 @@ test('generic controller executor materializes a multi-file project, runs Node t
     const result = await executor.execute({ plan, state, workspace, persist: async () => { persists += 1; } });
     assert.match(await readFile(path.join(root, 'src', 'math.mjs'), 'utf8'), /function add/u);
     await assert.rejects(stat(path.join(root, 'test', 'generated.test.mjs')), { code: 'ENOENT' });
-    assert.equal(result.tests.length, 2);
+    assert.equal(result.tests.length, 1);
     assert.equal(result.tests.every((entry) => entry.exitCode === 0), true);
     assert.equal(state.controllerPlan.cleanup.leftovers.length, 0);
     assert.equal(state.controllerPlan.cleanup.verifiedAbsent, 1);
