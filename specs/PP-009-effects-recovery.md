@@ -79,6 +79,16 @@ Recovery behavior is stage-aware:
 - `publishing`: reconcile/push the already sealed candidate rather than requesting another model turn;
 - uncertain interrupted tool invocation: preserve the worktree, inspect resulting state, and continue conservatively; full invocation-level reconciliation is a future hardening area.
 
+A verification attempt that proves the **proposal itself** invalid is different from a verification infrastructure failure. Candidate-content rejection (for example whitespace/check failures, unresolved proposal state, or another repairable candidate invariant) must:
+
+1. leave the working-tree proposal intact;
+2. restore PATCH-POLLER-owned Git index state so a rejected staging attempt does not become persistent residue;
+3. persist the exact validator evidence as run context/blocker;
+4. move the run back to `running` for another bounded proposal-engine repair turn when turn budget remains;
+5. never grant the proposal engine Git-administrative authority merely because sealing failed.
+
+By contrast, an infrastructure/control-plane failure during verification or publication must keep the durable `verifying`/`publishing` stage and be retried/reconciled without rerunning the proposal engine unless later evidence proves the project content itself requires repair.
+
 The original baseline SHA must remain unchanged across recovery.
 
 ## Failure taxonomy
@@ -90,6 +100,8 @@ Recovery and retry policy distinguishes at least:
 3. `TRANSIENT` — bounded retry only where the operation is idempotent/reconcilable;
 4. `CODE` — return evidence to the proposal engine/coordinator;
 5. `PROTOCOL` — malformed/contradictory agent or control-channel data.
+
+Candidate validation rejection is a `CODE`/proposal-quality outcome unless the evidence indicates a security/policy violation that local policy says must not be delegated back for repair.
 
 Unknown failures default to conservative handling, not privilege expansion.
 
@@ -116,6 +128,8 @@ PATCH-POLLER state is authoritative; GitHub status is a durable coordination pro
 Tests must cover at least:
 
 - restart during final verification does not rerun the model unnecessarily;
+- a candidate-content validation rejection restores the control-plane-owned index, preserves working-tree bytes, and returns to a bounded repair turn rather than looping in `verifying`;
+- verification/publication infrastructure failure does not rerun the model unnecessarily;
 - restart during publication reconciles the same sealed SHA;
 - duplicate task revision does not execute again;
 - a newer revision of one issue is deferred while an older revision remains active;
@@ -126,6 +140,6 @@ Tests must cover at least:
 
 ## v0.1 boundary
 
-v0.1 implements atomic JSON run state, immutable baseline persistence, duplicate-revision suppression, active-revision deferral, resumable feedback, candidate sealing, and stage-aware finalization/publication recovery. A repeated task-branch push uses the same sealed local SHA.
+v0.1 implements atomic JSON run state, immutable baseline persistence, duplicate-revision suppression, active-revision deferral, resumable feedback, transactional candidate sealing, repair-turn recovery for rejected candidate content, and stage-aware finalization/publication recovery. A repeated task-branch push uses the same sealed local SHA.
 
 v0.1 does **not** yet implement the complete generic effect journal. In particular, a crash after GitHub accepts a newly created status comment but before its ID is persisted can still require future reconciliation logic, and an interrupted model invocation may be followed by another bounded model turn after workspace inspection. Those limitations are explicit rather than hidden.
