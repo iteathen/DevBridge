@@ -52,13 +52,30 @@ function canConnect() {
 });
 `;
 
-export async function captureSandboxProbeProcess(executable, args, { cwd = '/', env = {}, timeoutMs = PROBE_TIMEOUT_MS } = {}) {
-  const child = spawn(executable, args, containedSpawnOptions({
-    cwd,
-    env,
-    shell: false,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }));
+export async function captureSandboxProbeProcess(
+  executable,
+  args,
+  {
+    cwd = '/',
+    env = {},
+    timeoutMs = PROBE_TIMEOUT_MS,
+    extraStdio = [],
+    release = null,
+  } = {},
+) {
+  if (!Array.isArray(extraStdio)) throw new TypeError('sandbox probe extraStdio must be an array');
+  let child;
+  try {
+    child = spawn(executable, args, containedSpawnOptions({
+      cwd,
+      env,
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe', ...extraStdio],
+    }));
+  } catch (error) {
+    if (typeof release === 'function') await release();
+    throw error;
+  }
   let stdout = Buffer.alloc(0);
   let stderr = Buffer.alloc(0);
   let truncated = false;
@@ -83,6 +100,7 @@ export async function captureSandboxProbeProcess(executable, args, { cwd = '/', 
   }).finally(async () => {
     clearTimeout(timer);
     if (termination) await termination;
+    if (typeof release === 'function') await release();
   });
   return {
     ...exit,
