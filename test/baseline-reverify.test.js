@@ -94,7 +94,7 @@ function driftingWorkspace({ reconciliationError = null } = {}) {
     baseRef: 'origin/main',
     baseSha: BASE_A,
     publicationBaseSha: BASE_A,
-    publicationRewriteFromShas: []
+    taskBranchKnownRemoteHeads: []
   };
   let sealCalls = 0;
   return {
@@ -104,7 +104,7 @@ function driftingWorkspace({ reconciliationError = null } = {}) {
       async prepareRun(_task, _runId, resume = {}) {
         if (resume.baseSha) workspace.baseSha = resume.baseSha;
         if (resume.publicationBaseSha) workspace.publicationBaseSha = resume.publicationBaseSha;
-        if (resume.publicationRewriteFromShas) workspace.publicationRewriteFromShas = [...resume.publicationRewriteFromShas];
+        if (resume.taskBranchKnownRemoteHeads) workspace.taskBranchKnownRemoteHeads = [...resume.taskBranchKnownRemoteHeads];
         return workspace;
       },
       async snapshot() { return snapshot(workspace, { headSha: workspace.publicationBaseSha === BASE_A ? HEAD_A : HEAD_B }); },
@@ -114,7 +114,6 @@ function driftingWorkspace({ reconciliationError = null } = {}) {
         if (sealCalls === 1) {
           if (reconciliationError) throw reconciliationError;
           workspace.publicationBaseSha = BASE_B;
-          workspace.publicationRewriteFromShas = [HEAD_A];
           throw new BaselineReverificationRequiredError(
             `upstream baseline advanced from ${BASE_A} to ${BASE_B}`,
             { changed: true, fromBaseSha: BASE_A, toBaseSha: BASE_B, fromHeadSha: HEAD_A, toHeadSha: HEAD_B }
@@ -181,6 +180,7 @@ test('model candidate is reverified after baseline rebase and stale test evidenc
   assert.deepEqual(state.prior.tests, ['fresh-test-pass']);
   assert.equal(state.workspace.baseSha, BASE_A);
   assert.equal(state.workspace.publicationBaseSha, BASE_B);
+  assert.deepEqual(state.workspace.taskBranchKnownRemoteHeads, []);
   assert.equal(state.baselineReconciliation.history.length, 1);
 });
 
@@ -197,7 +197,7 @@ test('restart from publishing rechecks baseline and re-enters verification befor
     baseRef: 'origin/main',
     baseSha: BASE_A,
     publicationBaseSha: BASE_A,
-    publicationRewriteFromShas: []
+    taskBranchKnownRemoteHeads: [HEAD_A]
   };
   const stale = snapshot(workspace, { headSha: HEAD_A });
   await store.set(key, {
@@ -223,7 +223,7 @@ test('restart from publishing rechecks baseline and re-enters verification befor
     async prepareRun(_task, _runId, resume = {}) {
       workspace.baseSha = resume.baseSha;
       workspace.publicationBaseSha = resume.publicationBaseSha;
-      workspace.publicationRewriteFromShas = [...(resume.publicationRewriteFromShas ?? [])];
+      workspace.taskBranchKnownRemoteHeads = [...(resume.taskBranchKnownRemoteHeads ?? [])];
       return workspace;
     },
     async snapshot() { return snapshot(workspace, { headSha: workspace.publicationBaseSha === BASE_A ? HEAD_A : HEAD_B }); },
@@ -232,7 +232,6 @@ test('restart from publishing rechecks baseline and re-enters verification befor
       seals += 1;
       if (seals === 1) {
         workspace.publicationBaseSha = BASE_B;
-        workspace.publicationRewriteFromShas = [HEAD_A];
         throw new BaselineReverificationRequiredError('baseline advanced while publication was interrupted', {
           changed: true,
           fromBaseSha: BASE_A,
@@ -267,6 +266,7 @@ test('restart from publishing rechecks baseline and re-enters verification befor
   assert.deepEqual(state.prior.tests, ['fresh-post-restart-test']);
   assert.equal(state.workspace.baseSha, BASE_A);
   assert.equal(state.workspace.publicationBaseSha, BASE_B);
+  assert.deepEqual(state.workspace.taskBranchKnownRemoteHeads, [HEAD_A]);
 });
 
 test('deterministic controller plan re-executes after a successful baseline rebase', async () => {
