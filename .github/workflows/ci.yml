@@ -136,6 +136,12 @@ jobs:
           & $sandboxExecutable --probe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "executable=$sandboxExecutable" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Diagnose Windows contained-process startup
+        timeout-minutes: 4
+        continue-on-error: true
+        env:
+          DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE: ${{ steps.windows-sandbox.outputs.executable }}
+        run: node scripts/diagnose-windows-processcontainer-startup.mjs
       - name: Windows sandbox qualification
         timeout-minutes: 7
         env:
