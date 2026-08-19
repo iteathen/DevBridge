@@ -58,7 +58,7 @@ function remoteLease(identity, { now, expires = now + TTL, epoch = 1, previousLe
   });
 }
 
-function managerOptions(identity, store, trusted, clock) {
+function managerOptions(identity, store, trusted, clock, extra = {}) {
   return {
     identity,
     trustedIdentities: trusted,
@@ -70,6 +70,7 @@ function managerOptions(identity, store, trusted, clock) {
     setIntervalFn: () => ({ fake: true }),
     clearIntervalFn: () => {},
     sessionId: '1'.repeat(32),
+    ...extra,
   };
 }
 
@@ -135,7 +136,7 @@ test('unexpired trusted peer lease defers while expired peer lease can be reclai
   }
 });
 
-test('same persistent identity can reconcile an active lease after daemon restart', async () => {
+test('same persistent identity takeover requires a locally exclusive control session', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-lease-restart-'));
   try {
     const identity = await loadOrCreateAgentIdentity({ directory: root, handle: 'agent-a' });
@@ -143,8 +144,15 @@ test('same persistent identity can reconcile an active lease after daemon restar
     const previous = { commitSha: 'c'.repeat(40), envelope: remoteLease(identity, { now: now - 10_000, expires: now + 60_000, epoch: 7, sessionId: '8'.repeat(32) }) };
     const store = new MemoryLeaseStore(previous);
     const clock = { now };
-    const manager = new TaskLeaseManager(managerOptions(identity, store, new Map(), clock));
-    const acquired = await manager.begin(TASK);
+
+    const ordinary = new TaskLeaseManager(managerOptions(identity, store, new Map(), clock));
+    const deferred = await ordinary.begin(TASK);
+    assert.equal(deferred.acquired, false);
+    assert.equal(deferred.reason, 'held-by-local-session');
+    assert.equal(store.calls.length, 0);
+
+    const exclusive = new TaskLeaseManager(managerOptions(identity, store, new Map(), clock, { allowIdentityTakeover: true }));
+    const acquired = await exclusive.begin(TASK);
     assert.equal(acquired.acquired, true);
     assert.equal(acquired.reconciled, true);
     assert.equal(acquired.handle.epoch, 8);
