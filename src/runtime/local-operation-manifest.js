@@ -17,6 +17,11 @@ const MAX_MANIFESTS = 64;
 const MAX_ARGUMENTS = 64;
 const MAX_ENUM_VALUES = 64;
 const VALUE_TYPES = new Set(['string', 'project-path', 'integer', 'enum']);
+const FORBIDDEN_PARAMETER_NAMES = new Set([
+  'command', 'shell', 'argv', 'args', 'executable', 'cwd', 'localpath', 'absolutepath',
+  'environment', 'env', 'credentials', 'credential', 'capabilities', 'gitref', 'gitsha',
+  'cleanuproot', 'module', 'plugin', 'faultinjection', 'exec', 'eval', 'require', 'chdir',
+]);
 
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new PolicyError(`${name} must be an object`);
@@ -30,6 +35,13 @@ function onlyKeys(value, allowed, name) {
 function safeIdentifier(value, name, pattern = SAFE_ID) {
   if (typeof value !== 'string' || !pattern.test(value)) throw new PolicyError(`${name} is invalid`);
   return value;
+}
+
+function safeParameter(value, name) {
+  const param = safeIdentifier(value, name, SAFE_PARAM);
+  const authorityKey = param.toLowerCase().replace(/[_-]/gu, '');
+  if (FORBIDDEN_PARAMETER_NAMES.has(authorityKey)) throw new PolicyError(`${name} is reserved for control-plane authority`);
+  return param;
 }
 
 function safeInteger(value, name, { min, max }) {
@@ -87,7 +99,7 @@ function validateArgument(raw, index) {
     onlyKeys(value, new Set(['kind', 'param', 'flag']), name);
     return {
       kind,
-      param: safeIdentifier(value.param, `${name}.param`, SAFE_PARAM),
+      param: safeParameter(value.param, `${name}.param`),
       flag: safeIdentifier(value.flag, `${name}.flag`, SAFE_FLAG),
     };
   }
@@ -97,7 +109,7 @@ function validateArgument(raw, index) {
   onlyKeys(value, allowed, name);
   const result = {
     kind,
-    param: safeIdentifier(value.param, `${name}.param`, SAFE_PARAM),
+    param: safeParameter(value.param, `${name}.param`),
     required: value.required === true,
     repeat: value.repeat === true,
     ...validateValueDescriptor(value, name),
@@ -182,13 +194,11 @@ function encodeValue(descriptor, value, name) {
 }
 
 function materializeArgument(descriptor, raw, name) {
-  const values = descriptor.repeat ? raw : [raw];
-  if (descriptor.repeat) {
-    if (!Array.isArray(raw) || raw.length === 0 || raw.length > descriptor.maxItems) {
-      throw new PolicyError(`${name} must contain 1-${descriptor.maxItems} values`);
-    }
+  if (!descriptor.repeat) return encodeValue(descriptor, raw, name);
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > descriptor.maxItems) {
+    throw new PolicyError(`${name} must contain 1-${descriptor.maxItems} values`);
   }
-  return values.map((value, index) => encodeValue(descriptor, value, descriptor.repeat ? `${name}[${index}]` : name));
+  return raw.map((value, index) => encodeValue(descriptor, value, `${name}[${index}]`));
 }
 
 function localEnvironment() {
