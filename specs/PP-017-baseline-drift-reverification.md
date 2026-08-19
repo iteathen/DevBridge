@@ -91,9 +91,9 @@ Baseline rebase rewrites candidate commit IDs, so a recoverable publication path
 For a PATCH-POLLER-owned task branch:
 
 - PATCH-POLLER first observes the exact remote branch head after validating the exact locally verified candidate identity.
-- First creation uses an explicitly empty expected value with `--force-with-lease=<ref>` followed by an empty expected value.
+- First creation uses an explicitly empty expected value with `--force-with-lease=<ref>:`.
 - If the remote already equals the exact verified local head, publication is treated as reconciled/idempotent and that exact observed head may be retained as confirmed remote state.
-- A rewritten rebased candidate may replace a remote head only when that exact head was previously confirmed on the remote through PATCH-POLLER's own publication/reconciliation path, using explicit expected-head `--force-with-lease` semantics.
+- A rewritten rebased candidate may replace a remote head only when that exact head was previously confirmed on the remote through PATCH-POLLER's own publication/reconciliation path, using `--force-with-lease=<ref>:<expected-sha>`.
 - Merely having the same commit locally, including as a pre-rebase candidate head, does not make an unexplained remote branch authoritative or overwriteable.
 - Any other remote head fails closed; PATCH-POLLER does not overwrite an unexplained branch mutation.
 - After push, PATCH-POLLER re-observes the branch and records success only if the remote exact head equals the intended verified local head. This allows recovery from an ambiguous transport result without blind retry.
@@ -106,7 +106,7 @@ PP-016 still fences these effects. Reconciliation, sealing, and publication occu
 
 PP-009 recovery evidence remains authoritative for ambiguous effects. A restart resumes with the immutable `baseSha`, persisted `publicationBaseSha`, exact verified candidate snapshot when present, and a bounded set of exact task-branch heads that PATCH-POLLER previously confirmed remotely. It observes before mutating rather than resetting to a remembered branch state.
 
-An interrupted publication does not require trusting an unconfirmed intended head. On recovery, PATCH-POLLER first confirms that the managed candidate still equals the persisted verified candidate identity. Then either the remote already equals that exact verified head, which is reconciled idempotently without overwrite, or it still equals a previously confirmed predecessor head, which may be used as the explicit force-with-lease expectation. Any local identity drift invalidates verification; any third remote state fails closed.
+An interrupted publication does not require trusting an unconfirmed intended head. On recovery, PATCH-POLLER first confirms that the managed candidate still equals the persisted verified candidate identity. Then either the remote already equals that exact verified head, which is reconciled idempotently without overwrite, or it still equals a previously confirmed predecessor head, which may be used as the explicit `force-with-lease` expectation. Any local identity drift invalidates verification; any third remote state fails closed.
 
 ## Required tests
 
@@ -124,7 +124,7 @@ Tests must cover at least:
 - resumed publication with a dirty worktree clears stale verification before sealing or publication;
 - deterministic local candidate drift consumes the next bounded deterministic attempt, and an exhausted window checkpoints without invoking the plan executor or publication;
 - publication rejects a local `HEAD` different from `expectedHeadSha` before any push;
-- first task-branch publication pushes the exact verified SHA to the task ref with an explicit empty expected remote value and never relies on symbolic `HEAD` as payload identity;
+- first task-branch publication pushes `<verified-sha>:<task-ref>` with an explicit empty expected remote value and never relies on symbolic `HEAD` as payload identity;
 - rebased branch rewrite uses an exact previously confirmed remote predecessor head while pushing the exact verified local SHA;
 - a merely local pre-rebase candidate head does not become task-branch rewrite authority;
 - unexpected remote branch mutation is not overwritten;
