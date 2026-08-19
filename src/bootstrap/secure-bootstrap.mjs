@@ -1,9 +1,15 @@
+import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import * as transactional from './transactional-bootstrap.mjs';
 import { validateRuntimeCandidate as sandboxValidateRuntimeCandidate } from './candidate-validator.mjs';
-import { readSignedReleaseManifest, verifyRuntimeReleaseIntegrity } from './release-integrity.mjs';
+import {
+  readSignedReleaseManifest,
+  runtimeArtifactSha256,
+  verifyRuntimeReleaseIntegrity,
+} from './release-integrity.mjs';
+import { runtimeArtifactSha256Sync } from './runtime-artifact-sync.mjs';
 
 export * from './transactional-bootstrap.mjs';
 
@@ -13,6 +19,10 @@ function takeValue(argv, index, flag) {
   const value = argv[index + 1];
   if (!value || value.startsWith('--')) fail(`${flag} requires a value`);
   return value;
+}
+
+function exactDigest(value) {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/u.test(value) ? value : null;
 }
 
 export function parseBootstrapArgs(argv) {
@@ -89,7 +99,9 @@ export async function prepareRuntimeCandidate(args, paths, {
     fail('candidate tested artifact digest does not match the statically verified release artifact');
   }
   // Re-run the static digest/signature check after candidate tests so the exact
-  // bytes accepted for activation are the exact bytes that were tested.
+  // bytes accepted for activation are the exact bytes that were tested at the
+  // end of validation. superviseDaemon performs one more synchronous digest
+  // check immediately before spawning that runtime after the drain window.
   const afterIntegrity = await verifyRuntimeReleaseIntegrity({ args, runtime, manifest: releaseManifest });
   if (afterIntegrity.artifactSha256 !== validation.artifactSha256) {
     fail('candidate artifact changed after sandbox validation');
@@ -130,6 +142,14 @@ function augmentActivationRecord(record, integrityByHead) {
   };
 }
 
+function acceptedRuntimeForCwd(integrityByHead, cwd) {
+  const resolved = path.resolve(cwd);
+  for (const runtime of integrityByHead.values()) {
+    if (runtime?.runtimeDir && path.resolve(runtime.runtimeDir) === resolved) return runtime;
+  }
+  return null;
+}
+
 export async function superviseDaemon(args, paths, initialRuntime, options = {}) {
   const integrityByHead = new Map();
   if (initialRuntime?.head) integrityByHead.set(initialRuntime.head.toLowerCase(), initialRuntime);
@@ -140,6 +160,8 @@ export async function superviseDaemon(args, paths, initialRuntime, options = {})
   const baseResolveChannelRefFn = options.resolveChannelRefFn ?? transactional.resolveChannelRef;
   const baseRecordActivationFn = options.recordActivationFn ?? transactional.writeRuntimeActivationState;
   const baseCandidatePrepareFn = options.candidatePrepareFn ?? prepareRuntimeCandidate;
+  const baseSpawnImpl = options.spawnImpl ?? spawn;
+  const artifactDigestSyncFn = options.artifactDigestSyncFn ?? runtimeArtifactSha256Sync;
 
   const remoteHeadFn = args.releaseMode === 'production'
     ? (ref, context) => {
@@ -156,6 +178,9 @@ export async function superviseDaemon(args, paths, initialRuntime, options = {})
       ...input,
       releaseManifest: manifest,
     });
+    if (!exactDigest(candidate?.artifactSha256)) {
+      fail('candidate preparation did not return an exact tested runtime artifact digest');
+    }
     integrityByHead.set(candidate.head.toLowerCase(), candidate);
     return candidate;
   };
@@ -165,30 +190,70 @@ export async function superviseDaemon(args, paths, initialRuntime, options = {})
     augmentActivationRecord(record, integrityByHead),
   );
 
+  const spawnImpl = (executable, argv, spawnOptions = {}) => {
+    const accepted = acceptedRuntimeForCwd(integrityByHead, spawnOptions.cwd ?? '.');
+    if (accepted?.artifactSha256) {
+      const observed = artifactDigestSyncFn(accepted.runtimeDir);
+      if (observed.sha256 !== accepted.artifactSha256) {
+        fail(`runtime artifact changed after validation before activation; expected ${accepted.artifactSha256}, observed ${observed.sha256}`);
+      }
+    } else if (args.releaseMode === 'production') {
+      fail('production supervisor refuses to spawn a runtime without accepted exact artifact evidence');
+    }
+    return baseSpawnImpl(executable, argv, spawnOptions);
+  };
+
   return transactional.superviseDaemon(args, paths, initialRuntime, {
     ...options,
     remoteHeadFn,
     resolveChannelRefFn: baseResolveChannelRefFn,
     candidatePrepareFn,
     recordActivationFn,
+    spawnImpl,
   });
 }
 
 async function validateProductionRuntime(args, paths, runtime, { env = process.env } = {}) {
+  const persisted = transactional.readRuntimeActivationState(paths)?.current;
+  if (
+    persisted?.head?.toLowerCase?.() === runtime.head.toLowerCase() &&
+    exactDigest(persisted.artifactSha256) &&
+    persisted.releaseIntegrity?.mode === 'production' &&
+    persisted.releaseIntegrity?.verified === true &&
+    persisted.releaseIntegrity?.immutableRelease === true
+  ) {
+    // A new local manifest may already name the *next* release while this
+    // last-known-good runtime was signed by the previous manifest. Preserve the
+    // prior accepted release identity from the control-owned activation journal,
+    // but independently re-hash the current runtime before trusting it again.
+    const artifact = await runtimeArtifactSha256(runtime.runtimeDir);
+    if (artifact.sha256 !== persisted.artifactSha256) {
+      fail(`persisted production runtime artifact changed; expected ${persisted.artifactSha256}, observed ${artifact.sha256}`);
+    }
+    return {
+      ...runtime,
+      artifactSha256: artifact.sha256,
+      releaseIntegrity: {
+        mode: 'production',
+        verified: true,
+        immutableRelease: true,
+        artifactSha256: artifact.sha256,
+        manifestSha256: persisted.releaseIntegrity.manifestSha256 ?? null,
+        keyId: persisted.releaseIntegrity.keyId ?? null,
+        releaseHead: runtime.head,
+      },
+    };
+  }
+
   const manifest = await readSignedReleaseManifest(args.releaseManifest, args.releasePublicKey);
   const integrity = await verifyRuntimeReleaseIntegrity({ args, runtime, manifest });
-  const persisted = transactional.readRuntimeActivationState(paths)?.current;
-  const alreadyHealthy = persisted?.head?.toLowerCase?.() === runtime.head.toLowerCase() &&
-    persisted?.artifactSha256 === integrity.artifactSha256 &&
-    persisted?.releaseIntegrity?.manifestSha256 === integrity.manifestSha256 &&
-    persisted?.releaseIntegrity?.verified === true;
-  if (alreadyHealthy) return { ...runtime, artifactSha256: integrity.artifactSha256, releaseIntegrity: integrity };
-
   const validation = await sandboxValidateRuntimeCandidate(paths, runtime, null, {
     expectedArtifactSha256: integrity.artifactSha256,
     env,
   });
-  if (validation.artifactSha256 !== integrity.artifactSha256) fail('production runtime sandbox validation did not preserve the signed artifact');
+  if (validation.artifactSha256 !== integrity.artifactSha256) {
+    fail('production runtime sandbox validation did not preserve the signed artifact');
+  }
   return { ...runtime, artifactSha256: integrity.artifactSha256, releaseIntegrity: integrity, validation };
 }
 
@@ -225,8 +290,8 @@ export async function bootstrap(argv = process.argv.slice(2), runner) {
     return transactional.runPollerCli(args.command, paths, runtime, runner);
   }
 
-  // In production, reaching this point means the exact signed runtime passed
-  // the verified untrusted-code validation boundary. Doctor is now a
+  // In production, reaching this point means the exact signed/persisted runtime
+  // passed the trusted release-integrity boundary. Doctor is now a
   // post-acceptance control-plane health check, not a pre-acceptance trust test.
   const doctorStatus = transactional.runPollerCli('doctor', paths, runtime, runner);
   if (doctorStatus !== 0 || args.command === 'doctor') return doctorStatus;
