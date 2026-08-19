@@ -1,87 +1,93 @@
 # DevBridge setup
 
-DevBridge is designed to be installed from one small bootstrap file and then keep itself current.
+DevBridge is installed from one standalone stage-0 launcher and then keeps its managed runtime current through the secure supervisor.
 
 ## Requirements
 
 - Node.js 22.16.0 or newer
 - Git
-- a GitHub account with access to the task queue and target repositories
-- Linux with Bubblewrap for any untrusted proposal-worker or repository-code execution
+- a GitHub account with access to the configured task queue and target repositories
+- Linux with Bubblewrap for untrusted proposal-worker or repository-code execution
 
-Windows and other hosts can run configuration, static, and control-plane operations, but untrusted execution remains fail-closed until a verified OS sandbox provider exists for that platform.
+Windows can run configuration, static, and control-plane operations, but untrusted execution remains fail-closed until a verified Windows OS sandbox provider exists.
 
-## New install
+## Fresh install
 
-Create a directory for the launcher and download the single bootstrap file from the DevBridge repository.
-
-### Linux / macOS
+### Linux
 
 ```sh
-mkdir -p ~/devbridge
-cd ~/devbridge
-curl -fsSLO https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs
-node devbridge.mjs --home ~/.devbridge
+mkdir -p "$HOME/.devbridge/bin" && curl -fsSL https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs -o "$HOME/.devbridge/bin/devbridge.mjs" && node "$HOME/.devbridge/bin/devbridge.mjs"
 ```
 
 ### Windows PowerShell
 
 ```powershell
-New-Item -ItemType Directory -Force "$HOME\devbridge" | Out-Null
-Set-Location "$HOME\devbridge"
-Invoke-WebRequest "https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs" -OutFile "devbridge.mjs"
-node .\devbridge.mjs --home "$HOME\.devbridge"
+New-Item -ItemType Directory -Force "$HOME\.devbridge\bin" | Out-Null; Invoke-WebRequest "https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs" -OutFile "$HOME\.devbridge\bin\devbridge.mjs"; node "$HOME\.devbridge\bin\devbridge.mjs"
 ```
 
-On the first run DevBridge fetches its managed runtime, creates a safe local configuration if one does not already exist, and exits rather than enabling execution automatically.
+The launcher defaults to `~/.devbridge` / `$HOME\.devbridge`. On first run it:
+
+1. enforces the supported Node.js version;
+2. uses a tightly controlled Git environment to materialize the fixed `https://github.com/iteathen/DevBridge.git` `main` checkout under the managed home;
+3. verifies the checkout origin and DevBridge package/bootstrap shape;
+4. transfers control to the managed secure bootstrap;
+5. creates `config.json` from `config/devbridge.example.json` when no local config exists; and
+6. exits so the operator can review local authority before execution is enabled.
+
+No old product state or namespace is migrated. A clean DevBridge home is the supported cutover path.
+
+## Review local authority
 
 Review `~/.devbridge/config.json` (Windows: `$HOME\.devbridge\config.json`) before starting the daemon. In particular:
 
-- set `github.queueRepository`;
-- keep `github.trustedActorIds` limited to people who are actually allowed to submit development jobs to this workstation;
-- review `workspace.allowedOwners`;
+- set `github.queueRepository` deliberately;
+- keep `github.trustedActorIds` limited to actors allowed to submit development jobs to this workstation;
+- review `workspace.allowedOwners` and `workspace.externalReadRoots`;
 - keep `execution.enabled` false until `doctor` reports the expected local capability and sandbox state;
-- leave model adapters, dynamic tool onboarding, coordination, and automatic task-branch publication disabled unless they are deliberately needed.
+- leave model adapters, dynamic tool onboarding, coordination, and automatic task-branch publication disabled unless deliberately required.
 
-Run the local health check:
+Run the health check:
 
-```sh
-node devbridge.mjs doctor --home ~/.devbridge
-```
-
-Then start DevBridge:
+### Linux
 
 ```sh
-node devbridge.mjs --home ~/.devbridge
+node "$HOME/.devbridge/bin/devbridge.mjs" doctor
 ```
 
-The default bootstrap command is the supervised daemon. The launcher periodically checks its configured update channel, validates an acceptable candidate, drains the running daemon at a safe boundary, activates the exact tested runtime, and rolls back to the last-known-good runtime if activation or health validation fails.
+### Windows PowerShell
+
+```powershell
+node "$HOME\.devbridge\bin\devbridge.mjs" doctor
+```
+
+Then start the supervised daemon by running the launcher without a command.
 
 ## Authentication
 
-The reference configuration uses local GitHub authentication in `auto` mode. It checks the configured token environment variables and can use the active GitHub CLI credential where configured. Credentials remain control-plane state and are not intentionally inherited by untrusted workers.
+The reference configuration uses local GitHub authentication in `auto` mode. It checks configured token environment-variable names such as `DEVBRIDGE_GITHUB_TOKEN` and standard GitHub variables, and may use the active GitHub CLI credential where configured.
 
-Do not put tokens into task issues, repository files, model prompts, or checked-in configuration.
+Credentials are control-plane state. Do not put tokens in task issues, repository files, model prompts, or checked-in configuration, and do not intentionally inherit them into untrusted workers.
 
 ## Linux sandbox prerequisite
 
 Repository-controlled code and proposal workers require the live OS boundary probe to pass. Install Bubblewrap using the operating-system package manager, then run `doctor` and require the relevant sandbox capability to report verified before enabling untrusted execution.
 
-On Ubuntu systems that restrict unprivileged user namespaces, use a narrowly scoped Bubblewrap/AppArmor policy rather than globally disabling the host restriction. See `docs/bootstrap.md` for the detailed deployment notes.
+On Ubuntu systems that restrict unprivileged user namespaces, use a narrowly scoped Bubblewrap/AppArmor policy rather than globally disabling the host restriction. See `docs/bootstrap.md`.
 
 ## Updating
 
-Normal updates require no reinstall. Keep the small `devbridge.mjs` launcher and start DevBridge through it; the supervisor owns runtime update discovery, candidate validation, activation, health checking, and rollback.
+Once a managed runtime exists, stage 0 does not activate fetched replacement runtime bytes. Runtime updates remain owned by the supervisor:
 
-The launcher itself is intentionally small. If the checked-in launcher changes materially, replace your local `devbridge.mjs` with the current repository copy. Existing `devbridge.mjs` launchers are retained as a compatibility path during the DevBridge rename.
+1. observe the locally selected update policy;
+2. materialize an isolated candidate;
+3. verify release/runtime identity;
+4. run candidate-controlled validation only behind the required OS sandbox;
+5. recheck the candidate artifact identity;
+6. drain the current daemon only after candidate acceptance;
+7. activate and health-check the exact tested candidate; and
+8. roll back to last-known-good on activation failure.
 
-## Existing DevBridge installations
-
-The product is now named **DevBridge**. Existing installations do not need to discard their state.
-
-The v1 wire protocols, durable record protocol strings, signed-release protocol identifiers, and legacy `~/.devbridge` state path remain compatibility identities. GitHub repository renames redirect existing Git fetch/push URLs, so old managed runtimes can continue following the repository during the transition. New installations should use `devbridge.mjs` and `~/.devbridge`.
-
-Local operator configuration is never silently rewritten by self-update. If an existing config names the old repository explicitly, update that machine-owned setting deliberately when migrating it to the DevBridge repository name.
+The launcher itself is intentionally small. If `devbridge.mjs` changes materially, replace the local launcher with the current repository copy.
 
 ## Stopping and maintenance
 
@@ -95,6 +101,6 @@ devbridge stop
 devbridge restart
 ```
 
-`pause` is cooperative admission control at a safe task-cycle boundary; it does not freeze an active worker process. `stop` takes precedence over pause.
+`pause` is cooperative admission control at a safe task-cycle boundary; it does not freeze an active worker. `stop` takes precedence over pause.
 
-For the full security model and production signed-release mode, read `README.md`, `docs/bootstrap.md`, and the active specifications.
+For the full security model and production signed-release mode, read `README.md`, `docs/bootstrap.md`, and the active DB specifications.
