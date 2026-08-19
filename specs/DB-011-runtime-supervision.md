@@ -10,11 +10,12 @@ A locally started DevBridge instance must remain useful as a durable bridge with
 
 ## Ownership split
 
-The bootstrap is a deliberately small supervisor. The mutable DevBridge daemon is its child process.
+The bootstrap is a deliberately small supervisor boundary around the mutable daemon runtime.
 
-- The supervisor owns local release policy, trusted update discovery, static release-integrity verification, candidate sandbox verification, daemon lifecycle, runtime checkout replacement, activation evidence, rollback, and unexpected-child restart.
+- Stage 0 owns only fixed DevBridge source bootstrap, managed-checkout shape verification, and transfer to the managed secure bootstrap.
+- The secure supervisor owns local release policy, trusted update discovery, static release-integrity verification, candidate sandbox verification, daemon lifecycle, runtime activation evidence, rollback, and unexpected-child restart.
 - The daemon owns task polling, durable run coordination, feedback/decisions, managed workspaces, coding-tool invocation, candidate sealing, and GitHub status reporting.
-- Coding tools and runtime candidates remain untrusted proposal/code inputs before activation acceptance and cannot update DevBridge's supervisor/control state.
+- Coding tools and runtime candidates remain untrusted proposal/code inputs before activation acceptance and cannot update DevBridge supervisor/control state.
 - Remote task/feedback/decision text cannot select a runtime repository, update ref, release mode, signing key/manifest, executable, local runtime path, or update policy.
 
 ## Release-integrity modes
@@ -100,9 +101,7 @@ The supervisor MUST keep the last-known-good runtime available while a candidate
 
 The supervisor MUST NOT overwrite files beneath a live daemon.
 
-### Legacy pre-supervisor adoption exception
-
-A daemon created before DB-011 supervision is not a normal supervised child. The existing bounded, exact-identity Windows legacy takeover mechanism remains a compatibility migration only. It does not relax candidate release-integrity or validation rules and is not a general update timeout policy.
+If an existing daemon does not stop through the verified token-bound cooperative control path after the bounded grace window, the supervisor MUST fail closed. It MUST NOT force-kill an unverified process or delete ownership state as a shortcut.
 
 ## Crash behavior
 
@@ -114,7 +113,7 @@ An unexpected nonzero child exit is infrastructure failure. The supervisor may r
 
 `status` and `stop` are inspection/control operations and MUST NOT update the managed runtime underneath an active daemon.
 
-`stop` continues to use the daemon's token-bound stop contract. `restart` remains an explicit operator maintenance command.
+`stop` uses the daemon's token-bound stop contract. `restart` remains an explicit operator maintenance command.
 
 Production invocations still require the installed runtime to satisfy the local signed release subject before candidate runtime code is treated as accepted.
 
@@ -122,7 +121,7 @@ Production invocations still require the installed runtime to satisfy the local 
 
 Development/testing should retain the start-once workflow when the local sandbox provider is available. Production trades some release-pipeline ceremony for an independently signed immutable subject; ordinary remote tasks do not participate in that release authority.
 
-A bootstrap/supervisor protocol change may still require an explicit compatibility migration when the already-running supervisor lacks the new mechanism. Such a migration MUST be named explicitly rather than represented as zero-touch.
+The live bootstrap and runtime identity are DevBridge-only. Product-rename compatibility, old launcher/config namespaces, and pre-supervisor rename takeover behavior are outside the active contract.
 
 ## Required tests
 
@@ -145,4 +144,4 @@ Tests MUST cover at least:
 - clean daemon stop exits the supervisor;
 - operator stop outranks pending update/restart behavior;
 - remote task/feedback content cannot alter update source/channel/release policy;
-- legacy takeover retains its exact identity/ownership protections.
+- an unresponsive/unverified existing daemon fails closed rather than being force-terminated.
