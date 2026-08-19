@@ -8,6 +8,7 @@ import {
   canonicalizeWindowsReadRootPath,
   canonicalizeWindowsWorkspacePath,
   createWindowsProcessContainerId,
+  windowsProcessContainerNetworkPolicy,
   windowsProcessContainerProbeTimeouts,
   windowsProcessContainerUiPolicy,
 } from '../src/runtime/windows-processcontainer-sandbox.js';
@@ -166,5 +167,27 @@ test('Windows ProcessContainer keeps fine-grained UI denials without blanket Win
       systemSettings: 'none',
       ime: false,
     },
+  });
+});
+
+test('Windows deny-network policy permits Winsock startup but requires SID-scoped firewall egress blocking', () => {
+  assert.deepEqual(windowsProcessContainerNetworkPolicy('deny'), {
+    network: {
+      defaultPolicy: 'block',
+      enforcementMode: 'both',
+      allowLocalNetwork: false,
+    },
+    capabilities: ['internetClient'],
+  });
+});
+
+test('Windows unrestricted-network policy leaves MXC capability-mode allow semantics unchanged', () => {
+  assert.deepEqual(windowsProcessContainerNetworkPolicy('unrestricted'), {
+    network: {
+      defaultPolicy: 'allow',
+      enforcementMode: 'capabilities',
+      allowLocalNetwork: false,
+    },
+    capabilities: [],
   });
 });
