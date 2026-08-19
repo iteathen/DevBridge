@@ -18,6 +18,10 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function compareNames(left, right) {
+  return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
+}
+
 function normalizeRelease(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('release manifest release subject must be an object');
   const allowed = new Set(['repository', 'head', 'artifactSha256', 'version']);
@@ -119,7 +123,7 @@ export async function runtimeArtifactSha256(runtimeDir, {
 
   async function walk(directory, prefix = '') {
     const entries = await readdir(directory, { withFileTypes: true });
-    entries.sort((a, b) => a.name.localeCompare(b.name));
+    entries.sort(compareNames);
     for (const entry of entries) {
       if (prefix === '' && entry.name === '.git') continue;
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
