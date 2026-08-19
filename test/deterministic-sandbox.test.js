@@ -7,6 +7,7 @@ import { createCoreOperationRegistry } from '../src/runtime/deterministic-operat
 import { deterministicOperationSecurity } from '../src/runtime/deterministic-operation-security.js';
 import { DeterministicProcessRunner } from '../src/runtime/deterministic-process-runner.js';
 import { createDeterministicSandboxProvider } from '../src/runtime/deterministic-sandbox.js';
+import { windowsCreateProcessCommandLine } from '../src/runtime/windows-processcontainer-sandbox.js';
 
 function providerFor(root, options = {}) {
   return createDeterministicSandboxProvider({
@@ -16,6 +17,23 @@ function providerFor(root, options = {}) {
     stateDirectory: options.stateDirectory ?? path.join(root, 'state'),
     env: options.env ?? process.env,
   });
+}
+
+function supportedSandboxHost() {
+  return process.platform === 'linux' || process.platform === 'win32';
+}
+
+function expectedProvider() {
+  return process.platform === 'win32' ? 'windows-processcontainer' : 'bubblewrap';
+}
+
+function requireOrSkipSandbox(t, status) {
+  if (status.verified) return true;
+  if (process.env.DEVBRIDGE_REQUIRE_SANDBOX_TEST === '1') {
+    assert.fail(`required ${expectedProvider()} boundary verification failed: ${status.reason}`);
+  }
+  t.skip(`${expectedProvider()} unavailable/unusable on this host: ${status.reason}`);
+  return false;
 }
 
 test('deterministic operations classify static inspection separately and unknown named operations fail into the sandboxed class', () => {
@@ -34,6 +52,18 @@ test('deterministic operations classify static inspection separately and unknown
   assert.equal(deterministicOperationSecurity('node.test').sandboxRequired, true);
   assert.equal(deterministicOperationSecurity('cmake.configure').repositoryCode, true);
   assert.equal(deterministicOperationSecurity('future.package-manager.operation').sandboxRequired, true);
+});
+
+test('Windows process-container command line preserves structural argv boundaries', () => {
+  assert.equal(
+    windowsCreateProcessCommandLine(['C:\\Program Files\\nodejs\\node.exe', '-e', 'console.log("hello world")', 'safe&literal']),
+    '"C:\\Program Files\\nodejs\\node.exe" -e "console.log(\\"hello world\\")" safe&literal',
+  );
+  assert.equal(
+    windowsCreateProcessCommandLine(['node.exe', 'C:\\path with spaces\\']),
+    'node.exe "C:\\path with spaces\\\\"',
+  );
+  assert.throws(() => windowsCreateProcessCommandLine(['node.exe', 'bad\0arg']), /must not contain NUL/u);
 });
 
 test('repository-code execution fails closed before process launch when no verified sandbox provider is configured', async () => {
@@ -93,9 +123,9 @@ test('static Node syntax inspection refuses a project symlink that would escape 
   }
 });
 
-test('verified Bubblewrap execution denies external read/write, control-state read, network egress, and .git mutation', { timeout: 30_000 }, async (t) => {
-  if (process.platform !== 'linux') {
-    t.skip('Bubblewrap provider is Linux-only; non-Linux hosts are covered by fail-closed behavior.');
+test('verified OS sandbox denies external read/write, control-state read, network egress, and .git mutation', { timeout: 45_000 }, async (t) => {
+  if (!supportedSandboxHost()) {
+    t.skip('No repository-code sandbox canary is defined for this host OS.');
     return;
   }
 
@@ -160,17 +190,11 @@ test('repository code is contained', async () => {
 
     const provider = providerFor(root, {
       stateDirectory,
-      policy: { provider: 'bubblewrap', bubblewrapExecutable: 'bwrap' },
+      policy: { provider: 'auto', bubblewrapExecutable: 'bwrap' },
       env: { ...process.env, DEVBRIDGE_GITHUB_TOKEN: 'must-not-reach-worker' },
     });
     const status = await provider.verify();
-    if (!status.verified) {
-      if (process.env.DEVBRIDGE_REQUIRE_SANDBOX_TEST === '1') {
-        assert.fail(`required Bubblewrap boundary verification failed: ${status.reason}`);
-      }
-      t.skip(`Bubblewrap unavailable/unusable on this host: ${status.reason}`);
-      return;
-    }
+    if (!requireOrSkipSandbox(t, status)) return;
 
     const runner = new DeterministicProcessRunner({
       sourceEnv: { ...process.env, DEVBRIDGE_GITHUB_TOKEN: 'must-not-reach-worker' },
@@ -183,7 +207,7 @@ test('repository code is contained', async () => {
 
     assert.equal(result.exitCode, 0, result.stderr || result.stdout);
     assert.equal(result.sandbox.required, true);
-    assert.equal(result.sandbox.provider, 'bubblewrap');
+    assert.equal(result.sandbox.provider, expectedProvider());
     assert.equal(result.sandbox.verified, true);
     assert.equal(result.sandbox.network, 'denied');
     assert.equal(await readFile(gitConfig, 'utf8'), 'git-admin-sentinel\n');
@@ -195,9 +219,9 @@ test('repository code is contained', async () => {
   }
 });
 
-test('Bubblewrap exposes locally configured external read roots read-only', { timeout: 30_000 }, async (t) => {
-  if (process.platform !== 'linux') {
-    t.skip('Bubblewrap provider is Linux-only.');
+test('verified OS sandbox exposes configured external read roots read-only', { timeout: 45_000 }, async (t) => {
+  if (!supportedSandboxHost()) {
+    t.skip('No repository-code sandbox canary is defined for this host OS.');
     return;
   }
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-sandbox-readroot-'));
@@ -224,20 +248,17 @@ test('configured read root', () => {
     const provider = providerFor(root, {
       stateDirectory,
       externalReadRoots: [readRoot],
-      policy: { provider: 'bubblewrap', bubblewrapExecutable: 'bwrap' },
+      policy: { provider: 'auto', bubblewrapExecutable: 'bwrap' },
     });
     const status = await provider.verify();
-    if (!status.verified) {
-      if (process.env.DEVBRIDGE_REQUIRE_SANDBOX_TEST === '1') assert.fail(`required Bubblewrap verification failed: ${status.reason}`);
-      t.skip(`Bubblewrap unavailable/unusable on this host: ${status.reason}`);
-      return;
-    }
+    if (!requireOrSkipSandbox(t, status)) return;
     const runner = new DeterministicProcessRunner({ sandboxProvider: provider });
     const result = await createCoreOperationRegistry().execute('node.test', { paths: ['readroot.test.mjs'] }, {
       projectDir,
       processRunner: runner,
     });
     assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+    assert.equal(result.sandbox.provider, expectedProvider());
     assert.equal(await readFile(path.join(readRoot, 'reference.txt'), 'utf8'), 'reference-ok\n');
   } finally {
     await rm(root, { recursive: true, force: true });
