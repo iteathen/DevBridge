@@ -16,12 +16,12 @@ async function git(cwd, args) {
 }
 
 test('rejected candidate seal restores the index, then accepts ordinary CRLF after repair', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'pp-candidate-transaction-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-candidate-transaction-'));
   const source = path.join(root, 'source');
   await exec('git', ['init', '-b', 'main', source]);
   await writeFile(path.join(source, 'README.md'), 'base\n');
   await git(source, ['add', 'README.md']);
-  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', 'initial']);
+  await git(source, ['-c', 'user.name=DevBridge Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', 'initial']);
 
   const policy = new WorkspacePolicy({ root: path.join(root, 'managed'), allowedOwners: ['owner'], allowCreate: true });
   await policy.ensureRoot();
