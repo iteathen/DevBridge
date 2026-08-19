@@ -9,7 +9,7 @@ function nowIso() {
 
 export class DecisionRequiredError extends PolicyError {
   constructor(checkpoint) {
-    super(`hard gate ${checkpoint?.checkpointId ?? 'unknown'} requires an exact trusted decision before candidate sealing`);
+    super(`hard gate ${checkpoint?.checkpointId ?? 'unknown'} requires an exact trusted decision before candidate sealing or publication`);
     this.checkpoint = checkpoint ? structuredClone(checkpoint) : null;
   }
 }
@@ -19,6 +19,7 @@ export class DecisionGatedWorkspaceManager {
   #store;
   #queueRepository;
   #gate;
+  #identityByWorktree = new Map();
 
   constructor({ delegate, stateStore, queueRepository, gateController }) {
     this.#delegate = delegate;
@@ -31,16 +32,28 @@ export class DecisionGatedWorkspaceManager {
     return `run.${this.#queueRepository}#${issueNumber}.${revision}`;
   }
 
-  prepareRun(...args) { return this.#delegate.prepareRun(...args); }
-  snapshot(...args) { return this.#delegate.snapshot(...args); }
-  validate(...args) { return this.#delegate.validate(...args); }
-  publishTaskBranch(...args) { return this.#delegate.publishTaskBranch(...args); }
+  #rememberIdentity(workspace, issueNumber, revision) {
+    const worktreeDir = workspace?.worktreeDir;
+    if (typeof worktreeDir !== 'string' || worktreeDir.length === 0) {
+      throw new PolicyError('hard-gated workspace must expose a managed worktree identity');
+    }
+    this.#identityByWorktree.set(worktreeDir, {
+      issueNumber,
+      revision,
+    });
+  }
 
-  async sealCandidate(workspace, { issueNumber, revision }) {
+  #knownIdentity(workspace) {
+    const worktreeDir = workspace?.worktreeDir;
+    if (typeof worktreeDir !== 'string' || worktreeDir.length === 0) return null;
+    return this.#identityByWorktree.get(worktreeDir) ?? null;
+  }
+
+  async #requireAllowed(workspace, { issueNumber, revision }) {
     const key = this.#key(issueNumber, revision);
     const state = await this.#store.get(key);
     if (!state?.task || state.runId == null) {
-      throw new PolicyError('hard-gated candidate sealing requires durable run state');
+      throw new PolicyError('hard-gated candidate effect requires durable run state');
     }
     const snapshot = await this.#delegate.validate(workspace);
     const gate = await this.#gate.ensureCandidate({
@@ -50,11 +63,41 @@ export class DecisionGatedWorkspaceManager {
       persist: () => this.#store.set(key, state),
     });
     if (!gate.allowed) throw new DecisionRequiredError(gate.checkpoint);
+    return { state, snapshot, gate };
+  }
+
+  async prepareRun(task, runId, resume) {
+    const workspace = await this.#delegate.prepareRun(task, runId, resume);
+    this.#rememberIdentity(workspace, task.issueNumber, task.revision);
+    return workspace;
+  }
+
+  snapshot(...args) { return this.#delegate.snapshot(...args); }
+  validate(...args) { return this.#delegate.validate(...args); }
+
+  async sealCandidate(workspace, { issueNumber, revision }) {
+    this.#rememberIdentity(workspace, issueNumber, revision);
+    await this.#requireAllowed(workspace, { issueNumber, revision });
 
     // The exact artifact subject was recomputed immediately before this call.
     // No proposal engine or repository-controlled operation runs between this
     // verification and the control-plane-owned Git sealing transaction.
     return this.#delegate.sealCandidate(workspace, { issueNumber, revision });
+  }
+
+  async publishTaskBranch(workspace) {
+    const identity = this.#knownIdentity(workspace);
+    if (!identity) {
+      throw new PolicyError('hard-gated publication requires locally derived task identity from prepareRun or candidate sealing');
+    }
+
+    // Publication is independently gated. This matters on restart when the
+    // candidate may already be sealed and RunCoordinator can resume directly
+    // from the publishing stage without calling sealCandidate again. An expired,
+    // superseded, or artifact-mismatched approval therefore cannot leak through
+    // the stage-recovery path.
+    await this.#requireAllowed(workspace, identity);
+    return this.#delegate.publishTaskBranch(workspace);
   }
 }
 
@@ -149,7 +192,7 @@ export class DecisionGatedRunCoordinator {
     state.prior.blockers = [
       checkpoint
         ? `Hard gate ${checkpoint.checkpointId} is pending for exact artifact ${checkpoint.subjectDigest}; approval must match the run, task revision, checkpoint, subject digest, and locally configured decision authority.`
-        : 'A sensitive candidate requires a matching PP-007 hard-gate decision before sealing.',
+        : 'A sensitive candidate requires a matching PP-007 hard-gate decision before sealing or publication.',
     ];
     state.prior.nextStep = null;
     state.prior.liveness = null;
@@ -161,7 +204,7 @@ export class DecisionGatedRunCoordinator {
     await this.#publish(
       state,
       'HARD_GATE_PENDING',
-      `Candidate sealing is blocked by hard gate ${checkpoint?.checkpointId ?? 'unknown'} (${classes}). ${authority}`,
+      `Candidate sealing/publication is blocked by hard gate ${checkpoint?.checkpointId ?? 'unknown'} (${classes}). ${authority}`,
     );
     return this.#waitingResult(state, checkpoint);
   }
@@ -194,7 +237,7 @@ export class DecisionGatedRunCoordinator {
       state.prior.blockers = [];
       state.prior.nextStep = null;
       await this.#save(key, state);
-      await this.#publish(state, 'DECISION_ACCEPTED', `Exact approval accepted for hard gate ${polled.checkpoint.checkpointId}; PATCH-POLLER will recompute the artifact subject before sealing.`);
+      await this.#publish(state, 'DECISION_ACCEPTED', `Exact approval accepted for hard gate ${polled.checkpoint.checkpointId}; PATCH-POLLER will recompute the artifact subject before sealing/publication.`);
       return null;
     }
 
