@@ -184,7 +184,7 @@ export class BubblewrapSandboxProvider {
       throw new PolicyError('worker sandbox IPC sources must remain under the dedicated control-owned worker exchange');
     }
 
-    bwrapArgs.push('--dir', '/run/devbridge-exchange');
+    bwrapArgs.push('--tmpfs', '/run/devbridge-exchange');
     bwrapArgs.push('--ro-bind', context.path, WORKER_CONTEXT_FILE);
     bwrapArgs.push('--bind', result.path, WORKER_RESULT_FILE);
     bwrapArgs.push('--remount-ro', '/run/devbridge-exchange');
