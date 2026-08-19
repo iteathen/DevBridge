@@ -19,12 +19,14 @@ export class LocalToolchainRegistry {
 
   has(name) { return this.#resolvers.has(name); }
   names() { return [...this.#resolvers.keys()].sort(); }
+  invalidate(name) { this.#cache.delete(name); }
 
   async resolve(name, { refresh = false } = {}) {
     const entry = this.#resolvers.get(name);
     if (!entry) throw new PolicyError(`unregistered local toolchain ${name}`);
     if (!refresh && this.#cache.has(name)) return structuredClone(this.#cache.get(name));
-    const descriptor = await entry.resolver();
+    if (refresh) this.#cache.delete(name);
+    const descriptor = await entry.resolver({ refresh });
     if (!descriptor || typeof descriptor !== 'object' || typeof descriptor.executable !== 'string' || descriptor.executable.length === 0) {
       throw new PolicyError(`toolchain ${name} resolver returned an invalid descriptor`);
     }
@@ -33,11 +35,11 @@ export class LocalToolchainRegistry {
     return structuredClone(normalized);
   }
 
-  async inspect() {
+  async inspect({ refresh = false } = {}) {
     const results = [];
     for (const name of this.names()) {
       try {
-        const descriptor = await this.resolve(name);
+        const descriptor = await this.resolve(name, { refresh });
         results.push({
           name,
           available: true,
@@ -58,7 +60,8 @@ export class LocalToolchainRegistry {
 
 export function createCoreToolchainRegistry({ env = process.env, platform = process.platform } = {}) {
   let nativePromise = null;
-  const native = async () => {
+  const native = async ({ refresh = false } = {}) => {
+    if (refresh) nativePromise = null;
     nativePromise ??= discoverNativeCompiler({ env, platform });
     const compiler = await nativePromise;
     if (!compiler) throw new PolicyError('no approved native C compiler was discovered locally');
@@ -84,8 +87,8 @@ export function createCoreToolchainRegistry({ env = process.env, platform = proc
       version: null,
       source: 'PATH',
     }))
-    .register('native.c', async () => {
-      const compiler = await native();
+    .register('native.c', async ({ refresh = false } = {}) => {
+      const compiler = await native({ refresh });
       return {
         family: compiler.family,
         executable: compiler.executable,
@@ -94,8 +97,8 @@ export function createCoreToolchainRegistry({ env = process.env, platform = proc
         source: compiler.source ?? 'local-discovery',
       };
     })
-    .register('native.linker', async () => {
-      const compiler = await native();
+    .register('native.linker', async ({ refresh = false } = {}) => {
+      const compiler = await native({ refresh });
       return {
         family: compiler.linker ? `${compiler.family}-linker` : `${compiler.family}-driver-linker`,
         executable: compiler.linker ?? compiler.executable,
