@@ -78,7 +78,7 @@ jobs:
       - name: Prepare Windows process-container sandbox provider
         if: runner.os == 'Windows'
         id: windows-sandbox
-        timeout-minutes: 2
+        timeout-minutes: 3
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -88,6 +88,14 @@ jobs:
           if (-not (Test-Path -LiteralPath $sandboxExecutable -PathType Leaf)) {
             throw "Windows sandbox bootstrap did not produce an executable: $sandboxExecutable"
           }
+          $hostPrepExecutable = Join-Path (Split-Path -Parent $sandboxExecutable) 'wxc-host-prep.exe'
+          if (-not (Test-Path -LiteralPath $hostPrepExecutable -PathType Leaf)) {
+            throw "Windows sandbox bootstrap did not produce the MXC host-prep helper: $hostPrepExecutable"
+          }
+          & $hostPrepExecutable prepare-system-drive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $hostPrepExecutable prepare-null-device --no-sacl
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $sandboxExecutable --probe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "executable=$sandboxExecutable" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
