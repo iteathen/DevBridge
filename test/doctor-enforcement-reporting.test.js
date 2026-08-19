@@ -36,6 +36,25 @@ function configFor(root, tools = {}) {
   });
 }
 
+function expectedProvider() {
+  return process.platform === 'win32' ? 'windows-processcontainer' : 'bubblewrap';
+}
+
+function expectedBoundaryObservations() {
+  const common = {
+    projectWriteAllowed: true,
+    runScratchWriteAllowed: true,
+    arbitraryOutsideReadDenied: true,
+    arbitraryOutsideWriteDenied: true,
+    controlStateReadDenied: true,
+    gitAdministrativeWriteDenied: true,
+    networkEgressDenied: true,
+  };
+  return process.platform === 'win32'
+    ? { ...common, descendantProcessContained: true }
+    : { ...common, effectiveCapabilitiesDropped: true };
+}
+
 const declaredOsTool = {
   executable: process.execPath,
   args: ['--version'],
@@ -86,7 +105,9 @@ test('doctor never upgrades an os declaration into enforcement when provider pro
   }
 });
 
-test('doctor exposes actual harmless boundary-probe observations when the platform provider verifies', { timeout: 30_000 }, async () => {
+test('doctor exposes actual harmless boundary-probe observations when the platform provider verifies', {
+  timeout: process.platform === 'win32' ? 90_000 : 30_000,
+}, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-doctor-observed-'));
   try {
     const report = await doctor(configFor(root), {
@@ -106,20 +127,11 @@ test('doctor exposes actual harmless boundary-probe observations when the platfo
       return;
     }
 
-    assert.equal(provider.provider, 'bubblewrap');
+    assert.equal(provider.provider, expectedProvider());
     assert.equal(provider.verification, 'boundary-probe');
     assert.equal(provider.boundaryProbe.attempted, true);
     assert.equal(provider.boundaryProbe.verified, true);
-    assert.deepEqual(provider.boundaryProbe.observations, {
-      projectWriteAllowed: true,
-      runScratchWriteAllowed: true,
-      arbitraryOutsideReadDenied: true,
-      arbitraryOutsideWriteDenied: true,
-      controlStateReadDenied: true,
-      gitAdministrativeWriteDenied: true,
-      networkEgressDenied: true,
-      effectiveCapabilitiesDropped: true,
-    });
+    assert.deepEqual(provider.boundaryProbe.observations, expectedBoundaryObservations());
   } finally {
     await rm(root, { recursive: true, force: true });
   }
