@@ -12,7 +12,7 @@ import { PolicyError } from './errors.js';
 import { daemonStatus, pauseDaemon, resumeDaemon, stopDaemon } from './runtime/daemon-lock.js';
 
 function usage() {
-  console.error('Usage: patch-poller <doctor|poll-once|run-once|daemon|status|pause|resume|stop|restart|handoff-status|handoff-seed|handoff-project> --config <path> [--repository owner/name] [--issue number]');
+  console.error('Usage: devbridge <doctor|poll-once|run-once|daemon|status|pause|resume|stop|restart|handoff-status|handoff-seed|handoff-project> --config <path> [--repository owner/name] [--issue number]');
 }
 
 function optionValue(argv, name) {
