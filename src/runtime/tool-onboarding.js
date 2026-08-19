@@ -122,10 +122,10 @@ function parsePositionals(lines, commands, usedParams, remaining) {
     const metavar = rawToken.replace(/[<>\[\]]/gu, '').replace(/\.\.\./gu, '').trim();
     const upper = metavar.toUpperCase();
     if (['OPTION', 'OPTIONS', 'FLAG', 'FLAGS'].includes(upper)) continue;
-    const param = normalizedParam(metavar);
-    if (!param || usedParams.has(param)) continue;
-    usedParams.add(param);
     if ((upper === 'COMMAND' || upper === 'SUBCOMMAND') && commands.length > 0) {
+      const param = 'subcommand';
+      if (usedParams.has(param)) continue;
+      usedParams.add(param);
       descriptors.push({
         kind: 'positional',
         param,
@@ -136,6 +136,9 @@ function parsePositionals(lines, commands, usedParams, remaining) {
       });
       continue;
     }
+    const param = normalizedParam(metavar);
+    if (!param || usedParams.has(param)) continue;
+    usedParams.add(param);
     const descriptor = {
       kind: 'positional',
       param,
@@ -312,7 +315,6 @@ export class ToolOnboardingService {
         operation: entry.operation,
         state: 'probe-blocked',
         errorClass: error?.name ?? 'Error',
-        reason: String(error?.message ?? error).slice(0, 240),
       };
     } finally {
       await rm(probeRoot, { recursive: true, force: true });
