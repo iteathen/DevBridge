@@ -27,6 +27,11 @@ function truncateFault(buffer) {
   return buffer.length <= FAULT_TRUNCATE_BYTES ? buffer : buffer.subarray(buffer.length - FAULT_TRUNCATE_BYTES);
 }
 
+function abortedError(signal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  return new PolicyError('deterministic operation aborted by the control plane');
+}
+
 export class DeterministicProcessRunner {
   #sourceEnv;
   #faults;
@@ -51,7 +56,9 @@ export class DeterministicProcessRunner {
     operation = null,
     executionClass = 'control-process',
     sandbox = { required: false },
+    signal = null,
   }) {
+    if (signal?.aborted) throw abortedError(signal);
     if (typeof executable !== 'string' || executable.length === 0) throw new PolicyError('deterministic operation executable is missing');
     if (!Array.isArray(args) || args.some((value) => typeof value !== 'string')) throw new PolicyError('deterministic operation args must be structural strings');
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 28_800_000) throw new PolicyError('deterministic operation timeout is out of range');
@@ -101,6 +108,7 @@ export class DeterministicProcessRunner {
       spawnEnv = prepared.env;
       sandboxEvidence = { required: true, executionClass, ...prepared.evidence };
     }
+    if (signal?.aborted) throw abortedError(signal);
 
     const child = spawn(spawnExecutable, spawnArgs, containedSpawnOptions({ cwd: spawnCwd, env: spawnEnv, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
     const startedAtMs = Date.now();
@@ -164,17 +172,23 @@ export class DeterministicProcessRunner {
     if (stdin == null) child.stdin.end(); else child.stdin.end(String(stdin));
 
     let timedOut = false;
+    let aborted = false;
     let termination = null;
+    const terminate = () => { termination ??= terminateProcessTree(child); };
+    const onAbort = () => { aborted = true; terminate(); };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
     const timer = setTimeout(() => {
       timedOut = true;
-      termination = terminateProcessTree(child);
+      terminate();
     }, timeoutMs);
     timer.unref?.();
     const exit = await new Promise((resolve, reject) => {
       child.once('error', reject);
-      child.once('exit', (code, signal) => resolve({ code, signal }));
+      child.once('exit', (code, exitSignal) => resolve({ code, signal: exitSignal }));
     }).finally(async () => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
       if (heartbeat) clearInterval(heartbeat);
       if (termination) await termination;
     });
@@ -195,6 +209,7 @@ export class DeterministicProcessRunner {
       exitCode: exit.code,
       signal: exit.signal,
       timedOut,
+      aborted,
       outputTruncated,
       stdout: stdout.toString('utf8'),
       stderr: stderr.toString('utf8'),
