@@ -12,13 +12,16 @@ import {
   runPollerCli,
 } from '../patch-poller.mjs';
 
-test('bootstrap defaults to testing channel and daemon', () => {
+test('bootstrap defaults to alpha development testing channel and daemon', () => {
   assert.deepEqual(parseBootstrapArgs([]), {
     command: 'daemon',
     channel: 'testing',
     home: null,
     config: null,
     update: true,
+    releaseMode: 'development',
+    releaseManifest: null,
+    releasePublicKey: null,
   });
 });
 
@@ -31,6 +34,9 @@ test('bootstrap accepts one safe command and local-only switches', () => {
       home: '/tmp/pp',
       config: null,
       update: false,
+      releaseMode: 'development',
+      releaseManifest: null,
+      releasePublicKey: null,
     },
   );
   for (const command of ['status', 'stop', 'restart']) {
@@ -39,6 +45,24 @@ test('bootstrap accepts one safe command and local-only switches', () => {
   assert.throws(() => parseBootstrapArgs(['--channel', 'evil']), /Unknown PATCH-POLLER channel/u);
   assert.throws(() => parseBootstrapArgs(['daemon', 'run-once']), /Only one/u);
   assert.throws(() => parseBootstrapArgs(['--repository', 'attacker/repo']), /Unknown bootstrap argument/u);
+});
+
+test('production mode is explicit, stable-only, and requires local signed-release inputs', () => {
+  const parsed = parseBootstrapArgs([
+    '--channel', 'stable',
+    '--release-mode', 'production',
+    '--release-manifest', './release.json',
+    '--release-public-key', './release.pub.pem',
+  ]);
+  assert.equal(parsed.releaseMode, 'production');
+  assert.equal(parsed.channel, 'stable');
+  assert.equal(parsed.releaseManifest, path.resolve('./release.json'));
+  assert.equal(parsed.releasePublicKey, path.resolve('./release.pub.pem'));
+
+  assert.throws(() => parseBootstrapArgs(['--release-mode', 'production']), /requires --channel stable/u);
+  assert.throws(() => parseBootstrapArgs(['--channel', 'stable', '--release-mode', 'production']), /requires --release-manifest/u);
+  assert.throws(() => parseBootstrapArgs(['--release-mode', 'development', '--release-manifest', './release.json']), /valid only with --release-mode production/u);
+  assert.throws(() => parseBootstrapArgs(['--release-mode', 'unsafe']), /development or production/u);
 });
 
 test('managed Git environment removes inherited Git and SSH authority', () => {
