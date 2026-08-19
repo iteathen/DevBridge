@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { WorkerExchange, WORKER_CONTEXT_FILE, WORKER_RESULT_FILE } from '../src/runtime/worker-exchange.js';
@@ -46,7 +46,7 @@ test('control-owned mailbox hardens state permissions and survives a fresh contr
     assert.equal(mailbox.workerContextFile, WORKER_CONTEXT_FILE);
     assert.equal(mailbox.workerResultFile, WORKER_RESULT_FILE);
     assert.deepEqual(Object.keys(mailbox.sandboxIpc()).sort(), [
-      'contextSource', 'contextTarget', 'protocol', 'resultSource', 'resultTarget',
+      'contextSource', 'contextTarget', 'protocol', 'resultSource', 'resultTarget', 'transport',
     ]);
 
     await writeFile(mailbox.resultFile, resultEnvelope, { encoding: 'utf8' });
@@ -56,6 +56,52 @@ test('control-owned mailbox hardens state permissions and survives a fresh contr
     const consumed = await recovered.consumeResult();
     assert.equal(consumed.resultParseError, null);
     assert.equal(consumed.text, resultEnvelope);
+  });
+});
+
+test('host staging transport imports only a stable worker-owned result into the authoritative mailbox', async () => {
+  await withRoot('pp-worker-exchange-staging-', async (root) => {
+    const stateDirectory = path.join(root, 'state');
+    const exchange = new WorkerExchange({ stateDirectory });
+    const mailbox = await exchange.prepareTurn({
+      runId: 'run-1',
+      turnId: 'turn-1',
+      context: { objective: 'stage result' },
+      targetMode: 'host-staging-file',
+    });
+
+    assert.equal(path.resolve(mailbox.workerContextFile), path.resolve(mailbox.contextFile));
+    assert.equal(path.basename(mailbox.workerResultFile), 'worker-result-staging.json');
+    assert.notEqual(path.resolve(mailbox.workerResultFile), path.resolve(mailbox.resultFile));
+    await writeFile(mailbox.workerResultFile, resultEnvelope, { encoding: 'utf8' });
+
+    const consumed = await mailbox.consumeResult();
+    assert.equal(consumed.resultParseError, null);
+    assert.equal(consumed.text, resultEnvelope);
+    assert.equal(await readFile(mailbox.resultFile, 'utf8'), resultEnvelope);
+
+    const recovered = await new WorkerExchange({ stateDirectory }).openTurn({ runId: 'run-1', turnId: 'turn-1' });
+    const recoveredResult = await recovered.consumeResult();
+    assert.equal(recoveredResult.text, resultEnvelope);
+  });
+});
+
+test('host staging transport rejects replacement before importing worker output', async () => {
+  await withRoot('pp-worker-exchange-staging-replace-', async (root) => {
+    const exchange = new WorkerExchange({ stateDirectory: path.join(root, 'state') });
+    const mailbox = await exchange.prepareTurn({
+      runId: 'run-1',
+      turnId: 'turn-1',
+      context: {},
+      targetMode: 'host-staging-file',
+    });
+    await rm(mailbox.workerResultFile);
+    await writeFile(mailbox.workerResultFile, resultEnvelope, { mode: 0o600 });
+    await assert.rejects(
+      () => mailbox.consumeResult(),
+      /replaced after DevBridge established worker-exchange ownership/u,
+    );
+    assert.equal(await readFile(mailbox.resultFile, 'utf8'), '');
   });
 });
 
