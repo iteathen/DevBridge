@@ -65,7 +65,7 @@ test('first-version local pipeline turns a task into a sealed candidate commit',
       JSON.parse(input);
       fs.writeFileSync('README.md', 'after\\n');
       fs.writeFileSync(process.argv[1], JSON.stringify({
-        protocol: 'patch-poller/result-v1',
+        protocol: 'devbridge/result-v1',
         status: 'complete',
         summary: 'fixture finished',
         progress: ['edited README'],
@@ -116,7 +116,7 @@ test('first-version local pipeline turns a task into a sealed candidate commit',
   const worktree = workspaceManager.worktreePath('owner/repo', result.runId);
   assert.equal(await readFile(path.join(worktree, 'README.md'), 'utf8'), 'after\n');
   assert.equal((await git(worktree, ['status', '--porcelain=v1'])).stdout.trim(), '');
-  assert.match((await git(worktree, ['log', '-1', '--pretty=%s'])).stdout.trim(), /^PATCH-POLLER issue #42 /);
+  assert.match((await git(worktree, ['log', '-1', '--pretty=%s'])).stdout.trim(), /^DevBridge issue #42 /);
 
   const second = await coordinator.executeTask(task);
   assert.equal(second.skipped, true);

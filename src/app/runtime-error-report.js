@@ -11,7 +11,7 @@ function messageFor(error) {
 function capsuleFor(state, summary) {
   const prior = state.prior ?? {};
   const blockers = [...(prior.blockers ?? [])];
-  blockers.push(`PATCH-POLLER runtime error: ${summary}`);
+  blockers.push(`DevBridge runtime error: ${summary}`);
   return buildContextCapsule({
     task: state.task,
     sequence: Math.max(1, Number(state.turn ?? 0) + 1),

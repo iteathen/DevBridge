@@ -52,7 +52,7 @@ function workspaceManager(changedFiles, { onSeal = null } = {}) {
 
 function planWithOperation(files) {
   return normalizeControllerPlan({
-    protocol: 'patch-poller/controller-plan-v1',
+    protocol: 'devbridge/controller-plan-v1',
     files,
     operations: [{ id: 'hostile', operation: 'fixture.mutate', params: {} }],
     assertions: [],
@@ -127,7 +127,7 @@ test('resume rechecks final bytes instead of trusting a persisted applied record
     const malicious = 'changed after crash\n';
     await writeFile(path.join(root, 'src', 'resume.txt'), malicious);
     const plan = normalizeControllerPlan({
-      protocol: 'patch-poller/controller-plan-v1',
+      protocol: 'devbridge/controller-plan-v1',
       files: [{ scope: 'persistent', action: 'create', path: 'src/resume.txt', content: authorized }],
       operations: [],
       assertions: [],
@@ -179,7 +179,7 @@ test('untampered persistent proposals are reverified before changed-path validat
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-final-byte-ok-'));
   try {
     const plan = normalizeControllerPlan({
-      protocol: 'patch-poller/controller-plan-v1',
+      protocol: 'devbridge/controller-plan-v1',
       files: [{ scope: 'persistent', action: 'create', path: 'ok.txt', content: 'ok\n' }],
       operations: [],
       assertions: [],

@@ -45,7 +45,7 @@ export class ManagedScratchTransaction {
     if (effectGuard != null && typeof effectGuard !== 'function') throw new TypeError('ManagedScratchTransaction effectGuard must be a function');
     this.#effectGuard = effectGuard;
     const runId = safeId(String(workspace.runId ?? path.basename(workspace.worktreeDir)), 'scratch runId');
-    this.#root = path.join(path.dirname(path.resolve(workspace.worktreeDir)), `.patch-poller-scratch-${runId}`);
+    this.#root = path.join(path.dirname(path.resolve(workspace.worktreeDir)), `.devbridge-scratch-${runId}`);
     this.#state.controllerPlan ??= {};
     this.#state.controllerPlan.scratchLedger ??= [];
   }

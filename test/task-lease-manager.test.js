@@ -9,7 +9,7 @@ import { TaskLeaseManager } from '../src/run/task-lease-manager.js';
 import { signTaskLease } from '../src/run/task-lease.js';
 
 const REVISION = 'a'.repeat(64);
-const TASK = { queueRepository: 'iteathen/PATCH-POLLER', issueNumber: 49, revision: REVISION };
+const TASK = { queueRepository: 'iteathen/DevBridge', issueNumber: 49, revision: REVISION };
 const TTL = 120_000;
 
 class MemoryLeaseStore {

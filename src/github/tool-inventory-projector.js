@@ -1,8 +1,8 @@
 import { ProtocolError } from '../errors.js';
 import { redactText } from '../security/redaction.js';
 
-const PROJECTION_PROTOCOL = 'patch-poller/tool-inventory-projection-v1';
-const RECORD_PROTOCOL = 'patch-poller/tool-inventory-record-v1';
+const PROJECTION_PROTOCOL = 'devbridge/tool-inventory-projection-v1';
+const RECORD_PROTOCOL = 'devbridge/tool-inventory-record-v1';
 const SHA256_RE = /^[0-9a-f]{64}$/u;
 
 function positiveInteger(value, name) {
@@ -15,7 +15,7 @@ function validateRecord(record) {
   if (record.protocol !== RECORD_PROTOCOL) throw new ProtocolError('tool inventory projection record protocol is invalid');
   if (typeof record.digest !== 'string' || !SHA256_RE.test(record.digest)) throw new ProtocolError('tool inventory projection digest is invalid');
   if (!Number.isSafeInteger(record.generation) || record.generation < 1) throw new ProtocolError('tool inventory projection generation is invalid');
-  if (!record.inventory || record.inventory.protocol !== 'patch-poller/tool-inventory-v1') throw new ProtocolError('tool inventory projection payload is invalid');
+  if (!record.inventory || record.inventory.protocol !== 'devbridge/tool-inventory-v1') throw new ProtocolError('tool inventory projection payload is invalid');
   return record;
 }
 
@@ -27,14 +27,14 @@ function bodyFor(record) {
     inventory: record.inventory,
   };
   return [
-    '<!-- patch-poller-tool-inventory -->',
-    '## PATCH-POLLER — RUNNER CAPABILITIES',
+    '<!-- devbridge-tool-inventory -->',
+    '## DevBridge — RUNNER CAPABILITIES',
     '',
     `Inventory generation ${record.generation}; digest \`${record.digest}\`.`,
     '',
     'This projection reports local authority; it does not grant tools or execution capability.',
     '',
-    '```patch-poller-tool-inventory',
+    '```devbridge-tool-inventory',
     JSON.stringify(payload, null, 2),
     '```',
   ].join('\n');
@@ -96,7 +96,7 @@ export class ToolInventoryProjector {
     }
     if (!response) {
       // Deliberately do not search for/adopt marker-looking comments. The exact
-      // PATCH-POLLER-owned comment ID is durable control state; repository or
+      // DevBridge-owned comment ID is durable control state; repository or
       // user content cannot forge ownership merely by copying the marker/body.
       response = await this.#client.request(
         'POST',

@@ -37,7 +37,7 @@ async function fixture() {
   await exec('git', ['init', '-b', 'main', source]);
   await writeFile(path.join(source, 'README.md'), 'one\n');
   await git(source, ['add', 'README.md']);
-  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=patch-poller@example.invalid', 'commit', '-m', 'initial']);
+  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', 'initial']);
 
   const policy = new WorkspacePolicy({ root: path.join(root, 'managed'), allowedOwners: ['owner'], allowCreate: true });
   await policy.ensureRoot();
@@ -57,7 +57,7 @@ async function createCandidate(manager, task, workspace, content = 'candidate\n'
 async function advanceSource(source, file = 'UPSTREAM.md') {
   await writeFile(path.join(source, file), 'upstream\n');
   await git(source, ['add', file]);
-  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=patch-poller@example.invalid', 'commit', '-m', `advance ${file}`]);
+  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', `advance ${file}`]);
   return (await git(source, ['rev-parse', 'HEAD'])).stdout.trim();
 }
 
@@ -124,7 +124,7 @@ test('rebased task branch rewrite uses confirmed predecessor CAS while pushing t
   assert.equal((await git(source, ['rev-parse', ref])).stdout.trim(), rebased.headSha);
 });
 
-test('a local pre-rebase candidate head never becomes rewrite authority unless PATCH-POLLER confirmed it remotely', async () => {
+test('a local pre-rebase candidate head never becomes rewrite authority unless DevBridge confirmed it remotely', async () => {
   const { source, client, manager, task, workspace } = await fixture();
   const first = await createCandidate(manager, task, workspace);
   assert.deepEqual(workspace.taskBranchKnownRemoteHeads, []);

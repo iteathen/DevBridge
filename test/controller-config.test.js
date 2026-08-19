@@ -6,7 +6,7 @@ import { validateConfig } from '../src/config.js';
 function base() {
   return {
     version: 1,
-    github: { queueRepository: 'iteathen/PATCH-POLLER', trustedActorIds: ['1775584'], rateLimit: {} },
+    github: { queueRepository: 'iteathen/DevBridge', trustedActorIds: ['1775584'], rateLimit: {} },
     workspace: { root: path.resolve('/tmp/pp-controller-config'), allowedOwners: ['iteathen'] },
     state: { directory: path.resolve('/tmp/pp-controller-state') },
     execution: {},

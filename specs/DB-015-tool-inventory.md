@@ -1,12 +1,12 @@
-# PP-015 — Local Tool Inventory and Agent Capability Projection
+# DB-015 — Local Tool Inventory and Agent Capability Projection
 
 Status: active
 
-Read with PP-003, PP-004, PP-005, PP-010, PP-012, and PP-013.
+Read with DB-003, DB-004, DB-005, DB-010, DB-012, and DB-013.
 
 ## 1. Goal
 
-PATCH-POLLER must give a coordinating agent an accurate, bounded view of the tools and execution capabilities available on the runner without turning discovery, repository content, tool output, or GitHub text into machine authority.
+DevBridge must give a coordinating agent an accurate, bounded view of the tools and execution capabilities available on the runner without turning discovery, repository content, tool output, or GitHub text into machine authority.
 
 The governing distinction is:
 
@@ -16,7 +16,7 @@ A binary being present in PATH is not equivalent to a registered deterministic o
 
 ## 2. Authority model
 
-PATCH-POLLER-owned local configuration and built-in registries remain authoritative for:
+DevBridge-owned local configuration and built-in registries remain authoritative for:
 
 - registered deterministic operation names and parameter schemas;
 - executable/toolchain resolution used by those operations;
@@ -36,7 +36,7 @@ The default general discovery engine is informational and non-executing.
 
 It:
 
-- observes a bounded PATCH-POLLER-owned catalog of logical command names;
+- observes a bounded DevBridge-owned catalog of logical command names;
 - reads each bounded PATH directory once per discovery generation;
 - records whether a matching executable entry is present;
 - does not invoke a discovered binary for `--version`, `--help`, man output, self-description, or any other probe;
@@ -51,25 +51,25 @@ Discovery MUST be bounded by catalog size and PATH-directory count. The implemen
 
 The normalized inventory protocol is:
 
-`patch-poller/tool-inventory-v1`
+`devbridge/tool-inventory-v1`
 
 A durable/projectable record uses:
 
-`patch-poller/tool-inventory-record-v1`
+`devbridge/tool-inventory-record-v1`
 
 A compact context reference uses:
 
-`patch-poller/tool-inventory-ref-v1`
+`devbridge/tool-inventory-ref-v1`
 
 A dynamic operation may additionally publish a controller-facing parameter schema using:
 
-`patch-poller/operation-parameters-v1`
+`devbridge/operation-parameters-v1`
 
 The normalized inventory contains at least:
 
 ### Runtime
 
-- PATCH-POLLER family/version;
+- DevBridge family/version;
 - exact runtime commit identity when locally known and trustworthy;
 - Node family/version;
 - coarse platform and architecture.
@@ -107,9 +107,9 @@ For dynamically registered local-manifest operations, the projection MAY also ex
 - safe enum values;
 - whether at least one parameter is required.
 
-The public parameter schema MUST NOT expose executable identity, fixed literal argv, option flags, shell text, environment values, local paths, timeout implementation details, help-probe argv, or any other authority-bearing argv construction. If schema metadata cannot be projected safely without path/secret disclosure, PATCH-POLLER omits the schema rather than publishing a partially unsafe representation.
+The public parameter schema MUST NOT expose executable identity, fixed literal argv, option flags, shell text, environment values, local paths, timeout implementation details, help-probe argv, or any other authority-bearing argv construction. If schema metadata cannot be projected safely without path/secret disclosure, DevBridge omits the schema rather than publishing a partially unsafe representation.
 
-Security classification comes from PATCH-POLLER's control-owned operation-security registry, not controller text or repository/tool output. Unknown/dynamic `tool.*` operations remain repository-code execution and require verified OS sandbox enforcement.
+Security classification comes from DevBridge's control-owned operation-security registry, not controller text or repository/tool output. Unknown/dynamic `tool.*` operations remain repository-code execution and require verified OS sandbox enforcement.
 
 ### Toolchains
 
@@ -167,9 +167,9 @@ If a material capability, parameter-schema, enforcement, or availability fact ch
 
 ## 6. GitHub projection
 
-The coordinating agent receives a machine-readable projection through a PATCH-POLLER-owned issue comment using:
+The coordinating agent receives a machine-readable projection through a DevBridge-owned issue comment using:
 
-`patch-poller/tool-inventory-projection-v1`
+`devbridge/tool-inventory-projection-v1`
 
 The projection:
 
@@ -177,21 +177,21 @@ The projection:
 - is bounded by the existing GitHub comment budget;
 - passes through secret detection/redaction safeguards;
 - refuses publication if redaction would make the digest-bearing payload diverge;
-- updates/coalesces the exact comment ID retained in PATCH-POLLER control state;
+- updates/coalesces the exact comment ID retained in DevBridge control state;
 - suppresses writes when the normalized digest is unchanged;
 - uses the shared GitHub rate/mutation budget.
 
 ### Projection ownership
 
-A marker-looking GitHub comment is not proof that PATCH-POLLER owns it.
+A marker-looking GitHub comment is not proof that DevBridge owns it.
 
-On first publication PATCH-POLLER creates a new comment and durably records the returned comment ID. Later updates target only that control-state-owned ID. If it is deleted, PATCH-POLLER may create a replacement and update control state.
+On first publication DevBridge creates a new comment and durably records the returned comment ID. Later updates target only that control-state-owned ID. If it is deleted, DevBridge may create a replacement and update control state.
 
-PATCH-POLLER MUST NOT search for and adopt arbitrary marker-looking comments after losing state. A malicious/repository-authored comment therefore cannot forge the runner's authoritative capability projection by copying its heading, marker, or JSON shape.
+DevBridge MUST NOT search for and adopt arbitrary marker-looking comments after losing state. A malicious/repository-authored comment therefore cannot forge the runner's authoritative capability projection by copying its heading, marker, or JSON shape.
 
 ## 7. Status/context reference
 
-Ordinary PATCH-POLLER status context SHOULD include only the compact inventory reference (protocol, digest, generation), not duplicate the full inventory in every status update.
+Ordinary DevBridge status context SHOULD include only the compact inventory reference (protocol, digest, generation), not duplicate the full inventory in every status update.
 
 This lets the coordinating agent bind a task/status context to the current capabilities comment while controlling GitHub and context-window cost.
 
@@ -213,7 +213,7 @@ Inventory/projection failure is informational infrastructure failure and MUST NO
 
 Automatic unfamiliar-tool help probing is not allowed to become task-dispatch latency. The normal cycle dispatches work using the exact inventory already projected/referenced for that work, then reconciles locally pre-authorized dynamic onboarding. A newly registered capability is reflected by a new inventory digest and is eligible for subsequent planning/work, not retroactively inserted into the task that triggered its discovery.
 
-A coordinating agent may use the inventory to choose among capabilities PATCH-POLLER already exposes. It may avoid an unavailable toolchain or prefer an operation whose enforcement requirements are currently satisfied. Presence-only discovered names are planning hints only.
+A coordinating agent may use the inventory to choose among capabilities DevBridge already exposes. It may avoid an unavailable toolchain or prefer an operation whose enforcement requirements are currently satisfied. Presence-only discovered names are planning hints only.
 
 Fallback behavior is:
 
@@ -224,9 +224,9 @@ Fallback behavior is:
 
 ## 9. Operator-authored local operation manifests
 
-PATCH-POLLER supports a local extension point using:
+DevBridge supports a local extension point using:
 
-`patch-poller/local-operation-manifest-v1`
+`devbridge/local-operation-manifest-v1`
 
 The manifest directory is an explicit local operator configuration value. It is not under repository/controller authority.
 
@@ -278,7 +278,7 @@ For each locally delegated command that has no already registered/generated mani
 
 A blocked, unavailable, timed-out, truncated, undocumented, or unparseable probe does not create a capability. Probe failure telemetry exposes bounded classifications, not raw local exception messages that may contain machine paths.
 
-A generated wrapper is still repository-code execution. It does not become trusted merely because the wrapper was synthesized by PATCH-POLLER. Actual operation execution therefore continues to require the verified OS sandbox, denied network, hidden configured external roots, minimal environment, and bounded execution.
+A generated wrapper is still repository-code execution. It does not become trusted merely because the wrapper was synthesized by DevBridge. Actual operation execution therefore continues to require the verified OS sandbox, denied network, hidden configured external roots, minimal environment, and bounded execution.
 
 The help digest is retained as local provenance for the generated manifest. Help output is not itself authority and cannot choose executable identity, shell behavior, environment, credentials, network, external read roots, cleanup scope, Git authority, or arbitrary argv.
 

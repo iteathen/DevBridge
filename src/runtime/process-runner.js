@@ -8,7 +8,7 @@ import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
 import { WORKER_CONTEXT_FILE, WORKER_RESULT_FILE } from './worker-exchange.js';
 
 const CONTROL_CREDENTIAL_ENVIRONMENT = new Set([
-  'PATCH_POLLER_GITHUB_TOKEN',
+  'DEVBRIDGE_GITHUB_TOKEN',
   'GH_TOKEN',
   'GITHUB_TOKEN',
   'GH_ENTERPRISE_TOKEN',
@@ -36,7 +36,7 @@ function buildEnvironment(profile, source) {
     if (!CONTROL_CREDENTIAL_ENVIRONMENT.has(name)) env[name] = value;
   }
   env.GIT_TERMINAL_PROMPT = '0';
-  env.PATCH_POLLER_NONINTERACTIVE = '1';
+  env.DEVBRIDGE_NONINTERACTIVE = '1';
   env.NO_COLOR ??= '1';
   return env;
 }
@@ -76,18 +76,18 @@ async function consumeMailboxResult(mailbox) {
 
 export function toolBridge(runId, resultFile) {
   return {
-    protocol: 'patch-poller/tool-bridge-v1',
+    protocol: 'devbridge/tool-bridge-v1',
     runId: String(runId),
     resultFile,
-    resultProtocol: 'patch-poller/result-v1',
-    requirement: 'Before exiting, overwrite the existing resultFile in place with one JSON result envelope when the CLI can do so. Do not unlink, rename over, symlink, or replace the mailbox file. PATCH-POLLER independently validates the workspace; never claim completion unless the requested work and checks are complete.',
+    resultProtocol: 'devbridge/result-v1',
+    requirement: 'Before exiting, overwrite the existing resultFile in place with one JSON result envelope when the CLI can do so. Do not unlink, rename over, symlink, or replace the mailbox file. DevBridge independently validates the workspace; never claim completion unless the requested work and checks are complete.',
     gitAuthority: {
-      owner: 'patch-poller',
-      rule: 'Project edits are proposals. Do not stage, commit, reset, checkout, clean, push, or otherwise write Git administrative state. Do not write .git or linked-worktree metadata. Do not rely on Git administrative state being available inside the worker boundary; any available read-only Git inspection is observational only. Leave accepted project edits in the working tree; PATCH-POLLER validates, stages, seals, commits, and publishes them.'
+      owner: 'devbridge',
+      rule: 'Project edits are proposals. Do not stage, commit, reset, checkout, clean, push, or otherwise write Git administrative state. Do not write .git or linked-worktree metadata. Do not rely on Git administrative state being available inside the worker boundary; any available read-only Git inspection is observational only. Leave accepted project edits in the working tree; DevBridge validates, stages, seals, commits, and publishes them.'
     },
     resultSchema: {
       required: ['protocol', 'status', 'summary'],
-      protocol: 'patch-poller/result-v1',
+      protocol: 'devbridge/result-v1',
       status: ['complete', 'continue', 'blocked', 'failed'],
       summary: 'Required non-empty string, maximum 20000 characters.',
       progress: 'Optional array of at most 100 strings, each at most 4000 characters.',
@@ -97,7 +97,7 @@ export function toolBridge(runId, resultFile) {
       checkpoint: 'Optional bounded JSON object for a proposal checkpoint; it is not human authorization.'
     },
     example: {
-      protocol: 'patch-poller/result-v1',
+      protocol: 'devbridge/result-v1',
       status: 'complete',
       summary: 'Implemented and verified the requested change.',
       progress: [],
@@ -196,10 +196,10 @@ export class ProcessRunner {
       runId,
     });
     const env = buildEnvironment(profile, this.#sourceEnv);
-    env.PATCH_POLLER_RUN_ID = String(runId);
+    env.DEVBRIDGE_RUN_ID = String(runId);
     let stdin = null;
     if (profile.inputMode === 'stdin-json') stdin = `${JSON.stringify(toolContext)}\n`;
-    else if (profile.inputMode === 'stdin-text') stdin = `PATCH-POLLER CONTEXT\n${JSON.stringify(toolContext, null, 2)}\n`;
+    else if (profile.inputMode === 'stdin-text') stdin = `DevBridge CONTEXT\n${JSON.stringify(toolContext, null, 2)}\n`;
 
     const prepared = await this.#sandboxProvider.prepareExecution({
       executable,

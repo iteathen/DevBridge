@@ -1,4 +1,4 @@
-# PP-008 — Git and Supply-Chain Execution Boundary
+# DB-008 — Git and Supply-Chain Execution Boundary
 
 Status: active
 
@@ -14,15 +14,15 @@ A coding model is not the only thing capable of executing code. A repository can
 
 **No tool becomes trusted merely because it is conventional development infrastructure.**
 
-Remote repository content may describe desired development behavior, but only locally configured PATCH-POLLER policy grants filesystem, credential, network, or execution authority.
+Remote repository content may describe desired development behavior, but only locally configured DevBridge policy grants filesystem, credential, network, or execution authority.
 
 ## Managed Git boundary
 
-PATCH-POLLER-owned Git operations must use a dedicated Git adapter rather than inheriting the operator's interactive Git environment.
+DevBridge-owned Git operations must use a dedicated Git adapter rather than inheriting the operator's interactive Git environment.
 
 The adapter must, where supported:
 
-- use a synthetic PATCH-POLLER home/config root;
+- use a synthetic DevBridge home/config root;
 - disable system/global Git configuration inheritance;
 - disable Git hooks for control-plane Git operations;
 - disable inherited credential helpers;
@@ -53,9 +53,9 @@ A repository may contain `.gitmodules`, `.gitattributes`, or other metadata. The
 
 ## Checkout and candidate integrity
 
-PATCH-POLLER runtime exchange data is not project source. The reserved `.patch-poller/` runtime directory must be excluded from ordinary candidate changes, and a candidate that force-adds reserved runtime files must be rejected.
+DevBridge runtime exchange data is not project source. The reserved `.devbridge/` runtime directory must be excluded from ordinary candidate changes, and a candidate that force-adds reserved runtime files must be rejected.
 
-Before publication, candidate changes must be sealed into a deterministic task-branch commit owned by PATCH-POLLER. Publication must not rely on uncommitted working-tree state.
+Before publication, candidate changes must be sealed into a deterministic task-branch commit owned by DevBridge. Publication must not rely on uncommitted working-tree state.
 
 The persisted run baseline SHA is immutable for the run. A later fetch may update remote-tracking refs but must not redefine what commit the active task started from.
 
@@ -76,7 +76,7 @@ Each phase may have a different network, filesystem, credential, cache, and proc
 
 Dependency download and model access may require network access; ordinary build/test code should not receive unrestricted egress merely because provisioning did.
 
-Where platform containment supports it, PATCH-POLLER should use phase-scoped network profiles such as:
+Where platform containment supports it, DevBridge should use phase-scoped network profiles such as:
 
 - model/control traffic: only endpoints needed by the configured coding tool;
 - dependency fetch: configured registries and source hosts;
@@ -84,7 +84,7 @@ Where platform containment supports it, PATCH-POLLER should use phase-scoped net
 - browser integration: loopback plus explicitly required test endpoints;
 - publication: GitHub only.
 
-A declaration in configuration is not enforcement. PP-003 remains authoritative about honest sandbox claims.
+A declaration in configuration is not enforcement. DB-003 remains authoritative about honest sandbox claims.
 
 ## Cache policy
 
@@ -103,7 +103,7 @@ High-risk caches may need per-run isolation rather than sharing.
 
 ## Lockfiles and reproducibility
 
-Where the target ecosystem provides lockfiles, PATCH-POLLER should prefer locked/reproducible installation modes for verification. An agent may propose a lockfile change, but that change is project code and is reviewed/validated like any other candidate modification.
+Where the target ecosystem provides lockfiles, DevBridge should prefer locked/reproducible installation modes for verification. An agent may propose a lockfile change, but that change is project code and is reviewed/validated like any other candidate modification.
 
 ## Required tests
 
@@ -119,4 +119,4 @@ Before a feature is claimed as enforced, tests must cover relevant bypasses, inc
 
 ## v0.1 boundary
 
-v0.1 implements the managed Git portion of this contract and validates it with local Git fixtures. It does **not** yet provide a first-class package-manager phase controller. A coding CLI may invoke package/build/test tools inside its declared sandbox; that does not mean PATCH-POLLER has independently verified those commands or isolated dependency phases yet.
+v0.1 implements the managed Git portion of this contract and validates it with local Git fixtures. It does **not** yet provide a first-class package-manager phase controller. A coding CLI may invoke package/build/test tools inside its declared sandbox; that does not mean DevBridge has independently verified those commands or isolated dependency phases yet.

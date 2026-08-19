@@ -1,6 +1,6 @@
 # DevBridge bootstrap launcher
 
-`devbridge.mjs` is the canonical self-updating launcher for **DevBridge** on a machine that already has Node.js 22.16.0+ and Git. The legacy `patch-poller.mjs` launcher remains available during the rename compatibility window.
+`devbridge.mjs` is the canonical self-updating launcher for **DevBridge** on a machine that already has Node.js 22.16.0+ and Git. The legacy `devbridge.mjs` launcher remains available during the rename compatibility window.
 
 The bootstrap is intentionally a smaller authority boundary than the mutable daemon runtime. It owns trusted runtime-source policy, release-integrity policy, candidate staging/validation, activation/rollback, and supervisor lifecycle. The installed runtime owns task polling, execution, leases, workspaces, verification, status, pause/resume state, and task publication.
 
@@ -8,7 +8,7 @@ For the shortest installation path, see `docs/setup.md`.
 
 ## Rename compatibility
 
-The product and new user-facing entrypoint are named DevBridge, but the v1 runtime still retains several `patch-poller/*` protocol identifiers and the legacy signed-release repository subject. Those are compatibility identities rather than branding.
+The product and new user-facing entrypoint are named DevBridge, but the v1 runtime still retains several `devbridge/*` protocol identifiers and the legacy signed-release repository subject. Those are compatibility identities rather than branding.
 
 GitHub redirects Git operations made against the former repository URL after a repository rename, so existing managed runtimes can continue fetching through the old origin during the transition. New documentation and new installs use the DevBridge repository and `devbridge.mjs`.
 
@@ -47,15 +47,15 @@ Both release files are local operator authority. Tasks, feedback, decisions, rep
 
 ### v1 signed-release identity during the rename
 
-The current v1 release-integrity implementation still signs the historical repository identity `iteathen/PATCH-POLLER`. That identity is retained temporarily so already deployed production bootstrap code can continue verifying the same immutable release subject through the repository rename.
+The current v1 release-integrity implementation still signs the historical repository identity `iteathen/DevBridge`. That identity is retained temporarily so already deployed production bootstrap code can continue verifying the same immutable release subject through the repository rename.
 
 The release manifest therefore currently has this compatibility shape:
 
 ```json
 {
-  "protocol": "patch-poller/release-manifest-v1",
+  "protocol": "devbridge/release-manifest-v1",
   "release": {
-    "repository": "iteathen/PATCH-POLLER",
+    "repository": "iteathen/DevBridge",
     "head": "40-hex-git-commit-sha",
     "artifactSha256": "64-hex-runtime-artifact-sha256",
     "version": "0.1.0"
@@ -72,7 +72,7 @@ The Ed25519 signature covers the canonical UTF-8 v1 release subject using that s
 
 A future DevBridge-native release-subject version may move the signed identity to `iteathen/DevBridge`, but it must include an explicit backward-compatible migration rather than silently invalidating existing production installations.
 
-`artifactSha256` is the platform-neutral `patch-poller/runtime-artifact-v1` digest over sorted runtime directories, file paths+bytes, and symlink paths+targets, excluding only the checkout root `.git` administrative directory. Host timestamps and permission bits are not signed.
+`artifactSha256` is the platform-neutral `devbridge/runtime-artifact-v1` digest over sorted runtime directories, file paths+bytes, and symlink paths+targets, excluding only the checkout root `.git` administrative directory. Host timestamps and permission bits are not signed.
 
 Production update acceptance requires all of these to agree before candidate code executes:
 
@@ -115,9 +115,9 @@ For a new DevBridge installation, invoke the launcher with `--home ~/.devbridge`
 5. never overwrites an existing operator config;
 6. keeps execution disabled in the initial config so authority can be reviewed before use.
 
-The canonical checked-in example is `config/devbridge.example.json`. The legacy `config/patch-poller.example.json` remains present because older bootstrap code still looks up that filename; its current contents are kept aligned with the DevBridge defaults.
+The canonical checked-in example is `config/devbridge.example.json`. The legacy `config/devbridge.example.json` remains present because older bootstrap code still looks up that filename; its current contents are kept aligned with the DevBridge defaults.
 
-GitHub authentication defaults to local `auto` mode. The runtime checks the configured bounded environment-variable names (including the v1 compatibility name `PATCH_POLLER_GITHUB_TOKEN`, then standard GitHub variables) and may fall back to the active GitHub CLI credential for the configured host. `doctor` may report the provider/source name but never token contents.
+GitHub authentication defaults to local `auto` mode. The runtime checks the configured bounded environment-variable names (including the v1 compatibility name `DEVBRIDGE_GITHUB_TOKEN`, then standard GitHub variables) and may fall back to the active GitHub CLI credential for the configured host. `doctor` may report the provider/source name but never token contents.
 
 Control-plane GitHub credentials are not inherited by runtime-candidate validation or proposal-worker processes.
 
@@ -146,7 +146,7 @@ An unexpected nonzero daemon exit is restarted on the same accepted runtime afte
 
 ## Daemon pause/resume interaction
 
-PP-018 added cooperative runtime `pause`/`resume` to the installed DevBridge CLI.
+DB-018 added cooperative runtime `pause`/`resume` to the installed DevBridge CLI.
 
 Pause is an admission pause, not an OS process/thread freeze. It binds to the exact current daemon lock token, is acknowledged at a safe task-cycle boundary, prevents the next polling/admission cycle, leaves the daemon alive, and preserves run/worktree/IPC/checkpoint/lease evidence.
 
@@ -168,7 +168,7 @@ node devbridge.mjs stop --home ~/.devbridge
 node devbridge.mjs restart --home ~/.devbridge
 ```
 
-The installed `devbridge` runtime CLI additionally exposes the current PP-014 handoff commands and PP-018 `pause`/`resume`; see `README.md` or `src/cli.js` for the exact runtime command list.
+The installed `devbridge` runtime CLI additionally exposes the current DB-014 handoff commands and DB-018 `pause`/`resume`; see `README.md` or `src/cli.js` for the exact runtime command list.
 
 `stop` does not kill an arbitrary PID or delete `daemon.lock`. It writes a local token-bound stop request for the exact current daemon owner. The daemon consumes that request at its normal control boundary and releases only its own lock/control state.
 
@@ -176,7 +176,7 @@ The installed `devbridge` runtime CLI additionally exposes the current PP-014 ha
 
 ## Workstation resource governance
 
-PP-018 applies below-normal OS priority by default to model-worker and deterministic-operation child processes. This policy is implemented by the daemon/runtime, not by the bootstrap supervisor's release-integrity logic.
+DB-018 applies below-normal OS priority by default to model-worker and deterministic-operation child processes. This policy is implemented by the daemon/runtime, not by the bootstrap supervisor's release-integrity logic.
 
 Priority is background-workstation QoS only. It does not claim hard CPU, memory, disk, process-count, or native-thread quotas.
 
@@ -197,10 +197,10 @@ Task admission is currently serialized. A larger configured `execution.maxConcur
 
 - `docs/setup.md`: minimal install and migration.
 - `docs/naming-and-compatibility.md`: rename compatibility identities.
-- PP-003: local capability/sandbox authority.
-- PP-008: Git/supply-chain execution boundaries.
-- PP-009: durable effects/recovery.
-- PP-010: provenance/control channels.
-- PP-011: runtime supervision and zero-touch updates.
-- PP-013: deterministic controller-plan infrastructure.
-- PP-018: workstation governance and cooperative pause.
+- DB-003: local capability/sandbox authority.
+- DB-008: Git/supply-chain execution boundaries.
+- DB-009: durable effects/recovery.
+- DB-010: provenance/control channels.
+- DB-011: runtime supervision and zero-touch updates.
+- DB-013: deterministic controller-plan infrastructure.
+- DB-018: workstation governance and cooperative pause.

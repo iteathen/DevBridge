@@ -1,4 +1,4 @@
-# PP-011 — Runtime Supervision and Zero-Touch Updates
+# DB-011 — Runtime Supervision and Zero-Touch Updates
 
 Status: active
 
@@ -6,15 +6,15 @@ Implementation status: v0.1 separates alpha mutable-channel development updates 
 
 ## Goal
 
-A locally started PATCH-POLLER instance must remain useful as a durable bridge without requiring the operator to restart it after ordinary PATCH-POLLER runtime fixes or test-build updates, while never confusing convenient self-hosting with production release integrity.
+A locally started DevBridge instance must remain useful as a durable bridge without requiring the operator to restart it after ordinary DevBridge runtime fixes or test-build updates, while never confusing convenient self-hosting with production release integrity.
 
 ## Ownership split
 
-The bootstrap is a deliberately small supervisor. The mutable PATCH-POLLER daemon is its child process.
+The bootstrap is a deliberately small supervisor. The mutable DevBridge daemon is its child process.
 
 - The supervisor owns local release policy, trusted update discovery, static release-integrity verification, candidate sandbox verification, daemon lifecycle, runtime checkout replacement, activation evidence, rollback, and unexpected-child restart.
 - The daemon owns task polling, durable run coordination, feedback/decisions, managed workspaces, coding-tool invocation, candidate sealing, and GitHub status reporting.
-- Coding tools and runtime candidates remain untrusted proposal/code inputs before activation acceptance and cannot update PATCH-POLLER's supervisor/control state.
+- Coding tools and runtime candidates remain untrusted proposal/code inputs before activation acceptance and cannot update DevBridge's supervisor/control state.
 - Remote task/feedback/decision text cannot select a runtime repository, update ref, release mode, signing key/manifest, executable, local runtime path, or update policy.
 
 ## Release-integrity modes
@@ -30,10 +30,10 @@ Even in development, a **new update candidate's** own preflight/tests MUST NOT e
 Production mode MUST be explicit local operator policy. v0.1 requires:
 
 - the stable channel only;
-- a local bounded `patch-poller/release-manifest-v1`;
+- a local bounded `devbridge/release-manifest-v1`;
 - a local trusted Ed25519 public key;
 - a signature over the canonical release subject;
-- fixed repository identity `iteathen/PATCH-POLLER`;
+- fixed repository identity `iteathen/DevBridge`;
 - exact 40-hex Git head;
 - exact package version;
 - exact platform-neutral runtime artifact SHA-256.
@@ -44,7 +44,7 @@ Missing/inaccessible signing material, invalid signature, wrong repository/head/
 
 ## Runtime artifact identity
 
-PATCH-POLLER computes a control-owned SHA-256 over the exact runtime artifact using deterministic sorted relative paths and object types/content. The root `.git` administration directory is excluded; runtime directories, file paths+bytes, and symlink path+target participate. Host timestamps and platform-specific permission bits do not.
+DevBridge computes a control-owned SHA-256 over the exact runtime artifact using deterministic sorted relative paths and object types/content. The root `.git` administration directory is excluded; runtime directories, file paths+bytes, and symlink path+target participate. Host timestamps and platform-specific permission bits do not.
 
 The artifact digest is computed before candidate-controlled validation and again afterward. Any mutation caused by candidate preflight/tests invalidates the candidate even if those commands report success.
 
@@ -65,7 +65,7 @@ Candidate-controlled preflight/tests MUST run behind the same verified outer OS 
 
 It MUST deny/unexpose:
 
-- PATCH-POLLER operator config and activation/control state;
+- DevBridge operator config and activation/control state;
 - current/last-known-good runtime siblings except the candidate itself;
 - daemon lock/stop authority;
 - GitHub CLI/SSH/control credentials and token variables;
@@ -102,7 +102,7 @@ The supervisor MUST NOT overwrite files beneath a live daemon.
 
 ### Legacy pre-supervisor adoption exception
 
-A daemon created before PP-011 supervision is not a normal supervised child. The existing bounded, exact-identity Windows legacy takeover mechanism remains a compatibility migration only. It does not relax candidate release-integrity or validation rules and is not a general update timeout policy.
+A daemon created before DB-011 supervision is not a normal supervised child. The existing bounded, exact-identity Windows legacy takeover mechanism remains a compatibility migration only. It does not relax candidate release-integrity or validation rules and is not a general update timeout policy.
 
 ## Crash behavior
 

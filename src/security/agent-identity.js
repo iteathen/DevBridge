@@ -3,7 +3,7 @@ import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PolicyError } from '../errors.js';
 
-export const AGENT_IDENTITY_PROTOCOL = 'patch-poller/agent-identity-v1';
+export const AGENT_IDENTITY_PROTOCOL = 'devbridge/agent-identity-v1';
 export const AGENT_IDENTITY_FILE = 'agent-identity-v1.json';
 
 const HANDLE_RE = /^[A-Za-z0-9_.-]{1,40}$/u;

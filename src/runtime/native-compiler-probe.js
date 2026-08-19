@@ -7,7 +7,7 @@ import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
 
 const OUTPUT_LIMIT = 128 * 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
-const EXECUTABLE_MARKER = 'PATCH-POLLER-NATIVE-LINK-OK';
+const EXECUTABLE_MARKER = 'DevBridge-NATIVE-LINK-OK';
 const EXECUTABLE_EXIT_CODE = 17;
 
 function appendBounded(current, chunk, maxBytes = OUTPUT_LIMIT) {
@@ -226,7 +226,7 @@ function invocationEvidence(name, run, extra = {}, redactions = []) {
 
 function windowsLinkSource({ broken = false } = {}) {
   if (broken) {
-    return 'void missing_patch_poller_link_symbol(void); void __stdcall patch_poller_entry(void) { missing_patch_poller_link_symbol(); }\n';
+    return 'void missing_devbridge_link_symbol(void); void __stdcall devbridge_entry(void) { missing_devbridge_link_symbol(); }\n';
   }
   return [
     'typedef void* PP_HANDLE;',
@@ -234,13 +234,13 @@ function windowsLinkSource({ broken = false } = {}) {
     '__declspec(dllimport) PP_HANDLE __stdcall GetStdHandle(PP_DWORD);',
     '__declspec(dllimport) int __stdcall WriteFile(PP_HANDLE, const void*, PP_DWORD, PP_DWORD*, void*);',
     '__declspec(dllimport) void __stdcall ExitProcess(unsigned int);',
-    `void __stdcall patch_poller_entry(void) { const char message[] = "${EXECUTABLE_MARKER}\\n"; PP_DWORD written = 0; WriteFile(GetStdHandle((PP_DWORD)-11), message, (PP_DWORD)(sizeof(message)-1), &written, 0); ExitProcess(${EXECUTABLE_EXIT_CODE}); }`,
+    `void __stdcall devbridge_entry(void) { const char message[] = "${EXECUTABLE_MARKER}\\n"; PP_DWORD written = 0; WriteFile(GetStdHandle((PP_DWORD)-11), message, (PP_DWORD)(sizeof(message)-1), &written, 0); ExitProcess(${EXECUTABLE_EXIT_CODE}); }`,
     ''
   ].join('\n');
 }
 
 function posixLinkSource({ broken = false } = {}) {
-  if (broken) return 'extern int missing_patch_poller_link_symbol(void); int main(void) { return missing_patch_poller_link_symbol(); }\n';
+  if (broken) return 'extern int missing_devbridge_link_symbol(void); int main(void) { return missing_devbridge_link_symbol(); }\n';
   return `#include <stdio.h>\nint main(void) { fputs("${EXECUTABLE_MARKER}\\n", stdout); return ${EXECUTABLE_EXIT_CODE}; }\n`;
 }
 
@@ -254,7 +254,7 @@ async function linkWindowsMsvc({ compiler, probeDir, env, sourcePath, sourceName
   const compile = await runProcess(compiler.executable, compileArguments(compiler, sourceName, objectName, { noRuntime: true }), { cwd: probeDir, env });
   if (compile.exitCode !== 0 || compile.timedOut) return { compile, sdk, link: null };
   const link = await runProcess(compiler.linker, [
-    '/nologo', '/nodefaultlib', '/subsystem:console', '/entry:patch_poller_entry',
+    '/nologo', '/nodefaultlib', '/subsystem:console', '/entry:devbridge_entry',
     `/out:${executableName}`, objectName, sdk.library
   ], { cwd: probeDir, env });
   return { compile, sdk, link };
@@ -288,9 +288,9 @@ export async function runNativeCompilerProbe({ workDir, env = process.env } = {}
     const compiler = await discoverNativeCompiler({ env });
     if (!compiler) {
       return {
-        protocol: 'patch-poller/result-v1',
+        protocol: 'devbridge/result-v1',
         status: 'failed',
-        summary: 'PATCH-POLLER native compiler diagnostic could not find an authorized local C compiler.',
+        summary: 'DevBridge native compiler diagnostic could not find an authorized local C compiler.',
         progress: [],
         tests: [{ name: 'native-compiler-discovery', available: false }],
         nextStep: null,
@@ -306,8 +306,8 @@ export async function runNativeCompilerProbe({ workDir, env = process.env } = {}
       source: compiler.source
     });
     const redactions = [root, probeDir, compiler.executable, path.dirname(compiler.executable)];
-    const validSource = 'int patch_poller_compiler_probe(void) { return 0; }\n';
-    const invalidSource = 'int patch_poller_compiler_probe(void) { return missing + ; }\n';
+    const validSource = 'int devbridge_compiler_probe(void) { return 0; }\n';
+    const invalidSource = 'int devbridge_compiler_probe(void) { return missing + ; }\n';
 
     await writeFile(sourcePath, validSource, 'utf8');
     let run = await runProcess(compiler.executable, compileArguments(compiler, sourceName, objectName), { cwd: probeDir, env });
@@ -315,7 +315,7 @@ export async function runNativeCompilerProbe({ workDir, env = process.env } = {}
     tests.push(invocationEvidence('native-compiler-valid', run, { objectCreated: firstObject }, redactions));
     if (run.exitCode !== 0 || run.timedOut || !firstObject) {
       return {
-        protocol: 'patch-poller/result-v1', status: 'failed',
+        protocol: 'devbridge/result-v1', status: 'failed',
         summary: `Native compiler ${compiler.family} was discovered but could not compile the valid probe.`,
         progress: [], tests, nextStep: null, blocker: 'native-compiler-valid-build-failed'
       };
@@ -329,7 +329,7 @@ export async function runNativeCompilerProbe({ workDir, env = process.env } = {}
     tests.push(invocationEvidence('native-compiler-intentional-error', run, { diagnosticObserved }, redactions));
     if (run.exitCode === 0 || run.timedOut || !diagnosticObserved) {
       return {
-        protocol: 'patch-poller/result-v1', status: 'failed',
+        protocol: 'devbridge/result-v1', status: 'failed',
         summary: `Native compiler ${compiler.family} did not produce trustworthy failure diagnostics for the intentional syntax error.`,
         progress: [], tests, nextStep: null, blocker: 'native-compiler-diagnostic-missing'
       };
@@ -342,14 +342,14 @@ export async function runNativeCompilerProbe({ workDir, env = process.env } = {}
     tests.push(invocationEvidence('native-compiler-repair', run, { objectCreated: repairedObject }, redactions));
     if (run.exitCode !== 0 || run.timedOut || !repairedObject) {
       return {
-        protocol: 'patch-poller/result-v1', status: 'failed',
+        protocol: 'devbridge/result-v1', status: 'failed',
         summary: `Native compiler ${compiler.family} did not recover after the intentional compiler failure.`,
         progress: [], tests, nextStep: null, blocker: 'native-compiler-repair-failed'
       };
     }
 
     await rm(objectPath, { force: true });
-    await writeFile(sourcePath, 'int patch_poller_warning_probe(void) { int unused = 1; return 0; }\n', 'utf8');
+    await writeFile(sourcePath, 'int devbridge_warning_probe(void) { int unused = 1; return 0; }\n', 'utf8');
     run = await runProcess(compiler.executable, compileArguments(compiler, sourceName, objectName, { warnings: true }), { cwd: probeDir, env });
     const warningText = `${run.stdout}\n${run.stderr}`;
     tests.push(invocationEvidence('native-compiler-warning', run, {
@@ -363,7 +363,7 @@ export async function runNativeCompilerProbe({ workDir, env = process.env } = {}
     if (linkAttempt.unavailable) {
       tests.push({ name: 'native-linker-discovery', available: false, reason: linkAttempt.reason });
       return {
-        protocol: 'patch-poller/result-v1', status: 'failed',
+        protocol: 'devbridge/result-v1', status: 'failed',
         summary: `Native compiler ${compiler.family} passed, but the fixed local linker diagnostic could not resolve its required local linker components.`,
         progress: [], tests, nextStep: null, blocker: linkAttempt.reason
       };
@@ -373,7 +373,7 @@ export async function runNativeCompilerProbe({ workDir, env = process.env } = {}
     tests.push(invocationEvidence('native-linker-valid', linkAttempt.link, { executableCreated: linkedExecutable }, redactions));
     if (!linkAttempt.link || linkAttempt.link.exitCode !== 0 || linkAttempt.link.timedOut || !linkedExecutable) {
       return {
-        protocol: 'patch-poller/result-v1', status: 'failed',
+        protocol: 'devbridge/result-v1', status: 'failed',
         summary: `Native linker for ${compiler.family} could not produce the valid executable probe.`,
         progress: [], tests, nextStep: null, blocker: 'native-linker-valid-build-failed'
       };
@@ -384,7 +384,7 @@ export async function runNativeCompilerProbe({ workDir, env = process.env } = {}
     tests.push(invocationEvidence('native-executable-run', run, { markerObserved, expectedExitCode: EXECUTABLE_EXIT_CODE }, redactions));
     if (run.timedOut || run.exitCode !== EXECUTABLE_EXIT_CODE || !markerObserved) {
       return {
-        protocol: 'patch-poller/result-v1', status: 'failed',
+        protocol: 'devbridge/result-v1', status: 'failed',
         summary: 'Linked native executable did not preserve the expected stdout marker and process exit code.',
         progress: [], tests, nextStep: null, blocker: 'native-executable-run-failed'
       };
@@ -399,7 +399,7 @@ export async function runNativeCompilerProbe({ workDir, env = process.env } = {}
     if (linkAttempt.link) tests.push(invocationEvidence('native-linker-intentional-error', linkAttempt.link, { diagnosticObserved: linkerDiagnosticObserved }, redactions));
     if (!linkAttempt.link || linkAttempt.link.exitCode === 0 || linkAttempt.link.timedOut || !linkerDiagnosticObserved) {
       return {
-        protocol: 'patch-poller/result-v1', status: 'failed',
+        protocol: 'devbridge/result-v1', status: 'failed',
         summary: `Native linker for ${compiler.family} did not produce trustworthy diagnostics for the intentional unresolved symbol.`,
         progress: [], tests, nextStep: null, blocker: 'native-linker-diagnostic-missing'
       };
@@ -413,7 +413,7 @@ export async function runNativeCompilerProbe({ workDir, env = process.env } = {}
     tests.push(invocationEvidence('native-linker-repair', linkAttempt.link, { executableCreated: repairedExecutable }, redactions));
     if (!linkAttempt.link || linkAttempt.link.exitCode !== 0 || linkAttempt.link.timedOut || !repairedExecutable) {
       return {
-        protocol: 'patch-poller/result-v1', status: 'failed',
+        protocol: 'devbridge/result-v1', status: 'failed',
         summary: `Native linker for ${compiler.family} did not recover after the intentional linker failure.`,
         progress: [], tests, nextStep: null, blocker: 'native-linker-repair-failed'
       };
@@ -424,14 +424,14 @@ export async function runNativeCompilerProbe({ workDir, env = process.env } = {}
     tests.push(invocationEvidence('native-linker-repair-run', run, { markerObserved: repairMarkerObserved, expectedExitCode: EXECUTABLE_EXIT_CODE }, redactions));
     if (run.timedOut || run.exitCode !== EXECUTABLE_EXIT_CODE || !repairMarkerObserved) {
       return {
-        protocol: 'patch-poller/result-v1', status: 'failed',
+        protocol: 'devbridge/result-v1', status: 'failed',
         summary: 'Repaired native executable did not preserve the expected stdout marker and process exit code.',
         progress: [], tests, nextStep: null, blocker: 'native-linker-repair-run-failed'
       };
     }
 
     return {
-      protocol: 'patch-poller/result-v1',
+      protocol: 'devbridge/result-v1',
       status: 'complete',
       summary: `Native toolchain durability probe completed with ${compiler.family}: compiler error recovery, linker error recovery, and executable stdout/exit propagation all behaved correctly.`,
       progress: [
@@ -444,9 +444,9 @@ export async function runNativeCompilerProbe({ workDir, env = process.env } = {}
     };
   } catch (error) {
     return {
-      protocol: 'patch-poller/result-v1',
+      protocol: 'devbridge/result-v1',
       status: 'failed',
-      summary: `PATCH-POLLER native compiler diagnostic failed: ${String(error?.message || error).slice(0, 1000)}`,
+      summary: `DevBridge native compiler diagnostic failed: ${String(error?.message || error).slice(0, 1000)}`,
       progress: [],
       tests,
       nextStep: null,

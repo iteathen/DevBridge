@@ -19,11 +19,11 @@ async function fixture() {
   await exec('git', ['init', '-b', 'main', source]);
   await writeFile(path.join(source, 'BASE.txt'), 'production\n');
   await git(source, ['add', 'BASE.txt']);
-  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=patch-poller@example.invalid', 'commit', '-m', 'production']);
+  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', 'production']);
   await git(source, ['checkout', '-b', 'integration/testing']);
   await writeFile(path.join(source, 'BASE.txt'), 'testing-v1\n');
   await git(source, ['add', 'BASE.txt']);
-  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=patch-poller@example.invalid', 'commit', '-m', 'testing']);
+  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', 'testing']);
   await git(source, ['checkout', 'main']);
 
   const policy = new WorkspacePolicy({ root: path.join(root, 'managed'), allowedOwners: ['owner'], allowCreate: true });
@@ -57,7 +57,7 @@ test('resolves semantic baseline channels locally and persists the exact resolve
   await git(source, ['checkout', 'integration/testing']);
   await writeFile(path.join(source, 'BASE.txt'), 'testing-v2\n');
   await git(source, ['add', 'BASE.txt']);
-  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=patch-poller@example.invalid', 'commit', '-m', 'testing advance']);
+  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', 'testing advance']);
   await git(source, ['checkout', 'main']);
 
   const resumed = await manager.prepareRun(task, 'run-channel', {

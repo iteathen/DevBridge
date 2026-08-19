@@ -288,7 +288,7 @@ export class ToolOnboardingService {
     catch {
       return { command: entry.command, operation: entry.operation, state: 'unavailable' };
     }
-    const probeRoot = await mkdtemp(path.join(this.#workspaceRoot, '.patch-poller-tool-probe-'));
+    const probeRoot = await mkdtemp(path.join(this.#workspaceRoot, '.devbridge-tool-probe-'));
     try {
       const result = await this.#runner.run({
         executable,

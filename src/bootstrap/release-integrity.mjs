@@ -2,9 +2,9 @@ import { createHash, createPublicKey, verify as verifySignature } from 'node:cry
 import { lstat, readFile, readdir, readlink } from 'node:fs/promises';
 import path from 'node:path';
 
-export const RELEASE_MANIFEST_PROTOCOL = 'patch-poller/release-manifest-v1';
-export const RELEASE_SUBJECT_PROTOCOL = 'patch-poller/release-subject-v1';
-export const RELEASE_REPOSITORY = 'iteathen/PATCH-POLLER';
+export const RELEASE_MANIFEST_PROTOCOL = 'devbridge/release-manifest-v1';
+export const RELEASE_SUBJECT_PROTOCOL = 'devbridge/release-subject-v1';
+export const RELEASE_REPOSITORY = 'iteathen/DevBridge';
 
 const HEAD_RE = /^[0-9a-f]{40}$/u;
 const DIGEST_RE = /^[0-9a-f]{64}$/u;
@@ -117,7 +117,7 @@ export async function runtimeArtifactSha256(runtimeDir, {
 } = {}) {
   const root = path.resolve(runtimeDir);
   const hash = createHash('sha256');
-  appendField(hash, 'protocol', 'patch-poller/runtime-artifact-v1');
+  appendField(hash, 'protocol', 'devbridge/runtime-artifact-v1');
   let fileCount = 0;
   let totalBytes = 0;
 
@@ -155,7 +155,7 @@ export async function runtimeArtifactSha256(runtimeDir, {
 
   await walk(root);
   return {
-    protocol: 'patch-poller/runtime-artifact-v1',
+    protocol: 'devbridge/runtime-artifact-v1',
     sha256: hash.digest('hex'),
     fileCount,
     totalBytes,

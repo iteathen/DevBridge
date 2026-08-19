@@ -50,7 +50,7 @@ test('malicious validation stays outside supervisor authority', async () => {
   assert.ok(['denied', 'sandbox-shadow-write'].includes(attemptWrite(${quoted(secretFile)}, 'stolen')));
   assert.ok(['denied', 'sandbox-shadow-write'].includes(attemptWrite(${quoted(currentFile)}, 'mutated')));
   assert.ok(['denied', 'sandbox-shadow-write'].includes(attemptWrite(${quoted(activationFile)}, '{"owned":true}')));
-  assert.equal(process.env.PATCH_POLLER_BOOTSTRAP_SECRET, undefined);
+  assert.equal(process.env.DEVBRIDGE_BOOTSTRAP_SECRET, undefined);
   assert.equal(process.env.GH_TOKEN, undefined);
   assert.equal(process.env.GITHUB_TOKEN, undefined);
   assert.equal(await networkDenied(), true);
@@ -74,13 +74,13 @@ test('candidate validation cannot read or mutate bootstrap host state or reach t
   await writeFile(path.join(candidateDir, 'test', 'malicious.test.js'), maliciousTest({ secretFile, currentFile, activationFile }));
   await writeFile(secretFile, 'control-secret-sentinel\n');
   await writeFile(currentFile, 'current-runtime-sentinel\n');
-  await writeFile(activationFile, '{"protocol":"patch-poller/runtime-activation-v1"}\n');
+  await writeFile(activationFile, '{"protocol":"devbridge/runtime-activation-v1"}\n');
 
   const paths = { home, runtimeCandidates };
   const runtime = { runtimeDir: candidateDir, head: 'a'.repeat(40), version: '0.1.0' };
   const sourceEnv = {
     ...process.env,
-    PATCH_POLLER_BOOTSTRAP_SECRET: 'must-never-reach-candidate',
+    DEVBRIDGE_BOOTSTRAP_SECRET: 'must-never-reach-candidate',
     GH_TOKEN: 'must-never-reach-candidate',
     GITHUB_TOKEN: 'must-never-reach-candidate',
   };
@@ -97,7 +97,7 @@ test('candidate validation cannot read or mutate bootstrap host state or reach t
   try {
     validation = await validateRuntimeCandidate(paths, runtime, null, { env: sourceEnv });
   } catch (error) {
-    if (process.env.PATCH_POLLER_REQUIRE_SANDBOX_TEST === '1') throw error;
+    if (process.env.DEVBRIDGE_REQUIRE_SANDBOX_TEST === '1') throw error;
     t.skip(`verified bootstrap candidate sandbox unavailable on this host: ${error.message}`);
     return;
   }
@@ -108,5 +108,5 @@ test('candidate validation cannot read or mutate bootstrap host state or reach t
   assert.equal(validation.sandbox.network, 'denied');
   assert.equal(await readFile(secretFile, 'utf8'), 'control-secret-sentinel\n');
   assert.equal(await readFile(currentFile, 'utf8'), 'current-runtime-sentinel\n');
-  assert.equal(await readFile(activationFile, 'utf8'), '{"protocol":"patch-poller/runtime-activation-v1"}\n');
+  assert.equal(await readFile(activationFile, 'utf8'), '{"protocol":"devbridge/runtime-activation-v1"}\n');
 });

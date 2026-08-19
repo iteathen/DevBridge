@@ -2,7 +2,7 @@
 
 ## Purpose first
 
-PATCH-POLLER bridges a remote coordination channel and a local development environment. That makes it both an automation tool and a security boundary. Architectural decisions should be weighted in this order for the control path:
+DevBridge bridges a remote coordination channel and a local development environment. That makes it both an automation tool and a security boundary. Architectural decisions should be weighted in this order for the control path:
 
 1. correctness and containment;
 2. recoverability and provenance;
@@ -58,15 +58,15 @@ A new task transport, local CLI surface, deterministic tool, decision transport,
 
 Simple does not mean permissive. Prefer one serial request queue over a clever rate scheduler; one structured task envelope over ambiguous command formats; one managed workspace root over arbitrary local paths; one owned/coalesced status projection over chatty streams; one authoritative run coordinator over implicit state spread across event listeners.
 
-Current multi-agent coordination is deliberately narrow: PP-016 lets multiple authorized installations share a queue through signed exact-task leases and fencing, while each daemon still admits work serially. **Do not infer a parallel scheduler, per-workstation task-routing ACL, or new capability authority merely because distributed lease coordination exists.** Add those only behind explicit contracts when a real workload requires them.
+Current multi-agent coordination is deliberately narrow: DB-016 lets multiple authorized installations share a queue through signed exact-task leases and fencing, while each daemon still admits work serially. **Do not infer a parallel scheduler, per-workstation task-routing ACL, or new capability authority merely because distributed lease coordination exists.** Add those only behind explicit contracts when a real workload requires them.
 
-Likewise, PP-018 below-normal child priority is a simple workstation QoS mechanism. Do not represent it as hard CPU/memory/thread containment or build a fake portable quota layer around APIs that cannot enforce one.
+Likewise, DB-018 below-normal child priority is a simple workstation QoS mechanism. Do not represent it as hard CPU/memory/thread containment or build a fake portable quota layer around APIs that cannot enforce one.
 
-## Agents propose; PATCH-POLLER decides
+## Agents propose; DevBridge decides
 
 Remote and local LLMs are subordinate proposal engines. They can be creative about solutions without being authoritative about machine capability, Git state, publication state, lease ownership, runtime activation, or whether a consequential boundary may be crossed.
 
-This separation allows PATCH-POLLER to use multiple tools/agents without letting disagreement between them become disagreement about control-plane truth.
+This separation allows DevBridge to use multiple tools/agents without letting disagreement between them become disagreement about control-plane truth.
 
 The same principle applies to tool documentation and repository code: observation may inform a proposal or bounded schema, but does not create executable authority.
 
@@ -75,15 +75,15 @@ The same principle applies to tool documentation and repository code: observatio
 Do not collapse distinct permissions into a generic concept of a “trusted developer” or “trusted agent.” Current important dimensions include:
 
 - trusted task author (`github.trustedActorIds`): may submit remote development jobs to that runner's configured queue;
-- trusted decision actor for one or more PP-007 classes;
-- trusted PP-016 peer public key: may produce coordination lease evidence the runner recognizes;
+- trusted decision actor for one or more DB-007 classes;
+- trusted DB-016 peer public key: may produce coordination lease evidence the runner recognizes;
 - locally enabled tool/operation authority;
 - local repository/workspace/baseline authority;
 - publication/release authority.
 
 One dimension does not imply another.
 
-In particular, PP-016 coordination identity is not current per-workstation task addressing. If one developer must not dispatch work to another developer's workstation, enforce that today through the target runner's local queue/task-author policy until a dedicated addressed-dispatch contract exists.
+In particular, DB-016 coordination identity is not current per-workstation task addressing. If one developer must not dispatch work to another developer's workstation, enforce that today through the target runner's local queue/task-author policy until a dedicated addressed-dispatch contract exists.
 
 ## Human judgment is leverage, not a mutex
 
@@ -122,7 +122,7 @@ Examples:
 - a lease signature proves coordination identity/subject, not task/capability authority;
 - a successful prior test run is not current verification after candidate/baseline drift;
 - a priority request is not applied QoS until OS application succeeds;
-- a remote comment that looks like a PATCH-POLLER protocol object is not authoritative without the typed source/provenance path.
+- a remote comment that looks like a DevBridge protocol object is not authoritative without the typed source/provenance path.
 
 When an enforcement layer cannot prove the requested semantics, fail closed or report the limitation honestly rather than translating aspiration into `true`.
 

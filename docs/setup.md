@@ -73,13 +73,13 @@ On Ubuntu systems that restrict unprivileged user namespaces, use a narrowly sco
 
 Normal updates require no reinstall. Keep the small `devbridge.mjs` launcher and start DevBridge through it; the supervisor owns runtime update discovery, candidate validation, activation, health checking, and rollback.
 
-The launcher itself is intentionally small. If the checked-in launcher changes materially, replace your local `devbridge.mjs` with the current repository copy. Existing `patch-poller.mjs` launchers are retained as a compatibility path during the DevBridge rename.
+The launcher itself is intentionally small. If the checked-in launcher changes materially, replace your local `devbridge.mjs` with the current repository copy. Existing `devbridge.mjs` launchers are retained as a compatibility path during the DevBridge rename.
 
-## Existing PATCH-POLLER installations
+## Existing DevBridge installations
 
 The product is now named **DevBridge**. Existing installations do not need to discard their state.
 
-The v1 wire protocols, durable record protocol strings, signed-release protocol identifiers, and legacy `~/.patch-poller` state path remain compatibility identities. GitHub repository renames redirect existing Git fetch/push URLs, so old managed runtimes can continue following the repository during the transition. New installations should use `devbridge.mjs` and `~/.devbridge`.
+The v1 wire protocols, durable record protocol strings, signed-release protocol identifiers, and legacy `~/.devbridge` state path remain compatibility identities. GitHub repository renames redirect existing Git fetch/push URLs, so old managed runtimes can continue following the repository during the transition. New installations should use `devbridge.mjs` and `~/.devbridge`.
 
 Local operator configuration is never silently rewritten by self-update. If an existing config names the old repository explicitly, update that machine-owned setting deliberately when migrating it to the DevBridge repository name.
 

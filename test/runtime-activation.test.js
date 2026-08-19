@@ -8,9 +8,9 @@ import {
   loadPersistedHealthyRuntime,
   prepareRuntimeCandidate,
   readRuntimeActivationState,
-  runPollerCli,
+  runDevBridgeCli,
   writeRuntimeActivationState,
-} from '../patch-poller.mjs';
+} from '../devbridge.mjs';
 
 function fixturePaths() {
   const home = mkdtempSync(path.join(tmpdir(), 'pp-runtime-activation-'));
@@ -94,7 +94,7 @@ test('activation journal is atomic JSON and only a contained exact healthy runti
   const runtimeDir = candidateRuntimePath(paths, head);
   mkdirSync(runtimeDir, { recursive: true });
   writeRuntimeActivationState(paths, {
-    protocol: 'patch-poller/runtime-activation-v1',
+    protocol: 'devbridge/runtime-activation-v1',
     state: 'healthy',
     current: { ref: 'sol/foundation-bootstrap', head, runtimeDir, cliPath: path.join(runtimeDir, 'src', 'cli.js'), version: '0.1.0' },
   });
@@ -112,7 +112,7 @@ test('activation journal is atomic JSON and only a contained exact healthy runti
   assert.equal(loaded.runtimeDir, runtimeDir);
 
   writeRuntimeActivationState(paths, {
-    protocol: 'patch-poller/runtime-activation-v1',
+    protocol: 'devbridge/runtime-activation-v1',
     state: 'healthy',
     current: { ref: 'sol/foundation-bootstrap', head, runtimeDir: path.resolve(paths.home, '..', 'escape'), cliPath: '/escape/src/cli.js', version: '0.1.0' },
   });
@@ -129,7 +129,7 @@ test('runtime-aware CLI launch uses candidate cwd and never a shell', () => {
     observed = { executable, args, options };
     return { status: 0 };
   };
-  assert.equal(runPollerCli('doctor', paths, runtime, runner), 0);
+  assert.equal(runDevBridgeCli('doctor', paths, runtime, runner), 0);
   assert.equal(observed.options.cwd, runtimeDir);
   assert.equal(observed.options.shell, false);
   assert.deepEqual(observed.args, [runtime.cliPath, 'doctor', '--config', paths.config]);

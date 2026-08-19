@@ -19,7 +19,7 @@ function record(sequence, overrides = {}) {
   const handoff = buildChatHandoff({
     handoffId: `projection-${sequence}`,
     sequence,
-    repository: 'iteathen/PATCH-POLLER',
+    repository: 'iteathen/DevBridge',
     baselineSha: 'a'.repeat(40),
     headSha: sequence === 1 ? 'b'.repeat(40) : 'c'.repeat(40),
     branch: 'sol/pp-014-context-rollover',
@@ -37,7 +37,7 @@ function record(sequence, overrides = {}) {
     createdAt: `2026-08-18T18:2${sequence}:00.000Z`,
     ...overrides,
   });
-  return { protocol: 'patch-poller/chat-handoff-store-v1', state: 'ready', digest: chatHandoffDigest(handoff), handoff, createdAt: handoff.createdAt, verifiedAt: handoff.createdAt };
+  return { protocol: 'devbridge/chat-handoff-store-v1', state: 'ready', digest: chatHandoffDigest(handoff), handoff, createdAt: handoff.createdAt, verifiedAt: handoff.createdAt };
 }
 
 function fakeGitHub() {
@@ -72,17 +72,17 @@ test('GitHub projection creates one bounded recovery comment and then edits it f
   const projector = new ChatHandoffProjector({
     client,
     stateStore: memoryStore(),
-    queueRepository: 'iteathen/PATCH-POLLER',
+    queueRepository: 'iteathen/DevBridge',
     maxCommentBytes: 48_000,
   });
   const first = await projector.project({ issueNumber: 20, record: record(1) });
   assert.equal(first.projected, true);
   assert.equal(client.comments.length, 1);
   assert.equal(client.calls.filter((call) => call.method === 'POST').length, 1);
-  assert.ok(client.comments[0].body.includes('PATCH-POLLER — CHAT HANDOFF READY'));
+  assert.ok(client.comments[0].body.includes('DevBridge — CHAT HANDOFF READY'));
   const parsed = parseGitHubChatResumeSeed(first.seed);
   assert.equal(parsed.issueNumber, 20);
-  assert.equal(parsed.repository, 'iteathen/PATCH-POLLER');
+  assert.equal(parsed.repository, 'iteathen/DevBridge');
 
   const second = await projector.project({ issueNumber: 20, record: record(2) });
   assert.equal(second.commentId, first.commentId);
@@ -95,12 +95,12 @@ test('GitHub projection creates one bounded recovery comment and then edits it f
 test('projection reconciles a crash-after-create by finding its durable marker before posting again', async () => {
   const client = fakeGitHub();
   const firstState = memoryStore();
-  const projector = new ChatHandoffProjector({ client, stateStore: firstState, queueRepository: 'iteathen/PATCH-POLLER' });
+  const projector = new ChatHandoffProjector({ client, stateStore: firstState, queueRepository: 'iteathen/DevBridge' });
   const item = record(1);
   await projector.project({ issueNumber: 20, record: item });
   assert.equal(client.comments.length, 1);
 
-  const restarted = new ChatHandoffProjector({ client, stateStore: memoryStore(), queueRepository: 'iteathen/PATCH-POLLER' });
+  const restarted = new ChatHandoffProjector({ client, stateStore: memoryStore(), queueRepository: 'iteathen/DevBridge' });
   const recovered = await restarted.project({ issueNumber: 20, record: item });
   assert.equal(recovered.projected, true);
   assert.equal(client.comments.length, 1, 'marker reconciliation must not create a duplicate comment');
@@ -110,7 +110,7 @@ test('projection reconciles a crash-after-create by finding its durable marker b
 
 test('fresh controller can verify a GitHub projection and recover exactly the recorded phase and next action', async () => {
   const client = fakeGitHub();
-  const projector = new ChatHandoffProjector({ client, stateStore: memoryStore(), queueRepository: 'iteathen/PATCH-POLLER' });
+  const projector = new ChatHandoffProjector({ client, stateStore: memoryStore(), queueRepository: 'iteathen/DevBridge' });
   const source = record(2);
   const projection = await projector.project({ issueNumber: 20, record: source });
 
@@ -135,12 +135,12 @@ test('fresh controller can verify a GitHub projection and recover exactly the re
   });
   assert.equal(reconciled.status, 'ready');
   assert.equal(reconciled.nextActionId, 'merge');
-  assert.equal(projection.seed, client.comments[0].body.split(/\r?\n/u).find((line) => line.startsWith('PATCH-POLLER-RESUME-GITHUB v1 ')));
+  assert.equal(projection.seed, client.comments[0].body.split(/\r?\n/u).find((line) => line.startsWith('DEVBRIDGE-RESUME-GITHUB v1 ')));
 });
 
 test('tampered GitHub projection is rejected before a fresh controller can resume it', async () => {
   const client = fakeGitHub();
-  const projector = new ChatHandoffProjector({ client, stateStore: memoryStore(), queueRepository: 'iteathen/PATCH-POLLER' });
+  const projector = new ChatHandoffProjector({ client, stateStore: memoryStore(), queueRepository: 'iteathen/DevBridge' });
   await projector.project({ issueNumber: 20, record: record(1) });
   const tampered = client.comments[0].body.replace('"phase": "testing"', '"phase": "publishing"');
   assert.throws(() => parseChatHandoffProjectionBody(tampered), /digest mismatch/u);
@@ -151,7 +151,7 @@ test('projection fails closed instead of publishing a digest-divergent redacted 
   const projector = new ChatHandoffProjector({
     client,
     stateStore: memoryStore(),
-    queueRepository: 'iteathen/PATCH-POLLER',
+    queueRepository: 'iteathen/DevBridge',
     maxCommentBytes: 48_000,
     secretValues: ['SUPER-SECRET-MARKER'],
   });
@@ -161,6 +161,6 @@ test('projection fails closed instead of publishing a digest-divergent redacted 
 });
 
 test('projection refuses a handoff larger than the remote comment budget', async () => {
-  const tiny = new ChatHandoffProjector({ client: fakeGitHub(), stateStore: memoryStore(), queueRepository: 'iteathen/PATCH-POLLER', maxCommentBytes: 4096 });
+  const tiny = new ChatHandoffProjector({ client: fakeGitHub(), stateStore: memoryStore(), queueRepository: 'iteathen/DevBridge', maxCommentBytes: 4096 });
   await assert.rejects(() => tiny.project({ issueNumber: 20, record: record(1, { blockers: ['x'.repeat(2000), 'y'.repeat(2000)] }) }), /comment budget/u);
 });

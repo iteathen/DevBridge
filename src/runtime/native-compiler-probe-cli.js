@@ -16,15 +16,15 @@ async function readStdin() {
 async function main() {
   const raw = await readStdin();
   const context = JSON.parse(raw);
-  if (context?.protocol !== 'patch-poller/context-v1') throw new Error('native compiler diagnostic requires patch-poller/context-v1');
+  if (context?.protocol !== 'devbridge/context-v1') throw new Error('native compiler diagnostic requires devbridge/context-v1');
   if (context?.bridge?.resultFile !== WORKER_RESULT_FILE) {
-    throw new Error('native compiler diagnostic requires the fixed PATCH-POLLER worker result endpoint');
+    throw new Error('native compiler diagnostic requires the fixed DevBridge worker result endpoint');
   }
 
   // The diagnostic ignores free-form task instructions for process selection.
   // Compiler discovery and all compiler arguments are fixed control-plane code.
   // Build scratch is sandbox-local and separate from the control-owned mailbox.
-  const workDir = await mkdtemp(path.join(os.tmpdir(), 'patch-poller-native-compiler-'));
+  const workDir = await mkdtemp(path.join(os.tmpdir(), 'devbridge-native-compiler-'));
   try {
     const result = await runNativeCompilerProbe({ workDir, env: process.env });
     await writeFile(WORKER_RESULT_FILE, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8' });

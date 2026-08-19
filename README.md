@@ -4,7 +4,7 @@
 
 DevBridge is a local Node.js control plane that accepts narrowly trusted GitHub development tasks, runs them under local machine policy, preserves durable context and Git state, verifies the resulting work, and publishes only through explicitly authorized boundaries.
 
-The project was previously named **PATCH-POLLER**. The old name described one transport mechanism; DevBridge describes the actual purpose of the application.
+The project was previously named **DevBridge**. The old name described one transport mechanism; DevBridge describes the actual purpose of the application.
 
 ## What DevBridge does
 
@@ -18,7 +18,7 @@ Current mainline capabilities include:
 - optional coding-model adapters, disabled by default;
 - verified Linux/Bubblewrap containment for untrusted proposal workers and repository-code execution;
 - durable run state, context handoffs, restart recovery, and bounded reconciliation;
-- PP-007 human checkpoint-and-proceed gates for sensitive work;
+- DB-007 human checkpoint-and-proceed gates for sensitive work;
 - candidate sealing and exact-head task-branch publication;
 - persistent Ed25519 installation identity, signed multi-agent task leases, heartbeat/TTL recovery, and fencing;
 - fast-forward baseline reconciliation with mandatory post-drift reverification;
@@ -34,7 +34,7 @@ Remote task text, repository content, dependencies, model output, tool documenta
 
 `github.trustedActorIds` is a **remote development-job submission allowlist**, not a generic collaborator list. If execution is enabled and a runner trusts an actor, that actor may submit development work to that runner within its existing local capability and sandbox policy.
 
-PP-016 peer identity and leases coordinate ownership only. Current v1 task envelopes are not yet cryptographically addressed to a destination workstation. If developer A must not be able to dispatch work to developer B's machine, enforce that today through B's runner-local queue and trusted-actor policy.
+DB-016 peer identity and leases coordinate ownership only. Current v1 task envelopes are not yet cryptographically addressed to a destination workstation. If developer A must not be able to dispatch work to developer B's machine, enforce that today through B's runner-local queue and trusted-actor policy.
 
 Untrusted proposal-worker and repository-code execution requires a verified outer OS sandbox. The built-in provider is Linux/Bubblewrap. Unsupported hosts fail closed for those execution classes rather than silently running with host authority.
 
@@ -72,7 +72,7 @@ The bootstrap launcher is deliberately small. Normal operation starts DevBridge 
 
 Development update mode follows a mutable testing channel and is explicitly alpha. Production mode uses a locally trusted Ed25519-signed immutable release subject binding repository identity, exact Git commit, version, and runtime artifact SHA-256.
 
-Existing `patch-poller.mjs` installations remain a supported compatibility path during the rename. GitHub redirects Git operations from a renamed repository, so an old managed remote can continue reaching the renamed repository; new installs should use the DevBridge URL and launcher.
+Existing `devbridge.mjs` installations remain a supported compatibility path during the rename. GitHub redirects Git operations from a renamed repository, so an old managed remote can continue reaching the renamed repository; new installs should use the DevBridge URL and launcher.
 
 ## CLI
 
@@ -93,7 +93,7 @@ devbridge handoff-seed
 devbridge handoff-project
 ```
 
-The legacy `patch-poller` binary alias remains available during the compatibility window.
+The legacy `devbridge` binary alias remains available during the compatibility window.
 
 `pause` is cooperative admission control at a safe task-cycle boundary. It does not freeze an active child process or bypass lease heartbeat/fencing. `stop` takes precedence over pause.
 
@@ -102,9 +102,9 @@ The legacy `patch-poller` binary alias remains available during the compatibilit
 The v1 wire protocol keeps its existing compatibility namespace:
 
 ````markdown
-```patch-poller-task
+```devbridge-task
 {
-  "protocol": "patch-poller/task-v1",
+  "protocol": "devbridge/task-v1",
   "target": { "repository": "iteathen/example" },
   "instructions": "Implement the requested change, follow project specs, build, and test.",
   "requestedCapabilities": ["project.write", "process.execute"]
@@ -112,7 +112,7 @@ The v1 wire protocol keeps its existing compatibility namespace:
 ```
 ````
 
-The `patch-poller/*` strings are durable protocol identifiers, not current product branding. They are intentionally not renamed in place because existing task records, run state, leases, handoffs, and signed release subjects depend on stable identifiers. See [`docs/naming-and-compatibility.md`](docs/naming-and-compatibility.md).
+The `devbridge/*` strings are durable protocol identifiers, not current product branding. They are intentionally not renamed in place because existing task records, run state, leases, handoffs, and signed release subjects depend on stable identifiers. See [`docs/naming-and-compatibility.md`](docs/naming-and-compatibility.md).
 
 ## Configuration
 
@@ -186,7 +186,7 @@ The following remain explicit roadmap boundaries:
 - [`docs/tool-profiles.md`](docs/tool-profiles.md) — local worker/tool profile policy.
 - [`docs/roadmap.md`](docs/roadmap.md) — implemented state and remaining work.
 - [`docs/naming-and-compatibility.md`](docs/naming-and-compatibility.md) — DevBridge rename compatibility rules.
-- `specs/PP-001` through `PP-018` — normative contracts. The `PP` identifiers and `patch-poller/*` wire strings are retained v1 compatibility names.
+- `specs/DB-001` through `DB-018` — normative contracts. The `PP` identifiers and `devbridge/*` wire strings are retained v1 compatibility names.
 
 Historical checksum-bound handoffs under `docs/handoffs/` and point-in-time audits under `docs/testing/` remain historical evidence rather than live status documents.
 

@@ -5,7 +5,7 @@ export const MAX_RETAINED_CONTENT_EDITS = 100;
 const MAX_BATCH = 30;
 
 const CONTENT_PROVENANCE_QUERY = `
-query PatchPollerContentProvenance($ids: [ID!]!) {
+query DevBridgeContentProvenance($ids: [ID!]!) {
   nodes(ids: $ids) {
     __typename
     ... on Issue {

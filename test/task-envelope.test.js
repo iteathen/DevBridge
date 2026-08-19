@@ -5,12 +5,12 @@ import { contentSha256 } from '../src/github/content-provenance.js';
 import { ProtocolError } from '../src/errors.js';
 
 function body(object) {
-  return `Task description\n\n\`\`\`patch-poller-task\n${JSON.stringify(object)}\n\`\`\``;
+  return `Task description\n\n\`\`\`devbridge-task\n${JSON.stringify(object)}\n\`\`\``;
 }
 
 test('parses a bounded task envelope and produces a stable exact-body-bound revision', () => {
   const task = {
-    protocol: 'patch-poller/task-v1',
+    protocol: 'devbridge/task-v1',
     target: { repository: 'iteathen/example' },
     instructions: 'Fix the thing.',
     requestedCapabilities: ['project.write'],
@@ -33,7 +33,7 @@ test('parses a bounded task envelope and produces a stable exact-body-bound revi
 
 test('preserves bounded context handoff text as revision-bound task data', () => {
   const task = {
-    protocol: 'patch-poller/task-v1',
+    protocol: 'devbridge/task-v1',
     target: { repository: 'iteathen/example' },
     instructions: 'Relay context.',
     context: { handoff: 'nonce=abc\npayload=exact\n' }
@@ -47,7 +47,7 @@ test('preserves bounded context handoff text as revision-bound task data', () =>
 
 test('rejects oversized or non-string handoff data', () => {
   const base = {
-    protocol: 'patch-poller/task-v1',
+    protocol: 'devbridge/task-v1',
     target: { repository: 'iteathen/example' },
     instructions: 'Relay context.'
   };
@@ -57,7 +57,7 @@ test('rejects oversized or non-string handoff data', () => {
 
 test('rejects remote command authority', () => {
   assert.throws(() => parseTaskEnvelope(body({
-    protocol: 'patch-poller/task-v1',
+    protocol: 'devbridge/task-v1',
     target: { repository: 'iteathen/example' },
     instructions: 'Do work.',
     command: 'rm -rf /'
@@ -65,7 +65,7 @@ test('rejects remote command authority', () => {
 });
 
 test('requires exactly one unquoted machine envelope', () => {
-  const one = body({ protocol: 'patch-poller/task-v1', target: { repository: 'iteathen/example' }, instructions: 'A' });
+  const one = body({ protocol: 'devbridge/task-v1', target: { repository: 'iteathen/example' }, instructions: 'A' });
   assert.throws(() => parseTaskEnvelope(`${one}\n${one}`), /exactly one/);
 
   const quoted = one.split('\n').map((line) => `> ${line}`).join('\n');

@@ -8,7 +8,7 @@ import {
 } from '../errors.js';
 import { splitRepository } from '../security/workspace-policy.js';
 
-const RUNTIME_DIR = '.patch-poller';
+const RUNTIME_DIR = '.devbridge';
 const RUNTIME_EXCLUDE = `${RUNTIME_DIR}/`;
 const SHA_RE = /^[0-9a-f]{40}$/u;
 const MAX_KNOWN_TASK_BRANCH_HEADS = 16;
@@ -86,7 +86,7 @@ export class GitWorkspaceManager {
     tokenProvider = async () => null,
     remoteUrlResolver = (repository) => `https://github.com/${repository}.git`,
     fetchTimeoutMs = 300_000,
-    branchPrefix = 'patchpoller',
+    branchPrefix = 'devbridge',
     baselineChannels = {},
     defaultBaselineChannel = null
   }) {
@@ -328,7 +328,7 @@ export class GitWorkspaceManager {
     }
     const reserved = snapshot.changedFiles.filter(isReservedRuntimePath);
     if (reserved.length > 0) {
-      throw new PolicyError(`reserved PATCH-POLLER runtime paths may not become project changes: ${reserved.join(', ')}`);
+      throw new PolicyError(`reserved DevBridge runtime paths may not become project changes: ${reserved.join(', ')}`);
     }
 
     const committed = await this.#git.run(['diff', '--check', `${snapshot.publicationBaseSha}...HEAD`], {
@@ -355,7 +355,7 @@ export class GitWorkspaceManager {
       allowFailure: true
     });
     if (reset.exitCode !== 0) {
-      throw new PolicyError(`failed to restore PATCH-POLLER-owned candidate index after rejected seal: ${(reset.stderr || reset.stdout).trim()}`);
+      throw new PolicyError(`failed to restore DevBridge-owned candidate index after rejected seal: ${(reset.stderr || reset.stdout).trim()}`);
     }
   }
 
@@ -414,8 +414,8 @@ export class GitWorkspaceManager {
       await this.#git.run(['reset', '--hard', current.baseSha], { cwd: workspace.worktreeDir });
     } else {
       const rebased = await this.#git.run([
-        '-c', 'user.name=PATCH-POLLER',
-        '-c', 'user.email=patch-poller@localhost',
+        '-c', 'user.name=DevBridge',
+        '-c', 'user.email=devbridge@localhost',
         '-c', 'commit.gpgSign=false',
         'rebase', '--no-autostash', '--onto', current.baseSha, fromBaseSha, workspace.branch
       ], { cwd: workspace.worktreeDir, allowFailure: true });
@@ -427,7 +427,7 @@ export class GitWorkspaceManager {
         const files = lines(conflicted.stdout);
         const aborted = await this.#git.run(['rebase', '--abort'], { cwd: workspace.worktreeDir, allowFailure: true });
         if (aborted.exitCode !== 0) {
-          throw new PolicyError(`automatic baseline rebase failed and PATCH-POLLER could not restore the pre-rebase candidate: ${(aborted.stderr || aborted.stdout).trim()}`);
+          throw new PolicyError(`automatic baseline rebase failed and DevBridge could not restore the pre-rebase candidate: ${(aborted.stderr || aborted.stdout).trim()}`);
         }
         const restoredHead = normalizeSha((await this.#git.run(['rev-parse', 'HEAD'], { cwd: workspace.worktreeDir })).stdout.trim(), 'restored candidate head');
         if (restoredHead !== fromHeadSha) throw new PolicyError('automatic baseline rebase abort did not restore the exact candidate head');
@@ -471,7 +471,7 @@ export class GitWorkspaceManager {
           const stagedFiles = lines(staged.stdout);
           const reserved = stagedFiles.filter(isReservedRuntimePath);
           if (reserved.length > 0) {
-            throw new CandidateValidationError(`refusing to seal reserved PATCH-POLLER runtime paths: ${reserved.join(', ')}`);
+            throw new CandidateValidationError(`refusing to seal reserved DevBridge runtime paths: ${reserved.join(', ')}`);
           }
           if (stagedFiles.length === 0) {
             await this.#restoreProposalIndex(workspace);
@@ -484,10 +484,10 @@ export class GitWorkspaceManager {
               throw new CandidateValidationError(`staged candidate failed git diff --check: ${(check.stderr || check.stdout).trim()}`);
             }
 
-            const message = `PATCH-POLLER issue #${issueNumber} ${String(revision).slice(0, 12)}`;
+            const message = `DevBridge issue #${issueNumber} ${String(revision).slice(0, 12)}`;
             await this.#git.run([
-              '-c', 'user.name=PATCH-POLLER',
-              '-c', 'user.email=patch-poller@localhost',
+              '-c', 'user.name=DevBridge',
+              '-c', 'user.email=devbridge@localhost',
               '-c', 'commit.gpgSign=false',
               'commit', '--no-gpg-sign', '-m', message
             ], { cwd: workspace.worktreeDir });
@@ -501,11 +501,11 @@ export class GitWorkspaceManager {
     }
 
     snapshot = await this.validate(workspace);
-    if (snapshot.dirty) throw new PolicyError('candidate remained dirty after PATCH-POLLER sealed it');
+    if (snapshot.dirty) throw new PolicyError('candidate remained dirty after DevBridge sealed it');
     const reconciliation = await this.reconcilePublicationBaseline(workspace);
     if (reconciliation.changed) {
       throw new BaselineReverificationRequiredError(
-        `upstream baseline advanced from ${reconciliation.fromBaseSha} to ${reconciliation.toBaseSha}; PATCH-POLLER rebased the sealed candidate and requires fresh verification before publication`,
+        `upstream baseline advanced from ${reconciliation.fromBaseSha} to ${reconciliation.toBaseSha}; DevBridge rebased the sealed candidate and requires fresh verification before publication`,
         reconciliation
       );
     }
@@ -536,7 +536,7 @@ export class GitWorkspaceManager {
 
   async publishTaskBranch(workspace, { expectedHeadSha = null } = {}) {
     if (!workspace.branch.startsWith(`${this.#branchPrefix}/`)) {
-      throw new PolicyError('refusing to publish a non-PATCH-POLLER task branch');
+      throw new PolicyError('refusing to publish a non-DevBridge task branch');
     }
     const snapshot = await this.validate(workspace);
     if (snapshot.dirty) throw new PolicyError('refusing to publish an unsealed dirty task branch');
@@ -560,7 +560,7 @@ export class GitWorkspaceManager {
     let expectation;
     if (remoteHead == null) expectation = '';
     else if (knownRemoteHeads.has(remoteHead)) expectation = remoteHead;
-    else throw new PolicyError(`remote PATCH-POLLER task branch moved to unexpected head ${remoteHead}; refusing to overwrite it`);
+    else throw new PolicyError(`remote DevBridge task branch moved to unexpected head ${remoteHead}; refusing to overwrite it`);
 
     const pushed = await this.#git.run([
       'push', `--force-with-lease=${ref}:${expectation}`, 'origin', `${localHead}:${ref}`

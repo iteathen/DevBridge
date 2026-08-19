@@ -283,30 +283,30 @@ export async function bootstrap(argv = process.argv.slice(2), runner) {
   }
 
   process.stdout.write(
-    `[patch-poller-bootstrap] channel=${args.channel} releaseMode=${args.releaseMode} ref=${runtime.ref} version=${runtime.version} head=${runtime.head}` +
+    `[devbridge-bootstrap] channel=${args.channel} releaseMode=${args.releaseMode} ref=${runtime.ref} version=${runtime.version} head=${runtime.head}` +
     `${runtime.artifactSha256 ? ` artifactSha256=${runtime.artifactSha256}` : ''}\n`,
   );
   if (transactional.prepareLocalConfig(paths, runtime)) {
     process.stdout.write(
-      `[patch-poller-bootstrap] Created safe local config: ${paths.config}\n` +
-      '[patch-poller-bootstrap] Review execution/controller-plan policy and enable execution only when ready.\n' +
-      '[patch-poller-bootstrap] Then run this same command again.\n',
+      `[devbridge-bootstrap] Created safe local config: ${paths.config}\n` +
+      '[devbridge-bootstrap] Review execution/controller-plan policy and enable execution only when ready.\n' +
+      '[devbridge-bootstrap] Then run this same command again.\n',
     );
     return 0;
   }
 
   if (args.command === 'status' || args.command === 'stop') {
-    return transactional.runPollerCli(args.command, paths, runtime, runner);
+    return transactional.runDevBridgeCli(args.command, paths, runtime, runner);
   }
 
   // In production, reaching this point means the exact signed/persisted runtime
   // passed the trusted release-integrity boundary. Doctor is now a
   // post-acceptance control-plane health check, not a pre-acceptance trust test.
-  const doctorStatus = transactional.runPollerCli('doctor', paths, runtime, runner);
+  const doctorStatus = transactional.runDevBridgeCli('doctor', paths, runtime, runner);
   if (doctorStatus !== 0 || args.command === 'doctor') return doctorStatus;
 
   if (args.command !== 'daemon' && args.command !== 'restart') {
-    return transactional.runPollerCli(args.command, paths, runtime, runner);
+    return transactional.runDevBridgeCli(args.command, paths, runtime, runner);
   }
 
   await transactional.stopExistingDaemon(paths, runtime, runner);
@@ -319,7 +319,7 @@ export async function bootstrap(argv = process.argv.slice(2), runner) {
       { ...args, command: 'daemon' },
       paths,
       runtime,
-      { runner, takeover: false, signal: controller.signal },
+      { runner, stopExisting: false, signal: controller.signal },
     );
   } finally {
     process.removeListener('SIGINT', requestStop);

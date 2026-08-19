@@ -7,7 +7,7 @@ import { operationSecurityDescription } from './deterministic-operation-security
 import { enforcementProviderReport, profileSecurityDescription } from './profile-security.js';
 
 const SHA40_RE = /^[0-9a-f]{40}$/u;
-const PARAMETER_SCHEMA_PROTOCOL = 'patch-poller/operation-parameters-v1';
+const PARAMETER_SCHEMA_PROTOCOL = 'devbridge/operation-parameters-v1';
 const PARAMETER_KINDS = new Set(['flag', 'option', 'positional']);
 const PARAMETER_TYPES = new Set(['boolean', 'string', 'project-path', 'integer', 'enum']);
 
@@ -132,7 +132,7 @@ function runtimeProjection(identity) {
     ? identity.commitSha
     : null;
   return {
-    family: 'patch-poller',
+    family: 'devbridge',
     version: safeMetadata(identity?.version, 80),
     commitSha,
     nodeFamily: 'node',
@@ -189,7 +189,7 @@ export class ToolInventoryService {
   reference() {
     if (!this.#current) return null;
     return {
-      protocol: 'patch-poller/tool-inventory-ref-v1',
+      protocol: 'devbridge/tool-inventory-ref-v1',
       digest: this.#current.digest,
       generation: this.#current.generation,
     };
@@ -284,7 +284,7 @@ export class ToolInventoryService {
       ? await discoverPathTools({ env: this.#env })
       : { tools: [], discoveryElapsedMs: 0, directoriesScanned: 0, pathTruncated: false };
     const normalized = {
-      protocol: 'patch-poller/tool-inventory-v1',
+      protocol: 'devbridge/tool-inventory-v1',
       authority: 'local-observation-only',
       runtime: runtimeProjection(this.#runtimeIdentity),
       enforcement: normalizedSandbox,
@@ -302,7 +302,7 @@ export class ToolInventoryService {
     if (this.#current?.digest === inventoryDigest) return this.current();
     this.#generation += 1;
     this.#current = {
-      protocol: 'patch-poller/tool-inventory-record-v1',
+      protocol: 'devbridge/tool-inventory-record-v1',
       digest: inventoryDigest,
       generation: this.#generation,
       generatedAt: new Date().toISOString(),

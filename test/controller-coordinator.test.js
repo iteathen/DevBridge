@@ -20,14 +20,14 @@ function planTask() {
       target: { repository: 'owner/repo' },
       instructions: 'run deterministic plan',
       context: { handoff: 'handoff' },
-      controllerPlan: normalizeControllerPlan({ protocol: 'patch-poller/controller-plan-v1' })
+      controllerPlan: normalizeControllerPlan({ protocol: 'devbridge/controller-plan-v1' })
     }
   };
 }
 
 function cleanSnapshot() {
   return {
-    branch: 'patchpoller/issue-33-eeeeeeeeeeee',
+    branch: 'devbridge/issue-33-eeeeeeeeeeee',
     baseSha: '1'.repeat(40),
     headSha: '1'.repeat(40),
     dirty: false,

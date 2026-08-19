@@ -15,9 +15,9 @@ async function readStdin() {
 async function main() {
   const raw = await readStdin();
   const context = JSON.parse(raw);
-  if (context?.protocol !== 'patch-poller/context-v1') throw new Error('lifecycle roundtrip diagnostic requires patch-poller/context-v1');
+  if (context?.protocol !== 'devbridge/context-v1') throw new Error('lifecycle roundtrip diagnostic requires devbridge/context-v1');
   if (context?.bridge?.resultFile !== WORKER_RESULT_FILE) {
-    throw new Error('lifecycle roundtrip diagnostic requires the fixed PATCH-POLLER worker result endpoint');
+    throw new Error('lifecycle roundtrip diagnostic requires the fixed DevBridge worker result endpoint');
   }
 
   const projectRoot = path.resolve(process.cwd());

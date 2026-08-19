@@ -10,8 +10,8 @@ export function parseDecisionEnvelope(body) {
   if (typeof body !== 'string') throw new ProtocolError('decision body must be a string');
   if (Buffer.byteLength(body, 'utf8') > 64_000) throw new ProtocolError('decision body is too large');
 
-  const matches = [...body.matchAll(/```patch-poller-decision\s*\r?\n([\s\S]*?)\r?\n```/gu)];
-  if (matches.length !== 1) throw new ProtocolError('decision must contain exactly one patch-poller-decision block');
+  const matches = [...body.matchAll(/```devbridge-decision\s*\r?\n([\s\S]*?)\r?\n```/gu)];
+  if (matches.length !== 1) throw new ProtocolError('decision must contain exactly one devbridge-decision block');
 
   let value;
   try {
@@ -25,7 +25,7 @@ export function parseDecisionEnvelope(body) {
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new ProtocolError(`decision field ${key} is not supported`);
   }
-  if (value.protocol !== 'patch-poller/decision-v1') throw new ProtocolError('unsupported decision protocol');
+  if (value.protocol !== 'devbridge/decision-v1') throw new ProtocolError('unsupported decision protocol');
   if (!RUN_ID_RE.test(value.runId ?? '')) throw new ProtocolError('decision runId is invalid');
   if (!DIGEST_RE.test(value.taskRevision ?? '')) throw new ProtocolError('decision taskRevision is invalid');
   if (!CHECKPOINT_ID_RE.test(value.checkpointId ?? '')) throw new ProtocolError('decision checkpointId is invalid');

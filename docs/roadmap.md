@@ -1,29 +1,29 @@
 # Implementation Roadmap
 
-This roadmap reflects the current `main` implementation after the security/capability campaign and issue #49 PRs through the PP-018 runtime-governance slice.
+This roadmap reflects the current `main` implementation after the security/capability campaign and issue #49 PRs through the DB-018 runtime-governance slice.
 
 Work is organized by ownership boundary so the project stays reviewable and agents do not create half-connected features across the control plane.
 
 ## Current operational checkpoint
 
-PATCH-POLLER now has a complete local control-plane path for trusted task intake, managed development work, verification, recovery, and bounded publication on verified Linux hosts.
+DevBridge now has a complete local control-plane path for trusted task intake, managed development work, verification, recovery, and bounded publication on verified Linux hosts.
 
 Implemented current-state capabilities include:
 
 - exact GitHub task/feedback/decision provenance with trusted numeric actor IDs and complete-current-content edit verification;
 - managed repository/worktree provisioning and hardened Git control operations;
 - durable multi-turn run state, restart recovery, and context capsules;
-- PP-007 artifact-exact hard gates before sensitive sealing/publication;
-- deterministic PP-013 controller plans and locally registered operations;
+- DB-007 artifact-exact hard gates before sensitive sealing/publication;
+- deterministic DB-013 controller plans and locally registered operations;
 - exact final-byte verification after deterministic operations/cleanup;
 - verified Linux Bubblewrap isolation for repository-code operations and proposal workers;
 - control-owned worker IPC outside proposal worktrees;
 - signed immutable production self-update release subjects with sandboxed candidate validation and last-known-good rollback;
 - sanitized local tool inventory and bounded sandboxed dynamic operation onboarding;
-- durable PP-014 chat-context rollover/resume;
-- PP-016 Ed25519 installation identity, signed task leases, exact Git-ref CAS, heartbeat/TTL recovery, fencing, and coordination branch namespacing;
-- PP-017 baseline drift reconciliation, fast-forward-only automated rebase, mandatory reverification, and exact verified-head publication CAS;
-- PP-018 cooperative pause/resume and below-normal child-process QoS;
+- durable DB-014 chat-context rollover/resume;
+- DB-016 Ed25519 installation identity, signed task leases, exact Git-ref CAS, heartbeat/TTL recovery, fencing, and coordination branch namespacing;
+- DB-017 baseline drift reconciliation, fast-forward-only automated rebase, mandatory reverification, and exact verified-head publication CAS;
+- DB-018 cooperative pause/resume and below-normal child-process QoS;
 - effective serialized task admission (one task/run continuation at a time).
 
 This is still pre-production software. The remaining work below is explicit rather than hidden behind optimistic status wording.
@@ -32,7 +32,7 @@ This is still pre-production software. The remaining work below is explicit rath
 
 A runner's `github.trustedActorIds` is a remote development-job submission allowlist.
 
-Current PP-016 coordination prevents conflicting compliant agents from owning the same task, but task envelopes do not yet carry a cryptographically bound destination-agent address. Therefore a shared team queue does not by itself ensure developer-to-developer workstation isolation.
+Current DB-016 coordination prevents conflicting compliant agents from owning the same task, but task envelopes do not yet carry a cryptographically bound destination-agent address. Therefore a shared team queue does not by itself ensure developer-to-developer workstation isolation.
 
 Until per-installation dispatch addressing exists, deployments that require developer A to be unable to dispatch work to developer B's machine must use runner-local queue/trusted-actor separation. Repository collaboration, coordination peer trust, and task-dispatch trust are different authorities.
 
@@ -74,9 +74,9 @@ Implemented:
 
 Remaining:
 
-- numeric GitHub repository-ID pinning plus rename/transfer reconciliation (PP-010);
+- numeric GitHub repository-ID pinning plus rename/transfer reconciliation (DB-010);
 - formal bounded managed worktree/repository retention sweeper;
-- first-class submodule/LFS/package-manager phase authority (PP-008);
+- first-class submodule/LFS/package-manager phase authority (DB-008);
 - additional independently controlled verifier/publisher effects if product requirements expand beyond task branches.
 
 ## Slice 2 — Durable coordinator, decisions, and recovery — critical paths complete, genericization remains
@@ -97,7 +97,7 @@ Implemented:
 
 Remaining:
 
-- a complete generic PP-009 effect journal/reconciliation abstraction for every future remote mutation rather than targeted implementations;
+- a complete generic DB-009 effect journal/reconciliation abstraction for every future remote mutation rather than targeted implementations;
 - broader use of `decision-scope` automatic gating where it provides value over current stricter artifact-exact binding;
 - explicit operator recovery UX for unusual poisoned/unknown remote control refs/state;
 - stronger durable retention/cleanup policy across all long-lived run evidence.
@@ -111,7 +111,7 @@ Implemented:
 - exact trusted decision provenance;
 - complete current-body/edit-history task provenance;
 - durable accepted/rejected provenance evidence;
-- PP-014 bounded chat handoff checkpoint/readback/latest-pointer protocol;
+- DB-014 bounded chat handoff checkpoint/readback/latest-pointer protocol;
 - authenticated handoff projection with exact digest preservation;
 - compact tool-inventory projection/reference;
 - rate-budgeted conditional polling with persisted validators.
@@ -121,7 +121,7 @@ Remaining:
 - GitHub App installation authentication as an alternative local credential provider;
 - optional webhook `TaskSource` if operational value justifies it;
 - optional human-readable label mirrors where useful, never as authority;
-- additional repository-ID hardening under PP-010.
+- additional repository-ID hardening under DB-010.
 
 ## Slice 4 — Sandbox, workers, and tool authority — Linux boundary complete, platform/phase work remains
 
@@ -146,7 +146,7 @@ Remaining:
 
 - verified Windows OS containment provider (Job Object/AppContainer or equivalent with matching boundary evidence);
 - verified providers for other supported non-Linux platforms;
-- explicit dependency fetch/install/build/test/browser phases with narrowly scoped network and cache authority (PP-008);
+- explicit dependency fetch/install/build/test/browser phases with narrowly scoped network and cache authority (DB-008);
 - lifecycle-script/package-manager policy and trust-scoped caches;
 - browser/Playwright loopback/restricted-network provider if justified;
 - stronger complete tool/profile identity/version evidence.
@@ -169,12 +169,12 @@ Implemented:
 Remaining:
 
 - verified candidate-execution sandbox on Windows/non-Linux platforms;
-- a formal release publication pipeline/tool if/when release operations become part of PATCH-POLLER itself;
+- a formal release publication pipeline/tool if/when release operations become part of DevBridge itself;
 - alternate signed release transport/provider only if justified by deployment needs.
 
 ## Slice 6 — Multi-agent coordination — first complete coordination boundary implemented
 
-Implemented under PP-016:
+Implemented under DB-016:
 
 - persistent local Ed25519 identity;
 - public SHA-256 fingerprint/address;
@@ -199,7 +199,7 @@ Remaining:
 
 ## Slice 7 — Baseline drift and reverification — core complete
 
-Implemented under PP-017:
+Implemented under DB-017:
 
 - immutable original baseline evidence;
 - separate current publication baseline;
@@ -211,13 +211,13 @@ Implemented under PP-017:
 - exact clean verified candidate identity;
 - publication bound to exact verified head;
 - explicit expected remote task-branch head and ambiguity reconciliation;
-- PP-016 fence preservation through publication wrappers.
+- DB-016 fence preservation through publication wrappers.
 
 Remaining work is hardening/coverage discovered through future failures rather than a known missing core feature.
 
 ## Slice 8 — Workstation governance and daemon control — cooperative core complete
 
-Implemented under PP-018:
+Implemented under DB-018:
 
 - effective serialized task admission;
 - below-normal child priority by default;

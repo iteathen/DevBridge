@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import process from 'node:process';
 
 export const DEFAULT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES = Object.freeze([
-  'PATCH_POLLER_GITHUB_TOKEN',
+  'DEVBRIDGE_GITHUB_TOKEN',
   'GH_TOKEN',
   'GITHUB_TOKEN',
 ]);

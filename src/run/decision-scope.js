@@ -39,7 +39,7 @@ export function createDecisionScopeCheckpoint({
     generation: String(nowMs),
   });
   return {
-    protocol: 'patch-poller/checkpoint-v1',
+    protocol: 'devbridge/checkpoint-v1',
     checkpointId,
     type: 'decision-boundary',
     bindingMode: 'decision-scope',

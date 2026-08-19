@@ -5,7 +5,7 @@ import {
   decideSupervisorAction,
   remoteBranchHead,
   superviseDaemon,
-} from '../patch-poller.mjs';
+} from '../src/bootstrap/transactional-bootstrap.mjs';
 
 const paths = {
   home: '/managed',
@@ -16,7 +16,7 @@ const paths = {
 };
 const runtimeA = {
   head: 'a'.repeat(40),
-  ref: 'sol/foundation-bootstrap',
+  ref: 'main',
   cliPath: '/managed/runtime/src/cli.js',
   runtimeDir: '/managed/runtime',
   version: '0.1.0',
@@ -62,7 +62,7 @@ test('supervisor validates an exact candidate before draining current daemon, th
     if (starts === 2) setTimeout(() => child.emit('exit', 0, null), 20);
     return child;
   };
-  const runPollerCliFn = (command, _paths, runtime) => {
+  const runDevBridgeCliFn = (command, _paths, runtime) => {
     events.push(`${command}:${runtime.head}`);
     if (command === 'stop') setTimeout(() => current.emit('exit', 0, null), 0);
     return 0;
@@ -82,10 +82,10 @@ test('supervisor validates an exact candidate before draining current daemon, th
       restartBackoffMs: 1,
       healthWindowMs: 1,
       maxIterations: 2,
-      takeover: false,
+      stopExisting: false,
       remoteHeadFn: () => runtimeB.head,
       candidatePrepareFn,
-      runPollerCliFn,
+      runDevBridgeCliFn,
       recordActivationFn: (_paths, record) => { records.push(record); },
       resolveChannelRefFn: () => runtimeA.ref,
       updateCheckDelayFn: timer,
@@ -124,10 +124,10 @@ test('failed candidate validation never drains the healthy current daemon', asyn
       },
       updateIntervalMs: 5,
       maxIterations: 1,
-      takeover: false,
+      stopExisting: false,
       remoteHeadFn: () => runtimeB.head,
       candidatePrepareFn: async () => { events.push('validate'); throw new Error('test failure'); },
-      runPollerCliFn: (command) => { events.push(command); return 0; },
+      runDevBridgeCliFn: (command) => { events.push(command); return 0; },
       recordActivationFn: (_paths, record) => { records.push(record); },
       resolveChannelRefFn: () => runtimeA.ref,
       updateCheckDelayFn: timer,
@@ -155,7 +155,7 @@ test('candidate daemon crash inside health window rolls back to last-known-good 
     else if (starts.length === 3) setTimeout(() => child.emit('exit', 0, null), 5);
     return child;
   };
-  const runPollerCliFn = (command) => {
+  const runDevBridgeCliFn = (command) => {
     if (command === 'stop') setTimeout(() => current.emit('exit', 0, null), 0);
     return 0;
   };
@@ -168,10 +168,10 @@ test('candidate daemon crash inside health window rolls back to last-known-good 
       spawnImpl,
       updateIntervalMs: 5,
       maxIterations: 3,
-      takeover: false,
+      stopExisting: false,
       remoteHeadFn: () => runtimeB.head,
       candidatePrepareFn: async () => runtimeB,
-      runPollerCliFn,
+      runDevBridgeCliFn,
       recordActivationFn: (_paths, record) => { records.push(record); },
       resolveChannelRefFn: () => runtimeA.ref,
       updateCheckDelayFn: timer,
@@ -202,7 +202,7 @@ test('supervisor restarts an unexpected daemon crash without mutating runtime', 
     {
       spawnImpl,
       maxIterations: 2,
-      takeover: false,
+      stopExisting: false,
       restartBackoffMs: 1,
       delayFn: timer,
     },
