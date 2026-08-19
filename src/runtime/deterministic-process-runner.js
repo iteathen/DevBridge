@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { PolicyError } from '../errors.js';
+import { applyChildProcessPriority } from './process-priority.js';
 import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
 
 const DEFAULT_OUTPUT_LIMIT = 512 * 1024;
@@ -36,11 +37,21 @@ export class DeterministicProcessRunner {
   #sourceEnv;
   #faults;
   #sandboxProvider;
+  #processPriority;
+  #setPriority;
 
-  constructor({ sourceEnv = process.env, faultInjector = null, sandboxProvider = null } = {}) {
+  constructor({
+    sourceEnv = process.env,
+    faultInjector = null,
+    sandboxProvider = null,
+    processPriority = 'below-normal',
+    setPriority = undefined,
+  } = {}) {
     this.#sourceEnv = sourceEnv;
     this.#faults = faultInjector;
     this.#sandboxProvider = sandboxProvider;
+    this.#processPriority = processPriority;
+    this.#setPriority = setPriority;
   }
 
   async run({
@@ -111,6 +122,13 @@ export class DeterministicProcessRunner {
     if (signal?.aborted) throw abortedError(signal);
 
     const child = spawn(spawnExecutable, spawnArgs, containedSpawnOptions({ cwd: spawnCwd, env: spawnEnv, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
+    let processPriority;
+    try {
+      processPriority = await applyChildProcessPriority(child, this.#processPriority, { setPriority: this.#setPriority });
+    } catch (error) {
+      await terminateProcessTree(child);
+      throw error;
+    }
     const startedAtMs = Date.now();
     const startedAt = new Date(startedAtMs).toISOString();
     const deadlineAt = new Date(startedAtMs + timeoutMs).toISOString();
@@ -217,6 +235,7 @@ export class DeterministicProcessRunner {
       finishedAt: new Date().toISOString(),
       lastOutputAt,
       sandbox: sandboxEvidence,
+      processPriority,
     };
   }
 }

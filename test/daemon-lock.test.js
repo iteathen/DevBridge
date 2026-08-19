@@ -16,6 +16,13 @@ function pause(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const inactiveStatus = {
+  activeLock: false,
+  stopRequested: false,
+  pauseRequested: false,
+  paused: false,
+};
+
 test('daemon lock prevents concurrent ownership and releases only its own token', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-lock-'));
   const file = path.join(root, 'daemon.lock');
@@ -36,6 +43,8 @@ test('daemon stop request binds to the current lock token and is consumed by its
     pid: process.pid,
     createdAt: release.record.createdAt,
     stopRequested: false,
+    pauseRequested: false,
+    paused: false,
   });
 
   const requested = await requestDaemonStop(file);
@@ -47,10 +56,7 @@ test('daemon stop request binds to the current lock token and is consumed by its
   assert.equal(await consumeDaemonStopRequest(file, release.record), true);
   assert.equal((await daemonStatus(file)).stopRequested, false);
   await release();
-  assert.deepEqual(await daemonStatus(file), {
-    activeLock: false,
-    stopRequested: false,
-  });
+  assert.deepEqual(await daemonStatus(file), inactiveStatus);
 });
 
 test('stopDaemon waits for the lock owner to release instead of deleting its lock', async () => {
@@ -70,8 +76,5 @@ test('stopDaemon waits for the lock owner to release instead of deleting its loc
   const result = await stopping;
   assert.equal(result.requested, true);
   assert.equal(result.stopped, true);
-  assert.deepEqual(await daemonStatus(file), {
-    activeLock: false,
-    stopRequested: false,
-  });
+  assert.deepEqual(await daemonStatus(file), inactiveStatus);
 });
