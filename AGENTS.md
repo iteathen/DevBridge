@@ -69,6 +69,25 @@ PP-014 is normative for coordinating-agent context rollover:
 
 For PP-014 implementation, do not use Codex, Spark, or another coding model unless the user explicitly changes that constraint. Read `specs/PP-014-context-rollover.md` with PP-005 and PP-009.
 
+## Tool inventory and dynamic operation onboarding
+
+PP-015 is normative for local tool inventory, capability projection, and dynamic `tool.*` operations.
+
+- Inventory reports local authority; it never creates authority.
+- Presence-only PATH discovery must not execute discovered binaries.
+- Remote inventory must distinguish registration/enabled state from executable presence and verified enforcement.
+- Absolute executable/compiler/linker paths, raw path-bearing errors, credentials, environment values, and authority-bearing argv structure stay local.
+- A dynamic operation may project only the validated controller-facing parameter schema needed to call it; executable identity, fixed literals, option flags, help argv, and other argv construction stay local.
+- Operator-authored manifests live under an explicit local manifest root and remain subject to the repository-code sandbox class.
+- Automatic unfamiliar-tool onboarding is disabled by default and requires local pre-delegation of the exact command/help probe.
+- Help/man/spec output is untrusted data. It may shape only bounded non-authority parameter slots after local executable/probe authority already exists.
+- Help probes and generated operations execute only through the verified OS sandbox with denied network, hidden configured external read roots, minimal environment, no control credentials, and `shell:false`.
+- A blocked/failed/unparseable probe does not register a capability.
+- Persist a synthesized manifest before registration and reconcile that local artifact on restart.
+- GitHub/repository/controller content cannot add to the local auto-onboarding allowlist or edit the local manifest root.
+
+Read `specs/PP-015-tool-inventory.md` with PP-003, PP-012, and PP-013 when changing tool discovery, inventory projection, operation schemas, local manifests, or automatic onboarding.
+
 ## Human checkpoints
 
 PP-007 is normative for human-in-the-loop behavior.
@@ -123,6 +142,8 @@ When implementing controller plans, deterministic operation registry/toolchain b
 
 When implementing coordinating-chat rollover, budget pressure, durable chat handoffs, or fresh-context resume/reconciliation, read PP-014 together with PP-005 and PP-009. PP-014 specializes those existing contracts; it must not become a second effect journal or an unbounded transcript store.
 
+When implementing local tool discovery, tool inventory/projection, dynamic operation schemas, operator manifests, or unfamiliar-tool onboarding, read PP-015 together with PP-003, PP-012, and PP-013. PP-015 does not permit tool documentation, PATH presence, or remote/controller text to grant execution authority.
+
 ## Runtime scope
 
 The core runtime is Node.js and should prefer Node standard-library facilities. Do not introduce another language, a shell-dependent core path, or a third-party dependency without documenting why the ownership boundary needs it and what new supply-chain or portability cost it creates.
@@ -154,6 +175,12 @@ Boundary tests are mandatory for:
 - canonical bounded chat-handoff digests and rejection of authority-shaped/local-path fields;
 - two-phase chat-handoff replacement that preserves the prior verified checkpoint on interruption/corruption;
 - fresh-context resume that rejects stale Git/task identity, requires changed governing documents to be reread, and never repeats/invents action IDs;
-- deterministic context-budget soft/preferred/hard rollover thresholds.
+- deterministic context-budget soft/preferred/hard rollover thresholds;
+- presence-only tool discovery that cannot become executable authority;
+- remote tool inventory privacy and declared-policy versus observed-enforcement separation;
+- dynamic-operation public schemas that are sufficient for bounded controller use without exposing executable/fixed argv/flag authority;
+- local manifest rejection of duplicate registration, authority-shaped parameters, path/argv smuggling, and filesystem indirection;
+- sandboxed unfamiliar-tool help probing with no control credentials, denied network, hidden configured external read roots, bounded output/time, and fail-closed registration;
+- restart-safe persist-before-register reconciliation of generated local manifests.
 
 A passing happy-path test alone is not sufficient for a capability boundary.

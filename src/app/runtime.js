@@ -1,3 +1,4 @@
+import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { JsonStateStore } from '../state/json-state-store.js';
 import { stateFileName } from '../state/state-file.js';
@@ -20,6 +21,8 @@ import { DeterministicProcessRunner } from '../runtime/deterministic-process-run
 import { createDeterministicSandboxProvider } from '../runtime/deterministic-sandbox.js';
 import { WorkerExchange } from '../runtime/worker-exchange.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
+import { loadLocalOperationManifests } from '../runtime/local-operation-manifest.js';
+import { ToolOnboardingService } from '../runtime/tool-onboarding.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { ToolInventoryService } from '../runtime/tool-inventory.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
@@ -31,6 +34,38 @@ import { HardGateController } from '../run/hard-gate-controller.js';
 import { DecisionGatedRunCoordinator, DecisionGatedWorkspaceManager } from '../run/decision-gated-coordinator.js';
 
 export { stateFileName } from '../state/state-file.js';
+
+function isWithin(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+async function canonicalLocalManifestDirectory(directory, workspaceRoot) {
+  if (!directory) return null;
+  const resolved = path.resolve(directory);
+  const info = await lstat(resolved);
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw new Error('execution.toolOnboarding.manifestDirectory must be a real non-symlink directory');
+  }
+  let current = path.dirname(resolved);
+  while (true) {
+    const parentInfo = await lstat(current);
+    if (parentInfo.isSymbolicLink()) {
+      throw new Error('execution.toolOnboarding.manifestDirectory must not use filesystem indirection');
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  const [canonical, canonicalWorkspaceRoot] = await Promise.all([
+    realpath(resolved),
+    realpath(path.resolve(workspaceRoot)),
+  ]);
+  if (isWithin(canonicalWorkspaceRoot, canonical)) {
+    throw new Error('execution.toolOnboarding.manifestDirectory must be outside the controller-writable workspace root');
+  }
+  return canonical;
+}
 
 export async function createRuntime(config, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
   const workspacePolicy = new WorkspacePolicy(config.workspace);
@@ -127,11 +162,32 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   });
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
+  const onboardingConfig = config.execution.toolOnboarding ?? {
+    enabled: false,
+    manifestDirectory: null,
+    autoIntegrate: [],
+    maxHelpBytes: 262_144,
+    probeTimeoutMs: 15_000,
+  };
+  const manifestDirectory = await canonicalLocalManifestDirectory(onboardingConfig.manifestDirectory, config.workspace.root);
+  const localOperationManifests = manifestDirectory
+    ? await loadLocalOperationManifests({ directory: manifestDirectory, registry: operationRegistry, env })
+    : [];
+  const toolOnboarding = onboardingConfig.enabled
+    ? new ToolOnboardingService({
+        operationRegistry,
+        processRunner: deterministicProcessRunner,
+        workspaceRoot: config.workspace.root,
+        manifestDirectory,
+        autoIntegrate: onboardingConfig.autoIntegrate,
+        env,
+        maxHelpBytes: onboardingConfig.maxHelpBytes,
+        timeoutMs: onboardingConfig.probeTimeoutMs,
+      })
+    : null;
   const deterministicControllerPlanExecutor = new ControllerPlanExecutor({
     operationRegistry,
     processRunner: deterministicProcessRunner,
-    // Deterministic plan work uses the raw workspace manager. The hard gate is
-    // deliberately applied only at the final candidate-sealing frontier.
     workspaceManager,
     faultInjector,
   });
@@ -194,6 +250,8 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     chatHandoffProjector,
     toolInventory,
     toolInventoryProjector,
+    toolOnboarding,
+    localOperationManifests,
     contextBudget,
     rateBudget,
     client,

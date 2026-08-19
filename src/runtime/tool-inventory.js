@@ -7,6 +7,9 @@ import { operationSecurityDescription } from './deterministic-operation-security
 import { enforcementProviderReport, profileSecurityDescription } from './profile-security.js';
 
 const SHA40_RE = /^[0-9a-f]{40}$/u;
+const PARAMETER_SCHEMA_PROTOCOL = 'patch-poller/operation-parameters-v1';
+const PARAMETER_KINDS = new Set(['flag', 'option', 'positional']);
+const PARAMETER_TYPES = new Set(['boolean', 'string', 'project-path', 'integer', 'enum']);
 
 function codepointCompare(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -28,7 +31,6 @@ function safeMetadata(value, maxLength = 240) {
   if (typeof value !== 'string') return null;
   const trimmed = value.replace(/[\u0000-\u001f\u007f]/gu, ' ').trim().slice(0, maxLength);
   if (!trimmed) return null;
-  // Remote inventory must not become a machine-path disclosure channel.
   if (/[\\/]/u.test(trimmed) || /^[A-Za-z]:/u.test(trimmed)) return null;
   return trimmed;
 }
@@ -84,6 +86,44 @@ function sanitizeDiscovered(entry) {
     probeStatus: 'not-executed',
     executableAuthority: false,
     integrationState: 'informational-only',
+  };
+}
+
+function sanitizeParameterSchema(raw) {
+  if (!raw || raw.protocol !== PARAMETER_SCHEMA_PROTOCOL || !Array.isArray(raw.parameters) || raw.parameters.length > 64) return null;
+  const parameters = [];
+  const seen = new Set();
+  for (const rawParameter of raw.parameters) {
+    if (!rawParameter || typeof rawParameter !== 'object' || Array.isArray(rawParameter)) return null;
+    const name = safeMetadata(rawParameter.name, 80);
+    if (!name || !/^[A-Za-z][A-Za-z0-9_-]{0,79}$/u.test(name) || seen.has(name)) return null;
+    if (!PARAMETER_KINDS.has(rawParameter.kind) || !PARAMETER_TYPES.has(rawParameter.valueType)) return null;
+    if (rawParameter.kind === 'flag' && rawParameter.valueType !== 'boolean') return null;
+    if (rawParameter.kind !== 'flag' && rawParameter.valueType === 'boolean') return null;
+    const parameter = {
+      name,
+      kind: rawParameter.kind,
+      valueType: rawParameter.valueType,
+      required: rawParameter.required === true,
+      repeat: rawParameter.repeat === true,
+    };
+    if (parameter.repeat) {
+      if (!Number.isSafeInteger(rawParameter.maxItems) || rawParameter.maxItems < 1 || rawParameter.maxItems > 32) return null;
+      parameter.maxItems = rawParameter.maxItems;
+    }
+    if (parameter.valueType === 'enum') {
+      if (!Array.isArray(rawParameter.values) || rawParameter.values.length === 0 || rawParameter.values.length > 64) return null;
+      const values = rawParameter.values.map((value) => safeMetadata(value, 256));
+      if (values.some((value) => value == null)) return null;
+      parameter.values = [...new Set(values)];
+    }
+    seen.add(name);
+    parameters.push(parameter);
+  }
+  return {
+    protocol: PARAMETER_SCHEMA_PROTOCOL,
+    requireAnyParameter: raw.requireAnyParameter === true,
+    parameters,
   };
 }
 
@@ -156,17 +196,23 @@ export class ToolInventoryService {
   }
 
   #operationInventory(sandboxStatus) {
-    return this.#operations.names().map((name) => {
-      const security = operationSecurityDescription(name, sandboxStatus);
-      return {
-        name,
-        layer: 'core',
+    const described = typeof this.#operations.describe === 'function'
+      ? this.#operations.describe()
+      : this.#operations.names().map((name) => ({ name, layer: 'core' }));
+    return described.map((entry) => {
+      const security = operationSecurityDescription(entry.name, sandboxStatus);
+      const projected = {
+        name: safeMetadata(entry.name, 80),
+        layer: safeMetadata(entry.layer ?? 'core', 40) ?? 'core',
         executionClass: security.executionClass,
         repositoryCode: security.repositoryCode === true,
         sandboxRequired: security.sandboxRequired === true,
         enforcementRequirement: security.enforcementRequirement,
         usable: security.usable === true,
       };
+      const parameterSchema = sanitizeParameterSchema(entry.parameterSchema);
+      if (parameterSchema) projected.parameterSchema = parameterSchema;
+      return projected;
     });
   }
 

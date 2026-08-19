@@ -15,7 +15,7 @@ function base() {
   };
 }
 
-test('uses conservative API, auth, execution, Git, publication, and context-rollover defaults', () => {
+test('uses conservative API, auth, execution, Git, publication, context-rollover, and tool-onboarding defaults', () => {
   const config = validateConfig(base());
   assert.equal(config.github.apiVersion, '2026-03-10');
   assert.equal(config.github.rateLimit.reserveRatio, 0.2);
@@ -32,6 +32,13 @@ test('uses conservative API, auth, execution, Git, publication, and context-roll
   assert.equal(config.execution.decisionApprovalTtlMs, 86_400_000);
   assert.equal(config.execution.architectureGateFileThreshold, 20);
   assert.equal(config.execution.architectureGateOwnerThreshold, 4);
+  assert.deepEqual(config.execution.toolOnboarding, {
+    enabled: false,
+    manifestDirectory: null,
+    autoIntegrate: [],
+    maxHelpBytes: 262_144,
+    probeTimeoutMs: 15_000,
+  });
   assert.deepEqual(config.workspace.externalReadRoots, []);
   assert.equal(config.git.executable, 'git');
   assert.equal(config.publication.autoPushTaskBranches, false);
@@ -72,6 +79,52 @@ test('context rollover policy is local, explicit, and bounded', () => {
   raw.contextRollover.maxHandoffBytes = 65_536;
   raw.contextRollover.unit = 'guess';
   assert.throws(() => validateConfig(raw), /tokens, bytes, or proxy/u);
+});
+
+test('local tool onboarding is disabled by default and requires an exact local manifest/policy boundary when enabled', () => {
+  const raw = base();
+  const manifestDirectory = path.resolve('/tmp/patch-poller-local-operations');
+  raw.execution.toolOnboarding = {
+    enabled: true,
+    manifestDirectory,
+    autoIntegrate: [
+      { command: 'rg', operation: 'tool.rg', helpArgs: ['--help'] },
+      { command: 'uv' },
+    ],
+    maxHelpBytes: 65_536,
+    probeTimeoutMs: 8_000,
+  };
+  const config = validateConfig(raw);
+  assert.deepEqual(config.execution.toolOnboarding, {
+    enabled: true,
+    manifestDirectory,
+    autoIntegrate: [
+      { command: 'rg', operation: 'tool.rg', helpArgs: ['--help'] },
+      { command: 'uv', operation: 'tool.uv', helpArgs: ['--help'] },
+    ],
+    maxHelpBytes: 65_536,
+    probeTimeoutMs: 8_000,
+  });
+
+  const missingManifest = base();
+  missingManifest.execution.toolOnboarding = { enabled: true, autoIntegrate: [{ command: 'rg' }] };
+  assert.throws(() => validateConfig(missingManifest), /manifestDirectory is required/u);
+
+  const unsafeCommand = base();
+  unsafeCommand.execution.toolOnboarding = {
+    enabled: true,
+    manifestDirectory,
+    autoIntegrate: [{ command: 'rg;rm' }],
+  };
+  assert.throws(() => validateConfig(unsafeCommand), /command is invalid/u);
+
+  const unsafeHelp = base();
+  unsafeHelp.execution.toolOnboarding = {
+    enabled: true,
+    manifestDirectory,
+    autoIntegrate: [{ command: 'rg', helpArgs: ['help;rm'] }],
+  };
+  assert.throws(() => validateConfig(unsafeHelp), /fixed safe option arguments/u);
 });
 
 test('legacy github.tokenEnv remains first while standard environment fallbacks are added', () => {

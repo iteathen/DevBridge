@@ -61,6 +61,13 @@
     "maxConcurrentTasks": 1,
     "maxTurns": 8,
     "allowUncontainedTools": false,
+    "toolOnboarding": {
+      "enabled": false,
+      "manifestDirectory": null,
+      "autoIntegrate": [],
+      "maxHelpBytes": 262144,
+      "probeTimeoutMs": 15000
+    },
     "decisionAuthorities": {},
     "decisionApprovalTtlMs": 86400000,
     "architectureGateFileThreshold": 20,

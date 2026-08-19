@@ -20,6 +20,19 @@ async function refreshInventory(runtime) {
   }
 }
 
+async function reconcileOnboarding(runtime) {
+  if (!runtime.toolOnboarding) return { changed: false, events: [], error: null };
+  try {
+    return { ...(await runtime.toolOnboarding.reconcile()), error: null };
+  } catch (error) {
+    return {
+      changed: false,
+      events: [],
+      error: { name: error.name, message: error.message },
+    };
+  }
+}
+
 function startInventoryProjection(runtime, issueNumber, record, projections, projectedIssues) {
   if (!runtime.toolInventoryProjector || !record || !Number.isSafeInteger(issueNumber) || projectedIssues.has(issueNumber)) return;
   projectedIssues.add(issueNumber);
@@ -29,7 +42,7 @@ function startInventoryProjection(runtime, issueNumber, record, projections, pro
 }
 
 export async function runCycle(runtime) {
-  const inventory = await refreshInventory(runtime);
+  let inventory = await refreshInventory(runtime);
   const projections = [];
   const projectedIssues = new Set();
   if (!runtime.config.execution.enabled) {
@@ -39,6 +52,7 @@ export async function runCycle(runtime) {
       rejected: [],
       toolInventory: inventory.reference,
       toolInventoryError: inventory.error,
+      toolOnboarding: { changed: false, events: [], error: null },
       inventoryProjections: [],
       recommendedPollIntervalMs: recommendedPollInterval(runtime),
       rateLimit: runtime.rateBudget.snapshot()
@@ -53,12 +67,18 @@ export async function runCycle(runtime) {
   const poll = await runtime.taskSource.poll();
   for (const task of poll.tasks) {
     if (resumed?.runId === runIdForTask(task)) continue;
-    // Start the GitHub handshake, but do not await network reporting before
-    // dispatching the task. Status capsules independently carry the digest ref.
     startInventoryProjection(runtime, task.issueNumber, inventory.record, projections, projectedIssues);
     const result = await runtime.coordinator.executeTask(task);
     if (!result.skipped) results.push(result);
   }
+
+  // Dynamic onboarding is deliberately outside the dispatch critical path.
+  // A locally pre-authorized unfamiliar CLI may take time to sandbox/probe;
+  // current tasks use the inventory they were actually given and any newly
+  // registered operation becomes visible only after this reconciliation.
+  const toolOnboarding = await reconcileOnboarding(runtime);
+  if (toolOnboarding.changed) inventory = await refreshInventory(runtime);
+
   const inventoryProjections = await Promise.all(projections);
   return {
     executionEnabled: true,
@@ -67,6 +87,7 @@ export async function runCycle(runtime) {
     rejected: poll.rejected ?? [],
     toolInventory: inventory.reference,
     toolInventoryError: inventory.error,
+    toolOnboarding,
     inventoryProjections,
     recommendedPollIntervalMs: recommendedPollInterval(runtime, poll.pollIntervalMs ?? 0),
     rateLimit: runtime.rateBudget.snapshot()
