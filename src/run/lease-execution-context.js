@@ -1,8 +1,21 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
+const activeTaskLease = new AsyncLocalStorage();
+
+export async function guardActiveTaskLease({ refresh = false } = {}) {
+  const active = activeTaskLease.getStore() ?? null;
+  if (!active) return null;
+  active.manager.assertOwned(active.handle);
+  if (refresh) {
+    if (typeof active.manager.ensureFresh === 'function') await active.manager.ensureFresh(active.handle);
+    else await active.manager.renew(active.handle);
+    active.manager.assertOwned(active.handle);
+  }
+  return active.handle;
+}
+
 export class LeaseExecutionContext {
   #manager;
-  #storage = new AsyncLocalStorage();
 
   constructor({ taskLeaseManager }) {
     if (!taskLeaseManager || typeof taskLeaseManager.assertOwned !== 'function') throw new TypeError('LeaseExecutionContext requires a task lease manager');
@@ -11,22 +24,18 @@ export class LeaseExecutionContext {
 
   run(handle, callback) {
     this.#manager.assertOwned(handle);
-    return this.#storage.run(handle, callback);
+    return activeTaskLease.run({ manager: this.#manager, handle }, callback);
   }
 
   #active() {
-    const handle = this.#storage.getStore() ?? null;
-    if (handle) this.#manager.assertOwned(handle);
-    return handle;
+    const active = activeTaskLease.getStore() ?? null;
+    if (!active) return null;
+    active.manager.assertOwned(active.handle);
+    return active.handle;
   }
 
   async #freshSensitiveLease() {
-    const handle = this.#active();
-    if (!handle) return null;
-    if (typeof this.#manager.ensureFresh === 'function') await this.#manager.ensureFresh(handle);
-    else await this.#manager.renew(handle);
-    this.#manager.assertOwned(handle);
-    return handle;
+    return guardActiveTaskLease({ refresh: true });
   }
 
   wrapProcessRunner(delegate) {
@@ -35,14 +44,14 @@ export class LeaseExecutionContext {
       run: async (request) => {
         const handle = this.#active();
         const result = await delegate.run(handle ? { ...request, signal: handle.signal } : request);
-        if (handle) this.#manager.assertOwned(handle);
+        if (handle) await guardActiveTaskLease();
         return result;
       },
       recoverResult: typeof delegate.recoverResult === 'function'
         ? async (request) => {
             const handle = this.#active();
             const result = await delegate.recoverResult(request);
-            if (handle) this.#manager.assertOwned(handle);
+            if (handle) await guardActiveTaskLease();
             return result;
           }
         : undefined,
@@ -54,7 +63,7 @@ export class LeaseExecutionContext {
     const guarded = async (method, args, { refresh = false } = {}) => {
       const handle = refresh ? await this.#freshSensitiveLease() : this.#active();
       const result = await delegate[method](...args);
-      if (handle) this.#manager.assertOwned(handle);
+      if (handle) await guardActiveTaskLease();
       return result;
     };
     return {
