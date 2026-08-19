@@ -49,6 +49,30 @@ function fileExists(candidate) {
   }
 }
 
+function npmCliCandidates(env = process.env) {
+  return [
+    env.npm_execpath,
+    path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    path.resolve(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ].filter(Boolean);
+}
+
+export function resolveNpmCli(env = process.env) {
+  for (const candidate of npmCliCandidates(env)) {
+    const resolved = path.resolve(candidate);
+    if (fileExists(resolved)) return resolved;
+  }
+  return null;
+}
+
+function launcherEnvironment(source = process.env) {
+  const result = {};
+  for (const name of ['PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'SystemDrive', 'TEMP', 'TMP']) {
+    if (source[name] != null) result[name] = source[name];
+  }
+  return result;
+}
+
 export function windowsSandboxExecutablePath(home, { arch = process.arch } = {}) {
   return path.join(path.resolve(home), 'sandbox', 'mxc', WINDOWS_SANDBOX_PACKAGE_VERSION, 'wxc-exec.exe');
 }
@@ -76,14 +100,19 @@ export function ensureWindowsSandboxRuntime({
     return destination;
   }
 
+  const npmCli = resolveNpmCli(env);
+  if (!npmCli) {
+    fail('Could not locate npm-cli.js beside the active Node.js runtime; a standard Node.js/npm installation is required to provision the Windows sandbox prerequisite');
+  }
+
   const sandboxRoot = path.join(path.resolve(home), 'sandbox');
   const stage = path.join(sandboxRoot, `.mxc-stage-${process.pid}-${Date.now()}`);
   const destinationDir = path.dirname(destination);
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   mkdirSync(stage, { recursive: true });
 
   try {
-    checkedCommand(npm, [
+    checkedCommand(process.execPath, [
+      npmCli,
       'install',
       '--prefix', stage,
       '--ignore-scripts',
@@ -119,7 +148,7 @@ export function ensureWindowsSandboxRuntime({
 
     checkedCommand(destination, ['--probe'], {
       cwd: destinationDir,
-      env: {},
+      env: launcherEnvironment(env),
       timeout: PROBE_TIMEOUT_MS,
       windowsHide: true,
       stdio: 'pipe',
