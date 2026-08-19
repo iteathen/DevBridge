@@ -10,10 +10,10 @@ import {
   readRuntimeActivationState,
   runDevBridgeCli,
   writeRuntimeActivationState,
-} from '../devbridge.mjs';
+} from '../src/bootstrap/secure-bootstrap.mjs';
 
 function fixturePaths() {
-  const home = mkdtempSync(path.join(tmpdir(), 'pp-runtime-activation-'));
+  const home = mkdtempSync(path.join(tmpdir(), 'devbridge-runtime-activation-'));
   return {
     home,
     runtime: path.join(home, 'runtime'),
@@ -40,10 +40,10 @@ test('candidate preparation rejects a ref/head race before activation validation
     { channel: 'testing', update: true, releaseMode: 'development' },
     paths,
     {
-      desiredRef: 'sol/foundation-bootstrap',
+      desiredRef: 'main',
       desiredHead: expected,
       ensureRuntimeFn: () => ({
-        ref: 'sol/foundation-bootstrap',
+        ref: 'main',
         head: 'c'.repeat(40),
         cliPath: path.join(paths.runtimeCandidates, expected, 'src', 'cli.js'),
         version: '0.1.0',
@@ -64,11 +64,11 @@ test('candidate preparation validates and returns the exact tested separate runt
     { channel: 'testing', update: true, releaseMode: 'development' },
     paths,
     {
-      desiredRef: 'sol/foundation-bootstrap',
+      desiredRef: 'main',
       desiredHead: head,
       ensureRuntimeFn: () => {
         events.push('materialized');
-        return { ref: 'sol/foundation-bootstrap', head, cliPath: path.join(runtimeDir, 'src', 'cli.js'), version: '0.1.0' };
+        return { ref: 'main', head, cliPath: path.join(runtimeDir, 'src', 'cli.js'), version: '0.1.0' };
       },
       validateCandidateFn: (_paths, runtime, _runner, options) => {
         events.push(`validated:${runtime.head}`);
@@ -96,7 +96,7 @@ test('activation journal is atomic JSON and only a contained exact healthy runti
   writeRuntimeActivationState(paths, {
     protocol: 'devbridge/runtime-activation-v1',
     state: 'healthy',
-    current: { ref: 'sol/foundation-bootstrap', head, runtimeDir, cliPath: path.join(runtimeDir, 'src', 'cli.js'), version: '0.1.0' },
+    current: { ref: 'main', head, runtimeDir, cliPath: path.join(runtimeDir, 'src', 'cli.js'), version: '0.1.0' },
   });
   assert.equal(readRuntimeActivationState(paths).current.head, head);
   const loaded = loadPersistedHealthyRuntime(paths, undefined, {
@@ -108,13 +108,13 @@ test('activation journal is atomic JSON and only a contained exact healthy runti
     }),
   });
   assert.equal(loaded.head, head);
-  assert.equal(loaded.ref, 'sol/foundation-bootstrap');
+  assert.equal(loaded.ref, 'main');
   assert.equal(loaded.runtimeDir, runtimeDir);
 
   writeRuntimeActivationState(paths, {
     protocol: 'devbridge/runtime-activation-v1',
     state: 'healthy',
-    current: { ref: 'sol/foundation-bootstrap', head, runtimeDir: path.resolve(paths.home, '..', 'escape'), cliPath: '/escape/src/cli.js', version: '0.1.0' },
+    current: { ref: 'main', head, runtimeDir: path.resolve(paths.home, '..', 'escape'), cliPath: '/escape/src/cli.js', version: '0.1.0' },
   });
   assert.equal(loadPersistedHealthyRuntime(paths, undefined, { ensureRuntimeFn: () => { throw new Error('must not inspect escape'); } }), null);
 });
