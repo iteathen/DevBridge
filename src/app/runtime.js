@@ -30,6 +30,7 @@ import { ToolInventoryService } from '../runtime/tool-inventory.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { builtInToolProfiles, builtInToolReadRoots } from '../runtime/builtin-tool-profiles.js';
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
+import { LeaseExecutionContext } from '../run/lease-execution-context.js';
 import { LivenessProjectingPlanExecutor } from '../run/liveness-projecting-plan-executor.js';
 import { RunCoordinator } from '../run/run-coordinator.js';
 import { TaskLeaseManager } from '../run/task-lease-manager.js';
@@ -174,6 +175,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
       clockSkewMs: coordination.clockSkewMs,
     });
   }
+  const leaseExecutionContext = taskLeaseManager ? new LeaseExecutionContext({ taskLeaseManager }) : null;
   const hardGateController = new HardGateController({
     decisionSource,
     decisionAuthorities: config.execution.decisionAuthorities,
@@ -187,6 +189,12 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     queueRepository: config.github.queueRepository,
     gateController: hardGateController,
   });
+  const executionWorkspaceManager = leaseExecutionContext
+    ? leaseExecutionContext.wrapWorkspaceManager(gatedWorkspaceManager)
+    : gatedWorkspaceManager;
+  const planWorkspaceManager = leaseExecutionContext
+    ? leaseExecutionContext.wrapWorkspaceManager(workspaceManager)
+    : workspaceManager;
   const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
   const deterministicSandboxProvider = createDeterministicSandboxProvider({
     externalReadRoots: config.workspace.externalReadRoots,
@@ -201,11 +209,17 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     sandboxProvider: deterministicSandboxProvider,
     trustedReadRootsByProfile: builtInToolReadRoots(),
   });
+  const leaseProcessRunner = leaseExecutionContext
+    ? leaseExecutionContext.wrapProcessRunner(processRunner)
+    : processRunner;
   const deterministicProcessRunner = new DeterministicProcessRunner({
     sourceEnv: env,
     faultInjector,
     sandboxProvider: deterministicSandboxProvider,
   });
+  const leaseDeterministicProcessRunner = leaseExecutionContext
+    ? leaseExecutionContext.wrapProcessRunner(deterministicProcessRunner)
+    : deterministicProcessRunner;
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
   const onboardingConfig = config.execution.toolOnboarding ?? {
@@ -233,8 +247,8 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     : null;
   const deterministicControllerPlanExecutor = new ControllerPlanExecutor({
     operationRegistry,
-    processRunner: deterministicProcessRunner,
-    workspaceManager,
+    processRunner: leaseDeterministicProcessRunner,
+    workspaceManager: planWorkspaceManager,
     faultInjector,
   });
   const controllerPlanExecutor = new LivenessProjectingPlanExecutor({
@@ -265,8 +279,8 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
 
   const baseCoordinator = new RunCoordinator({
     stateStore,
-    workspaceManager: gatedWorkspaceManager,
-    processRunner,
+    workspaceManager: executionWorkspaceManager,
+    processRunner: leaseProcessRunner,
     controllerPlanExecutor,
     statusReporter,
     feedbackSource,
@@ -308,11 +322,11 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     agentIdentity,
     taskLeaseStore,
     taskLeaseManager,
+    leaseExecutionContext,
     workspacePolicy,
     gitClient,
     workspaceManager,
     gatedWorkspaceManager,
-    hardGateController,
     processRunner,
     workerExchange,
     deterministicProcessRunner,
