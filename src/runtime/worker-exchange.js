@@ -12,6 +12,7 @@ export const WORKER_RESULT_FILE = '/run/devbridge-exchange/result.json';
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const DEFAULT_RESULT_LIMIT = 1_048_576;
 const MANIFEST_LIMIT = 64 * 1024;
+const WORKER_TARGET_MODES = new Set(['virtual', 'host-exact-files']);
 
 function sha256(text) {
   return createHash('sha256').update(text, 'utf8').digest('hex');
@@ -179,6 +180,20 @@ async function readControlManifest(candidate, anchor) {
   return parsed;
 }
 
+function workerTargets(paths, targetMode) {
+  if (!WORKER_TARGET_MODES.has(targetMode)) throw new PolicyError(`unsupported worker IPC target mode: ${targetMode}`);
+  if (targetMode === 'host-exact-files') {
+    return { contextFile: paths.contextFile, resultFile: paths.resultFile };
+  }
+  return { contextFile: WORKER_CONTEXT_FILE, resultFile: WORKER_RESULT_FILE };
+}
+
+function sameHostPath(a, b) {
+  const left = path.normalize(path.resolve(a));
+  const right = path.normalize(path.resolve(b));
+  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
 class WorkerMailbox {
   #turnRoot;
   #contextFile;
@@ -198,16 +213,16 @@ class WorkerMailbox {
 
   get contextFile() { return this.#contextFile; }
   get resultFile() { return this.#resultFile; }
-  get workerContextFile() { return WORKER_CONTEXT_FILE; }
-  get workerResultFile() { return WORKER_RESULT_FILE; }
+  get workerContextFile() { return this.#manifest.workerContextFile; }
+  get workerResultFile() { return this.#manifest.workerResultFile; }
 
   sandboxIpc() {
     return {
       protocol: WORKER_EXCHANGE_PROTOCOL,
       contextSource: this.#contextFile,
       resultSource: this.#resultFile,
-      contextTarget: WORKER_CONTEXT_FILE,
-      resultTarget: WORKER_RESULT_FILE,
+      contextTarget: this.#manifest.workerContextFile,
+      resultTarget: this.#manifest.workerResultFile,
     };
   }
 
@@ -280,9 +295,14 @@ export class WorkerExchange {
     };
   }
 
-  async prepareTurn({ runId, turnId, context }) {
+  workerTargets({ runId, turnId, targetMode = 'virtual' }) {
+    return workerTargets(this.#paths(runId, turnId), targetMode);
+  }
+
+  async prepareTurn({ runId, turnId, context, targetMode = 'virtual' }) {
     await this.#ensureRoot();
     const paths = this.#paths(runId, turnId);
+    const targets = workerTargets(paths, targetMode);
 
     try {
       await mkdir(paths.runRoot, { mode: 0o700 });
@@ -325,8 +345,8 @@ export class WorkerExchange {
       contextAnchorIdentity: identityOf(contextAnchorInfo),
       resultIdentity: identityOf(resultInfo),
       resultAnchorIdentity: identityOf(resultAnchorInfo),
-      workerContextFile: WORKER_CONTEXT_FILE,
-      workerResultFile: WORKER_RESULT_FILE,
+      workerContextFile: targets.contextFile,
+      workerResultFile: targets.resultFile,
     };
     await writeFile(paths.manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, {
       encoding: 'utf8',
@@ -357,7 +377,11 @@ export class WorkerExchange {
     if (manifest.runId !== paths.safeRunId || manifest.turnId !== paths.safeTurnId) {
       throw new PolicyError('worker-exchange manifest does not match the requested run/turn identity');
     }
-    if (manifest.workerContextFile !== WORKER_CONTEXT_FILE || manifest.workerResultFile !== WORKER_RESULT_FILE) {
+    const virtualTargets = workerTargets(paths, 'virtual');
+    const hostTargets = workerTargets(paths, 'host-exact-files');
+    const validVirtual = manifest.workerContextFile === virtualTargets.contextFile && manifest.workerResultFile === virtualTargets.resultFile;
+    const validHost = sameHostPath(manifest.workerContextFile, hostTargets.contextFile) && sameHostPath(manifest.workerResultFile, hostTargets.resultFile);
+    if (!validVirtual && !validHost) {
       throw new PolicyError('worker-exchange manifest uses unexpected sandbox-visible IPC paths');
     }
     await secureStat(paths.turnRoot, 'directory', manifest.turnIdentity);
