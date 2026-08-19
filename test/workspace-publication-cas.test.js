@@ -32,12 +32,12 @@ class RecordingGitClient {
 }
 
 async function fixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'pp-publication-cas-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-publication-cas-'));
   const source = path.join(root, 'source');
   await exec('git', ['init', '-b', 'main', source]);
   await writeFile(path.join(source, 'README.md'), 'one\n');
   await git(source, ['add', 'README.md']);
-  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', 'initial']);
+  await git(source, ['-c', 'user.name=DevBridge Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', 'initial']);
 
   const policy = new WorkspacePolicy({ root: path.join(root, 'managed'), allowedOwners: ['owner'], allowCreate: true });
   await policy.ensureRoot();
@@ -57,7 +57,7 @@ async function createCandidate(manager, task, workspace, content = 'candidate\n'
 async function advanceSource(source, file = 'UPSTREAM.md') {
   await writeFile(path.join(source, file), 'upstream\n');
   await git(source, ['add', file]);
-  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', `advance ${file}`]);
+  await git(source, ['-c', 'user.name=DevBridge Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', `advance ${file}`]);
   return (await git(source, ['rev-parse', 'HEAD'])).stdout.trim();
 }
 
