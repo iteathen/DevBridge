@@ -328,6 +328,7 @@ test('upstream history rewrite checkpoints instead of failing or looping', async
     maxTurns: 3
   });
 
+  const t = task();
   const result = await coordinator.executeTask(t);
   assert.equal(result.status, 'waiting-feedback');
   assert.equal(result.waiting, true);
