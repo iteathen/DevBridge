@@ -131,7 +131,14 @@ export class DeterministicOperationRegistry {
 
   has(name) { return this.#operations.has(name); }
   names() { return [...this.#operations.keys()].sort(); }
-  describe() { return this.names().map((name) => ({ name, layer: this.#operations.get(name).layer ?? 'core' })); }
+  describe() {
+    return this.names().map((name) => {
+      const adapter = this.#operations.get(name);
+      const description = { name, layer: adapter.layer ?? 'core' };
+      if (adapter.publicSchema) description.parameterSchema = structuredClone(adapter.publicSchema);
+      return description;
+    });
+  }
 
   validate(name, params) {
     const adapter = this.#operations.get(name);
