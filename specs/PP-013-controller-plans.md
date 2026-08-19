@@ -215,21 +215,29 @@ For PATCH-POLLER self-hosting during development, local policy SHOULD allow test
 
 ## 11. Transactional runtime activation
 
-Moving the testing branch MUST NOT automatically make an unvalidated candidate the sole running daemon.
+Moving a mutable update branch MUST NOT automatically make an unvalidated candidate the running daemon. Runtime release authority and candidate execution are separate boundaries and MUST follow PP-010 and PP-011.
+
+PATCH-POLLER distinguishes two release-integrity modes:
+
+- **development/testing:** a locally configured mutable testing channel may identify the candidate transport. This is explicit alpha behavior and is not production release integrity.
+- **production:** the mutable stable channel is transport only. Local trusted configuration MUST provide a signed immutable release manifest and Ed25519 public key binding the fixed repository identity, exact 40-hex commit, package version, and exact platform-neutral runtime artifact SHA-256.
 
 Runtime update should be a transaction:
 
-1. observe candidate testing revision;
-2. materialize/fetch into a separate candidate runtime location;
-3. run cheap syntax/import/schema preflight;
-4. run configured targeted tests/doctor;
-5. run any required broader acceptance gate;
-6. only after gates pass, cooperatively drain the current daemon;
-7. activate the exact tested candidate SHA;
-8. verify new daemon health;
-9. if activation/health fails, retain or restore the last-known-good runtime and preserve evidence.
+1. observe local release policy and the exact current runtime;
+2. resolve the candidate identity: the authorized mutable testing head in development, or the independently signed immutable release subject plus matching stable transport in production;
+3. materialize/fetch into a separate candidate runtime location while the current daemon remains available;
+4. perform PATCH-POLLER-owned static/integrity checks; in production, verify the signature, repository, exact head, version, and artifact digest before executing candidate-controlled code;
+5. verify the configured OS sandbox provider and fail closed on unsupported/unverified hosts for candidate-controlled validation;
+6. run candidate-controlled preflight/tests only inside that verified sandbox with a minimal environment, no control-plane credentials/state access, read-only Git administration, and denied network;
+7. recompute the exact runtime artifact digest after sandbox validation and reject any mutation; persist bounded release, artifact, and sandbox evidence;
+8. only after those gates pass, cooperatively drain the current daemon;
+9. immediately before candidate daemon spawn, recheck that the runtime artifact digest still equals the exact accepted/tested digest;
+10. start the candidate and perform the post-acceptance health window and `doctor` check;
+11. mark the candidate healthy only after those checks succeed;
+12. if activation or health fails, retain or restore the last-known-good runtime and preserve bounded evidence rather than broadening authority under uncertainty.
 
-The previous runtime MUST remain available until the candidate is proven activatable. An invalid docs/code commit must not brick the supervisor merely because a branch ref changed.
+The previous runtime MUST remain available until the candidate is proven healthy. Candidate `doctor` is post-acceptance runtime-health evidence, not a substitute for release-integrity verification or sandboxed candidate validation.
 
 Activation state/effects are subject to PP-009 durable reconciliation rules.
 
@@ -398,10 +406,10 @@ The implementation is not complete until at least these tests pass:
 
 ### Runtime activation
 
-17. Syntax-broken candidate runtime fails preflight and the old daemon remains healthy.
-18. Candidate test/doctor failure does not activate.
-19. Activation failure/health failure restores or retains last-known-good runtime.
-20. Successful candidate activates the exact tested SHA.
+17. Development mutable-channel candidates still require verified sandboxed candidate validation; a syntax-broken candidate or unavailable sandbox fails before the current daemon is drained.
+18. Production rejects unsigned, wrong-head, wrong-version, or wrong-digest stable movement before candidate code can gain authority; candidate preflight/tests run without control credentials/state or network access and preserve an exact tested artifact digest.
+19. Artifact mutation after validation, activation failure, or health failure cannot leave the changed candidate running; last-known-good remains available or is restored with evidence.
+20. Successful production activation starts only the exact signed-and-tested runtime artifact, rechecks its digest at the spawn boundary, and runs `doctor` only as post-acceptance health evidence before recording healthy state.
 
 ### Publication
 
@@ -435,7 +443,7 @@ Implement by coherent ownership boundary, not as unrelated tiny patches:
 
 ### Phase B — safe self-hosting (P0)
 
-- transactional candidate runtime validation/activation;
+- two-mode transactional candidate runtime release validation, sandboxed candidate execution, and activation;
 - last-known-good retention/rollback;
 - restart/effect reconciliation coverage.
 
