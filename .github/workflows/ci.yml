@@ -142,6 +142,12 @@ jobs:
           DEVBRIDGE_REQUIRE_SANDBOX_TEST: '1'
           DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE: ${{ steps.windows-sandbox.outputs.executable }}
         run: node --test --test-concurrency=1 test/bootstrap-candidate-sandbox.test.js test/deterministic-sandbox.test.js test/doctor-capabilities.test.js test/doctor-enforcement-reporting.test.js test/worker-sandbox.test.js
+      - name: Windows workload acceptance
+        timeout-minutes: 5
+        env:
+          DEVBRIDGE_REQUIRE_WINDOWS_WORKLOAD_TEST: '1'
+          DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE: ${{ steps.windows-sandbox.outputs.executable }}
+        run: node --test test/windows-workload-acceptance.test.js
       - name: Doctor proves verified Windows execution
         timeout-minutes: 2
         env:
