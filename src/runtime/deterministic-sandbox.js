@@ -2,8 +2,9 @@ import process from 'node:process';
 import { PolicyError } from '../errors.js';
 import { BubblewrapSandboxProvider } from './bubblewrap-sandbox.js';
 import { unavailableSandboxStatus } from './sandbox-status.js';
+import { WindowsProcessContainerSandboxProvider } from './windows-processcontainer-sandbox.js';
 
-const PROVIDERS = new Set(['auto', 'bubblewrap', 'none']);
+const PROVIDERS = new Set(['auto', 'bubblewrap', 'windows-processcontainer', 'none']);
 
 class UnavailableSandboxProvider {
   #status;
@@ -25,7 +26,7 @@ class UnavailableSandboxProvider {
 export function normalizeSandboxPolicy(raw = {}) {
   const value = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const provider = value.provider ?? 'auto';
-  if (!PROVIDERS.has(provider)) throw new PolicyError('sandbox provider must be auto, bubblewrap, or none');
+  if (!PROVIDERS.has(provider)) throw new PolicyError('sandbox provider must be auto, bubblewrap, windows-processcontainer, or none');
   const bubblewrapExecutable = value.bubblewrapExecutable ?? 'bwrap';
   if (typeof bubblewrapExecutable !== 'string' || bubblewrapExecutable.trim() === '') {
     throw new PolicyError('bubblewrap executable must be a non-empty local executable name/path');
@@ -47,19 +48,45 @@ export function createDeterministicSandboxProvider({
       reason: 'repository-code sandboxing is explicitly disabled by local policy',
     }));
   }
-  if (process.platform !== 'linux') {
-    return new UnavailableSandboxProvider(unavailableSandboxStatus({
+
+  if (process.platform === 'linux') {
+    if (normalized.provider === 'windows-processcontainer') {
+      return new UnavailableSandboxProvider(unavailableSandboxStatus({
+        requestedProvider: normalized.provider,
+        provider: 'windows-processcontainer',
+        reason: 'Windows process-container sandbox was requested on a non-Windows host',
+      }));
+    }
+    return new BubblewrapSandboxProvider({
       requestedProvider: normalized.provider,
-      provider: normalized.provider === 'bubblewrap' ? 'bubblewrap' : 'none',
-      reason: `no verified repository-code sandbox provider is implemented for ${process.platform}; repository-code operations are disabled`,
-    }));
+      executable: normalized.bubblewrapExecutable,
+      externalReadRoots,
+      workspaceRoot,
+      stateDirectory,
+      env,
+    });
   }
-  return new BubblewrapSandboxProvider({
+
+  if (process.platform === 'win32') {
+    if (normalized.provider === 'bubblewrap') {
+      return new UnavailableSandboxProvider(unavailableSandboxStatus({
+        requestedProvider: normalized.provider,
+        provider: 'bubblewrap',
+        reason: 'Bubblewrap sandbox was requested on a non-Linux host',
+      }));
+    }
+    return new WindowsProcessContainerSandboxProvider({
+      requestedProvider: normalized.provider,
+      externalReadRoots,
+      workspaceRoot,
+      stateDirectory,
+      env,
+    });
+  }
+
+  return new UnavailableSandboxProvider(unavailableSandboxStatus({
     requestedProvider: normalized.provider,
-    executable: normalized.bubblewrapExecutable,
-    externalReadRoots,
-    workspaceRoot,
-    stateDirectory,
-    env,
-  });
+    provider: 'none',
+    reason: `no verified repository-code sandbox provider is implemented for ${process.platform}; repository-code operations are disabled`,
+  }));
 }
