@@ -14,7 +14,7 @@ export async function runDaemon(config, { env = process.env, fetchImpl = globalT
   const release = await acquireDaemonLock(lockPath);
   const lockRecord = release.record;
   try {
-    const runtime = await createRuntime(config, { env, fetchImpl });
+    const runtime = await createRuntime(config, { env, fetchImpl, coordinationExclusive: true });
     onEvent({ type: 'daemon-started', at: new Date().toISOString(), pid: lockRecord.pid });
     while (!signal?.aborted) {
       if (await consumeDaemonStopRequest(lockPath, lockRecord)) {
