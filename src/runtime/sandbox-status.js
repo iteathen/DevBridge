@@ -2,7 +2,8 @@ import process from 'node:process';
 
 export function boundedSandboxReason(value) {
   const text = String(value ?? 'sandbox verification failed').replace(/[\r\n\t]+/gu, ' ').trim();
-  return text.length <= 180 ? text : `${text.slice(0, 177)}...`;
+  if (text.length <= 180) return text;
+  return `${text.slice(0, 88)}...${text.slice(-89)}`;
 }
 
 function boundaryProbe({ attempted = false, verified = false, observations = null } = {}) {
