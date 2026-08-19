@@ -20,6 +20,8 @@ import { DeterministicProcessRunner } from '../runtime/deterministic-process-run
 import { createDeterministicSandboxProvider } from '../runtime/deterministic-sandbox.js';
 import { WorkerExchange } from '../runtime/worker-exchange.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
+import { loadLocalOperationManifests } from '../runtime/local-operation-manifest.js';
+import { ToolOnboardingService } from '../runtime/tool-onboarding.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { ToolInventoryService } from '../runtime/tool-inventory.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
@@ -127,11 +129,31 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   });
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
+  const onboardingConfig = config.execution.toolOnboarding ?? {
+    enabled: false,
+    manifestDirectory: null,
+    autoIntegrate: [],
+    maxHelpBytes: 262_144,
+    probeTimeoutMs: 15_000,
+  };
+  const localOperationManifests = onboardingConfig.manifestDirectory
+    ? await loadLocalOperationManifests({ directory: onboardingConfig.manifestDirectory, registry: operationRegistry, env })
+    : [];
+  const toolOnboarding = onboardingConfig.enabled
+    ? new ToolOnboardingService({
+        operationRegistry,
+        processRunner: deterministicProcessRunner,
+        workspaceRoot: config.workspace.root,
+        manifestDirectory: onboardingConfig.manifestDirectory,
+        autoIntegrate: onboardingConfig.autoIntegrate,
+        env,
+        maxHelpBytes: onboardingConfig.maxHelpBytes,
+        timeoutMs: onboardingConfig.probeTimeoutMs,
+      })
+    : null;
   const deterministicControllerPlanExecutor = new ControllerPlanExecutor({
     operationRegistry,
     processRunner: deterministicProcessRunner,
-    // Deterministic plan work uses the raw workspace manager. The hard gate is
-    // deliberately applied only at the final candidate-sealing frontier.
     workspaceManager,
     faultInjector,
   });
@@ -194,6 +216,8 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     chatHandoffProjector,
     toolInventory,
     toolInventoryProjector,
+    toolOnboarding,
+    localOperationManifests,
     contextBudget,
     rateBudget,
     client,
