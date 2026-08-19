@@ -9,7 +9,7 @@ export const WINDOWS_SANDBOX_PACKAGE = '@microsoft/mxc-sdk';
 export const WINDOWS_SANDBOX_PACKAGE_VERSION = '0.7.0';
 const CAPTURE_LIMIT = 4 * 1024 * 1024;
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
-const PROBE_TIMEOUT_MS = 10_000;
+const PROBE_TIMEOUT_MS = 35_000;
 
 function fail(message) {
   throw new Error(message);
@@ -73,8 +73,23 @@ function launcherEnvironment(source = process.env) {
   return result;
 }
 
-export function windowsSandboxExecutablePath(home, { arch = process.arch } = {}) {
-  return path.join(path.resolve(home), 'sandbox', 'mxc', WINDOWS_SANDBOX_PACKAGE_VERSION, 'wxc-exec.exe');
+function windowsSandboxRuntimeDirectory(home) {
+  return path.join(path.resolve(home), 'sandbox', 'mxc', WINDOWS_SANDBOX_PACKAGE_VERSION);
+}
+
+export function windowsSandboxExecutablePath(home) {
+  return path.join(windowsSandboxRuntimeDirectory(home), 'wxc-exec.exe');
+}
+
+export function windowsSandboxHostPrepExecutablePath(home) {
+  return path.join(windowsSandboxRuntimeDirectory(home), 'wxc-host-prep.exe');
+}
+
+function installManagedFile(source, destination) {
+  const temporary = `${destination}.${process.pid}.${Date.now()}.tmp`;
+  copyFileSync(source, temporary);
+  if (fileExists(destination)) rmSync(temporary, { force: true });
+  else renameSync(temporary, destination);
 }
 
 export function ensureWindowsSandboxRuntime({
@@ -94,8 +109,9 @@ export function ensureWindowsSandboxRuntime({
     return resolved;
   }
 
-  const destination = windowsSandboxExecutablePath(home, { arch });
-  if (fileExists(destination)) {
+  const destination = windowsSandboxExecutablePath(home);
+  const hostPrepDestination = windowsSandboxHostPrepExecutablePath(home);
+  if (fileExists(destination) && fileExists(hostPrepDestination)) {
     env.DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE = destination;
     return destination;
   }
@@ -129,22 +145,22 @@ export function ensureWindowsSandboxRuntime({
       stdio: 'pipe',
     }, runner);
 
-    const source = path.join(
+    const sourceDirectory = path.join(
       stage,
       'node_modules',
       '@microsoft',
       'mxc-sdk',
       'bin',
       sdkArch(arch),
-      'wxc-exec.exe',
     );
+    const source = path.join(sourceDirectory, 'wxc-exec.exe');
+    const hostPrepSource = path.join(sourceDirectory, 'wxc-host-prep.exe');
     if (!fileExists(source)) fail(`pinned MXC package did not contain expected runtime: ${source}`);
+    if (!fileExists(hostPrepSource)) fail(`pinned MXC package did not contain expected host-prep helper: ${hostPrepSource}`);
 
     mkdirSync(destinationDir, { recursive: true });
-    const temporary = `${destination}.${process.pid}.${Date.now()}.tmp`;
-    copyFileSync(source, temporary);
-    if (fileExists(destination)) rmSync(temporary, { force: true });
-    else renameSync(temporary, destination);
+    installManagedFile(source, destination);
+    installManagedFile(hostPrepSource, hostPrepDestination);
 
     checkedCommand(destination, ['--probe'], {
       cwd: destinationDir,
