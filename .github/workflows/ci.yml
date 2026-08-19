@@ -72,6 +72,7 @@ jobs:
           node --test
           test/workspace-manager.test.js
           test/baseline-reverify.test.js
+          test/baseline-reverify-recovery.test.js
           test/workspace-publication-cas.test.js
       - name: Tests
         env:

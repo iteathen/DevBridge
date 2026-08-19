@@ -285,6 +285,31 @@ export class RunCoordinator {
     return null;
   }
 
+  async #consumeDeterministicBaselineReverification(key, state, workspace) {
+    const turnLimit = state.turnLimit ?? this.#maxTurns;
+    const currentAttempt = Math.max(1, state.turn);
+    if (currentAttempt >= turnLimit) {
+      state.stage = 'waiting-feedback';
+      state.baselineReverifyRequired = false;
+      const blocker = `Publication baseline kept advancing through the bounded ${turnLimit}-attempt deterministic reverification window; trusted continuation feedback is required.`;
+      state.prior.blockers = [blocker];
+      state.prior.nextStep = 'Inspect the publication-baseline drift and provide a trusted continuation decision. PATCH-POLLER will not replay the deterministic plan outside its bounded verification window.';
+      await this.#save(key, state);
+      await this.#publish(state, 'WAITING_FEEDBACK', blocker, await this.#workspace.snapshot(workspace), { force: true });
+      return {
+        runId: state.runId,
+        issueNumber: state.task.issueNumber,
+        status: 'waiting-feedback',
+        waiting: true,
+        branch: workspace.branch
+      };
+    }
+    state.turn = currentAttempt + 1;
+    state.baselineReverifyRequired = false;
+    await this.#save(key, state);
+    return null;
+  }
+
   async #recordBaselineCheckpoint(key, state, workspace, error) {
     const snapshot = await this.#workspace.snapshot(workspace);
     const summary = `PATCH-POLLER cannot safely reconcile the publication baseline automatically: ${error.message}`;
@@ -664,6 +689,10 @@ export class RunCoordinator {
       if (state.stage === 'verifying' || state.stage === 'publishing') {
         const finalized = await this.#finalize(key, state, workspace);
         if (finalized) return finalized;
+        if (plan && state.stage === 'controller-plan' && state.baselineReverifyRequired) {
+          const checkpoint = await this.#consumeDeterministicBaselineReverification(key, state, workspace);
+          if (checkpoint) return checkpoint;
+        }
       }
 
       if (plan) {
@@ -705,24 +734,8 @@ export class RunCoordinator {
         const finalized = await this.#finalize(key, state, workspace);
         if (finalized) return finalized;
         if (state.stage === 'controller-plan' && state.baselineReverifyRequired) {
-          if (state.turn >= state.turnLimit) {
-            state.stage = 'waiting-feedback';
-            state.baselineReverifyRequired = false;
-            const blocker = `Publication baseline kept advancing through the bounded ${state.turnLimit}-attempt deterministic reverification window; trusted continuation feedback is required.`;
-            state.prior.blockers = [blocker];
-            await this.#save(key, state);
-            await this.#publish(state, 'WAITING_FEEDBACK', blocker, await this.#workspace.snapshot(workspace), { force: true });
-            return {
-              runId: state.runId,
-              issueNumber: task.issueNumber,
-              status: 'waiting-feedback',
-              waiting: true,
-              branch: workspace.branch
-            };
-          }
-          state.turn += 1;
-          state.baselineReverifyRequired = false;
-          await this.#save(key, state);
+          const checkpoint = await this.#consumeDeterministicBaselineReverification(key, state, workspace);
+          if (checkpoint) return checkpoint;
           return this.executeTask(task);
         }
         throw new PolicyError('deterministic controller plan could not be finalized');
