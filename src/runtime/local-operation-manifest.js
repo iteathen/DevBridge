@@ -310,11 +310,18 @@ export function createManifestOperationAdapter(manifest, { env = process.env } =
 }
 
 async function canonicalManifestDirectory(directory) {
-  const info = await lstat(directory);
+  const resolved = path.resolve(directory);
+  const info = await lstat(resolved);
   if (!info.isDirectory() || info.isSymbolicLink()) throw new PolicyError('local operation manifest directory must be a real directory');
-  const canonical = await realpath(directory);
-  if (canonical !== path.resolve(directory)) throw new PolicyError('local operation manifest directory must use its canonical path');
-  return canonical;
+  let current = path.dirname(resolved);
+  while (true) {
+    const parentInfo = await lstat(current);
+    if (parentInfo.isSymbolicLink()) throw new PolicyError('local operation manifest directory must not use filesystem indirection');
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return realpath(resolved);
 }
 
 export async function loadLocalOperationManifests({ directory, registry, env = process.env }) {
