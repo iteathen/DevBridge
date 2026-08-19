@@ -155,11 +155,34 @@ export function ensureStage0Runtime(args, paths, runner = defaultRunner) {
   return validateRuntimeShape(paths.runtime);
 }
 
+async function provisionWindowsSandbox(paths) {
+  if (process.platform !== 'win32') return null;
+  const helperPath = path.join(paths.runtime, 'src', 'bootstrap', 'windows-sandbox-runtime.mjs');
+  if (!existsSync(helperPath) || !statSync(helperPath).isFile()) {
+    process.stderr.write('[devbridge-stage0] Windows sandbox bootstrap helper is unavailable; repository-code execution will remain disabled.\n');
+    return null;
+  }
+  try {
+    const helper = await import(pathToFileURL(helperPath).href);
+    if (typeof helper.ensureWindowsSandboxRuntime !== 'function') fail('managed Windows sandbox bootstrap helper is invalid');
+    const executable = helper.ensureWindowsSandboxRuntime({ home: paths.home, env: process.env });
+    if (executable) process.stdout.write(`[devbridge-stage0] windows-sandbox=${executable}\n`);
+    return executable;
+  } catch (error) {
+    process.stderr.write(
+      `[devbridge-stage0] Windows sandbox prerequisite could not be provisioned: ${error?.message ?? error}\n` +
+      '[devbridge-stage0] Continuing fail-closed: repository-code execution stays disabled until provisioning and live verification succeed.\n',
+    );
+    return null;
+  }
+}
+
 export async function bootstrapStage0(argv = process.argv.slice(2), runner = defaultRunner) {
   assertSupportedNode();
   const args = parseStage0Args(argv);
   const paths = resolveStage0Paths(args);
   const runtime = ensureStage0Runtime(args, paths, runner);
+  await provisionWindowsSandbox(paths);
   const module = await import(pathToFileURL(runtime.secureBootstrapPath).href);
   if (typeof module.bootstrap !== 'function') fail('Managed DevBridge runtime does not export the secure bootstrap entrypoint.');
   return module.bootstrap(argv);
