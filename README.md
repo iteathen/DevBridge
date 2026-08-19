@@ -1,14 +1,10 @@
 # DevBridge
 
-**Safely connect remote coding controllers to a local development environment.**
+**Safely bridge remote coding controllers and agents to a locally controlled development environment.**
 
-DevBridge is a local Node.js control plane that accepts narrowly trusted GitHub development tasks, runs them under local machine policy, preserves durable context and Git state, verifies the resulting work, and publishes only through explicitly authorized boundaries.
-
-The project was previously named **DevBridge**. The old name described one transport mechanism; DevBridge describes the actual purpose of the application.
+DevBridge is a local Node.js control plane. Remote content may request development work, but DevBridge retains machine authority: provenance, capability policy, workspace state, execution admission, verification, leases/fencing, publication, runtime activation, and recovery remain locally controlled.
 
 ## What DevBridge does
-
-DevBridge lets a remote coding controller request development work on a machine without making the remote controller the security authority for that machine.
 
 Current mainline capabilities include:
 
@@ -17,66 +13,69 @@ Current mainline capabilities include:
 - deterministic controller plans and locally registered build/test/tool operations;
 - optional coding-model adapters, disabled by default;
 - verified Linux/Bubblewrap containment for untrusted proposal workers and repository-code execution;
-- durable run state, context handoffs, restart recovery, and bounded reconciliation;
-- DB-007 human checkpoint-and-proceed gates for sensitive work;
+- durable run state, bounded context handoffs, restart recovery, and reconciliation;
+- DB-007 checkpoint-and-proceed human gates for consequential decisions;
 - candidate sealing and exact-head task-branch publication;
-- persistent Ed25519 installation identity, signed multi-agent task leases, heartbeat/TTL recovery, and fencing;
+- persistent Ed25519 installation identity, signed multi-agent leases, TTL recovery, and fencing;
 - fast-forward baseline reconciliation with mandatory post-drift reverification;
-- supervised self-update with candidate validation, safe daemon drain, health checking, and rollback;
+- supervised self-update with isolated candidate validation, safe daemon drain, health checking, and rollback;
 - cooperative `pause` / `resume` and below-normal child-process priority;
 - serialized task admission: effective task concurrency is currently one.
 
 ## Security model
 
-**DevBridge owns machine authority. Remote content requests work; it does not grant capability.**
+**Remote content requests work; it does not create machine authority.**
 
-Remote task text, repository content, dependencies, model output, tool documentation, and process output cannot create executable paths, shell authority, arbitrary local paths, environment secrets, credentials, network capability, sandbox exceptions, trusted actors, peer keys, Git-ref authority, or decision authority.
+Remote task text, repository content, dependencies, model output, tool documentation, and process output cannot grant executable paths, shell authority, arbitrary local paths, environment secrets, credentials, network capability, sandbox exceptions, trusted actors, peer keys, Git-ref authority, or decision authority.
 
-`github.trustedActorIds` is a **remote development-job submission allowlist**, not a generic collaborator list. If execution is enabled and a runner trusts an actor, that actor may submit development work to that runner within its existing local capability and sandbox policy.
-
-DB-016 peer identity and leases coordinate ownership only. Current v1 task envelopes are not yet cryptographically addressed to a destination workstation. If developer A must not be able to dispatch work to developer B's machine, enforce that today through B's runner-local queue and trusted-actor policy.
+`github.trustedActorIds` is a runner-local **remote development-job submission allowlist**, not a generic collaborator list. Task-author trust, decision authority, and coordination-peer trust are separate local policies.
 
 Untrusted proposal-worker and repository-code execution requires a verified outer OS sandbox. The built-in provider is Linux/Bubblewrap. Unsupported hosts fail closed for those execution classes rather than silently running with host authority.
 
 ## Install
 
-DevBridge is intentionally bootstrap-first. New installs need Node.js 22.16.0+ and Git; Linux machines that execute untrusted project code also need Bubblewrap.
+Requirements: Node.js 22.16.0 or newer and Git. Linux machines that execute untrusted project code also need Bubblewrap.
 
-Download the single `devbridge.mjs` launcher and run it with a dedicated DevBridge home:
+### Linux
 
-### Linux / macOS
+Copy/paste this command:
 
 ```sh
-mkdir -p ~/devbridge
-cd ~/devbridge
-curl -fsSLO https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs
-node devbridge.mjs --home ~/.devbridge
+mkdir -p "$HOME/.devbridge/bin" && curl -fsSL https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs -o "$HOME/.devbridge/bin/devbridge.mjs" && node "$HOME/.devbridge/bin/devbridge.mjs"
 ```
 
 ### Windows PowerShell
 
+Copy/paste this command:
+
 ```powershell
-New-Item -ItemType Directory -Force "$HOME\devbridge" | Out-Null
-Set-Location "$HOME\devbridge"
-Invoke-WebRequest "https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs" -OutFile "devbridge.mjs"
-node .\devbridge.mjs --home "$HOME\.devbridge"
+New-Item -ItemType Directory -Force "$HOME\.devbridge\bin" | Out-Null; Invoke-WebRequest "https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs" -OutFile "$HOME\.devbridge\bin\devbridge.mjs"; node "$HOME\.devbridge\bin\devbridge.mjs"
 ```
 
-The first run fetches the managed runtime and creates a safe local config, with execution disabled. Review the config, run `doctor`, then start DevBridge again.
+`devbridge.mjs` is a standalone stage-0 launcher. It uses only Node.js built-ins and the local `git` executable, materializes the fixed `iteathen/DevBridge` runtime under `~/.devbridge`, verifies the managed checkout/package shape, and then transfers control to the managed secure bootstrap.
 
-See **[`docs/setup.md`](docs/setup.md)** for the complete setup and migration path.
+On a fresh install, the managed bootstrap creates `~/.devbridge/config.json` from the safe example and exits. It does **not** silently enable execution. Review the local authorities first, then run:
+
+```text
+node ~/.devbridge/bin/devbridge.mjs doctor
+node ~/.devbridge/bin/devbridge.mjs
+```
+
+PowerShell users can use `$HOME\.devbridge\bin\devbridge.mjs` in the same commands.
+
+See [`docs/setup.md`](docs/setup.md) for setup details.
 
 ## Self-update
 
-The bootstrap launcher is deliberately small. Normal operation starts DevBridge through `devbridge.mjs`; the supervisor periodically observes its configured update channel, validates an acceptable candidate in isolation, drains the current daemon only after validation succeeds, activates the exact tested runtime, performs health checks, and retains or restores the last-known-good runtime on failure.
+Stage 0 establishes only the fixed managed checkout needed to reach the secure bootstrap. Once a runtime exists, ordinary updates remain inside the supervised candidate-validation boundary rather than being activated by the stage-0 launcher.
 
-Development update mode follows a mutable testing channel and is explicitly alpha. Production mode uses a locally trusted Ed25519-signed immutable release subject binding repository identity, exact Git commit, version, and runtime artifact SHA-256.
+The supervisor observes the locally selected update policy, materializes candidates separately, verifies release/runtime identity, runs candidate-controlled validation only behind the required OS sandbox, rechecks exact artifact identity, drains the current daemon only after acceptance, health-checks activation, and keeps last-known-good rollback available.
 
-Existing `devbridge.mjs` installations remain a supported compatibility path during the rename. GitHub redirects Git operations from a renamed repository, so an old managed remote can continue reaching the renamed repository; new installs should use the DevBridge URL and launcher.
+Development mode follows the mutable `main` testing channel and is explicitly alpha. Production mode requires a locally trusted Ed25519-signed immutable release subject binding `iteathen/DevBridge`, exact Git head, package version, and runtime artifact SHA-256.
 
 ## CLI
 
-The canonical CLI name is now `devbridge`:
+The canonical CLI is `devbridge`:
 
 ```text
 devbridge doctor
@@ -93,13 +92,11 @@ devbridge handoff-seed
 devbridge handoff-project
 ```
 
-The legacy `devbridge` binary alias remains available during the compatibility window.
-
-`pause` is cooperative admission control at a safe task-cycle boundary. It does not freeze an active child process or bypass lease heartbeat/fencing. `stop` takes precedence over pause.
+`pause` is cooperative admission control at a safe task-cycle boundary. It does not suspend an active child process or bypass lease heartbeat/fencing. `stop` takes precedence over pause.
 
 ## Task protocol
 
-The v1 wire protocol keeps its existing compatibility namespace:
+DevBridge task envelopes use the DevBridge namespace only:
 
 ````markdown
 ```devbridge-task
@@ -112,19 +109,19 @@ The v1 wire protocol keeps its existing compatibility namespace:
 ```
 ````
 
-The `devbridge/*` strings are durable protocol identifiers, not current product branding. They are intentionally not renamed in place because existing task records, run state, leases, handoffs, and signed release subjects depend on stable identifiers. See [`docs/naming-and-compatibility.md`](docs/naming-and-compatibility.md).
+Old product names and namespaces are not accepted as live compatibility aliases.
 
 ## Configuration
 
-The canonical example is:
+The canonical checked-in example is:
 
 ```text
 config/devbridge.example.json
 ```
 
-Fresh configuration keeps execution, model adapters, multi-agent coordination, dynamic tool onboarding, and automatic task-branch publication conservative by default.
+Fresh configuration keeps execution, model adapters, coordination, dynamic tool onboarding, and automatic task-branch publication conservative/off by default.
 
-Important local authorities to review before enabling execution:
+Review these local authorities before enabling execution:
 
 - `github.queueRepository`
 - `github.trustedActorIds`
@@ -140,31 +137,23 @@ DevBridge never silently rewrites an existing operator configuration during self
 
 ## Multi-agent coordination
 
-Coordination is disabled by default. When enabled, each installation owns a persistent local Ed25519 identity. Signed task leases are stored behind DevBridge-owned Git refs and use exact expected-value Git compare-and-swap behavior.
+Coordination is disabled by default. When enabled, each installation owns a persistent local Ed25519 identity. Signed task leases are stored behind DevBridge-owned Git refs and changed with exact expected-value compare-and-swap behavior.
 
-Lease ownership is not task authority, machine capability, human approval, or publication authority. Those remain independent local policy boundaries.
-
-Per-installation human-to-workstation dispatch authorization remains an open roadmap item.
+Lease ownership is not task authority, machine capability, human approval, or publication authority. Per-installation human-to-workstation dispatch authorization remains roadmap work.
 
 ## Human checkpoints
 
-DevBridge uses **checkpoint and proceed**, not blanket stop-and-wait.
-
-Safe reversible work may continue while a consequential decision is pending. Hard-gated effects remain blocked until an exact, still-valid decision subject has been authorized by an actor locally delegated for the relevant decision class.
+DevBridge uses **checkpoint and proceed**, not blanket stop-and-wait. Safe reversible work may continue while a consequential decision is pending. Hard-gated effects remain blocked until an exact, still-valid decision subject has been authorized by an actor locally delegated for that decision class.
 
 Remote decisions cannot expand filesystem, executable, credential, network, sandbox, peer-trust, or other machine capability.
 
 ## Support DevBridge
 
-DevBridge is developed with real recurring infrastructure costs. Sponsorship helps pay for **AI model/API tokens, GitHub tooling, and the compute/infrastructure needed to develop and test the project**.
-
-If DevBridge is useful to you, use the repository's **Sponsor** button to support development through the existing `iteathen` GitHub identity.
-
-The repository intentionally does not add third-party donation platforms by default. Funding metadata lives in `.github/FUNDING.yml`.
+Repository funding metadata is in `.github/FUNDING.yml`. Sponsorship helps cover AI model/API tokens, GitHub tooling, compute, and project infrastructure.
 
 ## Current limitations
 
-The following remain explicit roadmap boundaries:
+Important explicit boundaries include:
 
 - per-installation task destination/dispatch authorization for shared team queues;
 - verified untrusted-code sandbox providers for Windows and other non-Linux hosts;
@@ -174,29 +163,29 @@ The following remain explicit roadmap boundaries:
 - GitHub App installation authentication;
 - hard OS CPU/memory/disk/process/thread quotas beyond current process-priority QoS;
 - parallel task admission/scheduling;
-- remaining operator CLI surfaces such as `whoami`, peer/lease administration, manual claim/recovery, local issue dry-run, and local patch verification;
 - automatic default-branch merge/release/deployment as ordinary task effects.
 
 ## Documentation
 
-- [`docs/setup.md`](docs/setup.md) — minimal install, update, and migration instructions.
+- [`docs/setup.md`](docs/setup.md) — minimal installation and operation.
 - [`docs/architecture.md`](docs/architecture.md) — control-plane architecture and trust model.
-- [`docs/bootstrap.md`](docs/bootstrap.md) — detailed self-update and release-integrity behavior.
+- [`docs/bootstrap.md`](docs/bootstrap.md) — stage-0, self-update, and release-integrity behavior.
 - [`docs/design-principles.md`](docs/design-principles.md) — engineering principles.
 - [`docs/tool-profiles.md`](docs/tool-profiles.md) — local worker/tool profile policy.
 - [`docs/roadmap.md`](docs/roadmap.md) — implemented state and remaining work.
-- [`docs/naming-and-compatibility.md`](docs/naming-and-compatibility.md) — DevBridge rename compatibility rules.
-- `specs/DB-001` through `DB-018` — normative contracts. The `PP` identifiers and `devbridge/*` wire strings are retained v1 compatibility names.
+- `specs/DB-001` through `DB-018` — live normative contracts.
 
-Historical checksum-bound handoffs under `docs/handoffs/` and point-in-time audits under `docs/testing/` remain historical evidence rather than live status documents.
+Checksum-bound handoffs under `docs/handoffs/` and point-in-time audits under `docs/testing/` remain historical evidence. Their historical bytes are not live compatibility behavior.
 
 ## Tests
 
 ```text
+npm run preflight
 npm test
+node src/cli.js doctor --config config/devbridge.example.json
 ```
 
-CI runs the broad suite on Ubuntu and Windows plus focused security, sandbox, coordination, baseline-reverification, and runtime-governance gates. Linux CI exercises the real Bubblewrap boundary; unsupported-platform behavior is tested fail-closed.
+CI runs the suite on Ubuntu and Windows, including the standalone-launcher regression and the DevBridge-only live-identity audit. Linux CI exercises the real Bubblewrap boundary; unsupported-platform behavior is tested fail-closed.
 
 ## License
 
