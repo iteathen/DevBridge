@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { buildContextCapsule } from '../context/context-capsule.js';
-import { CandidateValidationError, PolicyError } from '../errors.js';
+import { CandidateValidationError, PolicyError, TaskLeaseLostError } from '../errors.js';
 import { validateToolProfile } from '../runtime/cli-profile.js';
 import { controllerPlanDigest } from './controller-plan.js';
 import { parseToolResult } from './result-envelope.js';
@@ -686,6 +686,13 @@ export class RunCoordinator {
         branch: state.workspace?.branch ?? null
       };
     } catch (error) {
+      if (error instanceof TaskLeaseLostError) {
+        if (state.stage === 'invoking') state.stage = 'running';
+        state.prior.liveness = null;
+        state.leaseFence = { classification: error.name, message: error.message, at: nowIso() };
+        await this.#save(key, state);
+        throw error;
+      }
       if (state.stage === 'verifying' || state.stage === 'publishing') throw error;
 
       state.stage = 'failed';
