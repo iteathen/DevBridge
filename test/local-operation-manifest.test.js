@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -128,6 +128,26 @@ test('local manifest directory loading is deterministic and collisions fail clos
     await assert.rejects(
       loadLocalOperationManifests({ directory: root, registry: new DeterministicOperationRegistry() }),
       /already exists/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('local manifest directory rejects filesystem indirection in its parent chain', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'pp-local-manifest-indirection-'));
+  const actualParent = path.join(root, 'actual');
+  const manifestRoot = path.join(actualParent, 'manifests');
+  const aliasParent = path.join(root, 'alias');
+  await mkdir(manifestRoot, { recursive: true });
+  await symlink(actualParent, aliasParent, process.platform === 'win32' ? 'junction' : 'dir');
+  try {
+    await assert.rejects(
+      loadLocalOperationManifests({
+        directory: path.join(aliasParent, 'manifests'),
+        registry: new DeterministicOperationRegistry(),
+      }),
+      /must not use filesystem indirection/u,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
