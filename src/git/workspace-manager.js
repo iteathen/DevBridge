@@ -534,7 +534,7 @@ export class GitWorkspaceManager {
     ].slice(-MAX_KNOWN_TASK_BRANCH_HEADS));
   }
 
-  async publishTaskBranch(workspace) {
+  async publishTaskBranch(workspace, { expectedHeadSha = null } = {}) {
     if (!workspace.branch.startsWith(`${this.#branchPrefix}/`)) {
       throw new PolicyError('refusing to publish a non-PATCH-POLLER task branch');
     }
@@ -544,6 +544,12 @@ export class GitWorkspaceManager {
     const token = await this.#tokenProvider();
     const ref = `refs/heads/${workspace.branch}`;
     const localHead = normalizeSha(snapshot.headSha, 'local task branch head');
+    if (expectedHeadSha != null) {
+      const expectedHead = normalizeSha(expectedHeadSha, 'expected verified task branch head');
+      if (localHead !== expectedHead) {
+        throw new PolicyError(`local task branch head ${localHead} differs from the exact verified publication head ${expectedHead}; fresh verification is required`);
+      }
+    }
     const remoteHead = await this.#remoteTaskBranchHead(workspace, token, ref);
     if (remoteHead === localHead) {
       this.#rememberKnownTaskBranchHead(workspace, localHead);
@@ -557,7 +563,7 @@ export class GitWorkspaceManager {
     else throw new PolicyError(`remote PATCH-POLLER task branch moved to unexpected head ${remoteHead}; refusing to overwrite it`);
 
     const pushed = await this.#git.run([
-      'push', `--force-with-lease=${ref}:${expectation}`, 'origin', `HEAD:${ref}`
+      'push', `--force-with-lease=${ref}:${expectation}`, 'origin', `${localHead}:${ref}`
     ], {
       cwd: workspace.worktreeDir,
       token,
