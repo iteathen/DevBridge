@@ -57,12 +57,13 @@ test('provisions, seals, and resumes an isolated managed worktree while ignoring
     baseRef: workspace.baseRef,
     baseSha: workspace.baseSha,
     publicationBaseSha: workspace.publicationBaseSha,
-    publicationRewriteFromShas: workspace.publicationRewriteFromShas
+    taskBranchKnownRemoteHeads: workspace.taskBranchKnownRemoteHeads
   });
   assert.equal(resumed.worktreeDir, workspace.worktreeDir);
   assert.equal(resumed.branch, workspace.branch);
   assert.equal(resumed.baseSha, workspace.baseSha);
   assert.equal(resumed.publicationBaseSha, workspace.publicationBaseSha);
+  assert.deepEqual(resumed.taskBranchKnownRemoteHeads, workspace.taskBranchKnownRemoteHeads);
 });
 
 test('a resumed run keeps its original baseline after upstream advances', async () => {
@@ -101,7 +102,7 @@ test('fast-forward drift rebases a sealed candidate while preserving the immutab
 
   assert.equal(workspace.baseSha, originalBase);
   assert.equal(workspace.publicationBaseSha, newBase);
-  assert.ok(workspace.publicationRewriteFromShas.includes(preRebaseHead));
+  assert.deepEqual(workspace.taskBranchKnownRemoteHeads, []);
   const rebased = await manager.validate(workspace);
   assert.equal(rebased.dirty, false);
   assert.deepEqual(rebased.changedFiles, ['README.md']);
