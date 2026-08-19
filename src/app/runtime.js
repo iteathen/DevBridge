@@ -1,3 +1,4 @@
+import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { JsonStateStore } from '../state/json-state-store.js';
 import { stateFileName } from '../state/state-file.js';
@@ -33,6 +34,25 @@ import { HardGateController } from '../run/hard-gate-controller.js';
 import { DecisionGatedRunCoordinator, DecisionGatedWorkspaceManager } from '../run/decision-gated-coordinator.js';
 
 export { stateFileName } from '../state/state-file.js';
+
+function isWithin(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+async function canonicalLocalManifestDirectory(directory, workspaceRoot) {
+  if (!directory) return null;
+  const resolved = path.resolve(directory);
+  const info = await lstat(resolved);
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw new Error('execution.toolOnboarding.manifestDirectory must be a real non-symlink directory');
+  }
+  const canonical = await realpath(resolved);
+  if (isWithin(workspaceRoot, canonical)) {
+    throw new Error('execution.toolOnboarding.manifestDirectory must be outside the controller-writable workspace root');
+  }
+  return canonical;
+}
 
 export async function createRuntime(config, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
   const workspacePolicy = new WorkspacePolicy(config.workspace);
@@ -136,15 +156,16 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     maxHelpBytes: 262_144,
     probeTimeoutMs: 15_000,
   };
-  const localOperationManifests = onboardingConfig.manifestDirectory
-    ? await loadLocalOperationManifests({ directory: onboardingConfig.manifestDirectory, registry: operationRegistry, env })
+  const manifestDirectory = await canonicalLocalManifestDirectory(onboardingConfig.manifestDirectory, config.workspace.root);
+  const localOperationManifests = manifestDirectory
+    ? await loadLocalOperationManifests({ directory: manifestDirectory, registry: operationRegistry, env })
     : [];
   const toolOnboarding = onboardingConfig.enabled
     ? new ToolOnboardingService({
         operationRegistry,
         processRunner: deterministicProcessRunner,
         workspaceRoot: config.workspace.root,
-        manifestDirectory: onboardingConfig.manifestDirectory,
+        manifestDirectory,
         autoIntegrate: onboardingConfig.autoIntegrate,
         env,
         maxHelpBytes: onboardingConfig.maxHelpBytes,
