@@ -40,7 +40,7 @@ jobs:
         run: node --test test/standalone-launcher.test.js
 
   test:
-    timeout-minutes: 8
+    timeout-minutes: 12
     strategy:
       fail-fast: false
       matrix:
@@ -56,7 +56,7 @@ jobs:
           node-version: 22.16.0
       - name: Prepare Bubblewrap sandbox provider
         if: runner.os == 'Linux'
-        timeout-minutes: 2
+        timeout-minutes: 5
         shell: bash
         run: |
           set -euxo pipefail
@@ -77,6 +77,7 @@ jobs:
           bwrap --version
       - name: Prepare Windows process-container sandbox provider
         if: runner.os == 'Windows'
+        id: windows-sandbox
         timeout-minutes: 2
         shell: pwsh
         run: |
@@ -89,12 +90,31 @@ jobs:
           }
           & $sandboxExecutable --probe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE=$sandboxExecutable" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Tests
+          "executable=$sandboxExecutable" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Tests (Linux)
+        if: runner.os == 'Linux'
         timeout-minutes: 5
         env:
           DEVBRIDGE_REQUIRE_SANDBOX_TEST: '1'
         run: npm test
-      - name: Doctor smoke test
+      - name: Tests (Windows unit and regression)
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        run: npm test
+      - name: Windows sandbox qualification
+        if: runner.os == 'Windows'
+        timeout-minutes: 7
+        env:
+          DEVBRIDGE_REQUIRE_SANDBOX_TEST: '1'
+          DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE: ${{ steps.windows-sandbox.outputs.executable }}
+        run: node --test --test-concurrency=1 test/bootstrap-candidate-sandbox.test.js test/deterministic-sandbox.test.js test/doctor-capabilities.test.js test/doctor-enforcement-reporting.test.js test/worker-sandbox.test.js
+      - name: Doctor smoke test (Linux)
+        if: runner.os == 'Linux'
         timeout-minutes: 1
+        run: node src/cli.js doctor --config config/devbridge.example.json
+      - name: Doctor smoke test (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: 2
+        env:
+          DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE: ${{ steps.windows-sandbox.outputs.executable }}
         run: node src/cli.js doctor --config config/devbridge.example.json
