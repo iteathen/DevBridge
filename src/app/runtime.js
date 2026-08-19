@@ -11,6 +11,7 @@ import { IssueFeedbackSource } from '../github/issue-feedback-source.js';
 import { IssueDecisionSource } from '../github/issue-decision-source.js';
 import { IssueStatusReporter } from '../github/issue-status-reporter.js';
 import { ChatHandoffProjector } from '../github/chat-handoff-projector.js';
+import { ToolInventoryProjector } from '../github/tool-inventory-projector.js';
 import { WorkspacePolicy } from '../security/workspace-policy.js';
 import { GitClient } from '../git/git-client.js';
 import { GitWorkspaceManager } from '../git/workspace-manager.js';
@@ -20,6 +21,7 @@ import { createDeterministicSandboxProvider } from '../runtime/deterministic-san
 import { WorkerExchange } from '../runtime/worker-exchange.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
+import { ToolInventoryService } from '../runtime/tool-inventory.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { builtInToolProfiles, builtInToolReadRoots } from '../runtime/builtin-tool-profiles.js';
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
@@ -56,8 +58,24 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
   const feedbackSource = new IssueFeedbackSource({ client, queueRepository: config.github.queueRepository, trustedActorIds: config.github.trustedActorIds });
   const decisionSource = new IssueDecisionSource({ client, queueRepository: config.github.queueRepository });
   const secretValues = credential ? [credential.token] : [];
-  const statusReporter = new IssueStatusReporter({ client, stateStore, queueRepository: config.github.queueRepository, progressIntervalMs: config.status.progressIntervalMs, maxCommentBytes: config.status.maxCommentBytes, secretValues });
+  let toolInventory = null;
+  const statusReporter = new IssueStatusReporter({
+    client,
+    stateStore,
+    queueRepository: config.github.queueRepository,
+    progressIntervalMs: config.status.progressIntervalMs,
+    maxCommentBytes: config.status.maxCommentBytes,
+    secretValues,
+    inventoryRefProvider: () => toolInventory?.reference() ?? null,
+  });
   const chatHandoffProjector = new ChatHandoffProjector({
+    client,
+    stateStore,
+    queueRepository: config.github.queueRepository,
+    maxCommentBytes: config.status.maxCommentBytes,
+    secretValues,
+  });
+  const toolInventoryProjector = new ToolInventoryProjector({
     client,
     stateStore,
     queueRepository: config.github.queueRepository,
@@ -128,7 +146,21 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
       throw new Error(`local tool profile name ${name} is reserved by PATCH-POLLER`);
     }
   }
+  const deterministicProfileNames = Object.keys(builtIns);
   const tools = { ...config.tools, ...builtIns };
+  toolInventory = new ToolInventoryService({
+    operationRegistry,
+    toolchainRegistry,
+    sandboxProvider: deterministicSandboxProvider,
+    profiles: tools,
+    deterministicProfileNames,
+    modelAdaptersEnabled: config.execution.modelAdaptersEnabled,
+    allowUncontainedTools: config.execution.allowUncontainedTools,
+    env,
+    runtimeIdentity: { version: '0.1.0' },
+  });
+  await toolInventory.refresh();
+
   const baseCoordinator = new RunCoordinator({
     stateStore,
     workspaceManager: gatedWorkspaceManager,
@@ -143,7 +175,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     allowUncontainedTools: config.execution.allowUncontainedTools,
     controllerPlansEnabled: config.execution.controllerPlansEnabled,
     modelAdaptersEnabled: config.execution.modelAdaptersEnabled,
-    deterministicProfileNames: Object.keys(builtIns),
+    deterministicProfileNames,
     autoPushTaskBranches: config.publication.autoPushTaskBranches,
     forceNoOpPublication: config.publication.forceNoOpPublication,
   });
@@ -160,6 +192,8 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     stateStore,
     chatHandoffStore,
     chatHandoffProjector,
+    toolInventory,
+    toolInventoryProjector,
     contextBudget,
     rateBudget,
     client,
