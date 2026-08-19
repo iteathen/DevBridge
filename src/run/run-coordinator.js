@@ -328,7 +328,32 @@ export class RunCoordinator {
       ? 'Re-run the deterministic controller plan and all of its assertions against the current managed candidate before publication.'
       : 'The managed candidate changed after verification. Re-run the relevant verification/tests against the current worktree before reporting complete. Do not stage or commit; PATCH-POLLER owns Git administrative state.';
     state.prior.progress.push(summary);
-    state.stage = state.task.envelope.controllerPlan ? 'controller-plan' : 'running';
+
+    if (state.task.envelope.controllerPlan) {
+      const turnLimit = state.turnLimit ?? this.#maxTurns;
+      const currentAttempt = Math.max(1, state.turn);
+      if (currentAttempt >= turnLimit) {
+        const blocker = `Local candidate identity kept drifting after verification through the bounded ${turnLimit}-attempt deterministic reverification window; trusted continuation feedback is required.`;
+        state.stage = 'waiting-feedback';
+        state.prior.blockers = [blocker];
+        state.prior.nextStep = 'Inspect the post-verification local candidate drift and provide a trusted continuation decision. PATCH-POLLER will not replay the deterministic plan outside its bounded verification window.';
+        await this.#save(key, state);
+        await this.#publish(state, 'WAITING_FEEDBACK', blocker, snapshot, { force: true });
+        return {
+          runId: state.runId,
+          issueNumber: state.task.issueNumber,
+          status: 'waiting-feedback',
+          waiting: true,
+          branch: workspace.branch,
+          headSha: snapshot.headSha
+        };
+      }
+      state.turn = currentAttempt + 1;
+      state.stage = 'controller-plan';
+    } else {
+      state.stage = 'running';
+    }
+
     await this.#save(key, state);
     await this.#publish(state, 'REVERIFYING', summary, snapshot, { force: true });
     return null;

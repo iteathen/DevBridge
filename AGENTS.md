@@ -118,12 +118,15 @@ PP-017 is normative when an authorized task baseline may move while a run is in 
 - Only fast-forward upstream movement may be automatically reconciled. A baseline force-push/history rewrite checkpoints instead of being silently accepted.
 - Reconciliation starts from a sealed clean candidate and uses the hardened Git adapter. A failed rebase must be aborted and the exact pre-rebase candidate head restored before the controller proceeds.
 - A successful rebase invalidates earlier verification evidence. Model-assisted work requires a fresh bounded verification turn; deterministic controller plans replay their registered operations/assertions against the rebased worktree.
+- Verification binds to an exact clean local candidate identity: the verified `headSha` together with its `publicationBaseSha`. On resumed publication, a dirty worktree, a different local `HEAD`, or a different publication baseline invalidates prior test evidence before sealing or publication may continue.
+- Model-assisted local candidate drift consumes the next normal bounded verification turn. Deterministic local candidate drift consumes the next deterministic attempt; an exhausted deterministic window checkpoints to `waiting-feedback` instead of replaying indefinitely.
 - Changed-path checks, no-project-diff decisions, and publication evidence are relative to `publicationBaseSha`, while the original `baseSha` remains visible as historical evidence.
+- Task-branch publication receives the exact verified local head as controller-owned `expectedHeadSha`, rechecks the current clean local head against it, and pushes `<verified-sha>:<task-ref>`. Symbolic `HEAD` is not publication payload identity.
 - A rebase may rewrite a PATCH-POLLER-owned task branch only with an explicit expected remote head. First creation uses an explicitly empty expected value; later rewrite requires an exact predecessor head that PATCH-POLLER previously confirmed on the remote through its own publication/reconciliation path. A merely local pre-rebase candidate SHA is not rewrite authority. Blind force is forbidden.
-- Ambiguous task-branch publication is reconciled by re-observing the exact remote head. If the remote already equals the intended local head the effect is idempotently accepted; otherwise only a previously confirmed predecessor may authorize retry. An unexplained remote head is never overwritten.
-- PP-016 fencing still governs reconciliation/sealing/publication effects when coordination is enabled.
+- Ambiguous task-branch publication is reconciled by re-observing the exact remote head. If the remote already equals the intended verified local head the effect is idempotently accepted; otherwise only a previously confirmed predecessor may authorize retry. An unexplained remote head is never overwritten.
+- PP-016 fencing still governs reconciliation/sealing/publication effects when coordination is enabled, and the lease-aware publication wrapper must preserve the exact verified-head option while performing its fresh fence check before the delegate effect.
 
-Read `specs/PP-017-baseline-drift-reverification.md` with PP-008, PP-009, PP-013, and PP-016 when changing task baselines, rebase behavior, post-rebase verification, no-op publication, or task-branch publication CAS.
+Read `specs/PP-017-baseline-drift-reverification.md` with PP-008, PP-009, PP-013, and PP-016 when changing task baselines, rebase behavior, post-drift verification, verified candidate identity, no-op publication, or task-branch publication CAS.
 
 ## Human checkpoints
 
@@ -183,7 +186,7 @@ When implementing local tool discovery, tool inventory/projection, dynamic opera
 
 When implementing multi-agent task coordination, persistent agent identity, shared queue leases, lease ref CAS transport, heartbeat/TTL recovery, agent branch namespaces, or lease-loss process fencing, read PP-016 together with PP-002, PP-003, PP-004, PP-005, PP-008, PP-009, and PP-010. PP-016 coordination evidence never creates task or capability authority.
 
-When implementing baseline-drift detection, automated rebase, post-rebase verification, publication-baseline tracking, or task-branch rewrite recovery, read PP-017 together with PP-008, PP-009, PP-013, and PP-016. The immutable start baseline and current publication baseline are different evidence and must not be conflated.
+When implementing baseline-drift detection, automated rebase, post-drift verification, publication-baseline tracking, verified local candidate identity, or task-branch rewrite recovery, read PP-017 together with PP-008, PP-009, PP-013, and PP-016. The immutable start baseline, current publication baseline, and exact locally verified publication head are distinct evidence and must not be conflated.
 
 ## Runtime scope
 
@@ -231,6 +234,8 @@ Boundary tests are mandatory for:
 - immutable start-baseline evidence plus independently advancing publication-baseline evidence;
 - fast-forward-only baseline reconciliation, exact pre-rebase restoration after conflict, and history-rewrite checkpointing;
 - mandatory post-rebase model verification or deterministic-plan replay within bounded turn limits;
+- post-verification dirty/local-HEAD/publication-baseline drift invalidation, including bounded deterministic local-drift replay and exhausted-window checkpointing;
+- exact locally verified candidate-head binding through the lease-aware publication boundary and exact-SHA push payload;
 - explicit expected-head task-branch CAS for first creation, confirmed-remote rebased rewrite, ambiguous-effect reconciliation, rejection of local-only predecessor authority, and unexpected-remote refusal.
 
 A passing happy-path test alone is not sufficient for a capability boundary.

@@ -2,7 +2,7 @@
 
 Status: active
 
-Implementation status: v0.1 implements pre-publication fast-forward baseline reconciliation, bounded recovery evidence, mandatory post-rebase reverification, and exact expected-head task-branch publication CAS.
+Implementation status: v0.2 implements pre-publication fast-forward baseline reconciliation, bounded recovery evidence, mandatory post-drift reverification, exact locally verified candidate binding, and exact expected-head task-branch publication CAS.
 
 ## Goal
 
@@ -66,29 +66,47 @@ A successful rebase makes prior test/verification evidence stale for publication
 - The pre-rebase test list is removed from the current verification projection; the reconciliation history preserves the fact that it was invalidated.
 - Repeated baseline movement consumes the existing bounded task/turn window. It must not create an unbounded rebase/reverify loop.
 
+Post-verification local candidate drift follows the same evidence rule. Verification binds to the exact clean candidate identity that was observed when verification completed: its `headSha` and `publicationBaseSha`. Before a persisted `publishing` state may continue, PATCH-POLLER re-observes that identity. A dirty worktree, a different local `HEAD`, or a different publication baseline invalidates the prior verification evidence and clears its current test projection.
+
+- Model-assisted local-drift reverification consumes the next normal bounded tool turn.
+- Deterministic local-drift reverification consumes the next deterministic verification attempt before replaying the validated plan.
+- If the deterministic attempt window is already exhausted, PATCH-POLLER checkpoints to `waiting-feedback` and does not invoke the plan executor or publication again until trusted continuation extends the bounded window.
+
+## Exact verified candidate publication identity
+
+Publication is bound to the exact local commit SHA that passed the current verification, not to a symbolic name that can move between verification and the Git effect.
+
+- The final verified snapshot supplies an `expectedHeadSha` to the task-branch publication boundary.
+- Immediately before any remote observation or push, the workspace manager validates the current clean local `HEAD` and requires it to equal that exact verified SHA.
+- A mismatch fails closed and requires fresh verification before publication.
+- The push payload uses the exact verified commit as `<verified-sha>:<task-ref>`. Symbolic `HEAD` is not publication payload identity.
+- An already-converged remote branch is idempotent only when the remote exact head equals that same verified local SHA.
+
+The expected verified head is controller-owned recovery/verification evidence. Task text, repository content, tool output, and model output cannot choose or override it.
+
 ## Task-branch publication CAS
 
 Baseline rebase rewrites candidate commit IDs, so a recoverable publication path cannot rely on blind force-push.
 
 For a PATCH-POLLER-owned task branch:
 
-- PATCH-POLLER first observes the exact remote branch head.
+- PATCH-POLLER first observes the exact remote branch head after validating the exact locally verified candidate identity.
 - First creation uses an explicitly empty expected value with `--force-with-lease=<ref>:`.
-- If the remote already equals the local exact head, publication is treated as reconciled/idempotent and that exact observed head may be retained as confirmed remote state.
+- If the remote already equals the exact verified local head, publication is treated as reconciled/idempotent and that exact observed head may be retained as confirmed remote state.
 - A rewritten rebased candidate may replace a remote head only when that exact head was previously confirmed on the remote through PATCH-POLLER's own publication/reconciliation path, using `--force-with-lease=<ref>:<expected-sha>`.
 - Merely having the same commit locally, including as a pre-rebase candidate head, does not make an unexplained remote branch authoritative or overwriteable.
 - Any other remote head fails closed; PATCH-POLLER does not overwrite an unexplained branch mutation.
-- After push, PATCH-POLLER re-observes the branch and records success only if the remote exact head equals the intended local head. This allows recovery from an ambiguous transport result without blind retry.
+- After push, PATCH-POLLER re-observes the branch and records success only if the remote exact head equals the intended verified local head. This allows recovery from an ambiguous transport result without blind retry.
 
 No task/model/controller input may choose the force mode or expected remote SHA.
 
 ## Coordination and recovery
 
-PP-016 still fences these effects. Reconciliation, sealing, and publication occur through the lease-aware workspace boundary when coordination is enabled.
+PP-016 still fences these effects. Reconciliation, sealing, and publication occur through the lease-aware workspace boundary when coordination is enabled. The lease-aware publication wrapper must preserve the exact `expectedHeadSha` option unchanged while performing the required fresh-lease check before the delegate publication effect.
 
-PP-009 recovery evidence remains authoritative for ambiguous effects. A restart resumes with the immutable `baseSha`, persisted `publicationBaseSha`, and a bounded set of exact task-branch heads that PATCH-POLLER previously confirmed remotely. It observes before mutating rather than resetting to a remembered branch state.
+PP-009 recovery evidence remains authoritative for ambiguous effects. A restart resumes with the immutable `baseSha`, persisted `publicationBaseSha`, exact verified candidate snapshot when present, and a bounded set of exact task-branch heads that PATCH-POLLER previously confirmed remotely. It observes before mutating rather than resetting to a remembered branch state.
 
-An interrupted publication does not require trusting an unconfirmed intended head. On recovery, either the remote already equals the intended local head, which is reconciled idempotently without overwrite, or it still equals a previously confirmed predecessor head, which may be used as the explicit `force-with-lease` expectation. Any third state fails closed.
+An interrupted publication does not require trusting an unconfirmed intended head. On recovery, PATCH-POLLER first confirms that the managed candidate still equals the persisted verified candidate identity. Then either the remote already equals that exact verified head, which is reconciled idempotently without overwrite, or it still equals a previously confirmed predecessor head, which may be used as the explicit `force-with-lease` expectation. Any local identity drift invalidates verification; any third remote state fails closed.
 
 ## Required tests
 
@@ -102,11 +120,16 @@ Tests must cover at least:
 - upstream history rewrite is not automatically rebased;
 - model verification evidence is cleared after rebase and another model turn is required before completion;
 - deterministic controller plans execute again after rebase and remain bounded by the existing turn window;
-- first task-branch publication uses an explicit empty expected remote value;
-- rebased branch rewrite uses an exact previously confirmed remote predecessor head;
+- resumed publication with a different clean local `HEAD` clears stale test evidence and reverifies before publication;
+- resumed publication with a dirty worktree clears stale verification before sealing or publication;
+- deterministic local candidate drift consumes the next bounded deterministic attempt, and an exhausted window checkpoints without invoking the plan executor or publication;
+- publication rejects a local `HEAD` different from `expectedHeadSha` before any push;
+- first task-branch publication pushes `<verified-sha>:<task-ref>` with an explicit empty expected remote value and never relies on symbolic `HEAD` as payload identity;
+- rebased branch rewrite uses an exact previously confirmed remote predecessor head while pushing the exact verified local SHA;
 - a merely local pre-rebase candidate head does not become task-branch rewrite authority;
 - unexpected remote branch mutation is not overwritten;
-- ambiguous push that nevertheless reached the exact intended head reconciles as success;
-- already-converged exact remote state can be recorded as confirmed without another push;
+- ambiguous push that nevertheless reached the exact intended verified head reconciles as success;
+- already-converged exact remote state can be recorded as confirmed without another push when it equals the verified local head;
 - no-op publication is judged relative to `publicationBaseSha`, not the immutable start baseline;
+- the lease-aware publication boundary forwards the exact verified-head option and refuses delegate publication after fencing;
 - existing PP-008 Git hardening and PP-016 lease fencing remain intact.

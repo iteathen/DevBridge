@@ -91,6 +91,39 @@ test('sealing and publication require a fresh lease before the delegate effect',
   assert.equal(order.includes('assert'), true);
 });
 
+test('lease-aware publication forwards exact verified-head options only after a fresh fence check', async () => {
+  const manager = fixtureManager();
+  const context = new LeaseExecutionContext({ taskLeaseManager: manager });
+  const publicationCalls = [];
+  const delegate = {
+    async prepareRun() { return 'prepared'; },
+    async publishTaskBranch(workspace, options) {
+      assert.equal(manager.calls.filter(([kind]) => kind === 'fresh').length, 1);
+      publicationCalls.push({ workspace, options });
+      return { branch: 'patchpoller/issue-49-fixture', headSha: options.expectedHeadSha };
+    }
+  };
+  const wrapped = context.wrapWorkspaceManager(delegate);
+  const handle = { signal: new AbortController().signal };
+  const options = { expectedHeadSha: 'a'.repeat(40) };
+
+  await context.run(handle, async () => {
+    const result = await wrapped.publishTaskBranch('workspace', options);
+    assert.equal(result.headSha, options.expectedHeadSha);
+    assert.equal(publicationCalls.length, 1);
+    assert.equal(publicationCalls[0].workspace, 'workspace');
+    assert.equal(publicationCalls[0].options, options);
+
+    manager.fence();
+    await assert.rejects(
+      wrapped.publishTaskBranch('workspace', { expectedHeadSha: 'b'.repeat(40) }),
+      TaskLeaseLostError
+    );
+  });
+
+  assert.equal(publicationCalls.length, 1);
+});
+
 test('fenced lease blocks workspace delegate invocation before a new effect starts', async () => {
   const manager = fixtureManager();
   const context = new LeaseExecutionContext({ taskLeaseManager: manager });

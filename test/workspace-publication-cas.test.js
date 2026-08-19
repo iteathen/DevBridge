@@ -65,23 +65,44 @@ function pushCalls(client) {
   return client.calls.filter(({ args }) => args[0] === 'push');
 }
 
-test('first task-branch publication uses an explicitly empty expected remote head', async () => {
+test('first task-branch publication binds the push payload to the exact verified local head', async () => {
   const { source, client, manager, task, workspace } = await fixture();
   const sealed = await createCandidate(manager, task, workspace);
-  const publication = await manager.publishTaskBranch(workspace);
+  const publication = await manager.publishTaskBranch(workspace, { expectedHeadSha: sealed.headSha });
   const ref = `refs/heads/${workspace.branch}`;
   const pushes = pushCalls(client);
   assert.equal(pushes.length, 1);
   assert.ok(pushes[0].args.includes(`--force-with-lease=${ref}:`));
+  assert.ok(pushes[0].args.includes(`${sealed.headSha}:${ref}`));
+  assert.equal(pushes[0].args.includes(`HEAD:${ref}`), false);
   assert.equal(publication.headSha, sealed.headSha);
   assert.deepEqual(workspace.taskBranchKnownRemoteHeads, [sealed.headSha]);
   assert.equal((await git(source, ['rev-parse', ref])).stdout.trim(), sealed.headSha);
 });
 
-test('rebased task branch rewrite binds force-with-lease to the exact confirmed remote predecessor head', async () => {
+test('mismatched expected verified local head fails before any push', async () => {
+  const { client, manager, task, workspace } = await fixture();
+  const sealed = await createCandidate(manager, task, workspace);
+  const mismatched = sealed.headSha === 'f'.repeat(40) ? 'e'.repeat(40) : 'f'.repeat(40);
+  const pushesBefore = pushCalls(client).length;
+
+  await assert.rejects(
+    manager.publishTaskBranch(workspace, { expectedHeadSha: mismatched }),
+    (error) => {
+      assert.ok(error instanceof PolicyError);
+      assert.match(error.message, /differs from the exact verified publication head/u);
+      return true;
+    }
+  );
+
+  assert.equal(pushCalls(client).length, pushesBefore);
+  assert.deepEqual(workspace.taskBranchKnownRemoteHeads, []);
+});
+
+test('rebased task branch rewrite uses confirmed predecessor CAS while pushing the exact verified SHA', async () => {
   const { source, client, manager, task, workspace } = await fixture();
   const first = await createCandidate(manager, task, workspace);
-  await manager.publishTaskBranch(workspace);
+  await manager.publishTaskBranch(workspace, { expectedHeadSha: first.headSha });
   assert.deepEqual(workspace.taskBranchKnownRemoteHeads, [first.headSha]);
   await advanceSource(source);
 
@@ -91,11 +112,13 @@ test('rebased task branch rewrite binds force-with-lease to the exact confirmed 
   );
   const rebased = await manager.sealCandidate(workspace, { issueNumber: task.issueNumber, revision: task.revision });
   assert.notEqual(rebased.headSha, first.headSha);
-  const publication = await manager.publishTaskBranch(workspace);
+  const publication = await manager.publishTaskBranch(workspace, { expectedHeadSha: rebased.headSha });
   const ref = `refs/heads/${workspace.branch}`;
   const pushes = pushCalls(client);
   assert.equal(pushes.length, 2);
   assert.ok(pushes[1].args.includes(`--force-with-lease=${ref}:${first.headSha}`));
+  assert.ok(pushes[1].args.includes(`${rebased.headSha}:${ref}`));
+  assert.equal(pushes[1].args.includes(`HEAD:${ref}`), false);
   assert.equal(publication.previousRemoteHeadSha, first.headSha);
   assert.deepEqual(workspace.taskBranchKnownRemoteHeads, [first.headSha, rebased.headSha]);
   assert.equal((await git(source, ['rev-parse', ref])).stdout.trim(), rebased.headSha);
@@ -122,7 +145,7 @@ test('a local pre-rebase candidate head never becomes rewrite authority unless P
 
   const pushesBefore = pushCalls(client).length;
   await assert.rejects(
-    manager.publishTaskBranch(workspace),
+    manager.publishTaskBranch(workspace, { expectedHeadSha: rebased.headSha }),
     (error) => {
       assert.ok(error instanceof PolicyError);
       assert.match(error.message, /unexpected head/u);
@@ -136,7 +159,7 @@ test('a local pre-rebase candidate head never becomes rewrite authority unless P
 test('unexpected remote task-branch mutation is never overwritten', async () => {
   const { source, client, manager, task, workspace } = await fixture();
   const first = await createCandidate(manager, task, workspace);
-  await manager.publishTaskBranch(workspace);
+  await manager.publishTaskBranch(workspace, { expectedHeadSha: first.headSha });
   const newBase = await advanceSource(source);
   await assert.rejects(
     manager.sealCandidate(workspace, { issueNumber: task.issueNumber, revision: task.revision }),
@@ -149,7 +172,7 @@ test('unexpected remote task-branch mutation is never overwritten', async () => 
   await git(source, ['update-ref', ref, newBase]);
   const pushesBefore = pushCalls(client).length;
   await assert.rejects(
-    manager.publishTaskBranch(workspace),
+    manager.publishTaskBranch(workspace, { expectedHeadSha: rebased.headSha }),
     (error) => {
       assert.ok(error instanceof PolicyError);
       assert.match(error.message, /unexpected head/u);
@@ -164,7 +187,7 @@ test('ambiguous push reconciles as success only after the exact intended remote 
   const { source, client, manager, task, workspace } = await fixture();
   const sealed = await createCandidate(manager, task, workspace);
   client.ambiguousNextPush = true;
-  const publication = await manager.publishTaskBranch(workspace);
+  const publication = await manager.publishTaskBranch(workspace, { expectedHeadSha: sealed.headSha });
   const ref = `refs/heads/${workspace.branch}`;
   assert.equal(publication.headSha, sealed.headSha);
   assert.equal(publication.reconciled, true);
@@ -172,13 +195,13 @@ test('ambiguous push reconciles as success only after the exact intended remote 
   assert.equal((await git(source, ['rev-parse', ref])).stdout.trim(), sealed.headSha);
 });
 
-test('already-converged remote task branch is idempotent and records the observed exact head without pushing again', async () => {
+test('already-converged exact remote state is idempotent for the same verified local head', async () => {
   const { client, manager, task, workspace } = await fixture();
   const sealed = await createCandidate(manager, task, workspace);
-  await manager.publishTaskBranch(workspace);
+  await manager.publishTaskBranch(workspace, { expectedHeadSha: sealed.headSha });
   workspace.taskBranchKnownRemoteHeads = [];
   const pushesBefore = pushCalls(client).length;
-  const publication = await manager.publishTaskBranch(workspace);
+  const publication = await manager.publishTaskBranch(workspace, { expectedHeadSha: sealed.headSha });
   assert.equal(publication.reconciled, true);
   assert.equal(publication.headSha, sealed.headSha);
   assert.deepEqual(workspace.taskBranchKnownRemoteHeads, [sealed.headSha]);
