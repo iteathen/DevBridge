@@ -62,6 +62,29 @@ function snapshot(workspace, { headSha = HEAD_A, dirty = false, changedFiles = [
   };
 }
 
+function priorState(snapshotValue, tests = []) {
+  return {
+    summary: null,
+    decisions: [],
+    provenance: [],
+    progress: ['candidate sealed'],
+    changedFiles: snapshotValue.changedFiles,
+    tests: [...tests],
+    git: {
+      branch: snapshotValue.branch,
+      baseSha: snapshotValue.baseSha,
+      publicationBaseSha: snapshotValue.publicationBaseSha,
+      headSha: snapshotValue.headSha,
+      dirty: snapshotValue.dirty
+    },
+    blockers: [],
+    nextStep: null,
+    outputTail: null,
+    receipt: null,
+    liveness: null
+  };
+}
+
 function driftingWorkspace({ reconciliationError = null } = {}) {
   const workspace = {
     repository: 'owner/repo',
@@ -161,6 +184,91 @@ test('model candidate is reverified after baseline rebase and stale test evidenc
   assert.equal(state.baselineReconciliation.history.length, 1);
 });
 
+test('restart from publishing rechecks baseline and re-enters verification before push', async () => {
+  const store = new MemoryStore();
+  const t = task();
+  const runId = `pp-${t.issueNumber}-${t.revision.slice(0, 16)}`;
+  const key = `run.owner/queue#${t.issueNumber}.${t.revision}`;
+  const workspace = {
+    repository: 'owner/repo',
+    repoDir: '/managed/repo',
+    worktreeDir: '/managed/run',
+    branch: BRANCH,
+    baseRef: 'origin/main',
+    baseSha: BASE_A,
+    publicationBaseSha: BASE_A,
+    publicationRewriteFromShas: []
+  };
+  const stale = snapshot(workspace, { headSha: HEAD_A });
+  await store.set(key, {
+    version: 1,
+    runId,
+    task: t,
+    stage: 'publishing',
+    turn: 1,
+    turnLimit: 3,
+    createdAt: new Date().toISOString(),
+    prior: priorState(stale, ['stale-pre-crash-test']),
+    workspace: structuredClone(workspace),
+    finalSnapshot: stale,
+    lastFeedbackCommentId: 0,
+    publication: { published: false },
+    transientRetry: null
+  });
+
+  let seals = 0;
+  let runs = 0;
+  let pushes = 0;
+  const workspaceManager = {
+    async prepareRun(_task, _runId, resume = {}) {
+      workspace.baseSha = resume.baseSha;
+      workspace.publicationBaseSha = resume.publicationBaseSha;
+      workspace.publicationRewriteFromShas = [...(resume.publicationRewriteFromShas ?? [])];
+      return workspace;
+    },
+    async snapshot() { return snapshot(workspace, { headSha: workspace.publicationBaseSha === BASE_A ? HEAD_A : HEAD_B }); },
+    async validate() { return snapshot(workspace, { headSha: workspace.publicationBaseSha === BASE_A ? HEAD_A : HEAD_B }); },
+    async sealCandidate() {
+      seals += 1;
+      if (seals === 1) {
+        workspace.publicationBaseSha = BASE_B;
+        workspace.publicationRewriteFromShas = [HEAD_A];
+        throw new BaselineReverificationRequiredError('baseline advanced while publication was interrupted', {
+          changed: true,
+          fromBaseSha: BASE_A,
+          toBaseSha: BASE_B,
+          fromHeadSha: HEAD_A,
+          toHeadSha: HEAD_B
+        });
+      }
+      return snapshot(workspace, { headSha: HEAD_B });
+    },
+    async publishTaskBranch() { pushes += 1; return { branch: BRANCH, headSha: HEAD_B }; }
+  };
+  const coordinator = new RunCoordinator({
+    stateStore: store,
+    workspaceManager,
+    processRunner: { run: async () => { runs += 1; return completedRun('fresh verification after restart', ['fresh-post-restart-test']); } },
+    queueRepository: 'owner/queue',
+    tools: { fixture: profile },
+    defaultTool: 'fixture',
+    maxTurns: 3,
+    autoPushTaskBranches: true
+  });
+
+  const result = await coordinator.executeTask(t);
+  assert.equal(result.status, 'completed');
+  assert.equal(result.published, true);
+  assert.equal(result.publicationBaseSha, BASE_B);
+  assert.equal(seals, 2);
+  assert.equal(runs, 1);
+  assert.equal(pushes, 1);
+  const state = await store.get(key);
+  assert.deepEqual(state.prior.tests, ['fresh-post-restart-test']);
+  assert.equal(state.workspace.baseSha, BASE_A);
+  assert.equal(state.workspace.publicationBaseSha, BASE_B);
+});
+
 test('deterministic controller plan re-executes after a successful baseline rebase', async () => {
   const store = new MemoryStore();
   const drift = driftingWorkspace();
@@ -220,7 +328,6 @@ test('upstream history rewrite checkpoints instead of failing or looping', async
     maxTurns: 3
   });
 
-  const t = task();
   const result = await coordinator.executeTask(t);
   assert.equal(result.status, 'waiting-feedback');
   assert.equal(result.waiting, true);
