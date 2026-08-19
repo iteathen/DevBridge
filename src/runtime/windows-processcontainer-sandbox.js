@@ -246,7 +246,7 @@ export function windowsProcessContainerNetworkPolicy(network) {
       enforcementMode: 'both',
       allowLocalNetwork: false,
     },
-    capabilities: ['internetClient'],
+    capabilities: ['internetClient', 'registryRead'],
   };
 }
 
