@@ -3,6 +3,7 @@ import path from 'node:path';
 import { PolicyError } from '../errors.js';
 import { expandProfileArgs } from './cli-profile.js';
 import { resolveExecutable } from './executable-resolver.js';
+import { applyChildProcessPriority } from './process-priority.js';
 import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
 import { WORKER_CONTEXT_FILE, WORKER_RESULT_FILE } from './worker-exchange.js';
 
@@ -113,6 +114,8 @@ export class ProcessRunner {
   #exchange;
   #sandboxProvider;
   #trustedReadRootsByProfile;
+  #processPriority;
+  #setPriority;
 
   constructor({
     executableResolver = resolveExecutable,
@@ -120,6 +123,8 @@ export class ProcessRunner {
     workerExchange = null,
     sandboxProvider = null,
     trustedReadRootsByProfile = {},
+    processPriority = 'below-normal',
+    setPriority = undefined,
   } = {}) {
     this.#resolver = executableResolver;
     this.#sourceEnv = sourceEnv;
@@ -128,6 +133,8 @@ export class ProcessRunner {
     this.#trustedReadRootsByProfile = Object.fromEntries(
       Object.entries(trustedReadRootsByProfile).map(([name, roots]) => [name, [...roots]]),
     );
+    this.#processPriority = processPriority;
+    this.#setPriority = setPriority;
   }
 
   #turnIdentity(projectDir, runDir) {
@@ -159,6 +166,7 @@ export class ProcessRunner {
       workerContextFile: mailbox.workerContextFile,
       workerResultFile: mailbox.workerResultFile,
       sandbox: null,
+      processPriority: null,
     };
   }
 
@@ -218,6 +226,13 @@ export class ProcessRunner {
       prepared.args,
       containedSpawnOptions({ cwd: prepared.cwd, env: prepared.env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }),
     );
+    let processPriority;
+    try {
+      processPriority = await applyChildProcessPriority(child, this.#processPriority, { setPriority: this.#setPriority });
+    } catch (error) {
+      await terminateProcessTree(child);
+      throw error;
+    }
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
     let outputTruncated = false;
@@ -259,6 +274,7 @@ export class ProcessRunner {
       workerContextFile: mailbox.workerContextFile,
       workerResultFile: mailbox.workerResultFile,
       sandbox: prepared.evidence,
+      processPriority,
     };
   }
 }

@@ -9,10 +9,10 @@ import { runDaemon } from './app/daemon.js';
 import { createRuntime } from './app/runtime.js';
 import { chatHandoffSeed, chatHandoffStatus } from './app/chat-handoff.js';
 import { PolicyError } from './errors.js';
-import { daemonStatus, stopDaemon } from './runtime/daemon-lock.js';
+import { daemonStatus, pauseDaemon, resumeDaemon, stopDaemon } from './runtime/daemon-lock.js';
 
 function usage() {
-  console.error('Usage: patch-poller <doctor|poll-once|run-once|daemon|status|stop|restart|handoff-status|handoff-seed|handoff-project> --config <path> [--repository owner/name] [--issue number]');
+  console.error('Usage: patch-poller <doctor|poll-once|run-once|daemon|status|pause|resume|stop|restart|handoff-status|handoff-seed|handoff-project> --config <path> [--repository owner/name] [--issue number]');
 }
 
 function optionValue(argv, name) {
@@ -95,6 +95,18 @@ async function main() {
   }
   if (command === 'status') {
     console.log(JSON.stringify(await daemonStatus(daemonLockPath(config)), null, 2));
+    return;
+  }
+  if (command === 'pause') {
+    const result = await pauseDaemon(daemonLockPath(config));
+    console.log(JSON.stringify(result, null, 2));
+    if (result.activeLock && !result.paused) process.exitCode = 3;
+    return;
+  }
+  if (command === 'resume') {
+    const result = await resumeDaemon(daemonLockPath(config));
+    console.log(JSON.stringify(result, null, 2));
+    if (result.activeLock && !result.resumed) process.exitCode = 3;
     return;
   }
   if (command === 'stop') {

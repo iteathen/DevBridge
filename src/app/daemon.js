@@ -2,12 +2,31 @@ import path from 'node:path';
 import { RateLimitError } from '../errors.js';
 import {
   acquireDaemonLock,
+  acknowledgeDaemonPause,
+  clearDaemonPauseAcknowledgement,
   consumeDaemonStopRequest,
-  waitForDaemonStopRequest,
+  hasDaemonPauseRequest,
+  waitForDaemonControlRequest,
+  waitForDaemonResumeOrStop,
 } from '../runtime/daemon-lock.js';
 import { createRuntime } from './runtime.js';
 import { reportActiveRunRuntimeError } from './runtime-error-report.js';
 import { runCycle } from './run-once.js';
+
+async function honorPauseAtBoundary(lockPath, lockRecord, signal, onEvent) {
+  if (!(await hasDaemonPauseRequest(lockPath, lockRecord))) return null;
+  const acknowledged = await acknowledgeDaemonPause(lockPath, lockRecord);
+  if (!acknowledged) return null;
+  onEvent({ type: 'daemon-paused', at: new Date().toISOString() });
+  try {
+    const result = await waitForDaemonResumeOrStop(lockPath, lockRecord, signal);
+    if (result === 'resumed') onEvent({ type: 'daemon-resumed', at: new Date().toISOString() });
+    if (result === 'stop-requested') onEvent({ type: 'daemon-stop-requested', at: new Date().toISOString() });
+    return result;
+  } finally {
+    await clearDaemonPauseAcknowledgement(lockPath, lockRecord);
+  }
+}
 
 export async function runDaemon(config, {
   env = process.env,
@@ -27,6 +46,10 @@ export async function runDaemon(config, {
         onEvent({ type: 'daemon-stop-requested', at: new Date().toISOString() });
         break;
       }
+
+      const pauseResult = await honorPauseAtBoundary(lockPath, lockRecord, signal, onEvent);
+      if (pauseResult === 'stop-requested' || pauseResult === 'signal') break;
+      if (signal?.aborted) break;
 
       let delay = config.github.pollIntervalMs;
       try {
@@ -63,13 +86,13 @@ export async function runDaemon(config, {
       }
 
       if (!signal?.aborted) {
-        const stopRequested = await waitForDaemonStopRequest(
+        const control = await waitForDaemonControlRequest(
           lockPath,
           lockRecord,
           Math.max(1000, delay),
           signal,
         );
-        if (stopRequested) {
+        if (control === 'stop-requested') {
           onEvent({ type: 'daemon-stop-requested', at: new Date().toISOString() });
           break;
         }
