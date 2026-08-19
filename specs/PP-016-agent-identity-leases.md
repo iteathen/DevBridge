@@ -74,10 +74,10 @@ A daemon may acquire a task revision only when one of these is true:
 
 1. the lease ref does not exist and creation succeeds with an explicit empty expected value;
 2. the current verified lease is `released` and replacement succeeds against its exact commit SHA;
-3. the current verified active lease is owned by the same persistent identity, allowing local restart/reconciliation, and replacement succeeds against its exact commit SHA;
+3. the current verified active lease is owned by the same persistent identity and either the signed session ID is the current session or the caller already holds PATCH-POLLER's exclusive local daemon lock for that identity/state root, and replacement succeeds against the exact commit SHA;
 4. the current verified active lease is owned by a trusted peer and is expired beyond the configured clock-skew margin, and replacement succeeds against its exact commit SHA.
 
-An unexpired active lease owned by another trusted peer defers the task. Deferral is normal coordination, not a task failure.
+An unexpired active lease owned by another trusted peer defers the task. An unexpired active lease owned by the same persistent key but a different session also defers unless the current control path has already proved local singleton ownership with the daemon lock. A shared private key alone is never sufficient proof that the previous local process is gone. Deferral is normal coordination, not a task failure.
 
 Each successful acquisition/renewal advances the fencing epoch and records the exact predecessor SHA. The currently observed lease commit SHA plus epoch are the fencing identity for the local claim.
 
@@ -98,7 +98,7 @@ This is a lease/fencing system, not a claim of perfect exactly-once computation 
 
 Terminal completion, cancellation, or handled failure should transition an owned lease to a signed `released` state with CAS rather than deleting the ref. Keeping a final transition avoids an ABA-style absent/ref-recreated ambiguity and preserves bounded forensic ancestry for that task revision.
 
-If the daemon crashes before release, TTL expiry is the recovery path.
+If the daemon crashes before release, TTL expiry is the general recovery path. A replacement daemon using the same persistent identity may reconcile the unexpired lease immediately only after it has acquired PATCH-POLLER's exclusive local daemon lock, proving that a second compliant daemon using that state root is not concurrently active. Non-exclusive one-shot execution does not receive this shortcut and must respect the existing session lease until expiry/release.
 
 If release loses a CAS race, PATCH-POLLER must not overwrite the successor. The terminal local run remains terminal; remote lease evidence is reported as reconciled/lost rather than force-corrected.
 
@@ -136,6 +136,8 @@ Configuration validation must require:
 - bounded safe handle;
 - bounded valid peer public-key encodings without duplicate fingerprints.
 
+The same-identity takeover permission is not configuration and must not be set by task/repository/model input. It is an in-process control fact supplied only by the daemon path after the local singleton lock has been acquired.
+
 ## Required tests
 
 Tests must prove at minimum:
@@ -149,10 +151,10 @@ Tests must prove at minimum:
 - renewal/reclaim uses the exact observed predecessor SHA;
 - simulated competing updates cause one contender to lose CAS and re-observe rather than overwrite;
 - unexpired peer lease defers; expired trusted peer lease may be reclaimed after skew;
-- same persistent identity can reconcile after daemon restart without waiting for TTL;
+- same persistent identity under a different session defers without singleton proof and may reconcile immediately only under the daemon's already-held exclusive local lock;
 - heartbeat advances the lease and a definite lost CAS fences/aborts the local claim;
 - expiry fences a local claim even when renewal failed ambiguously;
 - terminal release is signed/CAS-updated rather than blind deletion;
 - coordination-enabled candidate branches include the full agent fingerprint while disabled mode retains legacy names;
 - lease loss prevents subsequent worker invocation, sealing, and publication effects;
-- no task/model/repository field can select a peer key, lease repository, lease ref, expected SHA, or force mode.
+- no task/model/repository field can select a peer key, lease repository, lease ref, expected SHA, force mode, or same-identity takeover permission.
