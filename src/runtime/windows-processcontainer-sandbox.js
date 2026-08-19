@@ -157,6 +157,41 @@ async function canonicalWorkspaceDescendant(
   return canonical;
 }
 
+async function canonicalReadRoot(workspaceRoot, workspaceCanonical, candidate) {
+  const resolved = path.resolve(candidate);
+  if (isWithin(workspaceRoot, resolved) || isWithin(workspaceCanonical, resolved)) {
+    return canonicalWorkspaceDescendant(
+      workspaceRoot,
+      workspaceCanonical,
+      resolved,
+      'sandbox read root',
+    );
+  }
+  return canonicalExisting(resolved, 'sandbox read root');
+}
+
+async function canonicalProtectedRoots(values, workspaceRoot, workspaceCanonical) {
+  const roots = [];
+  for (const value of values) {
+    const resolved = path.resolve(value);
+    if (!(await exists(resolved))) {
+      roots.push(resolved);
+      continue;
+    }
+    if (isWithin(workspaceRoot, resolved) || isWithin(workspaceCanonical, resolved)) {
+      roots.push(await canonicalWorkspaceDescendant(
+        workspaceRoot,
+        workspaceCanonical,
+        resolved,
+        'sandbox protected root',
+      ));
+      continue;
+    }
+    roots.push(await realpath(resolved));
+  }
+  return dedupePaths(roots);
+}
+
 export async function canonicalizeWindowsWorkspacePath(
   workspaceRoot,
   candidate,
@@ -164,6 +199,11 @@ export async function canonicalizeWindowsWorkspacePath(
 ) {
   const workspaceCanonical = await canonicalWorkspaceRoot(workspaceRoot);
   return canonicalWorkspaceDescendant(workspaceRoot, workspaceCanonical, candidate, name, { directory });
+}
+
+export async function canonicalizeWindowsReadRootPath(workspaceRoot, candidate) {
+  const workspaceCanonical = await canonicalWorkspaceRoot(workspaceRoot);
+  return canonicalReadRoot(workspaceRoot, workspaceCanonical, candidate);
 }
 
 export function createWindowsProcessContainerId() {
@@ -280,12 +320,17 @@ function overlapsProtectedRoot(candidate, protectedRoots) {
     isWithin(candidate, protectedRoot) || isWithin(protectedRoot, candidate));
 }
 
-async function canonicalReadRoots(values, protectedRoots) {
+async function canonicalReadRoots(values, protectedRoots, workspaceRoot, workspaceCanonical) {
   const roots = [];
+  const protectedCanonicalRoots = await canonicalProtectedRoots(
+    protectedRoots,
+    workspaceRoot,
+    workspaceCanonical,
+  );
   for (const value of values) {
     if (typeof value !== 'string' || value.trim() === '' || !(await exists(value))) continue;
-    const canonical = await canonicalExisting(value, 'sandbox read root');
-    if (overlapsProtectedRoot(canonical, protectedRoots)) {
+    const canonical = await canonicalReadRoot(workspaceRoot, workspaceCanonical, value);
+    if (overlapsProtectedRoot(canonical, protectedCanonicalRoots)) {
       throw new PolicyError(`sandbox read root overlaps DevBridge control state: ${canonical}`);
     }
     roots.push(canonical);
@@ -399,7 +444,12 @@ export class WindowsProcessContainerSandboxProvider {
     const requestedReadRoots = [path.dirname(targetExecutable), ...localToolRoots(env)];
     if (sandbox.exposeConfiguredReadRoots !== false) requestedReadRoots.push(...this.#externalReadRoots);
     requestedReadRoots.push(...(sandbox.trustedReadRoots ?? []));
-    const readRoots = await canonicalReadRoots(requestedReadRoots, protectedRoots);
+    const readRoots = await canonicalReadRoots(
+      requestedReadRoots,
+      protectedRoots,
+      this.#workspaceRoot,
+      workspace,
+    );
 
     const readwritePaths = [project, scratch];
     const readonlyPaths = [...readRoots];
