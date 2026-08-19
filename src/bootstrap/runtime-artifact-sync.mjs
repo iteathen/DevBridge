@@ -7,6 +7,10 @@ const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
 
 function fail(message) { throw new Error(message); }
 
+function compareNames(left, right) {
+  return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
+}
+
 function appendField(hash, name, value) {
   const nameBytes = Buffer.from(String(name), 'utf8');
   const valueBytes = Buffer.isBuffer(value) ? value : Buffer.from(String(value), 'utf8');
@@ -30,7 +34,7 @@ export function runtimeArtifactSha256Sync(runtimeDir, {
 
   function walk(directory, prefix = '') {
     const entries = readdirSync(directory, { withFileTypes: true });
-    entries.sort((a, b) => a.name.localeCompare(b.name));
+    entries.sort(compareNames);
     for (const entry of entries) {
       if (prefix === '' && entry.name === '.git') continue;
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
