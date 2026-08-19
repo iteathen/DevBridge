@@ -131,6 +131,9 @@ export class GitTaskLeaseStore {
       if (pushed.timedOut) throw new GitCommandError('task lease CAS push timed out and ownership could not be reconciled', { ...pushed, cause: error });
       throw new GitCommandError('task lease CAS push failed and ownership could not be reconciled', { ...pushed, cause: error });
     }
+    if (current.commitSha === commitSha) {
+      return { updated: true, reconciled: true, ref, commitSha, envelope };
+    }
     if (current.commitSha !== expectedSha) {
       return { updated: false, reason: 'cas-lost', ref, expectedSha, attemptedSha: commitSha, current };
     }
