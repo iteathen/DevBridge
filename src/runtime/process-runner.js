@@ -45,6 +45,11 @@ function unwrapSingleJsonFence(text) {
   return match ? match[1].trim() : text;
 }
 
+function abortedError(signal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  return new PolicyError('worker execution aborted by the control plane');
+}
+
 export function parseResultJsonText(text) {
   let normalized = String(text);
   if (normalized.charCodeAt(0) === 0xFEFF) normalized = normalized.slice(1);
@@ -143,6 +148,7 @@ export class ProcessRunner {
       exitCode: null,
       signal: null,
       timedOut: false,
+      aborted: false,
       outputTruncated: false,
       stdout: '',
       stderr: '',
@@ -156,7 +162,8 @@ export class ProcessRunner {
     };
   }
 
-  async run({ profile, projectDir, runDir, runId, context }) {
+  async run({ profile, projectDir, runDir, runId, context, signal = null }) {
+    if (signal?.aborted) throw abortedError(signal);
     if (!this.#exchange) throw new PolicyError('worker execution requires a control-plane-owned worker exchange');
     if (!this.#sandboxProvider || typeof this.#sandboxProvider.prepareExecution !== 'function') {
       throw new PolicyError('worker execution requires a verified OS isolation provider');
@@ -171,6 +178,7 @@ export class ProcessRunner {
     const { projectRoot, turnId } = this.#turnIdentity(projectDir, runDir);
     const toolContext = { ...context, bridge: toolBridge(runId, WORKER_RESULT_FILE) };
     const mailbox = await this.#exchange.prepareTurn({ runId, turnId, context: toolContext });
+    if (signal?.aborted) throw abortedError(signal);
 
     const executable = await this.#resolver(profile.executable, this.#sourceEnv);
     const args = expandProfileArgs(profile.args, {
@@ -203,6 +211,7 @@ export class ProcessRunner {
     if (!prepared?.evidence?.verified) {
       throw new PolicyError('worker execution refused because the configured OS isolation provider is not verified');
     }
+    if (signal?.aborted) throw abortedError(signal);
 
     const child = spawn(
       prepared.executable,
@@ -217,10 +226,20 @@ export class ProcessRunner {
     if (stdin != null) child.stdin.end(stdin); else child.stdin.end();
 
     let timedOut = false;
+    let aborted = false;
     let termination = null;
-    const timer = setTimeout(() => { timedOut = true; termination = terminateProcessTree(child); }, profile.timeoutMs);
+    const terminate = () => { termination ??= terminateProcessTree(child); };
+    const onAbort = () => { aborted = true; terminate(); };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    const timer = setTimeout(() => { timedOut = true; terminate(); }, profile.timeoutMs);
     timer.unref?.();
-    const exit = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', (code, signal) => resolve({ code, signal })); }).finally(async () => { clearTimeout(timer); if (termination) await termination; });
+    const exit = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', (code, exitSignal) => resolve({ code, signal: exitSignal })); })
+      .finally(async () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        if (termination) await termination;
+      });
 
     const consumed = await consumeMailboxResult(mailbox);
     return {
@@ -229,6 +248,7 @@ export class ProcessRunner {
       exitCode: exit.code,
       signal: exit.signal,
       timedOut,
+      aborted,
       outputTruncated,
       stdout: stdout.toString('utf8'),
       stderr: stderr.toString('utf8'),
