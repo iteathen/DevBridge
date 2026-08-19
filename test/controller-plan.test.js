@@ -102,3 +102,53 @@ test('generic controller executor materializes a multi-file project, runs static
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('CMake and CTest adapters explicitly project controller-owned scratch through the repository sandbox', async () => {
+  const projectDir = path.join(os.tmpdir(), 'devbridge-cmake-sandbox-fixture', 'project');
+  const scratchRoot = path.join(path.dirname(projectDir), '.devbridge-scratch-fixture');
+  const calls = [];
+  const toolchainRegistry = {
+    has(name) { return name === 'cmake' || name === 'ctest'; },
+    async resolve(name) {
+      return { name, executable: path.join(projectDir, 'tools', name === 'ctest' ? 'ctest' : 'cmake') };
+    },
+  };
+  const registry = createCoreOperationRegistry({ toolchainRegistry });
+  const processRunner = {
+    async run(request) {
+      calls.push(request);
+      return {
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        outputTruncated: false,
+        stdout: '',
+        stderr: '',
+      };
+    },
+  };
+  const scratch = {
+    root: scratchRoot,
+    async directory(id) { return path.join(scratchRoot, id); },
+  };
+  const context = { projectDir, processRunner, scratch };
+
+  await registry.execute('cmake.configure', { sourcePath: 'CMakeLists.txt', buildId: 'acceptance' }, context);
+  await registry.execute('cmake.build', { buildId: 'acceptance', target: 'marker' }, context);
+  await registry.execute('ctest.run', { buildId: 'acceptance' }, context);
+
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls.map((call) => call.operation), ['cmake.configure', 'cmake.build', 'ctest.run']);
+  for (const call of calls) {
+    assert.equal(call.executionClass, 'repository-code');
+    assert.deepEqual(call.sandbox, {
+      required: true,
+      projectDir,
+      scratchRoot,
+      network: 'deny',
+    });
+  }
+  assert.equal(calls[0].args.includes(path.join(scratchRoot, 'cmake-acceptance')), true);
+  assert.equal(calls[1].args.includes(path.join(scratchRoot, 'cmake-acceptance')), true);
+  assert.equal(calls[2].args.includes(path.join(scratchRoot, 'cmake-acceptance')), true);
+});
