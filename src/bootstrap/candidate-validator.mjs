@@ -134,18 +134,22 @@ export async function runSandboxedCandidateCommand({
       trustedReadRoots: [],
     },
   });
-  if (prepared?.evidence?.verified !== true) fail(`candidate ${label} did not receive verified sandbox evidence`);
-  const outcome = await capturePreparedExecution(prepared, { timeoutMs, spawnImpl });
-  if (outcome.timedOut || outcome.outputTruncated || outcome.exitCode !== 0) {
-    const detail = String(outcome.stderr || outcome.stdout || '').trim();
-    const reason = outcome.timedOut
-      ? 'timed out'
-      : outcome.outputTruncated
-        ? 'exceeded bounded output'
-        : `failed (exit ${outcome.exitCode ?? 'null'}, signal ${outcome.signal ?? 'none'})`;
-    fail(`candidate ${label} ${reason}${detail ? `: ${detail.slice(-4000)}` : ''}`);
+  try {
+    if (prepared?.evidence?.verified !== true) fail(`candidate ${label} did not receive verified sandbox evidence`);
+    const outcome = await capturePreparedExecution(prepared, { timeoutMs, spawnImpl });
+    if (outcome.timedOut || outcome.outputTruncated || outcome.exitCode !== 0) {
+      const detail = String(outcome.stderr || outcome.stdout || '').trim();
+      const reason = outcome.timedOut
+        ? 'timed out'
+        : outcome.outputTruncated
+          ? 'exceeded bounded output'
+          : `failed (exit ${outcome.exitCode ?? 'null'}, signal ${outcome.signal ?? 'none'})`;
+      fail(`candidate ${label} ${reason}${detail ? `: ${detail.slice(-4000)}` : ''}`);
+    }
+    return { outcome, sandbox: prepared.evidence };
+  } finally {
+    if (typeof prepared?.cleanup === 'function') await prepared.cleanup();
   }
-  return { outcome, sandbox: prepared.evidence };
 }
 
 export async function validateRuntimeCandidate(paths, runtime, _legacyRunner = null, {
