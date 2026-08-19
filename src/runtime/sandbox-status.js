@@ -88,3 +88,54 @@ export function verifiedBubblewrapStatus({ requestedProvider }) {
     reason: null,
   };
 }
+
+export function pendingWindowsProcessContainerStatus({ requestedProvider }) {
+  return {
+    requestedProvider,
+    provider: 'windows-processcontainer',
+    platform: process.platform,
+    available: null,
+    verified: false,
+    verification: 'not-probed',
+    repositoryCodeExecution: false,
+    filesystem: 'unverified',
+    network: 'unverified',
+    gitAdministrativeState: 'unverified',
+    processTree: 'processcontainer-job-plus-parent-runner',
+    boundaryProbe: boundaryProbe(),
+    verifiedAt: null,
+    reason: null,
+  };
+}
+
+export function verifiedWindowsProcessContainerStatus({ requestedProvider, observations = null }) {
+  return {
+    requestedProvider,
+    provider: 'windows-processcontainer',
+    platform: process.platform,
+    available: true,
+    verified: true,
+    verification: 'boundary-probe',
+    repositoryCodeExecution: true,
+    filesystem: 'project-and-run-scratch-write-only',
+    network: 'denied',
+    gitAdministrativeState: 'read-only-or-unreachable',
+    processTree: 'processcontainer-job-plus-parent-runner',
+    boundaryProbe: boundaryProbe({
+      attempted: true,
+      verified: true,
+      observations: observations ?? {
+        projectWriteAllowed: true,
+        runScratchWriteAllowed: true,
+        arbitraryOutsideReadDenied: true,
+        arbitraryOutsideWriteDenied: true,
+        controlStateReadDenied: true,
+        gitAdministrativeWriteDenied: true,
+        networkEgressDenied: true,
+        descendantProcessContained: true,
+      },
+    }),
+    verifiedAt: new Date().toISOString(),
+    reason: null,
+  };
+}
