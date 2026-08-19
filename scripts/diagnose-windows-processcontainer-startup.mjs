@@ -86,12 +86,20 @@ function childEnvironment(scratch, source = process.env) {
   return Object.entries(values).map(([name, value]) => `${name}=${String(value)}`);
 }
 
-function runVariant({ sandboxExecutable, label, target, args, leastPrivilege, uiDisabled = true }) {
+function runVariant({
+  sandboxExecutable,
+  label,
+  target,
+  args,
+  leastPrivilege,
+  capabilities = [],
+  uiDisabled = true,
+}) {
   const scratch = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'devbridge-mxc-startup-')));
   try {
     const targetExecutable = canonicalExisting(target);
     if (!targetExecutable) {
-      return { label, leastPrivilege, uiDisabled, status: null, error: `target missing: ${target}` };
+      return { label, leastPrivilege, capabilities, uiDisabled, status: null, error: `target missing: ${target}` };
     }
     const config = {
       version: '0.7.0-alpha',
@@ -118,7 +126,7 @@ function runVariant({ sandboxExecutable, label, target, args, leastPrivilege, ui
       ui: { disable: uiDisabled, clipboard: 'none', injection: false },
       processContainer: {
         leastPrivilege,
-        capabilities: [],
+        capabilities,
         ui: {
           isolation: 'container',
           desktopSystemControl: false,
@@ -140,6 +148,7 @@ function runVariant({ sandboxExecutable, label, target, args, leastPrivilege, ui
     return {
       label,
       leastPrivilege,
+      capabilities,
       uiDisabled,
       status: outcome.status,
       signal: outcome.signal ?? null,
@@ -191,6 +200,15 @@ function main() {
   });
   results.push(nodeLpac);
   if (nodeLpac.status !== 0) {
+    results.push(runVariant({
+      sandboxExecutable,
+      label: 'node-lpac-registry-read',
+      target: nodeTarget,
+      args: ['-e', "process.stdout.write('node-start-ok')"],
+      leastPrivilege: true,
+      capabilities: ['registryRead'],
+    }));
+
     const nodeStandard = runVariant({
       sandboxExecutable,
       label: 'node-standard-appcontainer',
