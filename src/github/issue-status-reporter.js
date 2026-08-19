@@ -25,14 +25,30 @@ export class IssueStatusReporter {
   #progressIntervalMs;
   #maxCommentBytes;
   #secrets;
+  #inventoryRefProvider;
 
-  constructor({ client, stateStore, queueRepository, progressIntervalMs = 300_000, maxCommentBytes = 48_000, secretValues = [] }) {
+  constructor({
+    client,
+    stateStore,
+    queueRepository,
+    progressIntervalMs = 300_000,
+    maxCommentBytes = 48_000,
+    secretValues = [],
+    inventoryRefProvider = null,
+  }) {
     this.#client = client;
     this.#stateStore = stateStore;
     this.#queueRepository = queueRepository;
     this.#progressIntervalMs = progressIntervalMs;
     this.#maxCommentBytes = maxCommentBytes;
     this.#secrets = secretValues;
+    this.#inventoryRefProvider = typeof inventoryRefProvider === 'function' ? inventoryRefProvider : null;
+  }
+
+  #capsuleWithInventory(capsule) {
+    const reference = this.#inventoryRefProvider?.() ?? null;
+    if (!reference) return capsule;
+    return { ...capsule, toolInventory: reference };
   }
 
   async publish({ issueNumber, runId, revision, stage, summary, capsule, terminal = false, force = false }) {
@@ -45,7 +61,8 @@ export class IssueStatusReporter {
     }
 
     const sequence = (previous.sequence ?? 0) + 1;
-    let fitted = fitContextCapsule(capsule, Math.max(4096, this.#maxCommentBytes - 4096));
+    const contextualCapsule = this.#capsuleWithInventory(capsule);
+    let fitted = fitContextCapsule(contextualCapsule, Math.max(4096, this.#maxCommentBytes - 4096));
     let body = renderBody({ runId, revision, stage, summary, capsule: fitted, sequence });
     body = redactText(body, this.#secrets);
 
