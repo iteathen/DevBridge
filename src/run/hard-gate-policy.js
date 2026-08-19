@@ -31,10 +31,21 @@ function owners(paths) {
   return result;
 }
 
+function controlPlaneAuthority(file) {
+  return file === 'src/app/runtime.js' ||
+    file === 'src/run/run-coordinator.js' ||
+    file === 'src/run/controller-plan.js' ||
+    file === 'src/run/controller-plan-executor.js' ||
+    /^src\/run\/(?:decision-gated-coordinator|hard-gate-controller|hard-gate-policy|candidate-subject|decision-scope)\.js$/u.test(file) ||
+    /^src\/runtime\/(?:deterministic-operation-registry|toolchain-registry|builtin-tool-profiles)\.js$/u.test(file) ||
+    /^src\/state\/(?:json-state-store|state-file)\.js$/u.test(file);
+}
+
 function securityCapability(file) {
   return file === 'AGENTS.md' ||
     file === 'src/config.js' ||
     file.startsWith('src/security/') ||
+    controlPlaneAuthority(file) ||
     /^src\/runtime\/(?:.*sandbox.*|process-runner\.js|deterministic-process-runner\.js|cli-profile\.js|profile-security\.js|worker-exchange\.js|deterministic-operation-security\.js)$/u.test(file) ||
     file === 'specs/PP-003-security.md';
 }
@@ -54,7 +65,10 @@ function gitGithubPublication(file) {
 }
 
 function workflowRelease(file) {
-  return file.startsWith('.github/workflows/');
+  return file.startsWith('.github/') ||
+    file === 'package.json' ||
+    file === 'package-lock.json' ||
+    file === 'npm-shrinkwrap.json';
 }
 
 function publicContract(file) {
@@ -80,7 +94,7 @@ export function classifySensitiveCandidate(changedFiles, {
   matched('security-capability', securityCapability, 'security/capability policy or enforcement boundary');
   matched('bootstrap-self-update', bootstrapSelfUpdate, 'bootstrap, self-update, or runtime supervision boundary');
   matched('git-github-publication', gitGithubPublication, 'Git/GitHub credential, provenance, or publication boundary');
-  matched('workflow-release', workflowRelease, 'workflow/release automation');
+  matched('workflow-release', workflowRelease, 'workflow, release, or package execution metadata');
   matched('public-contract', publicContract, 'normative specification/public contract');
 
   const ownerCount = owners(paths).size;
