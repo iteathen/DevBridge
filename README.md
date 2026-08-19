@@ -12,7 +12,7 @@ Current mainline capabilities include:
 - managed Git repositories and isolated task worktrees;
 - deterministic controller plans and locally registered build/test/tool operations;
 - optional coding-model adapters, disabled by default;
-- verified Linux/Bubblewrap containment for untrusted proposal workers and repository-code execution;
+- verified Linux/Bubblewrap and Windows/ProcessContainer containment for untrusted proposal workers and repository-code execution;
 - durable run state, bounded context handoffs, restart recovery, and reconciliation;
 - DB-007 checkpoint-and-proceed human gates for consequential decisions;
 - candidate sealing and exact-head task-branch publication;
@@ -30,11 +30,11 @@ Remote task text, repository content, dependencies, model output, tool documenta
 
 `github.trustedActorIds` is a runner-local **remote development-job submission allowlist**, not a generic collaborator list. Task-author trust, decision authority, and coordination-peer trust are separate local policies.
 
-Untrusted proposal-worker and repository-code execution requires a verified outer OS sandbox. The built-in provider is Linux/Bubblewrap. Unsupported hosts fail closed for those execution classes rather than silently running with host authority.
+Untrusted proposal-worker and repository-code execution requires a verified outer OS sandbox. Linux uses Bubblewrap. Windows uses a ProcessContainer provider through a pinned Microsoft MXC runtime. A provider is not trusted merely because it is installed: DevBridge enables repository-code execution only after its own live filesystem/control-state/Git/network/process-tree boundary probe passes on that host.
 
 ## Install
 
-Requirements: Node.js 22.16.0 or newer and Git. Linux machines that execute untrusted project code also need Bubblewrap.
+Requirements: Node.js 22.16.0 or newer and Git. Linux machines that execute untrusted project code also need Bubblewrap. Windows sandbox prerequisites are provisioned automatically by the stage-0 launcher into the DevBridge-owned home.
 
 ### Linux
 
@@ -52,7 +52,7 @@ Copy/paste this command:
 New-Item -ItemType Directory -Force "$HOME\.devbridge\bin" | Out-Null; Invoke-WebRequest "https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs" -OutFile "$HOME\.devbridge\bin\devbridge.mjs"; node "$HOME\.devbridge\bin\devbridge.mjs"
 ```
 
-`devbridge.mjs` is a standalone stage-0 launcher. It uses only Node.js built-ins and the local `git` executable, materializes the fixed `iteathen/DevBridge` runtime under `~/.devbridge`, verifies the managed checkout/package shape, and then transfers control to the managed secure bootstrap.
+`devbridge.mjs` is a standalone stage-0 launcher. It uses only Node.js built-ins and the local `git` executable, materializes the fixed `iteathen/DevBridge` runtime under `~/.devbridge`, verifies the managed checkout/package shape, and then transfers control to the managed secure bootstrap. On Windows it also ensures the pinned ProcessContainer helper runtime is present under the DevBridge home; it does not add dependencies or generated files to the managed source checkout.
 
 On a fresh install, the managed bootstrap creates `~/.devbridge/config.json` from the safe example and exits. It does **not** silently enable execution. Review the local authorities first, then run:
 
@@ -61,7 +61,7 @@ node ~/.devbridge/bin/devbridge.mjs doctor
 node ~/.devbridge/bin/devbridge.mjs
 ```
 
-PowerShell users can use `$HOME\.devbridge\bin\devbridge.mjs` in the same commands.
+PowerShell users can use `$HOME\.devbridge\bin\devbridge.mjs` in the same commands. On Windows, `doctor` must report `windows-processcontainer`, `verified: true`, and repository-code execution available before untrusted repository/model work is admitted. If provisioning or the live canary fails, DevBridge remains fail-closed for those execution classes and reports the reason.
 
 See [`docs/setup.md`](docs/setup.md) for setup details.
 
@@ -156,7 +156,8 @@ Repository funding metadata is in `.github/FUNDING.yml`. Sponsorship helps cover
 Important explicit boundaries include:
 
 - per-installation task destination/dispatch authorization for shared team queues;
-- verified untrusted-code sandbox providers for Windows and other non-Linux hosts;
+- verified untrusted-code sandbox providers for non-Linux/non-Windows hosts;
+- Windows ProcessContainer support remains gated by the host's live DevBridge containment probe; install/probe success alone is not treated as security evidence;
 - first-class dependency-fetch/install/browser phases and package lifecycle-script isolation;
 - complete generic effect journaling for every possible remote mutation;
 - numeric GitHub repository-ID pinning and complete tool/profile identity evidence;
@@ -185,7 +186,7 @@ npm test
 node src/cli.js doctor --config config/devbridge.example.json
 ```
 
-CI runs the suite on Ubuntu and Windows, including the standalone-launcher regression and the DevBridge-only live-identity audit. Linux CI exercises the real Bubblewrap boundary; unsupported-platform behavior is tested fail-closed.
+CI runs the suite on Ubuntu and Windows, including the standalone-launcher regression and the DevBridge-only live-identity audit. Linux CI exercises the real Bubblewrap boundary. Windows CI provisions the pinned ProcessContainer runtime and requires the real deterministic and proposal-worker containment canaries to pass.
 
 ## License
 
