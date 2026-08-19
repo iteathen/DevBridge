@@ -74,8 +74,9 @@ For a PATCH-POLLER-owned task branch:
 
 - PATCH-POLLER first observes the exact remote branch head.
 - First creation uses an explicitly empty expected value with `--force-with-lease=<ref>:`.
-- If the remote already equals the local exact head, publication is treated as reconciled/idempotent.
-- A rewritten rebased candidate may replace a remote head only when that remote head is one of the exact locally recorded pre-rebase candidate heads for this run, using `--force-with-lease=<ref>:<expected-sha>`.
+- If the remote already equals the local exact head, publication is treated as reconciled/idempotent and that exact observed head may be retained as confirmed remote state.
+- A rewritten rebased candidate may replace a remote head only when that exact head was previously confirmed on the remote through PATCH-POLLER's own publication/reconciliation path, using `--force-with-lease=<ref>:<expected-sha>`.
+- Merely having the same commit locally, including as a pre-rebase candidate head, does not make an unexplained remote branch authoritative or overwriteable.
 - Any other remote head fails closed; PATCH-POLLER does not overwrite an unexplained branch mutation.
 - After push, PATCH-POLLER re-observes the branch and records success only if the remote exact head equals the intended local head. This allows recovery from an ambiguous transport result without blind retry.
 
@@ -85,7 +86,9 @@ No task/model/controller input may choose the force mode or expected remote SHA.
 
 PP-016 still fences these effects. Reconciliation, sealing, and publication occur through the lease-aware workspace boundary when coordination is enabled.
 
-PP-009 recovery evidence remains authoritative for ambiguous effects. A restart resumes with the immutable `baseSha`, persisted `publicationBaseSha`, and bounded known pre-rebase task heads; it observes before mutating rather than resetting to a remembered branch state.
+PP-009 recovery evidence remains authoritative for ambiguous effects. A restart resumes with the immutable `baseSha`, persisted `publicationBaseSha`, and a bounded set of exact task-branch heads that PATCH-POLLER previously confirmed remotely. It observes before mutating rather than resetting to a remembered branch state.
+
+An interrupted publication does not require trusting an unconfirmed intended head. On recovery, either the remote already equals the intended local head, which is reconciled idempotently without overwrite, or it still equals a previously confirmed predecessor head, which may be used as the explicit `force-with-lease` expectation. Any third state fails closed.
 
 ## Required tests
 
@@ -100,8 +103,10 @@ Tests must cover at least:
 - model verification evidence is cleared after rebase and another model turn is required before completion;
 - deterministic controller plans execute again after rebase and remain bounded by the existing turn window;
 - first task-branch publication uses an explicit empty expected remote value;
-- rebased branch rewrite uses the exact observed/recorded predecessor head;
+- rebased branch rewrite uses an exact previously confirmed remote predecessor head;
+- a merely local pre-rebase candidate head does not become task-branch rewrite authority;
 - unexpected remote branch mutation is not overwritten;
 - ambiguous push that nevertheless reached the exact intended head reconciles as success;
+- already-converged exact remote state can be recorded as confirmed without another push;
 - no-op publication is judged relative to `publicationBaseSha`, not the immutable start baseline;
 - existing PP-008 Git hardening and PP-016 lease fencing remain intact.
