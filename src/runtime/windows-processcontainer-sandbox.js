@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { access, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import process from 'node:process';
 import { PolicyError } from '../errors.js';
@@ -16,6 +17,8 @@ const MXC_SCHEMA_VERSION = '0.7.0-alpha';
 const MXC_DACL_MUTEX_WAIT_MS = 30_000;
 const MXC_PREREQUISITE_PROBE_TIMEOUT_MS = MXC_DACL_MUTEX_WAIT_MS + 5_000;
 const MXC_BOUNDARY_PROBE_TIMEOUT_MS = MXC_DACL_MUTEX_WAIT_MS + 10_000;
+const MAX_DENIED_TREE_ENTRIES = 4096;
+const WINDOWS_JOB_WRAPPER_SCRIPT = fileURLToPath(new URL('./windows-job-wrapper.ps1', import.meta.url));
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const CREDENTIAL_ENVIRONMENT = new Set([
   'DEVBRIDGE_GITHUB_TOKEN',
@@ -192,6 +195,39 @@ async function canonicalProtectedRoots(values, workspaceRoot, workspaceCanonical
   return dedupePaths(roots);
 }
 
+async function canonicalDeniedTree(
+  workspaceRoot,
+  workspaceCanonical,
+  candidate,
+  name,
+  { maxEntries = MAX_DENIED_TREE_ENTRIES } = {},
+) {
+  if (!Number.isInteger(maxEntries) || maxEntries < 1) throw new PolicyError(`${name} maximum entry bound is invalid`);
+  const root = await canonicalWorkspaceDescendant(workspaceRoot, workspaceCanonical, candidate, name);
+  const denied = [];
+
+  async function visit(current) {
+    if (denied.length >= maxEntries) {
+      throw new PolicyError(`${name} exceeds the bounded deny-tree entry limit`);
+    }
+    const info = await lstat(current);
+    if (info.isSymbolicLink()) throw new PolicyError(`${name} crosses filesystem indirection`);
+    const canonical = await canonicalWorkspaceDescendant(workspaceRoot, workspaceCanonical, current, name);
+    denied.push(canonical);
+    if (!info.isDirectory()) return;
+
+    const entries = await readdir(current, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) throw new PolicyError(`${name} crosses filesystem indirection`);
+      await visit(path.join(current, entry.name));
+    }
+  }
+
+  await visit(root);
+  return dedupePaths(denied);
+}
+
 export async function canonicalizeWindowsWorkspacePath(
   workspaceRoot,
   candidate,
@@ -204,6 +240,17 @@ export async function canonicalizeWindowsWorkspacePath(
 export async function canonicalizeWindowsReadRootPath(workspaceRoot, candidate) {
   const workspaceCanonical = await canonicalWorkspaceRoot(workspaceRoot);
   return canonicalReadRoot(workspaceRoot, workspaceCanonical, candidate);
+}
+
+export async function canonicalizeWindowsDeniedTreePaths(workspaceRoot, candidate, { maxEntries } = {}) {
+  const workspaceCanonical = await canonicalWorkspaceRoot(workspaceRoot);
+  return canonicalDeniedTree(
+    workspaceRoot,
+    workspaceCanonical,
+    candidate,
+    'sandbox denied tree',
+    maxEntries == null ? {} : { maxEntries },
+  );
 }
 
 export function createWindowsProcessContainerId() {
@@ -391,6 +438,13 @@ async function resolveWindowsSandboxExecutable(stateDirectory, env) {
   }
 }
 
+async function resolveWindowsPowerShell(env) {
+  const systemRoot = env.SystemRoot ?? env.SYSTEMROOT ?? env.WINDIR ?? 'C:\\Windows';
+  const candidate = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  if (!(await exists(candidate))) throw new PolicyError('Windows Job Object wrapper requires Windows PowerShell');
+  return canonicalExisting(candidate, 'Windows Job Object wrapper host');
+}
+
 export class WindowsProcessContainerSandboxProvider {
   #requestedProvider;
   #externalReadRoots;
@@ -489,7 +543,7 @@ export class WindowsProcessContainerSandboxProvider {
     const deniedPaths = [];
     const gitAdmin = path.join(project, '.git');
     if (await exists(gitAdmin)) {
-      deniedPaths.push(await canonicalWorkspaceDescendant(
+      deniedPaths.push(...await canonicalDeniedTree(
         this.#workspaceRoot,
         workspace,
         gitAdmin,
@@ -546,9 +600,20 @@ export class WindowsProcessContainerSandboxProvider {
       },
     };
 
+    const mxcArgs = ['--config-base64', Buffer.from(JSON.stringify(config), 'utf8').toString('base64')];
+    const wrapperHost = await resolveWindowsPowerShell(this.#env);
+    const wrappedArguments = Buffer.from(windowsCreateProcessCommandLine(mxcArgs), 'utf8').toString('base64');
     return {
-      executable: this.#resolvedExecutable,
-      args: ['--config-base64', Buffer.from(JSON.stringify(config), 'utf8').toString('base64')],
+      executable: wrapperHost,
+      args: [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', WINDOWS_JOB_WRAPPER_SCRIPT,
+        '-Executable', this.#resolvedExecutable,
+        '-ArgumentsBase64', wrappedArguments,
+      ],
       cwd: project,
       env: launcherEnvironment(this.#env),
       config,

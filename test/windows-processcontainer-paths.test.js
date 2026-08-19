@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import {
+  canonicalizeWindowsDeniedTreePaths,
   canonicalizeWindowsReadRootPath,
   canonicalizeWindowsWorkspacePath,
   createWindowsProcessContainerId,
@@ -133,6 +134,45 @@ test('read roots outside the workspace stay strict about filesystem indirection'
     await assert.rejects(
       () => canonicalizeWindowsReadRootPath(workspace, aliasedExternal),
       /(?:must not be|resolves through) filesystem indirection/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Git administrative deny tree covers existing descendants and rejects indirection', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-git-deny-tree-'));
+  try {
+    const workspace = path.join(root, 'workspace');
+    const gitAdmin = path.join(workspace, 'project', '.git');
+    const objects = path.join(gitAdmin, 'objects');
+    const config = path.join(gitAdmin, 'config');
+    const object = path.join(objects, 'fixture');
+    await mkdir(objects, { recursive: true });
+    await writeFile(config, 'sentinel\n');
+    await writeFile(object, 'object\n');
+
+    const denied = await canonicalizeWindowsDeniedTreePaths(workspace, gitAdmin);
+    const comparableDenied = new Set(denied.map(comparable));
+    for (const expected of [gitAdmin, objects, config, object]) {
+      assert.equal(comparableDenied.has(comparable(await realpath(expected))), true);
+    }
+
+    const outside = path.join(root, 'outside');
+    const redirect = path.join(gitAdmin, 'redirect');
+    await mkdir(outside);
+    try {
+      await directoryLink(outside, redirect);
+    } catch (error) {
+      if (error?.code === 'EPERM' || error?.code === 'EACCES') {
+        t.skip(`directory-link fixture unavailable on this host: ${error.code}`);
+        return;
+      }
+      throw error;
+    }
+    await assert.rejects(
+      () => canonicalizeWindowsDeniedTreePaths(workspace, gitAdmin),
+      /filesystem indirection/u,
     );
   } finally {
     await rm(root, { recursive: true, force: true });

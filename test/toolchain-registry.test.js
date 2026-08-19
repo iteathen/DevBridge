@@ -54,9 +54,14 @@ test('CMake operations derive argv locally and put build state only in managed s
     .register('ctest', async () => ({ executable: '/local/ctest', family: 'ctest' }));
   const registry = createCoreOperationRegistry({ toolchainRegistry: toolchains });
   const observed = [];
+  const projectDir = path.resolve('/project');
+  const scratchRoot = path.resolve('/managed-scratch');
   const context = {
-    projectDir: path.resolve('/project'),
-    scratch: { directory: async (id) => path.resolve('/managed-scratch', id) },
+    projectDir,
+    scratch: {
+      root: scratchRoot,
+      directory: async (id) => path.join(scratchRoot, id),
+    },
     processRunner: {
       run: async (request) => {
         observed.push(request);
@@ -75,9 +80,18 @@ test('CMake operations derive argv locally and put build state only in managed s
   await registry.execute('ctest.run', { buildId: 'release', config: 'Release' }, context);
 
   assert.deepEqual(observed[0].args, [
-    '-S', '.', '-B', path.resolve('/managed-scratch', 'cmake-release'), '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
+    '-S', '.', '-B', path.join(scratchRoot, 'cmake-release'), '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
   ]);
-  assert.deepEqual(observed[1].args, ['--build', path.resolve('/managed-scratch', 'cmake-release'), '--config', 'Release', '--target', 'all']);
-  assert.deepEqual(observed[2].args, ['--test-dir', path.resolve('/managed-scratch', 'cmake-release'), '--output-on-failure', '-C', 'Release']);
+  assert.deepEqual(observed[1].args, ['--build', path.join(scratchRoot, 'cmake-release'), '--config', 'Release', '--target', 'all']);
+  assert.deepEqual(observed[2].args, ['--test-dir', path.join(scratchRoot, 'cmake-release'), '--output-on-failure', '-C', 'Release']);
+  for (const request of observed) {
+    assert.equal(request.executionClass, 'repository-code');
+    assert.deepEqual(request.sandbox, {
+      required: true,
+      projectDir,
+      scratchRoot,
+      network: 'deny',
+    });
+  }
   assert.throws(() => registry.validate('cmake.configure', { buildId: 'x', arguments: ['--trace'] }), /parameter arguments is not allowed/u);
 });
