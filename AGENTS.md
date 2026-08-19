@@ -108,6 +108,23 @@ PP-016 is normative when more than one authorized PATCH-POLLER installation or p
 
 Read `specs/PP-016-agent-identity-leases.md` with PP-002, PP-003, PP-004, PP-005, PP-008, PP-009, and PP-010 when changing agent identity, shared-queue claiming, heartbeat/TTL behavior, task branch namespaces, process fencing, or lease recovery.
 
+## Baseline drift and publication reverification
+
+PP-017 is normative when an authorized task baseline may move while a run is in progress.
+
+- `baseSha` is immutable start-of-run evidence. A later fetch must never rewrite the historical baseline recorded in the task receipt.
+- `publicationBaseSha` is the separate exact baseline against which the current candidate is verified for publication. It begins at `baseSha` and may advance only through PATCH-POLLER's reconciliation path.
+- The run stays bound to the same authorized baseline ref/channel; a later default-branch change does not silently redirect an active task.
+- Only fast-forward upstream movement may be automatically reconciled. A baseline force-push/history rewrite checkpoints instead of being silently accepted.
+- Reconciliation starts from a sealed clean candidate and uses the hardened Git adapter. A failed rebase must be aborted and the exact pre-rebase candidate head restored before the controller proceeds.
+- A successful rebase invalidates earlier verification evidence. Model-assisted work requires a fresh bounded verification turn; deterministic controller plans replay their registered operations/assertions against the rebased worktree.
+- Changed-path checks, no-project-diff decisions, and publication evidence are relative to `publicationBaseSha`, while the original `baseSha` remains visible as historical evidence.
+- A rebase may rewrite a PATCH-POLLER-owned task branch only with an explicit expected remote head. First creation uses an explicitly empty expected value; later rewrite uses a locally recorded exact predecessor head. Blind force is forbidden.
+- Ambiguous task-branch publication is reconciled by re-observing the exact remote head. An unexplained remote head is never overwritten.
+- PP-016 fencing still governs reconciliation/sealing/publication effects when coordination is enabled.
+
+Read `specs/PP-017-baseline-drift-reverification.md` with PP-008, PP-009, PP-013, and PP-016 when changing task baselines, rebase behavior, post-rebase verification, no-op publication, or task-branch publication CAS.
+
 ## Human checkpoints
 
 PP-007 is normative for human-in-the-loop behavior.
@@ -166,6 +183,8 @@ When implementing local tool discovery, tool inventory/projection, dynamic opera
 
 When implementing multi-agent task coordination, persistent agent identity, shared queue leases, lease ref CAS transport, heartbeat/TTL recovery, agent branch namespaces, or lease-loss process fencing, read PP-016 together with PP-002, PP-003, PP-004, PP-005, PP-008, PP-009, and PP-010. PP-016 coordination evidence never creates task or capability authority.
 
+When implementing baseline-drift detection, automated rebase, post-rebase verification, publication-baseline tracking, or task-branch rewrite recovery, read PP-017 together with PP-008, PP-009, PP-013, and PP-016. The immutable start baseline and current publication baseline are different evidence and must not be conflated.
+
 ## Runtime scope
 
 The core runtime is Node.js and should prefer Node standard-library facilities. Do not introduce another language, a shell-dependent core path, or a third-party dependency without documenting why the ownership boundary needs it and what new supply-chain or portability cost it creates.
@@ -208,6 +227,10 @@ Boundary tests are mandatory for:
 - signed lease exact task/revision binding, time/epoch validation, explicit expected-SHA Git CAS, competing-writer reconciliation, and unknown-peer fail-closed behavior;
 - unexpired peer/local-session deferral, trusted expiry reclaim, and daemon-lock-qualified same-identity restart reconciliation;
 - lease heartbeat/fence/expiry behavior, child-process abort propagation, and prevention of stale sealing/publication effects;
-- full-fingerprint task branch namespacing with legacy compatibility when coordination is disabled.
+- full-fingerprint task branch namespacing with legacy compatibility when coordination is disabled;
+- immutable start-baseline evidence plus independently advancing publication-baseline evidence;
+- fast-forward-only baseline reconciliation, exact pre-rebase restoration after conflict, and history-rewrite checkpointing;
+- mandatory post-rebase model verification or deterministic-plan replay within bounded turn limits;
+- explicit expected-head task-branch CAS for first creation, rebased rewrite, ambiguous-effect reconciliation, and unexpected-remote refusal.
 
 A passing happy-path test alone is not sufficient for a capability boundary.
