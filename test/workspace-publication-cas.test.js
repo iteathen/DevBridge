@@ -74,13 +74,15 @@ test('first task-branch publication uses an explicitly empty expected remote hea
   assert.equal(pushes.length, 1);
   assert.ok(pushes[0].args.includes(`--force-with-lease=${ref}:`));
   assert.equal(publication.headSha, sealed.headSha);
+  assert.deepEqual(workspace.taskBranchKnownRemoteHeads, [sealed.headSha]);
   assert.equal((await git(source, ['rev-parse', ref])).stdout.trim(), sealed.headSha);
 });
 
-test('rebased task branch rewrite binds force-with-lease to the exact recorded predecessor head', async () => {
+test('rebased task branch rewrite binds force-with-lease to the exact confirmed remote predecessor head', async () => {
   const { source, client, manager, task, workspace } = await fixture();
   const first = await createCandidate(manager, task, workspace);
   await manager.publishTaskBranch(workspace);
+  assert.deepEqual(workspace.taskBranchKnownRemoteHeads, [first.headSha]);
   await advanceSource(source);
 
   await assert.rejects(
@@ -95,7 +97,40 @@ test('rebased task branch rewrite binds force-with-lease to the exact recorded p
   assert.equal(pushes.length, 2);
   assert.ok(pushes[1].args.includes(`--force-with-lease=${ref}:${first.headSha}`));
   assert.equal(publication.previousRemoteHeadSha, first.headSha);
+  assert.deepEqual(workspace.taskBranchKnownRemoteHeads, [first.headSha, rebased.headSha]);
   assert.equal((await git(source, ['rev-parse', ref])).stdout.trim(), rebased.headSha);
+});
+
+test('a local pre-rebase candidate head never becomes rewrite authority unless PATCH-POLLER confirmed it remotely', async () => {
+  const { source, client, manager, task, workspace } = await fixture();
+  const first = await createCandidate(manager, task, workspace);
+  assert.deepEqual(workspace.taskBranchKnownRemoteHeads, []);
+
+  const ref = `refs/heads/${workspace.branch}`;
+  await git(workspace.worktreeDir, ['push', 'origin', `${first.headSha}:${ref}`]);
+  assert.equal((await git(source, ['rev-parse', ref])).stdout.trim(), first.headSha);
+  assert.deepEqual(workspace.taskBranchKnownRemoteHeads, []);
+
+  await advanceSource(source);
+  await assert.rejects(
+    manager.sealCandidate(workspace, { issueNumber: task.issueNumber, revision: task.revision }),
+    BaselineReverificationRequiredError
+  );
+  const rebased = await manager.sealCandidate(workspace, { issueNumber: task.issueNumber, revision: task.revision });
+  assert.notEqual(rebased.headSha, first.headSha);
+  assert.deepEqual(workspace.taskBranchKnownRemoteHeads, []);
+
+  const pushesBefore = pushCalls(client).length;
+  await assert.rejects(
+    manager.publishTaskBranch(workspace),
+    (error) => {
+      assert.ok(error instanceof PolicyError);
+      assert.match(error.message, /unexpected head/u);
+      return true;
+    }
+  );
+  assert.equal(pushCalls(client).length, pushesBefore);
+  assert.equal((await git(source, ['rev-parse', ref])).stdout.trim(), first.headSha);
 });
 
 test('unexpected remote task-branch mutation is never overwritten', async () => {
@@ -133,16 +168,19 @@ test('ambiguous push reconciles as success only after the exact intended remote 
   const ref = `refs/heads/${workspace.branch}`;
   assert.equal(publication.headSha, sealed.headSha);
   assert.equal(publication.reconciled, true);
+  assert.deepEqual(workspace.taskBranchKnownRemoteHeads, [sealed.headSha]);
   assert.equal((await git(source, ['rev-parse', ref])).stdout.trim(), sealed.headSha);
 });
 
-test('already-converged remote task branch is idempotent and does not push again', async () => {
+test('already-converged remote task branch is idempotent and records the observed exact head without pushing again', async () => {
   const { client, manager, task, workspace } = await fixture();
   const sealed = await createCandidate(manager, task, workspace);
   await manager.publishTaskBranch(workspace);
+  workspace.taskBranchKnownRemoteHeads = [];
   const pushesBefore = pushCalls(client).length;
   const publication = await manager.publishTaskBranch(workspace);
   assert.equal(publication.reconciled, true);
   assert.equal(publication.headSha, sealed.headSha);
+  assert.deepEqual(workspace.taskBranchKnownRemoteHeads, [sealed.headSha]);
   assert.equal(pushCalls(client).length, pushesBefore);
 });
