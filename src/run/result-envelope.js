@@ -27,7 +27,7 @@ function serializedSize(value) {
 
 function toolFailure(summary, blocker, extra = {}) {
   return {
-    protocol: 'patch-poller/result-v1',
+    protocol: 'devbridge/result-v1',
     status: 'failed',
     summary,
     progress: [],
@@ -42,19 +42,19 @@ function toolFailure(summary, blocker, extra = {}) {
 
 function protocolFailure(detail) {
   return toolFailure(
-    `Local coding tool produced an invalid patch-poller/result-v1 envelope: ${tail(detail)}`,
+    `Local coding tool produced an invalid devbridge/result-v1 envelope: ${tail(detail)}`,
     'tool-protocol'
   );
 }
 
 function transientCapacityResult(detail) {
   return {
-    protocol: 'patch-poller/result-v1',
+    protocol: 'devbridge/result-v1',
     status: 'continue',
     summary: 'Local coding tool reported a transient model-capacity condition; retrying from durable context within the existing turn budget.',
     progress: [`Transient tool evidence: ${tail(detail)}`],
     tests: [],
-    nextStep: 'Retry the same task from the durable PATCH-POLLER context without broadening scope or capabilities.',
+    nextStep: 'Retry the same task from the durable DevBridge context without broadening scope or capabilities.',
     blocker: null,
     checkpoint: null,
     inferred: true,
@@ -66,7 +66,7 @@ function transientCapacityResult(detail) {
 
 function parseStructuredResult(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ProtocolError('tool result must be an object');
-  if (raw.protocol !== 'patch-poller/result-v1') throw new ProtocolError('tool result protocol must be patch-poller/result-v1');
+  if (raw.protocol !== 'devbridge/result-v1') throw new ProtocolError('tool result protocol must be devbridge/result-v1');
   if (!STATUSES.has(raw.status)) throw new ProtocolError('tool result status is invalid');
 
   const progress = raw.progress ?? [];
@@ -102,8 +102,8 @@ function parseStructuredResult(raw) {
 function preserveStructuredResult(result, { exitCode, timedOut }) {
   if (!timedOut && exitCode === 0) return result;
   const evidence = timedOut
-    ? 'Tool process timed out after writing this structured result; PATCH-POLLER preserved the result and will still independently validate the workspace.'
-    : `Tool process exited with code ${exitCode} after writing this structured result; PATCH-POLLER preserved the result and will still independently validate the workspace.`;
+    ? 'Tool process timed out after writing this structured result; DevBridge preserved the result and will still independently validate the workspace.'
+    : `Tool process exited with code ${exitCode} after writing this structured result; DevBridge preserved the result and will still independently validate the workspace.`;
   return {
     ...result,
     progress: [...result.progress, evidence].slice(-100),
@@ -145,7 +145,7 @@ export function parseToolResult(raw, {
   }
 
   return {
-    protocol: 'patch-poller/result-v1',
+    protocol: 'devbridge/result-v1',
     status: 'complete',
     summary: `Local coding tool exited successfully without a structured result.${stdout ? ` Output tail: ${tail(stdout)}` : ''}`,
     progress: [],

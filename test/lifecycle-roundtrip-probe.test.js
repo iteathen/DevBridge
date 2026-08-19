@@ -16,7 +16,7 @@ import { validateToolProfile } from '../src/runtime/cli-profile.js';
 
 function context() {
   return {
-    protocol: 'patch-poller/context-v1',
+    protocol: 'devbridge/context-v1',
     sequence: 3,
     task: { issueNumber: 77 },
     objective: `Execute lifecycle roundtrip ${LIFECYCLE_ROUNDTRIP_NONCE}.`,

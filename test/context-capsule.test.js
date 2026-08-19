@@ -5,7 +5,7 @@ import { buildContextCapsule, fitContextCapsule } from '../src/context/context-c
 
 test('builds self-contained task identity and compacts expendable context', () => {
   const task = {
-    queueRepository: 'iteathen/PATCH-POLLER',
+    queueRepository: 'iteathen/DevBridge',
     issueNumber: 12,
     actorId: '1775584',
     revision: 'a'.repeat(64),
@@ -52,7 +52,7 @@ test('builds self-contained task identity and compacts expendable context', () =
 test('preserves bounded handoff text exactly and publishes its digest', () => {
   const handoff = 'CONTEXT-ROUNDTRIP-V1\nnonce=abc123\npayload={"x":1}\n';
   const task = {
-    queueRepository: 'iteathen/PATCH-POLLER',
+    queueRepository: 'iteathen/DevBridge',
     issueNumber: 13,
     actorId: '1775584',
     revision: 'b'.repeat(64),

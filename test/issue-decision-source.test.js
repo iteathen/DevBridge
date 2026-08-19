@@ -10,8 +10,8 @@ const TRUSTED = '1';
 const OTHER = '2';
 
 function block(overrides = {}) {
-  return `\`\`\`patch-poller-decision\n${JSON.stringify({
-    protocol: 'patch-poller/decision-v1',
+  return `\`\`\`devbridge-decision\n${JSON.stringify({
+    protocol: 'devbridge/decision-v1',
     runId: 'run-1',
     taskRevision,
     checkpointId,

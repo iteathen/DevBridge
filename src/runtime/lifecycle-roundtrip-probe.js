@@ -81,7 +81,7 @@ function runProcess(executable, args, { cwd, env = {} }) {
 }
 
 function generatedTestSource() {
-  return `import assert from 'node:assert/strict';\nimport { mkdir, readFile, writeFile } from 'node:fs/promises';\nimport path from 'node:path';\n\nconst [fixtureFile, scratchFile, expectedNonce] = process.argv.slice(2);\nconst fixture = await readFile(fixtureFile, 'utf8');\nassert.equal(fixture, \`context-nonce=\${expectedNonce}\\n\`);\nawait mkdir(path.dirname(scratchFile), { recursive: true });\nawait writeFile(scratchFile, \`scratch-nonce=\${expectedNonce}\\n\`, 'utf8');\nconst scratch = await readFile(scratchFile, 'utf8');\nassert.equal(scratch, \`scratch-nonce=\${expectedNonce}\\n\`);\nprocess.stdout.write(\`PATCH-POLLER-LIFECYCLE-PASS \${expectedNonce}\\n\`);\n`;
+  return `import assert from 'node:assert/strict';\nimport { mkdir, readFile, writeFile } from 'node:fs/promises';\nimport path from 'node:path';\n\nconst [fixtureFile, scratchFile, expectedNonce] = process.argv.slice(2);\nconst fixture = await readFile(fixtureFile, 'utf8');\nassert.equal(fixture, \`context-nonce=\${expectedNonce}\\n\`);\nawait mkdir(path.dirname(scratchFile), { recursive: true });\nawait writeFile(scratchFile, \`scratch-nonce=\${expectedNonce}\\n\`, 'utf8');\nconst scratch = await readFile(scratchFile, 'utf8');\nassert.equal(scratch, \`scratch-nonce=\${expectedNonce}\\n\`);\nprocess.stdout.write(\`DevBridge-LIFECYCLE-PASS \${expectedNonce}\\n\`);\n`;
 }
 
 export async function runLifecycleRoundtripProbe({ projectRoot, context, env = process.env }) {
@@ -98,16 +98,16 @@ export async function runLifecycleRoundtripProbe({ projectRoot, context, env = p
   let scratchCreated = false;
   let cleanupError = null;
 
-  if (context?.protocol !== 'patch-poller/context-v1') {
+  if (context?.protocol !== 'devbridge/context-v1') {
     return {
-      protocol: 'patch-poller/result-v1', status: 'failed',
-      summary: 'Lifecycle roundtrip diagnostic did not receive patch-poller/context-v1.',
+      protocol: 'devbridge/result-v1', status: 'failed',
+      summary: 'Lifecycle roundtrip diagnostic did not receive devbridge/context-v1.',
       progress: [], tests, nextStep: null, blocker: 'lifecycle-context-protocol'
     };
   }
   if (!contextMatched) {
     return {
-      protocol: 'patch-poller/result-v1', status: 'failed',
+      protocol: 'devbridge/result-v1', status: 'failed',
       summary: `Lifecycle roundtrip context nonce ${LIFECYCLE_ROUNDTRIP_NONCE} was not present in both objective and prior summary.`,
       progress: [], tests: [{ name: 'context-input', nonce: LIFECYCLE_ROUNDTRIP_NONCE, matched: false }],
       nextStep: null, blocker: 'lifecycle-context-mismatch'
@@ -117,7 +117,7 @@ export async function runLifecycleRoundtripProbe({ projectRoot, context, env = p
   try {
     if (await exists(tempRoot)) {
       return {
-        protocol: 'patch-poller/result-v1', status: 'failed',
+        protocol: 'devbridge/result-v1', status: 'failed',
         summary: `Lifecycle temporary directory ${LIFECYCLE_TEMP_DIR} already exists; refusing to delete pre-existing evidence.`,
         progress: [], tests, nextStep: null, blocker: 'lifecycle-preexisting-temp'
       };
@@ -142,7 +142,7 @@ export async function runLifecycleRoundtripProbe({ projectRoot, context, env = p
       env
     });
     scratchCreated = await exists(scratchFile);
-    const marker = `PATCH-POLLER-LIFECYCLE-PASS ${LIFECYCLE_ROUNDTRIP_NONCE}`;
+    const marker = `DevBridge-LIFECYCLE-PASS ${LIFECYCLE_ROUNDTRIP_NONCE}`;
     const markerObserved = run.stdout.includes(marker);
     tests.push({
       name: 'generated-test-run',
@@ -166,7 +166,7 @@ export async function runLifecycleRoundtripProbe({ projectRoot, context, env = p
 
     if (run.exitCode !== 0 || run.timedOut || !markerObserved || !scratchCreated) {
       return {
-        protocol: 'patch-poller/result-v1', status: 'failed',
+        protocol: 'devbridge/result-v1', status: 'failed',
         summary: 'Generated lifecycle test did not complete with trustworthy pass evidence.',
         progress: [], tests, nextStep: null, blocker: 'lifecycle-test-failed'
       };
@@ -191,14 +191,14 @@ export async function runLifecycleRoundtripProbe({ projectRoot, context, env = p
 
   if (!cleanupPass) {
     return {
-      protocol: 'patch-poller/result-v1', status: 'failed',
+      protocol: 'devbridge/result-v1', status: 'failed',
       summary: 'Lifecycle test executed successfully but temporary test cleanup was not trustworthy.',
       progress: [], tests, nextStep: null, blocker: 'lifecycle-cleanup-failed'
     };
   }
 
   return {
-    protocol: 'patch-poller/result-v1',
+    protocol: 'devbridge/result-v1',
     status: 'complete',
     summary: `Lifecycle roundtrip passed for ${LIFECYCLE_ROUNDTRIP_NONCE}: generated test ran successfully and all temporary test/runtime files were removed before completion.`,
     progress: [

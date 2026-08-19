@@ -38,7 +38,7 @@ function runState(t, worktreeDir) {
     turn: 1,
     turnLimit: 8,
     createdAt: new Date(0).toISOString(),
-    workspace: { worktreeDir, branch: 'patchpoller/issue-27', baseSha: baselineSha, baseRef: 'main' },
+    workspace: { worktreeDir, branch: 'devbridge/issue-27', baseSha: baselineSha, baseRef: 'main' },
     prior: {
       summary: null,
       decisions: [],
@@ -81,7 +81,7 @@ test('task-branch publication rechecks the exact gate and blocks an approval tha
   });
 
   const snapshot = () => ({
-    branch: 'patchpoller/issue-27',
+    branch: 'devbridge/issue-27',
     baseSha: baselineSha,
     headSha: baselineSha,
     dirty: true,
@@ -91,11 +91,11 @@ test('task-branch publication rechecks the exact gate and blocks an approval tha
   });
   let publishCalls = 0;
   const delegate = {
-    prepareRun: async () => ({ worktreeDir: root, branch: 'patchpoller/issue-27', baseSha: baselineSha, baseRef: 'main' }),
+    prepareRun: async () => ({ worktreeDir: root, branch: 'devbridge/issue-27', baseSha: baselineSha, baseRef: 'main' }),
     validate: async () => snapshot(),
     snapshot: async () => snapshot(),
     sealCandidate: async () => ({ ...snapshot(), dirty: false, headSha: '2'.repeat(40) }),
-    publishTaskBranch: async () => { publishCalls += 1; return { branch: 'patchpoller/issue-27', headSha: '2'.repeat(40) }; },
+    publishTaskBranch: async () => { publishCalls += 1; return { branch: 'devbridge/issue-27', headSha: '2'.repeat(40) }; },
   };
   const workspace = new DecisionGatedWorkspaceManager({
     delegate,

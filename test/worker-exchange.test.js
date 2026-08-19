@@ -15,7 +15,7 @@ async function withRoot(prefix, fn) {
 }
 
 const resultEnvelope = `${JSON.stringify({
-  protocol: 'patch-poller/result-v1',
+  protocol: 'devbridge/result-v1',
   status: 'complete',
   summary: 'worker result survived restart',
 })}\n`;
@@ -83,7 +83,7 @@ test('exact run and turn identities prevent cross-run result confusion', async (
     const first = await exchange.prepareTurn({ runId: 'run-1', turnId: 'turn-1', context: { run: 1 } });
     const second = await exchange.prepareTurn({ runId: 'run-2', turnId: 'turn-1', context: { run: 2 } });
     const secondEnvelope = `${JSON.stringify({
-      protocol: 'patch-poller/result-v1',
+      protocol: 'devbridge/result-v1',
       status: 'complete',
       summary: 'run two only',
     })}\n`;
@@ -108,7 +108,7 @@ test('result consumption rejects regular-file replacement and directory substitu
     await writeFile(replaced.resultFile, resultEnvelope, { mode: 0o600 });
     await assert.rejects(
       () => replaced.consumeResult(),
-      /replaced after PATCH-POLLER established worker-exchange ownership/u,
+      /replaced after DevBridge established worker-exchange ownership/u,
     );
 
     const directory = await exchange.prepareTurn({ runId: 'run-1', turnId: 'turn-2', context: {} });

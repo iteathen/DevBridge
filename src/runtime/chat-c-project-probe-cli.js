@@ -14,17 +14,17 @@ async function readStdin() {
 
 async function main() {
   const context = JSON.parse(await readStdin());
-  if (context?.protocol !== 'patch-poller/context-v1') {
-    throw new Error('chat C project diagnostic requires patch-poller/context-v1');
+  if (context?.protocol !== 'devbridge/context-v1') {
+    throw new Error('chat C project diagnostic requires devbridge/context-v1');
   }
   if (context?.bridge?.resultFile !== WORKER_RESULT_FILE) {
-    throw new Error('chat C project diagnostic requires the fixed PATCH-POLLER worker result endpoint');
+    throw new Error('chat C project diagnostic requires the fixed DevBridge worker result endpoint');
   }
 
   const projectRoot = path.resolve(process.cwd());
   // This profile ignores free-form task instructions for file contents, paths,
   // executable selection, process arguments, and verification policy. The C
-  // project is authored in trusted PATCH-POLLER runtime code by the chat-only
+  // project is authored in trusted DevBridge runtime code by the chat-only
   // controller and materialized deterministically into the managed worktree.
   const result = await runChatCProjectProbe({ projectRoot, env: process.env });
   await writeFile(WORKER_RESULT_FILE, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8' });

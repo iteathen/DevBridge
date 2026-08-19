@@ -47,21 +47,21 @@ function securityCapability(file) {
     file.startsWith('src/security/') ||
     controlPlaneAuthority(file) ||
     /^src\/runtime\/(?:.*sandbox.*|process-runner\.js|deterministic-process-runner\.js|cli-profile\.js|profile-security\.js|worker-exchange\.js|deterministic-operation-security\.js)$/u.test(file) ||
-    file === 'specs/PP-003-security.md';
+    file === 'specs/DB-003-security.md';
 }
 
 function bootstrapSelfUpdate(file) {
-  return file === 'patch-poller.mjs' ||
+  return file === 'devbridge.mjs' ||
     file.startsWith('src/bootstrap/') ||
     file === 'docs/bootstrap.md' ||
-    file === 'specs/PP-011-runtime-supervision.md';
+    file === 'specs/DB-011-runtime-supervision.md';
 }
 
 function gitGithubPublication(file) {
   return file.startsWith('src/git/') ||
     file.startsWith('src/github/') ||
-    file === 'specs/PP-008-git-supply-chain.md' ||
-    file === 'specs/PP-010-provenance-control-channels.md';
+    file === 'specs/DB-008-git-supply-chain.md' ||
+    file === 'specs/DB-010-provenance-control-channels.md';
 }
 
 function workflowRelease(file) {
@@ -137,7 +137,7 @@ export function decisionScopeSubjectDigest({ decisionClasses, scopePaths, bounds
   if (!bounds || typeof bounds !== 'object' || Array.isArray(bounds)) throw new PolicyError('decision scope bounds must be an object');
   const normalizedBounds = Object.fromEntries(Object.entries(bounds).sort(([a], [b]) => a.localeCompare(b)));
   return sha256(JSON.stringify({
-    protocol: 'patch-poller/decision-scope-v1',
+    protocol: 'devbridge/decision-scope-v1',
     decisionClasses: classes,
     scopePaths: paths,
     bounds: normalizedBounds,
@@ -183,7 +183,7 @@ export function createHardGateCheckpoint({
     generation: String(nowMs),
   });
   return {
-    protocol: 'patch-poller/checkpoint-v1',
+    protocol: 'devbridge/checkpoint-v1',
     checkpointId,
     type: 'hard-gate',
     bindingMode: 'artifact-exact',

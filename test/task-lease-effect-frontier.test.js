@@ -42,7 +42,7 @@ function fixtureExecutor(operationRegistry = { validate() {}, async execute() { 
 
 function emptyPlan(overrides = {}) {
   return {
-    protocol: 'patch-poller/controller-plan-v1',
+    protocol: 'devbridge/controller-plan-v1',
     files: [],
     operations: [],
     assertions: [],
@@ -67,7 +67,7 @@ function statusRequest() {
     revision: 'a'.repeat(64),
     stage: 'RUNNING',
     summary: 'fixture status',
-    capsule: { protocol: 'patch-poller/context-v1' },
+    capsule: { protocol: 'devbridge/context-v1' },
     force: true,
   };
 }
@@ -127,7 +127,7 @@ test('controller scratch creation is wired to the active task lease guard', asyn
     })),
     TaskLeaseLostError,
   );
-  assert.equal(await exists(path.join(path.dirname(worktreeDir), '.patch-poller-scratch-run-scratch')), false);
+  assert.equal(await exists(path.join(path.dirname(worktreeDir), '.devbridge-scratch-run-scratch')), false);
 });
 
 test('fenced controller does not clean up task files after losing ownership', async () => {
@@ -168,7 +168,7 @@ test('task status publication is skipped when the lease is already fenced', asyn
   const reporter = new IssueStatusReporter({
     client: { async request() { requests += 1; return { data: { id: 10 } }; } },
     stateStore,
-    queueRepository: 'iteathen/PATCH-POLLER',
+    queueRepository: 'iteathen/DevBridge',
   });
 
   await context.run(handle, async () => {
@@ -193,14 +193,14 @@ test('status publication records local reconciliation evidence if ownership is l
       },
     },
     stateStore,
-    queueRepository: 'iteathen/PATCH-POLLER',
+    queueRepository: 'iteathen/DevBridge',
   });
 
   const result = await context.run(handle, () => reporter.publish(statusRequest()));
   assert.equal(result.published, true);
   assert.equal(result.commentId, 77);
   assert.equal(result.leaseLost, true);
-  const recorded = stateStore.values.get('status.iteathen/PATCH-POLLER#49.run-49');
+  const recorded = stateStore.values.get('status.iteathen/DevBridge#49.run-49');
   assert.equal(recorded.commentId, 77);
   assert.equal(recorded.sequence, 1);
 });

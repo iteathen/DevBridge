@@ -9,12 +9,12 @@ function state(stage = 'waiting-feedback') {
     turn: 1,
     createdAt: '2026-08-18T00:00:00.000Z',
     task: {
-      queueRepository: 'iteathen/PATCH-POLLER',
+      queueRepository: 'iteathen/DevBridge',
       issueNumber: 4,
       actorId: '1775584',
       revision: 'a'.repeat(64),
       envelope: {
-        target: { repository: 'iteathen/PATCH-POLLER' },
+        target: { repository: 'iteathen/DevBridge' },
         instructions: 'do it',
         requestedCapabilities: [],
         preferredTool: 'fixture',
@@ -27,7 +27,7 @@ function state(stage = 'waiting-feedback') {
       progress: [],
       changedFiles: ['a.txt'],
       tests: [],
-      git: { branch: 'patchpoller/issue-4-abc', baseSha: '1'.repeat(40), headSha: '1'.repeat(40), dirty: true },
+      git: { branch: 'devbridge/issue-4-abc', baseSha: '1'.repeat(40), headSha: '1'.repeat(40), dirty: true },
       blockers: ['waiting'],
       nextStep: null,
       outputTail: null,
@@ -38,11 +38,11 @@ function state(stage = 'waiting-feedback') {
 test('reports a nonterminal runtime error against the active run', async () => {
   const reports = [];
   const runtime = {
-    config: { github: { queueRepository: 'iteathen/PATCH-POLLER' } },
+    config: { github: { queueRepository: 'iteathen/DevBridge' } },
     stateStore: {
       entries: async () => [
-        ['run.iteathen/PATCH-POLLER#3.old', state('failed')],
-        ['run.iteathen/PATCH-POLLER#4.current', state('waiting-feedback')],
+        ['run.iteathen/DevBridge#3.old', state('failed')],
+        ['run.iteathen/DevBridge#4.current', state('waiting-feedback')],
       ],
     },
     statusReporter: {
@@ -66,7 +66,7 @@ test('reports a nonterminal runtime error against the active run', async () => {
 
 test('does nothing when there is no active run', async () => {
   const runtime = {
-    config: { github: { queueRepository: 'iteathen/PATCH-POLLER' } },
+    config: { github: { queueRepository: 'iteathen/DevBridge' } },
     stateStore: { entries: async () => [['run.x', state('completed')]] },
     statusReporter: { publish: async () => { throw new Error('must not publish'); } },
   };

@@ -5,7 +5,7 @@ import { GitHubContentProvenance, MAX_RETAINED_CONTENT_EDITS, contentSha256 } fr
 const TRUSTED = '1775584';
 const ALSO_TRUSTED = '1775585';
 const UNTRUSTED = '999';
-const BODY = '```patch-poller-task\n{"protocol":"patch-poller/task-v1"}\n```';
+const BODY = '```devbridge-task\n{"protocol":"devbridge/task-v1"}\n```';
 
 function actor(id, login = `u${id}`) {
   return { __typename: 'User', login, databaseId: String(id) };

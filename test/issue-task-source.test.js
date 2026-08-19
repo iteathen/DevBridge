@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { IssueTaskSource } from '../src/github/issue-task-source.js';
 import { contentSha256 } from '../src/github/content-provenance.js';
 
-const envelope = `\`\`\`patch-poller-task\n${JSON.stringify({ protocol: 'patch-poller/task-v1', target: { repository: 'iteathen/repo' }, instructions: 'Do work.' })}\n\`\`\``;
+const envelope = `\`\`\`devbridge-task\n${JSON.stringify({ protocol: 'devbridge/task-v1', target: { repository: 'iteathen/repo' }, instructions: 'Do work.' })}\n\`\`\``;
 
 function verified(candidate) {
   return {
@@ -40,8 +40,8 @@ test('accepts only trusted issue creators whose exact current content provenance
   let candidatesSeen = null;
   const source = new IssueTaskSource({
     client: clientFor(issues),
-    queueRepository: 'iteathen/PATCH-POLLER',
-    taskLabel: 'patch-poller:ready',
+    queueRepository: 'iteathen/DevBridge',
+    taskLabel: 'devbridge:ready',
     trustedActorIds: ['1775584'],
     contentProvenance: {
       verifyMany: async (candidates) => {
@@ -65,8 +65,8 @@ test('trusted issue creator plus untrusted editor provenance is rejected', async
   const issue = { id: 4, node_id: 'I_4', number: 4, title: 'edited', body: envelope, user: { id: 1775584, login: 'iteathen' } };
   const source = new IssueTaskSource({
     client: clientFor([issue]),
-    queueRepository: 'iteathen/PATCH-POLLER',
-    taskLabel: 'patch-poller:ready',
+    queueRepository: 'iteathen/DevBridge',
+    taskLabel: 'devbridge:ready',
     trustedActorIds: ['1775584'],
     contentProvenance: {
       verifyMany: async ([candidate]) => [{
@@ -91,8 +91,8 @@ test('an untrusted original is rejected before a later trusted editor could laun
   let provenanceCalled = false;
   const source = new IssueTaskSource({
     client: clientFor([issue]),
-    queueRepository: 'iteathen/PATCH-POLLER',
-    taskLabel: 'patch-poller:ready',
+    queueRepository: 'iteathen/DevBridge',
+    taskLabel: 'devbridge:ready',
     trustedActorIds: ['1775584'],
     contentProvenance: { verifyMany: async () => { provenanceCalled = true; return []; } },
   });
@@ -107,8 +107,8 @@ test('content race invalidates REST cache so the latest issue bytes are fetched 
   let invalidated = null;
   const source = new IssueTaskSource({
     client: clientFor([issue], { onInvalidate: async (requestPath) => { invalidated = requestPath; } }),
-    queueRepository: 'iteathen/PATCH-POLLER',
-    taskLabel: 'patch-poller:ready',
+    queueRepository: 'iteathen/DevBridge',
+    taskLabel: 'devbridge:ready',
     trustedActorIds: ['1775584'],
     contentProvenance: {
       verifyMany: async ([candidate]) => [{
@@ -130,8 +130,8 @@ test('provenance infrastructure failure fails closed and clears the conditional 
   let invalidated = null;
   const source = new IssueTaskSource({
     client: clientFor([issue], { onInvalidate: async (requestPath) => { invalidated = requestPath; } }),
-    queueRepository: 'iteathen/PATCH-POLLER',
-    taskLabel: 'patch-poller:ready',
+    queueRepository: 'iteathen/DevBridge',
+    taskLabel: 'devbridge:ready',
     trustedActorIds: ['1775584'],
     contentProvenance: { verifyMany: async () => { throw new Error('GraphQL temporarily unavailable'); } },
   });

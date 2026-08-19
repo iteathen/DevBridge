@@ -32,7 +32,7 @@ test('classifies sensitive security/bootstrap/Git/workflow/spec paths locally', 
     'src/bootstrap/transactional-bootstrap.mjs',
     'src/github/rest-client.js',
     '.github/workflows/ci.yml',
-    'specs/PP-007-human-checkpoints.md',
+    'specs/DB-007-human-checkpoints.md',
   ], { architectureFileThreshold: 99, architectureOwnerThreshold: 99 });
   assert.equal(result.required, true);
   assert.deepEqual(result.decisionClasses, [

@@ -7,13 +7,13 @@ function stateFixture() {
     runId: 'pp-29-liveness',
     turn: 1,
     task: {
-      queueRepository: 'iteathen/PATCH-POLLER',
+      queueRepository: 'iteathen/DevBridge',
       issueNumber: 29,
       actorId: '1775584',
       revision: 'a'.repeat(64),
       envelope: {
         instructions: 'Exercise deterministic liveness projection.',
-        target: { repository: 'iteathen/PATCH-POLLER' },
+        target: { repository: 'iteathen/DevBridge' },
         context: {},
       },
     },

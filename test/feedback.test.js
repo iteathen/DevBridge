@@ -5,14 +5,14 @@ import { contentSha256 } from '../src/github/content-provenance.js';
 import { IssueFeedbackSource } from '../src/github/issue-feedback-source.js';
 
 function block(value) {
-  return `\`\`\`patch-poller-feedback\n${JSON.stringify(value)}\n\`\`\``;
+  return `\`\`\`devbridge-feedback\n${JSON.stringify(value)}\n\`\`\``;
 }
 
 const revision = 'a'.repeat(64);
 
 function feedbackValue(action = 'continue') {
   return {
-    protocol: 'patch-poller/feedback-v1',
+    protocol: 'devbridge/feedback-v1',
     runId: 'run-1',
     taskRevision: revision,
     action,
@@ -40,7 +40,7 @@ function verified(candidate) {
 
 test('parses context-linked continuation feedback and digests the exact comment body', () => {
   const raw = block({
-    protocol: 'patch-poller/feedback-v1',
+    protocol: 'devbridge/feedback-v1',
     runId: 'run-1',
     taskRevision: revision,
     action: 'continue',
@@ -59,15 +59,15 @@ test('quoted feedback envelope is ordinary discussion rather than authority', ()
 
 test('waiting feedback source ignores wrong actor and wrong run, then accepts exact trusted provenance', async () => {
   const comments = [
-    { id: 10, node_id: 'IC_10', user: { id: 999 }, body: block({ protocol: 'patch-poller/feedback-v1', runId: 'run-1', taskRevision: revision, action: 'cancel' }) },
-    { id: 11, node_id: 'IC_11', user: { id: 1775584 }, body: block({ protocol: 'patch-poller/feedback-v1', runId: 'old-run', taskRevision: revision, action: 'cancel' }) },
+    { id: 10, node_id: 'IC_10', user: { id: 999 }, body: block({ protocol: 'devbridge/feedback-v1', runId: 'run-1', taskRevision: revision, action: 'cancel' }) },
+    { id: 11, node_id: 'IC_11', user: { id: 1775584 }, body: block({ protocol: 'devbridge/feedback-v1', runId: 'old-run', taskRevision: revision, action: 'cancel' }) },
     { id: 12, node_id: 'IC_12', user: { id: 1775584, login: 'iteathen' }, body: block(feedbackValue()) }
   ];
   const client = { request: async () => ({ notModified: false, data: comments }) };
   const contentProvenance = { verifyMany: async (candidates) => candidates.map(verified) };
   const source = new IssueFeedbackSource({
     client,
-    queueRepository: 'iteathen/PATCH-POLLER',
+    queueRepository: 'iteathen/DevBridge',
     trustedActorIds: ['1775584'],
     contentProvenance,
   });
@@ -85,7 +85,7 @@ test('trusted comment author plus untrusted edit provenance cannot resume a run'
   const comment = { id: 20, node_id: 'IC_20', user: { id: 1775584, login: 'iteathen' }, body: block(feedbackValue()) };
   const source = new IssueFeedbackSource({
     client: { request: async () => ({ notModified: false, data: [comment] }) },
-    queueRepository: 'iteathen/PATCH-POLLER',
+    queueRepository: 'iteathen/DevBridge',
     trustedActorIds: ['1775584'],
     contentProvenance: {
       verifyMany: async ([candidate]) => [{
@@ -114,7 +114,7 @@ test('provenance infrastructure failure does not advance the feedback cursor and
       request: async () => ({ notModified: false, data: [comment] }),
       invalidateConditional: async (requestPath) => { invalidated = requestPath; },
     },
-    queueRepository: 'iteathen/PATCH-POLLER',
+    queueRepository: 'iteathen/DevBridge',
     trustedActorIds: ['1775584'],
     contentProvenance: { verifyMany: async () => { throw new Error('GraphQL temporarily unavailable'); } },
   });

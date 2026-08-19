@@ -98,7 +98,7 @@ export class BubblewrapSandboxProvider {
     const home = path.resolve(os.homedir());
     return [
       this.#stateDirectory,
-      path.join(home, '.patch-poller'),
+      path.join(home, '.devbridge'),
       path.join(home, '.config', 'gh'),
       path.join(home, '.ssh'),
     ].map((entry) => path.resolve(entry));
@@ -111,7 +111,7 @@ export class BubblewrapSandboxProvider {
     }
     for (const sensitive of this.#sensitiveRoots()) {
       if (overlaps(root, sensitive)) {
-        throw new PolicyError('sandbox read roots may not overlap PATCH-POLLER or credential control state');
+        throw new PolicyError('sandbox read roots may not overlap DevBridge or credential control state');
       }
     }
   }
@@ -173,7 +173,7 @@ export class BubblewrapSandboxProvider {
   async #appendWorkerIpc(bwrapArgs, ipc) {
     if (ipc?.protocol !== WORKER_EXCHANGE_PROTOCOL) throw new PolicyError('worker sandbox IPC protocol is invalid');
     if (ipc.contextTarget !== WORKER_CONTEXT_FILE || ipc.resultTarget !== WORKER_RESULT_FILE) {
-      throw new PolicyError('worker sandbox IPC targets are not the fixed PATCH-POLLER exchange endpoints');
+      throw new PolicyError('worker sandbox IPC targets are not the fixed DevBridge exchange endpoints');
     }
 
     const context = await canonicalExisting(ipc.contextSource, 'worker context source');
@@ -184,7 +184,7 @@ export class BubblewrapSandboxProvider {
       throw new PolicyError('worker sandbox IPC sources must remain under the dedicated control-owned worker exchange');
     }
 
-    bwrapArgs.push('--dir', '/run/patch-poller-exchange');
+    bwrapArgs.push('--dir', '/run/devbridge-exchange');
     bwrapArgs.push('--ro-bind', context.path, WORKER_CONTEXT_FILE);
     bwrapArgs.push('--bind', result.path, WORKER_RESULT_FILE);
   }
@@ -197,7 +197,7 @@ export class BubblewrapSandboxProvider {
       if (isWithin(projectDir, resolved) || !isWithin(this.#workspaceRoot, resolved)) continue;
       let cursor = resolved;
       while (isWithin(projectParent, cursor) && cursor !== projectParent) {
-        if (path.dirname(cursor) === projectParent && path.basename(cursor).startsWith('.patch-poller-scratch-')) {
+        if (path.dirname(cursor) === projectParent && path.basename(cursor).startsWith('.devbridge-scratch-')) {
           if (!(await exists(cursor))) return null;
           const scratch = await canonicalExisting(cursor, 'sandbox derived scratch root');
           if (!scratch.info.isDirectory()) throw new PolicyError('sandbox derived scratch root must be a directory');
@@ -248,7 +248,7 @@ export class BubblewrapSandboxProvider {
       '--proc', '/proc',
       '--dev', '/dev',
       '--tmpfs', '/tmp',
-      '--dir', '/tmp/patch-poller-home',
+      '--dir', '/tmp/devbridge-home',
       '--dir', '/run',
     ];
     if (network === 'unrestricted') bwrapArgs.push('--share-net');
@@ -271,7 +271,7 @@ export class BubblewrapSandboxProvider {
     delete controlledEnvironment.TMPDIR;
     delete controlledEnvironment.TMP;
     delete controlledEnvironment.TEMP;
-    controlledEnvironment.HOME = '/tmp/patch-poller-home';
+    controlledEnvironment.HOME = '/tmp/devbridge-home';
     controlledEnvironment.TMPDIR = '/tmp';
     controlledEnvironment.TMP = '/tmp';
     controlledEnvironment.TEMP = '/tmp';
@@ -299,7 +299,7 @@ export class BubblewrapSandboxProvider {
       this.#status = unavailableSandboxStatus({
         requestedProvider: this.#requestedProvider,
         provider: 'bubblewrap',
-        reason: 'repository-code sandboxing is refused while PATCH-POLLER is running as root; run it under the dedicated unprivileged service account',
+        reason: 'repository-code sandboxing is refused while DevBridge is running as root; run it under the dedicated unprivileged service account',
       });
       return this.inspect();
     }
@@ -318,7 +318,7 @@ export class BubblewrapSandboxProvider {
     let stateProbe = null;
     try {
       await mkdir(this.#stateDirectory, { recursive: true, mode: 0o700 });
-      probeRoot = await mkdtemp(path.join(os.tmpdir(), 'patch-poller-sandbox-probe-'));
+      probeRoot = await mkdtemp(path.join(os.tmpdir(), 'devbridge-sandbox-probe-'));
       const projectDir = path.join(probeRoot, 'project');
       const scratchDir = path.join(probeRoot, 'scratch');
       const outsideDir = path.join(probeRoot, 'outside');

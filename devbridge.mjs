@@ -139,9 +139,7 @@ function validateRuntimeShape(runtime) {
   let manifest;
   try { manifest = JSON.parse(readFileSync(packagePath, 'utf8')); }
   catch { fail('Fetched DevBridge package.json is not valid JSON.'); }
-  if (typeof manifest?.version !== 'string' || manifest?.bin?.devbridge !== './src/cli.js') {
-    fail('Fetched runtime does not expose the expected DevBridge CLI shape.');
-  }
+  if (manifest?.name !== 'devbridge' || typeof manifest.version !== 'string') fail('Fetched runtime does not identify itself as DevBridge.');
   return { secureBootstrapPath, version: manifest.version };
 }
 

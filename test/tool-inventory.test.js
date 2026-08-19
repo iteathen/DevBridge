@@ -104,7 +104,7 @@ test('tool inventory separates discovered presence, local registration, policy, 
   assert.equal(second.digest, first.digest);
   assert.equal(second.generation, first.generation);
   assert.deepEqual(service.reference(), {
-    protocol: 'patch-poller/tool-inventory-ref-v1',
+    protocol: 'devbridge/tool-inventory-ref-v1',
     digest: first.digest,
     generation: first.generation,
   });
@@ -175,13 +175,13 @@ test('GitHub inventory projection coalesces by digest and never adopts a forged 
       throw new Error(`unexpected ${method}`);
     },
   };
-  const projector = new ToolInventoryProjector({ client, stateStore, queueRepository: 'iteathen/PATCH-POLLER' });
+  const projector = new ToolInventoryProjector({ client, stateStore, queueRepository: 'iteathen/DevBridge' });
   const record = {
-    protocol: 'patch-poller/tool-inventory-record-v1',
+    protocol: 'devbridge/tool-inventory-record-v1',
     digest: 'a'.repeat(64),
     generation: 1,
     generatedAt: '2026-08-18T20:00:00Z',
-    inventory: { protocol: 'patch-poller/tool-inventory-v1', authority: 'local-observation-only' },
+    inventory: { protocol: 'devbridge/tool-inventory-v1', authority: 'local-observation-only' },
   };
   const first = await projector.project({ issueNumber: 31, record });
   const second = await projector.project({ issueNumber: 31, record });
@@ -200,14 +200,14 @@ test('inventory projection refuses secret-bearing content rather than mutating a
   const projector = new ToolInventoryProjector({
     client: { request: async () => { throw new Error('must not publish'); } },
     stateStore: { get: async () => null, set: async () => {} },
-    queueRepository: 'iteathen/PATCH-POLLER',
+    queueRepository: 'iteathen/DevBridge',
     secretValues: ['super-secret-token'],
   });
   const record = {
-    protocol: 'patch-poller/tool-inventory-record-v1',
+    protocol: 'devbridge/tool-inventory-record-v1',
     digest: 'a'.repeat(64),
     generation: 1,
-    inventory: { protocol: 'patch-poller/tool-inventory-v1', accidental: 'super-secret-token' },
+    inventory: { protocol: 'devbridge/tool-inventory-v1', accidental: 'super-secret-token' },
   };
   await assert.rejects(projector.project({ issueNumber: 31, record }), /refusing to publish/u);
 });
@@ -223,8 +223,8 @@ test('ordinary status context references the current inventory digest without em
       },
     },
     stateStore: { get: async (key) => state.get(key), set: async (key, value) => state.set(key, value) },
-    queueRepository: 'iteathen/PATCH-POLLER',
-    inventoryRefProvider: () => ({ protocol: 'patch-poller/tool-inventory-ref-v1', digest: 'c'.repeat(64), generation: 7 }),
+    queueRepository: 'iteathen/DevBridge',
+    inventoryRefProvider: () => ({ protocol: 'devbridge/tool-inventory-ref-v1', digest: 'c'.repeat(64), generation: 7 }),
   });
   await reporter.publish({
     issueNumber: 31,
@@ -232,11 +232,11 @@ test('ordinary status context references the current inventory digest without em
     revision: 'd'.repeat(64),
     stage: 'RUNNING',
     summary: 'test',
-    capsule: { protocol: 'patch-poller/context-v1', sequence: 1 },
+    capsule: { protocol: 'devbridge/context-v1', sequence: 1 },
     force: true,
   });
   const body = calls[0].options.body.body;
-  assert.match(body, /patch-poller\/tool-inventory-ref-v1/u);
+  assert.match(body, /devbridge\/tool-inventory-ref-v1/u);
   assert.match(body, new RegExp('c{64}', 'u'));
   assert.doesNotMatch(body, /discoveredTools/u);
 });

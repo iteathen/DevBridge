@@ -23,7 +23,7 @@ function handoff(overrides = {}) {
     protocol: CHAT_HANDOFF_PROTOCOL,
     handoffId: 'pp014-fixture-1',
     sequence: 1,
-    repository: 'iteathen/PATCH-POLLER',
+    repository: 'iteathen/DevBridge',
     baselineSha: GIT_A,
     headSha: GIT_B,
     branch: 'sol/pp-014-context-rollover',
@@ -33,12 +33,12 @@ function handoff(overrides = {}) {
     phase: 'implementing',
     completedActionIds: ['read-specs', 'create-branch'],
     nextActionId: 'implement-core',
-    decisions: [{ id: 'architecture', digest: DECISION, summary: 'Use PP-005 plus PP-009 rather than a second effect journal.' }],
+    decisions: [{ id: 'architecture', digest: DECISION, summary: 'Use DB-005 plus DB-009 rather than a second effect journal.' }],
     blockers: [],
     evidenceRefs: [{ id: 'baseline', kind: 'commit', locator: `commit:${GIT_A}`, sha256: null }],
     governingDocs: [
       { path: 'AGENTS.md', sha256: DOC_A },
-      { path: 'specs/PP-005-context-handoff.md', sha256: DOC_B },
+      { path: 'specs/DB-005-context-handoff.md', sha256: DOC_B },
     ],
     previousHandoffDigest: null,
     createdAt: '2026-08-18T18:00:00.000Z',
@@ -111,7 +111,7 @@ test('two-phase checkpoint publishes a new ready pointer only after planned and 
   const store = new ChatHandoffStore({ stateStore, now: clock() });
   const first = await store.checkpoint(handoff());
   assert.equal(first.record.state, 'ready');
-  assert.equal((await store.loadLatest('iteathen/PATCH-POLLER')).record.digest, first.record.digest);
+  assert.equal((await store.loadLatest('iteathen/DevBridge')).record.digest, first.record.digest);
 
   const secondHandoff = handoff({
     handoffId: 'pp014-fixture-2',
@@ -124,7 +124,7 @@ test('two-phase checkpoint publishes a new ready pointer only after planned and 
   stateStore.failWhen((key, value) => key.includes('.record.') && value?.state === 'ready' && value?.handoff?.sequence === 2);
   await assert.rejects(() => store.checkpoint(secondHandoff), /injected state write failure/u);
   stateStore.clearFailure();
-  const latest = await store.loadLatest('iteathen/PATCH-POLLER');
+  const latest = await store.loadLatest('iteathen/DevBridge');
   assert.equal(latest.record.digest, first.record.digest, 'failed replacement must not replace the prior verified handoff');
 });
 
@@ -140,7 +140,7 @@ test('corrupt current handoff can fall back to the previous verified handoff', a
     createdAt: '2026-08-18T18:01:00.000Z',
   }));
   stateStore.corrupt(second.ref.key, { protocol: 'corrupt', state: 'ready' });
-  const recovered = await store.loadLatest('iteathen/PATCH-POLLER');
+  const recovered = await store.loadLatest('iteathen/DevBridge');
   assert.equal(recovered.recoveredFromPrevious, true);
   assert.equal(recovered.record.digest, first.record.digest);
 });
@@ -163,7 +163,7 @@ test('resume seed is compact, digest-bound, and parseable without copying the ha
   const seed = buildChatResumeSeed(normalized, digest);
   assert.ok(seed.length < 200);
   assert.deepEqual(parseChatResumeSeed(seed), {
-    protocol: 'patch-poller/chat-resume-seed-v1',
+    protocol: 'devbridge/chat-resume-seed-v1',
     repository: normalized.repository,
     handoffId: normalized.handoffId,
     digest,
@@ -174,7 +174,7 @@ test('resume reconciliation blocks stale Git/task identity before exposing nextA
   const result = reconcileChatResume({
     handoff: handoff(),
     observed: {
-      repository: 'iteathen/PATCH-POLLER',
+      repository: 'iteathen/DevBridge',
       baselineSha: GIT_A,
       headSha: 'c'.repeat(40),
       issueNumber: 20,
@@ -192,10 +192,10 @@ test('resume reconciliation blocks stale Git/task identity before exposing nextA
 test('governing document changes require reread acknowledgement before exact next action is released', () => {
   const changedDocs = [
     { path: 'AGENTS.md', sha256: '9'.repeat(64) },
-    { path: 'specs/PP-005-context-handoff.md', sha256: DOC_B },
+    { path: 'specs/DB-005-context-handoff.md', sha256: DOC_B },
   ];
   const observed = {
-    repository: 'iteathen/PATCH-POLLER', baselineSha: GIT_A, headSha: GIT_B, issueNumber: 20, prNumber: null,
+    repository: 'iteathen/DevBridge', baselineSha: GIT_A, headSha: GIT_B, issueNumber: 20, prNumber: null,
     runId: 'pp-20-fixture', completedActionIds: [], governingDocs: changedDocs,
   };
   let result = reconcileChatResume({ handoff: handoff(), observed });
@@ -211,7 +211,7 @@ test('already completed next action is reconciled without inventing a replacemen
   const result = reconcileChatResume({
     handoff: handoff(),
     observed: {
-      repository: 'iteathen/PATCH-POLLER', baselineSha: GIT_A, headSha: GIT_B, issueNumber: 20, prNumber: null,
+      repository: 'iteathen/DevBridge', baselineSha: GIT_A, headSha: GIT_B, issueNumber: 20, prNumber: null,
       runId: 'pp-20-fixture', completedActionIds: ['implement-core'], governingDocs: handoff().governingDocs,
     },
   });

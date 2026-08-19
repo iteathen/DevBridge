@@ -8,12 +8,12 @@ const subjectDigest = 'b'.repeat(64);
 const checkpointId = 'checkpoint-0123456789abcdef0123456789abcdef';
 
 function block(value) {
-  return `\`\`\`patch-poller-decision\n${JSON.stringify(value)}\n\`\`\``;
+  return `\`\`\`devbridge-decision\n${JSON.stringify(value)}\n\`\`\``;
 }
 
 function decision(overrides = {}) {
   return {
-    protocol: 'patch-poller/decision-v1',
+    protocol: 'devbridge/decision-v1',
     runId: 'run-1',
     taskRevision,
     checkpointId,

@@ -41,7 +41,7 @@ install(TARGETS hello-telemetry DESTINATION bin)
 `,
   'README.md': String.raw`# hello-telemetry-c-002
 
-A small C11 "Hello Telemetry" program authored by the chat-only controller and materialized/tested by PATCH-POLLER without a coding-model invocation.
+A small C11 "Hello Telemetry" program authored by the chat-only controller and materialized/tested by DevBridge without a coding-model invocation.
 
 The executable prints a friendly banner followed by deterministic NDJSON sensor fixtures. Identical seed/count arguments produce byte-for-byte identical output.
 
@@ -579,9 +579,9 @@ export async function runChatCProjectProbe({ projectRoot, env = process.env } = 
       cmake = await resolveExecutable(process.platform === 'win32' ? 'cmake.exe' : 'cmake', env);
     } catch {
       return {
-        protocol: 'patch-poller/result-v1',
+        protocol: 'devbridge/result-v1',
         status: 'failed',
-        summary: 'Chat-authored C project was materialized, but the fixed PATCH-POLLER verifier could not find CMake.',
+        summary: 'Chat-authored C project was materialized, but the fixed DevBridge verifier could not find CMake.',
         progress: ['Project source was created without invoking any coding model.'],
         tests: [...tests, { name: 'cmake-discovery', available: false }],
         nextStep: null,
@@ -592,7 +592,7 @@ export async function runChatCProjectProbe({ projectRoot, env = process.env } = 
     const ctest = await resolveCTest(cmake, env);
     if (!ctest) {
       return {
-        protocol: 'patch-poller/result-v1',
+        protocol: 'devbridge/result-v1',
         status: 'failed',
         summary: 'CMake was found, but the associated CTest executable was unavailable.',
         progress: [],
@@ -655,13 +655,13 @@ export async function runChatCProjectProbe({ projectRoot, env = process.env } = 
     if (!buildRemoved) throw new Error('generated build directory remained after verification');
 
     return {
-      protocol: 'patch-poller/result-v1',
+      protocol: 'devbridge/result-v1',
       status: 'complete',
       summary: 'Chat-only controller project materialized and verified: CMake build, C tests, deterministic native output, golden record, CLI overflow/error handling, and cleanup all passed without a coding model.',
       progress: [
         `Created ${Object.keys(PROJECT_FILES).length} source/project files under ${CHAT_C_PROJECT_RELATIVE}.`,
         'Repeated seed/count runs were byte-for-byte identical.',
-        'Generated build artifacts were removed before PATCH-POLLER candidate sealing.'
+        'Generated build artifacts were removed before DevBridge candidate sealing.'
       ],
       tests,
       nextStep: null,
@@ -669,7 +669,7 @@ export async function runChatCProjectProbe({ projectRoot, env = process.env } = 
     };
   } catch (error) {
     return {
-      protocol: 'patch-poller/result-v1',
+      protocol: 'devbridge/result-v1',
       status: 'failed',
       summary: `Chat-authored C project verification failed: ${String(error?.message || error).slice(0, 1000)}`,
       progress: [],

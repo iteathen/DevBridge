@@ -28,7 +28,7 @@ export function runtimeArtifactSha256Sync(runtimeDir, {
 } = {}) {
   const root = path.resolve(runtimeDir);
   const hash = createHash('sha256');
-  appendField(hash, 'protocol', 'patch-poller/runtime-artifact-v1');
+  appendField(hash, 'protocol', 'devbridge/runtime-artifact-v1');
   let fileCount = 0;
   let totalBytes = 0;
 
@@ -66,7 +66,7 @@ export function runtimeArtifactSha256Sync(runtimeDir, {
 
   walk(root);
   return {
-    protocol: 'patch-poller/runtime-artifact-v1',
+    protocol: 'devbridge/runtime-artifact-v1',
     sha256: hash.digest('hex'),
     fileCount,
     totalBytes,

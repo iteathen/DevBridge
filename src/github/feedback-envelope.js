@@ -6,8 +6,8 @@ const REVISION_RE = /^[0-9a-f]{64}$/;
 
 export function parseFeedbackEnvelope(body) {
   if (typeof body !== 'string') throw new ProtocolError('feedback body must be a string');
-  const matches = [...body.matchAll(/```patch-poller-feedback\s*\r?\n([\s\S]*?)\r?\n```/g)];
-  if (matches.length !== 1) throw new ProtocolError('feedback must contain exactly one patch-poller-feedback block');
+  const matches = [...body.matchAll(/```devbridge-feedback\s*\r?\n([\s\S]*?)\r?\n```/g)];
+  if (matches.length !== 1) throw new ProtocolError('feedback must contain exactly one devbridge-feedback block');
 
   let value;
   try {
@@ -16,7 +16,7 @@ export function parseFeedbackEnvelope(body) {
     throw new ProtocolError('feedback envelope is not valid JSON', { cause: error });
   }
 
-  if (value?.protocol !== 'patch-poller/feedback-v1') throw new ProtocolError('unsupported feedback protocol');
+  if (value?.protocol !== 'devbridge/feedback-v1') throw new ProtocolError('unsupported feedback protocol');
   if (!RUN_ID_RE.test(value.runId ?? '')) throw new ProtocolError('feedback runId is invalid');
   if (!REVISION_RE.test(value.taskRevision ?? '')) throw new ProtocolError('feedback taskRevision is invalid');
   if (!['continue', 'cancel'].includes(value.action)) throw new ProtocolError('feedback action must be continue or cancel');

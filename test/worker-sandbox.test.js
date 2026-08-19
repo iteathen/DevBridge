@@ -62,7 +62,7 @@ process.stdin.on('end', async () => {
 
   fs.writeFileSync(path.join(process.cwd(), 'worker-project-write.txt'), 'project-ok\n');
   fs.writeFileSync(resultFile, JSON.stringify({
-    protocol: 'patch-poller/result-v1',
+    protocol: 'devbridge/result-v1',
     status: 'complete',
     summary: 'contained worker completed',
     observations,
@@ -76,7 +76,7 @@ test('verified proposal worker cannot reach control state, credentials, Git admi
     return;
   }
 
-  const root = await mkdtemp(path.join(os.tmpdir(), 'patch-poller-worker-boundary-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-worker-boundary-'));
   const projectDir = path.join(root, 'project');
   const stateDirectory = path.join(root, 'state');
   const credentialDirectory = path.join(root, 'credential-store');
@@ -113,7 +113,7 @@ test('verified proposal worker cannot reach control state, credentials, Git admi
     });
     const status = await provider.verify();
     if (!status.verified) {
-      if (process.env.PATCH_POLLER_REQUIRE_SANDBOX_TEST === '1') {
+      if (process.env.DEVBRIDGE_REQUIRE_SANDBOX_TEST === '1') {
         assert.fail(`required proposal-worker Bubblewrap boundary verification failed: ${status.reason}`);
       }
       t.skip(`Bubblewrap unavailable/unusable on this host: ${status.reason}`);
@@ -155,7 +155,7 @@ test('verified proposal worker cannot reach control state, credentials, Git admi
     const run = await runner.run({
       profile,
       projectDir,
-      runDir: path.join(projectDir, '.patch-poller', 'run-1', 'turn-1'),
+      runDir: path.join(projectDir, '.devbridge', 'run-1', 'turn-1'),
       runId: 'run-1',
       context: { objective: 'attempt boundary attacks and report observations' },
     });
@@ -192,7 +192,7 @@ test('verified proposal worker cannot reach control state, credentials, Git admi
     assert.equal(await readFile(workerScript, 'utf8'), workerFixture);
     assert.equal(await readFile(path.join(projectDir, 'worker-project-write.txt'), 'utf8'), 'project-ok\n');
     await assert.rejects(readFile(stateWrite), { code: 'ENOENT' });
-    await assert.rejects(stat(path.join(projectDir, '.patch-poller')), { code: 'ENOENT' });
+    await assert.rejects(stat(path.join(projectDir, '.devbridge')), { code: 'ENOENT' });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

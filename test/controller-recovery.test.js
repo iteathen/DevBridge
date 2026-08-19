@@ -16,7 +16,7 @@ async function exists(candidate) {
 
 function plan(overrides = {}) {
   return normalizeControllerPlan({
-    protocol: 'patch-poller/controller-plan-v1',
+    protocol: 'devbridge/controller-plan-v1',
     files: [],
     operations: [],
     assertions: [],

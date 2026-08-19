@@ -6,9 +6,9 @@ import { validateConfig } from '../src/config.js';
 function base() {
   return {
     version: 1,
-    github: { queueRepository: 'iteathen/PATCH-POLLER', trustedActorIds: ['1775584'], rateLimit: {} },
-    workspace: { root: path.resolve('/tmp/pp-controller-config'), allowedOwners: ['iteathen'] },
-    state: { directory: path.resolve('/tmp/pp-controller-state') },
+    github: { queueRepository: 'iteathen/DevBridge', trustedActorIds: ['1775584'], rateLimit: {} },
+    workspace: { root: path.resolve('/tmp/devbridge-controller-config'), allowedOwners: ['iteathen'] },
+    state: { directory: path.resolve('/tmp/devbridge-controller-state') },
     execution: {},
     status: {},
     tools: {}
@@ -26,10 +26,10 @@ test('deterministic controller plans are enabled and coding-model adapters are d
 
 test('accepts local semantic baseline channel mapping including slash branches', () => {
   const raw = base();
-  raw.workspace.baselineChannels = { production: 'main', testing: 'sol/foundation-bootstrap' };
+  raw.workspace.baselineChannels = { production: 'main', testing: 'integration/testing' };
   raw.workspace.defaultBaselineChannel = 'testing';
   const config = validateConfig(raw);
-  assert.deepEqual(config.workspace.baselineChannels, { production: 'main', testing: 'sol/foundation-bootstrap' });
+  assert.deepEqual(config.workspace.baselineChannels, { production: 'main', testing: 'integration/testing' });
   assert.equal(config.workspace.defaultBaselineChannel, 'testing');
 });
 

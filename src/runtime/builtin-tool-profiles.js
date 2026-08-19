@@ -1,10 +1,10 @@
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-export const NATIVE_COMPILER_DIAGNOSTIC_PROFILE = 'patch-poller-native-compiler';
-export const TRANSIENT_RECOVERY_DIAGNOSTIC_PROFILE = 'patch-poller-transient-recovery';
-export const CHAT_C_PROJECT_DIAGNOSTIC_PROFILE = 'patch-poller-chat-c-project';
-export const LIFECYCLE_ROUNDTRIP_DIAGNOSTIC_PROFILE = 'patch-poller-lifecycle-roundtrip';
+export const NATIVE_COMPILER_DIAGNOSTIC_PROFILE = 'devbridge-native-compiler';
+export const TRANSIENT_RECOVERY_DIAGNOSTIC_PROFILE = 'devbridge-transient-recovery';
+export const CHAT_C_PROJECT_DIAGNOSTIC_PROFILE = 'devbridge-chat-c-project';
+export const LIFECYCLE_ROUNDTRIP_DIAGNOSTIC_PROFILE = 'devbridge-lifecycle-roundtrip';
 
 const NATIVE_COMPILER_CLI = fileURLToPath(new URL('./native-compiler-probe-cli.js', import.meta.url));
 const TRANSIENT_RECOVERY_CLI = fileURLToPath(new URL('./transient-recovery-probe-cli.js', import.meta.url));

@@ -1,12 +1,12 @@
-# PP-012 — Toolchain Durability and Error Recovery
+# DB-012 — Toolchain Durability and Error Recovery
 
 Status: active
 
 ## Goal
 
-Make PATCH-POLLER reliable under ordinary tool, model, compiler, build, test, and presentation failures without weakening authority boundaries or requiring human intervention for recoverable conditions.
+Make DevBridge reliable under ordinary tool, model, compiler, build, test, and presentation failures without weakening authority boundaries or requiring human intervention for recoverable conditions.
 
-PP-009 remains authoritative for durable effects and restart reconciliation. PP-003 and PP-008 remain authoritative for capability and supply-chain boundaries. This specification defines the local toolchain recovery behavior inside those constraints.
+DB-009 remains authoritative for durable effects and restart reconciliation. DB-003 and DB-008 remain authoritative for capability and supply-chain boundaries. This specification defines the local toolchain recovery behavior inside those constraints.
 
 ## Governing rule
 
@@ -16,7 +16,7 @@ A recoverable toolchain failure is not permission to broaden filesystem, process
 
 ## Presentation-only result normalization
 
-PATCH-POLLER may canonicalize a result only when the transformation is deterministic and preserves exactly one unambiguous JSON payload.
+DevBridge may canonicalize a result only when the transformation is deterministic and preserves exactly one unambiguous JSON payload.
 
 Allowed v0.1 presentation normalization is limited to:
 
@@ -24,17 +24,17 @@ Allowed v0.1 presentation normalization is limited to:
 - surrounding JSON whitespace and ordinary LF/CRLF line endings;
 - exactly one Markdown code fence containing exactly one JSON value, with an optional `json` fence label.
 
-PATCH-POLLER must not guess through prose plus JSON, multiple candidate payloads, comments, trailing commas, single-quoted pseudo-JSON, conflicting objects, missing authority identifiers, or any transformation that changes meaning.
+DevBridge must not guess through prose plus JSON, multiple candidate payloads, comments, trailing commas, single-quoted pseudo-JSON, conflicting objects, missing authority identifiers, or any transformation that changes meaning.
 
 Ambiguous or semantic defects remain `PROTOCOL` failures.
 
 ## Structured result versus wrapper process outcome
 
-A valid `patch-poller/result-v1` written before the wrapper process exits is durable evidence and must not be discarded merely because the wrapper later exits nonzero.
+A valid `devbridge/result-v1` written before the wrapper process exits is durable evidence and must not be discarded merely because the wrapper later exits nonzero.
 
 - `blocked` and `failed` structured results remain conservative outcomes, with wrapper-exit evidence attached.
 - `continue` remains a continuation outcome, with wrapper-exit evidence attached.
-- `complete` remains candidate intent, not completion authority. PATCH-POLLER must still independently validate/seal the workspace before completion.
+- `complete` remains candidate intent, not completion authority. DevBridge must still independently validate/seal the workspace before completion.
 - a timeout or nonzero wrapper exit is recorded as evidence even when a valid structured result exists.
 
 If there is no valid structured result, normal timeout/exit classification applies.
@@ -57,7 +57,7 @@ When no valid structured result exists, this condition may produce an automatic 
 
 ### Persisted retry backoff
 
-A retryable transient condition is state, not an in-memory sleep hint. Before another tool invocation PATCH-POLLER durably records at least:
+A retryable transient condition is state, not an in-memory sleep hint. Before another tool invocation DevBridge durably records at least:
 
 - failure classification/kind;
 - attempt count;
@@ -67,13 +67,13 @@ A retryable transient condition is state, not an in-memory sleep hint. Before an
 
 For the initial model-capacity class, v0.1 uses exponential delays of 5 seconds, 10 seconds, 20 seconds, 40 seconds, then a 60-second cap. The absolute turn window remains the hard attempt bound.
 
-If PATCH-POLLER or the host restarts during backoff, recovery must honor the remaining persisted delay before another invocation. It must not forget prior attempts, retry immediately merely because memory was lost, or sleep again for the full original interval after the deadline has partially elapsed.
+If DevBridge or the host restarts during backoff, recovery must honor the remaining persisted delay before another invocation. It must not forget prior attempts, retry immediately merely because memory was lost, or sleep again for the full original interval after the deadline has partially elapsed.
 
-The final allowed attempt does not schedule a useless delay after the window is already exhausted. Persistent transient failure reaches `waiting-feedback` rather than retrying forever. A matching trusted continuation may grant another bounded turn window under PP-006 without changing capabilities or resetting absolute turn identity.
+The final allowed attempt does not schedule a useless delay after the window is already exhausted. Persistent transient failure reaches `waiting-feedback` rather than retrying forever. A matching trusted continuation may grant another bounded turn window under DB-006 without changing capabilities or resetting absolute turn identity.
 
 ### Deterministic transient diagnostic
 
-PATCH-POLLER exposes a reserved built-in profile `patch-poller-transient-recovery` for black-box validation of this behavior without consuming a coding-model/provider budget.
+DevBridge exposes a reserved built-in profile `devbridge-transient-recovery` for black-box validation of this behavior without consuming a coding-model/provider budget.
 
 The diagnostic is fixed control-plane code. It:
 
@@ -106,13 +106,13 @@ Missing/broken compiler or linker installation, inaccessible locally configured 
 
 Machine-specific compiler/build paths are local authority.
 
-Remote task text may request a compiler/build test but may not grant or choose arbitrary executable paths. Toolchain paths come from trusted local configuration or locally constrained discovery owned by PATCH-POLLER.
+Remote task text may request a compiler/build test but may not grant or choose arbitrary executable paths. Toolchain paths come from trusted local configuration or locally constrained discovery owned by DevBridge.
 
 No durability test may install a compiler, linker, SDK, or build system, mutate PATH globally, or weaken sandboxing merely to make the test pass.
 
 ### Built-in native toolchain diagnostic
 
-PATCH-POLLER exposes an enumerated built-in local profile named `patch-poller-native-compiler`. The historical profile name is retained, but the profile validates the native compile/link/execute chain and is part of the trusted control plane, not a coding/model profile.
+DevBridge exposes an enumerated built-in local profile named `devbridge-native-compiler`. The historical profile name is retained, but the profile validates the native compile/link/execute chain and is part of the trusted control plane, not a coding/model profile.
 
 Selecting that exact profile requests a fixed diagnostic only. Remote content cannot supply or alter:
 
@@ -122,9 +122,9 @@ Selecting that exact profile requests a fixed diagnostic only. Remote content ca
 - environment-variable values;
 - shell commands;
 - discovery roots;
-- output paths outside PATCH-POLLER's reserved run directory.
+- output paths outside DevBridge's reserved run directory.
 
-The diagnostic locally discovers only constrained native C toolchain candidates, runs with `shell:false`, performs no network access, and operates only on PATCH-POLLER-generated temporary source, objects, executables, and runtime files in the reserved run directory.
+The diagnostic locally discovers only constrained native C toolchain candidates, runs with `shell:false`, performs no network access, and operates only on DevBridge-generated temporary source, objects, executables, and runtime files in the reserved run directory.
 
 It must execute these stateful recovery sequences in one probe workspace:
 
@@ -149,7 +149,7 @@ Every recovery attempt should retain enough bounded evidence to distinguish:
 - retry/backoff attempt and deadline;
 - final verification result.
 
-Temporary probes and compiler/build artifacts created solely for a non-destructive smoke must be removed, and final Git state must be independently checked. Failed, uncertain, or interrupted managed worktrees remain recovery evidence under PP-009.
+Temporary probes and compiler/build artifacts created solely for a non-destructive smoke must be removed, and final Git state must be independently checked. Failed, uncertain, or interrupted managed worktrees remain recovery evidence under DB-009.
 
 ## Required tests
 

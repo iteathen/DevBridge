@@ -21,7 +21,7 @@ const BASE_A = '1'.repeat(40);
 const BASE_B = '2'.repeat(40);
 const HEAD_A = '3'.repeat(40);
 const HEAD_B = '4'.repeat(40);
-const BRANCH = 'patchpoller/issue-49-aaaaaaaaaaaa';
+const BRANCH = 'devbridge/issue-49-aaaaaaaaaaaa';
 
 const profile = {
   executable: process.execPath,
@@ -51,7 +51,7 @@ function task({ controllerPlan = null } = {}) {
 
 function controllerPlanFixture() {
   return {
-    protocol: 'patch-poller/controller-plan-v1',
+    protocol: 'devbridge/controller-plan-v1',
     baselineChannel: null,
     files: [],
     operations: [],
@@ -165,7 +165,7 @@ function driftingWorkspace({ reconciliationError = null } = {}) {
 function completedRun(summary, tests) {
   return {
     result: {
-      protocol: 'patch-poller/result-v1',
+      protocol: 'devbridge/result-v1',
       status: 'complete',
       summary,
       progress: [],

@@ -1,4 +1,4 @@
-import { PatchPollerError, PolicyError } from '../errors.js';
+import { DevBridgeError, PolicyError } from '../errors.js';
 
 const POINTS = new Set([
   'file.after-effect',
@@ -10,7 +10,7 @@ const POINTS = new Set([
 ]);
 const ACTIONS = new Set(['error', 'crash', 'interrupt', 'timeout', 'truncate-output']);
 
-export class FaultInjectionError extends PatchPollerError {
+export class FaultInjectionError extends DevBridgeError {
   constructor(message, { point, action, ruleId } = {}) {
     super(message);
     this.point = point;

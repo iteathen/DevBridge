@@ -22,14 +22,14 @@ test('controller-plan final-byte mismatch fails the run before candidate sealing
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-final-byte-seal-'));
   try {
     const plan = normalizeControllerPlan({
-      protocol: 'patch-poller/controller-plan-v1',
+      protocol: 'devbridge/controller-plan-v1',
       files: [{ scope: 'persistent', action: 'create', path: 'planned.txt', content: 'authorized\n' }],
       operations: [{ id: 'mutate', operation: 'fixture.mutate', params: {} }],
       assertions: [],
     });
     let sealCalls = 0;
     const snapshot = {
-      branch: 'patchpoller/issue-25-final-bytes',
+      branch: 'devbridge/issue-25-final-bytes',
       baseSha: '1'.repeat(40),
       headSha: '1'.repeat(40),
       dirty: true,

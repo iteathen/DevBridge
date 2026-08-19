@@ -156,7 +156,7 @@ test('accepted cancel feedback persists exact content digest and verified editor
     feedbackSource: {
       pollWaitingRun: async () => ({
         feedback: {
-          protocol: 'patch-poller/feedback-v1',
+          protocol: 'devbridge/feedback-v1',
           runId: `pp-${t.issueNumber}-${t.revision.slice(0, 16)}`,
           taskRevision: t.revision,
           action: 'cancel',

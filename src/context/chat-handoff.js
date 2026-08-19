@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import { PolicyError, ProtocolError } from '../errors.js';
 
-export const CHAT_HANDOFF_PROTOCOL = 'patch-poller/chat-handoff-v1';
-const STORE_PROTOCOL = 'patch-poller/chat-handoff-store-v1';
-const POINTER_PROTOCOL = 'patch-poller/chat-handoff-pointer-v1';
+export const CHAT_HANDOFF_PROTOCOL = 'devbridge/chat-handoff-v1';
+const STORE_PROTOCOL = 'devbridge/chat-handoff-store-v1';
+const POINTER_PROTOCOL = 'devbridge/chat-handoff-pointer-v1';
 const DEFAULT_MAX_BYTES = 32 * 1024;
 const MAX_PROTOCOL_HANDOFF_BYTES = 256 * 1024;
 const SHA256_RE = /^[0-9a-f]{64}$/u;
@@ -386,14 +386,14 @@ export function buildChatResumeSeed(recordOrHandoff, digestOverride = null, { ma
   const normalized = normalizeChatHandoff(handoff, { maxBytes });
   const digest = digestOverride ?? recordOrHandoff?.digest ?? chatHandoffDigest(normalized, { maxBytes });
   sha256(digest, 'chat resume seed digest');
-  return `PATCH-POLLER-RESUME v1 repo=${normalized.repository} handoff=${normalized.handoffId} sha256=${digest}`;
+  return `DEVBRIDGE-RESUME v1 repo=${normalized.repository} handoff=${normalized.handoffId} sha256=${digest}`;
 }
 
 export function parseChatResumeSeed(seed) {
   const text = boundedString(seed, 'chat resume seed', 512);
-  const match = text.match(/^PATCH-POLLER-RESUME v1 repo=([^ ]+) handoff=([^ ]+) sha256=([0-9a-f]{64})$/u);
+  const match = text.match(/^DEVBRIDGE-RESUME v1 repo=([^ ]+) handoff=([^ ]+) sha256=([0-9a-f]{64})$/u);
   if (!match) throw new ProtocolError('chat resume seed is malformed');
-  return { protocol: 'patch-poller/chat-resume-seed-v1', repository: repository(match[1]), handoffId: safeId(match[2], 'chat resume seed handoffId'), digest: sha256(match[3], 'chat resume seed digest') };
+  return { protocol: 'devbridge/chat-resume-seed-v1', repository: repository(match[1]), handoffId: safeId(match[2], 'chat resume seed handoffId'), digest: sha256(match[3], 'chat resume seed digest') };
 }
 
 function normalizeObservedResume(input) {

@@ -11,7 +11,7 @@ const EXPECTED = 'c'.repeat(40);
 const OTHER = 'd'.repeat(40);
 
 function task() {
-  return { queueRepository: 'iteathen/PATCH-POLLER', issueNumber: 49, revision: REVISION };
+  return { queueRepository: 'iteathen/DevBridge', issueNumber: 49, revision: REVISION };
 }
 
 function envelope({ previousLeaseSha = null, epoch = 1 } = {}) {
@@ -19,7 +19,7 @@ function envelope({ previousLeaseSha = null, epoch = 1 } = {}) {
     protocol: SIGNED_TASK_LEASE_PROTOCOL,
     subject: {
       protocol: TASK_LEASE_PROTOCOL,
-      queueRepository: 'iteathen/PATCH-POLLER',
+      queueRepository: 'iteathen/DevBridge',
       issueNumber: 49,
       taskRevision: REVISION,
       ownerFingerprint: OWNER,
@@ -38,9 +38,9 @@ function envelope({ previousLeaseSha = null, epoch = 1 } = {}) {
 function workspace() {
   return {
     ensureRepository: async () => ({
-      repository: 'iteathen/PATCH-POLLER',
+      repository: 'iteathen/DevBridge',
       repoDir: '/control/repo',
-      remoteUrl: 'https://github.com/iteathen/PATCH-POLLER.git',
+      remoteUrl: 'https://github.com/iteathen/DevBridge.git',
       baseSha: 'e'.repeat(40),
     }),
   };
@@ -61,7 +61,7 @@ test('first task lease acquisition uses explicit empty expected-value force-with
       throw new Error(`unexpected git call ${args.join(' ')}`);
     },
   };
-  const store = new GitTaskLeaseStore({ workspaceManager: workspace(), gitClient: git, queueRepository: 'iteathen/PATCH-POLLER' });
+  const store = new GitTaskLeaseStore({ workspaceManager: workspace(), gitClient: git, queueRepository: 'iteathen/DevBridge' });
   const result = await store.compareAndSwap(task(), { expectedSha: null, envelope: envelope() });
   assert.equal(result.updated, true);
   const push = calls.find((call) => call.args[0] === 'push');
@@ -83,7 +83,7 @@ test('lease renewal parents the exact predecessor and CASes against the same SHA
       throw new Error(`unexpected git call ${args.join(' ')}`);
     },
   };
-  const store = new GitTaskLeaseStore({ workspaceManager: workspace(), gitClient: git, queueRepository: 'iteathen/PATCH-POLLER' });
+  const store = new GitTaskLeaseStore({ workspaceManager: workspace(), gitClient: git, queueRepository: 'iteathen/DevBridge' });
   await store.compareAndSwap(task(), { expectedSha: EXPECTED, envelope: envelope({ previousLeaseSha: EXPECTED, epoch: 2 }) });
   const ref = store.refForTask(task());
   const commit = calls.find((args) => args.includes('commit-tree'));
@@ -109,7 +109,7 @@ test('competing lease update is reported as CAS loss instead of overwritten', as
       throw new Error(`unexpected git call ${args.join(' ')}`);
     },
   };
-  const store = new GitTaskLeaseStore({ workspaceManager: workspace(), gitClient: git, queueRepository: 'iteathen/PATCH-POLLER' });
+  const store = new GitTaskLeaseStore({ workspaceManager: workspace(), gitClient: git, queueRepository: 'iteathen/DevBridge' });
   const result = await store.compareAndSwap(task(), { expectedSha: null, envelope: envelope() });
   assert.equal(result.updated, false);
   assert.equal(result.reason, 'cas-lost');
@@ -119,7 +119,7 @@ test('competing lease update is reported as CAS loss instead of overwritten', as
 
 test('observed lease commit ancestry must match the signed predecessor', async () => {
   const currentEnvelope = envelope({ previousLeaseSha: EXPECTED, epoch: 4 });
-  const ref = `refs/heads/patch-poller-control/leases/issue-49/${REVISION}`;
+  const ref = `refs/heads/devbridge-control/leases/issue-49/${REVISION}`;
   const git = {
     async run(args) {
       if (args[0] === 'ls-remote') return success(`${OTHER}\t${ref}\n`);
@@ -129,6 +129,6 @@ test('observed lease commit ancestry must match the signed predecessor', async (
       throw new Error(`unexpected git call ${args.join(' ')}`);
     },
   };
-  const store = new GitTaskLeaseStore({ workspaceManager: workspace(), gitClient: git, queueRepository: 'iteathen/PATCH-POLLER' });
+  const store = new GitTaskLeaseStore({ workspaceManager: workspace(), gitClient: git, queueRepository: 'iteathen/DevBridge' });
   await assert.rejects(store.observe(task()), /ancestry does not match its signed predecessor/u);
 });

@@ -6,9 +6,9 @@ import { validateConfig } from '../src/config.js';
 function base() {
   return {
     version: 1,
-    github: { queueRepository: 'iteathen/PATCH-POLLER', trustedActorIds: ['1775584'], rateLimit: {} },
-    workspace: { root: path.resolve('/tmp/patch-poller-workspace'), allowedOwners: ['iteathen'] },
-    state: { directory: path.resolve('/tmp/patch-poller-state') },
+    github: { queueRepository: 'iteathen/DevBridge', trustedActorIds: ['1775584'], rateLimit: {} },
+    workspace: { root: path.resolve('/tmp/devbridge-workspace'), allowedOwners: ['iteathen'] },
+    state: { directory: path.resolve('/tmp/devbridge-state') },
     execution: {},
     status: {},
     tools: {}
@@ -21,7 +21,7 @@ test('uses conservative API, auth, execution, Git, publication, context-rollover
   assert.equal(config.github.rateLimit.reserveRatio, 0.2);
   assert.equal(config.github.auth.mode, 'auto');
   assert.deepEqual(config.github.auth.environmentVariables, [
-    'PATCH_POLLER_GITHUB_TOKEN',
+    'DEVBRIDGE_GITHUB_TOKEN',
     'GH_TOKEN',
     'GITHUB_TOKEN',
   ]);
@@ -42,7 +42,7 @@ test('uses conservative API, auth, execution, Git, publication, context-rollover
   assert.deepEqual(config.workspace.externalReadRoots, []);
   assert.equal(config.git.executable, 'git');
   assert.equal(config.publication.autoPushTaskBranches, false);
-  assert.equal(config.publication.branchPrefix, 'patchpoller');
+  assert.equal(config.publication.branchPrefix, 'devbridge');
   assert.deepEqual(config.contextRollover, {
     enabled: true,
     unit: 'bytes',
@@ -83,7 +83,7 @@ test('context rollover policy is local, explicit, and bounded', () => {
 
 test('local tool onboarding is disabled by default and requires an exact local manifest/policy boundary when enabled', () => {
   const raw = base();
-  const manifestDirectory = path.resolve('/tmp/patch-poller-local-operations');
+  const manifestDirectory = path.resolve('/tmp/devbridge-local-operations');
   raw.execution.toolOnboarding = {
     enabled: true,
     manifestDirectory,
@@ -133,7 +133,7 @@ test('legacy github.tokenEnv remains first while standard environment fallbacks 
   const config = validateConfig(raw);
   assert.deepEqual(config.github.auth.environmentVariables, [
     'UAI_GITHUB_TOKEN',
-    'PATCH_POLLER_GITHUB_TOKEN',
+    'DEVBRIDGE_GITHUB_TOKEN',
     'GH_TOKEN',
     'GITHUB_TOKEN',
   ]);
