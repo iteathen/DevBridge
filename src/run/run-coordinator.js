@@ -573,7 +573,7 @@ export class RunCoordinator {
         baseSha: state.workspace?.baseSha ?? null,
         baselineChannel: state.workspace?.baselineChannel ?? plan?.baselineChannel ?? null,
         publicationBaseSha: state.workspace?.publicationBaseSha ?? null,
-        publicationRewriteFromShas: state.workspace?.publicationRewriteFromShas ?? []
+        taskBranchKnownRemoteHeads: state.workspace?.taskBranchKnownRemoteHeads ?? []
       });
       state.workspace = workspace;
       state.prior.receipt ??= {
