@@ -37,7 +37,7 @@ test('candidate preparation rejects a ref/head race before activation validation
   const expected = 'b'.repeat(40);
   let validations = 0;
   await assert.rejects(() => prepareRuntimeCandidate(
-    { channel: 'testing', update: true },
+    { channel: 'testing', update: true, releaseMode: 'development' },
     paths,
     {
       desiredRef: 'sol/foundation-bootstrap',
@@ -54,14 +54,14 @@ test('candidate preparation rejects a ref/head race before activation validation
   assert.equal(validations, 0);
 });
 
-test('candidate preparation validates the exact separate runtime before returning it', async () => {
+test('candidate preparation validates and returns the exact tested separate runtime digest', async () => {
   const paths = fixturePaths();
   const head = 'd'.repeat(40);
   const runtimeDir = candidateRuntimePath(paths, head);
   mkdirSync(runtimeDir, { recursive: true });
   const events = [];
   const candidate = await prepareRuntimeCandidate(
-    { channel: 'testing', update: true },
+    { channel: 'testing', update: true, releaseMode: 'development' },
     paths,
     {
       desiredRef: 'sol/foundation-bootstrap',
@@ -70,15 +70,22 @@ test('candidate preparation validates the exact separate runtime before returnin
         events.push('materialized');
         return { ref: 'sol/foundation-bootstrap', head, cliPath: path.join(runtimeDir, 'src', 'cli.js'), version: '0.1.0' };
       },
-      validateCandidateFn: (_paths, runtime) => {
+      validateCandidateFn: (_paths, runtime, _runner, options) => {
         events.push(`validated:${runtime.head}`);
-        return { tests: 'passed' };
+        return {
+          tests: 'passed-sandboxed',
+          artifactSha256: options.expectedArtifactSha256,
+          sandbox: { provider: 'fixture', verified: true },
+        };
       },
     },
   );
   assert.deepEqual(events, ['materialized', `validated:${head}`]);
   assert.equal(candidate.runtimeDir, runtimeDir);
   assert.equal(candidate.head, head);
+  assert.match(candidate.artifactSha256, /^[0-9a-f]{64}$/u);
+  assert.equal(candidate.validation.artifactSha256, candidate.artifactSha256);
+  assert.equal(candidate.releaseIntegrity.mode, 'development');
 });
 
 test('activation journal is atomic JSON and only a contained exact healthy runtime is rehydrated', () => {
