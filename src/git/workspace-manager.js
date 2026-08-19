@@ -11,7 +11,7 @@ import { splitRepository } from '../security/workspace-policy.js';
 const RUNTIME_DIR = '.patch-poller';
 const RUNTIME_EXCLUDE = `${RUNTIME_DIR}/`;
 const SHA_RE = /^[0-9a-f]{40}$/u;
-const MAX_PUBLICATION_REWRITE_HEADS = 16;
+const MAX_KNOWN_TASK_BRANCH_HEADS = 16;
 
 async function exists(candidate) {
   try {
@@ -57,12 +57,12 @@ function normalizeSha(value, label) {
   return normalized;
 }
 
-function normalizeRewriteHeads(value) {
+function normalizeKnownTaskBranchHeads(value) {
   if (value == null) return [];
-  if (!Array.isArray(value) || value.length > MAX_PUBLICATION_REWRITE_HEADS) {
-    throw new PolicyError(`persisted publication rewrite history must contain at most ${MAX_PUBLICATION_REWRITE_HEADS} commit SHAs`);
+  if (!Array.isArray(value) || value.length > MAX_KNOWN_TASK_BRANCH_HEADS) {
+    throw new PolicyError(`persisted known task-branch heads must contain at most ${MAX_KNOWN_TASK_BRANCH_HEADS} commit SHAs`);
   }
-  return [...new Set(value.map((entry) => normalizeSha(entry, 'publication rewrite head')))];
+  return [...new Set(value.map((entry) => normalizeSha(entry, 'known task-branch head')))];
 }
 
 async function sameFilesystemIdentity(left, right) {
@@ -205,7 +205,7 @@ export class GitWorkspaceManager {
   }
 
   async #resolveCurrentPublicationBaseline(repo, workspace) {
-    let baseRef = workspace.baseRef;
+    const baseRef = workspace.baseRef;
     if (workspace.baselineChannel) {
       const branch = this.#baselineChannels[workspace.baselineChannel];
       if (!branch) throw new PolicyError(`persisted baseline channel ${workspace.baselineChannel} is no longer authorized by local policy`);
@@ -256,7 +256,7 @@ export class GitWorkspaceManager {
     if (existsPublicationBase.exitCode !== 0) {
       throw new PolicyError(`persisted publication baseline is no longer available locally: ${publicationBaseSha}`);
     }
-    const publicationRewriteFromShas = normalizeRewriteHeads(resume.publicationRewriteFromShas);
+    const taskBranchKnownRemoteHeads = normalizeKnownTaskBranchHeads(resume.taskBranchKnownRemoteHeads);
 
     await this.#workspace.assertWriteContained(worktreeDir);
     await mkdir(path.dirname(worktreeDir), { recursive: true, mode: 0o700 });
@@ -284,7 +284,7 @@ export class GitWorkspaceManager {
       baseSha,
       baselineChannel,
       publicationBaseSha,
-      publicationRewriteFromShas,
+      taskBranchKnownRemoteHeads,
       worktreeDir,
       branch,
       runId: safeRunId(runId)
@@ -385,7 +385,7 @@ export class GitWorkspaceManager {
       cwd: workspace.repoDir,
       allowFailure: true
     });
-    if (upstreamFastForward.exitCode !== 0) {
+    if (upstreamFastForward.exitCode === 1) {
       throw new BaselineReconciliationError(
         `publication baseline ${workspace.baseRef} no longer descends from the previously verified publication baseline`,
         {
@@ -394,13 +394,19 @@ export class GitWorkspaceManager {
         }
       );
     }
+    if (upstreamFastForward.exitCode !== 0) {
+      throw new PolicyError(`unable to compare publication baseline ancestry: ${(upstreamFastForward.stderr || upstreamFastForward.stdout).trim()}`);
+    }
 
     const candidateDescendsFromBase = await this.#git.run(['merge-base', '--is-ancestor', fromBaseSha, before.headSha], {
       cwd: workspace.repoDir,
       allowFailure: true
     });
-    if (candidateDescendsFromBase.exitCode !== 0) {
+    if (candidateDescendsFromBase.exitCode === 1) {
       throw new PolicyError('candidate branch no longer descends from its persisted publication baseline');
+    }
+    if (candidateDescendsFromBase.exitCode !== 0) {
+      throw new PolicyError(`unable to compare candidate ancestry: ${(candidateDescendsFromBase.stderr || candidateDescendsFromBase.stdout).trim()}`);
     }
 
     const fromHeadSha = normalizeSha(before.headSha, 'candidate head');
@@ -438,10 +444,6 @@ export class GitWorkspaceManager {
 
     const toHeadSha = normalizeSha((await this.#git.run(['rev-parse', 'HEAD'], { cwd: workspace.worktreeDir })).stdout.trim(), 'rebased candidate head');
     workspace.publicationBaseSha = current.baseSha;
-    workspace.publicationRewriteFromShas = normalizeRewriteHeads([
-      ...(workspace.publicationRewriteFromShas ?? []),
-      fromHeadSha
-    ].slice(-MAX_PUBLICATION_REWRITE_HEADS));
     const snapshot = await this.validate(workspace);
     if (snapshot.dirty) throw new PolicyError('candidate became dirty while reconciling the publication baseline');
     return {
@@ -525,6 +527,13 @@ export class GitWorkspaceManager {
     return normalizeSha(sha, 'remote task branch head');
   }
 
+  #rememberKnownTaskBranchHead(workspace, headSha) {
+    workspace.taskBranchKnownRemoteHeads = normalizeKnownTaskBranchHeads([
+      ...(workspace.taskBranchKnownRemoteHeads ?? []),
+      headSha
+    ].slice(-MAX_KNOWN_TASK_BRANCH_HEADS));
+  }
+
   async publishTaskBranch(workspace) {
     if (!workspace.branch.startsWith(`${this.#branchPrefix}/`)) {
       throw new PolicyError('refusing to publish a non-PATCH-POLLER task branch');
@@ -537,13 +546,14 @@ export class GitWorkspaceManager {
     const localHead = normalizeSha(snapshot.headSha, 'local task branch head');
     const remoteHead = await this.#remoteTaskBranchHead(workspace, token, ref);
     if (remoteHead === localHead) {
+      this.#rememberKnownTaskBranchHead(workspace, localHead);
       return { branch: workspace.branch, headSha: localHead, reconciled: true, previousRemoteHeadSha: remoteHead };
     }
 
-    const allowedRewriteHeads = new Set(normalizeRewriteHeads(workspace.publicationRewriteFromShas));
+    const knownRemoteHeads = new Set(normalizeKnownTaskBranchHeads(workspace.taskBranchKnownRemoteHeads));
     let expectation;
     if (remoteHead == null) expectation = '';
-    else if (allowedRewriteHeads.has(remoteHead)) expectation = remoteHead;
+    else if (knownRemoteHeads.has(remoteHead)) expectation = remoteHead;
     else throw new PolicyError(`remote PATCH-POLLER task branch moved to unexpected head ${remoteHead}; refusing to overwrite it`);
 
     const pushed = await this.#git.run([
@@ -560,6 +570,7 @@ export class GitWorkspaceManager {
     if (reconciledHead !== localHead) {
       throw new PolicyError(`task branch publication did not converge on the exact local head: ${(pushed.stderr || pushed.stdout).trim()}`);
     }
+    this.#rememberKnownTaskBranchHead(workspace, localHead);
     return {
       branch: workspace.branch,
       headSha: localHead,
