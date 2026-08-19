@@ -2,7 +2,7 @@
 
 Status: active
 
-Implementation status: current main enforces the verified Linux outer sandbox for proposal workers/repository-code execution, control-owned worker IPC, exact local execution authority, sanitized dynamic-operation onboarding, and current DB-007/DB-016/DB-018 capability/fencing/governance boundaries. Unsupported enforcement claims fail closed.
+Implementation status: current main enforces verified outer sandboxes for proposal workers/repository-code execution on Linux (Bubblewrap) and Windows (ProcessContainer through the pinned Microsoft MXC runtime), control-owned worker IPC, exact local execution authority, sanitized dynamic-operation onboarding, and current DB-007/DB-016/DB-018 capability/fencing/governance boundaries. Unsupported or unverified enforcement claims fail closed.
 
 ## Fundamental rule
 
@@ -82,14 +82,16 @@ A synthesized wrapper reduces application-specific source edits; it does not tur
 
 ### Credentialed control plane versus proposal workers
 
-Untrusted proposal/model workers, and any repository-controlled subprocesses they launch, are separated from the credentialed control plane by a **verified OS isolation boundary**. A profile declaration is not sufficient evidence. If the active host has no verified worker-isolation provider, proposal-worker execution fails closed.
+Untrusted proposal/model workers, and any repository-controlled subprocesses they launch, are separated from the credentialed control plane by a **verified OS isolation boundary**. A profile declaration, installed binary, version banner, or provider-native capability probe is not sufficient evidence. If the active host has no provider that passes DevBridge's live adversarial boundary probe, proposal-worker and repository-code execution fail closed.
 
-The current built-in Linux provider uses Bubblewrap. Other platforms may inspect/configure DevBridge, but they do not gain proposal-worker/repository-code execution merely because a tool profile says `sandbox.enforcement: os` or `tool`.
+The built-in Linux provider uses Bubblewrap. The built-in Windows provider uses the ProcessContainer backend exposed by a pinned Microsoft MXC runtime. On Windows, the stage-0 bootstrap automatically provisions that pinned runtime into the DevBridge-owned home rather than modifying the managed source checkout. Provisioning failure leaves DevBridge available for non-repository-code control/static work but keeps repository-code execution disabled with an explicit diagnostic.
+
+The provider is usable only after DevBridge itself demonstrates the required boundary on the running host. Windows verification exercises positive project/scratch writes and negative arbitrary outside read/write, control-state read, `.git` mutation, network egress, and escaped-descendant behavior. Provider presence or MXC `--probe` success alone never sets `repositoryCodeExecution: true`.
 
 The worker boundary has these ownership rules:
 
-- DevBridge control state, daemon lock/stop/pause authority, GitHub CLI credential storage, SSH/user credential state, identity private keys, release authority, and other operator-home credential sources stay outside the worker mount namespace;
-- worker `HOME` and temporary directories are synthetic sandbox-owned locations rather than the operator home;
+- DevBridge control state, daemon lock/stop/pause authority, GitHub CLI credential storage, SSH/user credential state, identity private keys, release authority, and other operator-home credential sources stay outside the worker-visible filesystem policy;
+- worker `HOME`, profile-data directories, and temporary directories are synthetic sandbox-owned locations rather than the operator home;
 - control-plane GitHub token variables (`DEVBRIDGE_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, enterprise variants, Git/SSH askpass variables, and `SSH_AUTH_SOCK`) are stripped even when a local tool profile requests them;
 - a non-control credential required by a coding service must be granted explicitly/narrowly by local tool configuration; stored operator-home coding-tool credentials are not made visible as a convenience;
 - project/candidate bytes are writable proposal state, but authoritative `.git` / linked-worktree administrative state is read-only or unreachable from the worker;
@@ -100,16 +102,20 @@ The worker boundary has these ownership rules:
 
 Worker context/result exchange is **control-plane state**, not a reserved project directory.
 
-For every run/turn DevBridge creates a private exchange root under the configured state directory with exclusive run/turn ownership. The control-only manifest binds the exact run/turn to context/result file identities and SHA-256 of the context bytes. That manifest and mailbox root are never exposed to the worker.
+For every run/turn DevBridge creates a private exchange root under the configured state directory with exclusive run/turn ownership. The control-only manifest binds the exact run/turn to context/result identities and SHA-256 of the context bytes. The manifest and authoritative result object are never writable by a worker.
 
-Only two exact endpoints are projected into the worker namespace:
+Linux/Bubblewrap projects the pre-created context file read-only and the pre-created authoritative result file as an exact writable-in-place bind. The worker may not unlink, rename over, symlink, junction, or otherwise replace that mailbox object; DevBridge revalidates identity before consuming it.
 
-- the pre-created context file, read-only;
-- the pre-created result file, writable in place.
+Windows ProcessContainer has a different transport because MXC's writable-path fallback deliberately includes Windows delete authority. DevBridge therefore does **not** grant the worker writable access to the authoritative result object. Instead it exposes:
 
-The worker is instructed to overwrite the existing result file in place. It may not unlink, rename over, symlink, junction, or otherwise replace the mailbox object. Before privileged result consumption DevBridge revalidates control-owned directory/file type, service ownership where the host exposes a UID, private permissions on POSIX, recorded filesystem identity, context digest, and bounded result size. Reads use no-follow semantics where available and verify the opened file identity again.
+- the exact control-owned context file read-only;
+- one exact, pre-created, non-authoritative worker staging-result file read/write;
+- no write/create permission on the staging file's parent or siblings;
+- an explicit deny on the authoritative result file.
 
-This means `.devbridge/<run>/<turn>` inside the proposal tree is not an IPC security mechanism and need not exist. Project cleanup/Git exclusion is independent of control-plane mailbox ownership.
+After the contained process tree exits, DevBridge validates that the staging object is still the originally created regular file, enforces the result-size bound, then imports its bytes into the still-anchored authoritative result file under control-plane authority. A missing or replaced staging object is not accepted as a result. Recovery can repeat the same import from the control-owned manifest and recorded staging identity after interruption.
+
+Before privileged result consumption DevBridge revalidates control-owned directory/file type, service ownership where the host exposes a UID, private permissions on POSIX, recorded filesystem identity, context digest, and bounded result size. Reads use no-follow semantics where available. This means `.devbridge/<run>/<turn>` inside the proposal tree is not an IPC security mechanism and need not exist. Project cleanup/Git exclusion is independent of control-plane mailbox ownership.
 
 ## GitHub control-plane authentication
 
@@ -138,7 +144,7 @@ Network access is a capability because it can fetch executable content and exfil
 
 Network policy should be phase-aware where practical. Provisioning, dependency fetch/install, build/test, loopback browser testing, proposal-model access, and publication do not require the same network authority. Arbitrary project/test code must not inherit publication credentials or broad network access merely because another phase needs them.
 
-A worker network mode is usable only when the verified isolation provider can actually enforce the requested mode. The current Bubblewrap worker adapter enforces `deny` by retaining the unshared network namespace and supports explicit `unrestricted` networking by sharing the host network namespace while retaining filesystem/control-state isolation; a declared `restricted` mode fails closed until a provider can enforce a real restricted policy.
+A worker network mode is usable only when the verified isolation provider can actually enforce the requested mode. Bubblewrap enforces `deny` by retaining the unshared network namespace and supports explicit `unrestricted` networking by sharing the host network namespace while retaining filesystem/control-state isolation. Windows ProcessContainer uses default-block networking with no AppContainer capabilities for `deny`; its provider must pass DevBridge's live egress canary before that mode is considered verified. A declared `restricted` mode fails closed until a provider can enforce a real restricted policy.
 
 DB-008 remains authoritative for first-class package-manager/dependency/browser phase isolation, which is not yet complete.
 
@@ -200,7 +206,7 @@ DB-018 currently provides:
 
 Process priority is QoS, not a security sandbox or hard CPU quota. Strong CPU, memory, disk-growth, process-count, native-thread, or richer restricted-network containment requires verified platform adapters beyond portable Node APIs. Those gaps must be reported honestly rather than represented as enforced.
 
-A timeout must attempt to terminate the whole managed process tree using the platform containment provider rather than assuming termination of the immediate child is sufficient.
+A timeout must attempt to terminate the whole managed process tree using the platform containment provider rather than assuming termination of the immediate child is sufficient. On Windows, ProcessContainer/Job Object lifecycle containment is primary and the parent runner's tree termination remains defense in depth.
 
 `pause` must not be implemented as a process/thread freeze that breaks DB-016 lease heartbeat/fencing semantics. It is admission control at an existing safe boundary.
 
