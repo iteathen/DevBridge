@@ -40,7 +40,6 @@ jobs:
         run: node --test test/standalone-launcher.test.js
 
   test:
-    needs: smoke
     timeout-minutes: 6
     strategy:
       fail-fast: false
