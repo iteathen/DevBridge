@@ -13,8 +13,10 @@ import { IssueDecisionSource } from '../github/issue-decision-source.js';
 import { IssueStatusReporter } from '../github/issue-status-reporter.js';
 import { ChatHandoffProjector } from '../github/chat-handoff-projector.js';
 import { ToolInventoryProjector } from '../github/tool-inventory-projector.js';
+import { importAgentPublicIdentity, loadOrCreateAgentIdentity } from '../security/agent-identity.js';
 import { WorkspacePolicy } from '../security/workspace-policy.js';
 import { GitClient } from '../git/git-client.js';
+import { GitTaskLeaseStore } from '../git/task-lease-store.js';
 import { GitWorkspaceManager } from '../git/workspace-manager.js';
 import { ProcessRunner } from '../runtime/process-runner.js';
 import { DeterministicProcessRunner } from '../runtime/deterministic-process-runner.js';
@@ -28,8 +30,10 @@ import { ToolInventoryService } from '../runtime/tool-inventory.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { builtInToolProfiles, builtInToolReadRoots } from '../runtime/builtin-tool-profiles.js';
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
+import { LeaseExecutionContext } from '../run/lease-execution-context.js';
 import { LivenessProjectingPlanExecutor } from '../run/liveness-projecting-plan-executor.js';
 import { RunCoordinator } from '../run/run-coordinator.js';
+import { TaskLeaseManager } from '../run/task-lease-manager.js';
 import { HardGateController } from '../run/hard-gate-controller.js';
 import { DecisionGatedRunCoordinator, DecisionGatedWorkspaceManager } from '../run/decision-gated-coordinator.js';
 
@@ -67,7 +71,23 @@ async function canonicalLocalManifestDirectory(directory, workspaceRoot) {
   return canonical;
 }
 
-export async function createRuntime(config, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
+function coordinationDefaults(config) {
+  return config.coordination ?? {
+    enabled: false,
+    handle: 'agent',
+    leaseTtlMs: 1_200_000,
+    heartbeatIntervalMs: 300_000,
+    clockSkewMs: 60_000,
+    trustedPeers: [],
+  };
+}
+
+export async function createRuntime(config, {
+  env = process.env,
+  fetchImpl = globalThis.fetch,
+  coordinationExclusive = false,
+} = {}) {
+  if (typeof coordinationExclusive !== 'boolean') throw new TypeError('createRuntime coordinationExclusive must be a boolean');
   const workspacePolicy = new WorkspacePolicy(config.workspace);
   await workspacePolicy.ensureRoot();
   const stateStore = new JsonStateStore(path.join(config.state.directory, stateFileName(config.github.queueRepository)));
@@ -117,6 +137,13 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     maxCommentBytes: config.status.maxCommentBytes,
     secretValues,
   });
+  const coordination = coordinationDefaults(config);
+  const agentIdentity = coordination.enabled
+    ? await loadOrCreateAgentIdentity({ directory: config.state.directory, handle: coordination.handle })
+    : null;
+  const effectiveBranchPrefix = agentIdentity
+    ? `${config.publication.branchPrefix}/${agentIdentity.fingerprint}`
+    : config.publication.branchPrefix;
   const gitClient = new GitClient({ executable: config.git.executable, syntheticHome: path.join(config.state.directory, 'git-home'), defaultTimeoutMs: config.git.commandTimeoutMs });
   const workspaceManager = new GitWorkspaceManager({
     workspacePolicy,
@@ -124,10 +151,37 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     tokenProvider,
     remoteUrlResolver: (repository) => `${config.git.cloneBaseUrl}/${repository}.git`,
     fetchTimeoutMs: config.git.fetchTimeoutMs,
-    branchPrefix: config.publication.branchPrefix,
+    branchPrefix: effectiveBranchPrefix,
     baselineChannels: config.workspace.baselineChannels,
     defaultBaselineChannel: config.workspace.defaultBaselineChannel,
   });
+  let taskLeaseStore = null;
+  let taskLeaseManager = null;
+  if (agentIdentity) {
+    const trustedIdentities = new Map();
+    for (const peerConfig of coordination.trustedPeers) {
+      const peer = importAgentPublicIdentity(peerConfig);
+      if (peer.fingerprint !== peerConfig.fingerprint) throw new Error(`coordination peer ${peerConfig.handle} fingerprint changed after configuration validation`);
+      trustedIdentities.set(peer.fingerprint, peer);
+    }
+    taskLeaseStore = new GitTaskLeaseStore({
+      workspaceManager,
+      gitClient,
+      tokenProvider,
+      queueRepository: config.github.queueRepository,
+      fetchTimeoutMs: config.git.fetchTimeoutMs,
+    });
+    taskLeaseManager = new TaskLeaseManager({
+      identity: agentIdentity,
+      trustedIdentities,
+      store: taskLeaseStore,
+      leaseTtlMs: coordination.leaseTtlMs,
+      heartbeatIntervalMs: coordination.heartbeatIntervalMs,
+      clockSkewMs: coordination.clockSkewMs,
+      allowIdentityTakeover: coordinationExclusive,
+    });
+  }
+  const leaseExecutionContext = taskLeaseManager ? new LeaseExecutionContext({ taskLeaseManager }) : null;
   const hardGateController = new HardGateController({
     decisionSource,
     decisionAuthorities: config.execution.decisionAuthorities,
@@ -141,6 +195,12 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     queueRepository: config.github.queueRepository,
     gateController: hardGateController,
   });
+  const executionWorkspaceManager = leaseExecutionContext
+    ? leaseExecutionContext.wrapWorkspaceManager(gatedWorkspaceManager)
+    : gatedWorkspaceManager;
+  const planWorkspaceManager = leaseExecutionContext
+    ? leaseExecutionContext.wrapWorkspaceManager(workspaceManager)
+    : workspaceManager;
   const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
   const deterministicSandboxProvider = createDeterministicSandboxProvider({
     externalReadRoots: config.workspace.externalReadRoots,
@@ -155,11 +215,17 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     sandboxProvider: deterministicSandboxProvider,
     trustedReadRootsByProfile: builtInToolReadRoots(),
   });
+  const leaseProcessRunner = leaseExecutionContext
+    ? leaseExecutionContext.wrapProcessRunner(processRunner)
+    : processRunner;
   const deterministicProcessRunner = new DeterministicProcessRunner({
     sourceEnv: env,
     faultInjector,
     sandboxProvider: deterministicSandboxProvider,
   });
+  const leaseDeterministicProcessRunner = leaseExecutionContext
+    ? leaseExecutionContext.wrapProcessRunner(deterministicProcessRunner)
+    : deterministicProcessRunner;
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
   const onboardingConfig = config.execution.toolOnboarding ?? {
@@ -187,8 +253,8 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     : null;
   const deterministicControllerPlanExecutor = new ControllerPlanExecutor({
     operationRegistry,
-    processRunner: deterministicProcessRunner,
-    workspaceManager,
+    processRunner: leaseDeterministicProcessRunner,
+    workspaceManager: planWorkspaceManager,
     faultInjector,
   });
   const controllerPlanExecutor = new LivenessProjectingPlanExecutor({
@@ -219,8 +285,8 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
 
   const baseCoordinator = new RunCoordinator({
     stateStore,
-    workspaceManager: gatedWorkspaceManager,
-    processRunner,
+    workspaceManager: executionWorkspaceManager,
+    processRunner: leaseProcessRunner,
     controllerPlanExecutor,
     statusReporter,
     feedbackSource,
@@ -259,11 +325,14 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
     feedbackSource,
     decisionSource,
     statusReporter,
+    agentIdentity,
+    taskLeaseStore,
+    taskLeaseManager,
+    leaseExecutionContext,
     workspacePolicy,
     gitClient,
     workspaceManager,
     gatedWorkspaceManager,
-    hardGateController,
     processRunner,
     workerExchange,
     deterministicProcessRunner,

@@ -52,6 +52,21 @@ jobs:
         run: node --test --test-name-pattern="local onboarding policy" test/tool-onboarding.test.js
       - name: Issue 30 schema tests
         run: node --test test/dynamic-tool-schema.test.js
+      - name: Issue 49 coordination boundary tests
+        run: >-
+          node --test
+          test/agent-identity.test.js
+          test/task-lease.test.js
+          test/task-lease-store.test.js
+          test/task-lease-store-reconciliation.test.js
+          test/task-lease-manager.test.js
+          test/coordination-config.test.js
+          test/task-lease-dispatch.test.js
+          test/lease-execution-context.test.js
+          test/lease-process-abort.test.js
+          test/agent-branch-namespace.test.js
+          test/task-lease-control-path.test.js
+          test/task-lease-effect-frontier.test.js
       - name: Tests
         env:
           PATCH_POLLER_REQUIRE_SANDBOX_TEST: ${{ runner.os == 'Linux' && '1' || '0' }}

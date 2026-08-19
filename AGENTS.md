@@ -88,6 +88,26 @@ PP-015 is normative for local tool inventory, capability projection, and dynamic
 
 Read `specs/PP-015-tool-inventory.md` with PP-003, PP-012, and PP-013 when changing tool discovery, inventory projection, operation schemas, local manifests, or automatic onboarding.
 
+## Multi-agent identity, leases, and fencing
+
+PP-016 is normative when more than one authorized PATCH-POLLER installation or process can observe the same task queue.
+
+- A persistent generated Ed25519 key identifies an installation; its public SHA-256 fingerprint/address is coordination identity, not execution authority.
+- Private identity keys are local control material. Hardware IDs, usernames, machine names, MAC addresses, and project paths are not secret key derivation material.
+- Peer public keys and coordination timing are local operator policy. Task/repository/model content cannot add a peer or choose a lease ref/repository/expected SHA/force mode.
+- GitHub issue labels/comments may mirror ownership for humans but are not the exclusive claim primitive.
+- The authoritative lease is a signed bounded subject stored behind a PATCH-POLLER-owned Git ref and changed only with an explicit expected-value `--force-with-lease=<ref>:<expected-sha>` update.
+- Missing/ref-created, renewal, reclaim, release, and ambiguous push outcomes must be observed/reconciled rather than blind retried or force-overwritten.
+- An unexpired lease owned by another trusted peer defers the task. Unknown/unverifiable lease ownership fails closed.
+- A different local process using the same persistent key may not take over an unexpired session merely because it has the key. Immediate same-identity restart is allowed only when the daemon path has already acquired PATCH-POLLER's exclusive local singleton lock.
+- A definite lease CAS loss fences immediately. Ambiguous transport failure does not invent a new owner, but the old local claim becomes unusable at its signed expiry.
+- Active task child processes receive the lease abort signal. Before sealing or publication PATCH-POLLER must renew and re-check the fence.
+- Terminal release is a signed CAS transition, not blind lease-ref deletion.
+- Coordination-enabled task branches include the full public agent fingerprint; disabled single-agent deployments retain legacy branch naming.
+- A lease coordinates ownership only. It cannot approve hard gates, grant tool/filesystem/network/credential capability, replace PP-002 task provenance, or replace the durable run journal.
+
+Read `specs/PP-016-agent-identity-leases.md` with PP-002, PP-003, PP-004, PP-005, PP-008, PP-009, and PP-010 when changing agent identity, shared-queue claiming, heartbeat/TTL behavior, task branch namespaces, process fencing, or lease recovery.
+
 ## Human checkpoints
 
 PP-007 is normative for human-in-the-loop behavior.
@@ -144,6 +164,8 @@ When implementing coordinating-chat rollover, budget pressure, durable chat hand
 
 When implementing local tool discovery, tool inventory/projection, dynamic operation schemas, operator manifests, or unfamiliar-tool onboarding, read PP-015 together with PP-003, PP-012, and PP-013. PP-015 does not permit tool documentation, PATH presence, or remote/controller text to grant execution authority.
 
+When implementing multi-agent task coordination, persistent agent identity, shared queue leases, lease ref CAS transport, heartbeat/TTL recovery, agent branch namespaces, or lease-loss process fencing, read PP-016 together with PP-002, PP-003, PP-004, PP-005, PP-008, PP-009, and PP-010. PP-016 coordination evidence never creates task or capability authority.
+
 ## Runtime scope
 
 The core runtime is Node.js and should prefer Node standard-library facilities. Do not introduce another language, a shell-dependent core path, or a third-party dependency without documenting why the ownership boundary needs it and what new supply-chain or portability cost it creates.
@@ -181,6 +203,11 @@ Boundary tests are mandatory for:
 - dynamic-operation public schemas that are sufficient for bounded controller use without exposing executable/fixed argv/flag authority;
 - local manifest rejection of duplicate registration, authority-shaped parameters, path/argv smuggling, and filesystem indirection;
 - sandboxed unfamiliar-tool help probing with no control credentials, denied network, hidden configured external read roots, bounded output/time, and fail-closed registration;
-- restart-safe persist-before-register reconciliation of generated local manifests.
+- restart-safe persist-before-register reconciliation of generated local manifests;
+- persistent agent-key identity validation, public/private projection separation, and locally configured peer-key trust;
+- signed lease exact task/revision binding, time/epoch validation, explicit expected-SHA Git CAS, competing-writer reconciliation, and unknown-peer fail-closed behavior;
+- unexpired peer/local-session deferral, trusted expiry reclaim, and daemon-lock-qualified same-identity restart reconciliation;
+- lease heartbeat/fence/expiry behavior, child-process abort propagation, and prevention of stale sealing/publication effects;
+- full-fingerprint task branch namespacing with legacy compatibility when coordination is disabled.
 
 A passing happy-path test alone is not sufficient for a capability boundary.

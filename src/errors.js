@@ -9,6 +9,7 @@ export class ConfigurationError extends PatchPollerError {}
 export class ProtocolError extends PatchPollerError {}
 export class PolicyError extends PatchPollerError {}
 export class CandidateValidationError extends PatchPollerError {}
+export class TaskLeaseLostError extends PatchPollerError {}
 
 export class GitCommandError extends PatchPollerError {
   constructor(message, { args = [], cwd = null, exitCode = null, signal = null, stdout = '', stderr = '', cause } = {}) {
