@@ -13,6 +13,9 @@ import {
 } from './sandbox-status.js';
 
 const MXC_SCHEMA_VERSION = '0.7.0-alpha';
+const MXC_DACL_MUTEX_WAIT_MS = 30_000;
+const MXC_PREREQUISITE_PROBE_TIMEOUT_MS = MXC_DACL_MUTEX_WAIT_MS + 5_000;
+const MXC_BOUNDARY_PROBE_TIMEOUT_MS = MXC_DACL_MUTEX_WAIT_MS + 10_000;
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const CREDENTIAL_ENVIRONMENT = new Set([
   'DEVBRIDGE_GITHUB_TOKEN',
@@ -161,6 +164,17 @@ export async function canonicalizeWindowsWorkspacePath(
 ) {
   const workspaceCanonical = await canonicalWorkspaceRoot(workspaceRoot);
   return canonicalWorkspaceDescendant(workspaceRoot, workspaceCanonical, candidate, name, { directory });
+}
+
+export function createWindowsProcessContainerId() {
+  return `devbridge-${randomUUID().replaceAll('-', '')}`;
+}
+
+export function windowsProcessContainerProbeTimeouts() {
+  return {
+    prerequisiteMs: MXC_PREREQUISITE_PROBE_TIMEOUT_MS,
+    boundaryMs: MXC_BOUNDARY_PROBE_TIMEOUT_MS,
+  };
 }
 
 function needsWindowsQuotes(value) {
@@ -416,6 +430,7 @@ export class WindowsProcessContainerSandboxProvider {
     const network = sandbox.network === 'unrestricted' ? 'unrestricted' : 'deny';
     const config = {
       version: MXC_SCHEMA_VERSION,
+      containerId: createWindowsProcessContainerId(),
       containment: 'processcontainer',
       lifecycle: { destroyOnExit: true, preservePolicy: false },
       process: {
@@ -481,7 +496,7 @@ export class WindowsProcessContainerSandboxProvider {
     const nativeProbe = await captureSandboxProbeProcess(this.#resolvedExecutable, ['--probe'], {
       cwd: path.dirname(this.#resolvedExecutable),
       env: launcherEnvironment(this.#env),
-      timeoutMs: 5_000,
+      timeoutMs: MXC_PREREQUISITE_PROBE_TIMEOUT_MS,
     }).catch((error) => ({ code: null, timedOut: false, truncated: false, stdout: '', stderr: error?.message ?? String(error) }));
     if (nativeProbe.code !== 0 || nativeProbe.timedOut || nativeProbe.truncated) {
       const detail = nativeProbe.stderr.trim() || nativeProbe.stdout.trim() || `exit=${nativeProbe.code ?? 'spawn-error'}`;
@@ -541,7 +556,11 @@ export class WindowsProcessContainerSandboxProvider {
         sandbox: { projectDir, scratchRoot: scratchCanonical, network: 'deny' },
         scratchRoot: scratchCanonical,
       });
-      const outcome = await captureSandboxProbeProcess(launch.executable, launch.args, { cwd: launch.cwd, env: launch.env, timeoutMs: 10_000 });
+      const outcome = await captureSandboxProbeProcess(launch.executable, launch.args, {
+        cwd: launch.cwd,
+        env: launch.env,
+        timeoutMs: MXC_BOUNDARY_PROBE_TIMEOUT_MS,
+      });
       let observation = null;
       try { observation = JSON.parse(outcome.stdout.trim()); } catch { observation = null; }
       await sleep(1_600);
