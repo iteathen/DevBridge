@@ -12,7 +12,7 @@ export const WORKER_RESULT_FILE = '/run/devbridge-exchange/result.json';
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const DEFAULT_RESULT_LIMIT = 1_048_576;
 const MANIFEST_LIMIT = 64 * 1024;
-const WORKER_TARGET_MODES = new Set(['virtual', 'host-exact-files']);
+const WORKER_TARGET_MODES = new Set(['virtual', 'host-staging-file']);
 
 function sha256(text) {
   return createHash('sha256').update(text, 'utf8').digest('hex');
@@ -166,6 +166,44 @@ async function readAnchoredFile({
   }
 }
 
+async function readStableStagingFile(candidate, expectedIdentity, maxBytes) {
+  try {
+    const before = await secureStat(candidate, 'file', expectedIdentity);
+    if (before.size > BigInt(maxBytes)) return { text: null, tooLarge: true };
+    const handle = await openReadNoFollow(candidate);
+    try {
+      const opened = await handle.stat({ bigint: true });
+      assertOpenedFile(opened, candidate);
+      const text = await handle.readFile({ encoding: 'utf8' });
+      await secureStat(candidate, 'file', expectedIdentity);
+      return { text, tooLarge: false };
+    } finally {
+      await handle.close().catch(() => {});
+    }
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { text: null, tooLarge: false, missing: true };
+    throw error;
+  }
+}
+
+async function overwriteAnchoredResult({ candidate, anchor, expectedCandidateIdentity, expectedAnchorIdentity, text }) {
+  const beforeCandidate = await secureStat(candidate, 'file', expectedCandidateIdentity);
+  const beforeAnchor = await secureStat(anchor, 'file', expectedAnchorIdentity);
+  assertAnchoredPair(beforeCandidate, beforeAnchor, candidate);
+  const handle = await open(candidate, constants.O_WRONLY);
+  try {
+    const opened = await handle.stat({ bigint: true });
+    assertOpenedFile(opened, candidate);
+    await handle.truncate(0);
+    await handle.writeFile(text, { encoding: 'utf8' });
+  } finally {
+    await handle.close().catch(() => {});
+  }
+  const afterCandidate = await secureStat(candidate, 'file', expectedCandidateIdentity);
+  const afterAnchor = await secureStat(anchor, 'file', expectedAnchorIdentity);
+  assertAnchoredPair(afterCandidate, afterAnchor, candidate);
+}
+
 async function readControlManifest(candidate, anchor) {
   const read = await readAnchoredFile({ candidate, anchor, maxBytes: MANIFEST_LIMIT });
   if (read.tooLarge) throw new PolicyError('worker-exchange manifest exceeds the control-plane size bound');
@@ -182,13 +220,14 @@ async function readControlManifest(candidate, anchor) {
 
 function workerTargets(paths, targetMode) {
   if (!WORKER_TARGET_MODES.has(targetMode)) throw new PolicyError(`unsupported worker IPC target mode: ${targetMode}`);
-  if (targetMode === 'host-exact-files') {
-    return { contextFile: paths.contextFile, resultFile: paths.resultFile };
+  if (targetMode === 'host-staging-file') {
+    return { contextFile: paths.contextFile, resultFile: paths.stagingResultFile };
   }
   return { contextFile: WORKER_CONTEXT_FILE, resultFile: WORKER_RESULT_FILE };
 }
 
 function sameHostPath(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
   const left = path.normalize(path.resolve(a));
   const right = path.normalize(path.resolve(b));
   return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
@@ -200,14 +239,16 @@ class WorkerMailbox {
   #contextAnchorFile;
   #resultFile;
   #resultAnchorFile;
+  #stagingResultFile;
   #manifest;
 
-  constructor({ turnRoot, contextFile, contextAnchorFile, resultFile, resultAnchorFile, manifest }) {
+  constructor({ turnRoot, contextFile, contextAnchorFile, resultFile, resultAnchorFile, stagingResultFile, manifest }) {
     this.#turnRoot = turnRoot;
     this.#contextFile = contextFile;
     this.#contextAnchorFile = contextAnchorFile;
     this.#resultFile = resultFile;
     this.#resultAnchorFile = resultAnchorFile;
+    this.#stagingResultFile = stagingResultFile;
     this.#manifest = manifest;
   }
 
@@ -219,6 +260,7 @@ class WorkerMailbox {
   sandboxIpc() {
     return {
       protocol: WORKER_EXCHANGE_PROTOCOL,
+      transport: this.#manifest.resultTransport,
       contextSource: this.#contextFile,
       resultSource: this.#resultFile,
       contextTarget: this.#manifest.workerContextFile,
@@ -240,6 +282,22 @@ class WorkerMailbox {
     });
     if (sha256(context.text) !== this.#manifest.contextSha256) {
       throw new PolicyError('worker modified its control-plane-owned context file');
+    }
+
+    if (this.#manifest.resultTransport === 'worker-staging') {
+      const staged = await readStableStagingFile(this.#stagingResultFile, this.#manifest.stagingResultIdentity, maxBytes);
+      if (staged.tooLarge) return { text: null, resultParseError: `result file exceeds ${maxBytes} bytes` };
+      if (staged.missing) return { text: null, resultParseError: 'worker result staging file is missing' };
+      if (staged.text.length > 0) {
+        await overwriteAnchoredResult({
+          candidate: this.#resultFile,
+          anchor: this.#resultAnchorFile,
+          expectedCandidateIdentity: this.#manifest.resultIdentity,
+          expectedAnchorIdentity: this.#manifest.resultAnchorIdentity,
+          text: staged.text,
+        });
+      }
+      return { text: staged.text.length === 0 ? null : staged.text, resultParseError: null };
     }
 
     const result = await readAnchoredFile({
@@ -290,6 +348,7 @@ export class WorkerExchange {
       contextAnchorFile: path.join(turnRoot, '.context-anchor'),
       resultFile: path.join(turnRoot, 'result.json'),
       resultAnchorFile: path.join(turnRoot, '.result-anchor'),
+      stagingResultFile: path.join(turnRoot, 'worker-result-staging.json'),
       manifestFile: path.join(turnRoot, 'manifest.json'),
       manifestAnchorFile: path.join(turnRoot, '.manifest-anchor'),
     };
@@ -326,6 +385,9 @@ export class WorkerExchange {
     await link(paths.contextFile, paths.contextAnchorFile);
     await writeFile(paths.resultFile, '', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     await link(paths.resultFile, paths.resultAnchorFile);
+    if (targetMode === 'host-staging-file') {
+      await writeFile(paths.stagingResultFile, '', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    }
 
     const contextInfo = await secureStat(paths.contextFile, 'file');
     const contextAnchorInfo = await secureStat(paths.contextAnchorFile, 'file');
@@ -333,6 +395,9 @@ export class WorkerExchange {
     const resultInfo = await secureStat(paths.resultFile, 'file');
     const resultAnchorInfo = await secureStat(paths.resultAnchorFile, 'file');
     assertAnchoredPair(resultInfo, resultAnchorInfo, paths.resultFile);
+    const stagingResultInfo = targetMode === 'host-staging-file'
+      ? await secureStat(paths.stagingResultFile, 'file')
+      : null;
 
     const manifest = {
       protocol: WORKER_EXCHANGE_PROTOCOL,
@@ -345,6 +410,8 @@ export class WorkerExchange {
       contextAnchorIdentity: identityOf(contextAnchorInfo),
       resultIdentity: identityOf(resultInfo),
       resultAnchorIdentity: identityOf(resultAnchorInfo),
+      stagingResultIdentity: stagingResultInfo ? identityOf(stagingResultInfo) : null,
+      resultTransport: targetMode === 'host-staging-file' ? 'worker-staging' : 'control-anchored',
       workerContextFile: targets.contextFile,
       workerResultFile: targets.resultFile,
     };
@@ -364,6 +431,7 @@ export class WorkerExchange {
       contextAnchorFile: paths.contextAnchorFile,
       resultFile: paths.resultFile,
       resultAnchorFile: paths.resultAnchorFile,
+      stagingResultFile: paths.stagingResultFile,
       manifest,
     });
   }
@@ -378,10 +446,12 @@ export class WorkerExchange {
       throw new PolicyError('worker-exchange manifest does not match the requested run/turn identity');
     }
     const virtualTargets = workerTargets(paths, 'virtual');
-    const hostTargets = workerTargets(paths, 'host-exact-files');
-    const validVirtual = manifest.workerContextFile === virtualTargets.contextFile && manifest.workerResultFile === virtualTargets.resultFile;
-    const validHost = sameHostPath(manifest.workerContextFile, hostTargets.contextFile) && sameHostPath(manifest.workerResultFile, hostTargets.resultFile);
-    if (!validVirtual && !validHost) {
+    const stagingTargets = workerTargets(paths, 'host-staging-file');
+    const validVirtual = manifest.resultTransport === 'control-anchored' &&
+      manifest.workerContextFile === virtualTargets.contextFile && manifest.workerResultFile === virtualTargets.resultFile;
+    const validStaging = manifest.resultTransport === 'worker-staging' &&
+      sameHostPath(manifest.workerContextFile, stagingTargets.contextFile) && sameHostPath(manifest.workerResultFile, stagingTargets.resultFile);
+    if (!validVirtual && !validStaging) {
       throw new PolicyError('worker-exchange manifest uses unexpected sandbox-visible IPC paths');
     }
     await secureStat(paths.turnRoot, 'directory', manifest.turnIdentity);
@@ -393,6 +463,13 @@ export class WorkerExchange {
     const resultInfo = await secureStat(paths.resultFile, 'file', manifest.resultIdentity);
     const resultAnchorInfo = await secureStat(paths.resultAnchorFile, 'file', manifest.resultAnchorIdentity);
     assertAnchoredPair(resultInfo, resultAnchorInfo, paths.resultFile);
+    if (validStaging) {
+      try {
+        await secureStat(paths.stagingResultFile, 'file', manifest.stagingResultIdentity);
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+      }
+    }
 
     return new WorkerMailbox({
       turnRoot: paths.turnRoot,
@@ -400,6 +477,7 @@ export class WorkerExchange {
       contextAnchorFile: paths.contextAnchorFile,
       resultFile: paths.resultFile,
       resultAnchorFile: paths.resultAnchorFile,
+      stagingResultFile: paths.stagingResultFile,
       manifest,
     });
   }
