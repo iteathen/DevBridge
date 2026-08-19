@@ -138,10 +138,11 @@ test('decision matching rejects stale run/task/checkpoint/digest and expiry', ()
     checkpointId: cp.checkpointId,
     subjectDigest: cp.subjectDigest,
   };
-  assert.equal(decisionMatchesCheckpoint(cp, exact, { nowMs: Date.parse(cp.createdAt) + 1 }).ok, true);
-  assert.equal(decisionMatchesCheckpoint(cp, { ...exact, runId: 'other' }).reason, 'decision-run-mismatch');
-  assert.equal(decisionMatchesCheckpoint(cp, { ...exact, taskRevision: 'c'.repeat(64) }).reason, 'decision-task-mismatch');
-  assert.equal(decisionMatchesCheckpoint(cp, { ...exact, checkpointId: 'checkpoint-other' }).reason, 'decision-checkpoint-mismatch');
-  assert.equal(decisionMatchesCheckpoint(cp, { ...exact, subjectDigest: 'd'.repeat(64) }).reason, 'decision-subject-mismatch');
+  const activeNow = Date.parse(cp.createdAt) + 1;
+  assert.equal(decisionMatchesCheckpoint(cp, exact, { nowMs: activeNow }).ok, true);
+  assert.equal(decisionMatchesCheckpoint(cp, { ...exact, runId: 'other' }, { nowMs: activeNow }).reason, 'decision-run-mismatch');
+  assert.equal(decisionMatchesCheckpoint(cp, { ...exact, taskRevision: 'c'.repeat(64) }, { nowMs: activeNow }).reason, 'decision-task-mismatch');
+  assert.equal(decisionMatchesCheckpoint(cp, { ...exact, checkpointId: 'checkpoint-other' }, { nowMs: activeNow }).reason, 'decision-checkpoint-mismatch');
+  assert.equal(decisionMatchesCheckpoint(cp, { ...exact, subjectDigest: 'd'.repeat(64) }, { nowMs: activeNow }).reason, 'decision-subject-mismatch');
   assert.equal(decisionMatchesCheckpoint(cp, exact, { nowMs: Date.parse(cp.expiresAt) }).reason, 'checkpoint-expired');
 });
