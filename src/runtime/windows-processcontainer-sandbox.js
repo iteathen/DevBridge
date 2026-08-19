@@ -119,6 +119,50 @@ async function canonicalExisting(candidate, name, { directory = false } = {}) {
   return canonical;
 }
 
+async function canonicalWorkspaceRoot(candidate) {
+  const resolved = path.resolve(candidate);
+  const info = await lstat(resolved);
+  if (info.isSymbolicLink()) throw new PolicyError('sandbox workspace root must not itself be filesystem indirection');
+  if (!info.isDirectory()) throw new PolicyError('sandbox workspace root must be a directory');
+  return realpath(resolved);
+}
+
+function workspaceRelativePath(workspaceRoot, workspaceCanonical, candidate, name) {
+  const resolved = path.resolve(candidate);
+  if (isWithin(workspaceRoot, resolved)) return path.relative(path.resolve(workspaceRoot), resolved);
+  if (isWithin(workspaceCanonical, resolved)) return path.relative(path.resolve(workspaceCanonical), resolved);
+  throw new PolicyError(`${name} must stay inside the managed workspace root`);
+}
+
+async function canonicalWorkspaceDescendant(
+  workspaceRoot,
+  workspaceCanonical,
+  candidate,
+  name,
+  { directory = false } = {},
+) {
+  const resolved = path.resolve(candidate);
+  const relative = workspaceRelativePath(workspaceRoot, workspaceCanonical, resolved, name);
+  const info = await lstat(resolved);
+  if (info.isSymbolicLink()) throw new PolicyError(`${name} must not be filesystem indirection`);
+  if (directory && !info.isDirectory()) throw new PolicyError(`${name} must be a directory`);
+  const canonical = await realpath(resolved);
+  const expectedCanonical = path.resolve(workspaceCanonical, relative);
+  if (comparable(canonical) !== comparable(expectedCanonical)) {
+    throw new PolicyError(`${name} resolves through filesystem indirection inside managed workspace`);
+  }
+  return canonical;
+}
+
+export async function canonicalizeWindowsWorkspacePath(
+  workspaceRoot,
+  candidate,
+  { name = 'sandbox workspace path', directory = false } = {},
+) {
+  const workspaceCanonical = await canonicalWorkspaceRoot(workspaceRoot);
+  return canonicalWorkspaceDescendant(workspaceRoot, workspaceCanonical, candidate, name, { directory });
+}
+
 function needsWindowsQuotes(value) {
   return value.length === 0 || /[ \t\n\v"]/u.test(value);
 }
@@ -281,21 +325,50 @@ export class WindowsProcessContainerSandboxProvider {
   }
 
   async #createScratchRoot(prefix = 'run-') {
-    const scratchParent = path.join(this.#workspaceRoot, '.devbridge-sandbox-scratch');
+    const workspace = await canonicalWorkspaceRoot(this.#workspaceRoot);
+    const scratchParent = path.join(workspace, '.devbridge-sandbox-scratch');
     await mkdir(scratchParent, { recursive: true });
-    const parent = await canonicalExisting(scratchParent, 'sandbox scratch parent', { directory: true });
+    const parent = await canonicalWorkspaceDescendant(
+      this.#workspaceRoot,
+      workspace,
+      scratchParent,
+      'sandbox scratch parent',
+      { directory: true },
+    );
     const scratch = await mkdtemp(path.join(parent, prefix));
-    return canonicalExisting(scratch, 'sandbox scratch root', { directory: true });
+    return canonicalWorkspaceDescendant(
+      this.#workspaceRoot,
+      workspace,
+      scratch,
+      'sandbox scratch root',
+      { directory: true },
+    );
   }
 
   async #buildLaunch({ executable, args, cwd, env, sandbox, scratchRoot }) {
-    const project = await canonicalExisting(sandbox.projectDir, 'sandbox project root', { directory: true });
-    const workspace = await canonicalExisting(this.#workspaceRoot, 'sandbox workspace root', { directory: true });
-    const scratch = await canonicalExisting(scratchRoot, 'sandbox scratch root', { directory: true });
-    if (!isWithin(workspace, project)) throw new PolicyError('sandbox project root must stay inside the managed workspace root');
-    if (!isWithin(workspace, scratch)) throw new PolicyError('sandbox scratch root must stay inside the managed workspace root');
+    const workspace = await canonicalWorkspaceRoot(this.#workspaceRoot);
+    const project = await canonicalWorkspaceDescendant(
+      this.#workspaceRoot,
+      workspace,
+      sandbox.projectDir,
+      'sandbox project root',
+      { directory: true },
+    );
+    const scratch = await canonicalWorkspaceDescendant(
+      this.#workspaceRoot,
+      workspace,
+      scratchRoot,
+      'sandbox scratch root',
+      { directory: true },
+    );
 
-    const cwdResolved = await canonicalExisting(cwd, 'sandbox working directory', { directory: true });
+    const cwdResolved = await canonicalWorkspaceDescendant(
+      this.#workspaceRoot,
+      workspace,
+      cwd,
+      'sandbox working directory',
+      { directory: true },
+    );
     if (!isWithin(project, cwdResolved) && !isWithin(scratch, cwdResolved)) {
       throw new PolicyError('sandbox working directory must stay inside the project or owned scratch root');
     }
@@ -311,7 +384,14 @@ export class WindowsProcessContainerSandboxProvider {
     const readonlyPaths = [...readRoots];
     const deniedPaths = [];
     const gitAdmin = path.join(project, '.git');
-    if (await exists(gitAdmin)) deniedPaths.push(await canonicalExisting(gitAdmin, 'sandbox Git administrative path'));
+    if (await exists(gitAdmin)) {
+      deniedPaths.push(await canonicalWorkspaceDescendant(
+        this.#workspaceRoot,
+        workspace,
+        gitAdmin,
+        'sandbox Git administrative path',
+      ));
+    }
 
     if (sandbox.ipc) {
       const { contextSource, resultSource, contextTarget, resultTarget } = sandbox.ipc;
@@ -423,7 +503,7 @@ export class WindowsProcessContainerSandboxProvider {
     try {
       await mkdir(this.#stateDirectory, { recursive: true });
       await mkdir(this.#workspaceRoot, { recursive: true });
-      const workspace = await canonicalExisting(this.#workspaceRoot, 'sandbox workspace root', { directory: true });
+      const workspace = await canonicalWorkspaceRoot(this.#workspaceRoot);
       probeRoot = await mkdtemp(path.join(workspace, '.devbridge-windows-boundary-'));
       const projectDir = path.join(probeRoot, 'project');
       const scratchDir = path.join(probeRoot, 'scratch');
@@ -440,7 +520,13 @@ export class WindowsProcessContainerSandboxProvider {
       await writeFile(outsideRead, 'outside-sentinel\n');
       await writeFile(stateProbe, 'state-control-sentinel\n', { flag: 'wx' });
 
-      const scratchCanonical = await canonicalExisting(scratchDir, 'sandbox probe scratch', { directory: true });
+      const scratchCanonical = await canonicalWorkspaceDescendant(
+        this.#workspaceRoot,
+        workspace,
+        scratchDir,
+        'sandbox probe scratch',
+        { directory: true },
+      );
       const launch = await this.#buildLaunch({
         executable: process.execPath,
         args: ['-e', WINDOWS_PROBE_SCRIPT, projectDir, scratchDir, outsideRead, outsideWrite, stateProbe, descendantMarker],
@@ -525,8 +611,15 @@ export class WindowsProcessContainerSandboxProvider {
       throw new PolicyError(`sandboxed execution requires a verified sandbox provider; ${status.reason ?? 'provider is not verified'}`);
     }
 
+    const workspace = await canonicalWorkspaceRoot(this.#workspaceRoot);
     const scratchRoot = sandbox.scratchRoot
-      ? await canonicalExisting(sandbox.scratchRoot, 'sandbox scratch root', { directory: true })
+      ? await canonicalWorkspaceDescendant(
+        this.#workspaceRoot,
+        workspace,
+        sandbox.scratchRoot,
+        'sandbox scratch root',
+        { directory: true },
+      )
       : await this.#createScratchRoot();
     const ownedScratch = sandbox.scratchRoot == null;
     try {
