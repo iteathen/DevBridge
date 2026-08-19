@@ -82,7 +82,12 @@ function coordinationDefaults(config) {
   };
 }
 
-export async function createRuntime(config, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
+export async function createRuntime(config, {
+  env = process.env,
+  fetchImpl = globalThis.fetch,
+  coordinationExclusive = false,
+} = {}) {
+  if (typeof coordinationExclusive !== 'boolean') throw new TypeError('createRuntime coordinationExclusive must be a boolean');
   const workspacePolicy = new WorkspacePolicy(config.workspace);
   await workspacePolicy.ensureRoot();
   const stateStore = new JsonStateStore(path.join(config.state.directory, stateFileName(config.github.queueRepository)));
@@ -173,6 +178,7 @@ export async function createRuntime(config, { env = process.env, fetchImpl = glo
       leaseTtlMs: coordination.leaseTtlMs,
       heartbeatIntervalMs: coordination.heartbeatIntervalMs,
       clockSkewMs: coordination.clockSkewMs,
+      allowIdentityTakeover: coordinationExclusive,
     });
   }
   const leaseExecutionContext = taskLeaseManager ? new LeaseExecutionContext({ taskLeaseManager }) : null;
