@@ -6,19 +6,21 @@ DevBridge is a local daemon/CLI and control plane that watches a narrowly config
 
 The current mainline implements the architecture through DB-018. The previously planned managed workspace, durable coordinator, deterministic controller plans, hard decision gates, verified Linux execution sandbox, self-update isolation, exact GitHub provenance, tool inventory/onboarding, context rollover, multi-agent leases/fencing, baseline-drift reverification, and cooperative pause/resource-priority slices are now real control-plane behavior.
 
-The current major boundaries that remain deliberately incomplete are summarized in `docs/roadmap.md`: non-Linux untrusted-code sandbox providers, first-class package-manager/network phases, complete generic remote-effect journaling, per-installation task addressing for shared-team queues, stronger repository/tool identity evidence, hard OS resource quotas/parallel scheduling, and the remaining issue #49 CLI surfaces.
+DB-019 is the active design contract for cost-aware verification and durable test evidence. Its complete planner/evidence-store behavior is not yet implemented; issue #105 tracks that work.
+
+The current major boundaries that remain deliberately incomplete are summarized in `docs/roadmap.md`: non-Linux untrusted-code sandbox providers, first-class package-manager/network phases, complete generic remote-effect journaling, per-installation task addressing for shared-team queues, stronger repository/tool identity evidence, DB-019 verification-cost/evidence implementation, hard OS resource quotas/parallel scheduling, and the remaining issue #49 CLI surfaces.
 
 ## Control-plane model
 
-DevBridge owns authoritative run state, Git workspace state, capability policy, task provenance, checkpoint/decision state, coordination lease state, verification identity, publication state, runtime-update state, and daemon lifecycle state.
+DevBridge owns authoritative run state, Git workspace state, capability policy, task provenance, checkpoint/decision state, coordination lease state, verification identity/evidence, publication state, runtime-update state, and daemon lifecycle state.
 
 Remote and local LLMs do not own the control plane; they propose work to it. Repository content and subprocess output are also untrusted inputs unless a typed locally controlled adapter deliberately turns a specific observation into evidence.
 
 The primary orchestration path is conceptually:
 
-`TaskSource -> ProvenanceGate -> RunCoordinator -> LeaseGate -> WorkspaceManager -> ControllerPlan/ProposalRunner -> Verifier -> DecisionGate -> Publisher -> Reconciler`
+`TaskSource -> ProvenanceGate -> RunCoordinator -> LeaseGate -> WorkspaceManager -> ControllerPlan/ProposalRunner -> VerificationPlanner/Verifier -> DecisionGate -> Publisher -> Reconciler`
 
-Supporting control-plane services provide state storage, rate budgeting, capability/sandbox admission, worker IPC, tool inventory, context rollover, runtime supervision, and daemon governance.
+Supporting control-plane services provide state storage, rate budgeting, capability/sandbox admission, worker IPC, tool inventory, verification evidence, context rollover, runtime supervision, and daemon governance.
 
 Events may describe state changes and feed observability, but a durable coordinator and locally owned adapters decide authoritative lifecycle transitions. Hidden callback chains must not become execution authority.
 
@@ -61,10 +63,11 @@ Therefore a deployment requiring strict cross-developer workstation isolation mu
 8. Capability admission verifies the exact operation/profile, outer sandbox enforcement, environment/network policy, lease fence, and current daemon/run state before child launch.
 9. Worker IPC is projected from a control-owned mailbox outside the proposal worktree. Context bytes are read-only; the pre-created result object is writable in place and revalidated before privileged consumption.
 10. Candidate edits are verified against the current publication baseline. Controller-plan persistent outputs receive exact final-byte verification after deterministic operations and cleanup.
-11. DB-007 locally classifies sensitive candidate effects. Pending gates do not stop unrelated safe work; matching artifact-exact approval is required before sensitive sealing/publication.
-12. DevBridge creates/records the exact candidate commit and verification evidence.
-13. Before publication, DB-016 lease ownership and DB-017 exact verified-head identity are rechecked. Publication uses controller-owned Git refs and explicit expected remote state.
-14. Ambiguous effects are observed/reconciled before retry. Durable state records the resolved outcome.
+11. DB-019 verification planning determines the locally required verification set from ownership/risk/qualification policy, reuses exact still-valid evidence, and orders cheap high-signal prerequisites before expensive downstream suites where dependencies permit.
+12. DB-007 locally classifies sensitive candidate effects. Pending gates do not stop unrelated safe work; matching artifact-exact approval is required before sensitive sealing/publication.
+13. DevBridge creates/records the exact candidate commit and verification evidence.
+14. Before publication, DB-016 lease ownership and DB-017 exact verified-head identity are rechecked. Publication uses controller-owned Git refs and explicit expected remote state.
+15. Ambiguous effects are observed/reconciled before retry. Durable state records the resolved outcome.
 
 ## Managed Git/workspace model
 
@@ -79,7 +82,7 @@ Conceptually:
   runs/<run-id>/
 ```
 
-Control-owned durable state, worker mailbox state, identity keys, daemon control records, runtime activation state, and chat-handoff state live outside proposal trees under the configured DevBridge state/runtime roots.
+Control-owned durable state, worker mailbox state, identity keys, daemon control records, runtime activation state, verification evidence, and chat-handoff state live outside proposal trees under the configured DevBridge state/runtime roots.
 
 A task names a repository (`owner/name`), never a local path. Local policy chooses allowed owners, workspace roots, baseline channels, publication branch prefixes, manifest roots, and other filesystem authority.
 
@@ -95,6 +98,8 @@ Every run records two distinct baseline concepts:
 The active task remains bound to its authorized baseline ref/channel. Only same-ref fast-forward upstream movement may be automatically reconciled. Rewritten history checkpoints instead of silently changing authority.
 
 Successful rebase invalidates prior verification. Model-assisted candidates consume a fresh bounded verification turn; deterministic controller plans replay their registered assertions/operations against the rebased state. Dirty/local-head/publication-baseline drift after verification invalidates evidence again before sealing/publication.
+
+DB-019 may preserve independent verification evidence only when its exact candidate/baseline/test/policy/environment identity remains applicable. It does not override DB-017 invalidation when the verified subject changed.
 
 Publication binds the exact verified local head as payload identity and uses explicit expected remote head state. Symbolic `HEAD`, blind force, or unexplained remote branch state are not publication authority.
 
@@ -113,6 +118,20 @@ Coding-model adapters remain optional compatibility/inference surfaces and are d
 DB-013 controller plans are data, not remote shell scripts. They may propose bounded project file changes and invoke locally registered named operations with closed parameter schemas. They cannot provide executables, raw shell/argv, arbitrary local paths, cleanup roots, credentials, network authority, or arbitrary Git refs.
 
 Persistent file proposals are verified by exact normalized bytes after all deterministic operations and scratch cleanup. Operation-generated persistent output is not implicitly authorized through changed-path lists.
+
+### Cost-aware verification
+
+DB-019 treats verification cost and evidence lifecycle as control-plane state.
+
+Tests/suites should have stable identities and locally controlled metadata for tier/class, ownership/risk tags, expected/historical runtime, timing policy, resource requirements, and decomposability where relevant.
+
+The planner selects the smallest verification set that still proves the required contracts. Security, sandbox, installer/bootstrap/runtime, Git/GitHub control, persistence/recovery, public protocol/schema, tool-authority, and platform-execution changes remain able to force broad expensive qualification.
+
+A long test is not automatically a problem. A one-size-fits-all timeout is. Registered suites use bounded suite-specific expected/slow/liveness/hard-timeout policy, and long execution must expose enough liveness to distinguish healthy work from a hang.
+
+Passing evidence is reusable only when its exact candidate/baseline/test/policy/platform/sandbox/toolchain/config identity still matches. Restart, chat rollover, or a repeated model request is not itself a reason to rerun an expensive suite.
+
+Future verification parallelism must be resource-aware and cannot be inferred from a raw concurrency setting.
 
 ### Dynamic tool onboarding
 
@@ -163,9 +182,11 @@ DevBridge treats model/chat context as disposable.
 
 Run state, exact task/baseline/candidate identity, checkpoints, decisions, verification records, effect intent/outcome, cleanup ownership, and next-action evidence live in durable control state.
 
+DB-019 extends verification recovery: exact still-valid expensive test evidence should survive daemon restart, chat rollover, and publication recovery rather than being rerun reflexively. Decomposable suites may checkpoint completed cases when their semantics make those checkpoints trustworthy; changed candidate/environment/policy identities invalidate only evidence that can no longer be proven applicable.
+
 DB-014 adds bounded `devbridge/chat-handoff-v1` checkpoints for coordinating-chat rollover. Handoffs bind repository/baseline/head/task identity, governing-document digests, stable completed action IDs, one exact next action, and a whole-record SHA-256. Fresh contexts observe/reconcile before acting and do not invent a new next step if the recorded action already occurred.
 
-Large logs/diffs remain behind durable references rather than becoming a transcript dump.
+Large logs/diffs/test output belong behind bounded durable references rather than becoming a transcript dump.
 
 ## Runtime supervision and self-update
 
@@ -183,7 +204,7 @@ Pause is cooperative admission control at a safe task-cycle boundary. It does no
 
 Model/deterministic child processes use below-normal OS priority by default. Failure to apply a requested non-normal priority fails the operation instead of silently degrading to normal priority. Priority is QoS only; it is not a security sandbox or hard resource quota.
 
-Task admission is currently serialized to one active task/run continuation per daemon cycle. Parallel worker scheduling requires a future explicit scheduler/lease/effect accounting contract.
+Task admission is currently serialized to one active task/run continuation per daemon cycle. Parallel worker scheduling requires a future explicit scheduler/lease/effect accounting contract. DB-019 likewise does not grant ad-hoc test parallelism; future verification concurrency must account for resource/exclusivity constraints explicitly.
 
 ## GitHub and publication authority
 
@@ -195,6 +216,6 @@ DevBridge does not treat ordinary task text as authority to merge the default br
 
 ## Documentation authority
 
-`specs/DB-001-system.md` through `specs/DB-018-runtime-governance-pause.md` are the current normative contracts. `AGENTS.md`, this architecture document, `docs/bootstrap.md`, `docs/tool-profiles.md`, and `docs/roadmap.md` describe the current operating/engineering view.
+`specs/DB-001-system.md` through `specs/DB-019-verification-cost-evidence.md` are the current normative contracts. `AGENTS.md`, this architecture document, `docs/bootstrap.md`, `docs/tool-profiles.md`, `docs/testing/verification-governance.md`, and `docs/roadmap.md` describe the current operating/engineering view.
 
 `docs/handoffs/` and point-in-time testing audits are historical evidence. They intentionally preserve the state that existed when written and do not override newer specs/mainline behavior.
