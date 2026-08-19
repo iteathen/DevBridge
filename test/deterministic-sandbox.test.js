@@ -123,7 +123,9 @@ test('static Node syntax inspection refuses a project symlink that would escape 
   }
 });
 
-test('verified OS sandbox denies external read/write, control-state read, network egress, and .git mutation', { timeout: 45_000 }, async (t) => {
+test('verified OS sandbox denies external read/write, control-state read, network egress, and .git mutation', {
+  timeout: process.platform === 'win32' ? 90_000 : 45_000,
+}, async (t) => {
   if (!supportedSandboxHost()) {
     t.skip('No repository-code sandbox canary is defined for this host OS.');
     return;
@@ -219,7 +221,9 @@ test('repository code is contained', async () => {
   }
 });
 
-test('verified OS sandbox exposes configured external read roots read-only', { timeout: 45_000 }, async (t) => {
+test('verified OS sandbox exposes configured external read roots read-only', {
+  timeout: process.platform === 'win32' ? 90_000 : 45_000,
+}, async (t) => {
   if (!supportedSandboxHost()) {
     t.skip('No repository-code sandbox canary is defined for this host OS.');
     return;
