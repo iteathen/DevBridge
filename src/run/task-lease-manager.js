@@ -146,6 +146,14 @@ export class TaskLeaseManager {
     }
   }
 
+  async ensureFresh(handle) {
+    this.#assertCurrent(handle);
+    handle.renewing = handle.renewing.then(() => this.renew(handle));
+    const result = await handle.renewing;
+    this.#assertCurrent(handle);
+    return result;
+  }
+
   async begin(task) {
     const key = taskKey(task);
     const existingHandle = this.#handles.get(key);
