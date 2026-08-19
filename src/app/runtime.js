@@ -47,8 +47,21 @@ async function canonicalLocalManifestDirectory(directory, workspaceRoot) {
   if (!info.isDirectory() || info.isSymbolicLink()) {
     throw new Error('execution.toolOnboarding.manifestDirectory must be a real non-symlink directory');
   }
-  const canonical = await realpath(resolved);
-  if (isWithin(workspaceRoot, canonical)) {
+  let current = path.dirname(resolved);
+  while (true) {
+    const parentInfo = await lstat(current);
+    if (parentInfo.isSymbolicLink()) {
+      throw new Error('execution.toolOnboarding.manifestDirectory must not use filesystem indirection');
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  const [canonical, canonicalWorkspaceRoot] = await Promise.all([
+    realpath(resolved),
+    realpath(path.resolve(workspaceRoot)),
+  ]);
+  if (isWithin(canonicalWorkspaceRoot, canonical)) {
     throw new Error('execution.toolOnboarding.manifestDirectory must be outside the controller-writable workspace root');
   }
   return canonical;
