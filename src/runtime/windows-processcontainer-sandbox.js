@@ -177,6 +177,13 @@ export function windowsProcessContainerProbeTimeouts() {
   };
 }
 
+function probeProcessDetail(outcome, observation = null) {
+  const state = `exit=${outcome.code ?? 'spawn-error'} signal=${outcome.signal ?? 'none'} timeout=${outcome.timedOut} truncated=${outcome.truncated}`;
+  const diagnostic = outcome.stderr.trim() ||
+    (observation == null ? outcome.stdout.trim() : JSON.stringify(observation));
+  return diagnostic ? `${state}; ${diagnostic}` : state;
+}
+
 function needsWindowsQuotes(value) {
   return value.length === 0 || /[ \t\n\v"]/u.test(value);
 }
@@ -497,9 +504,9 @@ export class WindowsProcessContainerSandboxProvider {
       cwd: path.dirname(this.#resolvedExecutable),
       env: launcherEnvironment(this.#env),
       timeoutMs: MXC_PREREQUISITE_PROBE_TIMEOUT_MS,
-    }).catch((error) => ({ code: null, timedOut: false, truncated: false, stdout: '', stderr: error?.message ?? String(error) }));
+    }).catch((error) => ({ code: null, timedOut: false, truncated: false, stdout: '', stderr: error?.message ?? String(error), signal: null }));
     if (nativeProbe.code !== 0 || nativeProbe.timedOut || nativeProbe.truncated) {
-      const detail = nativeProbe.stderr.trim() || nativeProbe.stdout.trim() || `exit=${nativeProbe.code ?? 'spawn-error'}`;
+      const detail = probeProcessDetail(nativeProbe);
       this.#status = {
         ...unavailableSandboxStatus({
           requestedProvider: this.#requestedProvider,
@@ -576,9 +583,10 @@ export class WindowsProcessContainerSandboxProvider {
         await readFile(stateProbe, 'utf8') === 'state-control-sentinel\n';
 
       if (!passed) {
-        const detail = outcome.stderr.trim() ||
-          (observation ? JSON.stringify({ ...observation, descendantContained }) : outcome.stdout.trim()) ||
-          `exit=${outcome.code} signal=${outcome.signal ?? 'none'} timeout=${outcome.timedOut}`;
+        const detail = probeProcessDetail(
+          outcome,
+          observation ? { ...observation, descendantContained } : null,
+        );
         this.#status = {
           ...unavailableSandboxStatus({
             requestedProvider: this.#requestedProvider,
