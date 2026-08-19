@@ -80,7 +80,7 @@ function parseOptions(lines, usedParams) {
   for (const line of lines) {
     const trimmed = line.trimStart();
     if (!trimmed.startsWith('-')) continue;
-    const match = trimmed.match(/(?:^|[\s,])(--[A-Za-z0-9][A-Za-z0-9-]{0,79})(?:(?:=|\s+)(<[^>]{1,40}>|\[[A-Za-z][A-Za-z0-9_-]{0,39}\]|[A-Z][A-Z0-9_-]{0,39}))?/u);
+    const match = trimmed.match(/(?:^|[\s,])(--[A-Za-z0-9][A-Za-z0-9-]{0,79})(?:(?:=|\s+)(<[^>]{1,40}>|\[[A-Za-z][A-Za-z0-9_-]{0,39}\]|[A-Z][A-Z0-9_-]{0,39}(?=$|\s{2,})))?/u);
     if (!match) continue;
     const flag = match[1];
     if (seenFlags.has(flag)) continue;
@@ -201,12 +201,24 @@ function normalizePolicyEntry(raw, index) {
   };
 }
 
+function sameCanonicalPath(left, right) {
+  const resolvedLeft = path.resolve(left);
+  const resolvedRight = path.resolve(right);
+  if (process.platform === 'win32') return resolvedLeft.toLowerCase() === resolvedRight.toLowerCase();
+  return resolvedLeft === resolvedRight;
+}
+
+function pathWithin(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
 async function canonicalDirectory(directory, name) {
   const resolved = path.resolve(directory);
   const info = await lstat(resolved);
   if (!info.isDirectory() || info.isSymbolicLink()) throw new PolicyError(`${name} must be a real directory`);
   const canonical = await realpath(resolved);
-  if (canonical !== resolved) throw new PolicyError(`${name} must use its canonical path`);
+  if (!sameCanonicalPath(canonical, resolved)) throw new PolicyError(`${name} must use its canonical path`);
   return canonical;
 }
 
@@ -247,6 +259,9 @@ export class ToolOnboardingService {
     this.#runner = processRunner;
     this.#workspaceRoot = path.resolve(workspaceRoot);
     this.#manifestDirectory = path.resolve(manifestDirectory);
+    if (pathWithin(this.#workspaceRoot, this.#manifestDirectory)) {
+      throw new PolicyError('tool onboarding manifest directory must be outside the controller-writable workspace root');
+    }
     this.#entries = autoIntegrate.map(normalizePolicyEntry);
     const operations = new Set();
     for (const entry of this.#entries) {
