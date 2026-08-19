@@ -31,6 +31,7 @@ jobs:
       - name: Publish staged DevBridge hard cutover
         if: runner.os == 'Linux' && hashFiles('scripts/devbridge-hard-cutover.mjs') == ''
         run: |
+          git restore --source=HEAD -- .github/workflows/ci.yml .github/workflows/devbridge-hard-cutover.yml
           if git diff --quiet && git diff --cached --quiet; then
             echo "No staged cutover changes to publish."
           else
