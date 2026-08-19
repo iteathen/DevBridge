@@ -28,7 +28,6 @@ function safeMetadata(value, maxLength = 240) {
   if (typeof value !== 'string') return null;
   const trimmed = value.replace(/[\u0000-\u001f\u007f]/gu, ' ').trim().slice(0, maxLength);
   if (!trimmed) return null;
-  // Remote inventory must not become a machine-path disclosure channel.
   if (/[\\/]/u.test(trimmed) || /^[A-Za-z]:/u.test(trimmed)) return null;
   return trimmed;
 }
@@ -156,11 +155,14 @@ export class ToolInventoryService {
   }
 
   #operationInventory(sandboxStatus) {
-    return this.#operations.names().map((name) => {
-      const security = operationSecurityDescription(name, sandboxStatus);
+    const described = typeof this.#operations.describe === 'function'
+      ? this.#operations.describe()
+      : this.#operations.names().map((name) => ({ name, layer: 'core' }));
+    return described.map((entry) => {
+      const security = operationSecurityDescription(entry.name, sandboxStatus);
       return {
-        name,
-        layer: 'core',
+        name: safeMetadata(entry.name, 80),
+        layer: safeMetadata(entry.layer ?? 'core', 40) ?? 'core',
         executionClass: security.executionClass,
         repositoryCode: security.repositoryCode === true,
         sandboxRequired: security.sandboxRequired === true,
