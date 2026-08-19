@@ -189,6 +189,17 @@ function safeEnvironment(source, scratchRoot) {
     });
 }
 
+function launcherEnvironment(source = process.env) {
+  const env = {};
+  for (const name of [
+    'PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'SystemDrive',
+    'TEMP', 'TMP', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA',
+  ]) {
+    if (source[name] != null) env[name] = String(source[name]);
+  }
+  return env;
+}
+
 function localToolRoots(env) {
   const roots = [];
   const pathValue = env.Path ?? env.PATH ?? env.path ?? '';
@@ -261,7 +272,7 @@ export class WindowsProcessContainerSandboxProvider {
   }
 
   workerIpcTargetMode() {
-    return 'host-exact-files';
+    return 'host-staging-file';
   }
 
   verify() {
@@ -304,11 +315,22 @@ export class WindowsProcessContainerSandboxProvider {
 
     if (sandbox.ipc) {
       const { contextSource, resultSource, contextTarget, resultTarget } = sandbox.ipc;
-      if (comparable(contextSource) !== comparable(contextTarget) || comparable(resultSource) !== comparable(resultTarget)) {
-        throw new PolicyError('Windows process-container IPC requires exact host-file projections');
+      const exchangeRoot = path.join(this.#stateDirectory, 'worker-exchange');
+      const context = await canonicalExisting(contextSource, 'worker context file');
+      const controlResult = await canonicalExisting(resultSource, 'control-owned worker result file');
+      const stagingResult = await canonicalExisting(resultTarget, 'worker result staging file');
+      if (!isWithin(exchangeRoot, context) || !isWithin(exchangeRoot, controlResult) || !isWithin(exchangeRoot, stagingResult)) {
+        throw new PolicyError('Windows worker IPC files must stay inside the control-owned worker-exchange root');
       }
-      readonlyPaths.push(await canonicalExisting(contextSource, 'worker context file'));
-      readwritePaths.push(await canonicalExisting(resultSource, 'worker result file'));
+      if (comparable(context) !== comparable(contextTarget)) {
+        throw new PolicyError('Windows process-container context IPC requires an exact host-file projection');
+      }
+      if (comparable(controlResult) === comparable(stagingResult)) {
+        throw new PolicyError('Windows process-container worker result must use a non-authoritative staging file');
+      }
+      readonlyPaths.push(context);
+      readwritePaths.push(stagingResult);
+      deniedPaths.push(controlResult);
     }
 
     const network = sandbox.network === 'unrestricted' ? 'unrestricted' : 'deny';
@@ -350,7 +372,7 @@ export class WindowsProcessContainerSandboxProvider {
       executable: this.#resolvedExecutable,
       args: ['--config-base64', Buffer.from(JSON.stringify(config), 'utf8').toString('base64')],
       cwd: project,
-      env: {},
+      env: launcherEnvironment(this.#env),
       config,
       network,
     };
@@ -378,7 +400,7 @@ export class WindowsProcessContainerSandboxProvider {
 
     const nativeProbe = await captureSandboxProbeProcess(this.#resolvedExecutable, ['--probe'], {
       cwd: path.dirname(this.#resolvedExecutable),
-      env: {},
+      env: launcherEnvironment(this.#env),
       timeoutMs: 5_000,
     }).catch((error) => ({ code: null, timedOut: false, truncated: false, stdout: '', stderr: error?.message ?? String(error) }));
     if (nativeProbe.code !== 0 || nativeProbe.timedOut || nativeProbe.truncated) {
@@ -423,7 +445,13 @@ export class WindowsProcessContainerSandboxProvider {
         executable: process.execPath,
         args: ['-e', WINDOWS_PROBE_SCRIPT, projectDir, scratchDir, outsideRead, outsideWrite, stateProbe, descendantMarker],
         cwd: projectDir,
-        env: { PATH: this.#env.Path ?? this.#env.PATH ?? '', Path: this.#env.Path ?? this.#env.PATH ?? '', PATHEXT: this.#env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD', SYSTEMROOT: this.#env.SYSTEMROOT ?? this.#env.SystemRoot ?? 'C:\\Windows', CI: '1' },
+        env: {
+          PATH: this.#env.Path ?? this.#env.PATH ?? '',
+          Path: this.#env.Path ?? this.#env.PATH ?? '',
+          PATHEXT: this.#env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD',
+          SYSTEMROOT: this.#env.SYSTEMROOT ?? this.#env.SystemRoot ?? 'C:\\Windows',
+          CI: '1',
+        },
         sandbox: { projectDir, scratchRoot: scratchCanonical, network: 'deny' },
         scratchRoot: scratchCanonical,
       });
@@ -518,7 +546,7 @@ export class WindowsProcessContainerSandboxProvider {
           network: sandbox.network === 'unrestricted' ? 'unrestricted' : status.network,
           gitAdministrativeState: status.gitAdministrativeState,
           processTree: status.processTree,
-          workerIpc: sandbox.ipc ? 'control-owned-exact-host-files' : 'none',
+          workerIpc: sandbox.ipc ? 'control-context-plus-worker-staging-import' : 'none',
         },
       };
     } catch (error) {
