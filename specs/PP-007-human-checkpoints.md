@@ -2,6 +2,8 @@
 
 Status: active
 
+Implementation status: v0.1 enforces `artifact-exact` hard gates before sensitive candidate sealing **and task-branch publication**, with restart-safe decision state and exact GitHub decision provenance. Canonical `decision-scope` checkpoint/digest/invalidation primitives are implemented for scope-bound decision surfaces; automatic sensitive-change gating currently uses the stricter artifact-exact binding.
+
 ## Goal
 
 Use human judgment where it has high leverage without turning the human into a synchronous mutex for routine coding work. PATCH-POLLER must prevent expensive architectural drift and unsafe irreversible actions while continuing useful reversible work whenever possible.
@@ -26,6 +28,21 @@ PATCH-POLLER remains the single source of execution authority. Remote and local 
 A human decision can authorize only a decision class that local operator policy already permits that actor to decide. A GitHub comment cannot grant arbitrary filesystem, credential, executable, network, sandbox, or trust-policy capability.
 
 The authority hierarchy in PP-003 remains in force even for trusted maintainers.
+
+### v0.1 local decision delegation
+
+Remote decision authority is disabled for a class unless local configuration explicitly lists numeric GitHub actor IDs under `execution.decisionAuthorities` for that class. The supported automatic hard-gate classes are:
+
+- `security-capability`;
+- `bootstrap-self-update`;
+- `git-github-publication`;
+- `workflow-release`;
+- `public-contract`;
+- `architectural-change`.
+
+When one candidate triggers multiple classes, a remote actor must be locally authorized for **every** triggered class. PATCH-POLLER uses the intersection of those allowlists rather than the union, so a comment cannot combine partial delegations into broader authority. If the intersection is empty, the gate remains pending until local policy changes or the candidate changes; remote text cannot create an authorized actor.
+
+The local approval TTL and architectural breadth thresholds are also operator configuration. They are not task fields and cannot be changed by a decision comment.
 
 ## Three control concepts
 
@@ -56,7 +73,7 @@ Local policy defines hard-gated effect classes. Recommended default hard gates i
 - publication using a credential or authority class not already granted to the run;
 - changes to PATCH-POLLER's own trust/capability policy.
 
-A locally configured staging/task-branch push may be checkpoint-only rather than hard-gated when it is intentionally reversible and separately permissioned.
+A locally configured staging/task-branch push may be checkpoint-only rather than hard-gated when it is intentionally reversible and separately permissioned. **However, once a candidate itself is classified as sensitive, v0.1 rechecks that candidate's artifact-exact hard gate before the task-branch push as well as before sealing.** This closes restart paths that could otherwise resume directly from an already sealed `publishing` state after an approval expired or was superseded.
 
 Capability expansion beyond the active local sandbox/profile cannot be granted by remote approval alone; it requires the local policy mechanism defined in PP-003.
 
@@ -134,6 +151,8 @@ Two binding modes are supported:
 - `artifact-exact`: approval binds to an exact commit/content digest. Any artifact change invalidates the approval. Use for publication, destructive effects, releases, or other payload-sensitive gates.
 - `decision-scope`: approval binds to a normalized decision-surface digest describing the architectural choice and its declared bounds. Descendant implementation work may proceed without reapproval while it remains inside those bounds.
 
+For v0.1 automatic sensitive-candidate gates, PATCH-POLLER derives the artifact-exact subject from the immutable run baseline plus the sorted changed paths and their current file/deletion/symlink/executable identities. The subject is recomputed immediately before sealing and again before publication. A changed artifact supersedes the prior approval and requires a fresh checkpoint.
+
 If the decision surface materially expands or changes, PATCH-POLLER creates a new checkpoint. It must never silently stretch an old approval to cover a new consequential choice.
 
 Checkpoint decisions have explicit states such as `pending`, `approved`, `rejected`, `redirected`, `superseded`, or `expired`. Timeout/expiry does not become approval.
@@ -209,4 +228,5 @@ Implementation of this spec requires tests proving at minimum:
 - `decision-scope` approval survives in-scope descendant edits but not a material scope change;
 - silence/timeout never becomes approval;
 - restart preserves pending/accepted decision state without duplicating effects;
+- publication recovery cannot bypass an expired/superseded exact gate merely because the candidate was sealed before interruption;
 - repeated equivalent checkpoints are coalesced rather than spamming the human.

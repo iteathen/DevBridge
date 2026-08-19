@@ -28,6 +28,10 @@ test('uses conservative API, auth, execution, Git, publication, and context-roll
   assert.equal(config.github.auth.githubCliExecutable, 'gh');
   assert.equal(config.github.auth.hostname, 'github.com');
   assert.equal(config.execution.enabled, false);
+  assert.deepEqual(config.execution.decisionAuthorities, {});
+  assert.equal(config.execution.decisionApprovalTtlMs, 86_400_000);
+  assert.equal(config.execution.architectureGateFileThreshold, 20);
+  assert.equal(config.execution.architectureGateOwnerThreshold, 4);
   assert.deepEqual(config.workspace.externalReadRoots, []);
   assert.equal(config.git.executable, 'git');
   assert.equal(config.publication.autoPushTaskBranches, false);
@@ -107,4 +111,46 @@ test('GitHub auth rejects unsafe environment-variable names', () => {
     environmentVariables: ['GH_TOKEN;evil'],
   };
   assert.throws(() => validateConfig(raw), /environment-variable name/u);
+});
+
+test('normalizes local per-class decision authority and hard-gate bounds', () => {
+  const raw = base();
+  raw.execution.decisionAuthorities = {
+    'security-capability': ['1775584', '1775585', '1775584'],
+    'public-contract': ['1775584'],
+  };
+  raw.execution.decisionApprovalTtlMs = 3_600_000;
+  raw.execution.architectureGateFileThreshold = 12;
+  raw.execution.architectureGateOwnerThreshold = 3;
+
+  const config = validateConfig(raw);
+  assert.deepEqual(config.execution.decisionAuthorities, {
+    'security-capability': ['1775584', '1775585'],
+    'public-contract': ['1775584'],
+  });
+  assert.equal(config.execution.decisionApprovalTtlMs, 3_600_000);
+  assert.equal(config.execution.architectureGateFileThreshold, 12);
+  assert.equal(config.execution.architectureGateOwnerThreshold, 3);
+});
+
+test('rejects malformed or authority-expanding hard-gate configuration', () => {
+  const unknown = base();
+  unknown.execution.decisionAuthorities = { 'filesystem.unrestricted': ['1775584'] };
+  assert.throws(() => validateConfig(unknown), /not a supported local decision class/u);
+
+  const empty = base();
+  empty.execution.decisionAuthorities = { 'security-capability': [] };
+  assert.throws(() => validateConfig(empty), /must contain 1-32 numeric GitHub actor IDs/u);
+
+  const nonNumeric = base();
+  nonNumeric.execution.decisionAuthorities = { 'security-capability': ['iteathen'] };
+  assert.throws(() => validateConfig(nonNumeric), /numeric GitHub actor IDs/u);
+
+  const ttl = base();
+  ttl.execution.decisionApprovalTtlMs = 59_999;
+  assert.throws(() => validateConfig(ttl), /decisionApprovalTtlMs/u);
+
+  const broad = base();
+  broad.execution.architectureGateFileThreshold = 1;
+  assert.throws(() => validateConfig(broad), /architectureGateFileThreshold/u);
 });

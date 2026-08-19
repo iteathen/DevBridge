@@ -4,6 +4,7 @@ import path from 'node:path';
 import { ConfigurationError } from './errors.js';
 import { DEFAULT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES } from './github/auth-provider.js';
 import { validateFaultInjectionConfig } from './runtime/fault-injector.js';
+import { DECISION_CLASSES } from './run/hard-gate-policy.js';
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH_PREFIX_RE = /^[A-Za-z0-9_.-]+$/;
@@ -13,6 +14,7 @@ const ENVIRONMENT_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const HOSTNAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 const GITHUB_AUTH_MODES = new Set(['auto', 'environment', 'github-cli']);
 const CONTEXT_BUDGET_UNITS = new Set(['tokens', 'bytes', 'proxy']);
+const DECISION_CLASS_SET = new Set(DECISION_CLASSES);
 
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -141,6 +143,21 @@ function normalizeFaultInjection(execution) {
   }
 }
 
+function normalizeDecisionAuthorities(execution) {
+  const raw = requireObject(execution.decisionAuthorities ?? {}, 'execution.decisionAuthorities');
+  const authorities = {};
+  for (const [decisionClass, actorIds] of Object.entries(raw)) {
+    if (!DECISION_CLASS_SET.has(decisionClass)) {
+      throw new ConfigurationError(`execution.decisionAuthorities.${decisionClass} is not a supported local decision class`);
+    }
+    if (!Array.isArray(actorIds) || actorIds.length === 0 || actorIds.length > 32 || actorIds.some((id) => !/^\d+$/u.test(String(id)))) {
+      throw new ConfigurationError(`execution.decisionAuthorities.${decisionClass} must contain 1-32 numeric GitHub actor IDs`);
+    }
+    authorities[decisionClass] = [...new Set(actorIds.map(String))];
+  }
+  return authorities;
+}
+
 function normalizeContextRollover(config) {
   const rollover = requireObject(config.contextRollover ?? {}, 'contextRollover');
   const unit = requireString(rollover.unit ?? 'bytes', 'contextRollover.unit');
@@ -200,6 +217,11 @@ export function validateConfig(raw) {
   const branchPrefix = requireString(publication.branchPrefix ?? 'patchpoller', 'publication.branchPrefix');
   if (!BRANCH_PREFIX_RE.test(branchPrefix)) throw new ConfigurationError('publication.branchPrefix must be a safe branch segment');
   const faultInjection = normalizeFaultInjection(execution);
+  const decisionAuthorities = normalizeDecisionAuthorities(execution);
+  const decisionApprovalTtlMs = requireInteger(execution.decisionApprovalTtlMs ?? 86_400_000, 'execution.decisionApprovalTtlMs', { min: 60_000 });
+  if (decisionApprovalTtlMs > 2_592_000_000) throw new ConfigurationError('execution.decisionApprovalTtlMs must be <= 2592000000');
+  const architectureGateFileThreshold = requireInteger(execution.architectureGateFileThreshold ?? 20, 'execution.architectureGateFileThreshold', { min: 2 });
+  const architectureGateOwnerThreshold = requireInteger(execution.architectureGateOwnerThreshold ?? 4, 'execution.architectureGateOwnerThreshold', { min: 2 });
 
   return {
     version: 1,
@@ -244,6 +266,10 @@ export function validateConfig(raw) {
       maxConcurrentTasks: requireInteger(execution.maxConcurrentTasks ?? 1, 'execution.maxConcurrentTasks', { min: 1 }),
       maxTurns: requireInteger(execution.maxTurns ?? 8, 'execution.maxTurns', { min: 1 }),
       allowUncontainedTools: execution.allowUncontainedTools === true,
+      decisionAuthorities,
+      decisionApprovalTtlMs,
+      architectureGateFileThreshold,
+      architectureGateOwnerThreshold,
       faultInjection,
     },
     publication: {
