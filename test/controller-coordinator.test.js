@@ -48,7 +48,7 @@ test('controller plans bypass coding models, bind an input receipt, and elide no
     prepareRun: async (_task, _runId, resume) => ({
       worktreeDir: '/managed/run',
       branch: cleanSnapshot().branch,
-      baseRef: 'origin/sol/foundation-bootstrap',
+      baseRef: 'origin/main',
       baseSha: cleanSnapshot().baseSha,
       baselineChannel: resume.baselineChannel ?? 'testing'
     }),
