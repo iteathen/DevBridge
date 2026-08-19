@@ -30,7 +30,7 @@
     "externalReadRoots": [],
     "baselineChannels": {
       "production": "main",
-      "testing": "sol/foundation-bootstrap"
+      "testing": "main"
     },
     "defaultBaselineChannel": null
   },

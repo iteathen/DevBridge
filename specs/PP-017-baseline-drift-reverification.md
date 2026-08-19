@@ -2,7 +2,7 @@
 
 Status: active
 
-Implementation status: v0.2 implements pre-publication fast-forward baseline reconciliation, bounded recovery evidence, mandatory post-drift reverification, exact locally verified candidate binding, and exact expected-head task-branch publication CAS.
+Implementation status: implemented on current main: pre-publication fast-forward baseline reconciliation, bounded recovery evidence, mandatory post-drift reverification, exact locally verified candidate binding, and exact expected-head task-branch publication CAS.
 
 ## Goal
 

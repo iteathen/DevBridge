@@ -1,63 +1,52 @@
 # PATCH-POLLER
 
-PATCH-POLLER is a local Node.js bridge between chat-only coding agents and a real development environment. It watches a narrowly configured GitHub issue queue, accepts structured tasks only from locally trusted GitHub identities, carries durable context between model turns, and invokes locally configured coding CLIs under explicit capability policy.
+PATCH-POLLER is a local Node.js control plane that turns narrowly trusted GitHub tasks into bounded development work on a locally controlled machine. It owns task provenance, managed Git state, execution authority, durable run state, verification, human decision gates, coordination leases, publication, runtime supervision, and recovery. Remote/local LLMs and repository code remain subordinate proposal/code inputs.
 
-**Status:** v0.1 usable for general local operation on verified Linux hosts; pre-production hardening continues. The end-to-end local execution path is implemented and tested. Deterministic controller-plan operations that execute repository code require observed OS sandbox enforcement: Linux uses a verified Bubblewrap provider, while unsupported hosts fail closed for those operations. Full PP-007 decision orchestration, additional OS sandbox providers, package-manager phase isolation, GitHub App authentication, and the complete remote-effect journal remain explicit hardening work rather than hidden assumptions.
+## Current status
 
-## What v0.1 does
+The current `main` line implements the architecture through PP-018, including the security/capability campaign and the first issue #49 multi-agent/runtime-governance slices.
 
-- Polls a trusted GitHub Issues queue with persistent conditional requests and shared-account rate reserves.
-- Rejects tasks from untrusted numeric GitHub actor IDs or malformed task envelopes.
-- Maps `owner/name` targets into PATCH-POLLER-owned repositories/worktrees; a task never supplies a local path.
-- Uses a controlled Git environment with hooks, inherited credential helpers, interactive prompts, and dangerous transports disabled for control-plane Git operations.
-- Creates an isolated task branch/worktree and persists the exact starting SHA for the life of the run.
-- Invokes a locally configured coding CLI with `shell: false`, bounded environment/output/time, and a complete context capsule on every turn.
-- Classifies deterministic controller operations as static inspection or repository-code execution. Repository-code operations cannot launch without a verified OS sandbox provider.
-- On Linux, verifies Bubblewrap with an adversarial filesystem/network/control-state probe before allowing `node.test`, CMake configure/build, or CTest execution.
-- Keeps deterministic repository-code execution fail-closed on hosts without a verified provider while preserving static inspection operations.
-- Supports optional structured `patch-poller/result-v1` output for `complete`, `continue`, `blocked`, and `failed` turns; clean legacy CLI exits can still complete a first-version run.
-- Persists run/context state and resumes trusted `patch-poller/feedback-v1` continuation/cancel feedback without relying on model conversation memory.
-- Defers a newer revision of one issue while an older revision is still active.
-- Excludes PATCH-POLLER runtime exchange files from project changes and rejects attempts to force them into a candidate.
-- Validates Git state and seals all accepted project edits into a clean PATCH-POLLER candidate commit.
-- Can optionally push only the dedicated `patchpoller/*` task branch; automatic task-branch push is disabled by default.
-- Recovers `verifying`/`publishing` runs by finalizing the already sealed candidate instead of invoking the model again.
-- Coalesces bounded/redacted progress and context into GitHub status comments.
-- Provides `doctor`, `poll-once`, `run-once`, and `daemon` CLI commands plus a single-instance daemon lock.
+PATCH-POLLER is usable for general local operation on verified Linux hosts, but it is still pre-production software. The most important current platform boundary is unchanged: untrusted proposal-worker or repository-code execution requires a verified outer OS sandbox. The built-in verified provider is Linux/Bubblewrap; unsupported hosts fail closed for those execution classes instead of silently running them with host authority.
+
+Implemented on current main:
+
+- exact trusted GitHub task, feedback, and decision provenance using numeric actor IDs plus edit-history verification;
+- managed repository/worktree ownership, hardened Git invocation, candidate sealing, task-branch publication, and restart-safe recovery;
+- PP-007 artifact-exact hard gates for sensitive candidates before sealing and publication;
+- deterministic controller plans and locally registered deterministic operations, with model adapters optional and disabled by default;
+- exact final-byte re-verification after operations/cleanup before a controller-plan candidate may seal;
+- verified Linux Bubblewrap containment for proposal workers, repository-controlled build/test operations, and self-update candidate validation;
+- control-owned worker IPC outside proposal worktrees, with exact mailbox identity/digest checks;
+- signed immutable production self-update subjects, isolated candidate validation, safe daemon drain, health checks, and last-known-good rollback;
+- sanitized local tool inventory, bounded capability projection, and locally pre-authorized sandboxed dynamic `tool.*` onboarding;
+- durable coordinating-chat rollover and fresh-context recovery under PP-014;
+- persistent Ed25519 installation identity, signed task leases, expected-SHA Git-ref CAS, heartbeat/TTL recovery, fencing, and agent-namespaced candidate branches when coordination is enabled;
+- immutable start-baseline evidence plus a separate publication baseline, fast-forward-only automated rebase, mandatory post-drift reverification, and exact verified-head publication CAS;
+- cooperative daemon `pause`/`resume` at safe task-cycle boundaries;
+- below-normal child-process priority by default for model workers and deterministic operations;
+- serialized task admission: effective task concurrency is currently one even if a larger `execution.maxConcurrentTasks` value is configured.
 
 ## Control-plane rule
 
-PATCH-POLLER owns authoritative run state, managed Git state, capability policy, and publication state. Remote/local LLMs are proposal engines.
+PATCH-POLLER is the single source of machine authority.
 
-Remote task text, repository content, dependencies, model output, and process output are data/proposals. They cannot create executable paths, local paths, environment authority, credentials, or sandbox/network privileges.
+Remote task text, repository content, dependencies, model output, tool documentation, and process output are data/proposals. They cannot create an executable path, shell command, local filesystem root, environment secret, credential source, network capability, sandbox exception, trusted actor, peer key, Git ref authority, or human-decision authority.
 
-## Free GitHub reference deployment
+A task may request work and descriptive capabilities. Local operator policy decides what is actually allowed.
 
-The reference deployment is a GitHub Free personal account. Core correctness and safety do not depend on paid private-repository rulesets/branch protection, Actions, Codespaces, Packages, or other paid features.
+## Remote task authors and workstation security
 
-Local compilation/testing is the normal path. Optional GitHub features may add defense or convenience but may not become required for the core workflow. Metered features are a separate cost capability and default to no intentional spend.
+`github.trustedActorIds` is a **remote development-job submission allowlist**, not a generic repository-collaborator list.
 
-PAT/fine-grained-token authentication is the implemented v0.1 path. GitHub App installation authentication remains a planned free-compatible isolation improvement.
+If a runner has `execution.enabled: true` and trusts a GitHub actor, that actor can submit a valid PATCH-POLLER task that causes development code to run on that runner, subject to the runner's local tool/capability/sandbox policy. The task protocol does not permit arbitrary shell/argv/path/environment injection, but trusted task authors should still be treated as people allowed to request local development work.
 
-## Human checkpoints
+Multi-agent coordination does not change this rule. PP-016 leases coordinate which authorized installation owns a task; a peer key is not task authority, and a lease is not execution authority.
 
-The normative HITL model is **checkpoint and proceed**, not stop and wait. PP-007 defines non-blocking checkpoints, decision boundaries, hard gates, exact decision subjects, and refactor-pressure behavior.
+Current task envelopes do **not** contain a cryptographically bound destination-agent address. Therefore, a deployment that requires developer A to be unable to dispatch work to developer B's workstation must enforce that separation through each runner's local queue and `trustedActorIds` policy today. Do not configure a shared team actor allowlist merely because everyone is a repository collaborator. Per-installation dispatch addressing/authorization remains a roadmap item in issue #49.
 
-v0.1 implements durable ordinary continuation/cancel feedback and can record a proposal checkpoint, but it does **not yet** implement the complete `decision-v1`/safe-frontier orchestration. Do not treat a v0.1 model-produced checkpoint object as human authorization.
+## Task protocol
 
-## Repository-code sandbox boundary
-
-PATCH-POLLER does not default to arbitrary read-only access to the whole machine. Read access alone can expose credentials/private files that malicious project code could exfiltrate.
-
-Deterministic controller operations are split by execution class. Static inspection such as `node.syntax-check` can run without a repository-code sandbox. Operations that can execute repository-controlled code (`node.test`, `cmake.configure`, `cmake.build`, and `ctest.run`) are refused before process launch unless the locally selected provider has passed its boundary verification. Unknown future registered deterministic operations default to the repository-code class until deliberately classified otherwise.
-
-On Linux the built-in provider auto-discovers the local `bwrap` executable and verifies the actual boundary before use. The sandbox exposes the project and current PATCH-POLLER run scratch as writable, keeps `.git` administrative state read-only or unreachable, mounts required OS/tool roots read-only, mounts locally configured `workspace.externalReadRoots` read-only, uses a private temporary home, does not inherit GitHub credentials, and creates a separate network namespace with no external network path. PATCH-POLLER state, operator home data, SSH/GitHub credential directories, and unrelated host paths are not mounted.
-
-Provider presence is not sufficient. `doctor` reports both provider availability and the result of the adversarial boundary probe. If `capabilities.core.controllerPlans.sandbox.verified` is not `true`, repository-code controller operations remain disabled.
-
-Current built-in repository-code sandbox support is Linux/Bubblewrap. Windows and other unsupported hosts fail closed for repository-code controller operations; they do not fall back to unsandboxed execution. Coding-model adapter profiles retain their separate local sandbox declarations and policy.
-
-## Task example
+A task issue contains exactly one top-level machine envelope:
 
 ````markdown
 ```patch-poller-task
@@ -75,104 +64,148 @@ Current built-in repository-code sandbox support is Linux/Bubblewrap. Windows an
 ```
 ````
 
-Requested capabilities are descriptive only. Local policy is authoritative.
+The protocol deliberately has no task-controlled `command`, `shell`, `cwd`, `localPath`, `executable`, raw environment, credential, sandbox, Git-ref, peer-key, or daemon-control fields.
 
-## Setup and first run
+Task authority is accepted only when PATCH-POLLER can verify the exact current issue-body bytes and complete trusted edit provenance. Creator identity alone is insufficient.
 
-Requires Node.js 22.16.0 or newer and Git. Run PATCH-POLLER under a dedicated **unprivileged** service account; the built-in repository-code sandbox deliberately refuses to activate when PATCH-POLLER itself is running as root. Linux hosts that will execute repository code through deterministic controller plans also require a locally installed Bubblewrap (`bwrap`) package from the operating-system distribution.
+## Repository-code and proposal-worker sandbox boundary
 
-On Ubuntu 24.04 and other systems that restrict unprivileged user namespaces through AppArmor, use a narrowly scoped Bubblewrap policy rather than globally disabling the host restriction. Ubuntu's `apparmor-profiles` package provides `bwrap-userns-restrict`; one supported setup is:
+PATCH-POLLER does not default to read access across the host. Read-only host access can expose SSH keys, cloud credentials, browser profiles, tokens, and private documents that malicious code could exfiltrate through allowed output.
+
+Deterministic operations are classified as static inspection, trusted control work, or repository-code execution. Repository-code operations and proposal/model workers cannot launch unless the active outer isolation provider has passed PATCH-POLLER's live boundary probe.
+
+On Linux the built-in Bubblewrap provider:
+
+- exposes the managed proposal project and current run scratch as the ordinary writable roots;
+- keeps authoritative `.git` administration read-only or unreachable from untrusted execution;
+- exposes only required system/tool roots and explicitly configured external read roots as read-only;
+- uses synthetic private HOME/TMP locations;
+- hides PATCH-POLLER control state, daemon control files, SSH/GitHub credential directories, and unrelated operator-home paths;
+- strips control-plane GitHub/SSH credential environment channels;
+- can enforce denied or explicitly unrestricted worker networking; unsupported requested network modes fail closed;
+- verifies its actual filesystem/network/control-state boundary before admission.
+
+`doctor` separates profile declarations from configured provider identity and observed enforcement. A profile saying `sandbox.enforcement: "os"` or `"tool"` does not itself prove containment.
+
+Windows and other hosts without a verified provider remain usable for static/control-plane operations, but untrusted proposal-worker and repository-code execution fail closed there.
+
+## Human checkpoints and hard gates
+
+PP-007 uses **checkpoint and proceed**, not a blanket stop-and-wait model.
+
+PATCH-POLLER may continue reversible work inside the current capability/decision envelope while a consequential decision is pending. It enters `waiting-decision` only when the safe frontier is exhausted.
+
+Sensitive candidates are classified locally. Remote decision authority for a class exists only when local configuration lists the actor under `execution.decisionAuthorities` for every triggered class. Artifact-sensitive approval binds to the exact candidate subject and is rechecked before sealing and task-branch publication. Silence, expiry, stale IDs, changed artifacts, or ambiguous provenance never become approval.
+
+Remote decisions cannot grant new filesystem roots, executables, credentials, network authority, sandbox exceptions, peer trust, or other capability expansion.
+
+## Multi-agent coordination
+
+Coordination is disabled by default.
+
+When enabled, each installation owns a persistent local Ed25519 keypair. The public-key SHA-256 fingerprint identifies the installation; the private key remains control-plane state.
+
+Task ownership uses signed `patch-poller/task-lease-v1` subjects stored behind PATCH-POLLER-owned Git refs. Lease transitions use exact expected-value Git CAS (`--force-with-lease=<ref>:<expected-sha>` semantics), not issue-label races or blind force pushes.
+
+An unexpired trusted-peer lease defers the task. Expired trusted-peer leases may be reclaimed only after the configured skew margin. Lost/expired ownership fences new work and later sealing/publication effects, and active child execution receives the lease-loss abort signal where supported.
+
+A lease grants coordination authority only. It does not grant task trust, repository access, executable authority, credentials, sandbox authority, human-decision authority, or publication permission.
+
+## Baseline drift and exact publication identity
+
+Every run preserves an immutable `baseSha` as start-of-run evidence and tracks a separate `publicationBaseSha` for the candidate currently being verified.
+
+PATCH-POLLER automatically reconciles only same-ref fast-forward upstream movement. Rewritten upstream history checkpoints instead of being silently accepted. Successful rebase invalidates earlier verification and requires bounded fresh verification/replay before publication.
+
+Task-branch publication is bound to the exact locally verified head, not symbolic `HEAD`. First publication and any later rewrite require explicit expected remote state, and ambiguous publication is reconciled by re-observing the remote head rather than force-overwriting unexplained state.
+
+## Daemon runtime governance
+
+The supported CLI currently includes:
 
 ```text
-sudo apt-get update
-sudo apt-get install -y bubblewrap apparmor-profiles
-sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
-sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+patch-poller doctor
+patch-poller poll-once
+patch-poller run-once
+patch-poller daemon
+patch-poller status
+patch-poller pause
+patch-poller resume
+patch-poller stop
+patch-poller restart
+patch-poller handoff-status
+patch-poller handoff-seed
+patch-poller handoff-project
 ```
 
-On other Linux distributions, install Bubblewrap using the distribution package and ensure the dedicated unprivileged PATCH-POLLER account is permitted to create the namespaces Bubblewrap requires. Do not infer safety from package presence: `doctor` must still pass the live boundary probe before repository-code operations are usable.
+`pause` is cooperative admission control, not `SIGSTOP` or thread suspension. A request binds to the exact daemon lock token, is acknowledged at the next safe task-cycle boundary, prevents another polling/admission cycle, and preserves run/worktree/IPC/lease evidence. `stop` has precedence over pause.
+
+Model and deterministic child processes run below normal OS priority by default. This is workstation QoS, not a security sandbox or CPU/memory quota. Hard CPU, memory, disk-growth, descendant-count, and arbitrary native-thread quotas remain future resource-provider work.
+
+The daemon currently admits one task/run continuation at a time. A larger configured `maxConcurrentTasks` value does not create a worker pool.
+
+## Bootstrap and self-update
+
+`patch-poller.mjs` is the supported launcher for a machine with Node.js 22.16.0+ and Git.
+
+Development mode follows the mutable testing channel and is explicitly alpha. Production mode requires a locally trusted Ed25519-signed release manifest binding repository identity, exact commit, version, and platform-neutral runtime artifact SHA-256. Candidate preflight/tests execute only inside the verified untrusted-code sandbox; the artifact digest is recomputed after validation and again checked before activation. Failed validation/activation/health leaves or restores the last-known-good runtime.
+
+See `docs/bootstrap.md` for the exact production release subject and supervisor lifecycle.
+
+## Setup
 
 1. Copy `config/patch-poller.example.json` to a local configuration file **outside watched project repositories**.
-2. Configure `github.queueRepository`, `trustedActorIds`, workspace owners, and `github.tokenEnv`.
-3. If using coding-model adapters, configure the required local coding-tool profiles. See `docs/tool-profiles.md`.
-4. Keep `execution.enabled` false while reviewing local authority and sandbox behavior.
-5. Set the GitHub token environment variable for the PATCH-POLLER service account.
-6. Run local checks:
+2. Set `github.queueRepository`, `github.trustedActorIds`, allowed workspace owners, and authentication policy.
+3. Keep `execution.enabled` false while reviewing machine authority and sandbox behavior.
+4. If using model adapters, configure only the required local tool profiles and credentials; model adapters are disabled by default.
+5. If enabling coordination, configure the local handle, lease timing, and exact trusted peer public keys. Coordination is not task authorization.
+6. Run:
 
 ```text
 node src/cli.js doctor --config <local-config.json>
 node src/cli.js poll-once --config <local-config.json>
 ```
 
-If deterministic repository-code controller operations will be used, inspect the `doctor` result and require `capabilities.core.controllerPlans.sandbox.verified: true`. On a supported Linux deployment this means the reported provider is `bubblewrap` and its boundary probe succeeded. Do not enable repository-code execution by bypassing this gate on an unsupported or misconfigured host.
+7. Before enabling any untrusted execution on Linux, require the appropriate `doctor` enforcement records to report a verified Bubblewrap boundary. Do not bypass the gate on an unsupported/misconfigured host.
+8. Set `execution.enabled` to true only after reviewing the local task-author, tool, decision, publication, and coordination authority.
+9. Exercise `run-once`, then start the long-lived daemon/supervisor when the local policy is correct.
 
-7. Set `execution.enabled` to true and exercise one cycle:
+`publication.autoPushTaskBranches` defaults to false. Enabling it is a standing local authorization to publish PATCH-POLLER task branches under the configured branch prefix; it is not default-branch merge/release authority.
 
-```text
-node src/cli.js run-once --config <local-config.json>
-```
+## Current limitations / remaining roadmap
 
-8. Once the local tool/workspace behavior is correct, run the long-lived loop:
+The following are intentionally not represented as complete:
 
-```text
-node src/cli.js daemon --config <local-config.json>
-```
-
-`publication.autoPushTaskBranches` defaults to false. Enabling it is a standing **local** authorization to push only PATCH-POLLER's dedicated task branches. It does not authorize merge/default-branch/release operations.
-
-Do not commit the real local configuration if it contains machine-specific policy or secret-adjacent values.
-
-## Context and feedback
-
-Every tool turn receives a self-contained `patch-poller/context-v1` capsule with task identity, constraints, decisions/progress, changed files, test reports, Git state, blockers, next step, and bounded output tail.
-
-A blocked structured tool turn enters resumable `waiting-feedback`. Trusted continuation uses a GitHub comment containing exactly one `patch-poller-feedback` envelope bound to the run ID and task revision. Unstructured comments and comments from other actors are ordinary discussion.
-
-## Candidate publication model
-
-The coding tool edits only the isolated worktree. On completion PATCH-POLLER:
-
-1. validates worktree/merge/whitespace/reserved-path invariants;
-2. stages the candidate;
-3. creates a PATCH-POLLER-owned candidate commit;
-4. records the exact candidate SHA;
-5. optionally pushes that SHA to its dedicated task branch when local policy enables auto-push.
-
-It does not merge to the default branch or close issues in v0.1.
-
-## Known v0.1 limits
-
-The following are deliberately not represented as complete:
-
-- full PP-007 checkpoint/decision/safe-frontier orchestration;
-- repository-code OS sandbox providers for Windows and other non-Linux hosts; those deterministic operations fail closed there rather than running unsandboxed;
-- first-class dependency-fetch/install/build/test capability phases from PP-008;
-- generic operation journal/reconciliation for every GitHub mutation from PP-009;
-- numeric GitHub repository-ID pinning, decision replay journal, baseline instruction snapshots, and tool-version/profile digests from PP-010;
+- per-installation task destination/dispatch authorization for shared-team queues; use runner-local `trustedActorIds`/queue separation when cross-developer workstation isolation is required;
+- verified OS sandbox providers for Windows and other non-Linux hosts;
+- first-class dependency fetch/install/browser capability phases and package-manager lifecycle-script isolation from PP-008;
+- complete generic effect journaling/reconciliation for every possible remote mutation; current critical run/publication/update paths have targeted durable reconciliation;
+- numeric GitHub repository-ID pinning/rename-transfer reconciliation and complete tool/profile identity evidence;
 - GitHub App installation authentication;
-- webhook task source;
-- automatic PR creation/merge/issue closure;
-- independent verifier commands outside the coding tool's sandbox.
+- hard OS CPU/memory/disk/process-count/thread quotas beyond current below-normal process priority;
+- parallel task admission/scheduling; effective concurrency is one;
+- issue #49 CLI surfaces not yet implemented, including `whoami`, peer administration, lease inspection/manual claim/recovery, local issue dry-run, and local patch verification commands;
+- optional webhook task source;
+- automatic default-branch merge, release/tag/deployment, or issue closure as ordinary task effects.
 
-These are hardening/feature boundaries, not permission for an implementation to silently assume the missing protections exist.
+These are explicit boundaries, not permission to infer or silently emulate the missing authority.
 
-## Engineering documents
+## Documentation map
 
-- `AGENTS.md` — coding-agent operating rules.
+Live normative/operator documents:
+
+- `AGENTS.md` — coding-agent operating rules and spec-reading map.
 - `docs/design-principles.md` — LEGO / SOLID / CUPID / KISS application.
-- `docs/architecture.md` — control plane, ports, trust hierarchy, workspace and CLI model.
-- `docs/tool-profiles.md` — safe local CLI profile patterns, including current Codex guidance.
-- `specs/PP-001-system.md` — system contract, authority, and lifecycle.
-- `specs/PP-002-task-protocol.md` — task transport and revision identity.
-- `specs/PP-003-security.md` — filesystem, process, network, secret, capability, and recovery policy.
-- `specs/PP-004-github-budget.md` — API/plan/cost behavior.
-- `specs/PP-005-context-handoff.md` — durable model context, decisions, and handoffs.
-- `specs/PP-006-feedback.md` — trusted continuation/cancel feedback.
-- `specs/PP-007-human-checkpoints.md` — checkpoint-and-proceed HITL, decision boundaries, and hard gates.
-- `specs/PP-008-git-supply-chain.md` — Git/package/build supply-chain execution boundary.
-- `specs/PP-009-effects-recovery.md` — durable effects, crash recovery, and reconciliation.
-- `specs/PP-010-provenance-control-channels.md` — origin/provenance roles, replay resistance, and identity hardening.
-- `docs/roadmap.md` — implementation/hardening slices and completion gates.
+- `docs/architecture.md` — current control plane, trust hierarchy, execution, coordination, and recovery model.
+- `docs/bootstrap.md` — current supervisor/update/release-integrity behavior.
+- `docs/tool-profiles.md` — local proposal-worker profiles and observed sandbox enforcement.
+- `docs/roadmap.md` — current implemented state and remaining work.
+- `specs/PP-001-system.md` through `specs/PP-018-runtime-governance-pause.md` — normative contracts.
+
+Historical evidence:
+
+- `docs/handoffs/` contains immutable point-in-time handoffs; checksum-bound files are history, not current authority.
+- `docs/testing/` contains point-in-time audit evidence; read it with the current specs/roadmap rather than as a live status document.
 
 ## Tests
 
@@ -180,7 +213,7 @@ These are hardening/feature boundaries, not permission for an implementation to 
 npm test
 ```
 
-The v0.1 suite covers the protocol/security/rate/context boundaries plus real local Git worktree provisioning, candidate sealing, immutable baseline recovery, process execution, daemon locking, feedback resumption, finalization recovery, active-revision deferral, deterministic sandbox fail-closed behavior, Linux Bubblewrap boundary verification, and complete local task acceptance paths.
+CI additionally runs focused security, sandbox, coordination, baseline-reverification, and runtime-governance boundary suites on the applicable platforms. Linux CI requires the real Bubblewrap boundary test; unsupported-platform behavior is tested fail-closed.
 
 ## License
 

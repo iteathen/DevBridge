@@ -1,6 +1,6 @@
 # PATCH-POLLER Agent Guide
 
-PATCH-POLLER is security-sensitive automation. It turns remote task input into local coding-agent activity, so convenience never outranks capability boundaries, provenance, recoverability, or rate-limit discipline.
+PATCH-POLLER is security-sensitive automation. It turns remote task input into local development activity, so convenience never outranks capability boundaries, provenance, recoverability, lease/fence correctness, or rate-limit discipline.
 
 ## Required engineering cycle
 
@@ -12,10 +12,10 @@ For each meaningful change:
 4. Reassess after research; do not force the original idea if the evidence changed it.
 5. Plan by coherent ownership boundary, not tiny token-driven patches.
 6. Implement the smallest complete design that satisfies the contract.
-7. Test normal behavior, failure behavior, and boundary behavior.
+7. Test normal behavior, failure behavior, recovery behavior, and boundary behavior.
 8. Report what changed, what was tested, what remains, and the next safe step.
 
-Do not allow a model's context window to become the only record of work. Durable run state and context capsules are product requirements.
+Do not allow a model/chat context to become the only record of work. Durable run state, exact evidence, and bounded context handoffs are product requirements.
 
 ## Design hierarchy
 
@@ -26,33 +26,50 @@ Use the project principles together rather than as slogans:
 - CUPID: code should be composable, Unix-like, predictable, idiomatic, and domain-based.
 - KISS: prefer the smallest mechanism that preserves correctness and safety.
 
-Hexagonal boundaries are preferred where PATCH-POLLER touches GitHub, credentials, filesystems, processes, clocks, persistence, status delivery, or human decision intake.
+Hexagonal boundaries are preferred where PATCH-POLLER touches GitHub, credentials, filesystems, processes, clocks, persistence, status delivery, human decision intake, agent coordination, sandboxing, runtime supervision, or daemon control.
 
 ## Control-plane rule
 
-PATCH-POLLER owns authoritative run state, Git workspace state, capability policy, checkpoint/decision state, and publication state. Remote and local LLMs are proposal engines.
+PATCH-POLLER owns authoritative run state, Git workspace state, capability policy, task provenance, checkpoint/decision state, lease/fence state, verification identity, publication state, runtime-update state, and daemon lifecycle state. Remote and local LLMs are proposal engines.
 
-A model may propose a patch, repair, command through a locally configured profile, architectural direction, or next step. It does not get to declare that its own proposal is accepted, that a checkpoint has been satisfied, that a capability exists, or that an external effect is authorized.
+A model may propose a patch, repair, locally registered operation, architectural direction, or next step. It does not get to declare that its own proposal is accepted, that a checkpoint has been satisfied, that a capability exists, that a lease is owned, or that an external effect is authorized.
 
 ## Preferred execution path
 
-The preferred architecture is now:
+The preferred architecture is:
 
 `Primary chat controller -> PATCH-POLLER -> deterministic local operations -> verify -> seal/publish`
 
-The primary chat controller may author source text, tests, expected outputs, and structured intent. PATCH-POLLER owns materialization, local execution authority, cleanup, recovery, Git state, validation, and publication.
+The primary chat controller may author source text, tests, expected outputs, and structured intent. PATCH-POLLER owns materialization, executable/argv authority, sandbox admission, local process execution, cleanup, recovery, Git state, validation, and publication.
 
-Do not delegate deterministic machine work to a coding model merely because a model adapter exists. Compiler/tool discovery, process exit/stream capture, test execution, protocol fixtures, context receipts, cleanup, Git auditing, and publication reconciliation belong to PATCH-POLLER or deterministic registered adapters.
+Do not delegate deterministic machine work to a coding model merely because a model adapter exists. Compiler/tool discovery, process exit/stream capture, test execution, protocol fixtures, context receipts, cleanup, Git auditing, publication reconciliation, lease operations, daemon control, and runtime activation belong to PATCH-POLLER or deterministic registered adapters.
 
-Coding-model adapters such as Codex-family clients, Spark, or other external LLM tools are optional compatibility surfaces and should be disabled by default. Use them only when local policy explicitly enables them and the task genuinely requires model inference or specifically tests that adapter.
+Coding-model adapters such as Codex-family clients, Spark, or other external LLM tools are optional compatibility/inference surfaces and are disabled by default in the reference configuration. Use them only when local policy explicitly enables them and the task genuinely requires model inference or specifically tests that adapter.
 
-For the PP-013 implementation campaign documented in `docs/handoffs/PP-HO-0818-0910.md`, do **not** use Codex, Spark, or another coding model unless the user explicitly changes that constraint. Read `specs/PP-013-controller-plans.md` before implementing that campaign.
+Historical handoff-specific implementation constraints under `docs/handoffs/` describe their point-in-time campaigns; they do not override current user instructions or the current specs after those campaigns have merged.
 
-A controller plan is data, not a remote shell language. It may carry bounded project file proposals and reference locally registered deterministic operations with validated parameters, but it may not grant executable paths, raw shell fragments, arbitrary environment values, arbitrary local paths, arbitrary Git refs, cleanup roots, credentials, or capabilities.
+A controller plan is data, not a remote shell language. It may carry bounded project file proposals and reference locally registered deterministic operations with validated parameters, but it may not grant executable paths, raw shell fragments, arbitrary environment values, arbitrary local paths, arbitrary Git refs, cleanup roots, credentials, network privileges, sandbox exceptions, peer keys, or capabilities.
+
+## Remote task authors and workstation isolation
+
+Treat `github.trustedActorIds` as a **remote development-job submission allowlist**, not a generic collaborator list.
+
+If execution is locally enabled, a trusted task actor can submit valid work that causes development code to run on that runner within the runner's existing local capability/sandbox policy. The task protocol prevents direct arbitrary shell/argv/path/environment authority, but trusted task authors still have meaningful remote job-submission authority.
+
+PP-016 coordination leases do not solve human-to-workstation dispatch authorization. Current task envelopes are not cryptographically addressed to a destination agent. A peer public key authenticates lease evidence only; it is not task authority.
+
+Therefore:
+
+- do not populate every workstation's `trustedActorIds` from a broad repository collaborator/team list by convenience;
+- if developer A must be unable to dispatch work to developer B's machine, enforce that today with B's runner-local queue/trusted-actor policy;
+- do not claim that agent identity or lease ownership alone provides this isolation;
+- per-installation dispatch addressing/authorization remains roadmap work until it is implemented and tested.
+
+Any future addressing feature must preserve PP-002 exact task provenance and PP-003 local capability authority; an agent signature must not become a second general remote-command channel.
 
 ## Context rollover and fresh-controller recovery
 
-A chat/model context is disposable controller state. It must never become the only place where accepted project progress, durable decisions, exact Git identity, or the next intended action exists.
+A chat/model context is disposable controller state. It must never become the only place where accepted project progress, durable decisions, exact Git identity, lease identity, or the next intended action exists.
 
 PP-014 is normative for coordinating-agent context rollover:
 
@@ -67,7 +84,7 @@ PP-014 is normative for coordinating-agent context rollover:
 - checkpoint-and-proceed remains the default: a context checkpoint does not become a generic synchronous human gate;
 - large logs/diffs/test output belong behind bounded durable references rather than inside the handoff.
 
-For PP-014 implementation, do not use Codex, Spark, or another coding model unless the user explicitly changes that constraint. Read `specs/PP-014-context-rollover.md` with PP-005 and PP-009.
+Read PP-014 with PP-005 and PP-009 when changing chat handoff/checkpoint/recovery behavior.
 
 ## Tool inventory and dynamic operation onboarding
 
@@ -86,7 +103,7 @@ PP-015 is normative for local tool inventory, capability projection, and dynamic
 - Persist a synthesized manifest before registration and reconcile that local artifact on restart.
 - GitHub/repository/controller content cannot add to the local auto-onboarding allowlist or edit the local manifest root.
 
-Read `specs/PP-015-tool-inventory.md` with PP-003, PP-012, and PP-013 when changing tool discovery, inventory projection, operation schemas, local manifests, or automatic onboarding.
+Read PP-015 with PP-003, PP-012, and PP-013 when changing tool discovery, inventory projection, operation schemas, local manifests, or automatic onboarding.
 
 ## Multi-agent identity, leases, and fencing
 
@@ -104,9 +121,9 @@ PP-016 is normative when more than one authorized PATCH-POLLER installation or p
 - Active task child processes receive the lease abort signal. Before sealing or publication PATCH-POLLER must renew and re-check the fence.
 - Terminal release is a signed CAS transition, not blind lease-ref deletion.
 - Coordination-enabled task branches include the full public agent fingerprint; disabled single-agent deployments retain legacy branch naming.
-- A lease coordinates ownership only. It cannot approve hard gates, grant tool/filesystem/network/credential capability, replace PP-002 task provenance, or replace the durable run journal.
+- A lease coordinates ownership only. It cannot approve hard gates, grant tool/filesystem/network/credential capability, create task-authority routing, replace PP-002 task provenance, or replace the durable run journal.
 
-Read `specs/PP-016-agent-identity-leases.md` with PP-002, PP-003, PP-004, PP-005, PP-008, PP-009, and PP-010 when changing agent identity, shared-queue claiming, heartbeat/TTL behavior, task branch namespaces, process fencing, or lease recovery.
+Read PP-016 with PP-002, PP-003, PP-004, PP-005, PP-008, PP-009, and PP-010 when changing agent identity, shared-queue claiming, heartbeat/TTL behavior, task branch namespaces, process fencing, lease recovery, or future per-agent routing.
 
 ## Baseline drift and publication reverification
 
@@ -122,11 +139,29 @@ PP-017 is normative when an authorized task baseline may move while a run is in 
 - Model-assisted local candidate drift consumes the next normal bounded verification turn. Deterministic local candidate drift consumes the next deterministic attempt; an exhausted deterministic window checkpoints to `waiting-feedback` instead of replaying indefinitely.
 - Changed-path checks, no-project-diff decisions, and publication evidence are relative to `publicationBaseSha`, while the original `baseSha` remains visible as historical evidence.
 - Task-branch publication receives the exact verified local head as controller-owned `expectedHeadSha`, rechecks the current clean local head against it, and pushes `<verified-sha>:<task-ref>`. Symbolic `HEAD` is not publication payload identity.
-- A rebase may rewrite a PATCH-POLLER-owned task branch only with an explicit expected remote head. First creation uses an explicitly empty expected value; later rewrite requires an exact predecessor head that PATCH-POLLER previously confirmed on the remote through its own publication/reconciliation path. A merely local pre-rebase candidate SHA is not rewrite authority. Blind force is forbidden.
+- A rebase may rewrite a PATCH-POLLER-owned task branch only with an explicit expected remote head. First creation uses an explicitly empty expected value; later rewrite requires an exact predecessor head that PATCH-POLLER previously confirmed remotely. A merely local pre-rebase candidate SHA is not rewrite authority. Blind force is forbidden.
 - Ambiguous task-branch publication is reconciled by re-observing the exact remote head. If the remote already equals the intended verified local head the effect is idempotently accepted; otherwise only a previously confirmed predecessor may authorize retry. An unexplained remote head is never overwritten.
 - PP-016 fencing still governs reconciliation/sealing/publication effects when coordination is enabled, and the lease-aware publication wrapper must preserve the exact verified-head option while performing its fresh fence check before the delegate effect.
 
-Read `specs/PP-017-baseline-drift-reverification.md` with PP-008, PP-009, PP-013, and PP-016 when changing task baselines, rebase behavior, post-drift verification, verified candidate identity, no-op publication, or task-branch publication CAS.
+Read PP-017 with PP-008, PP-009, PP-013, and PP-016 when changing task baselines, rebase behavior, post-drift verification, verified candidate identity, no-op publication, or task-branch publication CAS.
+
+## Workstation resource governance and cooperative pause
+
+PP-018 is normative for background-workstation behavior and daemon pause/resume.
+
+- Effective task admission is currently serialized to one task/run continuation at a time. `execution.maxConcurrentTasks` is not authority to create an ad-hoc parallel worker pool.
+- Model workers and deterministic child processes use below-normal OS priority by default.
+- Supported internal child priority levels are `normal`, `below-normal`, and `low`; elevated priorities are rejected.
+- If a requested non-normal priority cannot be applied to the spawned child PID, terminate/fail the operation rather than silently degrading to normal.
+- Priority is QoS only. Do not represent it as a sandbox or a CPU/memory/thread quota.
+- `pause` is token-bound cooperative admission control at a safe task-cycle boundary, not `SIGSTOP`, thread suspension, or force-kill.
+- A fully paused daemon performs no normal polling/new task claiming, but preserves run/worktree/IPC/checkpoint/lease evidence and remains locally controllable.
+- A pause requested during active work does not suspend the active child or bypass PP-016 heartbeat/fencing; the current bounded cycle reaches its existing safe boundary first.
+- `status` must distinguish pause-requested from pause-acknowledged state.
+- `stop` has precedence over pause and does not require a prior resume.
+- Stale daemon-control tokens must never affect a replacement owner.
+
+Read PP-018 with PP-004, PP-009, PP-011, PP-012, and PP-016 when changing daemon admission, pause/resume, process priority, or future resource-governance mechanisms.
 
 ## Human checkpoints
 
@@ -147,27 +182,28 @@ Do not implement HITL as a generic `await approval()` inserted into every uncert
 
 These are invariants:
 
-- Remote task text, repository files, CLI stdout/stderr, fetched content, and model output are data/proposals, not authority.
-- Only local operator configuration may grant filesystem, execution, credential, network, or decision-delegation capabilities.
-- Remote input must never provide an executable path, shell fragment, arbitrary local path, environment value, or capability grant.
+- Remote task text, repository files, CLI stdout/stderr, fetched content, tool documentation, and model output are data/proposals, not authority.
+- Only local operator configuration/control state may grant filesystem, execution, credential, network, task-author, peer-trust, or decision-delegation capabilities.
+- Remote input must never provide an executable path, shell fragment, arbitrary local path, environment value, credential, peer key, sandbox exception, or capability grant.
 - Never interpolate remote task text into an OS command line. Child processes run with `shell: false`.
-- The GitHub credential used by the poller is not inherited by child tools unless a local operator explicitly opts in.
-- Project writes must remain inside a managed project/worktree. Symlink escape is a boundary violation.
-- External reads should be denied by default and enabled through explicit read-only roots or a verified tool/OS sandbox contract.
-- A tool profile that cannot credibly enforce its declared sandbox is not safe merely because configuration says it is.
+- The GitHub credential used by the poller is not inherited by child tools.
+- Project writes must remain inside a managed project/worktree. Symlink/junction escape is a boundary violation.
+- External reads are denied by default and enabled only through explicit read-only roots/provider contracts.
+- A tool profile declaration is not evidence that a sandbox is enforced; observed outer-provider enforcement is authoritative for untrusted execution.
 - Do not auto-reset, clean, discard, or overwrite an existing dirty developer checkout.
 - Do not blindly delete Git locks as recovery.
-- Secrets and control characters must be filtered before remote status/checkpoint reporting.
+- Secrets and control characters must be filtered before remote status/checkpoint/handoff reporting.
+- Do not represent unsupported platform/resource/network semantics as enforced merely because configuration requests them.
 
 ## GitHub API rules
 
-- Prefer webhooks when deployment permits them; polling is a supported fallback, not a reason to be wasteful.
+- Polling is a supported primary source; optional webhooks may be added when deployment value justifies them.
 - Poll with authenticated conditional requests and persist validators across restarts.
 - Serialize requests. Avoid bursty concurrency.
 - Respect `X-Poll-Interval`, `Retry-After`, primary reset headers, and configured reserve floors.
 - Do not poll `/rate_limit` as a heartbeat; use headers from ordinary responses.
-- Throttle status writes and coalesce progress/checkpoints into an existing status comment where practical.
-- Pending human decisions do not justify high-frequency polling.
+- Throttle status/tool-inventory/checkpoint writes and coalesce them into owned comments where practical.
+- Pending human decisions or leases do not justify high-frequency polling.
 - Terminal handoff/reporting may use a small emergency reserve, but routine polling may not consume it.
 
 ## Documentation and specifications
@@ -176,17 +212,23 @@ Specs are normative unless a newer spec explicitly supersedes them. If a spec be
 
 Keep implementation details out of broad principles unless they are genuine invariants. Keep security-critical invariants out of informal README prose only; they belong in specs and tests.
 
-When implementing run coordination or human decision handling, read PP-001, PP-003, PP-005, PP-006, and PP-007 together; none of them is a standalone shortcut around the others.
+Live normative contracts are currently PP-001 through PP-018.
 
-When implementing controller plans, deterministic operation registry/toolchain behavior, baseline channels, self-update activation, cleanup, context receipts, no-op publication, fault injection, capability doctor, or liveness changes, read PP-013 together with PP-003, PP-008, PP-009, PP-010, PP-011, and PP-012.
+When implementing run coordination or human decision handling, read PP-001, PP-003, PP-005, PP-006, PP-007, and PP-009 together.
 
-When implementing coordinating-chat rollover, budget pressure, durable chat handoffs, or fresh-context resume/reconciliation, read PP-014 together with PP-005 and PP-009. PP-014 specializes those existing contracts; it must not become a second effect journal or an unbounded transcript store.
+When implementing controller plans, deterministic operations/toolchain behavior, baseline channels, self-update activation, cleanup, context receipts, no-op publication, fault injection, capability doctor, or liveness changes, read PP-013 together with PP-003, PP-008, PP-009, PP-010, PP-011, and PP-012.
 
-When implementing local tool discovery, tool inventory/projection, dynamic operation schemas, operator manifests, or unfamiliar-tool onboarding, read PP-015 together with PP-003, PP-012, and PP-013. PP-015 does not permit tool documentation, PATH presence, or remote/controller text to grant execution authority.
+When implementing coordinating-chat rollover, budget pressure, durable chat handoffs, or fresh-context resume/reconciliation, read PP-014 with PP-005 and PP-009.
 
-When implementing multi-agent task coordination, persistent agent identity, shared queue leases, lease ref CAS transport, heartbeat/TTL recovery, agent branch namespaces, or lease-loss process fencing, read PP-016 together with PP-002, PP-003, PP-004, PP-005, PP-008, PP-009, and PP-010. PP-016 coordination evidence never creates task or capability authority.
+When implementing local tool discovery, inventory/projection, dynamic operations, operator manifests, or unfamiliar-tool onboarding, read PP-015 with PP-003, PP-012, and PP-013.
 
-When implementing baseline-drift detection, automated rebase, post-drift verification, publication-baseline tracking, verified local candidate identity, or task-branch rewrite recovery, read PP-017 together with PP-008, PP-009, PP-013, and PP-016. The immutable start baseline, current publication baseline, and exact locally verified publication head are distinct evidence and must not be conflated.
+When implementing multi-agent identity/leases/fencing or future per-agent routing, read PP-016 with PP-002, PP-003, PP-004, PP-005, PP-008, PP-009, and PP-010.
+
+When implementing baseline drift/rebase/reverification/publication CAS, read PP-017 with PP-008, PP-009, PP-013, and PP-016.
+
+When implementing daemon pause/resume, task admission, child priority, or resource governance, read PP-018 with PP-004, PP-009, PP-011, PP-012, and PP-016.
+
+`docs/handoffs/` and point-in-time audit documents are historical evidence. Do not update checksum-bound handoffs to make them look current and do not let them override newer specs/mainline status.
 
 ## Runtime scope
 
@@ -198,31 +240,30 @@ Do not introduce Python into PATCH-POLLER or its project workflow.
 
 Boundary tests are mandatory for:
 
-- path traversal and symlink escape;
-- trusted versus untrusted task issuers;
+- path traversal and symlink/junction escape;
+- trusted versus untrusted task issuers and exact edit provenance;
 - task-envelope parsing and malformed input;
+- proof that task/coordination/decision authorities remain distinct;
 - rate reserve behavior and conditional request caching;
 - secret redaction;
-- command argument templating and environment scrubbing;
-- restart-safe state persistence;
-- checkpoint/decision subject matching and invalidation;
+- command argument templating and environment/control-credential scrubbing;
+- restart-safe state persistence and effect reconciliation;
+- checkpoint/decision subject matching, expiry, supersession, and invalidation;
 - proof that a pending checkpoint does not pause unrelated safe work;
-- proof that pending hard gates cannot be crossed;
-- proof that silence/timeout does not become approval;
-- controller-plan/file-bundle containment, size, reserved-path, stale-digest, and operation-registry boundaries;
+- proof that pending hard gates cannot be crossed and silence/timeout is never approval;
+- controller-plan/file-bundle containment, size, reserved-path, stale-digest, operation-registry, and final-byte verification boundaries;
 - cleanup-ledger recovery after success, failure, timeout, and restart;
-- local baseline-channel resolution and immutable resolved baseline SHA;
-- transactional runtime candidate validation/activation with last-known-good preservation;
+- local baseline-channel resolution and immutable start baseline;
+- transactional runtime candidate validation/activation with signed production identity and last-known-good preservation;
 - proof that no-diff tasks elide publication by default;
 - proof that context receipts bind to the exact input/task revision;
-- proof that capability doctor distinguishes PATCH-POLLER core behavior from external adapter behavior;
+- capability doctor separation of declarations, provider identity, and observed enforcement;
 - canonical bounded chat-handoff digests and rejection of authority-shaped/local-path fields;
-- two-phase chat-handoff replacement that preserves the prior verified checkpoint on interruption/corruption;
-- fresh-context resume that rejects stale Git/task identity, requires changed governing documents to be reread, and never repeats/invents action IDs;
-- deterministic context-budget soft/preferred/hard rollover thresholds;
+- two-phase handoff replacement preserving the prior verified checkpoint on interruption/corruption;
+- fresh-context resume rejecting stale Git/task identity, requiring changed governing docs to be reread, and never repeating/inventing action IDs;
 - presence-only tool discovery that cannot become executable authority;
-- remote tool inventory privacy and declared-policy versus observed-enforcement separation;
-- dynamic-operation public schemas that are sufficient for bounded controller use without exposing executable/fixed argv/flag authority;
+- remote tool-inventory privacy;
+- dynamic-operation public schemas that remain non-authority-bearing;
 - local manifest rejection of duplicate registration, authority-shaped parameters, path/argv smuggling, and filesystem indirection;
 - sandboxed unfamiliar-tool help probing with no control credentials, denied network, hidden configured external read roots, bounded output/time, and fail-closed registration;
 - restart-safe persist-before-register reconciliation of generated local manifests;
@@ -234,8 +275,11 @@ Boundary tests are mandatory for:
 - immutable start-baseline evidence plus independently advancing publication-baseline evidence;
 - fast-forward-only baseline reconciliation, exact pre-rebase restoration after conflict, and history-rewrite checkpointing;
 - mandatory post-rebase model verification or deterministic-plan replay within bounded turn limits;
-- post-verification dirty/local-HEAD/publication-baseline drift invalidation, including bounded deterministic local-drift replay and exhausted-window checkpointing;
-- exact locally verified candidate-head binding through the lease-aware publication boundary and exact-SHA push payload;
-- explicit expected-head task-branch CAS for first creation, confirmed-remote rebased rewrite, ambiguous-effect reconciliation, rejection of local-only predecessor authority, and unexpected-remote refusal.
+- post-verification dirty/local-HEAD/publication-baseline drift invalidation and bounded replay;
+- exact locally verified candidate-head binding through lease-aware publication and exact-SHA push payload;
+- explicit expected-head task-branch CAS for first creation/rewrite, ambiguous-effect reconciliation, and unexpected-remote refusal;
+- pause request/acknowledgement exact lock-token binding, no new cycle while paused, resume, stop precedence, and stale-token rejection;
+- below-normal/low child priority application to the actual spawned PID and fail-closed priority-application errors;
+- proof that effective task concurrency remains one until an explicit scheduler contract exists.
 
 A passing happy-path test alone is not sufficient for a capability boundary.
