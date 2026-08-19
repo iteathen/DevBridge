@@ -132,7 +132,14 @@ try {
 
   $stdoutTask = $child.StandardOutput.ReadToEndAsync()
   $stderrTask = $child.StandardError.ReadToEndAsync()
-  $child.WaitForExit()
+
+  # Do not use parameterless WaitForExit here. Descendants can keep inherited
+  # stdout/stderr handles open after the root process exits, and .NET may wait
+  # for redirected-stream completion before returning. Observe only the root
+  # process handle, then close the kill-on-close job before draining streams.
+  while (-not $child.HasExited) {
+    Start-Sleep -Milliseconds 25
+  }
   $exitCode = $child.ExitCode
 
   # Closing the outer job is the authoritative lifetime boundary. Any process
