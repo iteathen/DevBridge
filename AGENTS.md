@@ -119,8 +119,8 @@ PP-017 is normative when an authorized task baseline may move while a run is in 
 - Reconciliation starts from a sealed clean candidate and uses the hardened Git adapter. A failed rebase must be aborted and the exact pre-rebase candidate head restored before the controller proceeds.
 - A successful rebase invalidates earlier verification evidence. Model-assisted work requires a fresh bounded verification turn; deterministic controller plans replay their registered operations/assertions against the rebased worktree.
 - Changed-path checks, no-project-diff decisions, and publication evidence are relative to `publicationBaseSha`, while the original `baseSha` remains visible as historical evidence.
-- A rebase may rewrite a PATCH-POLLER-owned task branch only with an explicit expected remote head. First creation uses an explicitly empty expected value; later rewrite uses a locally recorded exact predecessor head. Blind force is forbidden.
-- Ambiguous task-branch publication is reconciled by re-observing the exact remote head. An unexplained remote head is never overwritten.
+- A rebase may rewrite a PATCH-POLLER-owned task branch only with an explicit expected remote head. First creation uses an explicitly empty expected value; later rewrite requires an exact predecessor head that PATCH-POLLER previously confirmed on the remote through its own publication/reconciliation path. A merely local pre-rebase candidate SHA is not rewrite authority. Blind force is forbidden.
+- Ambiguous task-branch publication is reconciled by re-observing the exact remote head. If the remote already equals the intended local head the effect is idempotently accepted; otherwise only a previously confirmed predecessor may authorize retry. An unexplained remote head is never overwritten.
 - PP-016 fencing still governs reconciliation/sealing/publication effects when coordination is enabled.
 
 Read `specs/PP-017-baseline-drift-reverification.md` with PP-008, PP-009, PP-013, and PP-016 when changing task baselines, rebase behavior, post-rebase verification, no-op publication, or task-branch publication CAS.
@@ -231,6 +231,6 @@ Boundary tests are mandatory for:
 - immutable start-baseline evidence plus independently advancing publication-baseline evidence;
 - fast-forward-only baseline reconciliation, exact pre-rebase restoration after conflict, and history-rewrite checkpointing;
 - mandatory post-rebase model verification or deterministic-plan replay within bounded turn limits;
-- explicit expected-head task-branch CAS for first creation, rebased rewrite, ambiguous-effect reconciliation, and unexpected-remote refusal.
+- explicit expected-head task-branch CAS for first creation, confirmed-remote rebased rewrite, ambiguous-effect reconciliation, rejection of local-only predecessor authority, and unexpected-remote refusal.
 
 A passing happy-path test alone is not sufficient for a capability boundary.
