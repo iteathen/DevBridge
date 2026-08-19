@@ -1,7 +1,10 @@
 import { spawn } from 'node:child_process';
+import path from 'node:path';
+import process from 'node:process';
 import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
 
 const PROBE_TIMEOUT_MS = 8_000;
+const WINDOWS_PROCESSCONTAINER_WRAPPER_TIMEOUT_FLOOR_MS = 90_000;
 const PROBE_OUTPUT_LIMIT = 64 * 1024;
 
 export const BUBBLEWRAP_PROBE_SCRIPT = String.raw`
@@ -52,6 +55,14 @@ function canConnect() {
 });
 `;
 
+export function effectiveSandboxProbeTimeoutMs(executable, timeoutMs, platform = process.platform) {
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new TypeError('sandbox probe timeout must be a positive integer');
+  if (platform !== 'win32') return timeoutMs;
+  const basename = path.basename(String(executable)).toLowerCase();
+  if (basename !== 'powershell.exe') return timeoutMs;
+  return Math.max(timeoutMs, WINDOWS_PROCESSCONTAINER_WRAPPER_TIMEOUT_FLOOR_MS);
+}
+
 export async function captureSandboxProbeProcess(executable, args, { cwd = '/', env = {}, timeoutMs = PROBE_TIMEOUT_MS } = {}) {
   const child = spawn(executable, args, containedSpawnOptions({
     cwd,
@@ -72,10 +83,11 @@ export async function captureSandboxProbeProcess(executable, args, { cwd = '/', 
   child.stderr.on('data', (chunk) => { stderr = append(stderr, chunk); });
   let timedOut = false;
   let termination = null;
+  const effectiveTimeoutMs = effectiveSandboxProbeTimeoutMs(executable, timeoutMs);
   const timer = setTimeout(() => {
     timedOut = true;
     termination = terminateProcessTree(child);
-  }, timeoutMs);
+  }, effectiveTimeoutMs);
   timer.unref?.();
   const exit = await new Promise((resolve, reject) => {
     child.once('error', reject);
