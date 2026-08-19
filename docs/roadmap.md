@@ -1,6 +1,6 @@
 # Implementation Roadmap
 
-This roadmap reflects the current `main` implementation after the security/capability campaign and issue #49 PRs through the DB-018 runtime-governance slice.
+This roadmap reflects the current `main` implementation after the security/capability campaign and issue #49 PRs through the DB-018 runtime-governance slice, plus the DB-019 verification-cost/evidence design contract tracked by issue #105.
 
 Work is organized by ownership boundary so the project stays reviewable and agents do not create half-connected features across the control plane.
 
@@ -25,6 +25,8 @@ Implemented current-state capabilities include:
 - DB-017 baseline drift reconciliation, fast-forward-only automated rebase, mandatory reverification, and exact verified-head publication CAS;
 - DB-018 cooperative pause/resume and below-normal child-process QoS;
 - effective serialized task admission (one task/run continuation at a time).
+
+DB-019 now defines the next verification-governance contract: explicit test cost/tier metadata, risk-driven selection, exact reusable evidence identity, selective invalidation, resumable long suites, and suite-specific liveness/timeout policy. That contract is not yet fully implemented and is tracked in issue #105.
 
 This is still pre-production software. The remaining work below is explicit rather than hidden behind optimistic status wording.
 
@@ -236,7 +238,36 @@ Remaining:
 - parallel scheduling only after explicit durable admission/lease/effect/liveness accounting exists;
 - richer local status telemetry such as worker CPU load only when it can be measured truthfully and cheaply.
 
-## Slice 9 — Remaining UNIX-style CLI surfaces — open issue #49 work
+## Slice 9 — Verification cost and durable evidence — DB-019 design complete, implementation open in issue #105
+
+DB-019 defines the required control-plane model for long/expensive verification.
+
+Existing foundations already present:
+
+- DB-013 cheap preflight before broad CI;
+- per-operation timeout/output bounds;
+- coalesced long-running liveness projection;
+- DB-009 restart recovery that avoids unnecessary deterministic/model repetition when exact evidence remains valid;
+- DB-017 exact candidate/publication-baseline reverification identity;
+- DB-018 serialized task admission and child-process QoS.
+
+Remaining implementation under issue #105:
+
+- explicit verification tiers/classes and stable suite identities;
+- risk/ownership-driven test selection and locally controlled qualification triggers;
+- historical/expected runtime, timing, resource-class, and decomposability metadata;
+- deterministic cheap/high-signal ordering before expensive downstream suites;
+- exact durable verification evidence bound to candidate/baseline/test/policy/platform/sandbox/toolchain/config identities;
+- evidence reuse across restart/context rollover/publication recovery/repeated agent requests;
+- selective evidence invalidation rather than broad discard;
+- resumable/checkpointed long suites where semantics permit;
+- suite-specific expected/soft-slow/liveness/hard-timeout policy instead of a one-size-fits-all timeout;
+- bounded progress that distinguishes healthy long-running verification from a hang;
+- future resource-aware verification scheduling only behind explicit resource accounting.
+
+A universal 30-minute maximum is explicitly not the goal. Expensive tests remain mandatory where they provide unique required evidence; the goal is to make their cost deliberate and their results durable.
+
+## Slice 10 — Remaining UNIX-style CLI surfaces — open issue #49 work
 
 Currently implemented commands:
 
@@ -263,7 +294,7 @@ Remaining requested/possible controls, to be implemented only behind the already
 - local `verify --patch <file.diff>` candidate verification path;
 - optional structured `--json`/human output refinements where current commands do not already emit JSON.
 
-The CLI must expose existing authority; it must not become a second capability system or a shortcut around task provenance, leases, decision gates, sandboxing, publication CAS, or recovery.
+The CLI must expose existing authority; it must not become a second capability system or a shortcut around task provenance, leases, decision gates, sandboxing, publication CAS, verification-cost policy, or recovery.
 
 ## Deferred until justified
 
