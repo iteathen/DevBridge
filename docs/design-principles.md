@@ -34,25 +34,26 @@ Build capabilities as small replaceable pieces with explicit studs:
 - agent identity/lease coordinator;
 - runtime supervisor/update validator;
 - daemon governance/control boundary;
+- verification planner/evidence store;
 - clock/logger.
 
-A new task transport, local CLI surface, deterministic tool, decision transport, sandbox provider, release transport, or coordination projection should normally be an adapter behind an existing authority boundary, not a rewrite of orchestration logic.
+A new task transport, local CLI surface, deterministic tool, decision transport, sandbox provider, release transport, coordination projection, or verification backend should normally be an adapter behind an existing authority boundary, not a rewrite of orchestration logic.
 
 ## SOLID
 
-- Single responsibility: polling, provenance, policy, persistence, execution, validation, decision state, leases, runtime supervision, and reporting do not own each other's details.
+- Single responsibility: polling, provenance, policy, persistence, execution, validation, decision state, leases, runtime supervision, verification planning/evidence, and reporting do not own each other's details.
 - Open/closed: add a CLI/tool/task transport/provider by implementing a contract rather than branching throughout the core.
 - Liskov: adapters must honor the same safety and lifecycle semantics, not merely the same method names.
 - Interface segregation: do not hand an adapter a broad capability when it needs a narrow one.
-- Dependency inversion: application flow depends on ports/contracts; GitHub, Git, filesystem, sandbox, process, OS priority, and credential APIs sit at the edge.
+- Dependency inversion: application flow depends on ports/contracts; GitHub, Git, filesystem, sandbox, process, OS priority, verification backends, and credential APIs sit at the edge.
 
 ## CUPID
 
 - Composable: outputs become explicit validated inputs to the next stage.
 - Unix-like: favor transparent data and exit semantics, but do not use shell strings as an integration shortcut.
-- Predictable: state transitions, retries, task revisions, checkpoints, approvals, lease epochs, verification identities, and daemon-control ownership are inspectable/deterministic.
+- Predictable: state transitions, retries, task revisions, checkpoints, approvals, lease epochs, verification identities, test-selection reasons, and daemon-control ownership are inspectable/deterministic.
 - Idiomatic: use Node primitives where they are sufficient; use platform adapters where Node cannot honestly enforce the required boundary.
-- Domain-based: name concepts after the product domain: task revision, run, proposal, controller plan, checkpoint, decision subject, lease/fence, publication baseline, context capsule, capability policy, status projection.
+- Domain-based: name concepts after the product domain: task revision, run, proposal, controller plan, checkpoint, decision subject, lease/fence, publication baseline, context capsule, capability policy, verification tier, qualification trigger, evidence identity, status projection.
 
 ## KISS
 
@@ -62,13 +63,17 @@ Current multi-agent coordination is deliberately narrow: DB-016 lets multiple au
 
 Likewise, DB-018 below-normal child priority is a simple workstation QoS mechanism. Do not represent it as hard CPU/memory/thread containment or build a fake portable quota layer around APIs that cannot enforce one.
 
+DB-019 applies the same KISS rule to testing: do not solve long verification with a single huge timeout, a universal `run all tests`, or a raw parallelism number. Prefer explicit test classes, local qualification triggers, exact evidence identity, and the smallest verification set that still proves the required contracts.
+
 ## Agents propose; DevBridge decides
 
-Remote and local LLMs are subordinate proposal engines. They can be creative about solutions without being authoritative about machine capability, Git state, publication state, lease ownership, runtime activation, or whether a consequential boundary may be crossed.
+Remote and local LLMs are subordinate proposal engines. They can be creative about solutions without being authoritative about machine capability, Git state, publication state, lease ownership, runtime activation, verification sufficiency, or whether a consequential boundary may be crossed.
 
 This separation allows DevBridge to use multiple tools/agents without letting disagreement between them become disagreement about control-plane truth.
 
 The same principle applies to tool documentation and repository code: observation may inform a proposal or bounded schema, but does not create executable authority.
+
+An agent may recommend a test, but it does not own test cost or cached-evidence validity. A natural-language request such as `run all tests` is intent that DevBridge resolves through local/repository verification policy; it is not unlimited cost/process authority.
 
 ## Trust is dimensional, not one boolean
 
@@ -105,11 +110,25 @@ Human attention itself has a budget: deduplicate equivalent questions, bundle cl
 
 ## Domain-appropriate foundations
 
-Avoid accidental limits that become architecture. Byte caps, output tails, context budgets, polling intervals, retry bounds, refactor/churn thresholds, checkpoint retention, decision expiry, lease TTL/skew, and process-priority policy must be explicit where they materially affect behavior, with safe defaults and hard safety ceilings where needed.
+Avoid accidental limits that become architecture. Byte caps, output tails, context budgets, polling intervals, retry bounds, refactor/churn thresholds, checkpoint retention, decision expiry, lease TTL/skew, process-priority policy, verification timeouts, and test-cost thresholds must be explicit where they materially affect behavior, with safe defaults and hard safety ceilings where needed.
 
-Thresholds detect where review may help; they do not substitute for domain reasoning. A large diff is not automatically wrong and a small diff is not automatically safe.
+Thresholds detect where review may help; they do not substitute for domain reasoning. A large diff is not automatically wrong and a small diff is not automatically safe. A test exceeding 30 minutes is not automatically hung, and a 30-second test is not automatically worth running for every change.
 
 One is currently the truthful effective task-concurrency limit. Do not accept a larger configuration value as proof of a parallel scheduler until durable independent admission, lease, effect, liveness, and resource accounting are implemented.
+
+## Verification cost is a control-plane concern
+
+Correctness remains more important than speed, but verification cost should be deliberate rather than accidental.
+
+Use DB-019's explicit verification tiers, risk/ownership triggers, historical timing, and exact evidence identity to decide what must run. Expensive qualification is appropriate when it provides unique required evidence; it should not become the default response to every change.
+
+Run cheaper high-signal prerequisites before expensive downstream suites when dependencies permit. If a cheap check already proves the candidate invalid, do not keep spending verification time on checks that cannot change that verdict.
+
+Treat passing test evidence as durable state when it can be bound exactly to the candidate, publication baseline, test/policy identity, platform/sandbox, and relevant toolchain/configuration. Restart, chat rollover, or repeated agent requests are not reasons to repay an expensive test cost when that exact evidence remains valid.
+
+Prefer selective invalidation: if one independent environmental identity changed, invalidate the evidence that depended on it rather than throwing away unrelated valid evidence.
+
+Long tests must expose bounded liveness and suite-specific timing policy. A one-size-fits-all timeout is not a truthful model for heterogeneous verification.
 
 ## Enforcement claims require evidence
 
@@ -121,6 +140,7 @@ Examples:
 - Bubblewrap package presence is not enough; the actual boundary probe must pass;
 - a lease signature proves coordination identity/subject, not task/capability authority;
 - a successful prior test run is not current verification after candidate/baseline drift;
+- a prior test pass is reusable only while its DB-019 evidence identity still matches the exact candidate/environment/policy subject;
 - a priority request is not applied QoS until OS application succeeds;
 - a remote comment that looks like a DevBridge protocol object is not authoritative without the typed source/provenance path.
 
@@ -130,14 +150,14 @@ When an enforcement layer cannot prove the requested semantics, fail closed or r
 
 An ambiguous external effect is an observation problem before it is a retry problem.
 
-Persist intent/evidence, observe exact current state, reconcile idempotently when possible, and refuse unexplained divergence. This applies to task-branch publication, lease CAS, runtime activation, owned projections, daemon-control ownership, and future remote effects.
+Persist intent/evidence, observe exact current state, reconcile idempotently when possible, and refuse unexplained divergence. This applies to task-branch publication, lease CAS, runtime activation, owned projections, daemon-control ownership, verification evidence, and future remote effects.
 
-A generic retry loop is never a substitute for effect-specific identity and reconciliation.
+A generic retry loop is never a substitute for effect-specific identity and reconciliation. Likewise, rerunning an expensive test is not a substitute for checking whether exact prior evidence is still valid.
 
 ## Accountability without log spam
 
-Keep useful state transitions, request-budget observations, run/task identity, tool/provider identity, Git baseline/HEAD/verified candidate identity, lease epoch/ref identity, proposal/checkpoint digests, tests, accepted decisions, runtime activation evidence, and errors. Do not dump secrets, private keys, complete environments, or unbounded process output.
+Keep useful state transitions, request-budget observations, run/task identity, tool/provider identity, Git baseline/HEAD/verified candidate identity, lease epoch/ref identity, proposal/checkpoint digests, verification plan/reason/cost class, tests and evidence identities, accepted decisions, runtime activation evidence, and errors. Do not dump secrets, private keys, complete environments, or unbounded process output.
 
-Remote progress should be coalesced; local diagnostics may be more detailed but remain bounded. Decision requests should be evidence-rich enough to answer once rather than forcing a human to reconstruct the run from transcript noise.
+Remote progress should be coalesced; local diagnostics may be more detailed but remain bounded. Long-running verification should expose enough liveness to distinguish healthy work from a hang without creating heartbeat-comment spam. Decision requests should be evidence-rich enough to answer once rather than forcing a human to reconstruct the run from transcript noise.
 
 Historical handoffs/audits are evidence of what was true at their checkpoint. They must not be silently rewritten to look current or allowed to override the active specs/roadmap.
