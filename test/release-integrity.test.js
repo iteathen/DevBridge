@@ -12,6 +12,7 @@ import {
   runtimeArtifactSha256,
   verifyRuntimeReleaseIntegrity,
 } from '../src/bootstrap/release-integrity.mjs';
+import { runtimeArtifactSha256Sync } from '../src/bootstrap/runtime-artifact-sync.mjs';
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-release-integrity-'));
@@ -39,6 +40,12 @@ async function fixture() {
   }, null, 2)}\n`);
   return { root, runtimeDir, artifact, head, manifestPath, publicKeyPath, release, privateKey };
 }
+
+test('async signing digest and synchronous activation-boundary digest are identical', async () => {
+  const f = await fixture();
+  const synchronous = runtimeArtifactSha256Sync(f.runtimeDir);
+  assert.deepEqual(synchronous, f.artifact);
+});
 
 test('production release manifest verifies signature, exact head, version, and runtime SHA-256', async () => {
   const f = await fixture();
