@@ -1,8 +1,20 @@
 import { fitContextCapsule } from '../context/context-capsule.js';
+import { TaskLeaseLostError } from '../errors.js';
+import { guardActiveTaskLease } from '../run/lease-execution-context.js';
 import { redactText } from '../security/redaction.js';
 
 function byteLength(text) {
   return Buffer.byteLength(text, 'utf8');
+}
+
+async function taskLeaseAllowsEffect() {
+  try {
+    await guardActiveTaskLease();
+    return true;
+  } catch (error) {
+    if (error instanceof TaskLeaseLostError) return false;
+    throw error;
+  }
 }
 
 function renderBody({ runId, revision, stage, summary, capsule, sequence }) {
@@ -75,6 +87,10 @@ export class IssueStatusReporter {
       throw new RangeError('status report exceeds configured GitHub comment budget after compaction');
     }
 
+    if (!(await taskLeaseAllowsEffect())) {
+      return { published: false, commentId: previous.commentId ?? null, reason: 'lease-lost' };
+    }
+
     const [owner, repo] = this.#queueRepository.split('/');
     let response;
     if (previous.commentId) {
@@ -91,8 +107,14 @@ export class IssueStatusReporter {
       );
     }
 
+    const leaseCurrentAfterEffect = await taskLeaseAllowsEffect();
     const commentId = response.data?.id ?? previous.commentId ?? null;
     await this.#stateStore.set(stateKey, { commentId, stage, sequence, publishedAt: now });
-    return { published: true, commentId, sequence };
+    return {
+      published: true,
+      commentId,
+      sequence,
+      ...(leaseCurrentAfterEffect ? {} : { leaseLost: true }),
+    };
   }
 }

@@ -68,6 +68,7 @@ export class ManagedScratchTransaction {
     await mkdir(this.#root, { recursive: false, mode: 0o700 });
     const info = await lstat(this.#root);
     if (info.isSymbolicLink() || !info.isDirectory()) throw new PolicyError('managed scratch root creation was not stable');
+    await this.#guard();
   }
 
   async directory(id) {
@@ -92,6 +93,7 @@ export class ManagedScratchTransaction {
     } else {
       await this.#guard();
       await mkdir(target, { recursive: false, mode: 0o700 });
+      await this.#guard();
     }
     entry.state = 'created';
     entry.updatedAt = new Date().toISOString();
@@ -114,6 +116,7 @@ export class ManagedScratchTransaction {
         if (info.isSymbolicLink()) throw new PolicyError(`managed scratch ${safe} became a symbolic link before cleanup`);
         await this.#guard();
         await rm(target, { recursive: true, force: true });
+        await this.#guard();
       }
       entry.state = 'removed';
       entry.updatedAt = new Date().toISOString();
@@ -128,6 +131,7 @@ export class ManagedScratchTransaction {
       if (info.isSymbolicLink()) throw new PolicyError('managed scratch root became a symbolic link before cleanup');
       await this.#guard();
       await rm(this.#root, { recursive: true, force: true });
+      await this.#guard();
     }
     return {
       entries: ledger.length,

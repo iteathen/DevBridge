@@ -4,6 +4,7 @@ import path from 'node:path';
 import { PolicyError } from '../errors.js';
 import { isWithin } from '../security/workspace-policy.js';
 import { ManagedScratchTransaction } from '../runtime/managed-scratch.js';
+import { guardActiveTaskLease } from './lease-execution-context.js';
 
 async function exists(candidate) {
   try { await lstat(candidate); return true; }
@@ -48,11 +49,13 @@ async function assertContainedNoFollow(root, relative, { allowMissing = true } =
 async function atomicWrite(target, content, root) {
   const parentRelative = path.relative(root, path.dirname(target));
   await assertContainedNoFollow(root, parentRelative || '.');
+  await guardActiveTaskLease();
   await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
   await assertContainedNoFollow(root, parentRelative || '.', { allowMissing: false });
   const temp = `${target}.patch-poller-${process.pid}-${Date.now()}.tmp`;
   await writeFile(temp, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   await rename(temp, target);
+  await guardActiveTaskLease();
 }
 
 function operationResultEvidence(id, operation, result) {
@@ -121,7 +124,9 @@ export class ControllerPlanExecutor {
       if (currentDigest !== file.expectedSha256) throw new PolicyError(`controller delete stale digest for ${file.path}`);
       const info = await stat(target);
       if (!info.isFile()) throw new PolicyError(`controller delete only supports regular files: ${file.path}`);
+      await guardActiveTaskLease();
       await rm(target, { force: false });
+      await guardActiveTaskLease();
       return { path: file.path, action: 'delete', digest: null };
     }
     throw new PolicyError(`unsupported controller file action ${file.action}`);
@@ -140,7 +145,9 @@ export class ControllerPlanExecutor {
         const info = await lstat(target);
         if (info.isDirectory()) throw new PolicyError(`cleanup ledger entry unexpectedly became a directory: ${entry.path}`);
         if (info.isSymbolicLink()) throw new PolicyError(`cleanup ledger entry unexpectedly became a symbolic link: ${entry.path}`);
+        await guardActiveTaskLease();
         await rm(target, { force: true });
+        await guardActiveTaskLease();
       }
       entry.state = 'removed';
       entry.updatedAt = new Date().toISOString();
@@ -266,7 +273,13 @@ export class ControllerPlanExecutor {
     state.controllerPlan.scratchLedger ??= [];
     const planState = state.controllerPlan;
     const results = new Map();
-    const scratch = new ManagedScratchTransaction({ workspace, state, persist, faultInjector: this.#faults });
+    const scratch = new ManagedScratchTransaction({
+      workspace,
+      state,
+      persist,
+      faultInjector: this.#faults,
+      effectGuard: guardActiveTaskLease,
+    });
 
     try {
       planState.phase = 'materializing';

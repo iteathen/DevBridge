@@ -9,12 +9,18 @@ import { createRuntime } from './runtime.js';
 import { reportActiveRunRuntimeError } from './runtime-error-report.js';
 import { runCycle } from './run-once.js';
 
-export async function runDaemon(config, { env = process.env, fetchImpl = globalThis.fetch, signal = null, onEvent = () => {} } = {}) {
+export async function runDaemon(config, {
+  env = process.env,
+  fetchImpl = globalThis.fetch,
+  signal = null,
+  onEvent = () => {},
+  runtimeFactory = createRuntime,
+} = {}) {
   const lockPath = path.join(config.state.directory, 'daemon.lock');
   const release = await acquireDaemonLock(lockPath);
   const lockRecord = release.record;
   try {
-    const runtime = await createRuntime(config, { env, fetchImpl, coordinationExclusive: true });
+    const runtime = await runtimeFactory(config, { env, fetchImpl, coordinationExclusive: true });
     onEvent({ type: 'daemon-started', at: new Date().toISOString(), pid: lockRecord.pid });
     while (!signal?.aborted) {
       if (await consumeDaemonStopRequest(lockPath, lockRecord)) {

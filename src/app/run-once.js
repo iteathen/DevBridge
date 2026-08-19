@@ -194,4 +194,10 @@ export async function runCycle(runtime) {
   };
 }
 
-export async function runOnce(config, options = {}) { return runCycle(await createRuntime(config, options)); }
+export async function runOnce(config, {
+  env = process.env,
+  fetchImpl = globalThis.fetch,
+  runtimeFactory = createRuntime,
+} = {}) {
+  return runCycle(await runtimeFactory(config, { env, fetchImpl, coordinationExclusive: false }));
+}
