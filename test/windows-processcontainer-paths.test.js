@@ -9,6 +9,7 @@ import {
   canonicalizeWindowsWorkspacePath,
   createWindowsProcessContainerId,
   windowsProcessContainerProbeTimeouts,
+  windowsProcessContainerUiPolicy,
 } from '../src/runtime/windows-processcontainer-sandbox.js';
 
 function comparable(candidate) {
@@ -150,4 +151,20 @@ test('MXC verification wrappers outlive the upstream DACL mutex wait bound', () 
   assert.ok(timeouts.prerequisiteMs > 30_000);
   assert.ok(timeouts.boundaryMs > 30_000);
   assert.ok(timeouts.boundaryMs > timeouts.prerequisiteMs);
+});
+
+test('Windows ProcessContainer keeps fine-grained UI denials without blanket Win32k disable', () => {
+  assert.deepEqual(windowsProcessContainerUiPolicy(), {
+    ui: {
+      disable: false,
+      clipboard: 'none',
+      injection: false,
+    },
+    processContainerUi: {
+      isolation: 'container',
+      desktopSystemControl: false,
+      systemSettings: 'none',
+      ime: false,
+    },
+  });
 });
