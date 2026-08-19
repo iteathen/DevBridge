@@ -47,6 +47,14 @@
     "maxHandoffBytes": 32768,
     "maxRetained": 8
   },
+  "coordination": {
+    "enabled": false,
+    "handle": "agent",
+    "leaseTtlMs": 1200000,
+    "heartbeatIntervalMs": 300000,
+    "clockSkewMs": 60000,
+    "trustedPeers": []
+  },
   "git": {
     "executable": "git",
     "cloneBaseUrl": "https://github.com",
@@ -71,7 +79,7 @@
     "decisionAuthorities": {},
     "decisionApprovalTtlMs": 86400000,
     "architectureGateFileThreshold": 20,
-    "architectureGateOwnerThreshold": 4,
+    "architectureOwnerThreshold": 4,
     "faultInjection": {
       "enabled": false,
       "rules": []
