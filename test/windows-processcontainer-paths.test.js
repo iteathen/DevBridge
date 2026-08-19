@@ -170,14 +170,14 @@ test('Windows ProcessContainer keeps fine-grained UI denials without blanket Win
   });
 });
 
-test('Windows deny-network policy permits Winsock startup but requires SID-scoped firewall egress blocking', () => {
+test('Windows deny-network LPAC policy permits Node Winsock startup but requires SID-scoped firewall egress blocking', () => {
   assert.deepEqual(windowsProcessContainerNetworkPolicy('deny'), {
     network: {
       defaultPolicy: 'block',
       enforcementMode: 'both',
       allowLocalNetwork: false,
     },
-    capabilities: ['internetClient'],
+    capabilities: ['internetClient', 'registryRead'],
   });
 });
 
