@@ -1,8 +1,10 @@
 # PP-013 — Chat-controller deterministic execution plans
 
-Status: planned normative contract; implementation pending.
+Status: active
 
-This spec defines the next PATCH-POLLER architecture slice derived from the 2026-08-18 durability campaign. It is intended to replace repeated bespoke diagnostic profiles with a bounded, composable, deterministic execution protocol while preserving PATCH-POLLER's control-plane authority.
+Implementation status: implemented on current main. The PP-013 foundation, safe self-hosting, reusable deterministic infrastructure, and efficiency/observability phases have landed; later specs PP-014 through PP-018 extend this contract without replacing it.
+
+This spec defines PATCH-POLLER's bounded, composable deterministic execution protocol. It replaces repeated bespoke diagnostic profiles as the preferred machine-work path while preserving PATCH-POLLER's control-plane authority.
 
 Read together with PP-001, PP-003, PP-005, PP-008, PP-009, PP-010, PP-011, and PP-012. This spec does not weaken any existing security, Git, provenance, recovery, or supervision rule.
 
@@ -14,7 +16,7 @@ The preferred development and task path is:
 
 The primary chat controller may author source text, tests, expected outputs, and structured execution intent. PATCH-POLLER owns local filesystem materialization, process/tool authority, runtime state, Git state, validation, cleanup, recovery, and publication.
 
-Coding-model adapters such as Codex-family clients, Spark, or other external LLM coding tools are optional compatibility adapters, not the default execution engine. They MUST be disabled by default in the intended production configuration and MUST require explicit local enablement. During the implementation campaign governed by the handoff `docs/handoffs/PP-HO-0818-0910.md`, they MUST NOT be used unless the user explicitly changes the constraint or a test specifically targets a model adapter.
+Coding-model adapters such as Codex-family clients, Spark, or other external LLM coding tools are optional compatibility/inference adapters, not the default execution engine. They are disabled by default in the reference configuration and require explicit local enablement. Historical handoff-specific implementation constraints do not override the current user request or current specs after the PP-013 campaign has merged.
 
 ## 2. Core principle
 
@@ -39,11 +41,9 @@ Local configuration and PATCH-POLLER-owned adapters remain the only authority fo
 
 ## 3. Controller-plan envelope
 
-The implementation SHOULD introduce a versioned envelope such as:
+The implemented versioned envelope is `patch-poller/controller-plan-v1`.
 
-`patch-poller/controller-plan-v1`
-
-The exact JSON field names may change during implementation if a simpler schema preserves this contract, but the semantic ownership boundaries below are normative.
+The semantic ownership boundaries below are normative even if later protocol versions extend the schema compatibly.
 
 A plan contains bounded sections for:
 
@@ -55,7 +55,7 @@ A plan contains bounded sections for:
 6. final workspace assertions;
 7. context/provenance expectations.
 
-The plan itself is revision-bound task data and participates in the task revision digest/replay-prevention machinery.
+The plan itself is revision-bound task/controller data and participates in exact input/plan receipt and replay-prevention machinery.
 
 ## 4. File bundle
 
@@ -72,9 +72,13 @@ Each proposal MUST:
 - never target `.git`, linked-worktree administrative files, PATCH-POLLER reserved runtime exchange paths, or locally forbidden paths;
 - be treated as proposal content until PATCH-POLLER independently validates/seals it.
 
-For replacement/deletion, the protocol SHOULD support an expected-existing-content digest so stale controller plans cannot silently overwrite a different revision.
+For replacement/deletion, the protocol supports expected-existing-content identity where required so stale controller plans cannot silently overwrite a different revision.
 
-Text files SHOULD support explicit expected byte representation where byte identity is part of the contract. Presentation-only newline/BOM normalization MUST NOT silently change a plan whose assertion explicitly requires exact bytes.
+Text files may use explicit expected byte representation where byte identity is part of the contract. Presentation-only newline/BOM normalization MUST NOT silently change a plan whose assertion requires exact bytes.
+
+After all deterministic operations and ephemeral/scratch cleanup, PATCH-POLLER re-verifies every persistent controller-plan target against the exact normalized plan bytes before sealing. Persistent deletion targets must still be absent. Changed-path equality is an additional invariant, not a substitute for final-byte identity.
+
+Operation-generated persistent output is not implicitly authorized through `expectedChangedPaths`; a future generated-output feature requires its own locally registered output contract.
 
 ### 4.2 Ephemeral files
 
@@ -88,65 +92,53 @@ Ephemeral files MUST NOT become candidate project changes.
 
 Controller plans may reference logical operation identifiers only. The operation identifier resolves through PATCH-POLLER/local configuration to a trusted adapter.
 
-Examples of useful operation classes:
+Current/foundation operation families include Node syntax/test work, CMake configure/build, CTest, native compile/link/program execution, and Git/read-only validation operations. PP-015 additionally permits locally controlled dynamic `tool.*` operations behind the same authority rules.
 
-- `node.syntax-check`
-- `node.test`
-- `npm.test`
-- `cmake.configure`
-- `cmake.build`
-- `ctest.run`
-- `native.compile`
-- `native.link`
-- `program.run`
-- `git.read-status`
-- `git.diff-check`
-
-These names are illustrative; implementation may choose a different vocabulary.
-
-Each registered operation MUST own:
+Each registered operation owns:
 
 - executable/tool discovery or configured executable identity;
 - allowed environment names/values;
 - argument construction;
 - path validation;
 - timeout/output bounds;
-- process sandbox declaration/enforcement;
+- security classification and sandbox requirements;
 - result normalization/redaction;
 - operation-specific parameter schema.
 
 A controller MAY provide validated domain parameters such as a project-relative source path, a count, a seed, a build configuration, or an expected test name when the registered adapter schema explicitly permits them. It MUST NOT provide raw argv/shell syntax that bypasses adapter policy.
 
+Unknown future deterministic operations default to the repository-code execution class until deliberately classified otherwise. Repository-code operations require the verified OS sandbox under PP-003.
+
 ## 6. Local toolchain registry and discovery
 
 Machine-specific toolchain identity is local authority.
 
-PATCH-POLLER SHOULD provide a reusable local registry/resolver for Node, CMake, CTest, native C/C++ compiler/linker, and other locally approved deterministic tools.
+PATCH-POLLER provides reusable local registry/resolution for Node, CMake, CTest, native C/C++ compiler/linker, and other locally approved deterministic tools.
 
-Discovery SHOULD be cached with enough sanitized metadata to avoid rediscovering the same tool repeatedly while still detecting meaningful local changes. Cache entries may include:
+Discovery/capability state is cached/reported with sanitized metadata while detecting meaningful local changes. Records may include:
 
 - logical capability/family;
 - bounded version;
 - discovery source;
-- health/probe timestamp;
+- health/probe state;
 - sanitized supported features.
 
-Absolute machine paths MUST NOT be projected into remote status unless explicitly safe and required; normally only family/version/capability should be reported.
+Absolute machine paths MUST NOT be projected into remote status unless explicitly safe and required; normally only family/version/capability is reported.
 
-The compiler/linker logic proven in issues #12/#13 should become reusable registry adapters rather than remain a one-off diagnostic-only path.
+PP-015 specializes broader presence-only inventory and dynamic local-operation onboarding. PATH presence and tool documentation do not create executable authority.
 
 ## 7. Structured assertions
 
 Plans need deterministic assertions without arbitrary expression evaluation.
 
-Supported assertion classes SHOULD include:
+Supported assertion classes include bounded forms such as:
 
 - process exit equals/does-not-equal expected value;
 - stdout/stderr contains or exactly equals a bounded marker;
 - two captured outputs are byte-for-byte equal;
 - file exists/does not exist;
 - file SHA-256 equals expected digest;
-- exact file bytes/text where bounded;
+- exact bounded file bytes/text;
 - JSON field equals expected primitive value;
 - test count/pass status;
 - workspace changed paths equal an expected bounded set;
@@ -157,13 +149,13 @@ Assertion evaluation is PATCH-POLLER-owned. A controller MUST NOT submit executa
 
 ## 8. Managed scratch transaction and cleanup ledger
 
-PATCH-POLLER MUST make temporary lifecycle ownership automatic.
+PATCH-POLLER makes temporary lifecycle ownership automatic.
 
-For every run/plan it SHOULD persist a cleanup ledger describing paths/resources created as ephemeral state. The lifecycle should be conceptually:
+For every run/plan it persists a cleanup ledger describing paths/resources created as ephemeral state. The lifecycle is conceptually:
 
 `planned -> created -> observed -> cleanup-planned -> removed -> verified-absent`
 
-Cleanup MUST execute under `finally`/recovery semantics after success, failure, timeout, cancellation, or restart when safe.
+Cleanup executes under success/failure/timeout/cancellation/restart recovery semantics when safe.
 
 Cleanup may delete only:
 
@@ -172,20 +164,13 @@ Cleanup may delete only:
 
 Remote/controller content MUST NOT authorize arbitrary recursive cleanup roots.
 
-Terminal evidence SHOULD report at minimum:
-
-- ephemeral resources created count;
-- removed count;
-- verified-absent count;
-- leftovers/failures, if any.
-
-A cleanup failure that leaves an unexpected project artifact is terminal evidence and MUST prevent a clean-completion claim.
+Terminal evidence reports bounded cleanup outcome, including leftovers/failures. A cleanup failure that leaves an unexpected project artifact prevents a clean-completion claim.
 
 ## 9. Automatic context receipt
 
-PATCH-POLLER MUST make exact context identity first-class rather than requiring a worker to echo context text.
+PATCH-POLLER makes exact context identity first-class rather than requiring a worker to echo context text.
 
-Each execution result/terminal context SHOULD include a bounded receipt containing:
+Execution/terminal context carries a bounded receipt including relevant exact identities such as:
 
 - canonical input/controller-plan SHA-256;
 - task revision;
@@ -194,85 +179,84 @@ Each execution result/terminal context SHOULD include a bounded receipt containi
 - run identity;
 - effective baseline SHA.
 
-The receipt is generated by PATCH-POLLER from the exact input it delivered/consumed, not asserted by the external tool.
+The receipt is generated by PATCH-POLLER from exact input it delivered/consumed, not asserted by an external tool.
 
-When a test needs to verify literal payload transport, exact echo may still be used, but ordinary continuation should rely on the receipt.
+When a test needs literal payload transport verification, exact echo may still be used, but ordinary continuation relies on the receipt.
 
 ## 10. Baseline-by-channel authority
 
 Self-hosted/testing work exposed that `main` is not always the correct task baseline.
 
-PATCH-POLLER MUST support local semantic baseline channels, for example:
+PATCH-POLLER supports local semantic baseline channels such as `production` and `testing`.
 
-- `production`
-- `testing`
+Local configuration maps each channel to an authorized repository/ref policy. Remote/controller content may request a semantic intent only when local policy permits it; it MUST NOT grant an arbitrary raw ref/SHA.
 
-Local configuration maps each channel to an authorized repository/ref policy. Remote/controller content may request a semantic intent only if the local policy permits it; it MUST NOT grant an arbitrary raw ref/SHA.
+At run creation PATCH-POLLER resolves the effective authorized baseline to one exact commit SHA and persists it as immutable start-of-run evidence.
 
-At run creation PATCH-POLLER resolves the effective authorized baseline to one exact commit SHA and persists it. That SHA is immutable for the lifetime of the run even if the upstream branch advances.
+PP-017 later adds a distinct `publicationBaseSha` that may advance through controlled fast-forward reconciliation. That does not mutate the original PP-013 `baseSha` evidence.
 
-For PATCH-POLLER self-hosting during development, local policy SHOULD allow testing tasks to resolve from the configured testing channel (`sol/foundation-bootstrap` at the time of this spec) rather than default `main` when that is the intended candidate base.
+Do not bake a historical campaign branch name into the normative contract. The operator's current baseline-channel configuration is authoritative.
 
 ## 11. Transactional runtime activation
 
-Moving a mutable update branch MUST NOT automatically make an unvalidated candidate the running daemon. Runtime release authority and candidate execution are separate boundaries and MUST follow PP-010 and PP-011.
+Moving a mutable update branch MUST NOT automatically make an unvalidated candidate the running daemon. Runtime release authority and candidate execution are separate boundaries and follow PP-010 and PP-011.
 
 PATCH-POLLER distinguishes two release-integrity modes:
 
-- **development/testing:** a locally configured mutable testing channel may identify the candidate transport. This is explicit alpha behavior and is not production release integrity.
-- **production:** the mutable stable channel is transport only. Local trusted configuration MUST provide a signed immutable release manifest and Ed25519 public key binding the fixed repository identity, exact 40-hex commit, package version, and exact platform-neutral runtime artifact SHA-256.
+- **development/testing:** a locally configured mutable testing channel may identify candidate transport. This is explicit alpha behavior and is not production release integrity.
+- **production:** mutable stable transport is not authority. Local trusted configuration MUST provide a signed immutable release manifest and Ed25519 public key binding fixed repository identity, exact 40-hex commit, package version, and exact platform-neutral runtime artifact SHA-256.
 
-Runtime update should be a transaction:
+Runtime update is a transaction:
 
-1. observe local release policy and the exact current runtime;
-2. resolve the candidate identity: the authorized mutable testing head in development, or the independently signed immutable release subject plus matching stable transport in production;
-3. materialize/fetch into a separate candidate runtime location while the current daemon remains available;
-4. perform PATCH-POLLER-owned static/integrity checks; in production, verify the signature, repository, exact head, version, and artifact digest before executing candidate-controlled code;
-5. verify the configured OS sandbox provider and fail closed on unsupported/unverified hosts for candidate-controlled validation;
-6. run candidate-controlled preflight/tests only inside that verified sandbox with a minimal environment, no control-plane credentials/state access, read-only Git administration, and denied network;
-7. recompute the exact runtime artifact digest after sandbox validation and reject any mutation; persist bounded release, artifact, and sandbox evidence;
+1. observe local release policy and exact current runtime;
+2. resolve the candidate identity under development or independently signed production policy;
+3. materialize/fetch into a separate candidate runtime location while current daemon remains available;
+4. perform PATCH-POLLER-owned static/integrity checks and verify production signature/repository/head/version/artifact identity before candidate-controlled code executes;
+5. verify the configured OS sandbox provider and fail closed on unsupported/unverified hosts for candidate validation;
+6. run candidate preflight/tests only inside the verified sandbox with minimal environment, no control-plane credential/state access, read-only Git administration, and denied network;
+7. recompute exact runtime artifact digest after validation and reject mutation; persist bounded release/artifact/sandbox evidence;
 8. only after those gates pass, cooperatively drain the current daemon;
-9. immediately before candidate daemon spawn, recheck that the runtime artifact digest still equals the exact accepted/tested digest;
-10. start the candidate and perform the post-acceptance health window and `doctor` check;
-11. mark the candidate healthy only after those checks succeed;
-12. if activation or health fails, retain or restore the last-known-good runtime and preserve bounded evidence rather than broadening authority under uncertainty.
+9. immediately before candidate daemon spawn, recheck exact accepted/tested artifact identity;
+10. start the candidate and perform post-acceptance health/`doctor` checks;
+11. mark healthy only after those checks succeed;
+12. if activation/health fails, retain or restore last-known-good and preserve evidence rather than broadening authority.
 
-The previous runtime MUST remain available until the candidate is proven healthy. Candidate `doctor` is post-acceptance runtime-health evidence, not a substitute for release-integrity verification or sandboxed candidate validation.
+Candidate `doctor` is post-acceptance health evidence, not a substitute for release integrity or sandboxed candidate validation.
 
-Activation state/effects are subject to PP-009 durable reconciliation rules.
+Activation state/effects are subject to PP-009 durable reconciliation.
 
 ## 12. Deterministic execution is default; model execution is exceptional
 
-The default tool/plan selection policy SHOULD favor deterministic controller plans and local registered operations.
+Default tool/plan selection favors deterministic controller plans and local registered operations.
 
 Coding-model profiles:
 
 - are disabled by default;
 - are never selected merely because a deterministic operation is inconvenient;
 - cannot gain machine authority from remote text;
-- are used only when local policy enables them and task intent explicitly requires model inference or a test targets that adapter;
+- are used only when local policy enables them and task intent requires model inference or a test targets that adapter;
 - remain subordinate proposal engines under all existing Git/security rules.
 
-The current next-phase implementation campaign is stricter: no Codex, Spark, or other coding model is to be used.
+There is no longer a live PP-013 implementation-campaign prohibition on all model use. Historical handoffs record that campaign's constraints; current operation follows the current user request, local policy, and these specs.
 
 ## 13. No-op publication elision
 
-A verified task with no project diff SHOULD NOT push a task branch whose head equals its baseline merely to prove completion.
+A verified task with no project diff SHOULD NOT push a task branch whose head equals its publication baseline merely to prove completion.
 
-Default no-op completion should:
+Default no-op completion:
 
-- publish terminal context/evidence;
-- record candidate/base equality;
-- mark publication as skipped with a reason such as `no-project-diff`;
-- avoid branch creation/push and associated GitHub/CI cost.
+- publishes terminal context/evidence;
+- records candidate/base equality;
+- marks publication skipped with a reason such as `no-project-diff`;
+- avoids branch creation/push and associated GitHub/CI cost.
 
 A local diagnostic/test mode may explicitly force no-op publication when publication behavior itself is under test. Remote task text alone cannot force additional publication authority.
 
 ## 14. Generic local-only fault injection
 
-Durability testing SHOULD use a reusable PATCH-POLLER-owned fault-injection facility rather than one profile per failure scenario.
+Durability testing uses a reusable PATCH-POLLER-owned fault-injection facility rather than one profile per failure scenario.
 
-Supported deterministic fault classes may include:
+Supported deterministic fault classes may cover:
 
 - fail an operation N times with a named local classification;
 - timeout before/after a durable state transition;
@@ -286,61 +270,48 @@ Supported deterministic fault classes may include:
 
 Fault definitions/parameters that can alter machine authority MUST remain local test configuration. Remote task text may select only predeclared safe named scenarios when local testing policy permits.
 
-Test mode MAY use a bounded time-scale multiplier for retry/backoff so deterministic tests run quickly while preserving ordering/relative semantics. Production backoff configuration is not changed by the test multiplier.
+Test mode may use bounded time scaling for retry/backoff while preserving ordering/relative semantics. Production backoff policy is not silently changed by test scaling.
 
 ## 15. Capability doctor
 
-PATCH-POLLER SHOULD provide one deterministic capability doctor covering:
+PATCH-POLLER provides deterministic capability doctor coverage across core and adapter boundaries, including relevant project lifecycle, process execution, environment scrubbing, sandbox/provider evidence, locally registered operations, inventory, and profile usability.
 
-- project read/write lifecycle;
-- ProcessRunner exact exit/stdout/stderr behavior;
-- cwd containment;
-- environment scrubbing presence booleans;
-- filesystem boundary read/write attempts against locally derived harmless targets;
-- special writable roots such as TEMP separately from generic outside-project write;
-- locally registered tool invocation health;
-- profile-specific sandbox behavior.
-
-Doctor output MUST identify the layer being tested so a model-adapter denial is never mistaken for PATCH-POLLER core behavior.
+Doctor output identifies the layer being tested so a model-adapter denial is never mistaken for PATCH-POLLER core behavior.
 
 It MUST never print secret values, arbitrary outside file bytes, or unnecessary absolute machine paths.
+
+PP-003/PP-015 require declared policy, configured provider, and observed enforcement to remain distinct.
 
 ## 16. Long-running liveness projection
 
 A healthy long external operation must be distinguishable from a hang without flooding GitHub.
 
-Coalesced active-run status SHOULD include bounded fields such as:
+Coalesced active-run status carries bounded fields such as:
 
-- current stage;
+- current stage/activity;
 - elapsed duration;
 - last observed process output/activity time;
 - configured deadline/timeout;
-- attempt number/retry state;
-- whether the process is still owned/alive when safely observable.
+- attempt/retry state;
+- owned-process alive state where safely observable.
 
-Status mutation remains subject to PP-004 budget/pacing rules. The status reporter should edit/coalesce rather than append heartbeat comments.
+Status mutation remains subject to PP-004 budget/pacing rules. Status reporting edits/coalesces rather than appending heartbeat comments.
 
 ## 17. Testing-channel responsiveness
 
-Local testing configuration SHOULD permit faster claim/feedback polling than production when GitHub rate-limit reserves and server-provided `X-Poll-Interval` permit it.
+Local testing configuration may use faster claim/feedback cadence when GitHub rate-limit reserves and server-provided polling guidance permit it.
 
-The implementation may use adaptive cadence rather than a fixed fast loop. It MUST preserve serialized requests, conditional ETags, reserve floors, mutation pacing, and Retry-After/reset behavior.
+Adaptive cadence preserves serialized requests, conditional validators, reserve floors, mutation pacing, and retry/reset behavior.
 
-A local wake/nudge mechanism may be added if it does not create an inbound untrusted control surface.
+A local wake/nudge mechanism may be added only if it does not create an inbound untrusted control surface.
 
 ## 18. Cheap preflight before broad CI
 
-PATCH-POLLER/self-update workflows SHOULD run the cheapest high-signal checks before expensive cross-platform or full-suite gates.
+PATCH-POLLER/self-update workflows run cheap high-signal preflight before expensive broad gates where appropriate.
 
-Examples:
+Examples include changed JavaScript syntax/import validation, JSON/schema parsing, targeted tests, CMake configure, and spec/document preflight.
 
-- changed JavaScript syntax/import validation;
-- JSON/schema parsing;
-- targeted tests associated with changed modules;
-- CMake configure for CMake/project changes;
-- spec/preflight validation for changed documentation/contracts.
-
-Full Windows/Ubuntu CI and project-defined acceptance suites remain authoritative where required. Cheap preflight reduces wasted time; it does not replace broad acceptance.
+Full platform/project acceptance remains authoritative where required. Cheap preflight reduces wasted work; it does not replace broad acceptance.
 
 ## 19. Recovery and idempotence
 
@@ -348,11 +319,13 @@ All controller-plan stages are subject to PP-009:
 
 - persist intent before dependent external effects;
 - on restart, observe/reconcile before repeating;
-- do not rematerialize/rerun deterministic work unnecessarily when durable evidence proves the stage complete;
-- candidate verification/publication restart must use the same sealed SHA;
+- do not rematerialize/rerun deterministic work unnecessarily when durable evidence proves a stage complete;
+- candidate verification/publication recovery uses exact recorded identities;
 - cleanup resumes from the durable ledger;
 - duplicate plan revision does not execute twice;
 - a newer revision is deferred while an older revision of the same task remains active unless local policy says otherwise.
+
+PP-017 additionally requires fresh bounded reverification when the publication baseline or local candidate identity drifts after prior verification.
 
 ## 20. Security invariants
 
@@ -364,21 +337,23 @@ In particular:
 - Controller-provided project files are proposals, not accepted source until validated/sealed.
 - File paths are canonicalized/contained/no-follow checked.
 - Tool resolution/environment/capabilities remain local.
-- Child processes use `shell:false` unless an explicitly separate, locally approved shell adapter exists; the generic controller-plan protocol never takes shell text.
-- Credentials are not inherited by plan operations unless a dedicated local adapter explicitly requires and scopes them.
+- Child processes use `shell:false` unless an explicitly separate locally approved shell adapter exists; the generic controller-plan protocol never takes shell text.
+- Credentials are not inherited by plan operations unless a dedicated local adapter explicitly requires/scopes them.
 - Output is bounded/redacted before remote projection.
-- No remote/controller plan can select an arbitrary local baseline ref, executable path, SDK path, cleanup root, or capability.
+- No remote/controller plan can select an arbitrary local baseline ref, executable path, SDK path, cleanup root, credential, network capability, sandbox exception, or capability grant.
+- PP-016 task leases and peer signatures do not create controller-plan/task authority.
+- PP-018 process priority is local QoS and is not remotely granted through a plan.
 
-## 21. Acceptance tests for PP-013 implementation
+## 21. Required acceptance coverage
 
-The implementation is not complete until at least these tests pass:
+The implementation must continue to prove at least these boundaries:
 
 ### File bundle / controller plan
 
 1. Chat-authored multi-file project materializes without modifying PATCH-POLLER source to create a task-specific profile.
-2. Replace/delete operations require correct expected-existing digest when configured.
+2. Replace/delete operations require correct expected-existing identity when configured.
 3. Traversal, absolute paths, `.git`, reserved runtime paths, symlink/junction escapes, and oversized bundles are rejected.
-4. Expected changed-path set is enforced before sealing.
+4. Expected changed-path set and exact final persistent bytes/deletions are enforced before sealing.
 
 ### Deterministic operations
 
@@ -389,65 +364,68 @@ The implementation is not complete until at least these tests pass:
 
 ### Cleanup
 
-9. Ephemeral test source/fixture/scratch artifacts are all removed on success.
+9. Ephemeral test source/fixture/scratch artifacts are removed on success.
 10. The same resources are recovered/cleaned after deterministic failure, timeout, and daemon restart.
 11. Cleanup cannot delete an unregistered project path.
 
 ### Context
 
-12. Terminal context automatically includes the input/plan SHA-256 receipt and correct sequence/revision without payload echo.
+12. Terminal context includes input/plan SHA-256 receipt and correct sequence/revision without payload echo.
 13. Modified/mismatched context cannot be falsely reported as matching.
 
 ### Baseline
 
-14. Testing channel resolves through local policy to an exact SHA and persists it immutably.
+14. Baseline channel resolves through local policy to exact immutable start SHA.
 15. Raw unauthorized remote ref/SHA cannot override the baseline.
-16. Upstream branch advance does not move an active run's baseline.
+16. Upstream movement does not rewrite original start-baseline evidence; PP-017 governs publication-baseline reconciliation.
 
 ### Runtime activation
 
-17. Development mutable-channel candidates still require verified sandboxed candidate validation; a syntax-broken candidate or unavailable sandbox fails before the current daemon is drained.
-18. Production rejects unsigned, wrong-head, wrong-version, or wrong-digest stable movement before candidate code can gain authority; candidate preflight/tests run without control credentials/state or network access and preserve an exact tested artifact digest.
-19. Artifact mutation after validation, activation failure, or health failure cannot leave the changed candidate running; last-known-good remains available or is restored with evidence.
-20. Successful production activation starts only the exact signed-and-tested runtime artifact, rechecks its digest at the spawn boundary, and runs `doctor` only as post-acceptance health evidence before recording healthy state.
+17. Development mutable-channel candidates still require verified sandboxed candidate validation; broken candidate or unavailable sandbox fails before current daemon drain.
+18. Production rejects unsigned/wrong-head/wrong-version/wrong-digest transport before candidate code gains authority; candidate validation has no control credentials/state/network.
+19. Artifact mutation after validation, activation failure, or health failure cannot leave the changed candidate accepted; last-known-good remains available/restored.
+20. Successful production activation starts only exact signed-and-tested runtime artifact and rechecks digest at spawn boundary.
 
 ### Publication
 
-21. No-diff task publishes terminal evidence but does not push a task branch by default.
-22. Changed task seals/publishes normally.
-23. Forced no-op publication is possible only through local test policy.
+21. No-diff task publishes terminal evidence but does not push task branch by default.
+22. Changed task seals/publishes normally through current hard-gate/lease/baseline/CAS rules.
+23. Forced no-op publication is possible only through local policy/testing authority.
 
 ### Fault injection/recovery
 
-24. Named transient failure retries with persisted backoff and restart-safe remaining delay.
+24. Named transient failure retries with persisted backoff/restart-safe behavior.
 25. Result-written-then-wrapper-exit preserves conservative structured evidence.
-26. Verification/publication crash windows resume without rerunning prior deterministic proposal work.
+26. Verification/publication crash windows resume without unnecessarily rerunning prior deterministic proposal work.
 27. Duplicate revision does not duplicate effects.
 
 ### Capability/liveness
 
-28. Capability doctor distinguishes ProcessRunner behavior from external adapter behavior.
+28. Capability doctor distinguishes PATCH-POLLER core/provider behavior from external adapter declarations.
 29. Long-running fixture produces coalesced liveness state without status-comment spam.
 30. Testing polling remains within GitHub budget/reserve rules.
 
-## 22. Implementation order
+Later specs add mandatory acceptance coverage for PP-014 handoffs, PP-015 inventory/onboarding, PP-016 leases/fencing, PP-017 drift/reverification, and PP-018 pause/process-priority behavior.
 
-Implement by coherent ownership boundary, not as unrelated tiny patches:
+## 22. Historical implementation phases — complete
 
-### Phase A — controller plan foundation (P0)
+PP-013 was delivered by coherent ownership boundary:
+
+### Phase A — controller plan foundation
 
 - controller-plan/file-bundle parser + validation;
-- deterministic operation registry interface;
+- deterministic operation registry;
 - baseline-by-channel resolution;
 - deterministic execution default/model adapters disabled by default.
 
-### Phase B — safe self-hosting (P0)
+### Phase B — safe self-hosting
 
-- two-mode transactional candidate runtime release validation, sandboxed candidate execution, and activation;
+- transactional two-mode runtime candidate validation/activation;
+- verified sandboxed candidate execution;
 - last-known-good retention/rollback;
 - restart/effect reconciliation coverage.
 
-### Phase C — reusable deterministic infrastructure (P1)
+### Phase C — reusable deterministic infrastructure
 
 - toolchain registry/resolver;
 - cleanup ledger/scratch transaction;
@@ -456,10 +434,10 @@ Implement by coherent ownership boundary, not as unrelated tiny patches:
 - generic local-only fault injection;
 - capability doctor.
 
-### Phase D — efficiency/observability (P2)
+### Phase D — efficiency/observability
 
 - coalesced liveness fields;
-- adaptive faster testing polling;
+- adaptive testing polling;
 - cheap targeted preflight before broad CI.
 
-Each phase MUST be implemented using the required engineering cycle in `AGENTS.md`: read specs, assess/research/reassess, plan, implement, test normal/failure/boundary behavior, then publish evidence.
+These phases are historical delivery structure, not pending roadmap work. Current agents should use `docs/roadmap.md` and later PP-014–PP-018 specs for remaining work.
