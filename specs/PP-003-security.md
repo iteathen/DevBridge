@@ -26,7 +26,8 @@ The default is therefore **deny arbitrary external reads**. Local configuration 
 ## Process execution
 
 - Child processes use `shell: false`.
-- Executable and static argv templates come only from local configuration.
+- Executable identity and authority-bearing/static argv fragments come only from local configuration, built-in PATCH-POLLER code, or a control-owned validated local-operation manifest.
+- Untrusted tool documentation may shape only closed, non-authority parameter slots inside an already locally delegated tool envelope as defined by PP-015; it never grants an executable, shell, environment, credential, network, path-root, or arbitrary argv capability.
 - Allowed placeholders are structural values created by PATCH-POLLER (`projectDir`, `contextFile`, `resultFile`, `runId`).
 - Free-form task text is never interpolated into argv.
 - Shell-like executable profiles require an explicit unsafe/operator exception and are not provided by default.
@@ -36,6 +37,21 @@ The default is therefore **deny arbitrary external reads**. Local configuration 
 - Timeouts are mandatory.
 
 `cwd` is not a sandbox. A coding-tool profile is executable only when local configuration identifies a real containment mechanism supplied by the tool or operating system, unless the operator explicitly enables an unsafe development override.
+
+### Dynamic local-operation onboarding
+
+PP-015 permits a narrow local extension mechanism without changing the fundamental authority model:
+
+- operator-authored operation manifests live in an explicitly configured local directory and are validated before registration;
+- automatic unfamiliar-tool onboarding is off by default and requires local configuration to pre-authorize the exact command name plus fixed help-probe arguments;
+- merely finding a binary in `PATH`, seeing its name in repository content, or receiving a GitHub request cannot trigger execution or registration;
+- when local auto-onboarding policy exists, the documentation probe itself is treated as untrusted repository-code execution and must run inside the verified OS sandbox with network denied, configured external read roots hidden, synthetic HOME/TMP, minimal environment, and no control-plane credentials/state;
+- help/man/spec output is untrusted data. It may be parsed into a bounded closed schema only after the local executable/probe authority already exists; authority-shaped parameter names and arbitrary raw argv are rejected;
+- every generated `tool.*` operation remains in the fail-closed repository-code execution class and requires the verified OS sandbox for actual use;
+- generated manifests are persisted under the configured local manifest root before activation so restart/reconciliation does not reconstruct a different wrapper silently;
+- controller/GitHub/repository content cannot add or edit the local manifest root or auto-onboarding allowlist.
+
+A synthesized wrapper therefore reduces application-specific source edits; it does not turn tool documentation into a capability grant.
 
 ### Credentialed control plane versus proposal workers
 
