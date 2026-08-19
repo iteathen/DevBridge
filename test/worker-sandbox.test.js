@@ -19,7 +19,7 @@ process.stdin.on('end', async () => {
   const context = JSON.parse(input);
   const contextFile = process.argv[2];
   const resultFile = context.bridge.resultFile;
-  const [stateRead, stateWrite, daemonRead, credentialRead] = process.argv.slice(3);
+  const [stateRead, stateWrite, daemonRead, credentialRead, controlResult] = process.argv.slice(3);
 
   function denied(action) {
     try { action(); return false; } catch { return true; }
@@ -48,12 +48,10 @@ process.stdin.on('end', async () => {
     credentialReadDenied: denied(() => fs.readFileSync(credentialRead, 'utf8')),
     gitWriteDenied: denied(() => fs.writeFileSync(path.join(process.cwd(), '.git', 'config'), 'mutated')),
     contextWriteDenied: denied(() => fs.writeFileSync(contextFile, 'tampered')),
-    resultUnlinkDenied: denied(() => fs.unlinkSync(resultFile)),
-    resultReplaceDenied: denied(() => {
-      const replacement = '/tmp/replacement-result.json';
-      fs.writeFileSync(replacement, '{}');
-      fs.renameSync(replacement, resultFile);
-    }),
+    controlResultReadDenied: denied(() => fs.readFileSync(controlResult, 'utf8')),
+    controlResultWriteDenied: denied(() => fs.writeFileSync(controlResult, 'tampered')),
+    controlResultUnlinkDenied: denied(() => fs.unlinkSync(controlResult)),
+    resultParentWriteDenied: denied(() => fs.writeFileSync(path.join(path.dirname(resultFile), 'sibling-escape.txt'), 'escaped')),
     runtimeWriteDenied: denied(() => fs.writeFileSync(process.argv[1], 'mutated-runtime')),
     networkDenied: await networkDenied(),
     ghTokenAbsent: process.env.GH_TOKEN === undefined,
@@ -70,9 +68,17 @@ process.stdin.on('end', async () => {
 });
 `;
 
-test('verified proposal worker cannot reach control state, credentials, Git admin writes, IPC ownership, or network', { timeout: 30_000 }, async (t) => {
-  if (process.platform !== 'linux') {
-    t.skip('proposal-worker Bubblewrap boundary is Linux-only; unsupported hosts fail closed before worker launch');
+function supportedSandboxHost() {
+  return process.platform === 'linux' || process.platform === 'win32';
+}
+
+function expectedProvider() {
+  return process.platform === 'win32' ? 'windows-processcontainer' : 'bubblewrap';
+}
+
+test('verified proposal worker cannot reach control state, credentials, Git admin writes, IPC authority, or network', { timeout: 45_000 }, async (t) => {
+  if (!supportedSandboxHost()) {
+    t.skip('proposal-worker sandbox canary is defined only for Linux and Windows');
     return;
   }
 
@@ -93,6 +99,7 @@ test('verified proposal worker cannot reach control state, credentials, Git admi
     const daemonRead = path.join(stateDirectory, 'daemon.lock');
     const credentialRead = path.join(credentialDirectory, 'github-cli-token-sentinel.txt');
     const gitConfig = path.join(projectDir, '.git', 'config');
+    const controlResult = path.join(stateDirectory, 'worker-exchange', 'run-1', 'turn-1', 'result.json');
     await writeFile(stateRead, 'state-control-sentinel\n', { mode: 0o600 });
     await writeFile(daemonRead, 'daemon-control-sentinel\n', { mode: 0o600 });
     await writeFile(credentialRead, 'github-credential-sentinel\n', { mode: 0o600 });
@@ -105,7 +112,7 @@ test('verified proposal worker cannot reach control state, credentials, Git admi
       GITHUB_TOKEN: 'must-not-reach-worker-either',
     };
     const provider = createDeterministicSandboxProvider({
-      policy: { provider: 'bubblewrap', bubblewrapExecutable: 'bwrap' },
+      policy: { provider: 'auto', bubblewrapExecutable: 'bwrap' },
       externalReadRoots: [],
       workspaceRoot: root,
       stateDirectory,
@@ -114,9 +121,9 @@ test('verified proposal worker cannot reach control state, credentials, Git admi
     const status = await provider.verify();
     if (!status.verified) {
       if (process.env.DEVBRIDGE_REQUIRE_SANDBOX_TEST === '1') {
-        assert.fail(`required proposal-worker Bubblewrap boundary verification failed: ${status.reason}`);
+        assert.fail(`required proposal-worker ${expectedProvider()} boundary verification failed: ${status.reason}`);
       }
-      t.skip(`Bubblewrap unavailable/unusable on this host: ${status.reason}`);
+      t.skip(`${expectedProvider()} unavailable/unusable on this host: ${status.reason}`);
       return;
     }
 
@@ -139,6 +146,7 @@ test('verified proposal worker cannot reach control state, credentials, Git admi
         stateWrite,
         daemonRead,
         credentialRead,
+        controlResult,
       ],
       inputMode: 'stdin-json',
       timeoutMs: 10_000,
@@ -171,18 +179,27 @@ test('verified proposal worker cannot reach control state, credentials, Git admi
       credentialReadDenied: true,
       gitWriteDenied: true,
       contextWriteDenied: true,
-      resultUnlinkDenied: true,
-      resultReplaceDenied: true,
+      controlResultReadDenied: true,
+      controlResultWriteDenied: true,
+      controlResultUnlinkDenied: true,
+      resultParentWriteDenied: true,
       runtimeWriteDenied: true,
       networkDenied: true,
       ghTokenAbsent: true,
       githubTokenAbsent: true,
     });
-    assert.equal(run.workerContextFile, WORKER_CONTEXT_FILE);
-    assert.equal(run.workerResultFile, WORKER_RESULT_FILE);
-    assert.equal(run.sandbox.provider, 'bubblewrap');
+    if (process.platform === 'linux') {
+      assert.equal(run.workerContextFile, WORKER_CONTEXT_FILE);
+      assert.equal(run.workerResultFile, WORKER_RESULT_FILE);
+      assert.equal(run.sandbox.workerIpc, 'control-owned-exact-file-bindings');
+    } else {
+      assert.equal(path.resolve(run.workerContextFile), path.resolve(run.contextFile));
+      assert.equal(path.basename(run.workerResultFile), 'worker-result-staging.json');
+      assert.equal(run.sandbox.workerIpc, 'control-context-plus-worker-staging-import');
+      assert.notEqual(path.resolve(run.workerResultFile), path.resolve(run.resultFile));
+    }
+    assert.equal(run.sandbox.provider, expectedProvider());
     assert.equal(run.sandbox.verified, true);
-    assert.equal(run.sandbox.workerIpc, 'control-owned-exact-file-bindings');
     assert.equal(run.sandbox.network, 'denied');
 
     assert.equal(await readFile(stateRead, 'utf8'), 'state-control-sentinel\n');
@@ -191,6 +208,7 @@ test('verified proposal worker cannot reach control state, credentials, Git admi
     assert.equal(await readFile(gitConfig, 'utf8'), 'git-admin-sentinel\n');
     assert.equal(await readFile(workerScript, 'utf8'), workerFixture);
     assert.equal(await readFile(path.join(projectDir, 'worker-project-write.txt'), 'utf8'), 'project-ok\n');
+    assert.match(await readFile(run.resultFile, 'utf8'), /contained worker completed/u);
     await assert.rejects(readFile(stateWrite), { code: 'ENOENT' });
     await assert.rejects(stat(path.join(projectDir, '.devbridge')), { code: 'ENOENT' });
   } finally {
