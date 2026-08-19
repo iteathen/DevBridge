@@ -217,6 +217,18 @@ export function windowsProcessContainerProbeTimeouts() {
   };
 }
 
+export function windowsProcessContainerUiPolicy() {
+  return {
+    ui: { disable: false, clipboard: 'none', injection: false },
+    processContainerUi: {
+      isolation: 'container',
+      desktopSystemControl: false,
+      systemSettings: 'none',
+      ime: false,
+    },
+  };
+}
+
 function probeProcessDetail(outcome, observation = null) {
   const state = `exit=${outcome.code ?? 'spawn-error'} signal=${outcome.signal ?? 'none'} timeout=${outcome.timedOut} truncated=${outcome.truncated}`;
   const diagnostic = outcome.stderr.trim() ||
@@ -485,6 +497,7 @@ export class WindowsProcessContainerSandboxProvider {
     }
 
     const network = sandbox.network === 'unrestricted' ? 'unrestricted' : 'deny';
+    const uiPolicy = windowsProcessContainerUiPolicy();
     const config = {
       version: MXC_SCHEMA_VERSION,
       containerId: createWindowsProcessContainerId(),
@@ -507,16 +520,11 @@ export class WindowsProcessContainerSandboxProvider {
         enforcementMode: 'capabilities',
         allowLocalNetwork: false,
       },
-      ui: { disable: true, clipboard: 'none', injection: false },
+      ui: uiPolicy.ui,
       processContainer: {
         leastPrivilege: true,
         capabilities: [],
-        ui: {
-          isolation: 'container',
-          desktopSystemControl: false,
-          systemSettings: 'none',
-          ime: false,
-        },
+        ui: uiPolicy.processContainerUi,
       },
     };
 
