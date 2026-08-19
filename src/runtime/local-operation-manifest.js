@@ -6,6 +6,7 @@ import { normalizePlanPath } from '../run/controller-plan.js';
 import { resolveExecutable } from './executable-resolver.js';
 
 export const LOCAL_OPERATION_MANIFEST_PROTOCOL = 'patch-poller/local-operation-manifest-v1';
+export const OPERATION_PARAMETER_SCHEMA_PROTOCOL = 'patch-poller/operation-parameters-v1';
 
 const SAFE_ID = /^[A-Za-z0-9_.-]{1,80}$/u;
 const SAFE_COMMAND = /^[A-Za-z0-9_.+-]{1,80}$/u;
@@ -167,6 +168,36 @@ export function validateLocalOperationManifest(raw) {
   };
 }
 
+function publicSchemaForManifest(normalized) {
+  return {
+    protocol: OPERATION_PARAMETER_SCHEMA_PROTOCOL,
+    requireAnyParameter: normalized.requireAnyParameter === true,
+    parameters: normalized.arguments
+      .filter((entry) => entry.param)
+      .map((entry) => {
+        if (entry.kind === 'flag') {
+          return {
+            name: entry.param,
+            kind: 'flag',
+            valueType: 'boolean',
+            required: false,
+            repeat: false,
+          };
+        }
+        const parameter = {
+          name: entry.param,
+          kind: entry.kind,
+          valueType: entry.valueType,
+          required: entry.required === true,
+          repeat: entry.repeat === true,
+        };
+        if (entry.repeat) parameter.maxItems = entry.maxItems;
+        if (entry.valueType === 'enum') parameter.values = [...entry.values];
+        return parameter;
+      }),
+  };
+}
+
 function boundedScalar(value, name) {
   if (typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value, 'utf8') > 4096 || /[\u0000-\u001f\u007f]/u.test(value)) {
     throw new PolicyError(`${name} must be a bounded non-control string`);
@@ -214,6 +245,7 @@ export function createManifestOperationAdapter(manifest, { env = process.env } =
   return {
     layer: 'local-manifest',
     manifest: normalized,
+    publicSchema: publicSchemaForManifest(normalized),
     validate(raw) {
       const params = raw == null ? {} : requireObject(raw, `${normalized.operation} params`);
       for (const key of Object.keys(params)) if (!descriptors.has(key)) throw new PolicyError(`${normalized.operation} parameter ${key} is not allowed`);
