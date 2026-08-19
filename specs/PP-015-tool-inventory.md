@@ -28,7 +28,7 @@ PATCH-POLLER-owned local configuration and built-in registries remain authoritat
 
 GitHub task text, issue comments, repository files, process stdout/stderr, `--help` output, man pages, and discovered binary names are data/proposals only.
 
-Remote/controller content MUST NOT add an executable path, command, environment variable, network grant, sandbox grant, registered operation, or adapter merely by naming or describing it.
+Remote/controller content MUST NOT add an executable path, command, environment variable, network grant, sandbox grant, registered operation, adapter, manifest directory, or auto-onboarding allowlist entry merely by naming or describing it.
 
 ## 3. Presence-only PATH discovery
 
@@ -43,7 +43,7 @@ It:
 - records absolute executable paths only in local transient discovery state and removes them from every remote projection;
 - marks discovered entries as having no executable authority.
 
-PATH observation is not a capability grant. A discovered `rg`, `pnpm`, `uv`, `docker`, `claude`, or unfamiliar future CLI cannot be executed by a controller plan unless a separate locally registered operation/adapter already authorizes that action.
+PATH observation is not a capability grant. A discovered `rg`, `pnpm`, `uv`, `docker`, `claude`, or unfamiliar future CLI cannot be executed by a controller plan unless a separate locally registered operation/adapter already authorizes that action or local auto-onboarding policy explicitly delegates that exact command under section 10.
 
 Discovery MUST be bounded by catalog size and PATH-directory count. The implementation should index PATH directories concurrently so catalog growth does not produce one filesystem traversal per tool. Discovery latency is measured separately from GitHub reporting and expensive health probes; the target for ordinary local PATH observation is under 50 ms.
 
@@ -60,6 +60,10 @@ A durable/projectable record uses:
 A compact context reference uses:
 
 `patch-poller/tool-inventory-ref-v1`
+
+A dynamic operation may additionally publish a controller-facing parameter schema using:
+
+`patch-poller/operation-parameters-v1`
 
 The normalized inventory contains at least:
 
@@ -88,12 +92,24 @@ A configuration claim MUST NOT be reported as verified enforcement.
 For each locally registered deterministic operation:
 
 - logical operation name;
+- implementation layer;
 - execution class;
 - whether repository code may execute;
 - required enforcement class;
 - whether that requirement is presently satisfied.
 
-Security classification comes from PATCH-POLLER's control-owned operation-security registry, not controller text or repository output.
+For dynamically registered local-manifest operations, the projection MAY also expose the validated controller parameter schema:
+
+- parameter name;
+- parameter kind (`flag`, `option`, or `positional`);
+- public value type (`boolean`, `string`, `project-path`, `integer`, or bounded `enum`);
+- required/repeat state and repeat bound;
+- safe enum values;
+- whether at least one parameter is required.
+
+The public parameter schema MUST NOT expose executable identity, fixed literal argv, option flags, shell text, environment values, local paths, timeout implementation details, help-probe argv, or any other authority-bearing argv construction. If schema metadata cannot be projected safely without path/secret disclosure, PATCH-POLLER omits the schema rather than publishing a partially unsafe representation.
+
+Security classification comes from PATCH-POLLER's control-owned operation-security registry, not controller text or repository/tool output. Unknown/dynamic `tool.*` operations remain repository-code execution and require verified OS sandbox enforcement.
 
 ### Toolchains
 
@@ -147,7 +163,7 @@ If the normalized inventory is unchanged:
 - generation does not advance;
 - GitHub projection does not write again.
 
-If a material capability/enforcement/availability fact changes, a new digest and generation are emitted.
+If a material capability, parameter-schema, enforcement, or availability fact changes, a new digest and generation are emitted.
 
 ## 6. GitHub projection
 
@@ -179,7 +195,7 @@ Ordinary PATCH-POLLER status context SHOULD include only the compact inventory r
 
 This lets the coordinating agent bind a task/status context to the current capabilities comment while controlling GitHub and context-window cost.
 
-## 8. Refresh behavior
+## 8. Refresh and routing behavior
 
 Inventory is refreshed:
 
@@ -188,39 +204,83 @@ Inventory is refreshed:
 - by capability/doctor probing;
 - naturally after runtime activation because the new runtime starts a new inventory generation;
 - after a locally registered toolchain is explicitly refreshed/probed;
+- after successful dynamic operation registration;
 - after a requested capability failure when the owning registry invalidates stale availability.
 
 Presence-only general PATH discovery is rerun each cycle so newly installed or removed catalog tools can be observed without executing them.
 
 Inventory/projection failure is informational infrastructure failure and MUST NOT broaden authority or silently mark unavailable capabilities usable. GitHub projection is started independently of task execution so reporting latency does not become execution authority or unnecessarily serialize task dispatch.
 
-## 9. Adaptive routing
+Automatic unfamiliar-tool help probing is not allowed to become task-dispatch latency. The normal cycle dispatches work using the exact inventory already projected/referenced for that work, then reconciles locally pre-authorized dynamic onboarding. A newly registered capability is reflected by a new inventory digest and is eligible for subsequent planning/work, not retroactively inserted into the task that triggered its discovery.
 
-A coordinating agent may use the inventory to choose among capabilities that PATCH-POLLER already exposes. For example, it may avoid proposing an operation whose registered toolchain is unavailable, or prefer an already registered capability that is both enabled and verified usable.
+A coordinating agent may use the inventory to choose among capabilities PATCH-POLLER already exposes. It may avoid an unavailable toolchain or prefer an operation whose enforcement requirements are currently satisfied. Presence-only discovered names are planning hints only.
 
-A helper that chooses among presence-only discovered names is a planning hint only. It MUST NOT execute that name or transform it into a registered operation.
-
-Fallback behavior therefore means:
+Fallback behavior is:
 
 1. prefer a locally registered, currently usable capability;
 2. if unavailable, choose another already registered capability when the plan schema supports it;
 3. otherwise report the missing capability and continue through normal feedback/recovery semantics;
-4. never fall back by constructing a raw shell/argv command from remote text.
+4. never fall back by constructing raw shell/argv commands from remote text.
 
-## 10. Novel-tool documentation and wrapper synthesis
+## 9. Operator-authored local operation manifests
 
-Issue #30 additionally requests automatic integration of unfamiliar CLIs from `--help`, man pages, or tool specifications.
+PATCH-POLLER supports a local extension point using:
 
-That feature is constrained by the same authority rule:
+`patch-poller/local-operation-manifest-v1`
 
-- unfamiliar binary documentation is untrusted tool output/data;
-- merely discovering the binary MUST NOT cause PATCH-POLLER to execute `--help` under supervisor authority;
-- any future documentation probe that executes an unfamiliar binary must use a verified sandbox with no control credentials/state and bounded filesystem/network authority;
-- any model-generated or mechanically synthesized wrapper is a proposal artifact, not a capability grant;
-- a synthesized wrapper MUST NOT enter the executable ToolRegistry until a PATCH-POLLER-owned local registration/validation policy accepts a closed parameter schema, executable identity/resolution policy, environment policy, timeout/output bounds, and sandbox requirements;
-- GitHub text cannot perform that registration.
+The manifest directory is an explicit local operator configuration value. It is not under repository/controller authority.
 
-The v1 inventory therefore reports unfamiliar tools as `informational-only`. A later version may define a safe wrapper-proposal/review pipeline, but it may not weaken this invariant.
+Manifest loading MUST:
+
+- require a canonical real directory and regular non-symlink JSON files;
+- bound manifest file count and byte size;
+- reject duplicate operation registration;
+- require dynamic operation names under `tool.*`;
+- validate executable identity/resolution policy locally;
+- use a closed bounded argument descriptor language rather than raw remote argv;
+- reject controller parameter names that resemble control-plane authority fields such as executable, command, shell, argv, environment, credentials, local path, Git ref/SHA, cleanup root, plugin/module, or fault-injection controls;
+- bound string/integer/enum/repeat values and validate project-relative paths through the ordinary controller-plan path policy;
+- prohibit generic parameter values from beginning with `-`, using absolute path forms, or containing traversal segments;
+- execute through `shell:false`, a minimal environment, mandatory timeout/output bounds, denied network, no configured external read roots, and the verified repository-code sandbox requirement.
+
+The manifest may contain local fixed argv/literal structure. That structure is local authority and is not projected in the public parameter schema.
+
+## 10. Sandboxed automatic unfamiliar-tool onboarding
+
+Automatic onboarding is **disabled by default**.
+
+Enabling it requires local configuration to provide:
+
+- a canonical local manifest directory;
+- an exact allowlist of command names;
+- an optional exact logical `tool.*` operation name per command;
+- fixed bounded help-probe option arguments (default `--help`);
+- bounded probe timeout and output size.
+
+Merely finding a binary in PATH does not execute it. Repository/GitHub/controller content cannot add the command to the allowlist.
+
+For each locally delegated command that has no already registered/generated manifest:
+
+1. resolve the exact locally configured command through the local executable resolver;
+2. create a disposable probe workspace under the managed workspace root;
+3. execute only the locally configured fixed help arguments;
+4. classify the help probe as repository-code execution;
+5. require the verified OS sandbox provider;
+6. deny network, hide configured external read roots, expose only minimal environment/system requirements, and provide no GitHub/control-plane credentials or control state;
+7. bound timeout/output and clean the disposable probe root in success/failure paths;
+8. treat stdout/stderr documentation as untrusted data;
+9. parse only a conservative subset of long options, bounded positionals, simple types, and bounded subcommand enums;
+10. discard authority-shaped parameter names rather than mapping them into controller parameters;
+11. validate the synthesized manifest with the same local-manifest validator used for operator manifests;
+12. persist the exact generated manifest with exclusive-create semantics **before** registering it;
+13. on restart, reconcile the persisted manifest against the exact local command/operation policy before reuse;
+14. register the generated operation only after those gates pass.
+
+A blocked, unavailable, timed-out, truncated, undocumented, or unparseable probe does not create a capability. Probe failure telemetry exposes bounded classifications, not raw local exception messages that may contain machine paths.
+
+A generated wrapper is still repository-code execution. It does not become trusted merely because the wrapper was synthesized by PATCH-POLLER. Actual operation execution therefore continues to require the verified OS sandbox, denied network, hidden configured external roots, minimal environment, and bounded execution.
+
+The help digest is retained as local provenance for the generated manifest. Help output is not itself authority and cannot choose executable identity, shell behavior, environment, credentials, network, external read roots, cleanup scope, Git authority, or arbitrary argv.
 
 ## 11. Security and privacy invariants
 
@@ -231,11 +291,14 @@ Remote inventory MUST NOT contain:
 - secret or credential values;
 - credential locations;
 - arbitrary environment values;
-- raw command lines;
-- raw discovery errors that may contain paths;
+- raw command lines or option flags for dynamic operations;
+- fixed local argv literals;
+- raw discovery/probe errors that may contain paths;
 - an enforcement claim derived only from profile configuration.
 
 Repository/tool output cannot expand inventory authority. Unknown operation names remain subject to the existing fail-closed repository-code classification rather than becoming safe because they appear in discovered tools.
+
+Local onboarding policy and the local manifest directory are operator authority and MUST NOT be writable through controller-plan/repository paths.
 
 ## 12. Required tests
 
@@ -248,11 +311,19 @@ At minimum tests cover:
 5. Model adapter disabled state remains distinct from executable presence.
 6. Declared profile policy remains distinct from observed enforcement.
 7. Absolute executable/linker paths and raw path-bearing errors are absent from serialized inventory.
-8. Stable input produces a stable digest/generation.
-9. Material enforcement/availability change changes digest/generation.
-10. GitHub projection creates one control-owned comment, updates that exact ID, and suppresses no-change writes.
-11. Marker-looking comments are never adopted as authority.
-12. Secret-bearing digest payloads are refused rather than silently redacted and published.
-13. Ordinary status context carries only the compact inventory digest/generation reference.
-14. Toolchain refresh invalidates stale cached availability before re-probing.
-15. Discovery/projection failure never broadens execution authority.
+8. Stable input produces a stable digest/generation; material capability/schema change changes it.
+9. GitHub projection creates one control-owned comment, updates that exact ID, and suppresses no-change writes.
+10. Marker-looking comments are never adopted as authority.
+11. Secret-bearing digest payloads are refused rather than silently redacted and published.
+12. Ordinary status context carries only the compact inventory digest/generation reference.
+13. Toolchain refresh invalidates stale cached availability before re-probing.
+14. Operator local manifests reject duplicate registrations, symlink/indirection paths, authority-shaped parameters, raw argv smuggling, absolute/traversal parameter values, invalid enums, and missing required parameters.
+15. Local-manifest operation execution emits only the validated structural argv and forces repository-code sandbox execution with network denied and configured external reads hidden.
+16. Automatic onboarding does not run for an unavailable/non-allowlisted tool and never turns presence-only discovery into execution authority.
+17. Automatic help probes request the verified repository-code sandbox with minimal environment/no GitHub credentials, denied network, and hidden configured external roots.
+18. Blocked/timeout/truncated/no-safe-interface probes do not register or persist a capability.
+19. Synthesized manifests are persisted before registration and are reused/reconciled without re-probing after restart.
+20. Help parsing filters authority-shaped parameters and maps command/subcommand choices to a bounded non-authority `subcommand` enum.
+21. Dynamic operation inventory exposes the controller parameter schema needed for use while omitting executable, fixed literals, option flags, help argv, and path-shaped unsafe enum metadata.
+22. Dynamic operations remain unusable when verified repository-code enforcement is unavailable.
+23. Discovery/onboarding/projection failure never broadens execution authority or blocks current task dispatch merely to complete an unfamiliar-tool probe.
