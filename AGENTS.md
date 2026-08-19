@@ -163,6 +163,25 @@ DB-018 is normative for background-workstation behavior and daemon pause/resume.
 
 Read DB-018 with DB-004, DB-009, DB-011, DB-012, and DB-016 when changing daemon admission, pause/resume, process priority, or future resource-governance mechanisms.
 
+## Verification cost, test selection, and durable evidence
+
+DB-019 is normative for long/expensive verification governance.
+
+- A long test is not automatically a bad test. Expensive qualification remains required when it provides unique acceptance evidence.
+- Verification should use explicit tiers/classes and risk/ownership triggers rather than reflexively running every test for every change.
+- Run cheaper high-signal prerequisites before expensive downstream suites when dependencies permit.
+- A natural-language request such as `run all tests` is intent, not unlimited cost/process authority.
+- Passing verification evidence must bind to exact candidate/baseline/test/policy/platform/sandbox/toolchain/config identities as applicable.
+- Restart, chat rollover, publication recovery, or a repeated agent request does not justify rerunning an expensive suite when exact evidence remains valid.
+- Prefer selective invalidation when only one independently identified evidence dependency changed.
+- Decompose/checkpoint long suites only when their correctness semantics permit it.
+- Use suite/operation-specific expected, soft-slow/liveness, and hard-timeout policy rather than one global timeout.
+- Long-running work must expose bounded liveness so healthy execution is distinguishable from a hang without GitHub comment spam.
+- Future verification parallelism must be resource-aware and must not be inferred from a raw concurrency number.
+- Security/sandbox, installer/bootstrap/runtime, Git/GitHub control, persistence/recovery, public protocol/schema, tool-authority, and platform-execution changes must remain able to trigger broad expensive qualification when local/repository policy requires it.
+
+Read DB-019 with DB-009, DB-013, DB-017, and DB-018 when changing verification planning, test selection, evidence reuse/invalidation, long-suite recovery, test timing/liveness, or future verification scheduling.
+
 ## Human checkpoints
 
 DB-007 is normative for human-in-the-loop behavior.
@@ -197,7 +216,7 @@ These are invariants:
 
 ## GitHub API rules
 
-- Polling is a supported primary source; optional webhooks may be added when deployment value justifies them.
+- Polling is a supported primary source; optional webhooks may be added when deployment value justifies it.
 - Poll with authenticated conditional requests and persist validators across restarts.
 - Serialize requests. Avoid bursty concurrency.
 - Respect `X-Poll-Interval`, `Retry-After`, primary reset headers, and configured reserve floors.
@@ -212,7 +231,7 @@ Specs are normative unless a newer spec explicitly supersedes them. If a spec be
 
 Keep implementation details out of broad principles unless they are genuine invariants. Keep security-critical invariants out of informal README prose only; they belong in specs and tests.
 
-Live normative contracts are currently DB-001 through DB-018.
+Live normative contracts are currently DB-001 through DB-019.
 
 When implementing run coordination or human decision handling, read DB-001, DB-003, DB-005, DB-006, DB-007, and DB-009 together.
 
@@ -227,6 +246,8 @@ When implementing multi-agent identity/leases/fencing or future per-agent routin
 When implementing baseline drift/rebase/reverification/publication CAS, read DB-017 with DB-008, DB-009, DB-013, and DB-016.
 
 When implementing daemon pause/resume, task admission, child priority, or resource governance, read DB-018 with DB-004, DB-009, DB-011, DB-012, and DB-016.
+
+When implementing test selection/cost governance, durable verification evidence, long-test recovery/timing/liveness, or verification scheduling, read DB-019 with DB-009, DB-013, DB-017, and DB-018.
 
 `docs/handoffs/` and point-in-time audit documents are historical evidence. Do not update checksum-bound handoffs to make them look current and do not let them override newer specs/mainline status.
 
@@ -280,6 +301,14 @@ Boundary tests are mandatory for:
 - explicit expected-head task-branch CAS for first creation/rewrite, ambiguous-effect reconciliation, and unexpected-remote refusal;
 - pause request/acknowledgement exact lock-token binding, no new cycle while paused, resume, stop precedence, and stale-token rejection;
 - below-normal/low child priority application to the actual spawned PID and fail-closed priority-application errors;
-- proof that effective task concurrency remains one until an explicit scheduler contract exists.
+- proof that effective task concurrency remains one until an explicit scheduler contract exists;
+- verification-tier/risk-trigger selection that does not blindly run full/qualification suites for unrelated changes;
+- proof that cheap failed prerequisites suppress unnecessary expensive downstream verification;
+- exact durable verification evidence identity and conservative/selective invalidation;
+- restart/context-rollover/repeated-agent evidence reuse without redundant expensive reruns;
+- suite-specific expected/soft-slow/liveness/hard-timeout behavior, including healthy long-running and hung-test fixtures;
+- bounded long-test liveness projection without GitHub comment spam;
+- proof that broad agent requests cannot bypass local verification-cost policy;
+- qualification triggers that still force broad expensive evidence for high-risk ownership boundaries.
 
 A passing happy-path test alone is not sufficient for a capability boundary.
