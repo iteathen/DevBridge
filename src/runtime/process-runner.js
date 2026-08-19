@@ -5,7 +5,6 @@ import { expandProfileArgs } from './cli-profile.js';
 import { resolveExecutable } from './executable-resolver.js';
 import { applyChildProcessPriority } from './process-priority.js';
 import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
-import { WORKER_CONTEXT_FILE, WORKER_RESULT_FILE } from './worker-exchange.js';
 
 const CONTROL_CREDENTIAL_ENVIRONMENT = new Set([
   'DEVBRIDGE_GITHUB_TOKEN',
@@ -49,6 +48,10 @@ function unwrapSingleJsonFence(text) {
 function abortedError(signal) {
   if (signal?.reason instanceof Error) return signal.reason;
   return new PolicyError('worker execution aborted by the control plane');
+}
+
+async function cleanupPrepared(prepared) {
+  if (typeof prepared?.cleanup === 'function') await prepared.cleanup();
 }
 
 export function parseResultJsonText(text) {
@@ -184,15 +187,19 @@ export class ProcessRunner {
     }
 
     const { projectRoot, turnId } = this.#turnIdentity(projectDir, runDir);
-    const toolContext = { ...context, bridge: toolBridge(runId, WORKER_RESULT_FILE) };
-    const mailbox = await this.#exchange.prepareTurn({ runId, turnId, context: toolContext });
+    const targetMode = typeof this.#sandboxProvider.workerIpcTargetMode === 'function'
+      ? this.#sandboxProvider.workerIpcTargetMode()
+      : 'virtual';
+    const workerTargets = this.#exchange.workerTargets({ runId, turnId, targetMode });
+    const toolContext = { ...context, bridge: toolBridge(runId, workerTargets.resultFile) };
+    const mailbox = await this.#exchange.prepareTurn({ runId, turnId, context: toolContext, targetMode });
     if (signal?.aborted) throw abortedError(signal);
 
     const executable = await this.#resolver(profile.executable, this.#sourceEnv);
     const args = expandProfileArgs(profile.args, {
       projectDir: projectRoot,
-      contextFile: WORKER_CONTEXT_FILE,
-      resultFile: WORKER_RESULT_FILE,
+      contextFile: mailbox.workerContextFile,
+      resultFile: mailbox.workerResultFile,
       runId,
     });
     const env = buildEnvironment(profile, this.#sourceEnv);
@@ -217,64 +224,72 @@ export class ProcessRunner {
       },
     });
     if (!prepared?.evidence?.verified) {
+      await cleanupPrepared(prepared);
       throw new PolicyError('worker execution refused because the configured OS isolation provider is not verified');
     }
-    if (signal?.aborted) throw abortedError(signal);
-
-    const child = spawn(
-      prepared.executable,
-      prepared.args,
-      containedSpawnOptions({ cwd: prepared.cwd, env: prepared.env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }),
-    );
-    let processPriority;
-    try {
-      processPriority = await applyChildProcessPriority(child, this.#processPriority, { setPriority: this.#setPriority });
-    } catch (error) {
-      await terminateProcessTree(child);
-      throw error;
+    if (signal?.aborted) {
+      await cleanupPrepared(prepared);
+      throw abortedError(signal);
     }
-    let stdout = Buffer.alloc(0);
-    let stderr = Buffer.alloc(0);
-    let outputTruncated = false;
-    child.stdout.on('data', (chunk) => { const next = appendTail(stdout, chunk, profile.maxOutputBytes); stdout = next.buffer; outputTruncated ||= next.truncated; });
-    child.stderr.on('data', (chunk) => { const next = appendTail(stderr, chunk, profile.maxOutputBytes); stderr = next.buffer; outputTruncated ||= next.truncated; });
-    if (stdin != null) child.stdin.end(stdin); else child.stdin.end();
 
-    let timedOut = false;
-    let aborted = false;
-    let termination = null;
-    const terminate = () => { termination ??= terminateProcessTree(child); };
-    const onAbort = () => { aborted = true; terminate(); };
-    signal?.addEventListener('abort', onAbort, { once: true });
-    if (signal?.aborted) onAbort();
-    const timer = setTimeout(() => { timedOut = true; terminate(); }, profile.timeoutMs);
-    timer.unref?.();
-    const exit = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', (code, exitSignal) => resolve({ code, signal: exitSignal })); })
-      .finally(async () => {
-        clearTimeout(timer);
-        signal?.removeEventListener('abort', onAbort);
-        if (termination) await termination;
-      });
+    try {
+      const child = spawn(
+        prepared.executable,
+        prepared.args,
+        containedSpawnOptions({ cwd: prepared.cwd, env: prepared.env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }),
+      );
+      let processPriority;
+      try {
+        processPriority = await applyChildProcessPriority(child, this.#processPriority, { setPriority: this.#setPriority });
+      } catch (error) {
+        await terminateProcessTree(child);
+        throw error;
+      }
+      let stdout = Buffer.alloc(0);
+      let stderr = Buffer.alloc(0);
+      let outputTruncated = false;
+      child.stdout.on('data', (chunk) => { const next = appendTail(stdout, chunk, profile.maxOutputBytes); stdout = next.buffer; outputTruncated ||= next.truncated; });
+      child.stderr.on('data', (chunk) => { const next = appendTail(stderr, chunk, profile.maxOutputBytes); stderr = next.buffer; outputTruncated ||= next.truncated; });
+      if (stdin != null) child.stdin.end(stdin); else child.stdin.end();
 
-    const consumed = await consumeMailboxResult(mailbox);
-    return {
-      executable,
-      args,
-      exitCode: exit.code,
-      signal: exit.signal,
-      timedOut,
-      aborted,
-      outputTruncated,
-      stdout: stdout.toString('utf8'),
-      stderr: stderr.toString('utf8'),
-      recovered: false,
-      ...consumed,
-      contextFile: mailbox.contextFile,
-      resultFile: mailbox.resultFile,
-      workerContextFile: mailbox.workerContextFile,
-      workerResultFile: mailbox.workerResultFile,
-      sandbox: prepared.evidence,
-      processPriority,
-    };
+      let timedOut = false;
+      let aborted = false;
+      let termination = null;
+      const terminate = () => { termination ??= terminateProcessTree(child); };
+      const onAbort = () => { aborted = true; terminate(); };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) onAbort();
+      const timer = setTimeout(() => { timedOut = true; terminate(); }, profile.timeoutMs);
+      timer.unref?.();
+      const exit = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', (code, exitSignal) => resolve({ code, signal: exitSignal })); })
+        .finally(async () => {
+          clearTimeout(timer);
+          signal?.removeEventListener('abort', onAbort);
+          if (termination) await termination;
+        });
+
+      const consumed = await consumeMailboxResult(mailbox);
+      return {
+        executable,
+        args,
+        exitCode: exit.code,
+        signal: exit.signal,
+        timedOut,
+        aborted,
+        outputTruncated,
+        stdout: stdout.toString('utf8'),
+        stderr: stderr.toString('utf8'),
+        recovered: false,
+        ...consumed,
+        contextFile: mailbox.contextFile,
+        resultFile: mailbox.resultFile,
+        workerContextFile: mailbox.workerContextFile,
+        workerResultFile: mailbox.workerResultFile,
+        sandbox: prepared.evidence,
+        processPriority,
+      };
+    } finally {
+      await cleanupPrepared(prepared);
+    }
   }
 }
