@@ -67,6 +67,13 @@ jobs:
           test/agent-branch-namespace.test.js
           test/task-lease-control-path.test.js
           test/task-lease-effect-frontier.test.js
+      - name: Issue 49 baseline drift boundary tests
+        run: >-
+          node --test
+          test/workspace-manager.test.js
+          test/baseline-reverify.test.js
+          test/baseline-reverify-recovery.test.js
+          test/workspace-publication-cas.test.js
       - name: Tests
         env:
           PATCH_POLLER_REQUIRE_SANDBOX_TEST: ${{ runner.os == 'Linux' && '1' || '0' }}

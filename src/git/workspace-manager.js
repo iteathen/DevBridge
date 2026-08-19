@@ -1,10 +1,17 @@
 import { appendFile, mkdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { CandidateValidationError, PolicyError } from '../errors.js';
+import {
+  BaselineReconciliationError,
+  BaselineReverificationRequiredError,
+  CandidateValidationError,
+  PolicyError,
+} from '../errors.js';
 import { splitRepository } from '../security/workspace-policy.js';
 
 const RUNTIME_DIR = '.patch-poller';
 const RUNTIME_EXCLUDE = `${RUNTIME_DIR}/`;
+const SHA_RE = /^[0-9a-f]{40}$/u;
+const MAX_KNOWN_TASK_BRANCH_HEADS = 16;
 
 async function exists(candidate) {
   try {
@@ -42,6 +49,20 @@ function lines(text) {
 function isReservedRuntimePath(file) {
   const normalized = String(file).replace(/\\/g, '/');
   return normalized === RUNTIME_DIR || normalized.startsWith(`${RUNTIME_DIR}/`);
+}
+
+function normalizeSha(value, label) {
+  const normalized = String(value ?? '').toLowerCase();
+  if (!SHA_RE.test(normalized)) throw new PolicyError(`${label} must be an exact 40-hex Git commit SHA`);
+  return normalized;
+}
+
+function normalizeKnownTaskBranchHeads(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > MAX_KNOWN_TASK_BRANCH_HEADS) {
+    throw new PolicyError(`persisted known task-branch heads must contain at most ${MAX_KNOWN_TASK_BRANCH_HEADS} commit SHAs`);
+  }
+  return [...new Set(value.map((entry) => normalizeSha(entry, 'known task-branch head')))];
 }
 
 async function sameFilesystemIdentity(left, right) {
@@ -154,7 +175,7 @@ export class GitWorkspaceManager {
     }
     const baseRef = head.stdout.trim();
     if (!baseRef.startsWith('origin/')) throw new PolicyError('unable to resolve remote default branch');
-    const baseSha = (await this.#git.run(['rev-parse', baseRef], { cwd: repoDir })).stdout.trim();
+    const baseSha = normalizeSha((await this.#git.run(['rev-parse', baseRef], { cwd: repoDir })).stdout.trim(), 'repository baseline');
 
     return {
       repository,
@@ -177,10 +198,31 @@ export class GitWorkspaceManager {
       cwd: repo.repoDir,
       allowFailure: true
     });
-    if (resolved.exitCode !== 0 || !/^[0-9a-f]{40}$/iu.test(resolved.stdout.trim())) {
+    if (resolved.exitCode !== 0 || !SHA_RE.test(resolved.stdout.trim().toLowerCase())) {
       throw new PolicyError(`authorized baseline channel ${channel} is unavailable for ${repo.repository}`);
     }
     return { baseRef, baseSha: resolved.stdout.trim().toLowerCase(), baselineChannel: channel };
+  }
+
+  async #resolveCurrentPublicationBaseline(repo, workspace) {
+    const baseRef = workspace.baseRef;
+    if (workspace.baselineChannel) {
+      const branch = this.#baselineChannels[workspace.baselineChannel];
+      if (!branch) throw new PolicyError(`persisted baseline channel ${workspace.baselineChannel} is no longer authorized by local policy`);
+      const expectedRef = `origin/${branch}`;
+      if (baseRef !== expectedRef) throw new PolicyError('persisted baseline ref does not match the locally authorized baseline channel');
+    }
+    if (typeof baseRef !== 'string' || !baseRef.startsWith('origin/')) {
+      throw new PolicyError('persisted baseline ref must remain an origin remote-tracking branch');
+    }
+    const resolved = await this.#git.run(['rev-parse', '--verify', `${baseRef}^{commit}`], {
+      cwd: repo.repoDir,
+      allowFailure: true
+    });
+    if (resolved.exitCode !== 0 || !SHA_RE.test(resolved.stdout.trim().toLowerCase())) {
+      throw new PolicyError(`persisted publication baseline ref ${baseRef} is unavailable for ${repo.repository}`);
+    }
+    return { baseRef, baseSha: resolved.stdout.trim().toLowerCase() };
   }
 
   async prepareRun(task, runId, resume = {}) {
@@ -194,7 +236,7 @@ export class GitWorkspaceManager {
 
     if (resume.baseSha) {
       baseRef = resume.baseRef ?? repo.baseRef;
-      baseSha = resume.baseSha;
+      baseSha = normalizeSha(resume.baseSha, 'persisted run baseline');
       baselineChannel = resume.baselineChannel ?? null;
       const existsBase = await this.#git.run(['cat-file', '-e', `${baseSha}^{commit}`], {
         cwd: repo.repoDir,
@@ -205,6 +247,16 @@ export class GitWorkspaceManager {
       const baseline = await this.#resolveBaseline(repo, resume.baselineChannel ?? task.envelope.controllerPlan?.baselineChannel ?? null);
       ({ baseRef, baseSha, baselineChannel } = baseline);
     }
+
+    const publicationBaseSha = normalizeSha(resume.publicationBaseSha ?? baseSha, 'publication baseline');
+    const existsPublicationBase = await this.#git.run(['cat-file', '-e', `${publicationBaseSha}^{commit}`], {
+      cwd: repo.repoDir,
+      allowFailure: true
+    });
+    if (existsPublicationBase.exitCode !== 0) {
+      throw new PolicyError(`persisted publication baseline is no longer available locally: ${publicationBaseSha}`);
+    }
+    const taskBranchKnownRemoteHeads = normalizeKnownTaskBranchHeads(resume.taskBranchKnownRemoteHeads);
 
     await this.#workspace.assertWriteContained(worktreeDir);
     await mkdir(path.dirname(worktreeDir), { recursive: true, mode: 0o700 });
@@ -222,18 +274,29 @@ export class GitWorkspaceManager {
       if (branchExists.exitCode === 0) {
         await this.#git.run(['worktree', 'add', '--', worktreeDir, branch], { cwd: repo.repoDir });
       } else {
-        await this.#git.run(['worktree', 'add', '-b', branch, '--', worktreeDir, baseSha], { cwd: repo.repoDir });
+        await this.#git.run(['worktree', 'add', '-b', branch, '--', worktreeDir, publicationBaseSha], { cwd: repo.repoDir });
       }
     }
 
-    return { ...repo, baseRef, baseSha, baselineChannel, worktreeDir, branch, runId: safeRunId(runId) };
+    return {
+      ...repo,
+      baseRef,
+      baseSha,
+      baselineChannel,
+      publicationBaseSha,
+      taskBranchKnownRemoteHeads,
+      worktreeDir,
+      branch,
+      runId: safeRunId(runId)
+    };
   }
 
   async snapshot(workspace) {
     const { worktreeDir, baseSha } = workspace;
+    const publicationBaseSha = normalizeSha(workspace.publicationBaseSha ?? baseSha, 'publication baseline');
     const head = await this.#git.run(['rev-parse', 'HEAD'], { cwd: worktreeDir });
     const status = await this.#git.run(['status', '--porcelain=v1', '--untracked-files=all'], { cwd: worktreeDir });
-    const committed = await this.#git.run(['diff', '--name-only', `${baseSha}...HEAD`], { cwd: worktreeDir });
+    const committed = await this.#git.run(['diff', '--name-only', `${publicationBaseSha}...HEAD`], { cwd: worktreeDir });
     const staged = await this.#git.run(['diff', '--cached', '--name-only'], { cwd: worktreeDir });
     const unstaged = await this.#git.run(['diff', '--name-only'], { cwd: worktreeDir });
     const untracked = await this.#git.run(['ls-files', '--others', '--exclude-standard'], { cwd: worktreeDir });
@@ -249,6 +312,7 @@ export class GitWorkspaceManager {
     return {
       branch: workspace.branch,
       baseSha,
+      publicationBaseSha,
       headSha: head.stdout.trim(),
       dirty: status.stdout.trim() !== '',
       changedFiles,
@@ -267,7 +331,7 @@ export class GitWorkspaceManager {
       throw new PolicyError(`reserved PATCH-POLLER runtime paths may not become project changes: ${reserved.join(', ')}`);
     }
 
-    const committed = await this.#git.run(['diff', '--check', `${workspace.baseSha}...HEAD`], {
+    const committed = await this.#git.run(['diff', '--check', `${snapshot.publicationBaseSha}...HEAD`], {
       cwd: workspace.worktreeDir,
       allowFailure: true
     });
@@ -306,55 +370,171 @@ export class GitWorkspaceManager {
     }
   }
 
-  async sealCandidate(workspace, { issueNumber, revision }) {
-    let snapshot = await this.snapshot(workspace);
-    if (!snapshot.dirty) return snapshot;
+  async reconcilePublicationBaseline(workspace) {
+    const before = await this.validate(workspace);
+    if (before.dirty) throw new CandidateValidationError('publication baseline reconciliation requires a sealed clean candidate');
 
-    await this.#restoreProposalIndex(workspace);
-    snapshot = await this.#validateProposal(workspace);
-    if (!snapshot.dirty) return snapshot;
+    const repo = await this.ensureRepository(workspace.repository);
+    const current = await this.#resolveCurrentPublicationBaseline(repo, workspace);
+    const fromBaseSha = normalizeSha(workspace.publicationBaseSha ?? workspace.baseSha, 'publication baseline');
+    if (current.baseSha === fromBaseSha) {
+      return { changed: false, fromBaseSha, toBaseSha: fromBaseSha, fromHeadSha: before.headSha, toHeadSha: before.headSha, snapshot: before };
+    }
 
-    let committed = false;
-    try {
-      await this.#git.run(['add', '-A', '--', '.'], { cwd: workspace.worktreeDir });
-      const staged = await this.#git.run(['diff', '--cached', '--name-only'], { cwd: workspace.worktreeDir });
-      const stagedFiles = lines(staged.stdout);
-      const reserved = stagedFiles.filter(isReservedRuntimePath);
-      if (reserved.length > 0) {
-        throw new CandidateValidationError(`refusing to seal reserved PATCH-POLLER runtime paths: ${reserved.join(', ')}`);
-      }
-      if (stagedFiles.length === 0) {
-        await this.#restoreProposalIndex(workspace);
-        return this.#validateProposal(workspace);
-      }
+    const upstreamFastForward = await this.#git.run(['merge-base', '--is-ancestor', fromBaseSha, current.baseSha], {
+      cwd: workspace.repoDir,
+      allowFailure: true
+    });
+    if (upstreamFastForward.exitCode === 1) {
+      throw new BaselineReconciliationError(
+        `publication baseline ${workspace.baseRef} no longer descends from the previously verified publication baseline`,
+        {
+          kind: 'upstream-history-rewrite',
+          reconciliation: { fromBaseSha, toBaseSha: current.baseSha, fromHeadSha: before.headSha }
+        }
+      );
+    }
+    if (upstreamFastForward.exitCode !== 0) {
+      throw new PolicyError(`unable to compare publication baseline ancestry: ${(upstreamFastForward.stderr || upstreamFastForward.stdout).trim()}`);
+    }
 
-      const check = await this.#git.run(['diff', '--cached', '--check'], {
-        cwd: workspace.worktreeDir,
-        allowFailure: true
-      });
-      if (check.exitCode !== 0) {
-        throw new CandidateValidationError(`staged candidate failed git diff --check: ${(check.stderr || check.stdout).trim()}`);
-      }
+    const candidateDescendsFromBase = await this.#git.run(['merge-base', '--is-ancestor', fromBaseSha, before.headSha], {
+      cwd: workspace.repoDir,
+      allowFailure: true
+    });
+    if (candidateDescendsFromBase.exitCode === 1) {
+      throw new PolicyError('candidate branch no longer descends from its persisted publication baseline');
+    }
+    if (candidateDescendsFromBase.exitCode !== 0) {
+      throw new PolicyError(`unable to compare candidate ancestry: ${(candidateDescendsFromBase.stderr || candidateDescendsFromBase.stdout).trim()}`);
+    }
 
-      const message = `PATCH-POLLER issue #${issueNumber} ${String(revision).slice(0, 12)}`;
-      await this.#git.run([
+    const fromHeadSha = normalizeSha(before.headSha, 'candidate head');
+    if (fromHeadSha === fromBaseSha) {
+      await this.#git.run(['reset', '--hard', current.baseSha], { cwd: workspace.worktreeDir });
+    } else {
+      const rebased = await this.#git.run([
         '-c', 'user.name=PATCH-POLLER',
         '-c', 'user.email=patch-poller@localhost',
         '-c', 'commit.gpgSign=false',
-        'commit', '--no-gpg-sign', '-m', message
-      ], { cwd: workspace.worktreeDir });
-      committed = true;
-    } catch (error) {
-      if (!committed) await this.#restoreProposalIndex(workspace);
-      throw error;
+        'rebase', '--no-autostash', '--onto', current.baseSha, fromBaseSha, workspace.branch
+      ], { cwd: workspace.worktreeDir, allowFailure: true });
+      if (rebased.exitCode !== 0) {
+        const conflicted = await this.#git.run(['diff', '--name-only', '--diff-filter=U'], {
+          cwd: workspace.worktreeDir,
+          allowFailure: true
+        });
+        const files = lines(conflicted.stdout);
+        const aborted = await this.#git.run(['rebase', '--abort'], { cwd: workspace.worktreeDir, allowFailure: true });
+        if (aborted.exitCode !== 0) {
+          throw new PolicyError(`automatic baseline rebase failed and PATCH-POLLER could not restore the pre-rebase candidate: ${(aborted.stderr || aborted.stdout).trim()}`);
+        }
+        const restoredHead = normalizeSha((await this.#git.run(['rev-parse', 'HEAD'], { cwd: workspace.worktreeDir })).stdout.trim(), 'restored candidate head');
+        if (restoredHead !== fromHeadSha) throw new PolicyError('automatic baseline rebase abort did not restore the exact candidate head');
+        throw new BaselineReconciliationError(
+          `automatic baseline rebase conflicted with ${current.baseRef}; the pre-rebase candidate was restored${files.length ? ` (${files.join(', ')})` : ''}`,
+          {
+            kind: 'conflict',
+            files,
+            reconciliation: { fromBaseSha, toBaseSha: current.baseSha, fromHeadSha }
+          }
+        );
+      }
+    }
+
+    const toHeadSha = normalizeSha((await this.#git.run(['rev-parse', 'HEAD'], { cwd: workspace.worktreeDir })).stdout.trim(), 'rebased candidate head');
+    workspace.publicationBaseSha = current.baseSha;
+    const snapshot = await this.validate(workspace);
+    if (snapshot.dirty) throw new PolicyError('candidate became dirty while reconciling the publication baseline');
+    return {
+      changed: true,
+      fromBaseSha,
+      toBaseSha: current.baseSha,
+      fromHeadSha,
+      toHeadSha,
+      snapshot
+    };
+  }
+
+  async sealCandidate(workspace, { issueNumber, revision }) {
+    let snapshot = await this.snapshot(workspace);
+
+    if (snapshot.dirty) {
+      await this.#restoreProposalIndex(workspace);
+      snapshot = await this.#validateProposal(workspace);
+
+      if (snapshot.dirty) {
+        let committed = false;
+        try {
+          await this.#git.run(['add', '-A', '--', '.'], { cwd: workspace.worktreeDir });
+          const staged = await this.#git.run(['diff', '--cached', '--name-only'], { cwd: workspace.worktreeDir });
+          const stagedFiles = lines(staged.stdout);
+          const reserved = stagedFiles.filter(isReservedRuntimePath);
+          if (reserved.length > 0) {
+            throw new CandidateValidationError(`refusing to seal reserved PATCH-POLLER runtime paths: ${reserved.join(', ')}`);
+          }
+          if (stagedFiles.length === 0) {
+            await this.#restoreProposalIndex(workspace);
+          } else {
+            const check = await this.#git.run(['diff', '--cached', '--check'], {
+              cwd: workspace.worktreeDir,
+              allowFailure: true
+            });
+            if (check.exitCode !== 0) {
+              throw new CandidateValidationError(`staged candidate failed git diff --check: ${(check.stderr || check.stdout).trim()}`);
+            }
+
+            const message = `PATCH-POLLER issue #${issueNumber} ${String(revision).slice(0, 12)}`;
+            await this.#git.run([
+              '-c', 'user.name=PATCH-POLLER',
+              '-c', 'user.email=patch-poller@localhost',
+              '-c', 'commit.gpgSign=false',
+              'commit', '--no-gpg-sign', '-m', message
+            ], { cwd: workspace.worktreeDir });
+            committed = true;
+          }
+        } catch (error) {
+          if (!committed) await this.#restoreProposalIndex(workspace);
+          throw error;
+        }
+      }
     }
 
     snapshot = await this.validate(workspace);
     if (snapshot.dirty) throw new PolicyError('candidate remained dirty after PATCH-POLLER sealed it');
-    return snapshot;
+    const reconciliation = await this.reconcilePublicationBaseline(workspace);
+    if (reconciliation.changed) {
+      throw new BaselineReverificationRequiredError(
+        `upstream baseline advanced from ${reconciliation.fromBaseSha} to ${reconciliation.toBaseSha}; PATCH-POLLER rebased the sealed candidate and requires fresh verification before publication`,
+        reconciliation
+      );
+    }
+    return reconciliation.snapshot;
   }
 
-  async publishTaskBranch(workspace) {
+  async #remoteTaskBranchHead(workspace, token, ref) {
+    const observed = await this.#git.run(['ls-remote', '--heads', 'origin', ref], {
+      cwd: workspace.worktreeDir,
+      token,
+      authBaseUrl: authBaseUrl(workspace.remoteUrl),
+      timeoutMs: this.#fetchTimeoutMs
+    });
+    const entries = lines(observed.stdout);
+    if (entries.length === 0) return null;
+    if (entries.length !== 1) throw new PolicyError(`remote task branch observation returned multiple refs for ${ref}`);
+    const [sha, observedRef] = entries[0].split(/\s+/u);
+    if (observedRef !== ref) throw new PolicyError(`remote task branch observation returned unexpected ref ${observedRef}`);
+    return normalizeSha(sha, 'remote task branch head');
+  }
+
+  #rememberKnownTaskBranchHead(workspace, headSha) {
+    workspace.taskBranchKnownRemoteHeads = normalizeKnownTaskBranchHeads([
+      ...(workspace.taskBranchKnownRemoteHeads ?? []),
+      headSha
+    ].slice(-MAX_KNOWN_TASK_BRANCH_HEADS));
+  }
+
+  async publishTaskBranch(workspace, { expectedHeadSha = null } = {}) {
     if (!workspace.branch.startsWith(`${this.#branchPrefix}/`)) {
       throw new PolicyError('refusing to publish a non-PATCH-POLLER task branch');
     }
@@ -362,15 +542,46 @@ export class GitWorkspaceManager {
     if (snapshot.dirty) throw new PolicyError('refusing to publish an unsealed dirty task branch');
 
     const token = await this.#tokenProvider();
-    await this.#git.run(['push', 'origin', `HEAD:refs/heads/${workspace.branch}`], {
+    const ref = `refs/heads/${workspace.branch}`;
+    const localHead = normalizeSha(snapshot.headSha, 'local task branch head');
+    if (expectedHeadSha != null) {
+      const expectedHead = normalizeSha(expectedHeadSha, 'expected verified task branch head');
+      if (localHead !== expectedHead) {
+        throw new PolicyError(`local task branch head ${localHead} differs from the exact verified publication head ${expectedHead}; fresh verification is required`);
+      }
+    }
+    const remoteHead = await this.#remoteTaskBranchHead(workspace, token, ref);
+    if (remoteHead === localHead) {
+      this.#rememberKnownTaskBranchHead(workspace, localHead);
+      return { branch: workspace.branch, headSha: localHead, reconciled: true, previousRemoteHeadSha: remoteHead };
+    }
+
+    const knownRemoteHeads = new Set(normalizeKnownTaskBranchHeads(workspace.taskBranchKnownRemoteHeads));
+    let expectation;
+    if (remoteHead == null) expectation = '';
+    else if (knownRemoteHeads.has(remoteHead)) expectation = remoteHead;
+    else throw new PolicyError(`remote PATCH-POLLER task branch moved to unexpected head ${remoteHead}; refusing to overwrite it`);
+
+    const pushed = await this.#git.run([
+      'push', `--force-with-lease=${ref}:${expectation}`, 'origin', `${localHead}:${ref}`
+    ], {
       cwd: workspace.worktreeDir,
       token,
       authBaseUrl: authBaseUrl(workspace.remoteUrl),
-      timeoutMs: this.#fetchTimeoutMs
+      timeoutMs: this.#fetchTimeoutMs,
+      allowFailure: true
     });
+
+    const reconciledHead = await this.#remoteTaskBranchHead(workspace, token, ref);
+    if (reconciledHead !== localHead) {
+      throw new PolicyError(`task branch publication did not converge on the exact local head: ${(pushed.stderr || pushed.stdout).trim()}`);
+    }
+    this.#rememberKnownTaskBranchHead(workspace, localHead);
     return {
       branch: workspace.branch,
-      headSha: (await this.#git.run(['rev-parse', 'HEAD'], { cwd: workspace.worktreeDir })).stdout.trim()
+      headSha: localHead,
+      reconciled: pushed.exitCode !== 0 || pushed.timedOut === true,
+      previousRemoteHeadSha: remoteHead
     };
   }
 }

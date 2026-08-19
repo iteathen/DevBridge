@@ -11,6 +11,22 @@ export class PolicyError extends PatchPollerError {}
 export class CandidateValidationError extends PatchPollerError {}
 export class TaskLeaseLostError extends PatchPollerError {}
 
+export class BaselineReverificationRequiredError extends CandidateValidationError {
+  constructor(message, reconciliation = {}, options = {}) {
+    super(message, options);
+    this.reconciliation = structuredClone(reconciliation);
+  }
+}
+
+export class BaselineReconciliationError extends CandidateValidationError {
+  constructor(message, { kind = 'unknown', files = [], reconciliation = {}, cause } = {}) {
+    super(message, cause ? { cause } : undefined);
+    this.kind = kind;
+    this.files = [...files];
+    this.reconciliation = structuredClone(reconciliation);
+  }
+}
+
 export class GitCommandError extends PatchPollerError {
   constructor(message, { args = [], cwd = null, exitCode = null, signal = null, stdout = '', stderr = '', cause } = {}) {
     super(message, cause ? { cause } : undefined);
