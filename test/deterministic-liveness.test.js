@@ -30,7 +30,7 @@ test('long deterministic process emits bounded liveness while GitHub status muta
       },
     },
     stateStore: memoryStore(),
-    queueRepository: 'iteathen/PATCH-POLLER',
+    queueRepository: 'iteathen/DevBridge',
     progressIntervalMs: 60_000,
     maxCommentBytes: 48_000,
   });
@@ -52,7 +52,7 @@ test('long deterministic process emits bounded liveness while GitHub status muta
         stage: 'RUNNING',
         summary: 'Long deterministic fixture is active.',
         capsule: {
-          protocol: 'patch-poller/context-v1',
+          protocol: 'devbridge/context-v1',
           liveness: activity,
           progress: [],
           decisions: [],

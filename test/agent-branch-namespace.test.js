@@ -15,14 +15,14 @@ function manager(branchPrefix) {
 }
 
 test('coordination branch prefix places the full agent fingerprint before the issue segment', () => {
-  const branch = manager(`patchpoller/${FINGERPRINT}`).branchName(TASK);
-  assert.equal(branch, `patchpoller/${FINGERPRINT}/issue-49-${REVISION.slice(0, 12)}`);
+  const branch = manager(`devbridge/${FINGERPRINT}`).branchName(TASK);
+  assert.equal(branch, `devbridge/${FINGERPRINT}/issue-49-${REVISION.slice(0, 12)}`);
   assert.equal(branch.includes(FINGERPRINT), true);
 });
 
 test('legacy branch prefix remains unchanged when coordination is disabled', () => {
   assert.equal(
-    manager('patchpoller').branchName(TASK),
-    `patchpoller/issue-49-${REVISION.slice(0, 12)}`,
+    manager('devbridge').branchName(TASK),
+    `devbridge/issue-49-${REVISION.slice(0, 12)}`,
   );
 });

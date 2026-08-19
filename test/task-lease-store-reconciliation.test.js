@@ -13,7 +13,7 @@ function envelope() {
     protocol: SIGNED_TASK_LEASE_PROTOCOL,
     subject: {
       protocol: TASK_LEASE_PROTOCOL,
-      queueRepository: 'iteathen/PATCH-POLLER',
+      queueRepository: 'iteathen/DevBridge',
       issueNumber: 49,
       taskRevision: REVISION,
       ownerFingerprint: OWNER,
@@ -32,8 +32,8 @@ function envelope() {
 function success(stdout = '') { return { exitCode: 0, timedOut: false, stdout, stderr: '' }; }
 
 test('timed-out task lease push is accepted only when re-observation finds the exact attempted commit', async () => {
-  const task = { queueRepository: 'iteathen/PATCH-POLLER', issueNumber: 49, revision: REVISION };
-  const ref = `refs/heads/patch-poller-control/leases/issue-49/${REVISION}`;
+  const task = { queueRepository: 'iteathen/DevBridge', issueNumber: 49, revision: REVISION };
+  const ref = `refs/heads/devbridge-control/leases/issue-49/${REVISION}`;
   const signed = envelope();
   const git = {
     async run(args) {
@@ -51,12 +51,12 @@ test('timed-out task lease push is accepted only when re-observation finds the e
     workspaceManager: {
       ensureRepository: async () => ({
         repoDir: '/control/repo',
-        remoteUrl: 'https://github.com/iteathen/PATCH-POLLER.git',
+        remoteUrl: 'https://github.com/iteathen/DevBridge.git',
         baseSha: 'e'.repeat(40),
       }),
     },
     gitClient: git,
-    queueRepository: 'iteathen/PATCH-POLLER',
+    queueRepository: 'iteathen/DevBridge',
   });
   const result = await store.compareAndSwap(task, { expectedSha: null, envelope: signed });
   assert.equal(result.updated, true);

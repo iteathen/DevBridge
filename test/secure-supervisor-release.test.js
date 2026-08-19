@@ -5,7 +5,7 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { superviseDaemon } from '../patch-poller.mjs';
+import { superviseDaemon } from '../src/bootstrap/secure-bootstrap.mjs';
 import {
   RELEASE_MANIFEST_PROTOCOL,
   RELEASE_REPOSITORY,
@@ -109,13 +109,13 @@ test('production supervisor ignores mutable stable movement that is not the sign
     },
     artifactDigestSyncFn: exactFakeDigest,
     maxIterations: 1,
-    takeover: false,
+    stopExisting: false,
     updateIntervalMs: 1,
     updateCheckDelayFn: timer,
     remoteHeadFn: () => 'c'.repeat(40),
     resolveChannelRefFn: () => 'main',
     candidatePrepareFn: async () => { candidatePrepares += 1; return runtimeB; },
-    runPollerCliFn: (command) => { if (command === 'stop') stops += 1; return 0; },
+    runDevBridgeCliFn: (command) => { if (command === 'stop') stops += 1; return 0; },
     delayFn: timer,
   });
   assert.equal(result, 0);
@@ -140,7 +140,7 @@ test('production supervisor validates only the signed head and journals exact ar
     spawnImpl,
     artifactDigestSyncFn: exactFakeDigest,
     maxIterations: 2,
-    takeover: false,
+    stopExisting: false,
     updateIntervalMs: 1,
     healthWindowMs: 1,
     updateCheckDelayFn: timer,
@@ -152,7 +152,7 @@ test('production supervisor validates only the signed head and journals exact ar
       assert.equal(desiredHead, runtimeB.head);
       return runtimeB;
     },
-    runPollerCliFn: (command, _paths, runtime) => {
+    runDevBridgeCliFn: (command, _paths, runtime) => {
       if (command === 'stop') setTimeout(() => current.emit('exit', 0, null), 0);
       if (command === 'doctor') assert.equal(runtime.head, runtimeB.head);
       return 0;
@@ -195,13 +195,13 @@ test('production supervisor refuses a candidate whose bytes change after validat
       throw new Error('unexpected runtime path');
     },
     maxIterations: 2,
-    takeover: false,
+    stopExisting: false,
     updateIntervalMs: 1,
     updateCheckDelayFn: timer,
     remoteHeadFn: () => runtimeB.head,
     resolveChannelRefFn: () => 'main',
     candidatePrepareFn: async () => runtimeB,
-    runPollerCliFn: (command) => {
+    runDevBridgeCliFn: (command) => {
       if (command === 'stop') setTimeout(() => current.emit('exit', 0, null), 0);
       return 0;
     },

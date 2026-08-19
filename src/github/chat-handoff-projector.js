@@ -4,8 +4,8 @@ import { chatHandoffDigest, normalizeChatHandoff } from '../context/chat-handoff
 import { redactText } from '../security/redaction.js';
 import { headerValue } from './rate-budget.js';
 
-const PROJECTION_PROTOCOL = 'patch-poller/chat-handoff-projection-v1';
-const SEED_PROTOCOL = 'patch-poller/chat-resume-github-v1';
+const PROJECTION_PROTOCOL = 'devbridge/chat-handoff-projection-v1';
+const SEED_PROTOCOL = 'devbridge/chat-resume-github-v1';
 const SHA256_RE = /^[0-9a-f]{64}$/u;
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const SAFE_ID_RE = /^[A-Za-z0-9_.:-]{1,120}$/u;
@@ -36,7 +36,7 @@ function projectionSlot(mailboxRepository, issueNumber) {
 }
 
 function marker(mailboxRepository, issueNumber) {
-  return `<!-- patch-poller-chat-handoff slot=${projectionSlot(mailboxRepository, issueNumber)} -->`;
+  return `<!-- devbridge-chat-handoff slot=${projectionSlot(mailboxRepository, issueNumber)} -->`;
 }
 
 function lastPage(headers) {
@@ -53,11 +53,11 @@ function lastPage(headers) {
 function projectionBody({ mailboxRepository, issueNumber, record, seed }) {
   return [
     marker(mailboxRepository, issueNumber),
-    '## PATCH-POLLER — CHAT HANDOFF READY',
+    '## DevBridge — CHAT HANDOFF READY',
     '',
     seed,
     '',
-    '```patch-poller-chat-handoff',
+    '```devbridge-chat-handoff',
     JSON.stringify({
       protocol: PROJECTION_PROTOCOL,
       digest: record.digest,
@@ -75,12 +75,12 @@ export function buildGitHubChatResumeSeed(recordOrHandoff, issueNumber, digestOv
   const handoffId = safeId(handoff.handoffId, 'GitHub chat resume handoffId');
   const sha256 = digest(digestOverride ?? recordOrHandoff?.digest, 'GitHub chat resume digest');
   const issue = positiveInteger(issueNumber, 'GitHub chat resume issueNumber');
-  return `PATCH-POLLER-RESUME-GITHUB v1 mailbox=${mailbox} issue=${issue} repo=${targetRepository} handoff=${handoffId} sha256=${sha256}`;
+  return `DEVBRIDGE-RESUME-GITHUB v1 mailbox=${mailbox} issue=${issue} repo=${targetRepository} handoff=${handoffId} sha256=${sha256}`;
 }
 
 export function parseGitHubChatResumeSeed(seed) {
   if (typeof seed !== 'string' || seed.length > 768) throw new ProtocolError('GitHub chat resume seed must be a bounded string');
-  const match = seed.match(/^PATCH-POLLER-RESUME-GITHUB v1 mailbox=([^ ]+) issue=(\d+) repo=([^ ]+) handoff=([^ ]+) sha256=([0-9a-f]{64})$/u);
+  const match = seed.match(/^DEVBRIDGE-RESUME-GITHUB v1 mailbox=([^ ]+) issue=(\d+) repo=([^ ]+) handoff=([^ ]+) sha256=([0-9a-f]{64})$/u);
   if (!match) throw new ProtocolError('GitHub chat resume seed is malformed');
   return {
     protocol: SEED_PROTOCOL,
@@ -94,7 +94,7 @@ export function parseGitHubChatResumeSeed(seed) {
 
 export function parseChatHandoffProjectionBody(body) {
   if (typeof body !== 'string' || Buffer.byteLength(body, 'utf8') > 300 * 1024) throw new ProtocolError('GitHub chat handoff projection body is not a bounded string');
-  const fence = body.match(/```patch-poller-chat-handoff\r?\n([\s\S]*?)\r?\n```/u);
+  const fence = body.match(/```devbridge-chat-handoff\r?\n([\s\S]*?)\r?\n```/u);
   if (!fence) throw new ProtocolError('GitHub chat handoff projection payload fence is missing');
   let payload;
   try { payload = JSON.parse(fence[1]); }
@@ -108,7 +108,7 @@ export function parseChatHandoffProjectionBody(body) {
   if (chatHandoffDigest(handoff, { maxBytes: MAX_PROTOCOL_HANDOFF_BYTES }) !== expectedDigest) {
     throw new ProtocolError('GitHub chat handoff projection payload digest mismatch');
   }
-  const seedLine = body.split(/\r?\n/u).find((line) => line.startsWith('PATCH-POLLER-RESUME-GITHUB v1 '));
+  const seedLine = body.split(/\r?\n/u).find((line) => line.startsWith('DEVBRIDGE-RESUME-GITHUB v1 '));
   if (!seedLine) throw new ProtocolError('GitHub chat handoff projection resume seed is missing');
   const seed = parseGitHubChatResumeSeed(seedLine);
   if (seed.repository !== handoff.repository || seed.handoffId !== handoff.handoffId || seed.digest !== expectedDigest) {

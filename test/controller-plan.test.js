@@ -10,7 +10,7 @@ import { createCoreOperationRegistry } from '../src/runtime/deterministic-operat
 
 function basePlan(overrides = {}) {
   return {
-    protocol: 'patch-poller/controller-plan-v1',
+    protocol: 'devbridge/controller-plan-v1',
     files: [],
     operations: [],
     assertions: [],
@@ -64,7 +64,7 @@ test('rejects operation authority fields and assertions that name unknown operat
 });
 
 test('generic controller executor materializes a multi-file project, runs static Node inspection, and removes ephemeral files', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'patch-poller-controller-plan-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-controller-plan-'));
   try {
     const plan = normalizeControllerPlan(basePlan({
       files: [

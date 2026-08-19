@@ -20,7 +20,7 @@ const PREVIOUS = 'b'.repeat(40);
 function activeSubject(overrides = {}) {
   return {
     protocol: TASK_LEASE_PROTOCOL,
-    queueRepository: 'iteathen/PATCH-POLLER',
+    queueRepository: 'iteathen/DevBridge',
     issueNumber: 49,
     taskRevision: REVISION,
     sessionId: '1'.repeat(32),
@@ -43,7 +43,7 @@ test('signed task lease verifies only for the exact trusted task subject', async
     const trusted = new Map([[identity.fingerprint, identity]]);
     const verified = verifySignedTaskLease(parsed, {
       trustedIdentities: trusted,
-      queueRepository: 'iteathen/PATCH-POLLER',
+      queueRepository: 'iteathen/DevBridge',
       issueNumber: 49,
       taskRevision: REVISION,
     });
@@ -54,7 +54,7 @@ test('signed task lease verifies only for the exact trusted task subject', async
     assert.throws(
       () => verifySignedTaskLease(parsed, {
         trustedIdentities: trusted,
-        queueRepository: 'iteathen/PATCH-POLLER',
+        queueRepository: 'iteathen/DevBridge',
         issueNumber: 50,
         taskRevision: REVISION,
       }),
@@ -63,7 +63,7 @@ test('signed task lease verifies only for the exact trusted task subject', async
     assert.throws(
       () => verifySignedTaskLease(parsed, {
         trustedIdentities: new Map(),
-        queueRepository: 'iteathen/PATCH-POLLER',
+        queueRepository: 'iteathen/DevBridge',
         issueNumber: 49,
         taskRevision: REVISION,
       }),
@@ -84,7 +84,7 @@ test('signature binds canonical lease bytes and rejects tampering', async () => 
     assert.throws(
       () => verifySignedTaskLease(tampered, {
         trustedIdentities: new Map([[identity.fingerprint, identity]]),
-        queueRepository: 'iteathen/PATCH-POLLER',
+        queueRepository: 'iteathen/DevBridge',
         issueNumber: 49,
         taskRevision: REVISION,
       }),

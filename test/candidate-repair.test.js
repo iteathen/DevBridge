@@ -27,7 +27,7 @@ const task = {
     context: { constraints: [] }
   }
 };
-const branch = `patchpoller/issue-4-${revision.slice(0, 12)}`;
+const branch = `devbridge/issue-4-${revision.slice(0, 12)}`;
 const dirty = {
   branch,
   baseSha: '1'.repeat(40),
@@ -95,7 +95,7 @@ test('candidate validation rejection returns to a bounded repair turn instead of
       assert.match(context.blockers?.[0] ?? '', /candidate validation rejected/u);
       assert.match(context.nextStep ?? '', /Do not stage or commit/u);
       return {
-        result: { protocol: 'patch-poller/result-v1', status: 'complete', summary: 'repaired fixture', progress: [], tests: [] },
+        result: { protocol: 'devbridge/result-v1', status: 'complete', summary: 'repaired fixture', progress: [], tests: [] },
         resultParseError: null,
         exitCode: 0,
         timedOut: false,

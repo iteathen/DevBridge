@@ -18,7 +18,7 @@ test('configured handoffs above the 32 KiB default remain seedable and resumable
     protocol: CHAT_HANDOFF_PROTOCOL,
     handoffId: 'large-configured-handoff',
     sequence: 1,
-    repository: 'iteathen/PATCH-POLLER',
+    repository: 'iteathen/DevBridge',
     baselineSha: 'a'.repeat(40),
     headSha: 'b'.repeat(40),
     branch: 'sol/pp-014-context-rollover',
@@ -36,7 +36,7 @@ test('configured handoffs above the 32 KiB default remain seedable and resumable
     createdAt: '2026-08-18T18:40:00.000Z',
   };
   const checkpoint = await store.checkpoint(handoff);
-  const latest = await store.loadLatest('iteathen/PATCH-POLLER');
+  const latest = await store.loadLatest('iteathen/DevBridge');
   assert.equal(latest.record.digest, checkpoint.record.digest);
   assert.equal(parseChatResumeSeed(latest.seed).digest, checkpoint.record.digest);
   const resumed = reconcileChatResume({

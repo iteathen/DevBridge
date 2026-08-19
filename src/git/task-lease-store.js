@@ -1,7 +1,7 @@
 import { GitCommandError, PolicyError } from '../errors.js';
 import { parseSignedTaskLease, serializeSignedTaskLease } from '../run/task-lease.js';
 
-export const TASK_LEASE_REF_PREFIX = 'refs/heads/patch-poller-control/leases';
+export const TASK_LEASE_REF_PREFIX = 'refs/heads/devbridge-control/leases';
 
 const SHA_RE = /^[0-9a-f]{40}$/u;
 const REVISION_RE = /^[0-9a-f]{64}$/u;
@@ -110,8 +110,8 @@ export class GitTaskLeaseStore {
     const treeSha = tree.stdout.trim();
     if (!SHA_RE.test(treeSha)) throw new PolicyError('task lease store could not resolve a control commit tree');
     const commitArgs = [
-      '-c', 'user.name=PATCH-POLLER',
-      '-c', 'user.email=patch-poller@localhost',
+      '-c', 'user.name=DevBridge',
+      '-c', 'user.email=devbridge@localhost',
       '-c', 'commit.gpgSign=false',
       'commit-tree', treeSha,
     ];

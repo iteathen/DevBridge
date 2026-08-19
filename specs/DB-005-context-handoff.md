@@ -1,4 +1,4 @@
-# PP-005 — Context Capsules and Handoffs
+# DB-005 — Context Capsules and Handoffs
 
 Status: active
 
@@ -10,7 +10,7 @@ Human checkpoints and decisions are also durable run state. A context reset must
 
 ## Context capsule v1
 
-A capsule is structured data with protocol `patch-poller/context-v1` and includes, when available:
+A capsule is structured data with protocol `devbridge/context-v1` and includes, when available:
 
 - task identity and immutable revision digest;
 - objective/instructions;
@@ -37,11 +37,11 @@ Local capability grants and credentials are not copied into the model-visible ca
 
 A trusted task may carry an optional bounded `context.handoff` string for durable coordinating-agent context. This field exists for context-window rehydration and handoff bundles; it is not an instruction or capability channel.
 
-PATCH-POLLER, not the coding model, owns preservation of this payload:
+DevBridge, not the coding model, owns preservation of this payload:
 
 - the exact UTF-8 handoff text is revision-bound task data;
 - every context capsule carries the same handoff text while the run is active;
-- the capsule also carries `handoffSha256`, computed by PATCH-POLLER over the exact UTF-8 bytes;
+- the capsule also carries `handoffSha256`, computed by DevBridge over the exact UTF-8 bytes;
 - GitHub status/handoff projection includes the handoff subject to the ordinary redaction boundary;
 - coding tools may read and acknowledge the handoff, but correct relay must not depend on a model manually transcribing or reformatting it;
 - runtime compaction preferentially removes expendable transcript/progress material rather than silently rewriting a bounded handoff payload.
@@ -50,11 +50,11 @@ The v0.1 handoff field is deliberately bounded to fit the existing single-commen
 
 ## Coordinating-chat rollover specialization
 
-PP-014 (`specs/PP-014-context-rollover.md`) specializes this context contract for replacing the **coordinating chat/model session itself** rather than only replacing a subordinate coding-tool turn.
+DB-014 (`specs/DB-014-context-rollover.md`) specializes this context contract for replacing the **coordinating chat/model session itself** rather than only replacing a subordinate coding-tool turn.
 
-That specialization adds a separate bounded `patch-poller/chat-handoff-v1` checkpoint containing exact Git/task identities, stable completed action IDs, one exact next action, governing-document digests, and durable evidence references. It is stored and verified by PATCH-POLLER before being advertised as resumable.
+That specialization adds a separate bounded `devbridge/chat-handoff-v1` checkpoint containing exact Git/task identities, stable completed action IDs, one exact next action, governing-document digests, and durable evidence references. It is stored and verified by DevBridge before being advertised as resumable.
 
-PP-014 does not replace `patch-poller/context-v1`, does not make `context.handoff` unbounded, and does not create a second effect journal. The run/task context capsule remains the model-visible execution context; the chat handoff is a small controller-reconstruction index over durable run/Git/evidence state.
+DB-014 does not replace `devbridge/context-v1`, does not make `context.handoff` unbounded, and does not create a second effect journal. The run/task context capsule remains the model-visible execution context; the chat handoff is a small controller-reconstruction index over durable run/Git/evidence state.
 
 If a governing document changed between coordinating sessions, a fresh controller must reread that document before the chat handoff can release its recorded next action. If the action is already observed complete, the fresh controller checkpoints again rather than inventing a later action.
 
@@ -62,7 +62,7 @@ If a governing document changed between coordinating sessions, a fresh controlle
 
 A multi-turn runner supplies the complete current capsule through stdin and/or an exact **control-owned** context endpoint for every invocation. A tool adapter may parse a structured result from the coding tool, but failure to emit a perfect result must not erase existing context.
 
-Proposal-worker file IPC is not stored under the proposal worktree. For each exact `runId`/turn identity PATCH-POLLER creates a private mailbox below the configured control-state directory. The control plane owns:
+Proposal-worker file IPC is not stored under the proposal worktree. For each exact `runId`/turn identity DevBridge creates a private mailbox below the configured control-state directory. The control plane owns:
 
 - a manifest binding protocol, run ID, turn ID, filesystem identities, fixed worker-visible endpoints, and the SHA-256 of the exact context bytes;
 - a pre-created context file;
@@ -70,9 +70,9 @@ Proposal-worker file IPC is not stored under the proposal worktree. For each exa
 
 The worker does **not** receive the mailbox root or manifest. A verified OS isolation provider projects only the exact context file read-only and exact result file writable in place. The worker-visible paths are stable sandbox endpoints rather than host/project paths. Result writers must overwrite the existing file; replacing its inode by rename, symlink, junction, or another filesystem object is invalid.
 
-Before a result is consumed as proposal data, PATCH-POLLER revalidates the control-owned turn directory, context/result identities, unchanged context digest, file type/ownership constraints, and result-size bound. No result path in the candidate tree is trusted during this operation.
+Before a result is consumed as proposal data, DevBridge revalidates the control-owned turn directory, context/result identities, unchanged context digest, file type/ownership constraints, and result-size bound. No result path in the candidate tree is trusted during this operation.
 
-An interrupted turn can be reopened by its exact run/turn identity from the control-owned manifest. Reopening revalidates the same invariants before returning any result. This makes abrupt-worker recovery independent of project-authored `.patch-poller` files. A recovered result is still merely proposal data; candidate validation and control-plane effects remain authoritative.
+An interrupted turn can be reopened by its exact run/turn identity from the control-owned manifest. Reopening revalidates the same invariants before returning any result. This makes abrupt-worker recovery independent of project-authored `.devbridge` files. A recovered result is still merely proposal data; candidate validation and control-plane effects remain authoritative.
 
 The next capsule merges explicit durable state with new bounded observations. Critical constraints, active checkpoints, accepted decisions, decision boundaries, unfinished work, and the coordinating-agent handoff are retained before expendable transcript tail.
 
@@ -80,7 +80,7 @@ A new model turn must be told when it is operating while a checkpoint/decision i
 
 ## Checkpoint context
 
-PP-007 checkpoint records are richer than ordinary model context. The capsule carries only the bounded subset needed for correct continuation, including:
+DB-007 checkpoint records are richer than ordinary model context. The capsule carries only the bounded subset needed for correct continuation, including:
 
 - checkpoint ID;
 - checkpoint/decision type;
@@ -99,7 +99,7 @@ Accepted decisions are appended to provenance. For `artifact-exact` approvals, t
 
 Progress reports include a condensed context capsule so a chat-only coordinating agent can understand current state without relying on conversation memory.
 
-A checkpoint report should include enough context for a human or chat-only agent to make the decision without reconstructing the entire run transcript. It must state whether PATCH-POLLER is continuing safe work or has exhausted the safe frontier.
+A checkpoint report should include enough context for a human or chat-only agent to make the decision without reconstructing the entire run transcript. It must state whether DevBridge is continuing safe work or has exhausted the safe frontier.
 
 Terminal handoffs include the fuller capsule. If it exceeds a single safe comment budget, it is deterministically chunked with:
 

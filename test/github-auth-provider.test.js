@@ -8,7 +8,7 @@ import {
 const auth = Object.freeze({
   mode: 'auto',
   environmentVariables: [
-    'PATCH_POLLER_GITHUB_TOKEN',
+    'DEVBRIDGE_GITHUB_TOKEN',
     'GH_TOKEN',
     'GITHUB_TOKEN',
   ],
@@ -16,11 +16,11 @@ const auth = Object.freeze({
   hostname: 'github.com',
 });
 
-test('GitHub auth prefers PATCH-POLLER then GH_TOKEN then GITHUB_TOKEN', async () => {
+test('GitHub auth prefers DevBridge then GH_TOKEN then GITHUB_TOKEN', async () => {
   let githubCliCalled = false;
   const credential = await resolveGitHubCredential(auth, {
     env: {
-      PATCH_POLLER_GITHUB_TOKEN: 'first-token',
+      DEVBRIDGE_GITHUB_TOKEN: 'first-token',
       GH_TOKEN: 'second-token',
       GITHUB_TOKEN: 'third-token',
     },
@@ -31,7 +31,7 @@ test('GitHub auth prefers PATCH-POLLER then GH_TOKEN then GITHUB_TOKEN', async (
   });
 
   assert.equal(credential.provider, 'environment');
-  assert.equal(credential.source, 'PATCH_POLLER_GITHUB_TOKEN');
+  assert.equal(credential.source, 'DEVBRIDGE_GITHUB_TOKEN');
   assert.equal(credential.token, 'first-token');
   assert.equal(githubCliCalled, false);
 });

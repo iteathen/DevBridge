@@ -26,7 +26,7 @@ export function candidateValidationEnvironment(source = process.env, platform = 
   env.CI = '1';
   env.NO_COLOR = '1';
   env.GIT_TERMINAL_PROMPT = '0';
-  env.PATCH_POLLER_NONINTERACTIVE = '1';
+  env.DEVBRIDGE_NONINTERACTIVE = '1';
   return env;
 }
 

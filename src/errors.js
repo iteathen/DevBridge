@@ -1,15 +1,15 @@
-export class PatchPollerError extends Error {
+export class DevBridgeError extends Error {
   constructor(message, options = {}) {
     super(message, options);
     this.name = new.target.name;
   }
 }
 
-export class ConfigurationError extends PatchPollerError {}
-export class ProtocolError extends PatchPollerError {}
-export class PolicyError extends PatchPollerError {}
-export class CandidateValidationError extends PatchPollerError {}
-export class TaskLeaseLostError extends PatchPollerError {}
+export class ConfigurationError extends DevBridgeError {}
+export class ProtocolError extends DevBridgeError {}
+export class PolicyError extends DevBridgeError {}
+export class CandidateValidationError extends DevBridgeError {}
+export class TaskLeaseLostError extends DevBridgeError {}
 
 export class BaselineReverificationRequiredError extends CandidateValidationError {
   constructor(message, reconciliation = {}, options = {}) {
@@ -27,7 +27,7 @@ export class BaselineReconciliationError extends CandidateValidationError {
   }
 }
 
-export class GitCommandError extends PatchPollerError {
+export class GitCommandError extends DevBridgeError {
   constructor(message, { args = [], cwd = null, exitCode = null, signal = null, stdout = '', stderr = '', cause } = {}) {
     super(message, cause ? { cause } : undefined);
     this.args = [...args];
@@ -39,13 +39,13 @@ export class GitCommandError extends PatchPollerError {
   }
 }
 
-export class RateLimitError extends PatchPollerError {
+export class RateLimitError extends DevBridgeError {
   constructor(message, { retryAt = null, cause } = {}) {
     super(message, cause ? { cause } : undefined);
     this.retryAt = retryAt;
   }
 }
-export class HttpError extends PatchPollerError {
+export class HttpError extends DevBridgeError {
   constructor(message, { status, body = null, cause } = {}) {
     super(message, cause ? { cause } : undefined);
     this.status = status;

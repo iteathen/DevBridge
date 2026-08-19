@@ -16,12 +16,12 @@ async function git(cwd, args) {
 }
 
 test('rejected candidate seal restores the index, then accepts ordinary CRLF after repair', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'pp-candidate-transaction-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-candidate-transaction-'));
   const source = path.join(root, 'source');
   await exec('git', ['init', '-b', 'main', source]);
   await writeFile(path.join(source, 'README.md'), 'base\n');
   await git(source, ['add', 'README.md']);
-  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=patch-poller@example.invalid', 'commit', '-m', 'initial']);
+  await git(source, ['-c', 'user.name=DevBridge Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', 'initial']);
 
   const policy = new WorkspacePolicy({ root: path.join(root, 'managed'), allowedOwners: ['owner'], allowCreate: true });
   await policy.ensureRoot();
@@ -32,7 +32,7 @@ test('rejected candidate seal restores the index, then accepts ordinary CRLF aft
 
   const target = path.join(workspace.worktreeDir, 'test', 'fixtures', 'bad.txt');
   await mkdir(path.dirname(target), { recursive: true });
-  const bad = '\uFEFFPATCH-POLLER live smoke test 001 \r\n\r\n';
+  const bad = '\uFEFFDevBridge live smoke test 001 \r\n\r\n';
   await writeFile(target, bad, 'utf8');
 
   await assert.rejects(
@@ -47,7 +47,7 @@ test('rejected candidate seal restores the index, then accepts ordinary CRLF aft
   assert.equal(rejectedSnapshot.dirty, true);
   assert.deepEqual(rejectedSnapshot.changedFiles, ['test/fixtures/bad.txt']);
 
-  const repairedCrLf = 'PATCH-POLLER live smoke test 001\r\n';
+  const repairedCrLf = 'DevBridge live smoke test 001\r\n';
   await writeFile(target, repairedCrLf, 'utf8');
   const sealed = await manager.sealCandidate(workspace, { issueNumber: task.issueNumber, revision: task.revision });
   assert.equal(sealed.dirty, false);

@@ -96,7 +96,7 @@ test('model process runner applies the same configured priority policy', async (
     const result = await runner.run({
       profile: workerProfile,
       projectDir,
-      runDir: path.join(projectDir, '.patch-poller', 'priority-run', 'turn-1'),
+      runDir: path.join(projectDir, '.devbridge', 'priority-run', 'turn-1'),
       runId: 'priority-run',
       context: { objective: 'priority fixture' },
     });

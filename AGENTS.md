@@ -1,6 +1,6 @@
-# PATCH-POLLER Agent Guide
+# DevBridge Agent Guide
 
-PATCH-POLLER is security-sensitive automation. It turns remote task input into local development activity, so convenience never outranks capability boundaries, provenance, recoverability, lease/fence correctness, or rate-limit discipline.
+DevBridge is security-sensitive automation. It turns remote task input into local development activity, so convenience never outranks capability boundaries, provenance, recoverability, lease/fence correctness, or rate-limit discipline.
 
 ## Required engineering cycle
 
@@ -26,11 +26,11 @@ Use the project principles together rather than as slogans:
 - CUPID: code should be composable, Unix-like, predictable, idiomatic, and domain-based.
 - KISS: prefer the smallest mechanism that preserves correctness and safety.
 
-Hexagonal boundaries are preferred where PATCH-POLLER touches GitHub, credentials, filesystems, processes, clocks, persistence, status delivery, human decision intake, agent coordination, sandboxing, runtime supervision, or daemon control.
+Hexagonal boundaries are preferred where DevBridge touches GitHub, credentials, filesystems, processes, clocks, persistence, status delivery, human decision intake, agent coordination, sandboxing, runtime supervision, or daemon control.
 
 ## Control-plane rule
 
-PATCH-POLLER owns authoritative run state, Git workspace state, capability policy, task provenance, checkpoint/decision state, lease/fence state, verification identity, publication state, runtime-update state, and daemon lifecycle state. Remote and local LLMs are proposal engines.
+DevBridge owns authoritative run state, Git workspace state, capability policy, task provenance, checkpoint/decision state, lease/fence state, verification identity, publication state, runtime-update state, and daemon lifecycle state. Remote and local LLMs are proposal engines.
 
 A model may propose a patch, repair, locally registered operation, architectural direction, or next step. It does not get to declare that its own proposal is accepted, that a checkpoint has been satisfied, that a capability exists, that a lease is owned, or that an external effect is authorized.
 
@@ -38,11 +38,11 @@ A model may propose a patch, repair, locally registered operation, architectural
 
 The preferred architecture is:
 
-`Primary chat controller -> PATCH-POLLER -> deterministic local operations -> verify -> seal/publish`
+`Primary chat controller -> DevBridge -> deterministic local operations -> verify -> seal/publish`
 
-The primary chat controller may author source text, tests, expected outputs, and structured intent. PATCH-POLLER owns materialization, executable/argv authority, sandbox admission, local process execution, cleanup, recovery, Git state, validation, and publication.
+The primary chat controller may author source text, tests, expected outputs, and structured intent. DevBridge owns materialization, executable/argv authority, sandbox admission, local process execution, cleanup, recovery, Git state, validation, and publication.
 
-Do not delegate deterministic machine work to a coding model merely because a model adapter exists. Compiler/tool discovery, process exit/stream capture, test execution, protocol fixtures, context receipts, cleanup, Git auditing, publication reconciliation, lease operations, daemon control, and runtime activation belong to PATCH-POLLER or deterministic registered adapters.
+Do not delegate deterministic machine work to a coding model merely because a model adapter exists. Compiler/tool discovery, process exit/stream capture, test execution, protocol fixtures, context receipts, cleanup, Git auditing, publication reconciliation, lease operations, daemon control, and runtime activation belong to DevBridge or deterministic registered adapters.
 
 Coding-model adapters such as Codex-family clients, Spark, or other external LLM tools are optional compatibility/inference surfaces and are disabled by default in the reference configuration. Use them only when local policy explicitly enables them and the task genuinely requires model inference or specifically tests that adapter.
 
@@ -56,7 +56,7 @@ Treat `github.trustedActorIds` as a **remote development-job submission allowlis
 
 If execution is locally enabled, a trusted task actor can submit valid work that causes development code to run on that runner within the runner's existing local capability/sandbox policy. The task protocol prevents direct arbitrary shell/argv/path/environment authority, but trusted task authors still have meaningful remote job-submission authority.
 
-PP-016 coordination leases do not solve human-to-workstation dispatch authorization. Current task envelopes are not cryptographically addressed to a destination agent. A peer public key authenticates lease evidence only; it is not task authority.
+DB-016 coordination leases do not solve human-to-workstation dispatch authorization. Current task envelopes are not cryptographically addressed to a destination agent. A peer public key authenticates lease evidence only; it is not task authority.
 
 Therefore:
 
@@ -65,16 +65,16 @@ Therefore:
 - do not claim that agent identity or lease ownership alone provides this isolation;
 - per-installation dispatch addressing/authorization remains roadmap work until it is implemented and tested.
 
-Any future addressing feature must preserve PP-002 exact task provenance and PP-003 local capability authority; an agent signature must not become a second general remote-command channel.
+Any future addressing feature must preserve DB-002 exact task provenance and DB-003 local capability authority; an agent signature must not become a second general remote-command channel.
 
 ## Context rollover and fresh-controller recovery
 
 A chat/model context is disposable controller state. It must never become the only place where accepted project progress, durable decisions, exact Git identity, lease identity, or the next intended action exists.
 
-PP-014 is normative for coordinating-agent context rollover:
+DB-014 is normative for coordinating-agent context rollover:
 
 - checkpoint durable controller state before context pressure becomes a failure mode;
-- use bounded `patch-poller/chat-handoff-v1` state, not an unbounded transcript dump;
+- use bounded `devbridge/chat-handoff-v1` state, not an unbounded transcript dump;
 - bind handoffs to exact repository/baseline/head/task identities and a whole-handoff SHA-256;
 - record stable completed action IDs and at most one exact `nextActionId`;
 - on fresh-context resume, observe/reconcile before acting;
@@ -84,11 +84,11 @@ PP-014 is normative for coordinating-agent context rollover:
 - checkpoint-and-proceed remains the default: a context checkpoint does not become a generic synchronous human gate;
 - large logs/diffs/test output belong behind bounded durable references rather than inside the handoff.
 
-Read PP-014 with PP-005 and PP-009 when changing chat handoff/checkpoint/recovery behavior.
+Read DB-014 with DB-005 and DB-009 when changing chat handoff/checkpoint/recovery behavior.
 
 ## Tool inventory and dynamic operation onboarding
 
-PP-015 is normative for local tool inventory, capability projection, and dynamic `tool.*` operations.
+DB-015 is normative for local tool inventory, capability projection, and dynamic `tool.*` operations.
 
 - Inventory reports local authority; it never creates authority.
 - Presence-only PATH discovery must not execute discovered binaries.
@@ -103,34 +103,34 @@ PP-015 is normative for local tool inventory, capability projection, and dynamic
 - Persist a synthesized manifest before registration and reconcile that local artifact on restart.
 - GitHub/repository/controller content cannot add to the local auto-onboarding allowlist or edit the local manifest root.
 
-Read PP-015 with PP-003, PP-012, and PP-013 when changing tool discovery, inventory projection, operation schemas, local manifests, or automatic onboarding.
+Read DB-015 with DB-003, DB-012, and DB-013 when changing tool discovery, inventory projection, operation schemas, local manifests, or automatic onboarding.
 
 ## Multi-agent identity, leases, and fencing
 
-PP-016 is normative when more than one authorized PATCH-POLLER installation or process can observe the same task queue.
+DB-016 is normative when more than one authorized DevBridge installation or process can observe the same task queue.
 
 - A persistent generated Ed25519 key identifies an installation; its public SHA-256 fingerprint/address is coordination identity, not execution authority.
 - Private identity keys are local control material. Hardware IDs, usernames, machine names, MAC addresses, and project paths are not secret key derivation material.
 - Peer public keys and coordination timing are local operator policy. Task/repository/model content cannot add a peer or choose a lease ref/repository/expected SHA/force mode.
 - GitHub issue labels/comments may mirror ownership for humans but are not the exclusive claim primitive.
-- The authoritative lease is a signed bounded subject stored behind a PATCH-POLLER-owned Git ref and changed only with an explicit expected-value `--force-with-lease=<ref>:<expected-sha>` update.
+- The authoritative lease is a signed bounded subject stored behind a DevBridge-owned Git ref and changed only with an explicit expected-value `--force-with-lease=<ref>:<expected-sha>` update.
 - Missing/ref-created, renewal, reclaim, release, and ambiguous push outcomes must be observed/reconciled rather than blind retried or force-overwritten.
 - An unexpired lease owned by another trusted peer defers the task. Unknown/unverifiable lease ownership fails closed.
-- A different local process using the same persistent key may not take over an unexpired session merely because it has the key. Immediate same-identity restart is allowed only when the daemon path has already acquired PATCH-POLLER's exclusive local singleton lock.
+- A different local process using the same persistent key may not take over an unexpired session merely because it has the key. Immediate same-identity restart is allowed only when the daemon path has already acquired DevBridge's exclusive local singleton lock.
 - A definite lease CAS loss fences immediately. Ambiguous transport failure does not invent a new owner, but the old local claim becomes unusable at its signed expiry.
-- Active task child processes receive the lease abort signal. Before sealing or publication PATCH-POLLER must renew and re-check the fence.
+- Active task child processes receive the lease abort signal. Before sealing or publication DevBridge must renew and re-check the fence.
 - Terminal release is a signed CAS transition, not blind lease-ref deletion.
 - Coordination-enabled task branches include the full public agent fingerprint; disabled single-agent deployments retain legacy branch naming.
-- A lease coordinates ownership only. It cannot approve hard gates, grant tool/filesystem/network/credential capability, create task-authority routing, replace PP-002 task provenance, or replace the durable run journal.
+- A lease coordinates ownership only. It cannot approve hard gates, grant tool/filesystem/network/credential capability, create task-authority routing, replace DB-002 task provenance, or replace the durable run journal.
 
-Read PP-016 with PP-002, PP-003, PP-004, PP-005, PP-008, PP-009, and PP-010 when changing agent identity, shared-queue claiming, heartbeat/TTL behavior, task branch namespaces, process fencing, lease recovery, or future per-agent routing.
+Read DB-016 with DB-002, DB-003, DB-004, DB-005, DB-008, DB-009, and DB-010 when changing agent identity, shared-queue claiming, heartbeat/TTL behavior, task branch namespaces, process fencing, lease recovery, or future per-agent routing.
 
 ## Baseline drift and publication reverification
 
-PP-017 is normative when an authorized task baseline may move while a run is in progress.
+DB-017 is normative when an authorized task baseline may move while a run is in progress.
 
 - `baseSha` is immutable start-of-run evidence. A later fetch must never rewrite the historical baseline recorded in the task receipt.
-- `publicationBaseSha` is the separate exact baseline against which the current candidate is verified for publication. It begins at `baseSha` and may advance only through PATCH-POLLER's reconciliation path.
+- `publicationBaseSha` is the separate exact baseline against which the current candidate is verified for publication. It begins at `baseSha` and may advance only through DevBridge's reconciliation path.
 - The run stays bound to the same authorized baseline ref/channel; a later default-branch change does not silently redirect an active task.
 - Only fast-forward upstream movement may be automatically reconciled. A baseline force-push/history rewrite checkpoints instead of being silently accepted.
 - Reconciliation starts from a sealed clean candidate and uses the hardened Git adapter. A failed rebase must be aborted and the exact pre-rebase candidate head restored before the controller proceeds.
@@ -139,15 +139,15 @@ PP-017 is normative when an authorized task baseline may move while a run is in 
 - Model-assisted local candidate drift consumes the next normal bounded verification turn. Deterministic local candidate drift consumes the next deterministic attempt; an exhausted deterministic window checkpoints to `waiting-feedback` instead of replaying indefinitely.
 - Changed-path checks, no-project-diff decisions, and publication evidence are relative to `publicationBaseSha`, while the original `baseSha` remains visible as historical evidence.
 - Task-branch publication receives the exact verified local head as controller-owned `expectedHeadSha`, rechecks the current clean local head against it, and pushes `<verified-sha>:<task-ref>`. Symbolic `HEAD` is not publication payload identity.
-- A rebase may rewrite a PATCH-POLLER-owned task branch only with an explicit expected remote head. First creation uses an explicitly empty expected value; later rewrite requires an exact predecessor head that PATCH-POLLER previously confirmed remotely. A merely local pre-rebase candidate SHA is not rewrite authority. Blind force is forbidden.
+- A rebase may rewrite a DevBridge-owned task branch only with an explicit expected remote head. First creation uses an explicitly empty expected value; later rewrite requires an exact predecessor head that DevBridge previously confirmed remotely. A merely local pre-rebase candidate SHA is not rewrite authority. Blind force is forbidden.
 - Ambiguous task-branch publication is reconciled by re-observing the exact remote head. If the remote already equals the intended verified local head the effect is idempotently accepted; otherwise only a previously confirmed predecessor may authorize retry. An unexplained remote head is never overwritten.
-- PP-016 fencing still governs reconciliation/sealing/publication effects when coordination is enabled, and the lease-aware publication wrapper must preserve the exact verified-head option while performing its fresh fence check before the delegate effect.
+- DB-016 fencing still governs reconciliation/sealing/publication effects when coordination is enabled, and the lease-aware publication wrapper must preserve the exact verified-head option while performing its fresh fence check before the delegate effect.
 
-Read PP-017 with PP-008, PP-009, PP-013, and PP-016 when changing task baselines, rebase behavior, post-drift verification, verified candidate identity, no-op publication, or task-branch publication CAS.
+Read DB-017 with DB-008, DB-009, DB-013, and DB-016 when changing task baselines, rebase behavior, post-drift verification, verified candidate identity, no-op publication, or task-branch publication CAS.
 
 ## Workstation resource governance and cooperative pause
 
-PP-018 is normative for background-workstation behavior and daemon pause/resume.
+DB-018 is normative for background-workstation behavior and daemon pause/resume.
 
 - Effective task admission is currently serialized to one task/run continuation at a time. `execution.maxConcurrentTasks` is not authority to create an ad-hoc parallel worker pool.
 - Model workers and deterministic child processes use below-normal OS priority by default.
@@ -156,16 +156,16 @@ PP-018 is normative for background-workstation behavior and daemon pause/resume.
 - Priority is QoS only. Do not represent it as a sandbox or a CPU/memory/thread quota.
 - `pause` is token-bound cooperative admission control at a safe task-cycle boundary, not `SIGSTOP`, thread suspension, or force-kill.
 - A fully paused daemon performs no normal polling/new task claiming, but preserves run/worktree/IPC/checkpoint/lease evidence and remains locally controllable.
-- A pause requested during active work does not suspend the active child or bypass PP-016 heartbeat/fencing; the current bounded cycle reaches its existing safe boundary first.
+- A pause requested during active work does not suspend the active child or bypass DB-016 heartbeat/fencing; the current bounded cycle reaches its existing safe boundary first.
 - `status` must distinguish pause-requested from pause-acknowledged state.
 - `stop` has precedence over pause and does not require a prior resume.
 - Stale daemon-control tokens must never affect a replacement owner.
 
-Read PP-018 with PP-004, PP-009, PP-011, PP-012, and PP-016 when changing daemon admission, pause/resume, process priority, or future resource-governance mechanisms.
+Read DB-018 with DB-004, DB-009, DB-011, DB-012, and DB-016 when changing daemon admission, pause/resume, process priority, or future resource-governance mechanisms.
 
 ## Human checkpoints
 
-PP-007 is normative for human-in-the-loop behavior.
+DB-007 is normative for human-in-the-loop behavior.
 
 - Checkpoint and proceed is the default; stop and wait is exceptional.
 - A checkpoint does not automatically pause the run.
@@ -212,21 +212,21 @@ Specs are normative unless a newer spec explicitly supersedes them. If a spec be
 
 Keep implementation details out of broad principles unless they are genuine invariants. Keep security-critical invariants out of informal README prose only; they belong in specs and tests.
 
-Live normative contracts are currently PP-001 through PP-018.
+Live normative contracts are currently DB-001 through DB-018.
 
-When implementing run coordination or human decision handling, read PP-001, PP-003, PP-005, PP-006, PP-007, and PP-009 together.
+When implementing run coordination or human decision handling, read DB-001, DB-003, DB-005, DB-006, DB-007, and DB-009 together.
 
-When implementing controller plans, deterministic operations/toolchain behavior, baseline channels, self-update activation, cleanup, context receipts, no-op publication, fault injection, capability doctor, or liveness changes, read PP-013 together with PP-003, PP-008, PP-009, PP-010, PP-011, and PP-012.
+When implementing controller plans, deterministic operations/toolchain behavior, baseline channels, self-update activation, cleanup, context receipts, no-op publication, fault injection, capability doctor, or liveness changes, read DB-013 together with DB-003, DB-008, DB-009, DB-010, DB-011, and DB-012.
 
-When implementing coordinating-chat rollover, budget pressure, durable chat handoffs, or fresh-context resume/reconciliation, read PP-014 with PP-005 and PP-009.
+When implementing coordinating-chat rollover, budget pressure, durable chat handoffs, or fresh-context resume/reconciliation, read DB-014 with DB-005 and DB-009.
 
-When implementing local tool discovery, inventory/projection, dynamic operations, operator manifests, or unfamiliar-tool onboarding, read PP-015 with PP-003, PP-012, and PP-013.
+When implementing local tool discovery, inventory/projection, dynamic operations, operator manifests, or unfamiliar-tool onboarding, read DB-015 with DB-003, DB-012, and DB-013.
 
-When implementing multi-agent identity/leases/fencing or future per-agent routing, read PP-016 with PP-002, PP-003, PP-004, PP-005, PP-008, PP-009, and PP-010.
+When implementing multi-agent identity/leases/fencing or future per-agent routing, read DB-016 with DB-002, DB-003, DB-004, DB-005, DB-008, DB-009, and DB-010.
 
-When implementing baseline drift/rebase/reverification/publication CAS, read PP-017 with PP-008, PP-009, PP-013, and PP-016.
+When implementing baseline drift/rebase/reverification/publication CAS, read DB-017 with DB-008, DB-009, DB-013, and DB-016.
 
-When implementing daemon pause/resume, task admission, child priority, or resource governance, read PP-018 with PP-004, PP-009, PP-011, PP-012, and PP-016.
+When implementing daemon pause/resume, task admission, child priority, or resource governance, read DB-018 with DB-004, DB-009, DB-011, DB-012, and DB-016.
 
 `docs/handoffs/` and point-in-time audit documents are historical evidence. Do not update checksum-bound handoffs to make them look current and do not let them override newer specs/mainline status.
 
@@ -234,7 +234,7 @@ When implementing daemon pause/resume, task admission, child priority, or resour
 
 The core runtime is Node.js and should prefer Node standard-library facilities. Do not introduce another language, a shell-dependent core path, or a third-party dependency without documenting why the ownership boundary needs it and what new supply-chain or portability cost it creates.
 
-Do not introduce Python into PATCH-POLLER or its project workflow.
+Do not introduce Python into DevBridge or its project workflow.
 
 ## Testing
 

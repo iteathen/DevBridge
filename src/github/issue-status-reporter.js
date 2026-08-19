@@ -19,12 +19,12 @@ async function taskLeaseAllowsEffect() {
 
 function renderBody({ runId, revision, stage, summary, capsule, sequence }) {
   return [
-    `<!-- patch-poller-status run=${runId} revision=${revision} sequence=${sequence} -->`,
-    `## PATCH-POLLER — ${stage}`,
+    `<!-- devbridge-status run=${runId} revision=${revision} sequence=${sequence} -->`,
+    `## DevBridge — ${stage}`,
     '',
     summary,
     '',
-    '```patch-poller-context',
+    '```devbridge-context',
     JSON.stringify(capsule, null, 2),
     '```'
   ].join('\n');

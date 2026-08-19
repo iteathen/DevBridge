@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { ProtocolError } from '../errors.js';
 
-export const CONTROLLER_PLAN_PROTOCOL = 'patch-poller/controller-plan-v1';
+export const CONTROLLER_PLAN_PROTOCOL = 'devbridge/controller-plan-v1';
 const MAX_PLAN_BYTES = 1_048_576;
 const MAX_FILES = 256;
 const MAX_FILE_BYTES = 256 * 1024;
@@ -66,8 +66,8 @@ export function normalizePlanPath(value, name = 'path') {
     throw new ProtocolError(`${name} contains an unsafe path segment`);
   }
   const first = segments[0].toLowerCase();
-  if (first === '.git' || first === '.patch-poller') {
-    throw new ProtocolError(`${name} targets a reserved PATCH-POLLER path`);
+  if (first === '.git' || first === '.devbridge') {
+    throw new ProtocolError(`${name} targets a reserved DevBridge path`);
   }
   return normalized;
 }

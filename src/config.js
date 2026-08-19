@@ -246,7 +246,7 @@ export function validateConfig(raw) {
   const contextRollover = normalizeContextRollover(config);
   const coordination = normalizeCoordinationConfig(config.coordination ?? {}, { pollIntervalMs });
   const toolOnboarding = normalizeToolOnboarding(execution);
-  const branchPrefix = requireString(publication.branchPrefix ?? 'patchpoller', 'publication.branchPrefix');
+  const branchPrefix = requireString(publication.branchPrefix ?? 'devbridge', 'publication.branchPrefix');
   if (!BRANCH_PREFIX_RE.test(branchPrefix)) throw new ConfigurationError('publication.branchPrefix must be a safe branch segment');
   const faultInjection = normalizeFaultInjection(execution);
   const decisionAuthorities = normalizeDecisionAuthorities(execution);
@@ -259,7 +259,7 @@ export function validateConfig(raw) {
     version: 1,
     github: {
       queueRepository,
-      taskLabel: requireString(github.taskLabel ?? 'patch-poller:ready', 'github.taskLabel'),
+      taskLabel: requireString(github.taskLabel ?? 'devbridge:ready', 'github.taskLabel'),
       trustedActorIds: trustedActorIds.map(String),
       tokenEnv: githubAuth.environmentVariables[0],
       auth: githubAuth,
@@ -282,7 +282,7 @@ export function validateConfig(raw) {
       baselineChannels: baselines.channels,
       defaultBaselineChannel: baselines.defaultChannel,
     },
-    state: { directory: absolutePath(state.directory ?? '~/.patch-poller/state', 'state.directory') },
+    state: { directory: absolutePath(state.directory ?? '~/.devbridge/state', 'state.directory') },
     contextRollover,
     coordination,
     git: {

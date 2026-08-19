@@ -143,7 +143,7 @@ export async function discoverPathTools({
     });
   }
   return {
-    protocol: 'patch-poller/tool-discovery-v1',
+    protocol: 'devbridge/tool-discovery-v1',
     platform,
     tools,
     directoriesScanned: indexes.length,

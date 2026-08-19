@@ -1,20 +1,20 @@
-# PP-013 — Chat-controller deterministic execution plans
+# DB-013 — Chat-controller deterministic execution plans
 
 Status: active
 
-Implementation status: implemented on current main. The PP-013 foundation, safe self-hosting, reusable deterministic infrastructure, and efficiency/observability phases have landed; later specs PP-014 through PP-018 extend this contract without replacing it.
+Implementation status: implemented on current main. The DB-013 foundation, safe self-hosting, reusable deterministic infrastructure, and efficiency/observability phases have landed; later specs DB-014 through DB-018 extend this contract without replacing it.
 
-This spec defines PATCH-POLLER's bounded, composable, deterministic execution protocol. It replaces repeated bespoke diagnostic profiles as the preferred machine-work path while preserving PATCH-POLLER's control-plane authority.
+This spec defines DevBridge's bounded, composable, deterministic execution protocol. It replaces repeated bespoke diagnostic profiles as the preferred machine-work path while preserving DevBridge's control-plane authority.
 
-Read together with PP-001, PP-003, PP-005, PP-008, PP-009, PP-010, PP-011, and PP-012. This spec does not weaken any existing security, Git, provenance, recovery, or supervision rule.
+Read together with DB-001, DB-003, DB-005, DB-008, DB-009, DB-010, DB-011, and DB-012. This spec does not weaken any existing security, Git, provenance, recovery, or supervision rule.
 
 ## 1. Preferred execution architecture
 
 The preferred development and task path is:
 
-`Primary chat controller -> PATCH-POLLER -> deterministic local operations -> verify -> seal -> publish`
+`Primary chat controller -> DevBridge -> deterministic local operations -> verify -> seal -> publish`
 
-The primary chat controller may author source text, tests, expected outputs, and structured execution intent. PATCH-POLLER owns local filesystem materialization, process/tool authority, runtime state, Git state, validation, cleanup, recovery, and publication.
+The primary chat controller may author source text, tests, expected outputs, and structured execution intent. DevBridge owns local filesystem materialization, process/tool authority, runtime state, Git state, validation, cleanup, recovery, and publication.
 
 Coding-model adapters such as Codex-family clients, Spark, or other external LLM coding tools are optional compatibility adapters, not the default execution engine. They MUST be disabled by default in the intended production/reference configuration and MUST require explicit local enablement. Historical implementation-campaign restrictions recorded in `docs/handoffs/` are point-in-time constraints and are not standing prohibitions after those campaigns have merged; current user instructions, local policy, and active specs govern current work.
 
@@ -37,16 +37,16 @@ Remote/controller content MUST NOT provide or grant:
 - unbounded delete/cleanup roots;
 - arbitrary plugin/module loading;
 - sandbox exceptions;
-- PP-016 peer keys/lease authority;
-- PP-018 daemon-control or priority authority.
+- DB-016 peer keys/lease authority;
+- DB-018 daemon-control or priority authority.
 
-Local configuration and PATCH-POLLER-owned adapters remain the only authority for those concerns.
+Local configuration and DevBridge-owned adapters remain the only authority for those concerns.
 
 ## 3. Controller-plan envelope
 
 The implemented versioned envelope is:
 
-`patch-poller/controller-plan-v1`
+`devbridge/controller-plan-v1`
 
 Future protocol versions may evolve field names only when they preserve the normative semantic ownership boundaries below.
 
@@ -74,8 +74,8 @@ Each proposal MUST:
 - pass the same canonical containment/no-follow policy as all other managed workspace writes;
 - be bounded in count and byte size;
 - use an explicit supported encoding/content representation;
-- never target `.git`, linked-worktree administrative files, PATCH-POLLER reserved runtime exchange paths, or locally forbidden paths;
-- be treated as proposal content until PATCH-POLLER independently validates/seals it.
+- never target `.git`, linked-worktree administrative files, DevBridge reserved runtime exchange paths, or locally forbidden paths;
+- be treated as proposal content until DevBridge independently validates/seals it.
 
 For replacement/deletion, the protocol SHOULD support an expected-existing-content identity/digest so stale controller plans cannot silently overwrite a different revision.
 
@@ -89,13 +89,13 @@ Operation-generated persistent output MUST NOT become implicitly authorized thro
 
 Plans may include project-local files used only for tests/fixtures.
 
-Every ephemeral file created by PATCH-POLLER MUST be entered into a durable cleanup ledger before or atomically with creation. Cleanup ownership therefore remains with PATCH-POLLER even if the test/process fails or the daemon restarts.
+Every ephemeral file created by DevBridge MUST be entered into a durable cleanup ledger before or atomically with creation. Cleanup ownership therefore remains with DevBridge even if the test/process fails or the daemon restarts.
 
 Ephemeral files MUST NOT become candidate project changes.
 
 ## 5. Deterministic operation registry
 
-Controller plans may reference logical operation identifiers only. The operation identifier resolves through PATCH-POLLER/local configuration to a trusted adapter.
+Controller plans may reference logical operation identifiers only. The operation identifier resolves through DevBridge/local configuration to a trusted adapter.
 
 Examples of useful/current operation classes include:
 
@@ -105,7 +105,7 @@ Examples of useful/current operation classes include:
 - CTest operations;
 - native compile/link/program operations;
 - bounded Git/read-only validation operations;
-- locally controlled PP-015 `tool.*` operations.
+- locally controlled DB-015 `tool.*` operations.
 
 These examples do not authorize an unregistered operation.
 
@@ -122,13 +122,13 @@ Each registered operation MUST own:
 
 A controller MAY provide validated domain parameters such as a project-relative source path, a count, a seed, a build configuration, or an expected test name when the registered adapter schema explicitly permits them. It MUST NOT provide raw argv/shell syntax that bypasses adapter policy.
 
-Unknown future registered deterministic operations MUST default to the repository-code execution class until deliberately classified otherwise. Repository-code operations MUST pass the verified outer sandbox boundary under PP-003.
+Unknown future registered deterministic operations MUST default to the repository-code execution class until deliberately classified otherwise. Repository-code operations MUST pass the verified outer sandbox boundary under DB-003.
 
 ## 6. Local toolchain registry and discovery
 
 Machine-specific toolchain identity is local authority.
 
-PATCH-POLLER SHOULD provide a reusable local registry/resolver for Node, CMake, CTest, native C/C++ compiler/linker, and other locally approved deterministic tools. Current main implements this foundation.
+DevBridge SHOULD provide a reusable local registry/resolver for Node, CMake, CTest, native C/C++ compiler/linker, and other locally approved deterministic tools. Current main implements this foundation.
 
 Discovery SHOULD be cached with enough sanitized metadata to avoid rediscovering the same tool repeatedly while still detecting meaningful local changes. Cache/inventory entries may include:
 
@@ -140,7 +140,7 @@ Discovery SHOULD be cached with enough sanitized metadata to avoid rediscovering
 
 Absolute machine paths MUST NOT be projected into remote status unless explicitly safe and required; normally only family/version/capability should be reported.
 
-PP-015 extends this boundary with presence-only general tool inventory and locally pre-authorized dynamic operation onboarding. Binary presence or tool documentation MUST NOT create executable authority.
+DB-015 extends this boundary with presence-only general tool inventory and locally pre-authorized dynamic operation onboarding. Binary presence or tool documentation MUST NOT create executable authority.
 
 ## 7. Structured assertions
 
@@ -160,11 +160,11 @@ Supported assertion classes SHOULD include:
 - workspace is clean after cleanup;
 - context receipt matches the submitted input/revision.
 
-Assertion evaluation is PATCH-POLLER-owned. A controller MUST NOT submit executable assertion code.
+Assertion evaluation is DevBridge-owned. A controller MUST NOT submit executable assertion code.
 
 ## 8. Managed scratch transaction and cleanup ledger
 
-PATCH-POLLER MUST make temporary lifecycle ownership automatic.
+DevBridge MUST make temporary lifecycle ownership automatic.
 
 For every run/plan it SHOULD persist a cleanup ledger describing paths/resources created as ephemeral state. The lifecycle should be conceptually:
 
@@ -174,7 +174,7 @@ Cleanup MUST execute under recovery/finalization semantics after success, failur
 
 Cleanup may delete only:
 
-- exact paths PATCH-POLLER registered as ephemeral for this run; or
+- exact paths DevBridge registered as ephemeral for this run; or
 - descendants of a locally controlled reserved scratch root created for this run.
 
 Remote/controller content MUST NOT authorize arbitrary recursive cleanup roots.
@@ -190,7 +190,7 @@ A cleanup failure that leaves an unexpected project artifact is terminal evidenc
 
 ## 9. Automatic context receipt
 
-PATCH-POLLER MUST make exact context identity first-class rather than requiring a worker to echo context text.
+DevBridge MUST make exact context identity first-class rather than requiring a worker to echo context text.
 
 Each execution result/terminal context SHOULD include a bounded receipt containing:
 
@@ -201,34 +201,34 @@ Each execution result/terminal context SHOULD include a bounded receipt containi
 - run identity;
 - effective baseline SHA.
 
-The receipt is generated by PATCH-POLLER from the exact input it delivered/consumed, not asserted by the external tool.
+The receipt is generated by DevBridge from the exact input it delivered/consumed, not asserted by the external tool.
 
 When a test needs to verify literal payload transport, exact echo may still be used, but ordinary continuation should rely on the receipt.
 
-PP-014 later specializes coordinating-chat handoff identity; it does not replace this exact plan/context receipt.
+DB-014 later specializes coordinating-chat handoff identity; it does not replace this exact plan/context receipt.
 
 ## 10. Baseline-by-channel authority
 
 Self-hosted/testing work exposed that `main` is not always the correct task baseline.
 
-PATCH-POLLER MUST support local semantic baseline channels, for example:
+DevBridge MUST support local semantic baseline channels, for example:
 
 - `production`
 - `testing`
 
 Local configuration maps each channel to an authorized repository/ref policy. Remote/controller content may request a semantic intent only if local policy permits it; it MUST NOT grant an arbitrary raw ref/SHA.
 
-At run creation PATCH-POLLER resolves the effective authorized baseline to one exact commit SHA and persists it as immutable `baseSha` start-of-run evidence.
+At run creation DevBridge resolves the effective authorized baseline to one exact commit SHA and persists it as immutable `baseSha` start-of-run evidence.
 
-PP-017 introduces a separate `publicationBaseSha` that may advance only through the controlled same-ref fast-forward reconciliation/reverification path. That later publication identity MUST NOT rewrite the original PP-013 start-baseline evidence.
+DB-017 introduces a separate `publicationBaseSha` that may advance only through the controlled same-ref fast-forward reconciliation/reverification path. That later publication identity MUST NOT rewrite the original DB-013 start-baseline evidence.
 
 Do not bake a completed campaign branch name into this normative contract. The operator's current baseline-channel configuration is authoritative.
 
 ## 11. Transactional runtime activation
 
-Moving a mutable update branch MUST NOT automatically make an unvalidated candidate the running daemon. Runtime release authority and candidate execution are separate boundaries and MUST follow PP-010 and PP-011.
+Moving a mutable update branch MUST NOT automatically make an unvalidated candidate the running daemon. Runtime release authority and candidate execution are separate boundaries and MUST follow DB-010 and DB-011.
 
-PATCH-POLLER distinguishes two release-integrity modes:
+DevBridge distinguishes two release-integrity modes:
 
 - **development/testing:** a locally configured mutable testing channel may identify candidate transport. This is explicit alpha behavior and is not production release integrity.
 - **production:** the mutable stable channel is transport only. Local trusted configuration MUST provide a signed immutable release manifest and Ed25519 public key binding fixed repository identity, exact 40-hex commit, package version, and exact platform-neutral runtime artifact SHA-256.
@@ -238,7 +238,7 @@ Runtime update SHOULD be a transaction:
 1. observe local release policy and exact current runtime;
 2. resolve the candidate identity: authorized mutable testing head in development, or independently signed immutable release subject plus matching stable transport in production;
 3. materialize/fetch into a separate candidate runtime location while current daemon remains available;
-4. perform PATCH-POLLER-owned static/integrity checks; in production, verify signature, repository, exact head, version, and artifact digest before executing candidate-controlled code;
+4. perform DevBridge-owned static/integrity checks; in production, verify signature, repository, exact head, version, and artifact digest before executing candidate-controlled code;
 5. verify configured OS sandbox provider and fail closed on unsupported/unverified hosts for candidate-controlled validation;
 6. run candidate-controlled preflight/tests only inside that verified sandbox with minimal environment, no control-plane credentials/state access, read-only Git administration, and denied network;
 7. recompute exact runtime artifact digest after sandbox validation and reject mutation; persist bounded release/artifact/sandbox evidence;
@@ -250,7 +250,7 @@ Runtime update SHOULD be a transaction:
 
 The previous runtime MUST remain available until the candidate is proven healthy. Candidate `doctor` is post-acceptance runtime-health evidence, not a substitute for release-integrity verification or sandboxed candidate validation.
 
-Activation state/effects are subject to PP-009 durable reconciliation rules.
+Activation state/effects are subject to DB-009 durable reconciliation rules.
 
 ## 12. Deterministic execution is default; model execution is exceptional
 
@@ -264,7 +264,7 @@ Coding-model profiles:
 - are used only when local policy enables them and task intent explicitly requires model inference or a test targets that adapter;
 - remain subordinate proposal engines under all existing Git/security rules.
 
-There is no longer a live PP-013 implementation-campaign prohibition on all model use. Historical handoffs retain the point-in-time campaign constraint; current work follows current user instructions, local policy, and active specs.
+There is no longer a live DB-013 implementation-campaign prohibition on all model use. Historical handoffs retain the point-in-time campaign constraint; current work follows current user instructions, local policy, and active specs.
 
 ## 13. No-op publication elision
 
@@ -281,7 +281,7 @@ A local diagnostic/test mode may explicitly force no-op publication when publica
 
 ## 14. Generic local-only fault injection
 
-Durability testing SHOULD use a reusable PATCH-POLLER-owned fault-injection facility rather than one profile per failure scenario.
+Durability testing SHOULD use a reusable DevBridge-owned fault-injection facility rather than one profile per failure scenario.
 
 Supported deterministic fault classes may include:
 
@@ -301,7 +301,7 @@ Test mode MAY use a bounded time-scale multiplier for retry/backoff so determini
 
 ## 15. Capability doctor
 
-PATCH-POLLER SHOULD provide one deterministic capability doctor covering:
+DevBridge SHOULD provide one deterministic capability doctor covering:
 
 - project read/write lifecycle;
 - ProcessRunner exact exit/stdout/stderr behavior;
@@ -312,11 +312,11 @@ PATCH-POLLER SHOULD provide one deterministic capability doctor covering:
 - locally registered tool invocation health;
 - profile-specific sandbox/provider behavior.
 
-Doctor output MUST identify the layer being tested so a model-adapter denial is never mistaken for PATCH-POLLER core behavior.
+Doctor output MUST identify the layer being tested so a model-adapter denial is never mistaken for DevBridge core behavior.
 
 It MUST never print secret values, arbitrary outside file bytes, or unnecessary absolute machine paths.
 
-PP-003/PP-015 additionally require declared profile policy, configured provider identity, and observed enforcement to remain distinct.
+DB-003/DB-015 additionally require declared profile policy, configured provider identity, and observed enforcement to remain distinct.
 
 ## 16. Long-running liveness projection
 
@@ -331,7 +331,7 @@ Coalesced active-run status SHOULD include bounded fields such as:
 - attempt number/retry state;
 - whether the process is still owned/alive when safely observable.
 
-Status mutation remains subject to PP-004 budget/pacing rules. The status reporter should edit/coalesce rather than append heartbeat comments.
+Status mutation remains subject to DB-004 budget/pacing rules. The status reporter should edit/coalesce rather than append heartbeat comments.
 
 ## 17. Testing-channel responsiveness
 
@@ -343,7 +343,7 @@ A local wake/nudge mechanism may be added if it does not create an inbound untru
 
 ## 18. Cheap preflight before broad CI
 
-PATCH-POLLER/self-update workflows SHOULD run the cheapest high-signal checks before expensive cross-platform or full-suite gates.
+DevBridge/self-update workflows SHOULD run the cheapest high-signal checks before expensive cross-platform or full-suite gates.
 
 Examples:
 
@@ -357,32 +357,32 @@ Full Windows/Ubuntu CI and project-defined acceptance suites remain authoritativ
 
 ## 19. Recovery and idempotence
 
-All controller-plan stages are subject to PP-009:
+All controller-plan stages are subject to DB-009:
 
 - persist intent before dependent external effects;
 - on restart, observe/reconcile before repeating;
 - do not rematerialize/rerun deterministic work unnecessarily when durable evidence proves the stage complete;
 - candidate verification/publication recovery MUST use exact persisted candidate/baseline identity and MUST NOT silently trust stale verification;
-- PP-017 drift/rebase recovery MUST invalidate/replay verification when exact candidate or publication-baseline identity changed;
+- DB-017 drift/rebase recovery MUST invalidate/replay verification when exact candidate or publication-baseline identity changed;
 - cleanup resumes from durable ledger;
 - duplicate plan revision does not execute twice;
 - newer revision is deferred while older revision of same task remains active unless local policy says otherwise.
 
 ## 20. Security invariants
 
-PP-013 does not permit convenience shortcuts around existing boundaries.
+DB-013 does not permit convenience shortcuts around existing boundaries.
 
 In particular:
 
-- PATCH-POLLER owns Git index/commit/push state.
+- DevBridge owns Git index/commit/push state.
 - Controller-provided project files are proposals, not accepted source until validated/sealed.
 - File paths are canonicalized/contained/no-follow checked.
 - Tool resolution/environment/capabilities remain local.
 - Child processes use `shell:false` unless an explicitly separate, locally approved shell adapter exists; the generic controller-plan protocol never takes shell text.
 - Credentials are not inherited by plan operations unless a dedicated local adapter explicitly requires and scopes them.
 - Output is bounded/redacted before remote projection.
-- No remote/controller plan can select arbitrary local baseline ref, executable path, SDK path, cleanup root, credential, network capability, sandbox exception, PP-016 peer/lease authority, or PP-018 daemon-control/priority authority.
-- PP-016 task leases/signatures coordinate ownership only; they do not create controller-plan or trusted-task authority.
+- No remote/controller plan can select arbitrary local baseline ref, executable path, SDK path, cleanup root, credential, network capability, sandbox exception, DB-016 peer/lease authority, or DB-018 daemon-control/priority authority.
+- DB-016 task leases/signatures coordinate ownership only; they do not create controller-plan or trusted-task authority.
 
 ## 21. Required acceptance coverage
 
@@ -390,7 +390,7 @@ The implementation MUST continue to satisfy at least these boundaries:
 
 ### File bundle / controller plan
 
-1. Chat-authored multi-file project materializes without modifying PATCH-POLLER source to create a task-specific profile.
+1. Chat-authored multi-file project materializes without modifying DevBridge source to create a task-specific profile.
 2. Replace/delete operations require correct expected-existing identity/digest when configured.
 3. Traversal, absolute paths, `.git`, reserved runtime paths, symlink/junction escapes, and oversized bundles are rejected.
 4. Expected changed-path set and exact final persistent create/replace/delete identity are enforced before sealing.
@@ -417,7 +417,7 @@ The implementation MUST continue to satisfy at least these boundaries:
 
 14. Baseline channel resolves through local policy to exact SHA and persists immutable start-baseline evidence.
 15. Raw unauthorized remote ref/SHA cannot override baseline.
-16. Upstream movement does not rewrite original `baseSha`; PP-017 governs separate publication-baseline reconciliation/reverification.
+16. Upstream movement does not rewrite original `baseSha`; DB-017 governs separate publication-baseline reconciliation/reverification.
 
 ### Runtime activation
 
@@ -429,7 +429,7 @@ The implementation MUST continue to satisfy at least these boundaries:
 ### Publication
 
 21. No-diff task publishes terminal evidence but does not push task branch by default.
-22. Changed task seals/publishes only through current PP-007 hard-gate, PP-016 lease/fence, PP-017 verified-head/baseline, and Git-CAS rules where applicable.
+22. Changed task seals/publishes only through current DB-007 hard-gate, DB-016 lease/fence, DB-017 verified-head/baseline, and Git-CAS rules where applicable.
 23. Forced no-op publication is possible only through local test/policy authority.
 
 ### Fault injection/recovery
@@ -441,15 +441,15 @@ The implementation MUST continue to satisfy at least these boundaries:
 
 ### Capability/liveness
 
-28. Capability doctor distinguishes PATCH-POLLER core/provider behavior from external adapter declarations.
+28. Capability doctor distinguishes DevBridge core/provider behavior from external adapter declarations.
 29. Long-running fixture produces coalesced liveness state without status-comment spam.
 30. Testing polling remains within GitHub budget/reserve rules.
 
-Later specs add mandatory acceptance coverage for PP-014 handoffs, PP-015 inventory/onboarding, PP-016 leases/fencing, PP-017 drift/reverification, and PP-018 pause/process-priority behavior.
+Later specs add mandatory acceptance coverage for DB-014 handoffs, DB-015 inventory/onboarding, DB-016 leases/fencing, DB-017 drift/reverification, and DB-018 pause/process-priority behavior.
 
 ## 22. Historical implementation phases — complete
 
-PP-013 was implemented by coherent ownership boundary:
+DB-013 was implemented by coherent ownership boundary:
 
 ### Phase A — controller plan foundation (P0)
 

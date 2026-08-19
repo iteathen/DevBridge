@@ -53,7 +53,7 @@ test('GitHub recovery seed keeps mailbox repository distinct from target reposit
     createdAt: '2026-08-18T18:45:00.000Z',
   });
   const record = {
-    protocol: 'patch-poller/chat-handoff-store-v1',
+    protocol: 'devbridge/chat-handoff-store-v1',
     state: 'ready',
     digest: chatHandoffDigest(handoff),
     handoff,
@@ -61,12 +61,12 @@ test('GitHub recovery seed keeps mailbox repository distinct from target reposit
     verifiedAt: handoff.createdAt,
   };
   const client = fakeGitHub();
-  const projector = new ChatHandoffProjector({ client, stateStore: memoryStore(), queueRepository: 'iteathen/PATCH-POLLER' });
+  const projector = new ChatHandoffProjector({ client, stateStore: memoryStore(), queueRepository: 'iteathen/DevBridge' });
   const projected = await projector.project({ issueNumber: 20, record });
-  assert.ok(projected.seed.includes('mailbox=iteathen/PATCH-POLLER'));
+  assert.ok(projected.seed.includes('mailbox=iteathen/DevBridge'));
   assert.ok(projected.seed.includes('repo=iteathen/TARGET-PROJECT'));
   const parsed = parseChatHandoffProjectionBody(client.comments[0].body);
-  assert.equal(parsed.seed.mailboxRepository, 'iteathen/PATCH-POLLER');
+  assert.equal(parsed.seed.mailboxRepository, 'iteathen/DevBridge');
   assert.equal(parsed.seed.repository, 'iteathen/TARGET-PROJECT');
   assert.equal(parsed.handoff.repository, 'iteathen/TARGET-PROJECT');
 });

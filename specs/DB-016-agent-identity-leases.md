@@ -1,4 +1,4 @@
-# PP-016 — Agent Identity, Task Leases, and Fencing
+# DB-016 — Agent Identity, Task Leases, and Fencing
 
 Status: active
 
@@ -6,13 +6,13 @@ Implementation status: implemented first multi-agent coordination boundary. Curr
 
 ## Goal
 
-Allow multiple locally authorized PATCH-POLLER daemons to share a GitHub task queue without treating remote text, mutable labels, or race-prone local observation as exclusive execution authority.
+Allow multiple locally authorized DevBridge daemons to share a GitHub task queue without treating remote text, mutable labels, or race-prone local observation as exclusive execution authority.
 
-A task lease is **coordination authority only**. It does not grant task trust, repository access, executable authority, credentials, sandbox capability, human-decision authority, human-to-workstation dispatch authority, or publication permission. PP-002/PP-003/PP-007/PP-010 continue to govern those boundaries.
+A task lease is **coordination authority only**. It does not grant task trust, repository access, executable authority, credentials, sandbox capability, human-decision authority, human-to-workstation dispatch authority, or publication permission. DB-002/DB-003/DB-007/DB-010 continue to govern those boundaries.
 
 ## Identity
 
-Each installation that enables multi-agent coordination owns a persistent local Ed25519 keypair under PATCH-POLLER control state.
+Each installation that enables multi-agent coordination owns a persistent local Ed25519 keypair under DevBridge control state.
 
 - The private key is local control material and is never written to a task repository, worker context, GitHub status, process environment, model prompt, or lease subject.
 - The public identity fingerprint is lowercase SHA-256 over the exact DER/SPKI public-key bytes.
@@ -26,13 +26,13 @@ A daemon session additionally owns a fresh random session ID. The persistent key
 
 ## Identity is not task addressing
 
-The existence of an installation identity does not imply that current `patch-poller/task-v1` tasks are addressed to that identity.
+The existence of an installation identity does not imply that current `devbridge/task-v1` tasks are addressed to that identity.
 
-Current task intake remains PP-002 GitHub authority:
+Current task intake remains DB-002 GitHub authority:
 
 - each runner locally configures its queue and trusted numeric task actors;
 - the current task envelope has no destination-agent fingerprint/address field;
-- PP-016 lease ownership determines which already-authorized compliant daemon owns the task revision, not whether the human author was permitted to dispatch to a specific workstation.
+- DB-016 lease ownership determines which already-authorized compliant daemon owns the task revision, not whether the human author was permitted to dispatch to a specific workstation.
 
 Therefore, when multiple workstations observe one queue and trust the same task actor, any eligible installation may claim that trusted task according to this lease protocol.
 
@@ -40,7 +40,7 @@ If a deployment requires developer A to be unable to cause work to run on develo
 
 A future per-installation task-addressing/dispatch mechanism may use the public identity as routing evidence, but it MUST:
 
-- preserve PP-002 exact issue-body/edit provenance;
+- preserve DB-002 exact issue-body/edit provenance;
 - require local operator authorization of which human/task sources may address the installation;
 - not let repository/task text add trusted destinations/peers;
 - not turn an agent signature into arbitrary executable/capability authority;
@@ -60,11 +60,11 @@ The local daemon always trusts its own persisted public key for self-recovery.
 
 ## Lease subject
 
-The signed lease subject uses a bounded `patch-poller/task-lease-v1` structure that binds at least:
+The signed lease subject uses a bounded `devbridge/task-lease-v1` structure that binds at least:
 
 - queue repository;
 - issue number;
-- exact PP-002 task revision digest;
+- exact DB-002 task revision digest;
 - owner fingerprint/address;
 - daemon session ID;
 - monotonically increasing fencing epoch;
@@ -73,7 +73,7 @@ The signed lease subject uses a bounded `patch-poller/task-lease-v1` structure t
 - expiry time for active state;
 - prior lease commit SHA when one exists.
 
-The signature is Ed25519 over canonical JSON constructed by PATCH-POLLER from validated fields. Arbitrary object key order or extra fields are not signed/accepted implicitly.
+The signature is Ed25519 over canonical JSON constructed by DevBridge from validated fields. Arbitrary object key order or extra fields are not signed/accepted implicitly.
 
 Lease content is public coordination evidence. It must not contain private keys, credentials, local filesystem paths, environment values, raw task text, or worker output.
 
@@ -85,9 +85,9 @@ The authoritative lease is a dedicated queue-repository Git ref under the fixed/
 
 `--force-with-lease=<ref>:<expected-sha>`
 
-For first creation the expected value is empty, meaning the ref must not already exist. For later transitions the exact previously observed lease commit SHA is supplied. If another writer advanced the ref, the update fails and PATCH-POLLER must re-observe rather than overwrite it.
+For first creation the expected value is empty, meaning the ref must not already exist. For later transitions the exact previously observed lease commit SHA is supplied. If another writer advanced the ref, the update fails and DevBridge must re-observe rather than overwrite it.
 
-PATCH-POLLER must never use unqualified `--force`, force-with-lease without an explicit expected SHA, or a label/comment race as equivalent authority.
+DevBridge must never use unqualified `--force`, force-with-lease without an explicit expected SHA, or a label/comment race as equivalent authority.
 
 The queue repository and lease-ref namespace are local configuration/control-plane choices. Task text cannot redirect the lease to another repository/ref.
 
@@ -97,7 +97,7 @@ A daemon may acquire a task revision only when one of these is true:
 
 1. the lease ref does not exist and creation succeeds with an explicit empty expected value;
 2. the current verified lease is `released` and replacement succeeds against its exact commit SHA;
-3. the current verified active lease is owned by the same persistent identity and either signed session ID is current or the caller already holds PATCH-POLLER's exclusive local daemon lock for that identity/state root, and replacement succeeds against exact commit SHA;
+3. the current verified active lease is owned by the same persistent identity and either signed session ID is current or the caller already holds DevBridge's exclusive local daemon lock for that identity/state root, and replacement succeeds against exact commit SHA;
 4. the current verified active lease is owned by a trusted peer and is expired beyond configured clock-skew margin, and replacement succeeds against exact commit SHA.
 
 An unexpired active lease owned by another trusted peer defers the task. An unexpired active lease owned by the same persistent key but a different session also defers unless the current control path has already proved local singleton ownership with the daemon lock. A shared private key alone is never sufficient proof that the previous local process is gone. Deferral is normal coordination, not task failure.
@@ -112,16 +112,16 @@ Each successful acquisition/renewal advances fencing epoch and records exact pre
 - A definite CAS loss immediately fences the old local claim.
 - A transient renewal/network failure does not claim ownership moved, but local claim becomes unusable once signed expiry is reached.
 - Before starting a new worker/operation or crossing sealing/publication effects, coordinator confirms local claim is not fenced/expired.
-- Long-running child execution is connected to lease-loss abort where runtime can terminate it. A stale process must not continue into later PATCH-POLLER-controlled effects after lease loss.
+- Long-running child execution is connected to lease-loss abort where runtime can terminate it. A stale process must not continue into later DevBridge-controlled effects after lease loss.
 - Even if an external child ignores/delays termination, sealing/publication remain fenced.
 
-This is a lease/fencing system, not a claim of perfect exactly-once computation under arbitrary partitions. Required invariant: two compliant daemons cannot both successfully hold the same authoritative lease ref state, and a stale holder cannot continue PATCH-POLLER-authorized effects after fence is observed/expired.
+This is a lease/fencing system, not a claim of perfect exactly-once computation under arbitrary partitions. Required invariant: two compliant daemons cannot both successfully hold the same authoritative lease ref state, and a stale holder cannot continue DevBridge-authorized effects after fence is observed/expired.
 
-## PP-018 pause interaction
+## DB-018 pause interaction
 
 A daemon pause request does not freeze an active leased child/process.
 
-PP-018 acknowledges pause only after the current bounded task cycle reaches its existing safe boundary. During the active cycle, lease heartbeat/fencing remains authoritative. A fully paused daemon performs no normal task polling/claiming, so it does not acquire new leases until resumed.
+DB-018 acknowledges pause only after the current bounded task cycle reaches its existing safe boundary. During the active cycle, lease heartbeat/fencing remains authoritative. A fully paused daemon performs no normal task polling/claiming, so it does not acquire new leases until resumed.
 
 Stop has precedence over pause and follows normal lease/run recovery semantics.
 
@@ -129,13 +129,13 @@ Stop has precedence over pause and follows normal lease/run recovery semantics.
 
 Terminal completion, cancellation, or handled failure transitions an owned lease to signed `released` state with CAS rather than deleting the ref. Keeping a final transition avoids ABA-style absent/ref-recreated ambiguity and preserves bounded forensic ancestry for that task revision.
 
-If daemon crashes before release, TTL expiry is the general recovery path. A replacement daemon using the same persistent identity may reconcile the unexpired lease immediately only after it has acquired PATCH-POLLER's exclusive local daemon lock, proving a second compliant daemon using that state root is not concurrently active. Non-exclusive one-shot execution does not receive this shortcut and respects existing session lease until expiry/release.
+If daemon crashes before release, TTL expiry is the general recovery path. A replacement daemon using the same persistent identity may reconcile the unexpired lease immediately only after it has acquired DevBridge's exclusive local daemon lock, proving a second compliant daemon using that state root is not concurrently active. Non-exclusive one-shot execution does not receive this shortcut and respects existing session lease until expiry/release.
 
-If release loses a CAS race, PATCH-POLLER must not overwrite successor. Terminal local run remains terminal; remote lease evidence is reported as reconciled/lost rather than force-corrected.
+If release loses a CAS race, DevBridge must not overwrite successor. Terminal local run remains terminal; remote lease evidence is reported as reconciled/lost rather than force-corrected.
 
 ## Candidate branch namespace
 
-When coordination is enabled, task candidate branches include full persistent agent fingerprint beneath the locally configured PATCH-POLLER branch prefix before issue/revision segment.
+When coordination is enabled, task candidate branches include full persistent agent fingerprint beneath the locally configured DevBridge branch prefix before issue/revision segment.
 
 This prevents two authorized agents working same/adjacent tasks from publishing to same candidate ref. Fingerprint namespace does not itself grant publication authority.
 
@@ -143,23 +143,23 @@ Single-agent deployments with coordination disabled retain existing branch namin
 
 ## Interaction with existing protocols
 
-- PP-002 exact task provenance remains required before lease acquisition and is the authority for trusted human task authors.
-- PP-003 capability/sandbox rules are unchanged.
-- PP-004 API budget rules still apply; lease transport uses Git ref operations rather than converting issue polling into high-frequency REST writes.
-- PP-005/PP-009 durable run state remains local; a lease is not a substitute for run journal or handoff.
-- PP-007 human checkpoints remain separate; peer lease ownership cannot approve hard gate.
-- PP-008 Git publication rules remain separate from lease-ref control updates.
-- PP-010 provenance remains authoritative for GitHub task/feedback/decision input. Agent signatures authenticate coordination peers only; they do not create a second remote task-command authority.
-- PP-014 context rollover does not transfer private identity key or mutate lease authority.
-- PP-015 tool inventory/onboarding cannot alter peer keys or lease configuration.
-- PP-017 preserves lease fencing while rebasing/reverifying/publishing exact candidate identity.
-- PP-018 pause/resource governance does not suspend/override lease heartbeat or fencing.
+- DB-002 exact task provenance remains required before lease acquisition and is the authority for trusted human task authors.
+- DB-003 capability/sandbox rules are unchanged.
+- DB-004 API budget rules still apply; lease transport uses Git ref operations rather than converting issue polling into high-frequency REST writes.
+- DB-005/DB-009 durable run state remains local; a lease is not a substitute for run journal or handoff.
+- DB-007 human checkpoints remain separate; peer lease ownership cannot approve hard gate.
+- DB-008 Git publication rules remain separate from lease-ref control updates.
+- DB-010 provenance remains authoritative for GitHub task/feedback/decision input. Agent signatures authenticate coordination peers only; they do not create a second remote task-command authority.
+- DB-014 context rollover does not transfer private identity key or mutate lease authority.
+- DB-015 tool inventory/onboarding cannot alter peer keys or lease configuration.
+- DB-017 preserves lease fencing while rebasing/reverifying/publishing exact candidate identity.
+- DB-018 pause/resource governance does not suspend/override lease heartbeat or fencing.
 
 ## Configuration
 
 Multi-agent coordination is disabled by default.
 
-When enabled, local configuration provides bounded handle, lease TTL, heartbeat interval, clock-skew margin, and optional trusted peer public keys. Current implementation uses the configured queue repository as coordination repository. Lease ref prefix is PATCH-POLLER-owned and not task-controlled.
+When enabled, local configuration provides bounded handle, lease TTL, heartbeat interval, clock-skew margin, and optional trusted peer public keys. Current implementation uses the configured queue repository as coordination repository. Lease ref prefix is DevBridge-owned and not task-controlled.
 
 Configuration validation requires:
 
@@ -171,7 +171,7 @@ Configuration validation requires:
 
 Same-identity takeover permission is not configuration and cannot be set by task/repository/model input. It is an in-process control fact supplied only by daemon path after local singleton lock has been acquired.
 
-Task-author trust is also not derived from `trustedPeers`; it remains separate local `github.trustedActorIds` policy under PP-002.
+Task-author trust is also not derived from `trustedPeers`; it remains separate local `github.trustedActorIds` policy under DB-002.
 
 ## Required tests
 
@@ -192,7 +192,7 @@ Tests must prove at minimum:
 - terminal release is signed/CAS-updated rather than blind deletion;
 - coordination-enabled candidate branches include full agent fingerprint while disabled mode retains legacy names;
 - lease loss prevents subsequent worker invocation, sealing, and publication effects;
-- PP-018 pause during active work does not bypass heartbeat/fencing, and fully paused daemon admits/claims no new task;
+- DB-018 pause during active work does not bypass heartbeat/fencing, and fully paused daemon admits/claims no new task;
 - no task/model/repository field can select peer key, lease repository/ref, expected SHA, force mode, same-identity takeover permission, or create dispatch authority;
 - task-author trust and peer trust remain independent configuration dimensions;
 - until a destination-address protocol exists, tests/docs do not claim lease identity alone prevents one trusted task author from dispatching work to another runner that also trusts that author.

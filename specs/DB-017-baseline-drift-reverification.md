@@ -1,4 +1,4 @@
-# PP-017 — Baseline Drift, Rebase, and Reverification
+# DB-017 — Baseline Drift, Rebase, and Reverification
 
 Status: active
 
@@ -6,16 +6,16 @@ Implementation status: implemented on current main: pre-publication fast-forward
 
 ## Goal
 
-A PATCH-POLLER task may run long enough for its authorized upstream baseline to advance. A candidate that was verified only against an older baseline must not be published as though it were verified against the current one.
+A DevBridge task may run long enough for its authorized upstream baseline to advance. A candidate that was verified only against an older baseline must not be published as though it were verified against the current one.
 
-PATCH-POLLER therefore reconciles the publication baseline immediately before final completion/publication, without rewriting the evidence describing where the task originally started.
+DevBridge therefore reconciles the publication baseline immediately before final completion/publication, without rewriting the evidence describing where the task originally started.
 
 ## Two baseline identities
 
 The run has two distinct Git identities:
 
-1. `baseSha` is the immutable **start baseline**. It records the exact commit from which the active run was originally created. PP-008 remains authoritative: later fetches never redefine this historical fact.
-2. `publicationBaseSha` is the exact **currently verified publication baseline**. It begins equal to `baseSha` and may advance only through PATCH-POLLER's reconciliation procedure below.
+1. `baseSha` is the immutable **start baseline**. It records the exact commit from which the active run was originally created. DB-008 remains authoritative: later fetches never redefine this historical fact.
+2. `publicationBaseSha` is the exact **currently verified publication baseline**. It begins equal to `baseSha` and may advance only through DevBridge's reconciliation procedure below.
 
 Candidate changed-path calculation, diff checks, no-op publication decisions, and final publication evidence use `publicationBaseSha`. Handoffs/context may expose both values, but must not relabel the publication baseline as the original task input.
 
@@ -23,9 +23,9 @@ The baseline branch/ref is also stable for the run. A later change to the reposi
 
 ## Reconciliation point
 
-Before a run is considered complete, PATCH-POLLER:
+Before a run is considered complete, DevBridge:
 
-1. seals dirty candidate changes into a PATCH-POLLER-owned local commit;
+1. seals dirty candidate changes into a DevBridge-owned local commit;
 2. refreshes the managed repository through the hardened Git adapter;
 3. resolves the same authorized baseline ref used by the run;
 4. compares its current head to `publicationBaseSha`;
@@ -42,16 +42,16 @@ A candidate commit created before step 2 is a local preliminary seal, not proof 
 Automatic reconciliation is permitted only when the newly observed baseline is a descendant of the current `publicationBaseSha`.
 
 - Normal fast-forward branch advancement may be rebased automatically.
-- A force-push/history rewrite of the baseline is not silently accepted. PATCH-POLLER enters an explicit waiting/checkpoint state with preserved evidence.
-- The candidate must itself descend from the persisted publication baseline before PATCH-POLLER attempts rebase.
-- Rebase runs with the hardened managed Git environment, disabled hooks, no inherited credential helpers, no interactive prompting, and explicit PATCH-POLLER commit identity.
+- A force-push/history rewrite of the baseline is not silently accepted. DevBridge enters an explicit waiting/checkpoint state with preserved evidence.
+- The candidate must itself descend from the persisted publication baseline before DevBridge attempts rebase.
+- Rebase runs with the hardened managed Git environment, disabled hooks, no inherited credential helpers, no interactive prompting, and explicit DevBridge commit identity.
 - Autostash is disabled; reconciliation starts only from a sealed clean candidate.
 
 ## Conflict behavior
 
 A failed automatic rebase must not leave the managed worktree in an unresolved Git-administration state.
 
-PATCH-POLLER captures the conflict path set when available, aborts the rebase, verifies that the exact pre-rebase candidate head was restored, and records the failure.
+DevBridge captures the conflict path set when available, aborts the rebase, verifies that the exact pre-rebase candidate head was restored, and records the failure.
 
 For a model-assisted task, a normal candidate conflict may return to the repair loop so the proposal can be adapted and reverified. A deterministic controller plan cannot invent conflict-resolution logic outside its signed/validated plan and therefore checkpoints instead. Baseline history rewrites checkpoint for all task types.
 
@@ -66,11 +66,11 @@ A successful rebase makes prior test/verification evidence stale for publication
 - The pre-rebase test list is removed from the current verification projection; the reconciliation history preserves the fact that it was invalidated.
 - Repeated baseline movement consumes the existing bounded task/turn window. It must not create an unbounded rebase/reverify loop.
 
-Post-verification local candidate drift follows the same evidence rule. Verification binds to the exact clean candidate identity that was observed when verification completed: its `headSha` and `publicationBaseSha`. Before a persisted `publishing` state may continue, PATCH-POLLER re-observes that identity. A dirty worktree, a different local `HEAD`, or a different publication baseline invalidates the prior verification evidence and clears its current test projection.
+Post-verification local candidate drift follows the same evidence rule. Verification binds to the exact clean candidate identity that was observed when verification completed: its `headSha` and `publicationBaseSha`. Before a persisted `publishing` state may continue, DevBridge re-observes that identity. A dirty worktree, a different local `HEAD`, or a different publication baseline invalidates the prior verification evidence and clears its current test projection.
 
 - Model-assisted local-drift reverification consumes the next normal bounded tool turn.
 - Deterministic local-drift reverification consumes the next deterministic verification attempt before replaying the validated plan.
-- If the deterministic attempt window is already exhausted, PATCH-POLLER checkpoints to `waiting-feedback` and does not invoke the plan executor or publication again until trusted continuation extends the bounded window.
+- If the deterministic attempt window is already exhausted, DevBridge checkpoints to `waiting-feedback` and does not invoke the plan executor or publication again until trusted continuation extends the bounded window.
 
 ## Exact verified candidate publication identity
 
@@ -88,25 +88,25 @@ The expected verified head is controller-owned recovery/verification evidence. T
 
 Baseline rebase rewrites candidate commit IDs, so a recoverable publication path cannot rely on blind force-push.
 
-For a PATCH-POLLER-owned task branch:
+For a DevBridge-owned task branch:
 
-- PATCH-POLLER first observes the exact remote branch head after validating the exact locally verified candidate identity.
+- DevBridge first observes the exact remote branch head after validating the exact locally verified candidate identity.
 - First creation uses an explicitly empty expected value with `--force-with-lease=<ref>:`.
 - If the remote already equals the exact verified local head, publication is treated as reconciled/idempotent and that exact observed head may be retained as confirmed remote state.
-- A rewritten rebased candidate may replace a remote head only when that exact head was previously confirmed on the remote through PATCH-POLLER's own publication/reconciliation path, using `--force-with-lease=<ref>:<expected-sha>`.
+- A rewritten rebased candidate may replace a remote head only when that exact head was previously confirmed on the remote through DevBridge's own publication/reconciliation path, using `--force-with-lease=<ref>:<expected-sha>`.
 - Merely having the same commit locally, including as a pre-rebase candidate head, does not make an unexplained remote branch authoritative or overwriteable.
-- Any other remote head fails closed; PATCH-POLLER does not overwrite an unexplained branch mutation.
-- After push, PATCH-POLLER re-observes the branch and records success only if the remote exact head equals the intended verified local head. This allows recovery from an ambiguous transport result without blind retry.
+- Any other remote head fails closed; DevBridge does not overwrite an unexplained branch mutation.
+- After push, DevBridge re-observes the branch and records success only if the remote exact head equals the intended verified local head. This allows recovery from an ambiguous transport result without blind retry.
 
 No task/model/controller input may choose the force mode or expected remote SHA.
 
 ## Coordination and recovery
 
-PP-016 still fences these effects. Reconciliation, sealing, and publication occur through the lease-aware workspace boundary when coordination is enabled. The lease-aware publication wrapper must preserve the exact `expectedHeadSha` option unchanged while performing the required fresh-lease check before the delegate publication effect.
+DB-016 still fences these effects. Reconciliation, sealing, and publication occur through the lease-aware workspace boundary when coordination is enabled. The lease-aware publication wrapper must preserve the exact `expectedHeadSha` option unchanged while performing the required fresh-lease check before the delegate publication effect.
 
-PP-009 recovery evidence remains authoritative for ambiguous effects. A restart resumes with the immutable `baseSha`, persisted `publicationBaseSha`, exact verified candidate snapshot when present, and a bounded set of exact task-branch heads that PATCH-POLLER previously confirmed remotely. It observes before mutating rather than resetting to a remembered branch state.
+DB-009 recovery evidence remains authoritative for ambiguous effects. A restart resumes with the immutable `baseSha`, persisted `publicationBaseSha`, exact verified candidate snapshot when present, and a bounded set of exact task-branch heads that DevBridge previously confirmed remotely. It observes before mutating rather than resetting to a remembered branch state.
 
-An interrupted publication does not require trusting an unconfirmed intended head. On recovery, PATCH-POLLER first confirms that the managed candidate still equals the persisted verified candidate identity. Then either the remote already equals that exact verified head, which is reconciled idempotently without overwrite, or it still equals a previously confirmed predecessor head, which may be used as the explicit `force-with-lease` expectation. Any local identity drift invalidates verification; any third remote state fails closed.
+An interrupted publication does not require trusting an unconfirmed intended head. On recovery, DevBridge first confirms that the managed candidate still equals the persisted verified candidate identity. Then either the remote already equals that exact verified head, which is reconciled idempotently without overwrite, or it still equals a previously confirmed predecessor head, which may be used as the explicit `force-with-lease` expectation. Any local identity drift invalidates verification; any third remote state fails closed.
 
 ## Required tests
 
@@ -132,4 +132,4 @@ Tests must cover at least:
 - already-converged exact remote state can be recorded as confirmed without another push when it equals the verified local head;
 - no-op publication is judged relative to `publicationBaseSha`, not the immutable start baseline;
 - the lease-aware publication boundary forwards the exact verified-head option and refuses delegate publication after fencing;
-- existing PP-008 Git hardening and PP-016 lease fencing remain intact.
+- existing DB-008 Git hardening and DB-016 lease fencing remain intact.

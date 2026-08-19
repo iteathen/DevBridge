@@ -67,7 +67,7 @@ test('doctor never upgrades an os declaration into enforcement when provider pro
     const builtIns = report.capabilities.adapters.builtIns;
     assert.ok(builtIns.length >= 1);
     for (const entry of builtIns) {
-      assert.equal(entry.source, 'patch-poller-builtin');
+      assert.equal(entry.source, 'devbridge-builtin');
       assert.equal(entry.declaredPolicy.toolEnforcement, 'none');
       assert.equal(entry.enforcement.verified, false);
     }
@@ -98,7 +98,7 @@ test('doctor exposes actual harmless boundary-probe observations when the platfo
     });
     const provider = report.capabilities.enforcementProvider;
     if (!provider.verified) {
-      if (process.env.PATCH_POLLER_REQUIRE_SANDBOX_TEST === '1') {
+      if (process.env.DEVBRIDGE_REQUIRE_SANDBOX_TEST === '1') {
         assert.fail(`CI requires verified sandbox capability reporting: ${provider.reason}`);
       }
       assert.equal(provider.boundaryProbe?.verified ?? false, false);

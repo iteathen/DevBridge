@@ -8,11 +8,11 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import * as legacy from './legacy-bootstrap.mjs';
+import * as runtimeCore from './runtime-bootstrap.mjs';
 
-export * from './legacy-bootstrap.mjs';
+export * from './runtime-bootstrap.mjs';
 
-const ACTIVATION_PROTOCOL = 'patch-poller/runtime-activation-v1';
+const ACTIVATION_PROTOCOL = 'devbridge/runtime-activation-v1';
 const CAPTURE_LIMIT = 4 * 1024 * 1024;
 const DEFAULT_HEALTH_WINDOW_MS = 2_000;
 const CHILD_RESTART_BACKOFF_MS = 5_000;
@@ -73,7 +73,7 @@ function activationRecord(state, paths, previous, candidate = null, extra = {}) 
 }
 
 export function resolveBootstrapPaths(args, environment = process.env) {
-  const base = legacy.resolveBootstrapPaths(args, environment);
+  const base = runtimeCore.resolveBootstrapPaths(args, environment);
   return {
     ...base,
     runtimeCandidates: path.join(base.home, 'runtime-candidates'),
@@ -101,27 +101,26 @@ export function readRuntimeActivationState(paths) {
   }
 }
 
-export function runPollerCli(command, paths, runtime, runner = defaultRunner) {
-  return legacy.runPollerCli(command, runtimePaths(paths, runtime), runtime, runner);
+export function runDevBridgeCli(command, paths, runtime, runner = defaultRunner) {
+  return runtimeCore.runDevBridgeCli(command, runtimePaths(paths, runtime), runtime, runner);
 }
 
-export function runPollerCliCaptured(command, paths, runtime, runner = defaultRunner) {
-  return legacy.runPollerCliCaptured(command, runtimePaths(paths, runtime), runtime, runner);
+export function runDevBridgeCliCaptured(command, paths, runtime, runner = defaultRunner) {
+  return runtimeCore.runDevBridgeCliCaptured(command, runtimePaths(paths, runtime), runtime, runner);
 }
 
 export function prepareLocalConfig(paths, runtime = null) {
-  return legacy.prepareLocalConfig(runtime ? runtimePaths(paths, runtime) : paths);
+  return runtimeCore.prepareLocalConfig(runtime ? runtimePaths(paths, runtime) : paths);
 }
 
-export function spawnPollerDaemon(paths, runtime, spawnImpl = spawn) {
-  return legacy.spawnPollerDaemon(runtimePaths(paths, runtime), runtime, spawnImpl);
+export function spawnDevBridgeDaemon(paths, runtime, spawnImpl = spawn) {
+  return runtimeCore.spawnDevBridgeDaemon(runtimePaths(paths, runtime), runtime, spawnImpl);
 }
 
 export async function stopExistingDaemon(paths, runtime, runner = defaultRunner, options = {}) {
-  return legacy.stopExistingDaemon(paths, runtime, runner, {
+  return runtimeCore.stopExistingDaemon(paths, runtime, runner, {
     ...options,
-    stopCommandFn: options.stopCommandFn ?? (() => runPollerCliCaptured('stop', paths, runtime, runner)),
-    forceLegacyStopFn: options.forceLegacyStopFn ?? (() => legacy.forceTerminateLegacyDaemon(paths, runtime, runner)),
+    stopCommandFn: options.stopCommandFn ?? (() => runDevBridgeCliCaptured('stop', paths, runtime, runner)),
   });
 }
 
@@ -153,7 +152,7 @@ function checkedCommand(executable, args, { cwd, env, runner, label, timeout }) 
   return result;
 }
 
-export function validateRuntimeCandidate(paths, runtime, runner = defaultRunner, { runDoctorFn = runPollerCli } = {}) {
+export function validateRuntimeCandidate(paths, runtime, runner = defaultRunner, { runDoctorFn = runDevBridgeCli } = {}) {
   const cwd = runtimeDirectory(paths, runtime);
   const env = candidateEnvironment();
   checkedCommand(process.execPath, [path.join(cwd, 'src', 'bootstrap', 'repository-preflight.mjs')], {
@@ -177,7 +176,7 @@ export async function prepareRuntimeCandidate(args, paths, {
   desiredRef,
   desiredHead,
   runner = defaultRunner,
-  ensureRuntimeFn = legacy.ensureRuntime,
+  ensureRuntimeFn = runtimeCore.ensureRuntime,
   validateCandidateFn = validateRuntimeCandidate,
 } = {}) {
   if (!desiredRef || !/^[0-9a-f]{40}$/iu.test(String(desiredHead))) throw new Error('candidate preparation requires a trusted ref and exact head');
@@ -192,7 +191,7 @@ export async function prepareRuntimeCandidate(args, paths, {
   return runtime;
 }
 
-export function loadPersistedHealthyRuntime(paths, runner = defaultRunner, { ensureRuntimeFn = legacy.ensureRuntime } = {}) {
+export function loadPersistedHealthyRuntime(paths, runner = defaultRunner, { ensureRuntimeFn = runtimeCore.ensureRuntime } = {}) {
   const record = readRuntimeActivationState(paths);
   const current = record?.current;
   if (!current || !['healthy', 'rolled-back', 'candidate-failed'].includes(record.state)) return null;
@@ -226,16 +225,16 @@ export async function superviseDaemon(args, paths, initialRuntime, {
   restartBackoffMs = CHILD_RESTART_BACKOFF_MS,
   healthWindowMs = DEFAULT_HEALTH_WINDOW_MS,
   maxIterations = Number.POSITIVE_INFINITY,
-  takeover = true,
-  remoteHeadFn = legacy.remoteBranchHead,
+  stopExisting = true,
+  remoteHeadFn = runtimeCore.remoteBranchHead,
   candidatePrepareFn = prepareRuntimeCandidate,
-  runPollerCliFn = runPollerCli,
+  runDevBridgeCliFn = runDevBridgeCli,
   stopExistingFn = stopExistingDaemon,
   updateCheckDelayFn = updateCheckDelay,
   healthCheckDelayFn = delay,
   delayFn = delay,
   signal = null,
-  resolveChannelRefFn = legacy.resolveChannelRef,
+  resolveChannelRefFn = runtimeCore.resolveChannelRef,
   recordActivationFn = writeRuntimeActivationState,
   initialActivation = null,
 } = {}) {
@@ -246,12 +245,12 @@ export async function superviseDaemon(args, paths, initialRuntime, {
   let failedCandidateHead = null;
   let firstUpdateCheck = true;
 
-  if (takeover) await stopExistingFn(paths, runtime, runner);
+  if (stopExisting) await stopExistingFn(paths, runtime, runner);
 
   while (iterations < maxIterations) {
     iterations += 1;
-    const child = spawnPollerDaemon(paths, runtime, spawnImpl);
-    process.stdout.write(`[patch-poller-supervisor] daemon-started runtime=${runtime.head}\n`);
+    const child = spawnDevBridgeDaemon(paths, runtime, spawnImpl);
+    process.stdout.write(`[devbridge-supervisor] daemon-started runtime=${runtime.head}\n`);
     const exitPromise = childExit(child);
 
     if (activation && runtime.head === activation.candidate.head) {
@@ -265,7 +264,7 @@ export async function superviseDaemon(args, paths, initialRuntime, {
           failedCandidate: activation.candidate,
           error: new Error(`candidate daemon exited before health window (code=${outcome.exit.code ?? 'null'}, signal=${outcome.exit.signal ?? 'none'})`),
         }));
-        process.stderr.write(`[patch-poller-supervisor] candidate-health-failed head=${activation.candidate.head}; rolling back to ${activation.previous.head}\n`);
+        process.stderr.write(`[devbridge-supervisor] candidate-health-failed head=${activation.candidate.head}; rolling back to ${activation.previous.head}\n`);
         runtime = activation.previous;
         ref = runtime.ref;
         failedCandidateHead = activation.candidate.head;
@@ -274,14 +273,14 @@ export async function superviseDaemon(args, paths, initialRuntime, {
         continue;
       }
 
-      const doctorStatus = runPollerCliFn('doctor', paths, runtime, runner);
+      const doctorStatus = runDevBridgeCliFn('doctor', paths, runtime, runner);
       if (doctorStatus !== 0) {
         await recordActivation(recordActivationFn, paths, activationRecord('health-failed', paths, activation.previous, activation.candidate, {
           current: activation.previous,
           failedCandidate: activation.candidate,
           error: new Error(`candidate health doctor failed with exit ${doctorStatus}`),
         }));
-        const stopStatus = runPollerCliFn('stop', paths, runtime, runner);
+        const stopStatus = runDevBridgeCliFn('stop', paths, runtime, runner);
         if (stopStatus !== 0 && stopStatus !== 3) throw new Error(`could not stop unhealthy candidate daemon (exit ${stopStatus})`);
         await exitPromise;
         runtime = activation.previous;
@@ -293,7 +292,7 @@ export async function superviseDaemon(args, paths, initialRuntime, {
       }
 
       await recordActivation(recordActivationFn, paths, activationRecord('healthy', paths, activation.previous, activation.candidate, { current: activation.candidate }));
-      process.stdout.write(`[patch-poller-supervisor] candidate-healthy head=${activation.candidate.head} previous=${activation.previous.head}\n`);
+      process.stdout.write(`[devbridge-supervisor] candidate-healthy head=${activation.candidate.head} previous=${activation.previous.head}\n`);
       ref = activation.candidate.ref;
       activation = null;
     }
@@ -319,9 +318,9 @@ export async function superviseDaemon(args, paths, initialRuntime, {
       if (outcome.type === 'operator-stop') {
         if (!operatorStopPending) {
           operatorStopPending = true;
-          const stopStatus = runPollerCliFn('stop', paths, runtime, runner);
+          const stopStatus = runDevBridgeCliFn('stop', paths, runtime, runner);
           if (stopStatus !== 0 && stopStatus !== 3) {
-            process.stderr.write(`[patch-poller-supervisor] operator-stop-request-exit=${stopStatus}; waiting for daemon boundary\n`);
+            process.stderr.write(`[devbridge-supervisor] operator-stop-request-exit=${stopStatus}; waiting for daemon boundary\n`);
           }
         }
         continue;
@@ -336,7 +335,7 @@ export async function superviseDaemon(args, paths, initialRuntime, {
           desiredRef = resolveChannelRefFn(args.channel, { paths, runner });
           remoteHead = remoteHeadFn(desiredRef, { paths, runner });
         } catch (error) {
-          process.stderr.write(`[patch-poller-supervisor] update-check-error ${error.message}\n`);
+          process.stderr.write(`[devbridge-supervisor] update-check-error ${error.message}\n`);
           continue;
         }
         if (!remoteHead || (remoteHead === runtime.head && desiredRef === ref) || remoteHead === failedCandidateHead) continue;
@@ -353,14 +352,14 @@ export async function superviseDaemon(args, paths, initialRuntime, {
             failedCandidate: planned,
             error,
           }));
-          process.stderr.write(`[patch-poller-supervisor] candidate-validation-failed ${error.message}; current runtime remains ${runtime.head}\n`);
+          process.stderr.write(`[devbridge-supervisor] candidate-validation-failed ${error.message}; current runtime remains ${runtime.head}\n`);
           continue;
         }
 
         if (signal?.aborted) {
           operatorStopPending = true;
-          const stopStatus = runPollerCliFn('stop', paths, runtime, runner);
-          if (stopStatus !== 0 && stopStatus !== 3) process.stderr.write(`[patch-poller-supervisor] operator-stop-request-exit=${stopStatus}\n`);
+          const stopStatus = runDevBridgeCliFn('stop', paths, runtime, runner);
+          if (stopStatus !== 0 && stopStatus !== 3) process.stderr.write(`[devbridge-supervisor] operator-stop-request-exit=${stopStatus}\n`);
           continue;
         }
 
@@ -368,16 +367,16 @@ export async function superviseDaemon(args, paths, initialRuntime, {
         updatePending = true;
         await recordActivation(recordActivationFn, paths, activationRecord('candidate-validated', paths, runtime, candidate, { current: runtime }));
         await recordActivation(recordActivationFn, paths, activationRecord('drain-requested', paths, runtime, candidate, { current: runtime }));
-        process.stdout.write(`[patch-poller-supervisor] candidate-validated current=${runtime.head} next=${candidate.head}; requesting daemon drain\n`);
-        const stopStatus = runPollerCliFn('stop', paths, runtime, runner);
+        process.stdout.write(`[devbridge-supervisor] candidate-validated current=${runtime.head} next=${candidate.head}; requesting daemon drain\n`);
+        const stopStatus = runDevBridgeCliFn('stop', paths, runtime, runner);
         if (stopStatus !== 0 && stopStatus !== 3) {
-          process.stderr.write(`[patch-poller-supervisor] stop-request-exit=${stopStatus}; waiting for daemon boundary\n`);
+          process.stderr.write(`[devbridge-supervisor] stop-request-exit=${stopStatus}; waiting for daemon boundary\n`);
         }
         continue;
       }
 
       if (operatorStopPending) {
-        process.stdout.write('[patch-poller-supervisor] daemon-stopped cleanly; supervisor exiting\n');
+        process.stdout.write('[devbridge-supervisor] daemon-stopped cleanly; supervisor exiting\n');
         return 0;
       }
       if (updatePending && pendingActivation) {
@@ -388,10 +387,10 @@ export async function superviseDaemon(args, paths, initialRuntime, {
         break;
       }
       if (outcome.exit.code === 0) {
-        process.stdout.write('[patch-poller-supervisor] daemon-stopped cleanly; supervisor exiting\n');
+        process.stdout.write('[devbridge-supervisor] daemon-stopped cleanly; supervisor exiting\n');
         return 0;
       }
-      process.stderr.write(`[patch-poller-supervisor] daemon-exited code=${outcome.exit.code ?? 'null'} signal=${outcome.exit.signal ?? 'none'}; restarting\n`);
+      process.stderr.write(`[devbridge-supervisor] daemon-exited code=${outcome.exit.code ?? 'null'} signal=${outcome.exit.signal ?? 'none'}; restarting\n`);
       await delayFn(restartBackoffMs);
       break;
     }
@@ -400,36 +399,36 @@ export async function superviseDaemon(args, paths, initialRuntime, {
 }
 
 export async function bootstrap(argv = process.argv.slice(2), runner = defaultRunner) {
-  legacy.assertSupportedNode();
-  const args = legacy.parseBootstrapArgs(argv);
+  runtimeCore.assertSupportedNode();
+  const args = runtimeCore.parseBootstrapArgs(argv);
   const paths = resolveBootstrapPaths(args);
   const runtimeExists = existsSync(paths.runtime);
 
   let runtime = loadPersistedHealthyRuntime(paths, runner);
   if (!runtime) {
-    runtime = legacy.ensureRuntime(runtimeExists ? { ...args, update: false } : args, paths, runner);
+    runtime = runtimeCore.ensureRuntime(runtimeExists ? { ...args, update: false } : args, paths, runner);
     runtime = { ...runtime, runtimeDir: paths.runtime };
   }
 
-  process.stdout.write(`[patch-poller-bootstrap] channel=${args.channel} ref=${runtime.ref} version=${runtime.version} head=${runtime.head}\n`);
+  process.stdout.write(`[devbridge-bootstrap] channel=${args.channel} ref=${runtime.ref} version=${runtime.version} head=${runtime.head}\n`);
   if (prepareLocalConfig(paths, runtime)) {
     process.stdout.write(
-      `[patch-poller-bootstrap] Created safe local config: ${paths.config}\n` +
-      '[patch-poller-bootstrap] Review execution/controller-plan policy and enable execution only when ready.\n' +
-      '[patch-poller-bootstrap] Then run this same command again.\n',
+      `[devbridge-bootstrap] Created safe local config: ${paths.config}\n` +
+      '[devbridge-bootstrap] Review execution/controller-plan policy and enable execution only when ready.\n' +
+      '[devbridge-bootstrap] Then run this same command again.\n',
     );
     return 0;
   }
 
   if (args.command === 'status' || args.command === 'stop') {
-    return runPollerCli(args.command, paths, runtime, runner);
+    return runDevBridgeCli(args.command, paths, runtime, runner);
   }
 
-  const doctorStatus = runPollerCli('doctor', paths, runtime, runner);
+  const doctorStatus = runDevBridgeCli('doctor', paths, runtime, runner);
   if (doctorStatus !== 0 || args.command === 'doctor') return doctorStatus;
 
   if (args.command !== 'daemon' && args.command !== 'restart') {
-    return runPollerCli(args.command, paths, runtime, runner);
+    return runDevBridgeCli(args.command, paths, runtime, runner);
   }
 
   await stopExistingDaemon(paths, runtime, runner);
@@ -442,7 +441,7 @@ export async function bootstrap(argv = process.argv.slice(2), runner = defaultRu
       { ...args, command: 'daemon' },
       paths,
       runtime,
-      { runner, takeover: false, signal: controller.signal },
+      { runner, stopExisting: false, signal: controller.signal },
     );
   } finally {
     process.removeListener('SIGINT', requestStop);

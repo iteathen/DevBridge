@@ -265,7 +265,7 @@ export async function createRuntime(config, {
   const builtIns = builtInToolProfiles();
   for (const name of Object.keys(builtIns)) {
     if (Object.hasOwn(config.tools, name)) {
-      throw new Error(`local tool profile name ${name} is reserved by PATCH-POLLER`);
+      throw new Error(`local tool profile name ${name} is reserved by DevBridge`);
     }
   }
   const deterministicProfileNames = Object.keys(builtIns);

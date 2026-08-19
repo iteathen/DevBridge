@@ -117,7 +117,7 @@ test('local manifest directory loading is deterministic and collisions fail clos
       { name: 'tool.beta', layer: 'local-manifest' },
     ]);
     for (const entry of described) {
-      assert.equal(entry.parameterSchema.protocol, 'patch-poller/operation-parameters-v1');
+      assert.equal(entry.parameterSchema.protocol, 'devbridge/operation-parameters-v1');
       assert.equal(entry.parameterSchema.requireAnyParameter, true);
       assert.equal(entry.parameterSchema.parameters.some((parameter) => parameter.name === 'input' && parameter.required === true), true);
       assert.equal(JSON.stringify(entry.parameterSchema).includes('--verbose'), false);

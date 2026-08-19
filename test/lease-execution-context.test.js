@@ -100,7 +100,7 @@ test('lease-aware publication forwards exact verified-head options only after a 
     async publishTaskBranch(workspace, options) {
       assert.equal(manager.calls.filter(([kind]) => kind === 'fresh').length, 1);
       publicationCalls.push({ workspace, options });
-      return { branch: 'patchpoller/issue-49-fixture', headSha: options.expectedHeadSha };
+      return { branch: 'devbridge/issue-49-fixture', headSha: options.expectedHeadSha };
     }
   };
   const wrapped = context.wrapWorkspaceManager(delegate);

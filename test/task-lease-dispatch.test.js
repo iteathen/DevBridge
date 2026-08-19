@@ -8,8 +8,8 @@ const REVISION = 'a'.repeat(64);
 
 function task() {
   return {
-    queueRepository: 'iteathen/PATCH-POLLER',
-    repository: 'iteathen/PATCH-POLLER',
+    queueRepository: 'iteathen/DevBridge',
+    repository: 'iteathen/DevBridge',
     issueNumber: 49,
     revision: REVISION,
     envelope: { controllerPlan: {} },
@@ -20,7 +20,7 @@ function cycleRuntime(overrides = {}) {
   return {
     config: {
       execution: { enabled: true },
-      github: { queueRepository: 'iteathen/PATCH-POLLER', pollIntervalMs: 60_000 },
+      github: { queueRepository: 'iteathen/DevBridge', pollIntervalMs: 60_000 },
     },
     stateStore: { entries: async () => [] },
     rateBudget: {
@@ -108,14 +108,14 @@ test('RunCoordinator preserves resumable state when a lease fence blocks an effe
     },
     processRunner: { run: async () => { throw new Error('must not invoke worker'); } },
     controllerPlanExecutor: null,
-    queueRepository: 'iteathen/PATCH-POLLER',
+    queueRepository: 'iteathen/DevBridge',
     tools: {},
     controllerPlansEnabled: true,
     modelAdaptersEnabled: false,
   });
   const currentTask = task();
   await assert.rejects(coordinator.executeTask(currentTask), TaskLeaseLostError);
-  const key = `run.iteathen/PATCH-POLLER#49.${REVISION}`;
+  const key = `run.iteathen/DevBridge#49.${REVISION}`;
   const saved = await stateStore.get(key);
   assert.equal(saved.stage, 'preparing');
   assert.equal(saved.error, undefined);

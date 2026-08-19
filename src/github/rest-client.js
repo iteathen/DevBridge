@@ -118,7 +118,7 @@ export class GitHubRestClient {
       Accept: 'application/vnd.github+json',
       Authorization: `Bearer ${token}`,
       'X-GitHub-Api-Version': this.#apiVersion,
-      'User-Agent': 'PATCH-POLLER/0.1'
+      'User-Agent': 'DevBridge/0.1'
     };
 
     const key = conditional && method === 'GET' && this.#stateStore ? cacheKey(url) : null;

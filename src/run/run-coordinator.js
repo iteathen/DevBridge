@@ -242,13 +242,13 @@ export class RunCoordinator {
 
   async #recordCandidateRejection(key, state, workspace, error) {
     const snapshot = await this.#workspace.snapshot(workspace);
-    const summary = `PATCH-POLLER candidate validation rejected the proposal: ${error.message}`;
+    const summary = `DevBridge candidate validation rejected the proposal: ${error.message}`;
     state.stage = 'running';
     state.finalSnapshot = null;
     state.prior.changedFiles = snapshot.changedFiles;
     state.prior.git = gitProjection(snapshot);
     state.prior.blockers = [summary];
-    state.prior.nextStep = 'Repair the candidate validation issues in the working tree, re-run relevant read-only checks, and report complete only when correct. Do not stage or commit; PATCH-POLLER owns Git administrative state.';
+    state.prior.nextStep = 'Repair the candidate validation issues in the working tree, re-run relevant read-only checks, and report complete only when correct. Do not stage or commit; DevBridge owns Git administrative state.';
     state.prior.progress.push(summary);
     await this.#save(key, state);
     await this.#publish(state, 'REPAIRING', summary, snapshot, { force: true });
@@ -258,7 +258,7 @@ export class RunCoordinator {
   async #recordBaselineReverification(key, state, workspace, error) {
     const snapshot = await this.#workspace.snapshot(workspace);
     const reconciliation = error.reconciliation ?? {};
-    const summary = `PATCH-POLLER rebased the sealed candidate from publication baseline ${reconciliation.fromBaseSha ?? 'unknown'} to ${reconciliation.toBaseSha ?? snapshot.publicationBaseSha}; prior verification is stale and must be repeated before publication.`;
+    const summary = `DevBridge rebased the sealed candidate from publication baseline ${reconciliation.fromBaseSha ?? 'unknown'} to ${reconciliation.toBaseSha ?? snapshot.publicationBaseSha}; prior verification is stale and must be repeated before publication.`;
     state.finalSnapshot = null;
     state.baselineReverifyRequired = true;
     state.baselineReconciliation ??= { history: [] };
@@ -277,7 +277,7 @@ export class RunCoordinator {
     state.prior.blockers = [];
     state.prior.nextStep = state.task.envelope.controllerPlan
       ? 'Re-run the deterministic controller plan and all of its assertions against the rebased publication baseline before finalization.'
-      : 'The upstream baseline advanced and PATCH-POLLER rebased the sealed candidate. Re-run the relevant verification/tests against this rebased worktree before reporting complete. Do not stage or commit; PATCH-POLLER owns Git administrative state.';
+      : 'The upstream baseline advanced and DevBridge rebased the sealed candidate. Re-run the relevant verification/tests against this rebased worktree before reporting complete. Do not stage or commit; DevBridge owns Git administrative state.';
     state.prior.progress.push(summary);
     state.stage = state.task.envelope.controllerPlan ? 'controller-plan' : 'running';
     await this.#save(key, state);
@@ -293,7 +293,7 @@ export class RunCoordinator {
       state.baselineReverifyRequired = false;
       const blocker = `Publication baseline kept advancing through the bounded ${turnLimit}-attempt deterministic reverification window; trusted continuation feedback is required.`;
       state.prior.blockers = [blocker];
-      state.prior.nextStep = 'Inspect the publication-baseline drift and provide a trusted continuation decision. PATCH-POLLER will not replay the deterministic plan outside its bounded verification window.';
+      state.prior.nextStep = 'Inspect the publication-baseline drift and provide a trusted continuation decision. DevBridge will not replay the deterministic plan outside its bounded verification window.';
       await this.#save(key, state);
       await this.#publish(state, 'WAITING_FEEDBACK', blocker, await this.#workspace.snapshot(workspace), { force: true });
       return {
@@ -312,14 +312,14 @@ export class RunCoordinator {
 
   async #recordBaselineCheckpoint(key, state, workspace, error) {
     const snapshot = await this.#workspace.snapshot(workspace);
-    const summary = `PATCH-POLLER cannot safely reconcile the publication baseline automatically: ${error.message}`;
+    const summary = `DevBridge cannot safely reconcile the publication baseline automatically: ${error.message}`;
     state.stage = 'waiting-feedback';
     state.finalSnapshot = null;
     state.baselineReverifyRequired = false;
     state.prior.changedFiles = snapshot.changedFiles;
     state.prior.git = gitProjection(snapshot);
     state.prior.blockers = [summary];
-    state.prior.nextStep = 'Inspect the upstream baseline change and provide a trusted continuation decision. PATCH-POLLER will not rewrite upstream history or leave an unresolved rebase in the managed worktree.';
+    state.prior.nextStep = 'Inspect the upstream baseline change and provide a trusted continuation decision. DevBridge will not rewrite upstream history or leave an unresolved rebase in the managed worktree.';
     state.prior.progress.push(summary);
     await this.#save(key, state);
     await this.#publish(state, 'WAITING_FEEDBACK', summary, snapshot, { force: true });
@@ -342,7 +342,7 @@ export class RunCoordinator {
     if (observedPublicationBase !== verifiedPublicationBase) {
       reasons.push(`publication baseline changed from ${verifiedPublicationBase} to ${observedPublicationBase}`);
     }
-    const summary = `PATCH-POLLER observed local candidate identity drift after verification (${reasons.join('; ')}); prior verification is stale and must be repeated before publication.`;
+    const summary = `DevBridge observed local candidate identity drift after verification (${reasons.join('; ')}); prior verification is stale and must be repeated before publication.`;
     state.finalSnapshot = null;
     state.baselineReverifyRequired = false;
     state.prior.changedFiles = snapshot.changedFiles;
@@ -351,7 +351,7 @@ export class RunCoordinator {
     state.prior.blockers = [];
     state.prior.nextStep = state.task.envelope.controllerPlan
       ? 'Re-run the deterministic controller plan and all of its assertions against the current managed candidate before publication.'
-      : 'The managed candidate changed after verification. Re-run the relevant verification/tests against the current worktree before reporting complete. Do not stage or commit; PATCH-POLLER owns Git administrative state.';
+      : 'The managed candidate changed after verification. Re-run the relevant verification/tests against the current worktree before reporting complete. Do not stage or commit; DevBridge owns Git administrative state.';
     state.prior.progress.push(summary);
 
     if (state.task.envelope.controllerPlan) {
@@ -361,7 +361,7 @@ export class RunCoordinator {
         const blocker = `Local candidate identity kept drifting after verification through the bounded ${turnLimit}-attempt deterministic reverification window; trusted continuation feedback is required.`;
         state.stage = 'waiting-feedback';
         state.prior.blockers = [blocker];
-        state.prior.nextStep = 'Inspect the post-verification local candidate drift and provide a trusted continuation decision. PATCH-POLLER will not replay the deterministic plan outside its bounded verification window.';
+        state.prior.nextStep = 'Inspect the post-verification local candidate drift and provide a trusted continuation decision. DevBridge will not replay the deterministic plan outside its bounded verification window.';
         await this.#save(key, state);
         await this.#publish(state, 'WAITING_FEEDBACK', blocker, snapshot, { force: true });
         return {
@@ -597,7 +597,7 @@ export class RunCoordinator {
           await this.#save(key, state);
           if (rejectedFeedback.length > 0) {
             const summary = polled.provenanceRetryRequired
-              ? `Ignored ${rejectedFeedback.length} authority-shaped feedback comment(s) because exact edit provenance is temporarily unverifiable; the feedback cursor was not advanced and PATCH-POLLER will retry.`
+              ? `Ignored ${rejectedFeedback.length} authority-shaped feedback comment(s) because exact edit provenance is temporarily unverifiable; the feedback cursor was not advanced and DevBridge will retry.`
               : `Ignored ${rejectedFeedback.length} authority-shaped feedback comment(s) because creator/editor provenance did not satisfy local trust policy.`;
             await this.#publish(state, 'WAITING_FEEDBACK', summary, null);
           }
@@ -754,7 +754,7 @@ export class RunCoordinator {
         const run = await this.#runner.run({
           profile,
           projectDir: workspace.worktreeDir,
-          runDir: path.join(workspace.worktreeDir, '.patch-poller', state.runId, `turn-${nextTurn}`),
+          runDir: path.join(workspace.worktreeDir, '.devbridge', state.runId, `turn-${nextTurn}`),
           runId: state.runId,
           context
         });

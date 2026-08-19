@@ -3,10 +3,10 @@ import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { PolicyError } from '../errors.js';
 
-const LOCK_PROTOCOL = 'patch-poller/daemon-lock-v1';
-const STOP_PROTOCOL = 'patch-poller/daemon-stop-v1';
-const PAUSE_PROTOCOL = 'patch-poller/daemon-pause-v1';
-const PAUSED_PROTOCOL = 'patch-poller/daemon-paused-v1';
+const LOCK_PROTOCOL = 'devbridge/daemon-lock-v1';
+const STOP_PROTOCOL = 'devbridge/daemon-stop-v1';
+const PAUSE_PROTOCOL = 'devbridge/daemon-pause-v1';
+const PAUSED_PROTOCOL = 'devbridge/daemon-paused-v1';
 
 function stopFilePath(filePath, token) { return `${filePath}.stop-${token}`; }
 function pauseFilePath(filePath, token) { return `${filePath}.pause-${token}`; }
@@ -22,7 +22,7 @@ function validateLockRecord(record, filePath) {
       !Number.isSafeInteger(record.pid) || record.pid <= 0 ||
       typeof record.token !== 'string' || !/^[0-9a-f-]{36}$/iu.test(record.token) ||
       typeof record.createdAt !== 'string') {
-    throw new PolicyError(`PATCH-POLLER daemon lock is malformed at ${filePath}`);
+    throw new PolicyError(`DevBridge daemon lock is malformed at ${filePath}`);
   }
   return record;
 }
@@ -37,7 +37,7 @@ export async function readDaemonLock(filePath) {
   try { return validateLockRecord(JSON.parse(text), filePath); }
   catch (error) {
     if (error instanceof PolicyError) throw error;
-    throw new PolicyError(`PATCH-POLLER daemon lock is malformed at ${filePath}`);
+    throw new PolicyError(`DevBridge daemon lock is malformed at ${filePath}`);
   }
 }
 
@@ -50,11 +50,11 @@ async function readControlRecord(recordPath, { protocol, token, kind, timestampF
   }
   let record;
   try { record = JSON.parse(text); }
-  catch { throw new PolicyError(`PATCH-POLLER daemon ${kind} record is malformed at ${recordPath}`); }
+  catch { throw new PolicyError(`DevBridge daemon ${kind} record is malformed at ${recordPath}`); }
   if (record?.protocol !== protocol || record.token !== token ||
       !Number.isSafeInteger(record.pid) || record.pid <= 0 ||
       typeof record[timestampField] !== 'string') {
-    throw new PolicyError(`PATCH-POLLER daemon ${kind} record is malformed at ${recordPath}`);
+    throw new PolicyError(`DevBridge daemon ${kind} record is malformed at ${recordPath}`);
   }
   return { record, recordPath };
 }
@@ -105,7 +105,7 @@ export async function acquireDaemonLock(filePath) {
     if (error?.code !== 'EEXIST') throw error;
     let detail = '';
     try { detail = await readFile(filePath, 'utf8'); } catch {}
-    throw new PolicyError(`PATCH-POLLER daemon lock already exists at ${filePath}${detail ? `: ${detail.trim()}` : ''}`);
+    throw new PolicyError(`DevBridge daemon lock already exists at ${filePath}${detail ? `: ${detail.trim()}` : ''}`);
   }
   const record = { protocol: LOCK_PROTOCOL, pid: process.pid, token, createdAt: new Date().toISOString() };
   await handle.writeFile(`${JSON.stringify(record)}\n`, 'utf8');

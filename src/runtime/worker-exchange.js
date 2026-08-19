@@ -5,9 +5,9 @@ import path from 'node:path';
 import process from 'node:process';
 import { PolicyError } from '../errors.js';
 
-export const WORKER_EXCHANGE_PROTOCOL = 'patch-poller/worker-exchange-v1';
-export const WORKER_CONTEXT_FILE = '/run/patch-poller-exchange/context.json';
-export const WORKER_RESULT_FILE = '/run/patch-poller-exchange/result.json';
+export const WORKER_EXCHANGE_PROTOCOL = 'devbridge/worker-exchange-v1';
+export const WORKER_CONTEXT_FILE = '/run/devbridge-exchange/context.json';
+export const WORKER_RESULT_FILE = '/run/devbridge-exchange/result.json';
 
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const DEFAULT_RESULT_LIMIT = 1_048_576;
@@ -51,7 +51,7 @@ function assertAnchoredPair(primaryInfo, anchorInfo, primaryFile) {
     linkCount(primaryInfo) !== linkCount(anchorInfo) ||
     !sameIdentity(primaryInfo, anchorInfo)
   ) {
-    throw new PolicyError(`${primaryFile} was replaced after PATCH-POLLER established worker-exchange ownership`);
+    throw new PolicyError(`${primaryFile} was replaced after DevBridge established worker-exchange ownership`);
   }
 }
 
@@ -62,12 +62,12 @@ function expectedUid() {
 
 function assertOwned(info, name) {
   const uid = expectedUid();
-  if (uid != null && info.uid !== uid) throw new PolicyError(`${name} is not owned by the PATCH-POLLER service identity`);
+  if (uid != null && info.uid !== uid) throw new PolicyError(`${name} is not owned by the DevBridge service identity`);
 }
 
 function assertPrivateMode(info, name) {
   if (expectedUid() != null && (info.mode & 0o077n) !== 0n) {
-    throw new PolicyError(`${name} is accessible outside the PATCH-POLLER service identity`);
+    throw new PolicyError(`${name} is accessible outside the DevBridge service identity`);
   }
 }
 
@@ -94,7 +94,7 @@ async function secureStat(candidate, kind, expectedIdentity = null) {
   if (kind === 'directory') assertDirectory(info, candidate);
   else assertFile(info, candidate);
   if (expectedIdentity && !sameIdentity(info, expectedIdentity)) {
-    throw new PolicyError(`${candidate} was replaced after PATCH-POLLER established worker-exchange ownership`);
+    throw new PolicyError(`${candidate} was replaced after DevBridge established worker-exchange ownership`);
   }
   return info;
 }
@@ -103,7 +103,7 @@ async function ensurePrivateDirectory(candidate) {
   await mkdir(candidate, { recursive: true, mode: 0o700 });
   const initial = await lstat(candidate, { bigint: true });
   if (initial.isSymbolicLink() || !initial.isDirectory()) {
-    throw new PolicyError(`${candidate} must be a real PATCH-POLLER-owned directory`);
+    throw new PolicyError(`${candidate} must be a real DevBridge-owned directory`);
   }
   assertOwned(initial, candidate);
   if (expectedUid() != null && (initial.mode & 0o077n) !== 0n) await chmod(candidate, 0o700);

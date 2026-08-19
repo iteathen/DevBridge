@@ -14,4 +14,4 @@ For current implementation and remaining work, use:
 
 When a historical audit says a feature is missing but a later accepted PR/spec implements it, keep the audit unchanged and update the live documentation instead. Conversely, a historical passing audit does not prove current correctness after later changes; current acceptance must come from current tests/evidence.
 
-`PP-DURABILITY-AUDIT-0818.md` predates multiple later hardening and capability slices, including the PP-013 controller-plan campaign, PP-014 context rollover, PP-015 tool inventory/onboarding, PP-016 leases/fencing, PP-017 baseline reverification, and PP-018 runtime governance. Read it as historical evidence only.
+`PP-DURABILITY-AUDIT-0818.md` predates multiple later hardening and capability slices, including the DB-013 controller-plan campaign, DB-014 context rollover, DB-015 tool inventory/onboarding, DB-016 leases/fencing, DB-017 baseline reverification, and DB-018 runtime governance. Read it as historical evidence only.
