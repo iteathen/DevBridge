@@ -10,8 +10,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  smoke:
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -19,71 +24,59 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22.16.0
-      - name: Install Bubblewrap sandbox provider
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap apparmor-profiles
-          test -f /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
-          sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
-          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
       - name: Cheap preflight
+        timeout-minutes: 1
         run: npm run preflight
-      - name: Issue 30 config tests
-        run: node --test test/config.test.js
-      - name: Manifest argv envelope
-        run: node --test --test-name-pattern="local manifest materializes" test/local-operation-manifest.test.js
-      - name: Manifest parameter boundary
-        run: node --test --test-name-pattern="dynamic manifest parameters" test/local-operation-manifest.test.js
-      - name: Manifest nonempty guard
-        run: node --test --test-name-pattern="requireAnyParameter" test/local-operation-manifest.test.js
-      - name: Manifest directory recovery
-        run: node --test --test-name-pattern="local manifest directory loading" test/local-operation-manifest.test.js
-      - name: Onboarding help parser
-        run: node --test --test-name-pattern="help parser synthesizes" test/tool-onboarding.test.js
-      - name: Onboarding sandbox and persistence
-        run: node --test --test-name-pattern="automatic onboarding requires" test/tool-onboarding.test.js
-      - name: Onboarding unavailable and blocked
-        run: node --test --test-name-pattern="unavailable or blocked" test/tool-onboarding.test.js
-      - name: Onboarding local policy
-        run: node --test --test-name-pattern="local onboarding policy" test/tool-onboarding.test.js
-      - name: Issue 30 schema tests
-        run: node --test test/dynamic-tool-schema.test.js
-      - name: Issue 49 coordination boundary tests
-        run: >-
-          node --test
-          test/agent-identity.test.js
-          test/task-lease.test.js
-          test/task-lease-store.test.js
-          test/task-lease-store-reconciliation.test.js
-          test/task-lease-manager.test.js
-          test/coordination-config.test.js
-          test/task-lease-dispatch.test.js
-          test/lease-execution-context.test.js
-          test/lease-process-abort.test.js
-          test/agent-branch-namespace.test.js
-          test/task-lease-control-path.test.js
-          test/task-lease-effect-frontier.test.js
-      - name: Issue 49 baseline drift boundary tests
-        run: >-
-          node --test
-          test/workspace-manager.test.js
-          test/baseline-reverify.test.js
-          test/baseline-reverify-recovery.test.js
-          test/workspace-publication-cas.test.js
-      - name: Issue 49 runtime governance boundary tests
-        run: >-
-          node --test
-          test/daemon-lock.test.js
-          test/daemon-governance.test.js
-          test/process-priority.test.js
-          test/supervisor.test.js
+      - name: Standalone installer regression
+        timeout-minutes: 1
+        run: node --test test/standalone-launcher.test.js
+
+  test:
+    needs: smoke
+    timeout-minutes: 6
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+      - name: Prepare Bubblewrap sandbox provider
+        if: runner.os == 'Linux'
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euxo pipefail
+          profile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          if ! command -v bwrap >/dev/null 2>&1 || ! command -v apparmor_parser >/dev/null 2>&1 || [ ! -f "$profile" ]; then
+            sudo apt-get \
+              -o Acquire::Retries=2 \
+              -o Acquire::http::Timeout=15 \
+              -o Acquire::https::Timeout=15 \
+              update
+            sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              bubblewrap apparmor apparmor-profiles
+          fi
+          test -x "$(command -v bwrap)"
+          test -f "$profile"
+          sudo install -m 0644 "$profile" /etc/apparmor.d/bwrap-userns-restrict
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          bwrap --version
       - name: Tests
+        timeout-minutes: 3
         env:
           PATCH_POLLER_REQUIRE_SANDBOX_TEST: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: npm test
       - name: Doctor smoke test
+        timeout-minutes: 1
         run: node src/cli.js doctor --config config/patch-poller.example.json
