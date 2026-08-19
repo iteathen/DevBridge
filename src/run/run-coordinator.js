@@ -308,6 +308,32 @@ export class RunCoordinator {
     };
   }
 
+  async #recordLocalCandidateReverification(key, state, workspace, snapshot, verifiedSnapshot) {
+    const reasons = [];
+    if (snapshot.dirty) reasons.push('the managed worktree became dirty');
+    if (snapshot.headSha !== verifiedSnapshot.headSha) reasons.push(`HEAD moved from verified ${verifiedSnapshot.headSha} to ${snapshot.headSha}`);
+    const observedPublicationBase = snapshot.publicationBaseSha ?? snapshot.baseSha;
+    const verifiedPublicationBase = verifiedSnapshot.publicationBaseSha ?? verifiedSnapshot.baseSha;
+    if (observedPublicationBase !== verifiedPublicationBase) {
+      reasons.push(`publication baseline changed from ${verifiedPublicationBase} to ${observedPublicationBase}`);
+    }
+    const summary = `PATCH-POLLER observed local candidate identity drift after verification (${reasons.join('; ')}); prior verification is stale and must be repeated before publication.`;
+    state.finalSnapshot = null;
+    state.baselineReverifyRequired = false;
+    state.prior.changedFiles = snapshot.changedFiles;
+    state.prior.git = gitProjection(snapshot);
+    state.prior.tests = [];
+    state.prior.blockers = [];
+    state.prior.nextStep = state.task.envelope.controllerPlan
+      ? 'Re-run the deterministic controller plan and all of its assertions against the current managed candidate before publication.'
+      : 'The managed candidate changed after verification. Re-run the relevant verification/tests against the current worktree before reporting complete. Do not stage or commit; PATCH-POLLER owns Git administrative state.';
+    state.prior.progress.push(summary);
+    state.stage = state.task.envelope.controllerPlan ? 'controller-plan' : 'running';
+    await this.#save(key, state);
+    await this.#publish(state, 'REVERIFYING', summary, snapshot, { force: true });
+    return null;
+  }
+
   async #sealForFinalization(key, state, workspace) {
     try {
       return {
@@ -341,6 +367,12 @@ export class RunCoordinator {
     let finalSnapshot = state.finalSnapshot;
 
     if (state.stage === 'publishing' && finalSnapshot) {
+      const observed = await this.#workspace.snapshot(workspace);
+      const observedPublicationBase = observed.publicationBaseSha ?? observed.baseSha;
+      const verifiedPublicationBase = finalSnapshot.publicationBaseSha ?? finalSnapshot.baseSha;
+      if (observed.dirty || observed.headSha !== finalSnapshot.headSha || observedPublicationBase !== verifiedPublicationBase) {
+        return this.#recordLocalCandidateReverification(key, state, workspace, observed, finalSnapshot);
+      }
       const checked = await this.#sealForFinalization(key, state, workspace);
       if (checked.handled) return checked.result;
       finalSnapshot = checked.snapshot;
@@ -382,7 +414,9 @@ export class RunCoordinator {
       } else {
         state.stage = 'publishing';
         await this.#save(key, state);
-        const publication = await this.#workspace.publishTaskBranch(workspace);
+        const publication = await this.#workspace.publishTaskBranch(workspace, {
+          expectedHeadSha: finalSnapshot.headSha
+        });
         state.publication = { published: true, ...publication, publicationBaseSha, publishedAt: nowIso() };
         await this.#save(key, state);
       }
