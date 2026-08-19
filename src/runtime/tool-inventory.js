@@ -173,6 +173,7 @@ export class ToolInventoryService {
   async #adapterInventory(sandboxStatus) {
     const entries = [];
     for (const name of Object.keys(this.#profiles).sort(codepointCompare)) {
+      const publicName = safeMetadata(name, 80);
       const raw = this.#profiles[name];
       const adapterClass = this.#deterministicProfiles.has(name) ? 'deterministic-diagnostic' : 'model-adapter';
       let profile;
@@ -180,7 +181,7 @@ export class ToolInventoryService {
         profile = validateToolProfile(name, raw, { allowUncontainedTools: this.#allowUncontained });
       } catch {
         entries.push({
-          name,
+          name: publicName,
           adapterClass,
           enabled: false,
           available: false,
@@ -210,7 +211,7 @@ export class ToolInventoryService {
       });
       const usable = enabled && available && security.enforcement.usable === true;
       entries.push({
-        name,
+        name: publicName,
         adapterClass,
         enabled,
         available,
@@ -225,12 +226,12 @@ export class ToolInventoryService {
     return entries;
   }
 
-  async refresh({ verifySandbox = false } = {}) {
+  async refresh({ verifySandbox = false, refreshToolchains = false } = {}) {
     let sandboxStatus;
     if (verifySandbox && this.#sandbox?.verify) sandboxStatus = await this.#sandbox.verify();
     else sandboxStatus = this.#sandbox?.inspect?.() ?? null;
     const normalizedSandbox = sanitizeEnforcement(sandboxStatus);
-    const toolchains = (await this.#toolchains.inspect())
+    const toolchains = (await this.#toolchains.inspect({ refresh: refreshToolchains }))
       .map(sanitizeToolchain)
       .sort((a, b) => codepointCompare(a.name ?? '', b.name ?? ''));
     const discovery = this.#discoverPathToolsEnabled
