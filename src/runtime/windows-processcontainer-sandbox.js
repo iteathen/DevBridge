@@ -229,6 +229,27 @@ export function windowsProcessContainerUiPolicy() {
   };
 }
 
+export function windowsProcessContainerNetworkPolicy(network) {
+  if (network === 'unrestricted') {
+    return {
+      network: {
+        defaultPolicy: 'allow',
+        enforcementMode: 'capabilities',
+        allowLocalNetwork: false,
+      },
+      capabilities: [],
+    };
+  }
+  return {
+    network: {
+      defaultPolicy: 'block',
+      enforcementMode: 'both',
+      allowLocalNetwork: false,
+    },
+    capabilities: ['internetClient'],
+  };
+}
+
 function probeProcessDetail(outcome, observation = null) {
   const state = `exit=${outcome.code ?? 'spawn-error'} signal=${outcome.signal ?? 'none'} timeout=${outcome.timedOut} truncated=${outcome.truncated}`;
   const diagnostic = outcome.stderr.trim() ||
@@ -497,6 +518,7 @@ export class WindowsProcessContainerSandboxProvider {
     }
 
     const network = sandbox.network === 'unrestricted' ? 'unrestricted' : 'deny';
+    const networkPolicy = windowsProcessContainerNetworkPolicy(network);
     const uiPolicy = windowsProcessContainerUiPolicy();
     const config = {
       version: MXC_SCHEMA_VERSION,
@@ -515,15 +537,11 @@ export class WindowsProcessContainerSandboxProvider {
         deniedPaths: dedupePaths(deniedPaths),
       },
       fallback: { allowDaclMutation: true },
-      network: {
-        defaultPolicy: network === 'unrestricted' ? 'allow' : 'block',
-        enforcementMode: 'capabilities',
-        allowLocalNetwork: false,
-      },
+      network: networkPolicy.network,
       ui: uiPolicy.ui,
       processContainer: {
         leastPrivilege: true,
-        capabilities: [],
+        capabilities: networkPolicy.capabilities,
         ui: uiPolicy.processContainerUi,
       },
     };
