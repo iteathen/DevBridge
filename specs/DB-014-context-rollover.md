@@ -1,4 +1,4 @@
-# PP-014 — Durable Chat Context Rollover and Resume
+# DB-014 — Durable Chat Context Rollover and Resume
 
 Status: active
 
@@ -6,9 +6,9 @@ Status: active
 
 A chat/model context is a disposable controller process, not authoritative project memory.
 
-PATCH-POLLER MUST make context rollover, model-session restart, UI freeze, or controller replacement recoverable from small durable state without requiring a model to reconstruct completed work from transcript history.
+DevBridge MUST make context rollover, model-session restart, UI freeze, or controller replacement recoverable from small durable state without requiring a model to reconstruct completed work from transcript history.
 
-The design specializes PP-005 context rehydration and PP-009 effect reconciliation. It does not create a second effect journal and it does not store an unbounded transcript.
+The design specializes DB-005 context rehydration and DB-009 effect reconciliation. It does not create a second effect journal and it does not store an unbounded transcript.
 
 ## 2. Governing model
 
@@ -16,11 +16,11 @@ The expected control flow is:
 
 `controller context -> bounded checkpoint -> durable handoff -> verify -> reconcile -> fresh context -> exact next action`
 
-PATCH-POLLER owns handoff persistence and verification. A model or coordinating chat may author summaries and intended next-action IDs, but it cannot use a handoff to grant machine authority, capability, local path, executable, environment, credential, or Git mutation authority.
+DevBridge owns handoff persistence and verification. A model or coordinating chat may author summaries and intended next-action IDs, but it cannot use a handoff to grant machine authority, capability, local path, executable, environment, credential, or Git mutation authority.
 
 A handoff says what a fresh controller must know. Existing control-plane contracts still decide what it may do.
 
-## 3. `patch-poller/chat-handoff-v1`
+## 3. `devbridge/chat-handoff-v1`
 
 A handoff is a closed, bounded data object containing:
 
@@ -44,7 +44,7 @@ The protocol does not carry raw command lines, executable paths, local paths, en
 
 ## 4. Canonical encoding and digest
 
-The normalized handoff has deterministic object-key ordering and set-like collections use deterministic ordering. PATCH-POLLER computes the whole-handoff SHA-256 over canonical UTF-8 JSON.
+The normalized handoff has deterministic object-key ordering and set-like collections use deterministic ordering. DevBridge computes the whole-handoff SHA-256 over canonical UTF-8 JSON.
 
 The digest binds reconstruction facts; it is not authorization.
 
@@ -83,7 +83,7 @@ Examples:
 
 The exact naming scheme is local/controller-owned; remote input does not gain authority because it can name an action.
 
-A handoff records completed action IDs plus the one exact next action the controller intended. On resume, PATCH-POLLER reconciles observed state before the caller may act.
+A handoff records completed action IDs plus the one exact next action the controller intended. On resume, DevBridge reconciles observed state before the caller may act.
 
 If the recorded next action is already observed complete, resume MUST NOT execute it again and MUST NOT invent a replacement next action. It returns `checkpoint-required` so a fresh authoritative checkpoint can choose the subsequent action.
 
@@ -116,9 +116,9 @@ A hard rollover boundary limits controller-context growth; it does not authorize
 
 ## 8. Checkpoint-and-proceed policy
 
-PP-007 remains normative: context checkpointing is not a generic human hard gate.
+DB-007 remains normative: context checkpointing is not a generic human hard gate.
 
-Even below the soft budget threshold, PATCH-POLLER SHOULD checkpoint after durable boundaries including:
+Even below the soft budget threshold, DevBridge SHOULD checkpoint after durable boundaries including:
 
 - candidate seal/commit;
 - branch publication;
@@ -160,17 +160,17 @@ These constraints prevent an old context window from overwriting a newer durable
 
 ## 11. Resume seed
 
-For a human/UI-controlled chat, PATCH-POLLER may emit a compact local line:
+For a human/UI-controlled chat, DevBridge may emit a compact local line:
 
-`PATCH-POLLER-RESUME v1 repo=<owner/name> handoff=<id> sha256=<digest>`
+`DEVBRIDGE-RESUME v1 repo=<owner/name> handoff=<id> sha256=<digest>`
 
 The seed is an address/identity, not the handoff itself. A new controller must retrieve and verify the matching handoff before use.
 
-When a verified handoff is deliberately projected to a GitHub issue for cross-chat recovery, PATCH-POLLER emits:
+When a verified handoff is deliberately projected to a GitHub issue for cross-chat recovery, DevBridge emits:
 
-`PATCH-POLLER-RESUME-GITHUB v1 mailbox=<queue-owner/name> issue=<number> repo=<target-owner/name> handoff=<id> sha256=<digest>`
+`DEVBRIDGE-RESUME-GITHUB v1 mailbox=<queue-owner/name> issue=<number> repo=<target-owner/name> handoff=<id> sha256=<digest>`
 
-The mailbox repository identifies where the recovery comment lives; the target repository identifies the project/Git state to reconcile. They may be the same for self-hosting, but PP-014 MUST NOT assume they are identical.
+The mailbox repository identifies where the recovery comment lives; the target repository identifies the project/Git state to reconcile. They may be the same for self-hosting, but DB-014 MUST NOT assume they are identical.
 
 Current chat UIs may require the human to open the new window and provide the seed. Future API/CLI session launchers SHOULD consume the same identity/digest contract so the rollover model does not change when automatic session creation becomes available.
 
@@ -201,14 +201,14 @@ A digest mismatch does not mean the new document is malicious or wrong. It means
 
 ## 14. Security invariants
 
-PP-014 MUST preserve all existing trust boundaries:
+DB-014 MUST preserve all existing trust boundaries:
 
 - handoffs are data, never local capability grants;
 - credentials are never serialized into handoffs;
 - no arbitrary local path or executable field exists in the remote/model-visible schema;
 - no environment block or shell fragment exists;
 - evidence locators are durable references, not filesystem authority;
-- Git mutation still belongs to PATCH-POLLER/Git adapters and existing approval policy;
+- Git mutation still belongs to DevBridge/Git adapters and existing approval policy;
 - resume never treats silence, a stale handoff, or a digest mismatch as approval;
 - a handoff digest authenticates equality to locally stored state, not the identity of an untrusted author.
 
@@ -251,11 +251,11 @@ Implementation is not complete until tests cover at least:
 
 ## 17. Runtime and dependency boundary
 
-PP-014 uses Node.js standard-library facilities and the existing `StateStore`/GitHub ports. It adds no coding-model dependency, no new runtime dependency, and no Python.
+DB-014 uses Node.js standard-library facilities and the existing `StateStore`/GitHub ports. It adds no coding-model dependency, no new runtime dependency, and no Python.
 
 ## 18. Optional GitHub recovery projection
 
-Local verified handoff state is authoritative for PATCH-POLLER itself. A GitHub projection is optional and exists specifically to bridge environments such as a mobile/new ChatGPT window that cannot directly read the local StateStore.
+Local verified handoff state is authoritative for DevBridge itself. A GitHub projection is optional and exists specifically to bridge environments such as a mobile/new ChatGPT window that cannot directly read the local StateStore.
 
 Projection rules:
 
@@ -263,7 +263,7 @@ Projection rules:
 - the handoff must already be locally `ready` and verified;
 - the mailbox issue is locally/operator selected or already bound by controller policy;
 - the handoff target repository may differ from the mailbox repository;
-- PATCH-POLLER uses one stable marker/comment slot per mailbox-repository+issue and edits/coalesces later checkpoints instead of appending heartbeat-style comments;
+- DevBridge uses one stable marker/comment slot per mailbox-repository+issue and edits/coalesces later checkpoints instead of appending heartbeat-style comments;
 - after a crash between comment creation and local correlation persistence, the projector searches the stable marker before creating another comment;
 - the projection embeds the exact normalized handoff plus its original local digest and GitHub resume seed;
 - a fresh controller parses the bounded fence and recomputes the handoff digest before trusting reconstruction facts;

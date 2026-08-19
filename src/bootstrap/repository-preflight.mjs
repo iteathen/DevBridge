@@ -5,7 +5,7 @@ import path from 'node:path';
 import process from 'node:process';
 
 const SYNTAX_FILES = [
-  'patch-poller.mjs',
+  'devbridge.mjs',
   'src/cli.js',
   'src/config.js',
   'src/app/runtime.js',
@@ -21,7 +21,7 @@ const SYNTAX_FILES = [
 
 const JSON_FILES = [
   'package.json',
-  'config/patch-poller.example.json',
+  'config/devbridge.example.json',
 ];
 
 const TARGETED_TESTS = [
@@ -89,7 +89,7 @@ if (entryFile === thisFile) {
     const result = runRepositoryPreflight();
     process.stdout.write(`${JSON.stringify({ status: 'passed', ...result })}\n`);
   } catch (error) {
-    process.stderr.write(`[patch-poller-preflight] ${error.name}: ${error.message}\n`);
+    process.stderr.write(`[devbridge-preflight] ${error.name}: ${error.message}\n`);
     process.exitCode = 1;
   }
 }

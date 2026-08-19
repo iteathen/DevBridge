@@ -30,7 +30,7 @@ function task() {
 
 function snapshot({ dirty = true, headSha = '2'.repeat(40) } = {}) {
   return {
-    branch: 'patchpoller/issue-7-bbbbbbbbbbbb',
+    branch: 'devbridge/issue-7-bbbbbbbbbbbb',
     baseSha: '1'.repeat(40),
     headSha,
     dirty,
@@ -67,8 +67,8 @@ test('drives multiple turns, seals the candidate, and completes without requirin
     publishTaskBranch: async () => { throw new Error('should not publish'); }
   };
   const results = [
-    { result: { protocol: 'patch-poller/result-v1', status: 'continue', summary: 'pass one', progress: [], tests: [], nextStep: 'again' }, resultParseError: null, exitCode: 0, timedOut: false, stdout: '', stderr: '' },
-    { result: { protocol: 'patch-poller/result-v1', status: 'complete', summary: 'done', progress: [], tests: ['unit pass'], nextStep: null }, resultParseError: null, exitCode: 0, timedOut: false, stdout: '', stderr: '' }
+    { result: { protocol: 'devbridge/result-v1', status: 'continue', summary: 'pass one', progress: [], tests: [], nextStep: 'again' }, resultParseError: null, exitCode: 0, timedOut: false, stdout: '', stderr: '' },
+    { result: { protocol: 'devbridge/result-v1', status: 'complete', summary: 'done', progress: [], tests: ['unit pass'], nextStep: null }, resultParseError: null, exitCode: 0, timedOut: false, stdout: '', stderr: '' }
   ];
   const processRunner = { run: async (input) => { calls.push(input); return results.shift(); } };
   const reports = [];
@@ -93,7 +93,7 @@ test('blocked runs consume only trusted matching feedback before resuming', asyn
     publishTaskBranch: async () => ({})
   };
   let runs = 0;
-  const processRunner = { run: async () => { runs += 1; return runs === 1 ? { result: { protocol: 'patch-poller/result-v1', status: 'blocked', summary: 'need choice', blocker: 'choice', progress: [], tests: [] }, resultParseError: null, exitCode: 0, timedOut: false, stdout: '', stderr: '' } : { result: { protocol: 'patch-poller/result-v1', status: 'complete', summary: 'done', progress: [], tests: [] }, resultParseError: null, exitCode: 0, timedOut: false, stdout: '', stderr: '' }; } };
+  const processRunner = { run: async () => { runs += 1; return runs === 1 ? { result: { protocol: 'devbridge/result-v1', status: 'blocked', summary: 'need choice', blocker: 'choice', progress: [], tests: [] }, resultParseError: null, exitCode: 0, timedOut: false, stdout: '', stderr: '' } : { result: { protocol: 'devbridge/result-v1', status: 'complete', summary: 'done', progress: [], tests: [] }, resultParseError: null, exitCode: 0, timedOut: false, stdout: '', stderr: '' }; } };
   let feedbackReady = false;
   const feedbackSource = { pollWaitingRun: async () => feedbackReady ? { highestCommentId: 9, feedback: { action: 'continue', instructions: 'use B', actorId: '1', commentId: 9 } } : { highestCommentId: 0, feedback: null } };
   const coordinator = new RunCoordinator({ stateStore: store, workspaceManager, processRunner, feedbackSource, queueRepository: 'owner/queue', tools: { fixture: profile }, defaultTool: 'fixture', maxTurns: 3 });
@@ -116,7 +116,7 @@ test('a resumed run passes its persisted immutable baseline back to the workspac
     publishTaskBranch: async () => ({})
   };
   let count = 0;
-  const processRunner = { run: async () => { count += 1; return count === 1 ? { result: { protocol: 'patch-poller/result-v1', status: 'blocked', summary: 'hold', blocker: 'hold', progress: [], tests: [] }, resultParseError: null, exitCode: 0, timedOut: false, stdout: '', stderr: '' } : { result: { protocol: 'patch-poller/result-v1', status: 'complete', summary: 'done', progress: [], tests: [] }, resultParseError: null, exitCode: 0, timedOut: false, stdout: '', stderr: '' }; } };
+  const processRunner = { run: async () => { count += 1; return count === 1 ? { result: { protocol: 'devbridge/result-v1', status: 'blocked', summary: 'hold', blocker: 'hold', progress: [], tests: [] }, resultParseError: null, exitCode: 0, timedOut: false, stdout: '', stderr: '' } : { result: { protocol: 'devbridge/result-v1', status: 'complete', summary: 'done', progress: [], tests: [] }, resultParseError: null, exitCode: 0, timedOut: false, stdout: '', stderr: '' }; } };
   let feedbackReady = false;
   const feedbackSource = { pollWaitingRun: async () => feedbackReady ? { highestCommentId: 4, feedback: { action: 'continue', instructions: 'resume', actorId: '1', commentId: 4 } } : { highestCommentId: 0, feedback: null } };
   const coordinator = new RunCoordinator({ stateStore: store, workspaceManager, processRunner, feedbackSource, queueRepository: 'owner/queue', tools: { fixture: profile }, defaultTool: 'fixture', maxTurns: 3 });

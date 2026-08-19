@@ -33,7 +33,7 @@ function task() {
 
 function snapshot() {
   return {
-    branch: 'patchpoller/issue-41-eeeeeeeeeeee',
+    branch: 'devbridge/issue-41-eeeeeeeeeeee',
     baseSha: '1'.repeat(40),
     headSha: '1'.repeat(40),
     dirty: false,
@@ -83,7 +83,7 @@ function capacityFailure() {
 function completion() {
   return {
     result: {
-      protocol: 'patch-poller/result-v1',
+      protocol: 'devbridge/result-v1',
       status: 'complete',
       summary: 'recovered',
       progress: [],

@@ -57,7 +57,7 @@ test('dynamic operation inventory exposes only controller-facing parameter shape
   assert.equal(operation.repositoryCode, true);
   assert.equal(operation.usable, true);
   assert.deepEqual(operation.parameterSchema, {
-    protocol: 'patch-poller/operation-parameters-v1',
+    protocol: 'devbridge/operation-parameters-v1',
     requireAnyParameter: true,
     parameters: [
       { name: 'verbose', kind: 'flag', valueType: 'boolean', required: false, repeat: false },

@@ -1,13 +1,14 @@
 {
-  "name": "patch-poller",
+  "name": "devbridge",
   "version": "0.1.0",
   "private": true,
-  "description": "DevBridge: safely connect remote coding controllers to a local development environment.",
+  "description": "DevBridge: safely connect remote coding controllers to a locally controlled development environment.",
   "type": "module",
-  "engines": { "node": ">=22.16.0" },
+  "engines": {
+    "node": ">=22.16.0"
+  },
   "bin": {
-    "devbridge": "./src/cli.js",
-    "patch-poller": "./src/cli.js"
+    "devbridge": "./src/cli.js"
   },
   "scripts": {
     "preflight": "node ./src/bootstrap/repository-preflight.mjs",

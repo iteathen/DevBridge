@@ -8,7 +8,7 @@ import { CHAT_HANDOFF_PROTOCOL, chatHandoffDigest, parseChatResumeSeed } from '.
 
 function config(stateDirectory) {
   return {
-    github: { queueRepository: 'iteathen/PATCH-POLLER' },
+    github: { queueRepository: 'iteathen/DevBridge' },
     state: { directory: stateDirectory },
     contextRollover: { maxHandoffBytes: 32_768, maxRetained: 8 },
   };
@@ -19,7 +19,7 @@ function fixture() {
     protocol: CHAT_HANDOFF_PROTOCOL,
     handoffId: 'ui-rollover-fixture',
     sequence: 1,
-    repository: 'iteathen/PATCH-POLLER',
+    repository: 'iteathen/DevBridge',
     baselineSha: 'a'.repeat(40),
     headSha: 'b'.repeat(40),
     branch: 'sol/pp-014-context-rollover',
@@ -55,12 +55,12 @@ test('local handoff status and seed require no GitHub credential or remote reque
   assert.equal(seed, status.seed);
   const parsed = parseChatResumeSeed(seed);
   assert.equal(parsed.digest, chatHandoffDigest(fixture()));
-  assert.equal(parsed.repository, 'iteathen/PATCH-POLLER');
+  assert.equal(parsed.repository, 'iteathen/DevBridge');
 });
 
 test('local handoff status reports absence without creating remote authority', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'pp-chat-handoff-empty-'));
   const status = await chatHandoffStatus(config(directory));
-  assert.deepEqual(status, { ready: false, repository: 'iteathen/PATCH-POLLER' });
+  assert.deepEqual(status, { ready: false, repository: 'iteathen/DevBridge' });
   assert.equal(await chatHandoffSeed(config(directory)), null);
 });

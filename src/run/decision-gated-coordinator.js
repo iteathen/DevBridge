@@ -192,7 +192,7 @@ export class DecisionGatedRunCoordinator {
     state.prior.blockers = [
       checkpoint
         ? `Hard gate ${checkpoint.checkpointId} is pending for exact artifact ${checkpoint.subjectDigest}; approval must match the run, task revision, checkpoint, subject digest, and locally configured decision authority.`
-        : 'A sensitive candidate requires a matching PP-007 hard-gate decision before sealing or publication.',
+        : 'A sensitive candidate requires a matching DB-007 hard-gate decision before sealing or publication.',
     ];
     state.prior.nextStep = null;
     state.prior.liveness = null;
@@ -237,7 +237,7 @@ export class DecisionGatedRunCoordinator {
       state.prior.blockers = [];
       state.prior.nextStep = null;
       await this.#save(key, state);
-      await this.#publish(state, 'DECISION_ACCEPTED', `Exact approval accepted for hard gate ${polled.checkpoint.checkpointId}; PATCH-POLLER will recompute the artifact subject before sealing/publication.`);
+      await this.#publish(state, 'DECISION_ACCEPTED', `Exact approval accepted for hard gate ${polled.checkpoint.checkpointId}; DevBridge will recompute the artifact subject before sealing/publication.`);
       return null;
     }
 

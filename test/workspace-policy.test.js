@@ -9,8 +9,8 @@ import { PolicyError } from '../src/errors.js';
 test('maps allowed repository identity under managed root', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-workspace-'));
   const policy = new WorkspacePolicy({ root, allowedOwners: ['iteathen'] });
-  const candidate = policy.projectPath('iteathen/PATCH-POLLER');
-  assert.equal(candidate, path.join(root, 'repositories', 'iteathen', 'PATCH-POLLER'));
+  const candidate = policy.projectPath('iteathen/DevBridge');
+  assert.equal(candidate, path.join(root, 'repositories', 'iteathen', 'DevBridge'));
   assert.equal(await policy.assertWriteContained(candidate), path.resolve(candidate));
 });
 

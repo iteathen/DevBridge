@@ -18,7 +18,7 @@ async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-release-integrity-'));
   const runtimeDir = path.join(root, 'runtime');
   await mkdir(path.join(runtimeDir, 'src'), { recursive: true });
-  await writeFile(path.join(runtimeDir, 'package.json'), '{"name":"patch-poller","version":"0.1.0"}\n');
+  await writeFile(path.join(runtimeDir, 'package.json'), '{"name":"devbridge","version":"0.1.0"}\n');
   await writeFile(path.join(runtimeDir, 'src', 'cli.js'), 'console.log("release fixture");\n');
   const artifact = await runtimeArtifactSha256(runtimeDir);
   const head = 'a'.repeat(40);

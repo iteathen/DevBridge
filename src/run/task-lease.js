@@ -1,7 +1,7 @@
 import { PolicyError } from '../errors.js';
 
-export const TASK_LEASE_PROTOCOL = 'patch-poller/task-lease-v1';
-export const SIGNED_TASK_LEASE_PROTOCOL = 'patch-poller/signed-task-lease-v1';
+export const TASK_LEASE_PROTOCOL = 'devbridge/task-lease-v1';
+export const SIGNED_TASK_LEASE_PROTOCOL = 'devbridge/signed-task-lease-v1';
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const DIGEST_RE = /^[0-9a-f]{64}$/u;

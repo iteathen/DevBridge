@@ -63,7 +63,7 @@ export async function doctor(
   const builtIns = builtInToolProfiles();
   for (const name of Object.keys(builtIns)) {
     if (Object.hasOwn(config.tools, name)) {
-      throw new Error(`local tool profile name ${name} is reserved by PATCH-POLLER`);
+      throw new Error(`local tool profile name ${name} is reserved by DevBridge`);
     }
   }
 
@@ -80,7 +80,7 @@ export async function doctor(
   const builtInTools = [];
   for (const [name, raw] of Object.entries(builtIns)) {
     builtInTools.push(await describeProfile(name, raw, {
-      source: 'patch-poller-builtin',
+      source: 'devbridge-builtin',
       allowUncontainedTools: false,
       resolveTools,
       env,
@@ -157,7 +157,7 @@ export async function doctor(
           enabled: config.execution.controllerPlansEnabled,
           enforcementProvider,
           // Backward-compatible alias. This has always described the observed
-          // PATCH-POLLER provider, never a profile's sandbox declaration.
+          // DevBridge provider, never a profile's sandbox declaration.
           sandbox: enforcementProvider,
           operations,
         },

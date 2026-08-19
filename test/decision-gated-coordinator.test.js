@@ -45,7 +45,7 @@ function stateFor(t, worktreeDir) {
     turn: 1,
     turnLimit: 8,
     createdAt: new Date().toISOString(),
-    workspace: { worktreeDir, branch: 'patchpoller/issue-27', baseSha: baselineSha, baseRef: 'main' },
+    workspace: { worktreeDir, branch: 'devbridge/issue-27', baseSha: baselineSha, baseRef: 'main' },
     prior: {
       summary: null,
       decisions: [],
@@ -53,7 +53,7 @@ function stateFor(t, worktreeDir) {
       progress: [],
       changedFiles: ['src/security/policy.js'],
       tests: [],
-      git: { branch: 'patchpoller/issue-27', baseSha: baselineSha, headSha: baselineSha, dirty: true },
+      git: { branch: 'devbridge/issue-27', baseSha: baselineSha, headSha: baselineSha, dirty: true },
       blockers: [],
       nextStep: null,
       outputTail: null,
@@ -91,7 +91,7 @@ function decisionSource(actions = []) {
       if (!action) return { decision: null, rejected: [], unchanged: false, highestCommentId: request.afterCommentId };
       return {
         decision: {
-          protocol: 'patch-poller/decision-v1',
+          protocol: 'devbridge/decision-v1',
           runId: request.runId,
           taskRevision: request.taskRevision,
           checkpointId: request.checkpointId,
@@ -137,7 +137,7 @@ async function fixture({ actions = [], nowMs = () => Date.now(), controllerPlan 
   let sealCalls = 0;
   let publishCalls = 0;
   const snapshot = () => ({
-    branch: 'patchpoller/issue-27',
+    branch: 'devbridge/issue-27',
     baseSha: baselineSha,
     headSha: baselineSha,
     dirty: true,
@@ -148,14 +148,14 @@ async function fixture({ actions = [], nowMs = () => Date.now(), controllerPlan 
   const rawWorkspace = {
     validate: async () => snapshot(),
     snapshot: async () => snapshot(),
-    prepareRun: async () => ({ worktreeDir: root, branch: 'patchpoller/issue-27', baseSha: baselineSha, baseRef: 'main' }),
+    prepareRun: async () => ({ worktreeDir: root, branch: 'devbridge/issue-27', baseSha: baselineSha, baseRef: 'main' }),
     sealCandidate: async () => {
       sealCalls += 1;
       return { ...snapshot(), headSha: '2'.repeat(40), dirty: false };
     },
     publishTaskBranch: async () => {
       publishCalls += 1;
-      return { branch: 'patchpoller/issue-27', headSha: '2'.repeat(40) };
+      return { branch: 'devbridge/issue-27', headSha: '2'.repeat(40) };
     },
   };
   const gatedWorkspace = new DecisionGatedWorkspaceManager({
@@ -180,7 +180,7 @@ async function fixture({ actions = [], nowMs = () => Date.now(), controllerPlan 
         observed.push({ stage: persisted.stage, nextStep: persisted.prior.nextStep });
         return { runId: persisted.runId, issueNumber: currentTask.issueNumber, status: persisted.stage };
       }
-      const workspace = { worktreeDir: root, branch: 'patchpoller/issue-27', baseSha: baselineSha, baseRef: 'main' };
+      const workspace = { worktreeDir: root, branch: 'devbridge/issue-27', baseSha: baselineSha, baseRef: 'main' };
       const sealed = await gatedWorkspace.sealCandidate(workspace, { issueNumber: currentTask.issueNumber, revision: currentTask.revision });
       await gatedWorkspace.publishTaskBranch(workspace);
       persisted.stage = 'completed';
@@ -238,7 +238,7 @@ test('exact approval survives restart, rechecks the subject, then seals and publ
         async executeTask(currentTask) {
           const persisted = await f.store.get(f.key);
           if (persisted.stage === 'completed') return { status: 'completed', skipped: true };
-          const workspace = { worktreeDir: f.root, branch: 'patchpoller/issue-27', baseSha: baselineSha, baseRef: 'main' };
+          const workspace = { worktreeDir: f.root, branch: 'devbridge/issue-27', baseSha: baselineSha, baseRef: 'main' };
           const sealed = await f.gatedWorkspace.sealCandidate(workspace, { issueNumber: currentTask.issueNumber, revision: currentTask.revision });
           await f.gatedWorkspace.publishTaskBranch(workspace);
           persisted.stage = 'completed';
@@ -319,7 +319,7 @@ test('redirected model candidate receives bounded human direction but no seal au
 
 test('rejecting an immutable controller plan is terminal and never seals it', async () => {
   const f = await fixture({
-    controllerPlan: { protocol: 'patch-poller/controller-plan-v1' },
+    controllerPlan: { protocol: 'devbridge/controller-plan-v1' },
     actions: [{ action: 'reject', commentId: 205 }],
   });
   try {

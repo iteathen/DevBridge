@@ -6,7 +6,7 @@ function utf8Bytes(value) {
 
 function truncateText(text, maxChars) {
   if (typeof text !== 'string' || text.length <= maxChars) return text;
-  return `${text.slice(0, Math.max(0, maxChars - 32))}\n...[truncated by PATCH-POLLER]`;
+  return `${text.slice(0, Math.max(0, maxChars - 32))}\n...[truncated by DevBridge]`;
 }
 
 function handoffDigest(value) {
@@ -38,7 +38,7 @@ export function buildContextCapsule({ task, sequence = 1, prior = null, runtime 
   const taskProvenance = contentProvenanceProjection(task.provenance);
   const priorProvenance = Array.isArray(prior?.provenance) ? structuredClone(prior.provenance.slice(-20)) : [];
   return {
-    protocol: 'patch-poller/context-v1',
+    protocol: 'devbridge/context-v1',
     sequence,
     task: {
       queueRepository: task.queueRepository,
@@ -53,7 +53,7 @@ export function buildContextCapsule({ task, sequence = 1, prior = null, runtime 
     handoff,
     handoffSha256,
     receipt: receipt ? {
-      protocol: 'patch-poller/context-receipt-v1',
+      protocol: 'devbridge/context-receipt-v1',
       inputSha256: receipt.inputSha256 ?? task.revision,
       controllerPlanSha256: receipt.controllerPlanSha256 ?? null,
       taskRevision: receipt.taskRevision ?? task.revision,

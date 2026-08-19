@@ -52,7 +52,7 @@ async function inspectNoFollow(root, relative) {
 
 function stableArtifactPayload({ baselineSha, entries }) {
   return JSON.stringify({
-    protocol: 'patch-poller/artifact-subject-v1',
+    protocol: 'devbridge/artifact-subject-v1',
     baselineSha,
     entries,
   });
@@ -95,7 +95,7 @@ export async function candidateArtifactSubject({ worktreeDir, baselineSha, chang
 
   const payload = stableArtifactPayload({ baselineSha: baselineSha.toLowerCase(), entries });
   return {
-    protocol: 'patch-poller/artifact-subject-v1',
+    protocol: 'devbridge/artifact-subject-v1',
     baselineSha: baselineSha.toLowerCase(),
     changedFiles: paths,
     entries,

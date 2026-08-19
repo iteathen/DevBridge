@@ -2,12 +2,12 @@
   "version": 1,
   "github": {
     "queueRepository": "iteathen/DevBridge",
-    "taskLabel": "patch-poller:ready",
+    "taskLabel": "devbridge:ready",
     "trustedActorIds": ["1775584"],
     "auth": {
       "mode": "auto",
       "environmentVariables": [
-        "PATCH_POLLER_GITHUB_TOKEN",
+        "DEVBRIDGE_GITHUB_TOKEN",
         "GH_TOKEN",
         "GITHUB_TOKEN"
       ],

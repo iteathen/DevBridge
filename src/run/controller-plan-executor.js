@@ -52,7 +52,7 @@ async function atomicWrite(target, content, root) {
   await guardActiveTaskLease();
   await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
   await assertContainedNoFollow(root, parentRelative || '.', { allowMissing: false });
-  const temp = `${target}.patch-poller-${process.pid}-${Date.now()}.tmp`;
+  const temp = `${target}.devbridge-${process.pid}-${Date.now()}.tmp`;
   await writeFile(temp, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   await rename(temp, target);
   await guardActiveTaskLease();

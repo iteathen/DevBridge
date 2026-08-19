@@ -21,8 +21,8 @@ export function parseTaskEnvelope(body) {
   if (typeof body !== 'string') throw new ProtocolError('issue body must be a string');
   if (byteLength(body) > MAX_BODY_BYTES) throw new ProtocolError('issue body is too large');
 
-  const matches = [...body.matchAll(/```patch-poller-task\s*\r?\n([\s\S]*?)\r?\n```/g)];
-  if (matches.length !== 1) throw new ProtocolError('issue body must contain exactly one patch-poller-task block');
+  const matches = [...body.matchAll(/```devbridge-task\s*\r?\n([\s\S]*?)\r?\n```/g)];
+  if (matches.length !== 1) throw new ProtocolError('issue body must contain exactly one devbridge-task block');
 
   let envelope;
   try {
@@ -32,7 +32,7 @@ export function parseTaskEnvelope(body) {
   }
 
   if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) throw new ProtocolError('task envelope must be an object');
-  if (envelope.protocol !== 'patch-poller/task-v1') throw new ProtocolError('unsupported task protocol');
+  if (envelope.protocol !== 'devbridge/task-v1') throw new ProtocolError('unsupported task protocol');
   if (!envelope.target || typeof envelope.target !== 'object' || !REPOSITORY_RE.test(envelope.target.repository ?? '')) {
     throw new ProtocolError('target.repository must be owner/name');
   }

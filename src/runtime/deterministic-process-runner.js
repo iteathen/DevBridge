@@ -19,7 +19,7 @@ function boundedEnvironment(source, pass = [], set = {}) {
   for (const name of pass) if (source[name] != null) env[name] = source[name];
   Object.assign(env, set);
   env.GIT_TERMINAL_PROMPT = '0';
-  env.PATCH_POLLER_NONINTERACTIVE = '1';
+  env.DEVBRIDGE_NONINTERACTIVE = '1';
   env.NO_COLOR ??= '1';
   return env;
 }

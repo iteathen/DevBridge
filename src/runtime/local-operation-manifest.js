@@ -5,8 +5,8 @@ import { PolicyError } from '../errors.js';
 import { normalizePlanPath } from '../run/controller-plan.js';
 import { resolveExecutable } from './executable-resolver.js';
 
-export const LOCAL_OPERATION_MANIFEST_PROTOCOL = 'patch-poller/local-operation-manifest-v1';
-export const OPERATION_PARAMETER_SCHEMA_PROTOCOL = 'patch-poller/operation-parameters-v1';
+export const LOCAL_OPERATION_MANIFEST_PROTOCOL = 'devbridge/local-operation-manifest-v1';
+export const OPERATION_PARAMETER_SCHEMA_PROTOCOL = 'devbridge/operation-parameters-v1';
 
 const SAFE_ID = /^[A-Za-z0-9_.-]{1,80}$/u;
 const SAFE_COMMAND = /^[A-Za-z0-9_.+-]{1,80}$/u;

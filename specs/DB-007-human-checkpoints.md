@@ -1,4 +1,4 @@
-# PP-007 — Human Checkpoints and Decision Gates
+# DB-007 — Human Checkpoints and Decision Gates
 
 Status: active
 
@@ -6,13 +6,13 @@ Implementation status: v0.1 enforces `artifact-exact` hard gates before sensitiv
 
 ## Goal
 
-Use human judgment where it has high leverage without turning the human into a synchronous mutex for routine coding work. PATCH-POLLER must prevent expensive architectural drift and unsafe irreversible actions while continuing useful reversible work whenever possible.
+Use human judgment where it has high leverage without turning the human into a synchronous mutex for routine coding work. DevBridge must prevent expensive architectural drift and unsafe irreversible actions while continuing useful reversible work whenever possible.
 
 ## Governing doctrine
 
 **Checkpoint and proceed is the default. Stop and wait is exceptional.**
 
-Human attention is a scarce control-plane resource. A request for human judgment must not automatically suspend the run. When PATCH-POLLER reaches a consequential decision surface it records a durable checkpoint, publishes a concise decision summary, and continues work that remains inside the current trusted capability and architectural envelope.
+Human attention is a scarce control-plane resource. A request for human judgment must not automatically suspend the run. When DevBridge reaches a consequential decision surface it records a durable checkpoint, publishes a concise decision summary, and continues work that remains inside the current trusted capability and architectural envelope.
 
 A run stops progressing only when either:
 
@@ -23,11 +23,11 @@ Silence never implies approval.
 
 ## Authority
 
-PATCH-POLLER remains the single source of execution authority. Remote and local models are proposal engines.
+DevBridge remains the single source of execution authority. Remote and local models are proposal engines.
 
 A human decision can authorize only a decision class that local operator policy already permits that actor to decide. A GitHub comment cannot grant arbitrary filesystem, credential, executable, network, sandbox, or trust-policy capability.
 
-The authority hierarchy in PP-003 remains in force even for trusted maintainers.
+The authority hierarchy in DB-003 remains in force even for trusted maintainers.
 
 ### v0.1 local decision delegation
 
@@ -40,7 +40,7 @@ Remote decision authority is disabled for a class unless local configuration exp
 - `public-contract`;
 - `architectural-change`.
 
-When one candidate triggers multiple classes, a remote actor must be locally authorized for **every** triggered class. PATCH-POLLER uses the intersection of those allowlists rather than the union, so a comment cannot combine partial delegations into broader authority. If the intersection is empty, the gate remains pending until local policy changes or the candidate changes; remote text cannot create an authorized actor.
+When one candidate triggers multiple classes, a remote actor must be locally authorized for **every** triggered class. DevBridge uses the intersection of those allowlists rather than the union, so a comment cannot combine partial delegations into broader authority. If the intersection is empty, the gate remains pending until local policy changes or the candidate changes; remote text cannot create an authorized actor.
 
 The local approval TTL and architectural breadth thresholds are also operator configuration. They are not task fields and cannot be changed by a decision comment.
 
@@ -50,7 +50,7 @@ The local approval TTL and architectural breadth thresholds are also operator co
 
 A checkpoint is an immutable evidence record saying that the current state or proposed direction deserves human visibility.
 
-A checkpoint is normally non-blocking. It may be informational only, or it may expose a decision boundary. Creating a checkpoint does not authorize the proposed action and does not require PATCH-POLLER to stop safe work.
+A checkpoint is normally non-blocking. It may be informational only, or it may expose a decision boundary. Creating a checkpoint does not authorize the proposed action and does not require DevBridge to stop safe work.
 
 ### Decision boundary
 
@@ -58,7 +58,7 @@ A decision boundary identifies a consequential choice that must not become autho
 
 Examples include a broad architectural refactor, public contract replacement, schema migration strategy, or dependency/framework substitution.
 
-PATCH-POLLER may continue diagnostics, tests, benchmarks, impact analysis, architecture-preserving alternatives, and isolated experimental branches while a decision is pending.
+DevBridge may continue diagnostics, tests, benchmarks, impact analysis, architecture-preserving alternatives, and isolated experimental branches while a decision is pending.
 
 ### Hard gate
 
@@ -69,13 +69,13 @@ Local policy defines hard-gated effect classes. Recommended default hard gates i
 - merge/promotion into a protected or default branch;
 - force-push or destructive remote history rewrite;
 - release/tag/deployment or production migration effects;
-- destructive operations outside unquestionably disposable PATCH-POLLER-owned state;
+- destructive operations outside unquestionably disposable DevBridge-owned state;
 - publication using a credential or authority class not already granted to the run;
-- changes to PATCH-POLLER's own trust/capability policy.
+- changes to DevBridge's own trust/capability policy.
 
 A locally configured staging/task-branch push may be checkpoint-only rather than hard-gated when it is intentionally reversible and separately permissioned. **However, once a candidate itself is classified as sensitive, v0.1 rechecks that candidate's artifact-exact hard gate before the task-branch push as well as before sealing.** This closes restart paths that could otherwise resume directly from an already sealed `publishing` state after an approval expired or was superseded.
 
-Capability expansion beyond the active local sandbox/profile cannot be granted by remote approval alone; it requires the local policy mechanism defined in PP-003.
+Capability expansion beyond the active local sandbox/profile cannot be granted by remote approval alone; it requires the local policy mechanism defined in DB-003.
 
 ## Checkpoint record
 
@@ -94,10 +94,10 @@ Every checkpoint must be durable and restart-safe. It includes, when applicable:
 - alternatives attempted and why they failed or remain viable;
 - known risks and rollback/recovery path;
 - the exact action that is gated, if any;
-- safe work PATCH-POLLER may continue while the checkpoint is pending;
+- safe work DevBridge may continue while the checkpoint is pending;
 - policy version and provenance needed to interpret the checkpoint.
 
-The richer record remains local. Remote publication is bounded and redacted under PP-003 and PP-005.
+The richer record remains local. Remote publication is bounded and redacted under DB-003 and DB-005.
 
 ## Continue-safe behavior
 
@@ -120,7 +120,7 @@ When no useful safe work remains, the run may enter `waiting-decision`. This is 
 
 ## Architectural-change checkpoint
 
-PATCH-POLLER must support an architectural-change detector whose inputs are explicit, inspectable signals rather than a model's unsupported assertion that a refactor is necessary.
+DevBridge must support an architectural-change detector whose inputs are explicit, inspectable signals rather than a model's unsupported assertion that a refactor is necessary.
 
 Signals may include:
 
@@ -151,9 +151,9 @@ Two binding modes are supported:
 - `artifact-exact`: approval binds to an exact commit/content digest. Any artifact change invalidates the approval. Use for publication, destructive effects, releases, or other payload-sensitive gates.
 - `decision-scope`: approval binds to a normalized decision-surface digest describing the architectural choice and its declared bounds. Descendant implementation work may proceed without reapproval while it remains inside those bounds.
 
-For v0.1 automatic sensitive-candidate gates, PATCH-POLLER derives the artifact-exact subject from the immutable run baseline plus the sorted changed paths and their current file/deletion/symlink/executable identities. The subject is recomputed immediately before sealing and again before publication. A changed artifact supersedes the prior approval and requires a fresh checkpoint.
+For v0.1 automatic sensitive-candidate gates, DevBridge derives the artifact-exact subject from the immutable run baseline plus the sorted changed paths and their current file/deletion/symlink/executable identities. The subject is recomputed immediately before sealing and again before publication. A changed artifact supersedes the prior approval and requires a fresh checkpoint.
 
-If the decision surface materially expands or changes, PATCH-POLLER creates a new checkpoint. It must never silently stretch an old approval to cover a new consequential choice.
+If the decision surface materially expands or changes, DevBridge creates a new checkpoint. It must never silently stretch an old approval to cover a new consequential choice.
 
 Checkpoint decisions have explicit states such as `pending`, `approved`, `rejected`, `redirected`, `superseded`, or `expired`. Timeout/expiry does not become approval.
 
@@ -162,9 +162,9 @@ Checkpoint decisions have explicit states such as `pending`, `approved`, `reject
 Checkpoint decisions use a protocol separate from ordinary continuation feedback:
 
 ````markdown
-```patch-poller-decision
+```devbridge-decision
 {
-  "protocol": "patch-poller/decision-v1",
+  "protocol": "devbridge/decision-v1",
   "runId": "run-identity",
   "taskRevision": "64-hex-task-revision",
   "checkpointId": "checkpoint-identity",
@@ -179,11 +179,11 @@ Checkpoint decisions use a protocol separate from ordinary continuation feedback
 
 The actor, run ID, task revision, checkpoint ID, subject digest, and locally configured decision authority must all match. Stale, quoted, malformed, or mismatched decisions are ignored rather than applied to current work.
 
-When GitHub issue comments carry `patch-poller/decision-v1`, the **exact current comment-body bytes and edit provenance must be verified before any decision authority is evaluated**. The original comment author and every retained editor must satisfy the locally configured authority requirements for that decision class, the GraphQL body must match the REST bytes being consumed, and ambiguous/truncated/retention-saturated provenance fails closed under the same policy used by PP-006. A later trusted editor cannot launder an untrusted original or intermediate edit. The exact comment SHA-256 and sanitized edit provenance become part of the durable accepted/rejected decision evidence.
+When GitHub issue comments carry `devbridge/decision-v1`, the **exact current comment-body bytes and edit provenance must be verified before any decision authority is evaluated**. The original comment author and every retained editor must satisfy the locally configured authority requirements for that decision class, the GraphQL body must match the REST bytes being consumed, and ambiguous/truncated/retention-saturated provenance fails closed under the same policy used by DB-006. A later trusted editor cannot launder an untrusted original or intermediate edit. The exact comment SHA-256 and sanitized edit provenance become part of the durable accepted/rejected decision evidence.
 
 This provenance requirement is necessary but not sufficient: verified comment authorship/editorship does not bypass run/task/checkpoint/subject-digest matching or local decision-class delegation.
 
-Accepted decisions become durable provenance and are injected into subsequent context capsules under PP-005.
+Accepted decisions become durable provenance and are injected into subsequent context capsules under DB-005.
 
 ## Status semantics
 
@@ -198,7 +198,7 @@ Implementations may map these to labels or presentation text, but labels are obs
 
 ## Human-attention budget
 
-PATCH-POLLER must avoid approval fatigue:
+DevBridge must avoid approval fatigue:
 
 - deduplicate checkpoints with the same decision fingerprint;
 - bundle closely related decision surfaces when doing so does not blur authority;
@@ -211,7 +211,7 @@ The goal is to use human judgment for consequential choices, not routine executi
 
 ## Restart and recovery
 
-Pending checkpoints and decisions are persisted before dependent effects. After restart PATCH-POLLER reconstructs the same decision state, safe frontier, subject binding, and provenance. It must not duplicate a gated effect or forget that an approval was invalidated.
+Pending checkpoints and decisions are persisted before dependent effects. After restart DevBridge reconstructs the same decision state, safe frontier, subject binding, and provenance. It must not duplicate a gated effect or forget that an approval was invalidated.
 
 Experimental descendants may be retained or discarded according to worktree retention policy, but the checkpoint's baseline/candidate identities remain reconstructable.
 

@@ -4,7 +4,7 @@ import { parseResultJsonText } from '../src/runtime/process-runner.js';
 import { parseToolResult } from '../src/run/result-envelope.js';
 
 const complete = {
-  protocol: 'patch-poller/result-v1',
+  protocol: 'devbridge/result-v1',
   status: 'complete',
   summary: 'done',
   progress: [],
@@ -14,16 +14,16 @@ const complete = {
 };
 
 test('accepts one unambiguous Markdown json fence as presentation-only result formatting', () => {
-  const text = '\uFEFF```json\r\n{"protocol":"patch-poller/result-v1","status":"complete","summary":"ok"}\r\n```\r\n';
+  const text = '\uFEFF```json\r\n{"protocol":"devbridge/result-v1","status":"complete","summary":"ok"}\r\n```\r\n';
   const parsed = parseResultJsonText(text);
-  assert.equal(parsed.protocol, 'patch-poller/result-v1');
+  assert.equal(parsed.protocol, 'devbridge/result-v1');
   assert.equal(parsed.status, 'complete');
   assert.equal(parsed.summary, 'ok');
 });
 
 test('does not guess through prose or multiple fenced payloads', () => {
   assert.throws(
-    () => parseResultJsonText('note\n```json\n{"protocol":"patch-poller/result-v1"}\n```'),
+    () => parseResultJsonText('note\n```json\n{"protocol":"devbridge/result-v1"}\n```'),
     SyntaxError
   );
   assert.throws(
@@ -34,7 +34,7 @@ test('does not guess through prose or multiple fenced payloads', () => {
 
 test('preserves a conservative structured result when the wrapper later exits nonzero', () => {
   const result = parseToolResult({
-    protocol: 'patch-poller/result-v1',
+    protocol: 'devbridge/result-v1',
     status: 'blocked',
     summary: 'compiler unavailable',
     blocker: 'no compiler',

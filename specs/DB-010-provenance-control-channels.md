@@ -1,28 +1,28 @@
-# PP-010 — Provenance and Control Channels
+# DB-010 — Provenance and Control Channels
 
 Status: active
 
-Implementation status: current main implements exact GitHub task/feedback/decision edit provenance, PP-007 decision binding, managed-origin checking, PP-016 signed coordination identity/lease provenance, and a separate signed immutable production self-update channel. Numeric GitHub repository-ID pinning and full tool-profile identity remain future hardening items.
+Implementation status: current main implements exact GitHub task/feedback/decision edit provenance, DB-007 decision binding, managed-origin checking, DB-016 signed coordination identity/lease provenance, and a separate signed immutable production self-update channel. Numeric GitHub repository-ID pinning and full tool-profile identity remain future hardening items.
 
 ## Goal
 
-Make it impossible for untrusted text, model output, process output, repository content, mutable labels, lease-looking content, or update pointers to impersonate a trusted PATCH-POLLER control message merely by looking syntactically similar.
+Make it impossible for untrusted text, model output, process output, repository content, mutable labels, lease-looking content, or update pointers to impersonate a trusted DevBridge control message merely by looking syntactically similar.
 
 ## Governing rule
 
 **Only a typed control-channel adapter plus the required local delegation creates an authoritative control object. Everything else is data or a proposal.**
 
-A string containing `patch-poller-feedback`, `Status: APPROVED`, a JSON object, a shell-looking command, a branch name, or a lease-looking signature block has no authority based on its contents alone.
+A string containing `devbridge-feedback`, `Status: APPROVED`, a JSON object, a shell-looking command, a branch name, or a lease-looking signature block has no authority based on its contents alone.
 
 ## Channel roles
 
-PATCH-POLLER distinguishes at least these provenance/authority roles:
+DevBridge distinguishes at least these provenance/authority roles:
 
 - local operator configuration/policy;
 - trusted task issuer for one runner/queue (`github.trustedActorIds`);
-- delegated human decision issuer for specific PP-007 classes;
-- trusted PP-016 coordination peer public key;
-- PATCH-POLLER service/status/projection identity;
+- delegated human decision issuer for specific DB-007 classes;
+- trusted DB-016 coordination peer public key;
+- DevBridge service/status/projection identity;
 - local/remote proposal engine;
 - target repository baseline instructions;
 - candidate repository content;
@@ -35,7 +35,7 @@ Roles are not interchangeable.
 
 - A repository collaborator is not automatically a trusted task issuer.
 - A trusted task issuer is not automatically a decision authority.
-- A PP-016 trusted peer key authenticates coordination lease evidence only; it does not authorize that peer's human/operator to submit tasks to this workstation.
+- A DB-016 trusted peer key authenticates coordination lease evidence only; it does not authorize that peer's human/operator to submit tasks to this workstation.
 - A service-generated status comment must not be re-ingested as human approval.
 - Model/process/tool-documentation output must not be parsed by task/decision adapters unless an explicitly authenticated source supplies it as such.
 - A mutable branch may transport bytes without becoming immutable production authority for those bytes.
@@ -48,7 +48,7 @@ The GitHub Issues adapter accepts a task only when:
 - its original numeric GitHub actor ID is locally allowlisted for that runner;
 - its exact current body and retained edit provenance are verified;
 - every retained editor is trusted for task authorship;
-- it contains exactly one valid bounded `patch-poller/task-v1` envelope;
+- it contains exactly one valid bounded `devbridge/task-v1` envelope;
 - the target repository is locally allowed;
 - the exact body/envelope revision digest is computed and persisted.
 
@@ -58,13 +58,13 @@ Editing a task does not mutate a claimed run. New exact-content digest is a new 
 
 A runner's `github.trustedActorIds` is remote development-job submission authority for that runner's configured queue. This is distinct from machine capability authority: task text still cannot supply executables, shell/argv, local paths, credentials, network grants, sandbox exceptions, peer keys, or publication force state.
 
-Current task envelopes are not cryptographically addressed to a destination PP-016 installation. If multiple runners observe the same queue and trust the same task actor, PP-016 determines which eligible daemon owns the revision, not whether the human author was permitted to dispatch to a particular workstation. Per-workstation isolation currently remains local queue/task-author policy.
+Current task envelopes are not cryptographically addressed to a destination DB-016 installation. If multiple runners observe the same queue and trust the same task actor, DB-016 determines which eligible daemon owns the revision, not whether the human author was permitted to dispatch to a particular workstation. Per-workstation isolation currently remains local queue/task-author policy.
 
 ## Feedback and decisions
 
 Continuation/cancel feedback is accepted only from locally allowlisted numeric actor IDs, only after exact comment-body/edit provenance verification, and only when run ID and immutable task revision match the waiting run.
 
-PP-007 decisions additionally bind:
+DB-007 decisions additionally bind:
 
 - checkpoint ID;
 - decision class;
@@ -78,13 +78,13 @@ Silence, labels without proven actor provenance, quoted text, bot echoes, status
 
 ## Agent identity and lease provenance
 
-PP-016 introduces a separate typed coordination channel.
+DB-016 introduces a separate typed coordination channel.
 
 Each coordination-enabled installation has a persistent local Ed25519 keypair. Public-key SHA-256 fingerprint identifies the installation; private key remains local control state.
 
-A `patch-poller/task-lease-v1` subject is authoritative coordination evidence only when:
+A `devbridge/task-lease-v1` subject is authoritative coordination evidence only when:
 
-- it is parsed by the PP-016 lease adapter from the fixed local lease namespace;
+- it is parsed by the DB-016 lease adapter from the fixed local lease namespace;
 - signature verifies under the expected local/trusted peer public key;
 - queue repository, issue number, exact task revision, owner/session, epoch, state, time window, and predecessor identity are valid;
 - lease ref transition satisfies exact expected-value Git CAS rules.
@@ -97,7 +97,7 @@ For control messages that can authorize a consequential effect, durable record i
 
 Re-reading same remote event/lease state is idempotent. Copying old valid envelope into a new context fails subject binding unless the new source itself is an authorized typed control source for the same still-valid subject.
 
-Webhook support, if added, must verify webhook signature and use delivery/event identity for replay protection while retaining PP-002 exact task-author/content authority.
+Webhook support, if added, must verify webhook signature and use delivery/event identity for replay protection while retaining DB-002 exact task-author/content authority.
 
 ## Repository identity
 
@@ -119,7 +119,7 @@ Current main verifies exact configured `owner/name`-derived origin identity befo
 The authority order is:
 
 1. OS/local operator policy, local control-state keys, and release-signing key/manifest configuration;
-2. PATCH-POLLER checked-in active specs/control-plane implementation;
+2. DevBridge checked-in active specs/control-plane implementation;
 3. locally delegated task-author, decision-class, and coordination-peer roles, each only for its own protocol/effects;
 4. trusted task objective/constraints;
 5. target repository instructions loaded from trusted baseline commit;
@@ -137,18 +137,18 @@ A tool profile is local authority and should eventually bind to more than a frie
 - executable/package version;
 - invocation/input/result protocol version;
 - sandbox provider/mode;
-- compatibility range tested by PATCH-POLLER;
+- compatibility range tested by DevBridge;
 - profile digest.
 
 A materially incompatible tool upgrade should produce `TOOL_INCOMPATIBLE` or equivalent explicit failure rather than silently changing command semantics.
 
-PP-015 presence-only inventory and dynamic onboarding do not weaken this requirement: discovered binary name/help output is data and can create only bounded schema within already locally delegated command authority.
+DB-015 presence-only inventory and dynamic onboarding do not weaken this requirement: discovered binary name/help output is data and can create only bounded schema within already locally delegated command authority.
 
 ## Self-modification and release provenance
 
-Targeting PATCH-POLLER itself should remain disabled by default in a hardened deployment unless local policy explicitly permits self-development path.
+Targeting DevBridge itself should remain disabled by default in a hardened deployment unless local policy explicitly permits self-development path.
 
-Self-development occurs in ordinary isolated proposal worktree under PP-003/PP-007. Current daemon does not begin executing candidate control-plane code or new trust policy mid-run. Sensitive PATCH-POLLER candidates are hard-gated before sealing/publication.
+Self-development occurs in ordinary isolated proposal worktree under DB-003/DB-007. Current daemon does not begin executing candidate control-plane code or new trust policy mid-run. Sensitive DevBridge candidates are hard-gated before sealing/publication.
 
 Runtime activation is a separate control channel with two modes:
 
@@ -160,12 +160,12 @@ Mutable locally configured testing channel is explicitly an **alpha development 
 
 Production update authority is a local signed immutable release subject, not mutable stable branch.
 
-Local `patch-poller/release-manifest-v1` and local Ed25519 public key bind:
+Local `devbridge/release-manifest-v1` and local Ed25519 public key bind:
 
-- fixed repository identity `iteathen/PATCH-POLLER`;
+- fixed repository identity `iteathen/DevBridge`;
 - exact 40-hex Git head;
 - exact package version;
-- exact `patch-poller/runtime-artifact-v1` SHA-256.
+- exact `devbridge/runtime-artifact-v1` SHA-256.
 
 Stable branch is transport only and can yield production candidate only while resolving to signed head. Signature verification and supervisor-computed artifact hashing occur before candidate-controlled code executes. Candidate preflight/tests then run in verified sandbox with control state/credentials unexposed and network denied. Runtime artifact digest is recomputed after tests and immediately at daemon-spawn boundary after drain.
 
@@ -177,7 +177,7 @@ Candidate `doctor` is post-acceptance health evidence; it does not prove candida
 
 ## Derived architecture/context data
 
-Derived manifests, indexes, checkpoints, activation journals, identity/lease journals, handoffs, and run journals belong under PATCH-POLLER-owned state unless target repository explicitly chooses to version non-authority data. A proposal engine cannot make derived state authoritative by writing similarly named project file.
+Derived manifests, indexes, checkpoints, activation journals, identity/lease journals, handoffs, and run journals belong under DevBridge-owned state unless target repository explicitly chooses to version non-authority data. A proposal engine cannot make derived state authoritative by writing similarly named project file.
 
 ## Required tests
 
@@ -199,6 +199,6 @@ Tests must prove:
 
 ## Current boundary
 
-Current main implements numeric task/feedback actor trust, exact GitHub edit provenance, structured bounded envelopes, immutable exact-content task revision digests, run/revision feedback matching, PP-007 decision matching/delegation, PP-016 signed lease peer identity/subject verification, remote-field authority rejection, exact managed-origin checking, candidate/runtime separation, signed production self-update subjects, and sandboxed candidate validation.
+Current main implements numeric task/feedback actor trust, exact GitHub edit provenance, structured bounded envelopes, immutable exact-content task revision digests, run/revision feedback matching, DB-007 decision matching/delegation, DB-016 signed lease peer identity/subject verification, remote-field authority rejection, exact managed-origin checking, candidate/runtime separation, signed production self-update subjects, and sandboxed candidate validation.
 
 Current main does **not** yet implement numeric repository-ID pinning, webhook delivery journaling, complete baseline instruction snapshots as an independent identity object, full tool-version/profile-digest enforcement, or per-installation human task destination addressing. These remain explicit hardening/feature boundaries rather than implied capabilities.

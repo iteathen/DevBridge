@@ -49,22 +49,22 @@ function verifiedTestSandbox() {
 test('tool bridge tells workers the mandatory result fields and Git authority boundary', () => {
   const bridge = toolBridge('r1', WORKER_RESULT_FILE);
   assert.deepEqual(bridge.resultSchema.required, ['protocol', 'status', 'summary']);
-  assert.equal(bridge.resultSchema.protocol, 'patch-poller/result-v1');
+  assert.equal(bridge.resultSchema.protocol, 'devbridge/result-v1');
   assert.ok(bridge.resultSchema.status.includes('complete'));
   assert.match(bridge.resultSchema.summary, /Required non-empty string/u);
   assert.match(bridge.requirement, /overwrite the existing resultFile in place/u);
   assert.equal(bridge.resultFile, WORKER_RESULT_FILE);
-  assert.equal(bridge.gitAuthority.owner, 'patch-poller');
+  assert.equal(bridge.gitAuthority.owner, 'devbridge');
   assert.match(bridge.gitAuthority.rule, /Do not stage, commit, reset/u);
-  assert.match(bridge.gitAuthority.rule, /PATCH-POLLER validates, stages, seals, commits, and publishes/u);
-  assert.equal(bridge.example.protocol, 'patch-poller/result-v1');
+  assert.match(bridge.gitAuthority.rule, /DevBridge validates, stages, seals, commits, and publishes/u);
+  assert.equal(bridge.example.protocol, 'devbridge/result-v1');
   assert.equal(bridge.example.status, 'complete');
   assert.ok(bridge.example.summary.length > 0);
 });
 
 test('accepts a single UTF-8 BOM before otherwise valid tool result JSON', () => {
-  const parsed = parseResultJsonText('\uFEFF{"protocol":"patch-poller/result-v1","status":"complete","summary":"ok"}');
-  assert.equal(parsed.protocol, 'patch-poller/result-v1');
+  const parsed = parseResultJsonText('\uFEFF{"protocol":"devbridge/result-v1","status":"complete","summary":"ok"}');
+  assert.equal(parsed.protocol, 'devbridge/result-v1');
   assert.equal(parsed.status, 'complete');
   assert.equal(parsed.summary, 'ok');
 });
@@ -79,7 +79,7 @@ test('worker execution fails closed without a control-owned exchange and verifie
       () => runner.run({
         profile,
         projectDir,
-        runDir: path.join(projectDir, '.patch-poller', 'r1', 'turn-1'),
+        runDir: path.join(projectDir, '.devbridge', 'r1', 'turn-1'),
         runId: 'r1',
         context: { objective: 'never launch' },
       }),
@@ -105,7 +105,7 @@ test('runs without a shell, keeps IPC outside the proposal tree, and scrubs cont
     const result = await runner.run({
       profile,
       projectDir,
-      runDir: path.join(projectDir, '.patch-poller', 'r1', 'turn-1'),
+      runDir: path.join(projectDir, '.devbridge', 'r1', 'turn-1'),
       runId: 'r1',
       context: { objective: 'hello' }
     });
@@ -138,7 +138,7 @@ test('recovers an interrupted worker result from the exact control-owned run/tur
       context: { objective: 'interrupted worker' },
     });
     await writeFile(mailbox.resultFile, `${JSON.stringify({
-      protocol: 'patch-poller/result-v1',
+      protocol: 'devbridge/result-v1',
       status: 'continue',
       summary: 'recoverable checkpoint result',
       nextStep: 'continue from durable candidate bytes',
@@ -149,7 +149,7 @@ test('recovers an interrupted worker result from the exact control-owned run/tur
     });
     const recovered = await recoveredRunner.recoverResult({
       projectDir,
-      runDir: path.join(projectDir, '.patch-poller', 'r1', 'turn-1'),
+      runDir: path.join(projectDir, '.devbridge', 'r1', 'turn-1'),
       runId: 'r1',
     });
     assert.equal(recovered.recovered, true);

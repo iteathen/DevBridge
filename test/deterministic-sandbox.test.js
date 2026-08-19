@@ -37,7 +37,7 @@ test('deterministic operations classify static inspection separately and unknown
 });
 
 test('repository-code execution fails closed before process launch when no verified sandbox provider is configured', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'patch-poller-sandbox-closed-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-sandbox-closed-'));
   try {
     const testPath = path.join(root, 'fixture.test.mjs');
     await writeFile(testPath, "import test from 'node:test'; test('never launched', () => {});\n");
@@ -64,7 +64,7 @@ test('repository-code execution fails closed before process launch when no verif
 });
 
 test('static Node syntax inspection refuses a project symlink that would escape external-read policy', async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'patch-poller-static-read-boundary-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-static-read-boundary-'));
   const projectDir = path.join(root, 'project');
   try {
     await mkdir(projectDir, { recursive: true });
@@ -99,7 +99,7 @@ test('verified Bubblewrap execution denies external read/write, control-state re
     return;
   }
 
-  const root = await mkdtemp(path.join(os.tmpdir(), 'patch-poller-sandbox-boundary-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-sandbox-boundary-'));
   const projectDir = path.join(root, 'project');
   const outsideDir = path.join(root, 'outside');
   const stateDirectory = path.join(root, 'state');
@@ -152,7 +152,7 @@ test('repository code is contained', async () => {
   assert.equal(denied(() => fs.readFileSync(stateRead)), true);
   assert.equal(denied(() => fs.writeFileSync(path.join(process.cwd(), '.git', 'config'), 'mutated')), true);
   assert.equal(await networkDenied(), true);
-  assert.equal(process.env.PATCH_POLLER_GITHUB_TOKEN, undefined);
+  assert.equal(process.env.DEVBRIDGE_GITHUB_TOKEN, undefined);
   fs.writeFileSync(path.join(process.cwd(), 'sandbox-project-write.txt'), 'project-ok');
 });
 `;
@@ -161,11 +161,11 @@ test('repository code is contained', async () => {
     const provider = providerFor(root, {
       stateDirectory,
       policy: { provider: 'bubblewrap', bubblewrapExecutable: 'bwrap' },
-      env: { ...process.env, PATCH_POLLER_GITHUB_TOKEN: 'must-not-reach-worker' },
+      env: { ...process.env, DEVBRIDGE_GITHUB_TOKEN: 'must-not-reach-worker' },
     });
     const status = await provider.verify();
     if (!status.verified) {
-      if (process.env.PATCH_POLLER_REQUIRE_SANDBOX_TEST === '1') {
+      if (process.env.DEVBRIDGE_REQUIRE_SANDBOX_TEST === '1') {
         assert.fail(`required Bubblewrap boundary verification failed: ${status.reason}`);
       }
       t.skip(`Bubblewrap unavailable/unusable on this host: ${status.reason}`);
@@ -173,7 +173,7 @@ test('repository code is contained', async () => {
     }
 
     const runner = new DeterministicProcessRunner({
-      sourceEnv: { ...process.env, PATCH_POLLER_GITHUB_TOKEN: 'must-not-reach-worker' },
+      sourceEnv: { ...process.env, DEVBRIDGE_GITHUB_TOKEN: 'must-not-reach-worker' },
       sandboxProvider: provider,
     });
     const result = await createCoreOperationRegistry().execute('node.test', { paths: ['boundary.test.mjs'] }, {
@@ -200,7 +200,7 @@ test('Bubblewrap exposes locally configured external read roots read-only', { ti
     t.skip('Bubblewrap provider is Linux-only.');
     return;
   }
-  const root = await mkdtemp(path.join(os.tmpdir(), 'patch-poller-sandbox-readroot-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-sandbox-readroot-'));
   const projectDir = path.join(root, 'project');
   const readRoot = path.join(root, 'reference');
   const stateDirectory = path.join(root, 'state');
@@ -228,7 +228,7 @@ test('configured read root', () => {
     });
     const status = await provider.verify();
     if (!status.verified) {
-      if (process.env.PATCH_POLLER_REQUIRE_SANDBOX_TEST === '1') assert.fail(`required Bubblewrap verification failed: ${status.reason}`);
+      if (process.env.DEVBRIDGE_REQUIRE_SANDBOX_TEST === '1') assert.fail(`required Bubblewrap verification failed: ${status.reason}`);
       t.skip(`Bubblewrap unavailable/unusable on this host: ${status.reason}`);
       return;
     }
