@@ -308,34 +308,55 @@ export class RunCoordinator {
     };
   }
 
-  async #finalize(key, state, workspace) {
-    let finalSnapshot = state.finalSnapshot;
-    if (state.stage !== 'publishing' || !finalSnapshot) {
-      state.stage = 'verifying';
-      await this.#save(key, state);
-      try {
-        finalSnapshot = await this.#workspace.sealCandidate(workspace, {
+  async #sealForFinalization(key, state, workspace) {
+    try {
+      return {
+        handled: false,
+        snapshot: await this.#workspace.sealCandidate(workspace, {
           issueNumber: state.task.issueNumber,
           revision: state.task.revision
-        });
-      } catch (error) {
-        if (error instanceof BaselineReverificationRequiredError) {
-          return this.#recordBaselineReverification(key, state, workspace, error);
-        }
-        if (error instanceof BaselineReconciliationError) {
-          if (error.kind === 'upstream-history-rewrite' || state.task.envelope.controllerPlan) {
-            return this.#recordBaselineCheckpoint(key, state, workspace, error);
-          }
-          return this.#recordCandidateRejection(key, state, workspace, error);
-        }
-        if (error instanceof CandidateValidationError) {
-          if (state.task.envelope.controllerPlan) {
-            throw new PolicyError(`deterministic controller-plan candidate failed sealing: ${error.message}`, { cause: error });
-          }
-          return this.#recordCandidateRejection(key, state, workspace, error);
-        }
-        throw error;
+        })
+      };
+    } catch (error) {
+      if (error instanceof BaselineReverificationRequiredError) {
+        return { handled: true, result: await this.#recordBaselineReverification(key, state, workspace, error) };
       }
+      if (error instanceof BaselineReconciliationError) {
+        if (error.kind === 'upstream-history-rewrite' || state.task.envelope.controllerPlan) {
+          return { handled: true, result: await this.#recordBaselineCheckpoint(key, state, workspace, error) };
+        }
+        return { handled: true, result: await this.#recordCandidateRejection(key, state, workspace, error) };
+      }
+      if (error instanceof CandidateValidationError) {
+        if (state.task.envelope.controllerPlan) {
+          throw new PolicyError(`deterministic controller-plan candidate failed sealing: ${error.message}`, { cause: error });
+        }
+        return { handled: true, result: await this.#recordCandidateRejection(key, state, workspace, error) };
+      }
+      throw error;
+    }
+  }
+
+  async #finalize(key, state, workspace) {
+    let finalSnapshot = state.finalSnapshot;
+
+    if (state.stage === 'publishing' && finalSnapshot) {
+      const checked = await this.#sealForFinalization(key, state, workspace);
+      if (checked.handled) return checked.result;
+      finalSnapshot = checked.snapshot;
+      state.finalSnapshot = finalSnapshot;
+      state.baselineReverifyRequired = false;
+      state.prior.changedFiles = finalSnapshot.changedFiles;
+      state.prior.git = gitProjection(finalSnapshot);
+      state.prior.blockers = [];
+      state.prior.nextStep = null;
+      await this.#save(key, state);
+    } else {
+      state.stage = 'verifying';
+      await this.#save(key, state);
+      const sealed = await this.#sealForFinalization(key, state, workspace);
+      if (sealed.handled) return sealed.result;
+      finalSnapshot = sealed.snapshot;
       state.finalSnapshot = finalSnapshot;
       state.baselineReverifyRequired = false;
       state.prior.changedFiles = finalSnapshot.changedFiles;
