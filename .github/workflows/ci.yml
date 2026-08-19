@@ -8,7 +8,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test:
@@ -19,9 +19,27 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22.16.0
+      - name: Apply staged DevBridge hard cutover
+        if: runner.os == 'Linux' && hashFiles('scripts/devbridge-hard-cutover.mjs') != ''
+        run: node scripts/devbridge-hard-cutover.mjs
+      - name: Publish staged DevBridge hard cutover
+        if: runner.os == 'Linux' && hashFiles('scripts/devbridge-hard-cutover.mjs') == ''
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No staged cutover changes to publish."
+          else
+            git config user.name "DevBridge Cutover"
+            git config user.email "actions@users.noreply.github.com"
+            git add -A
+            git commit -m "refactor: hard cut over live identity to DevBridge"
+            git push origin HEAD:refactor/devbridge-hard-cutover
+          fi
       - name: Install Bubblewrap sandbox provider
         if: runner.os == 'Linux'
         run: |
