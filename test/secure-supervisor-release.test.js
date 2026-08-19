@@ -5,7 +5,7 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { superviseDaemon } from '../devbridge.mjs';
+import { superviseDaemon } from '../src/bootstrap/secure-bootstrap.mjs';
 import {
   RELEASE_MANIFEST_PROTOCOL,
   RELEASE_REPOSITORY,
