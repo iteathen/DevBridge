@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import {
+  canonicalizeWindowsReadRootPath,
   canonicalizeWindowsWorkspacePath,
   createWindowsProcessContainerId,
   windowsProcessContainerProbeTimeouts,
@@ -75,6 +76,61 @@ test('workspace trust anchor rejects new filesystem indirection below the anchor
         directory: true,
       }),
       /resolves through filesystem indirection inside managed workspace/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('workspace-contained read roots reuse the canonical workspace trust anchor', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-readroot-anchor-'));
+  try {
+    const realParent = path.join(root, 'real-parent');
+    const realWorkspace = path.join(realParent, 'workspace');
+    const realReadRoot = path.join(realWorkspace, 'reference');
+    const aliasParent = path.join(root, 'alias-parent');
+    await mkdir(realReadRoot, { recursive: true });
+    try {
+      await directoryLink(realParent, aliasParent);
+    } catch (error) {
+      if (error?.code === 'EPERM' || error?.code === 'EACCES') {
+        t.skip(`directory-link fixture unavailable on this host: ${error.code}`);
+        return;
+      }
+      throw error;
+    }
+
+    const aliasedWorkspace = path.join(aliasParent, 'workspace');
+    const aliasedReadRoot = path.join(aliasedWorkspace, 'reference');
+    const canonical = await canonicalizeWindowsReadRootPath(aliasedWorkspace, aliasedReadRoot);
+
+    assert.equal(comparable(canonical), comparable(await realpath(realReadRoot)));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('read roots outside the workspace stay strict about filesystem indirection', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-readroot-external-'));
+  try {
+    const workspace = path.join(root, 'workspace');
+    const realExternal = path.join(root, 'external-real');
+    const aliasedExternal = path.join(root, 'external-alias');
+    await mkdir(workspace, { recursive: true });
+    await mkdir(realExternal, { recursive: true });
+    try {
+      await directoryLink(realExternal, aliasedExternal);
+    } catch (error) {
+      if (error?.code === 'EPERM' || error?.code === 'EACCES') {
+        t.skip(`directory-link fixture unavailable on this host: ${error.code}`);
+        return;
+      }
+      throw error;
+    }
+
+    await assert.rejects(
+      () => canonicalizeWindowsReadRootPath(workspace, aliasedExternal),
+      /resolves through filesystem indirection/u,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
