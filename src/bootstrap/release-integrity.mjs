@@ -55,9 +55,7 @@ function normalizeSignature(value) {
   if (typeof value.value !== 'string' || value.value.length === 0 || value.value.length > 4096 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(value.value)) {
     fail('release manifest signature value must be bounded base64');
   }
-  let bytes;
-  try { bytes = Buffer.from(value.value, 'base64'); }
-  catch { fail('release manifest signature value is invalid base64'); }
+  const bytes = Buffer.from(value.value, 'base64');
   if (bytes.length !== 64) fail('release manifest Ed25519 signature must be exactly 64 bytes');
   return { algorithm: 'ed25519', keyId: value.keyId, value: value.value, bytes };
 }
@@ -84,8 +82,9 @@ export async function readSignedReleaseManifest(manifestPath, publicKeyPath) {
   try { publicKey = createPublicKey(publicKeyBytes); }
   catch { fail('release public key could not be parsed'); }
   if (publicKey.asymmetricKeyType !== 'ed25519') fail('release public key must be Ed25519');
-  const verified = verifySignature(null, releaseSubjectPayload(release), publicKey, signature.bytes);
-  if (!verified) fail('release manifest signature verification failed');
+  if (!verifySignature(null, releaseSubjectPayload(release), publicKey, signature.bytes)) {
+    fail('release manifest signature verification failed');
+  }
 
   return {
     protocol: RELEASE_MANIFEST_PROTOCOL,
@@ -146,7 +145,6 @@ export async function runtimeArtifactSha256(runtimeDir, {
       totalBytes += bytes.length;
       if (totalBytes > maxBytes) fail(`runtime artifact exceeds ${maxBytes} bytes`);
       appendField(hash, 'file-path', relative);
-      appendField(hash, 'file-executable', (info.mode & 0o111) !== 0 ? '1' : '0');
       appendField(hash, 'file-bytes', bytes);
     }
   }
