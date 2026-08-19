@@ -7,6 +7,7 @@ import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
 import { createDeterministicSandboxProvider } from '../runtime/deterministic-sandbox.js';
 import { operationSecurityDescription } from '../runtime/deterministic-operation-security.js';
+import { ToolInventoryService } from '../runtime/tool-inventory.js';
 import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
 import { enforcementProviderReport, profileSecurityDescription } from '../runtime/profile-security.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
@@ -102,6 +103,21 @@ export async function doctor(
     ? await toolchainRegistry.inspect()
     : toolchainRegistry.names().map((name) => ({ name, available: null, layer: 'core' }));
   const faultInjection = new DeterministicFaultInjector(config.execution.faultInjection ?? {}).inspect();
+  let toolInventory = null;
+  if (probeCoreCapabilities) {
+    const inventoryService = new ToolInventoryService({
+      operationRegistry,
+      toolchainRegistry,
+      sandboxProvider: deterministicSandboxProvider,
+      profiles: { ...config.tools, ...builtIns },
+      deterministicProfileNames: Object.keys(builtIns),
+      modelAdaptersEnabled: config.execution.modelAdaptersEnabled,
+      allowUncontainedTools: config.execution.allowUncontainedTools,
+      env,
+      runtimeIdentity: { version: '0.1.0' },
+    });
+    toolInventory = await inventoryService.refresh();
+  }
 
   let gitVersion = null;
   if (checkGit) {
@@ -133,6 +149,7 @@ export async function doctor(
     executionEnabled: config.execution.enabled,
     autoPushTaskBranches: config.publication.autoPushTaskBranches,
     gitVersion,
+    toolInventory,
     capabilities: {
       enforcementProvider,
       core: {
