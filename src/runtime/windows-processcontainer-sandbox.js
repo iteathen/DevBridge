@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { access, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { PolicyError } from '../errors.js';
@@ -270,34 +269,34 @@ export class WindowsProcessContainerSandboxProvider {
     return this.#verifyPromise;
   }
 
-  async #createScratchRoot(prefix = 'devbridge-windows-sandbox-') {
-    const scratch = await mkdtemp(path.join(os.tmpdir(), prefix));
+  async #createScratchRoot(prefix = 'run-') {
+    const scratchParent = path.join(this.#workspaceRoot, '.devbridge-sandbox-scratch');
+    await mkdir(scratchParent, { recursive: true });
+    const parent = await canonicalExisting(scratchParent, 'sandbox scratch parent', { directory: true });
+    const scratch = await mkdtemp(path.join(parent, prefix));
     return canonicalExisting(scratch, 'sandbox scratch root', { directory: true });
   }
 
   async #buildLaunch({ executable, args, cwd, env, sandbox, scratchRoot }) {
     const project = await canonicalExisting(sandbox.projectDir, 'sandbox project root', { directory: true });
     const workspace = await canonicalExisting(this.#workspaceRoot, 'sandbox workspace root', { directory: true });
+    const scratch = await canonicalExisting(scratchRoot, 'sandbox scratch root', { directory: true });
     if (!isWithin(workspace, project)) throw new PolicyError('sandbox project root must stay inside the managed workspace root');
+    if (!isWithin(workspace, scratch)) throw new PolicyError('sandbox scratch root must stay inside the managed workspace root');
 
     const cwdResolved = await canonicalExisting(cwd, 'sandbox working directory', { directory: true });
-    if (!isWithin(project, cwdResolved) && !isWithin(scratchRoot, cwdResolved)) {
+    if (!isWithin(project, cwdResolved) && !isWithin(scratch, cwdResolved)) {
       throw new PolicyError('sandbox working directory must stay inside the project or owned scratch root');
     }
 
     const targetExecutable = await canonicalExisting(executable, 'sandbox target executable');
     const protectedRoots = [this.#stateDirectory];
-    const devbridgeHome = this.#env.DEVBRIDGE_HOME
-      ? path.resolve(this.#env.DEVBRIDGE_HOME)
-      : path.join(os.homedir(), '.devbridge');
-    if (await exists(devbridgeHome)) protectedRoots.push(await canonicalExisting(devbridgeHome, 'DevBridge home', { directory: true }));
-
     const requestedReadRoots = [path.dirname(targetExecutable), ...localToolRoots(env)];
     if (sandbox.exposeConfiguredReadRoots !== false) requestedReadRoots.push(...this.#externalReadRoots);
     requestedReadRoots.push(...(sandbox.trustedReadRoots ?? []));
     const readRoots = await canonicalReadRoots(requestedReadRoots, protectedRoots);
 
-    const readwritePaths = [project, scratchRoot];
+    const readwritePaths = [project, scratch];
     const readonlyPaths = [...readRoots];
     const deniedPaths = [];
     const gitAdmin = path.join(project, '.git');
@@ -320,7 +319,7 @@ export class WindowsProcessContainerSandboxProvider {
       process: {
         commandLine: windowsCreateProcessCommandLine([targetExecutable, ...args]),
         cwd: cwdResolved,
-        env: safeEnvironment(env, scratchRoot),
+        env: safeEnvironment(env, scratch),
         timeout: 0,
       },
       filesystem: {
@@ -401,7 +400,9 @@ export class WindowsProcessContainerSandboxProvider {
     let stateProbe = null;
     try {
       await mkdir(this.#stateDirectory, { recursive: true });
-      probeRoot = await mkdtemp(path.join(os.tmpdir(), 'devbridge-windows-boundary-'));
+      await mkdir(this.#workspaceRoot, { recursive: true });
+      const workspace = await canonicalExisting(this.#workspaceRoot, 'sandbox workspace root', { directory: true });
+      probeRoot = await mkdtemp(path.join(workspace, '.devbridge-windows-boundary-'));
       const projectDir = path.join(probeRoot, 'project');
       const scratchDir = path.join(probeRoot, 'scratch');
       const outsideDir = path.join(probeRoot, 'outside');
