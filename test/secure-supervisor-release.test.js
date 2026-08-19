@@ -205,6 +205,7 @@ test('production supervisor refuses a candidate whose bytes change after validat
       if (command === 'stop') setTimeout(() => current.emit('exit', 0, null), 0);
       return 0;
     },
+    recordActivationFn: () => {},
     delayFn: timer,
   });
   await assert.rejects(result, /runtime artifact changed after validation before activation/u);
