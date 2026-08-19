@@ -9,6 +9,17 @@ function quoted(value) { return JSON.stringify(String(value)); }
 
 const noOpPreflight = 'process.exitCode = 0;\n';
 
+function expectedProvider() {
+  return process.platform === 'win32' ? 'windows-processcontainer' : 'bubblewrap';
+}
+
+function liveSandboxProvisioned() {
+  if (process.platform === 'linux') return true;
+  return process.platform === 'win32' &&
+    typeof process.env.DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE === 'string' &&
+    process.env.DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE.trim() !== '';
+}
+
 function maliciousTest({ secretFile, currentFile, activationFile }) {
   return `
 import test from 'node:test';
@@ -58,7 +69,9 @@ test('malicious validation stays outside supervisor authority', async () => {
 `;
 }
 
-test('candidate validation cannot read or mutate bootstrap host state or reach the network', { timeout: 30_000 }, async (t) => {
+test('candidate validation cannot read or mutate bootstrap host state or reach the network', {
+  timeout: process.platform === 'win32' ? 120_000 : 30_000,
+}, async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-bootstrap-candidate-sandbox-'));
   const home = path.join(root, 'home');
   const runtimeCandidates = path.join(home, 'runtime-candidates');
@@ -85,7 +98,7 @@ test('candidate validation cannot read or mutate bootstrap host state or reach t
     GITHUB_TOKEN: 'must-never-reach-candidate',
   };
 
-  if (process.platform !== 'linux') {
+  if (!liveSandboxProvisioned()) {
     await assert.rejects(
       () => validateRuntimeCandidate(paths, runtime, null, { env: sourceEnv }),
       /verified OS sandbox provider/u,
@@ -104,6 +117,7 @@ test('candidate validation cannot read or mutate bootstrap host state or reach t
   assert.equal(validation.preflight, 'passed-sandboxed');
   assert.equal(validation.tests, 'passed-sandboxed');
   assert.equal(validation.doctor, 'deferred-post-activation');
+  assert.equal(validation.sandbox.provider, expectedProvider());
   assert.equal(validation.sandbox.verified, true);
   assert.equal(validation.sandbox.network, 'denied');
   assert.equal(await readFile(secretFile, 'utf8'), 'control-secret-sentinel\n');
