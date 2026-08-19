@@ -4,11 +4,10 @@ on:
   push:
     branches:
       - main
-      - 'sol/**'
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -25,22 +24,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.16.0
-      - name: Apply staged DevBridge hard cutover
-        if: runner.os == 'Linux' && hashFiles('scripts/devbridge-hard-cutover.mjs') != ''
-        run: node scripts/devbridge-hard-cutover.mjs
-      - name: Publish staged DevBridge hard cutover
-        if: runner.os == 'Linux' && hashFiles('scripts/devbridge-hard-cutover.mjs') == ''
-        run: |
-          git restore --source=HEAD -- .github/workflows/ci.yml .github/workflows/devbridge-hard-cutover.yml
-          if git diff --quiet && git diff --cached --quiet; then
-            echo "No staged cutover changes to publish."
-          else
-            git config user.name "DevBridge Cutover"
-            git config user.email "actions@users.noreply.github.com"
-            git add -A
-            git commit -m "refactor: hard cut over live identity to DevBridge"
-            git push origin HEAD:refactor/devbridge-hard-cutover
-          fi
       - name: Install Bubblewrap sandbox provider
         if: runner.os == 'Linux'
         run: |
@@ -51,6 +34,10 @@ jobs:
           sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
       - name: Cheap preflight
         run: npm run preflight
+      - name: DevBridge identity audit
+        run: node --test test/product-identity.test.js
+      - name: Standalone launcher regression
+        run: node --test test/standalone-launcher.test.js
       - name: Issue 30 config tests
         run: node --test test/config.test.js
       - name: Manifest argv envelope
@@ -102,7 +89,7 @@ jobs:
           test/supervisor.test.js
       - name: Tests
         env:
-          PATCH_POLLER_REQUIRE_SANDBOX_TEST: ${{ runner.os == 'Linux' && '1' || '0' }}
+          DEVBRIDGE_REQUIRE_SANDBOX_TEST: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: npm test
       - name: Doctor smoke test
-        run: node src/cli.js doctor --config config/patch-poller.example.json
+        run: node src/cli.js doctor --config config/devbridge.example.json
