@@ -1,6 +1,12 @@
 import path from 'node:path';
 import { buildContextCapsule } from '../context/context-capsule.js';
-import { CandidateValidationError, PolicyError, TaskLeaseLostError } from '../errors.js';
+import {
+  BaselineReconciliationError,
+  BaselineReverificationRequiredError,
+  CandidateValidationError,
+  PolicyError,
+  TaskLeaseLostError,
+} from '../errors.js';
 import { validateToolProfile } from '../runtime/cli-profile.js';
 import { controllerPlanDigest } from './controller-plan.js';
 import { parseToolResult } from './result-envelope.js';
@@ -26,6 +32,17 @@ function transientRetryDelay(attempt) {
 function outputTail(run) {
   const text = [run.stdout, run.stderr].filter(Boolean).join('\n');
   return text.length <= 8000 ? text : text.slice(-8000);
+}
+
+function gitProjection(snapshot) {
+  if (!snapshot) return null;
+  return {
+    branch: snapshot.branch,
+    baseSha: snapshot.baseSha,
+    publicationBaseSha: snapshot.publicationBaseSha ?? snapshot.baseSha,
+    headSha: snapshot.headSha,
+    dirty: snapshot.dirty
+  };
 }
 
 function feedbackProvenanceProjection(provenance) {
@@ -152,12 +169,7 @@ export class RunCoordinator {
       runtime: {
         changedFiles: snapshot?.changedFiles ?? state.prior.changedFiles,
         tests: state.prior.tests,
-        git: snapshot ? {
-          branch: snapshot.branch,
-          baseSha: snapshot.baseSha,
-          headSha: snapshot.headSha,
-          dirty: snapshot.dirty
-        } : state.prior.git,
+        git: snapshot ? gitProjection(snapshot) : state.prior.git,
         blockers: state.prior.blockers,
         nextStep: state.prior.nextStep,
         outputTail: state.prior.outputTail,
@@ -234,18 +246,66 @@ export class RunCoordinator {
     state.stage = 'running';
     state.finalSnapshot = null;
     state.prior.changedFiles = snapshot.changedFiles;
-    state.prior.git = {
-      branch: snapshot.branch,
-      baseSha: snapshot.baseSha,
-      headSha: snapshot.headSha,
-      dirty: snapshot.dirty
-    };
+    state.prior.git = gitProjection(snapshot);
     state.prior.blockers = [summary];
     state.prior.nextStep = 'Repair the candidate validation issues in the working tree, re-run relevant read-only checks, and report complete only when correct. Do not stage or commit; PATCH-POLLER owns Git administrative state.';
     state.prior.progress.push(summary);
     await this.#save(key, state);
     await this.#publish(state, 'REPAIRING', summary, snapshot, { force: true });
     return null;
+  }
+
+  async #recordBaselineReverification(key, state, workspace, error) {
+    const snapshot = await this.#workspace.snapshot(workspace);
+    const reconciliation = error.reconciliation ?? {};
+    const summary = `PATCH-POLLER rebased the sealed candidate from publication baseline ${reconciliation.fromBaseSha ?? 'unknown'} to ${reconciliation.toBaseSha ?? snapshot.publicationBaseSha}; prior verification is stale and must be repeated before publication.`;
+    state.finalSnapshot = null;
+    state.baselineReverifyRequired = true;
+    state.baselineReconciliation ??= { history: [] };
+    state.baselineReconciliation.history ??= [];
+    state.baselineReconciliation.history.push({
+      fromBaseSha: reconciliation.fromBaseSha ?? null,
+      toBaseSha: reconciliation.toBaseSha ?? snapshot.publicationBaseSha,
+      fromHeadSha: reconciliation.fromHeadSha ?? null,
+      toHeadSha: reconciliation.toHeadSha ?? snapshot.headSha,
+      recordedAt: nowIso()
+    });
+    state.baselineReconciliation.history = state.baselineReconciliation.history.slice(-20);
+    state.prior.changedFiles = snapshot.changedFiles;
+    state.prior.git = gitProjection(snapshot);
+    state.prior.tests = [];
+    state.prior.blockers = [];
+    state.prior.nextStep = state.task.envelope.controllerPlan
+      ? 'Re-run the deterministic controller plan and all of its assertions against the rebased publication baseline before finalization.'
+      : 'The upstream baseline advanced and PATCH-POLLER rebased the sealed candidate. Re-run the relevant verification/tests against this rebased worktree before reporting complete. Do not stage or commit; PATCH-POLLER owns Git administrative state.';
+    state.prior.progress.push(summary);
+    state.stage = state.task.envelope.controllerPlan ? 'controller-plan' : 'running';
+    await this.#save(key, state);
+    await this.#publish(state, 'REVERIFYING', summary, snapshot, { force: true });
+    return null;
+  }
+
+  async #recordBaselineCheckpoint(key, state, workspace, error) {
+    const snapshot = await this.#workspace.snapshot(workspace);
+    const summary = `PATCH-POLLER cannot safely reconcile the publication baseline automatically: ${error.message}`;
+    state.stage = 'waiting-feedback';
+    state.finalSnapshot = null;
+    state.baselineReverifyRequired = false;
+    state.prior.changedFiles = snapshot.changedFiles;
+    state.prior.git = gitProjection(snapshot);
+    state.prior.blockers = [summary];
+    state.prior.nextStep = 'Inspect the upstream baseline change and provide a trusted continuation decision. PATCH-POLLER will not rewrite upstream history or leave an unresolved rebase in the managed worktree.';
+    state.prior.progress.push(summary);
+    await this.#save(key, state);
+    await this.#publish(state, 'WAITING_FEEDBACK', summary, snapshot, { force: true });
+    return {
+      runId: state.runId,
+      issueNumber: state.task.issueNumber,
+      status: 'waiting-feedback',
+      waiting: true,
+      branch: workspace.branch,
+      headSha: snapshot.headSha
+    };
   }
 
   async #finalize(key, state, workspace) {
@@ -259,6 +319,15 @@ export class RunCoordinator {
           revision: state.task.revision
         });
       } catch (error) {
+        if (error instanceof BaselineReverificationRequiredError) {
+          return this.#recordBaselineReverification(key, state, workspace, error);
+        }
+        if (error instanceof BaselineReconciliationError) {
+          if (error.kind === 'upstream-history-rewrite' || state.task.envelope.controllerPlan) {
+            return this.#recordBaselineCheckpoint(key, state, workspace, error);
+          }
+          return this.#recordCandidateRejection(key, state, workspace, error);
+        }
         if (error instanceof CandidateValidationError) {
           if (state.task.envelope.controllerPlan) {
             throw new PolicyError(`deterministic controller-plan candidate failed sealing: ${error.message}`, { cause: error });
@@ -268,19 +337,16 @@ export class RunCoordinator {
         throw error;
       }
       state.finalSnapshot = finalSnapshot;
+      state.baselineReverifyRequired = false;
       state.prior.changedFiles = finalSnapshot.changedFiles;
-      state.prior.git = {
-        branch: finalSnapshot.branch,
-        baseSha: finalSnapshot.baseSha,
-        headSha: finalSnapshot.headSha,
-        dirty: finalSnapshot.dirty
-      };
+      state.prior.git = gitProjection(finalSnapshot);
       state.prior.blockers = [];
       state.prior.nextStep = null;
       await this.#save(key, state);
     }
 
-    const noProjectDiff = finalSnapshot.headSha === finalSnapshot.baseSha && finalSnapshot.changedFiles.length === 0;
+    const publicationBaseSha = finalSnapshot.publicationBaseSha ?? finalSnapshot.baseSha;
+    const noProjectDiff = finalSnapshot.headSha === publicationBaseSha && finalSnapshot.changedFiles.length === 0;
     if (this.#autoPush && state.publication?.published !== true && !state.publication?.skipped) {
       if (noProjectDiff && !this.#forceNoOpPublication) {
         state.publication = {
@@ -288,6 +354,7 @@ export class RunCoordinator {
           skipped: true,
           reason: 'no-project-diff',
           headSha: finalSnapshot.headSha,
+          publicationBaseSha,
           recordedAt: nowIso()
         };
         await this.#save(key, state);
@@ -295,7 +362,7 @@ export class RunCoordinator {
         state.stage = 'publishing';
         await this.#save(key, state);
         const publication = await this.#workspace.publishTaskBranch(workspace);
-        state.publication = { published: true, ...publication, publishedAt: nowIso() };
+        state.publication = { published: true, ...publication, publicationBaseSha, publishedAt: nowIso() };
         await this.#save(key, state);
       }
     }
@@ -317,6 +384,8 @@ export class RunCoordinator {
       status: 'completed',
       branch: workspace.branch,
       headSha: finalSnapshot.headSha,
+      baseSha: finalSnapshot.baseSha,
+      publicationBaseSha,
       changedFiles: finalSnapshot.changedFiles,
       published: state.publication?.published === true,
       publicationSkipped: state.publication?.skipped === true,
@@ -481,7 +550,9 @@ export class RunCoordinator {
       const workspace = await this.#workspace.prepareRun(task, state.runId, {
         baseRef: state.workspace?.baseRef ?? null,
         baseSha: state.workspace?.baseSha ?? null,
-        baselineChannel: state.workspace?.baselineChannel ?? plan?.baselineChannel ?? null
+        baselineChannel: state.workspace?.baselineChannel ?? plan?.baselineChannel ?? null,
+        publicationBaseSha: state.workspace?.publicationBaseSha ?? null,
+        publicationRewriteFromShas: state.workspace?.publicationRewriteFromShas ?? []
       });
       state.workspace = workspace;
       state.prior.receipt ??= {
@@ -519,11 +590,12 @@ export class RunCoordinator {
         if (!this.#planExecutor) throw new PolicyError('controller plan executor is not configured');
         state.stage = 'controller-plan';
         state.turn = Math.max(1, state.turn);
+        state.baselineReverifyRequired = false;
         state.prior.liveness = {
           stage: 'controller-plan',
           startedAt: state.controllerPlan?.startedAt ?? nowIso(),
           lastActivityAt: nowIso(),
-          attempt: 1
+          attempt: state.turn
         };
         await this.#save(key, state);
         const execution = await this.#planExecutor.execute({
@@ -537,17 +609,12 @@ export class RunCoordinator {
               operationId: activity.operationId,
               operation: activity.operation,
               lastActivityAt: activity.at,
-              attempt: 1
+              attempt: state.turn
             };
           }
         });
         state.prior.changedFiles = execution.snapshot.changedFiles;
-        state.prior.git = {
-          branch: execution.snapshot.branch,
-          baseSha: execution.snapshot.baseSha,
-          headSha: execution.snapshot.headSha,
-          dirty: execution.snapshot.dirty
-        };
+        state.prior.git = gitProjection(execution.snapshot);
         state.prior.tests = [...state.prior.tests, ...execution.tests].slice(-100);
         state.prior.progress.push(execution.summary);
         state.prior.nextStep = null;
@@ -557,6 +624,27 @@ export class RunCoordinator {
         await this.#save(key, state);
         const finalized = await this.#finalize(key, state, workspace);
         if (finalized) return finalized;
+        if (state.stage === 'controller-plan' && state.baselineReverifyRequired) {
+          if (state.turn >= state.turnLimit) {
+            state.stage = 'waiting-feedback';
+            state.baselineReverifyRequired = false;
+            const blocker = `Publication baseline kept advancing through the bounded ${state.turnLimit}-attempt deterministic reverification window; trusted continuation feedback is required.`;
+            state.prior.blockers = [blocker];
+            await this.#save(key, state);
+            await this.#publish(state, 'WAITING_FEEDBACK', blocker, await this.#workspace.snapshot(workspace), { force: true });
+            return {
+              runId: state.runId,
+              issueNumber: task.issueNumber,
+              status: 'waiting-feedback',
+              waiting: true,
+              branch: workspace.branch
+            };
+          }
+          state.turn += 1;
+          state.baselineReverifyRequired = false;
+          await this.#save(key, state);
+          return this.executeTask(task);
+        }
         throw new PolicyError('deterministic controller plan could not be finalized');
       }
 
@@ -567,6 +655,7 @@ export class RunCoordinator {
         const nextTurn = state.turn + 1;
         state.stage = 'invoking';
         state.turn = nextTurn;
+        state.baselineReverifyRequired = false;
         await this.#save(key, state);
 
         const run = await this.#runner.run({
@@ -586,12 +675,7 @@ export class RunCoordinator {
         });
 
         state.prior.changedFiles = snapshot.changedFiles;
-        state.prior.git = {
-          branch: snapshot.branch,
-          baseSha: snapshot.baseSha,
-          headSha: snapshot.headSha,
-          dirty: snapshot.dirty
-        };
+        state.prior.git = gitProjection(snapshot);
         state.prior.outputTail = outputTail(run);
         state.prior.nextStep = result.nextStep;
         if (result.summary) state.prior.progress.push(result.summary);
