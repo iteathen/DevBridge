@@ -34,13 +34,16 @@ export class ManagedScratchTransaction {
   #state;
   #persist;
   #faults;
+  #effectGuard;
   #root;
 
-  constructor({ workspace, state, persist, faultInjector = null }) {
+  constructor({ workspace, state, persist, faultInjector = null, effectGuard = null }) {
     this.#workspace = workspace;
     this.#state = state;
     this.#persist = persist;
     this.#faults = faultInjector;
+    if (effectGuard != null && typeof effectGuard !== 'function') throw new TypeError('ManagedScratchTransaction effectGuard must be a function');
+    this.#effectGuard = effectGuard;
     const runId = safeId(String(workspace.runId ?? path.basename(workspace.worktreeDir)), 'scratch runId');
     this.#root = path.join(path.dirname(path.resolve(workspace.worktreeDir)), `.patch-poller-scratch-${runId}`);
     this.#state.controllerPlan ??= {};
@@ -48,6 +51,10 @@ export class ManagedScratchTransaction {
   }
 
   get root() { return this.#root; }
+
+  async #guard() {
+    if (this.#effectGuard) await this.#effectGuard();
+  }
 
   async #ensureRoot() {
     const parent = path.dirname(this.#root);
@@ -57,6 +64,7 @@ export class ManagedScratchTransaction {
       if (info.isSymbolicLink() || !info.isDirectory()) throw new PolicyError('managed scratch root is not a real directory');
       return;
     }
+    await this.#guard();
     await mkdir(this.#root, { recursive: false, mode: 0o700 });
     const info = await lstat(this.#root);
     if (info.isSymbolicLink() || !info.isDirectory()) throw new PolicyError('managed scratch root creation was not stable');
@@ -82,6 +90,7 @@ export class ManagedScratchTransaction {
       const info = await lstat(target);
       if (info.isSymbolicLink() || !info.isDirectory()) throw new PolicyError(`managed scratch ${safe} was replaced by an unsafe filesystem object`);
     } else {
+      await this.#guard();
       await mkdir(target, { recursive: false, mode: 0o700 });
     }
     entry.state = 'created';
@@ -103,6 +112,7 @@ export class ManagedScratchTransaction {
       if (await exists(target)) {
         const info = await lstat(target);
         if (info.isSymbolicLink()) throw new PolicyError(`managed scratch ${safe} became a symbolic link before cleanup`);
+        await this.#guard();
         await rm(target, { recursive: true, force: true });
       }
       entry.state = 'removed';
@@ -116,6 +126,7 @@ export class ManagedScratchTransaction {
     if (await exists(this.#root)) {
       const info = await lstat(this.#root);
       if (info.isSymbolicLink()) throw new PolicyError('managed scratch root became a symbolic link before cleanup');
+      await this.#guard();
       await rm(this.#root, { recursive: true, force: true });
     }
     return {
