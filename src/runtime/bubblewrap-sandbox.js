@@ -187,6 +187,7 @@ export class BubblewrapSandboxProvider {
     bwrapArgs.push('--dir', '/run/devbridge-exchange');
     bwrapArgs.push('--ro-bind', context.path, WORKER_CONTEXT_FILE);
     bwrapArgs.push('--bind', result.path, WORKER_RESULT_FILE);
+    bwrapArgs.push('--remount-ro', '/run/devbridge-exchange');
   }
 
   async #derivedScratchRoot(projectDir, args) {
