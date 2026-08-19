@@ -83,6 +83,7 @@ export class DeterministicProcessRunner {
     let spawnArgs = args;
     let spawnCwd = cwd;
     let spawnEnv = env;
+    let preparedCleanup = null;
     let sandboxEvidence = {
       required: false,
       provider: 'host',
@@ -110,7 +111,9 @@ export class DeterministicProcessRunner {
         },
         operation,
       });
+      preparedCleanup = typeof prepared?.cleanup === 'function' ? prepared.cleanup : null;
       if (!prepared?.evidence?.verified) {
+        if (preparedCleanup) await preparedCleanup();
         throw new PolicyError('repository-code execution refused because sandbox enforcement was not verified');
       }
       spawnExecutable = prepared.executable;
@@ -119,123 +122,130 @@ export class DeterministicProcessRunner {
       spawnEnv = prepared.env;
       sandboxEvidence = { required: true, executionClass, ...prepared.evidence };
     }
-    if (signal?.aborted) throw abortedError(signal);
+    if (signal?.aborted) {
+      if (preparedCleanup) await preparedCleanup();
+      throw abortedError(signal);
+    }
 
-    const child = spawn(spawnExecutable, spawnArgs, containedSpawnOptions({ cwd: spawnCwd, env: spawnEnv, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
-    let processPriority;
     try {
-      processPriority = await applyChildProcessPriority(child, this.#processPriority, { setPriority: this.#setPriority });
-    } catch (error) {
-      await terminateProcessTree(child);
-      throw error;
-    }
-    const startedAtMs = Date.now();
-    const startedAt = new Date(startedAtMs).toISOString();
-    const deadlineAt = new Date(startedAtMs + timeoutMs).toISOString();
-    let stdout = Buffer.alloc(0);
-    let stderr = Buffer.alloc(0);
-    let outputTruncated = false;
-    let lastOutputAt = null;
-    let lastActivityEmitAt = 0;
-    let activityError = null;
-    let activityQueue = Promise.resolve();
+      const child = spawn(spawnExecutable, spawnArgs, containedSpawnOptions({ cwd: spawnCwd, env: spawnEnv, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
+      let processPriority;
+      try {
+        processPriority = await applyChildProcessPriority(child, this.#processPriority, { setPriority: this.#setPriority });
+      } catch (error) {
+        await terminateProcessTree(child);
+        throw error;
+      }
+      const startedAtMs = Date.now();
+      const startedAt = new Date(startedAtMs).toISOString();
+      const deadlineAt = new Date(startedAtMs + timeoutMs).toISOString();
+      let stdout = Buffer.alloc(0);
+      let stderr = Buffer.alloc(0);
+      let outputTruncated = false;
+      let lastOutputAt = null;
+      let lastActivityEmitAt = 0;
+      let activityError = null;
+      let activityQueue = Promise.resolve();
 
-    const emitActivity = (kind, { force = false, stream = null, bytes = null, processAlive = child.exitCode == null } = {}) => {
-      if (typeof onActivity !== 'function') return;
-      const atMs = Date.now();
-      if (!force && lastActivityEmitAt !== 0 && atMs - lastActivityEmitAt < activityIntervalMs) return;
-      lastActivityEmitAt = atMs;
-      const at = new Date(atMs).toISOString();
-      const payload = {
-        kind,
-        at,
-        startedAt,
-        elapsedMs: Math.max(0, atMs - startedAtMs),
-        lastOutputAt,
-        deadlineAt,
-        timeoutMs,
-        processAlive,
+      const emitActivity = (kind, { force = false, stream = null, bytes = null, processAlive = child.exitCode == null } = {}) => {
+        if (typeof onActivity !== 'function') return;
+        const atMs = Date.now();
+        if (!force && lastActivityEmitAt !== 0 && atMs - lastActivityEmitAt < activityIntervalMs) return;
+        lastActivityEmitAt = atMs;
+        const at = new Date(atMs).toISOString();
+        const payload = {
+          kind,
+          at,
+          startedAt,
+          elapsedMs: Math.max(0, atMs - startedAtMs),
+          lastOutputAt,
+          deadlineAt,
+          timeoutMs,
+          processAlive,
+        };
+        if (stream) payload.stream = stream;
+        if (bytes != null) payload.bytes = bytes;
+        activityQueue = activityQueue.then(async () => {
+          if (activityError) return;
+          try { await onActivity(payload); }
+          catch (error) { activityError = error; }
+        });
       };
-      if (stream) payload.stream = stream;
-      if (bytes != null) payload.bytes = bytes;
-      activityQueue = activityQueue.then(async () => {
-        if (activityError) return;
-        try { await onActivity(payload); }
-        catch (error) { activityError = error; }
+
+      emitActivity('started', { force: true, processAlive: true });
+      const heartbeat = typeof onActivity === 'function'
+        ? setInterval(() => emitActivity('heartbeat', { force: true, processAlive: child.exitCode == null }), activityIntervalMs)
+        : null;
+      heartbeat?.unref?.();
+
+      const observe = (stream, chunk) => {
+        lastOutputAt = new Date().toISOString();
+        emitActivity('output', { stream, bytes: Buffer.byteLength(chunk) });
+      };
+      child.stdout.on('data', (chunk) => {
+        const next = appendTail(stdout, chunk, maxOutputBytes);
+        stdout = next.buffer;
+        outputTruncated ||= next.truncated;
+        observe('stdout', chunk);
       });
-    };
+      child.stderr.on('data', (chunk) => {
+        const next = appendTail(stderr, chunk, maxOutputBytes);
+        stderr = next.buffer;
+        outputTruncated ||= next.truncated;
+        observe('stderr', chunk);
+      });
+      if (stdin == null) child.stdin.end(); else child.stdin.end(String(stdin));
 
-    emitActivity('started', { force: true, processAlive: true });
-    const heartbeat = typeof onActivity === 'function'
-      ? setInterval(() => emitActivity('heartbeat', { force: true, processAlive: child.exitCode == null }), activityIntervalMs)
-      : null;
-    heartbeat?.unref?.();
+      let timedOut = false;
+      let aborted = false;
+      let termination = null;
+      const terminate = () => { termination ??= terminateProcessTree(child); };
+      const onAbort = () => { aborted = true; terminate(); };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) onAbort();
+      const timer = setTimeout(() => {
+        timedOut = true;
+        terminate();
+      }, timeoutMs);
+      timer.unref?.();
+      const exit = await new Promise((resolve, reject) => {
+        child.once('error', reject);
+        child.once('exit', (code, exitSignal) => resolve({ code, signal: exitSignal }));
+      }).finally(async () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        if (heartbeat) clearInterval(heartbeat);
+        if (termination) await termination;
+      });
 
-    const observe = (stream, chunk) => {
-      lastOutputAt = new Date().toISOString();
-      emitActivity('output', { stream, bytes: Buffer.byteLength(chunk) });
-    };
-    child.stdout.on('data', (chunk) => {
-      const next = appendTail(stdout, chunk, maxOutputBytes);
-      stdout = next.buffer;
-      outputTruncated ||= next.truncated;
-      observe('stdout', chunk);
-    });
-    child.stderr.on('data', (chunk) => {
-      const next = appendTail(stderr, chunk, maxOutputBytes);
-      stderr = next.buffer;
-      outputTruncated ||= next.truncated;
-      observe('stderr', chunk);
-    });
-    if (stdin == null) child.stdin.end(); else child.stdin.end(String(stdin));
+      emitActivity('finished', { force: true, processAlive: false });
+      await activityQueue;
+      if (activityError) throw activityError;
 
-    let timedOut = false;
-    let aborted = false;
-    let termination = null;
-    const terminate = () => { termination ??= terminateProcessTree(child); };
-    const onAbort = () => { aborted = true; terminate(); };
-    signal?.addEventListener('abort', onAbort, { once: true });
-    if (signal?.aborted) onAbort();
-    const timer = setTimeout(() => {
-      timedOut = true;
-      terminate();
-    }, timeoutMs);
-    timer.unref?.();
-    const exit = await new Promise((resolve, reject) => {
-      child.once('error', reject);
-      child.once('exit', (code, exitSignal) => resolve({ code, signal: exitSignal }));
-    }).finally(async () => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      if (heartbeat) clearInterval(heartbeat);
-      if (termination) await termination;
-    });
+      const fault = this.#faults?.throwIfTriggered('process.after-exit', { operation }) ?? null;
+      if (fault?.action === 'timeout') timedOut = true;
+      if (fault?.action === 'truncate-output') {
+        stdout = truncateFault(stdout);
+        stderr = truncateFault(stderr);
+        outputTruncated = true;
+      }
 
-    emitActivity('finished', { force: true, processAlive: false });
-    await activityQueue;
-    if (activityError) throw activityError;
-
-    const fault = this.#faults?.throwIfTriggered('process.after-exit', { operation }) ?? null;
-    if (fault?.action === 'timeout') timedOut = true;
-    if (fault?.action === 'truncate-output') {
-      stdout = truncateFault(stdout);
-      stderr = truncateFault(stderr);
-      outputTruncated = true;
+      return {
+        exitCode: exit.code,
+        signal: exit.signal,
+        timedOut,
+        aborted,
+        outputTruncated,
+        stdout: stdout.toString('utf8'),
+        stderr: stderr.toString('utf8'),
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        lastOutputAt,
+        sandbox: sandboxEvidence,
+        processPriority,
+      };
+    } finally {
+      if (preparedCleanup) await preparedCleanup();
     }
-
-    return {
-      exitCode: exit.code,
-      signal: exit.signal,
-      timedOut,
-      aborted,
-      outputTruncated,
-      stdout: stdout.toString('utf8'),
-      stderr: stderr.toString('utf8'),
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      lastOutputAt,
-      sandbox: sandboxEvidence,
-      processPriority,
-    };
   }
 }
