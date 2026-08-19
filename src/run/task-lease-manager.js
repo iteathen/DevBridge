@@ -24,6 +24,7 @@ export class TaskLeaseManager {
   #ttlMs;
   #heartbeatMs;
   #clockSkewMs;
+  #allowIdentityTakeover;
   #nowMs;
   #setInterval;
   #clearInterval;
@@ -37,6 +38,7 @@ export class TaskLeaseManager {
     leaseTtlMs,
     heartbeatIntervalMs,
     clockSkewMs = 0,
+    allowIdentityTakeover = false,
     nowMs = () => Date.now(),
     setIntervalFn = defaultSetInterval,
     clearIntervalFn = clearInterval,
@@ -47,6 +49,7 @@ export class TaskLeaseManager {
     if (!Number.isSafeInteger(leaseTtlMs) || leaseTtlMs < 1) throw new TypeError('TaskLeaseManager leaseTtlMs must be a positive safe integer');
     if (!Number.isSafeInteger(heartbeatIntervalMs) || heartbeatIntervalMs < 1 || heartbeatIntervalMs >= leaseTtlMs) throw new TypeError('TaskLeaseManager heartbeatIntervalMs must be positive and less than leaseTtlMs');
     if (!Number.isSafeInteger(clockSkewMs) || clockSkewMs < 0 || clockSkewMs >= leaseTtlMs) throw new TypeError('TaskLeaseManager clockSkewMs must be non-negative and less than leaseTtlMs');
+    if (typeof allowIdentityTakeover !== 'boolean') throw new TypeError('TaskLeaseManager allowIdentityTakeover must be a boolean');
     if (typeof sessionId !== 'string' || !/^[0-9a-f]{32}$/u.test(sessionId)) throw new TypeError('TaskLeaseManager sessionId must be 16 random bytes encoded as lowercase hex');
     this.#identity = identity;
     this.#trusted = new Map(trustedIdentities instanceof Map ? trustedIdentities : Object.entries(trustedIdentities ?? {}));
@@ -55,6 +58,7 @@ export class TaskLeaseManager {
     this.#ttlMs = leaseTtlMs;
     this.#heartbeatMs = heartbeatIntervalMs;
     this.#clockSkewMs = clockSkewMs;
+    this.#allowIdentityTakeover = allowIdentityTakeover;
     this.#nowMs = nowMs;
     this.#setInterval = setIntervalFn;
     this.#clearInterval = clearIntervalFn;
@@ -165,11 +169,23 @@ export class TaskLeaseManager {
 
     const current = await this.#store.observe(task);
     const verified = this.#verifyObservation(task, current);
-    if (verified?.subject?.state === 'active' && verified.subject.ownerFingerprint !== this.#identity.fingerprint &&
-        !taskLeaseExpired(verified.subject, this.#nowMs(), this.#clockSkewMs)) {
+    const activeUnexpired = verified?.subject?.state === 'active' &&
+      !taskLeaseExpired(verified.subject, this.#nowMs(), this.#clockSkewMs);
+    if (activeUnexpired && verified.subject.ownerFingerprint !== this.#identity.fingerprint) {
       return {
         acquired: false,
         reason: 'held-by-peer',
+        ownerAddress: verified.subject.ownerAddress,
+        expiresAt: verified.subject.expiresAt,
+        epoch: verified.subject.epoch,
+        commitSha: current.commitSha,
+      };
+    }
+    if (activeUnexpired && verified.subject.ownerFingerprint === this.#identity.fingerprint &&
+        verified.subject.sessionId !== this.#sessionId && !this.#allowIdentityTakeover) {
+      return {
+        acquired: false,
+        reason: 'held-by-local-session',
         ownerAddress: verified.subject.ownerAddress,
         expiresAt: verified.subject.expiresAt,
         epoch: verified.subject.epoch,
