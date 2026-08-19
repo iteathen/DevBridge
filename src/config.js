@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { normalizeCoordinationConfig } from './config/coordination-config.js';
 import { ConfigurationError } from './errors.js';
 import { DEFAULT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES } from './github/auth-provider.js';
 import { validateFaultInjectionConfig } from './runtime/fault-injector.js';
@@ -227,6 +228,7 @@ export function validateConfig(raw) {
 
   const githubAuth = normalizeGitHubAuth(github);
   const rate = requireObject(github.rateLimit ?? {}, 'github.rateLimit');
+  const pollIntervalMs = requireInteger(github.pollIntervalMs ?? 60_000, 'github.pollIntervalMs', { min: 15_000 });
   const workspace = requireObject(config.workspace, 'workspace');
   const allowedOwners = workspace.allowedOwners;
   if (!Array.isArray(allowedOwners) || allowedOwners.length === 0 || allowedOwners.some((owner) => !/^[A-Za-z0-9_.-]+$/.test(owner))) {
@@ -242,6 +244,7 @@ export function validateConfig(raw) {
   const publication = requireObject(config.publication ?? {}, 'publication');
   const daemon = requireObject(config.daemon ?? {}, 'daemon');
   const contextRollover = normalizeContextRollover(config);
+  const coordination = normalizeCoordinationConfig(config.coordination ?? {}, { pollIntervalMs });
   const toolOnboarding = normalizeToolOnboarding(execution);
   const branchPrefix = requireString(publication.branchPrefix ?? 'patchpoller', 'publication.branchPrefix');
   if (!BRANCH_PREFIX_RE.test(branchPrefix)) throw new ConfigurationError('publication.branchPrefix must be a safe branch segment');
@@ -261,7 +264,7 @@ export function validateConfig(raw) {
       tokenEnv: githubAuth.environmentVariables[0],
       auth: githubAuth,
       apiVersion: requireString(github.apiVersion ?? '2026-03-10', 'github.apiVersion'),
-      pollIntervalMs: requireInteger(github.pollIntervalMs ?? 60_000, 'github.pollIntervalMs', { min: 15_000 }),
+      pollIntervalMs,
       rateLimit: {
         reserveRatio: requireNumber(rate.reserveRatio ?? 0.2, 'github.rateLimit.reserveRatio', { min: 0, max: 0.9 }),
         minimumReserve: requireInteger(rate.minimumReserve ?? 250, 'github.rateLimit.minimumReserve'),
@@ -281,6 +284,7 @@ export function validateConfig(raw) {
     },
     state: { directory: absolutePath(state.directory ?? '~/.patch-poller/state', 'state.directory') },
     contextRollover,
+    coordination,
     git: {
       executable: requireString(git.executable ?? 'git', 'git.executable'),
       cloneBaseUrl: requireString(git.cloneBaseUrl ?? 'https://github.com', 'git.cloneBaseUrl').replace(/\/$/, ''),
