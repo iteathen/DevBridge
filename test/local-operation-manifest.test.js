@@ -111,10 +111,18 @@ test('local manifest directory loading is deterministic and collisions fail clos
     const registry = new DeterministicOperationRegistry();
     const loaded = await loadLocalOperationManifests({ directory: root, registry });
     assert.deepEqual(loaded.map((entry) => entry.operation), ['tool.alpha', 'tool.beta']);
-    assert.deepEqual(registry.describe(), [
+    const described = registry.describe();
+    assert.deepEqual(described.map(({ name, layer }) => ({ name, layer })), [
       { name: 'tool.alpha', layer: 'local-manifest' },
       { name: 'tool.beta', layer: 'local-manifest' },
     ]);
+    for (const entry of described) {
+      assert.equal(entry.parameterSchema.protocol, 'patch-poller/operation-parameters-v1');
+      assert.equal(entry.parameterSchema.requireAnyParameter, true);
+      assert.equal(entry.parameterSchema.parameters.some((parameter) => parameter.name === 'input' && parameter.required === true), true);
+      assert.equal(JSON.stringify(entry.parameterSchema).includes('--verbose'), false);
+      assert.equal(JSON.stringify(entry.parameterSchema).includes('fixed-subcommand'), false);
+    }
 
     await writeFile(path.join(root, '30-duplicate.json'), `${JSON.stringify(first)}\n`, { mode: 0o600 });
     await assert.rejects(
