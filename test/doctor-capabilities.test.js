@@ -24,6 +24,10 @@ function configFor(root, execution = {}) {
   });
 }
 
+function expectedProvider() {
+  return process.platform === 'win32' ? 'windows-processcontainer' : 'bubblewrap';
+}
+
 test('doctor distinguishes static controller operations from repository-code operations requiring verified sandboxing', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-doctor-capabilities-'));
   try {
@@ -58,7 +62,9 @@ test('doctor distinguishes static controller operations from repository-code ope
   }
 });
 
-test('doctor reports observed sandbox verification and gates repository-code usability on it', { timeout: 30_000 }, async () => {
+test('doctor reports observed sandbox verification and gates repository-code usability on it', {
+  timeout: process.platform === 'win32' ? 90_000 : 30_000,
+}, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-doctor-sandbox-observed-'));
   try {
     const result = await doctor(configFor(root), {
@@ -75,7 +81,7 @@ test('doctor reports observed sandbox verification and gates repository-code usa
     const nodeTest = controller.operations.find((entry) => entry.name === 'node.test');
     assert.equal(nodeTest.usable, controller.sandbox.verified);
     if (controller.sandbox.verified) {
-      assert.equal(controller.sandbox.provider, 'bubblewrap');
+      assert.equal(controller.sandbox.provider, expectedProvider());
       assert.equal(controller.sandbox.network, 'denied');
       assert.equal(controller.sandbox.filesystem, 'project-and-run-scratch-write-only');
     } else {
