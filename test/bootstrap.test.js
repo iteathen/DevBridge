@@ -10,7 +10,7 @@ import {
   prepareLocalConfig,
   resolveBootstrapPaths,
   runPollerCli,
-} from '../patch-poller.mjs';
+} from '../devbridge.mjs';
 
 test('bootstrap defaults to alpha development testing channel and daemon', () => {
   assert.deepEqual(parseBootstrapArgs([]), {
@@ -87,7 +87,7 @@ test('managed Git environment removes inherited Git and SSH authority', () => {
 });
 
 test('first run creates config outside the managed runtime without overwriting it', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'patch-poller-bootstrap-'));
+  const root = mkdtempSync(path.join(tmpdir(), 'devbridge-bootstrap-'));
   const args = parseBootstrapArgs(['--home', root]);
   const paths = resolveBootstrapPaths(args, {});
   mkdirSync(path.join(paths.runtime, 'config'), { recursive: true });
@@ -107,7 +107,7 @@ test('node version gate rejects older runtimes', () => {
   assert.throws(() => assertSupportedNode('22.15.9'), /22\.16\.0 or newer/u);
 });
 
-test('poller CLI launch never uses a shell', () => {
+test('runtime CLI launch never uses a shell', () => {
   let observed;
   const runner = (executable, args, options) => {
     observed = { executable, args, options };
