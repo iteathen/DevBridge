@@ -130,7 +130,7 @@ test('read roots outside the workspace stay strict about filesystem indirection'
 
     await assert.rejects(
       () => canonicalizeWindowsReadRootPath(workspace, aliasedExternal),
-      /resolves through filesystem indirection/u,
+      /(?:must not be|resolves through) filesystem indirection/u,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
