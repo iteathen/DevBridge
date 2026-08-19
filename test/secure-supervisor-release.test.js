@@ -12,20 +12,29 @@ import {
   releaseSubjectPayload,
 } from '../src/bootstrap/release-integrity.mjs';
 
+const artifactA = 'c'.repeat(64);
+const artifactB = 'd'.repeat(64);
 const runtimeA = {
   head: 'a'.repeat(40),
   ref: 'main',
   cliPath: '/managed/runtime/src/cli.js',
   runtimeDir: '/managed/runtime',
   version: '0.1.0',
+  artifactSha256: artifactA,
+  releaseIntegrity: {
+    mode: 'production',
+    verified: true,
+    immutableRelease: true,
+    artifactSha256: artifactA,
+    manifestSha256: 'f'.repeat(64),
+    keyId: 'previous-release-key',
+  },
 };
-const artifactB = 'd'.repeat(64);
 const runtimeB = {
+  ...runtimeA,
   head: 'b'.repeat(40),
-  ref: 'main',
   cliPath: `/managed/runtime-candidates/${'b'.repeat(40)}/src/cli.js`,
   runtimeDir: `/managed/runtime-candidates/${'b'.repeat(40)}`,
-  version: '0.1.0',
   artifactSha256: artifactB,
   releaseIntegrity: {
     mode: 'production',
@@ -47,6 +56,12 @@ const runtimeB = {
 };
 
 function timer(ms) { return new Promise((resolve) => setTimeout(resolve, Math.max(1, ms))); }
+
+function exactFakeDigest(runtimeDir) {
+  if (runtimeDir === runtimeA.runtimeDir) return { sha256: artifactA };
+  if (runtimeDir === runtimeB.runtimeDir) return { sha256: artifactB };
+  throw new Error(`unexpected fake runtime digest path ${runtimeDir}`);
+}
 
 async function signedReleaseFiles(head = runtimeB.head) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pp-secure-supervisor-'));
@@ -92,6 +107,7 @@ test('production supervisor ignores mutable stable movement that is not the sign
       setTimeout(() => child.emit('exit', 0, null), 15);
       return child;
     },
+    artifactDigestSyncFn: exactFakeDigest,
     maxIterations: 1,
     takeover: false,
     updateIntervalMs: 1,
@@ -122,6 +138,7 @@ test('production supervisor validates only the signed head and journals exact ar
   };
   const result = await superviseDaemon(productionArgs(files), paths, runtimeA, {
     spawnImpl,
+    artifactDigestSyncFn: exactFakeDigest,
     maxIterations: 2,
     takeover: false,
     updateIntervalMs: 1,
@@ -153,4 +170,44 @@ test('production supervisor validates only the signed head and journals exact ar
   const healthy = records.find((record) => record.state === 'healthy');
   assert.equal(healthy.current.head, runtimeB.head);
   assert.equal(healthy.current.artifactSha256, artifactB);
+});
+
+test('production supervisor refuses a candidate whose bytes change after validation and before daemon spawn', async () => {
+  const files = await signedReleaseFiles();
+  let starts = 0;
+  let current = null;
+  let candidateDigestChecks = 0;
+  const spawnImpl = () => {
+    starts += 1;
+    const child = new EventEmitter();
+    child.pid = 1000 + starts;
+    current = child;
+    return child;
+  };
+  const result = superviseDaemon(productionArgs(files), paths, runtimeA, {
+    spawnImpl,
+    artifactDigestSyncFn: (runtimeDir) => {
+      if (runtimeDir === runtimeA.runtimeDir) return { sha256: artifactA };
+      if (runtimeDir === runtimeB.runtimeDir) {
+        candidateDigestChecks += 1;
+        return { sha256: '0'.repeat(64) };
+      }
+      throw new Error('unexpected runtime path');
+    },
+    maxIterations: 2,
+    takeover: false,
+    updateIntervalMs: 1,
+    updateCheckDelayFn: timer,
+    remoteHeadFn: () => runtimeB.head,
+    resolveChannelRefFn: () => 'main',
+    candidatePrepareFn: async () => runtimeB,
+    runPollerCliFn: (command) => {
+      if (command === 'stop') setTimeout(() => current.emit('exit', 0, null), 0);
+      return 0;
+    },
+    delayFn: timer,
+  });
+  await assert.rejects(result, /runtime artifact changed after validation before activation/u);
+  assert.equal(starts, 1, 'mutated candidate daemon must never start');
+  assert.equal(candidateDigestChecks, 1);
 });
