@@ -4,12 +4,13 @@ DevBridge is installed from one standalone stage-0 launcher and then keeps its m
 
 ## Requirements
 
-- Node.js 22.16.0 or newer
+- Node.js 22.16.0 or newer, including npm
 - Git
 - a GitHub account with access to the configured task queue and target repositories
 - Linux with Bubblewrap for untrusted proposal-worker or repository-code execution
+- Windows 11/Windows Server hosts able to run the verified ProcessContainer backend; the pinned helper runtime is provisioned automatically
 
-Windows can run configuration, static, and control-plane operations, but untrusted execution remains fail-closed until a verified Windows OS sandbox provider exists.
+Repository-code/model-worker execution always remains fail-closed until the live DevBridge sandbox probe succeeds on the actual host.
 
 ## Fresh install
 
@@ -30,11 +31,14 @@ The launcher defaults to `~/.devbridge` / `$HOME\.devbridge`. On first run it:
 1. enforces the supported Node.js version;
 2. uses a tightly controlled Git environment to materialize the fixed `https://github.com/iteathen/DevBridge.git` `main` checkout under the managed home;
 3. verifies the checkout origin and DevBridge package/bootstrap shape;
-4. transfers control to the managed secure bootstrap;
-5. creates `config.json` from `config/devbridge.example.json` when no local config exists; and
-6. exits so the operator can review local authority before execution is enabled.
+4. on Windows, ensures the pinned Microsoft MXC ProcessContainer executable is present under the DevBridge-owned home without adding dependencies to the managed source checkout;
+5. transfers control to the managed secure bootstrap;
+6. creates `config.json` from `config/devbridge.example.json` when no local config exists; and
+7. exits so the operator can review local authority before execution is enabled.
 
 No old product state or namespace is migrated. A clean DevBridge home is the supported cutover path.
+
+Windows prerequisite installation is automatic and non-interactive. If it cannot be provisioned, stage 0 prints an actionable warning and continues in fail-closed mode: configuration/static/control-plane work remains available, while proposal workers and repository-code operations remain disabled until provisioning and live verification succeed.
 
 ## Review local authority
 
@@ -60,6 +64,8 @@ node "$HOME/.devbridge/bin/devbridge.mjs" doctor
 node "$HOME\.devbridge\bin\devbridge.mjs" doctor
 ```
 
+For untrusted execution, `doctor` must show a verified provider and `repositoryCodeExecution: true`. On Windows the provider is `windows-processcontainer`. The helper executable's own `--probe` is only a prerequisite check; DevBridge separately runs an adversarial containment probe before enabling execution.
+
 Then start the supervised daemon by running the launcher without a command.
 
 ## Authentication
@@ -73,6 +79,16 @@ Credentials are control-plane state. Do not put tokens in task issues, repositor
 Repository-controlled code and proposal workers require the live OS boundary probe to pass. Install Bubblewrap using the operating-system package manager, then run `doctor` and require the relevant sandbox capability to report verified before enabling untrusted execution.
 
 On Ubuntu systems that restrict unprivileged user namespaces, use a narrowly scoped Bubblewrap/AppArmor policy rather than globally disabling the host restriction. See `docs/bootstrap.md`.
+
+## Windows sandbox prerequisite
+
+The stage-0 launcher installs the pinned `@microsoft/mxc-sdk` helper runtime into a versioned directory under `$HOME\.devbridge\sandbox\mxc\` and persists only the required `wxc-exec.exe` helper there. The managed DevBridge Git checkout remains clean.
+
+The Windows provider applies ProcessContainer/AppContainer policy behind the same execution-provider interface used on Linux. Its default untrusted boundary grants project/sandbox scratch writes, explicitly configured/toolchain reads, one exact read-only worker-context endpoint, and one non-authoritative staging-result endpoint. It denies arbitrary external reads/writes, control state, authoritative worker results, Git administrative mutation, and network egress. ProcessContainer/Job Object lifecycle containment plus the parent runner's tree cleanup bound descendants.
+
+The writable Windows staging result is intentionally not authoritative. DevBridge validates its original file identity and size only after the contained process tree exits, then imports the bytes into the still-unexposed control-owned result mailbox. This avoids granting Windows delete authority to the authoritative IPC object.
+
+If Windows `doctor` reports the provider unavailable or unverified, do not bypass it. Repair the prerequisite/host condition and rerun the launcher/doctor; repository-code execution remains disabled by design.
 
 ## Updating
 
