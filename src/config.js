@@ -4,6 +4,7 @@ import path from 'node:path';
 import { ConfigurationError } from './errors.js';
 import { DEFAULT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES } from './github/auth-provider.js';
 import { validateFaultInjectionConfig } from './runtime/fault-injector.js';
+import { validateToolOnboardingPolicy } from './runtime/tool-onboarding.js';
 import { DECISION_CLASSES } from './run/hard-gate-policy.js';
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -184,6 +185,33 @@ function normalizeContextRollover(config) {
   };
 }
 
+function normalizeToolOnboarding(execution) {
+  const onboarding = requireObject(execution.toolOnboarding ?? {}, 'execution.toolOnboarding');
+  for (const key of Object.keys(onboarding)) {
+    if (!['enabled', 'manifestDirectory', 'autoIntegrate', 'maxHelpBytes', 'probeTimeoutMs'].includes(key)) {
+      throw new ConfigurationError(`execution.toolOnboarding.${key} is not supported`);
+    }
+  }
+  const enabled = onboarding.enabled == null ? false : requireBoolean(onboarding.enabled, 'execution.toolOnboarding.enabled');
+  const manifestDirectory = onboarding.manifestDirectory == null
+    ? null
+    : absolutePath(onboarding.manifestDirectory, 'execution.toolOnboarding.manifestDirectory');
+  let autoIntegrate;
+  try {
+    autoIntegrate = validateToolOnboardingPolicy({ autoIntegrate: onboarding.autoIntegrate ?? [] });
+  } catch (error) {
+    throw new ConfigurationError(error.message, { cause: error });
+  }
+  if (enabled && manifestDirectory == null) {
+    throw new ConfigurationError('execution.toolOnboarding.manifestDirectory is required when automatic onboarding is enabled');
+  }
+  const maxHelpBytes = requireInteger(onboarding.maxHelpBytes ?? 262_144, 'execution.toolOnboarding.maxHelpBytes', { min: 4_096 });
+  if (maxHelpBytes > 262_144) throw new ConfigurationError('execution.toolOnboarding.maxHelpBytes must be <= 262144');
+  const probeTimeoutMs = requireInteger(onboarding.probeTimeoutMs ?? 15_000, 'execution.toolOnboarding.probeTimeoutMs', { min: 1_000 });
+  if (probeTimeoutMs > 60_000) throw new ConfigurationError('execution.toolOnboarding.probeTimeoutMs must be <= 60000');
+  return { enabled, manifestDirectory, autoIntegrate, maxHelpBytes, probeTimeoutMs };
+}
+
 export function validateConfig(raw) {
   const config = requireObject(raw, 'config');
   if (config.version !== 1) throw new ConfigurationError('config.version must be 1');
@@ -214,6 +242,7 @@ export function validateConfig(raw) {
   const publication = requireObject(config.publication ?? {}, 'publication');
   const daemon = requireObject(config.daemon ?? {}, 'daemon');
   const contextRollover = normalizeContextRollover(config);
+  const toolOnboarding = normalizeToolOnboarding(execution);
   const branchPrefix = requireString(publication.branchPrefix ?? 'patchpoller', 'publication.branchPrefix');
   if (!BRANCH_PREFIX_RE.test(branchPrefix)) throw new ConfigurationError('publication.branchPrefix must be a safe branch segment');
   const faultInjection = normalizeFaultInjection(execution);
@@ -266,6 +295,7 @@ export function validateConfig(raw) {
       maxConcurrentTasks: requireInteger(execution.maxConcurrentTasks ?? 1, 'execution.maxConcurrentTasks', { min: 1 }),
       maxTurns: requireInteger(execution.maxTurns ?? 8, 'execution.maxTurns', { min: 1 }),
       allowUncontainedTools: execution.allowUncontainedTools === true,
+      toolOnboarding,
       decisionAuthorities,
       decisionApprovalTtlMs,
       architectureGateFileThreshold,
