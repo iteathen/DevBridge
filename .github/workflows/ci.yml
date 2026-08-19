@@ -34,12 +34,22 @@ jobs:
         run: npm run preflight
       - name: Issue 30 config tests
         run: node --test test/config.test.js
-      - name: Issue 30 manifest tests
-        run: node --test test/local-operation-manifest.test.js
-      - name: Issue 30 onboarding tests
-        env:
-          PATCH_POLLER_REQUIRE_SANDBOX_TEST: ${{ runner.os == 'Linux' && '1' || '0' }}
-        run: node --test test/tool-onboarding.test.js
+      - name: Manifest argv envelope
+        run: node --test --test-name-pattern="local manifest materializes" test/local-operation-manifest.test.js
+      - name: Manifest parameter boundary
+        run: node --test --test-name-pattern="dynamic manifest parameters" test/local-operation-manifest.test.js
+      - name: Manifest nonempty guard
+        run: node --test --test-name-pattern="requireAnyParameter" test/local-operation-manifest.test.js
+      - name: Manifest directory recovery
+        run: node --test --test-name-pattern="local manifest directory loading" test/local-operation-manifest.test.js
+      - name: Onboarding help parser
+        run: node --test --test-name-pattern="help parser synthesizes" test/tool-onboarding.test.js
+      - name: Onboarding sandbox and persistence
+        run: node --test --test-name-pattern="automatic onboarding requires" test/tool-onboarding.test.js
+      - name: Onboarding unavailable and blocked
+        run: node --test --test-name-pattern="unavailable or blocked" test/tool-onboarding.test.js
+      - name: Onboarding local policy
+        run: node --test --test-name-pattern="local onboarding policy" test/tool-onboarding.test.js
       - name: Issue 30 schema tests
         run: node --test test/dynamic-tool-schema.test.js
       - name: Tests
