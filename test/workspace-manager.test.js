@@ -16,12 +16,12 @@ import {
 const exec = promisify(execFile);
 async function git(cwd, args) { return exec('git', args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }); }
 async function fixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'pp-workspace-manager-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-workspace-manager-'));
   const source = path.join(root, 'source');
   await exec('git', ['init', '-b', 'main', source]);
   await writeFile(path.join(source, 'README.md'), 'one\n');
   await git(source, ['add', 'README.md']);
-  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', 'initial']);
+  await git(source, ['-c', 'user.name=DevBridge Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', 'initial']);
   const policy = new WorkspacePolicy({ root: path.join(root, 'managed'), allowedOwners: ['owner'], allowCreate: true });
   await policy.ensureRoot();
   const client = new GitClient({ syntheticHome: path.join(root, 'git-home'), allowFileProtocol: true });
@@ -33,7 +33,7 @@ async function fixture() {
 async function advanceSource(source, file = 'SECOND.md', content = 'later\n', message = 'upstream advance') {
   await writeFile(path.join(source, file), content);
   await git(source, ['add', file]);
-  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', message]);
+  await git(source, ['-c', 'user.name=DevBridge Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', message]);
   return (await git(source, ['rev-parse', 'HEAD'])).stdout.trim();
 }
 
@@ -138,7 +138,7 @@ test('rebase conflict aborts and restores the exact sealed candidate head', asyn
   const originalPublicationBase = workspace.publicationBaseSha;
   await writeFile(path.join(source, 'README.md'), 'upstream\n');
   await git(source, ['add', 'README.md']);
-  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', 'conflicting upstream advance']);
+  await git(source, ['-c', 'user.name=DevBridge Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', 'conflicting upstream advance']);
 
   await assert.rejects(
     manager.sealCandidate(workspace, { issueNumber: task.issueNumber, revision: task.revision }),
@@ -166,7 +166,7 @@ test('rewritten upstream baseline history is not automatically accepted', async 
   await git(source, ['rm', '-rf', '.']);
   await writeFile(path.join(source, 'README.md'), 'rewritten root\n');
   await git(source, ['add', 'README.md']);
-  await git(source, ['-c', 'user.name=Patch Poller Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', 'rewritten root']);
+  await git(source, ['-c', 'user.name=DevBridge Test', '-c', 'user.email=devbridge@example.invalid', 'commit', '-m', 'rewritten root']);
   await git(source, ['branch', '-M', 'main']);
 
   await assert.rejects(
