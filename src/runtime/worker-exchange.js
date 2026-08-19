@@ -30,13 +30,15 @@ function identityOf(info) {
   return {
     dev: String(info.dev),
     ino: String(info.ino),
+    birthtimeNs: String(info.birthtimeNs),
   };
 }
 
 function sameIdentity(info, expected) {
   if (!expected || typeof expected !== 'object') return false;
   const actual = identityOf(info);
-  return actual.dev === String(expected.dev) && actual.ino === String(expected.ino);
+  if (actual.dev !== String(expected.dev) || actual.ino !== String(expected.ino)) return false;
+  return expected.birthtimeNs == null || actual.birthtimeNs === String(expected.birthtimeNs);
 }
 
 function linkCount(info) {
