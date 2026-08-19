@@ -201,13 +201,6 @@ function normalizePolicyEntry(raw, index) {
   };
 }
 
-function sameCanonicalPath(left, right) {
-  const resolvedLeft = path.resolve(left);
-  const resolvedRight = path.resolve(right);
-  if (process.platform === 'win32') return resolvedLeft.toLowerCase() === resolvedRight.toLowerCase();
-  return resolvedLeft === resolvedRight;
-}
-
 function pathWithin(root, candidate) {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
@@ -217,9 +210,15 @@ async function canonicalDirectory(directory, name) {
   const resolved = path.resolve(directory);
   const info = await lstat(resolved);
   if (!info.isDirectory() || info.isSymbolicLink()) throw new PolicyError(`${name} must be a real directory`);
-  const canonical = await realpath(resolved);
-  if (!sameCanonicalPath(canonical, resolved)) throw new PolicyError(`${name} must use its canonical path`);
-  return canonical;
+  let current = path.dirname(resolved);
+  while (true) {
+    const parentInfo = await lstat(current);
+    if (parentInfo.isSymbolicLink()) throw new PolicyError(`${name} must not use filesystem indirection`);
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return realpath(resolved);
 }
 
 async function readExistingManifest(filePath) {
@@ -338,7 +337,13 @@ export class ToolOnboardingService {
 
   async reconcile() {
     if (this.#entries.length === 0) return { changed: false, events: [] };
+    const workspaceRoot = await canonicalDirectory(this.#workspaceRoot, 'tool onboarding workspace root');
     const manifestRoot = await canonicalDirectory(this.#manifestDirectory, 'tool onboarding manifest directory');
+    if (pathWithin(workspaceRoot, manifestRoot)) {
+      throw new PolicyError('tool onboarding manifest directory must be outside the controller-writable workspace root');
+    }
+    this.#workspaceRoot = workspaceRoot;
+    this.#manifestDirectory = manifestRoot;
     const events = [];
     let changed = false;
     for (const entry of this.#entries) {
