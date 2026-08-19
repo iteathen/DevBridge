@@ -4,7 +4,11 @@ import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { canonicalizeWindowsWorkspacePath } from '../src/runtime/windows-processcontainer-sandbox.js';
+import {
+  canonicalizeWindowsWorkspacePath,
+  createWindowsProcessContainerId,
+  windowsProcessContainerProbeTimeouts,
+} from '../src/runtime/windows-processcontainer-sandbox.js';
 
 function comparable(candidate) {
   const normalized = path.normalize(path.resolve(candidate));
@@ -75,4 +79,19 @@ test('workspace trust anchor rejects new filesystem indirection below the anchor
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('MXC executions receive unique locally generated AppContainer identities', () => {
+  const first = createWindowsProcessContainerId();
+  const second = createWindowsProcessContainerId();
+  assert.match(first, /^devbridge-[0-9a-f]{32}$/u);
+  assert.match(second, /^devbridge-[0-9a-f]{32}$/u);
+  assert.notEqual(first, second);
+});
+
+test('MXC verification wrappers outlive the upstream DACL mutex wait bound', () => {
+  const timeouts = windowsProcessContainerProbeTimeouts();
+  assert.ok(timeouts.prerequisiteMs > 30_000);
+  assert.ok(timeouts.boundaryMs > 30_000);
+  assert.ok(timeouts.boundaryMs > timeouts.prerequisiteMs);
 });
