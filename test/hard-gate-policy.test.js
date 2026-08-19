@@ -44,6 +44,36 @@ test('classifies sensitive security/bootstrap/Git/workflow/spec paths locally', 
   ]);
 });
 
+test('hard-gate implementation and control-plane effect wiring are themselves security-sensitive', () => {
+  const result = classifySensitiveCandidate([
+    'src/app/runtime.js',
+    'src/run/hard-gate-controller.js',
+    'src/run/decision-gated-coordinator.js',
+    'src/run/controller-plan-executor.js',
+    'src/runtime/deterministic-operation-registry.js',
+    'src/state/json-state-store.js',
+  ], { architectureFileThreshold: 99, architectureOwnerThreshold: 99 });
+  assert.equal(result.required, true);
+  assert.deepEqual(result.decisionClasses, ['security-capability']);
+  const reason = result.reasons.find((entry) => entry.decisionClass === 'security-capability');
+  assert.deepEqual(reason.paths, [
+    'src/app/runtime.js',
+    'src/run/controller-plan-executor.js',
+    'src/run/decision-gated-coordinator.js',
+    'src/run/hard-gate-controller.js',
+    'src/runtime/deterministic-operation-registry.js',
+    'src/state/json-state-store.js',
+  ]);
+});
+
+test('package and repository workflow metadata trigger the workflow/release gate', () => {
+  const result = classifySensitiveCandidate([
+    'package.json',
+    '.github/dependabot.yml',
+  ], { architectureFileThreshold: 99, architectureOwnerThreshold: 99 });
+  assert.deepEqual(result.decisionClasses, ['workflow-release']);
+});
+
 test('broad cross-owner change triggers architectural hard gate while narrow ordinary source change does not', () => {
   assert.equal(classifySensitiveCandidate(['src/domain/a.js']).required, false);
   const broad = classifySensitiveCandidate([
