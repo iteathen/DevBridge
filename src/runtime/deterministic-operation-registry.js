@@ -58,6 +58,18 @@ function localEnvironment() {
   return { pass, set: { CI: '1' } };
 }
 
+function managedScratchSandbox(projectDir, scratch) {
+  if (!scratch || typeof scratch.root !== 'string' || scratch.root.length === 0) {
+    throw new PolicyError('repository build operation requires a controller-owned scratch root');
+  }
+  return {
+    required: true,
+    projectDir,
+    scratchRoot: scratch.root,
+    network: 'deny',
+  };
+}
+
 function safeId(value, name) {
   if (typeof value !== 'string' || !SAFE_ID.test(value)) throw new PolicyError(`${name} must be a safe identifier`);
   return value;
@@ -259,6 +271,7 @@ function cmakeConfigureAdapter(toolchains) {
         environment: localEnvironment(),
         onActivity,
         operation: 'cmake.configure',
+        sandbox: managedScratchSandbox(projectDir, scratch),
       });
     },
   };
@@ -291,6 +304,7 @@ function cmakeBuildAdapter(toolchains) {
         environment: localEnvironment(),
         onActivity,
         operation: 'cmake.build',
+        sandbox: managedScratchSandbox(projectDir, scratch),
       });
     },
   };
@@ -321,6 +335,7 @@ function ctestAdapter(toolchains) {
         environment: localEnvironment(),
         onActivity,
         operation: 'ctest.run',
+        sandbox: managedScratchSandbox(projectDir, scratch),
       });
     },
   };
