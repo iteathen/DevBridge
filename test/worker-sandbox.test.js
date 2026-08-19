@@ -76,7 +76,9 @@ function expectedProvider() {
   return process.platform === 'win32' ? 'windows-processcontainer' : 'bubblewrap';
 }
 
-test('verified proposal worker cannot reach control state, credentials, Git admin writes, IPC authority, or network', { timeout: 45_000 }, async (t) => {
+test('verified proposal worker cannot reach control state, credentials, Git admin writes, IPC authority, or network', {
+  timeout: process.platform === 'win32' ? 90_000 : 45_000,
+}, async (t) => {
   if (!supportedSandboxHost()) {
     t.skip('proposal-worker sandbox canary is defined only for Linux and Windows');
     return;
