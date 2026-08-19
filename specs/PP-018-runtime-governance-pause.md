@@ -2,7 +2,7 @@
 
 Status: active
 
-Implementation status: v0.1 defines serialized task admission, below-normal child-process QoS, and token-bound cooperative daemon pause/resume at safe task-cycle boundaries.
+Implementation status: implemented on current main: serialized task admission, below-normal child-process QoS, and token-bound cooperative daemon pause/resume at safe task-cycle boundaries.
 
 ## Goal
 
