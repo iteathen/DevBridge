@@ -1,7 +1,7 @@
 {
   "version": 1,
   "github": {
-    "queueRepository": "iteathen/PATCH-POLLER",
+    "queueRepository": "iteathen/DevBridge",
     "taskLabel": "patch-poller:ready",
     "trustedActorIds": ["1775584"],
     "auth": {
@@ -24,7 +24,7 @@
     }
   },
   "workspace": {
-    "root": "~/.patch-poller/workspaces",
+    "root": "~/.devbridge/workspaces",
     "allowCreate": true,
     "allowedOwners": ["iteathen"],
     "externalReadRoots": [],
@@ -35,7 +35,7 @@
     "defaultBaselineChannel": null
   },
   "state": {
-    "directory": "~/.patch-poller/state"
+    "directory": "~/.devbridge/state"
   },
   "contextRollover": {
     "enabled": true,
@@ -88,7 +88,7 @@
   "publication": {
     "autoPushTaskBranches": false,
     "forceNoOpPublication": false,
-    "branchPrefix": "patchpoller"
+    "branchPrefix": "devbridge"
   },
   "daemon": {
     "errorBackoffMs": 60000
