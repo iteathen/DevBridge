@@ -55,7 +55,7 @@ test('live repository identity is DevBridge-only', () => {
   }
 
   const specNames = readdirSync(path.join(root, 'specs')).filter((name) => name.endsWith('.md'));
-  assert.equal(specNames.length, 18);
-  assert.ok(specNames.every((name) => /^DB-(?:00[1-9]|01[0-8])-/u.test(name)), specNames.join(', '));
+  assert.equal(specNames.length, 19);
+  assert.ok(specNames.every((name) => /^DB-(?:00[1-9]|01[0-9])-/u.test(name)), specNames.join(', '));
   assert.deepEqual(violations, []);
 });
