@@ -246,16 +246,24 @@ internal static class Program
             try
             {
                 uint pid = unchecked((uint)candidate.Id);
-                IntPtr processHandle = OpenProcess(
-                    PROCESS_QUERY_LIMITED_INFORMATION | (terminate ? PROCESS_TERMINATE : 0),
-                    false,
-                    pid);
+                uint desiredAccess = PROCESS_QUERY_LIMITED_INFORMATION | (terminate ? PROCESS_TERMINATE : 0);
+                IntPtr processHandle = OpenProcess(desiredAccess, false, pid);
+
+                // Do not let a denied PROCESS_TERMINATE right turn a real
+                // matching AppContainer process into an apparent absence.
+                // Fall back to a query-only handle: if its token matches the
+                // unique SID below, it is counted as a survivor and cleanup
+                // will keep retrying/fail closed rather than report zero.
+                bool canTerminate = !terminate || processHandle != IntPtr.Zero;
+                if (processHandle == IntPtr.Zero && terminate)
+                    processHandle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
                 if (processHandle == IntPtr.Zero) continue;
+
                 try
                 {
                     if (!ProcessMatchesAppContainer(processHandle, expectedSid)) continue;
                     matches += 1;
-                    if (terminate && TerminateProcess(processHandle, 0xDB)) terminated += 1;
+                    if (terminate && canTerminate && TerminateProcess(processHandle, 0xDB)) terminated += 1;
                 }
                 finally
                 {
