@@ -95,8 +95,8 @@ jobs:
         run: node src/cli.js doctor --config config/devbridge.example.json
 
   windows-sandbox:
-    name: Windows 11 ProcessContainer qualification
-    timeout-minutes: 25
+    name: Windows 11 native AppContainer qualification
+    timeout-minutes: 18
     runs-on: windows-11-arm
     steps:
       - uses: actions/checkout@v4
@@ -110,9 +110,9 @@ jobs:
       - name: Cheap preflight
         timeout-minutes: 1
         run: npm run preflight
-      - name: Prepare Windows process-container sandbox provider
+      - name: Prepare Windows native AppContainer sandbox provider
         id: windows-sandbox
-        timeout-minutes: 15
+        timeout-minutes: 2
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -123,16 +123,6 @@ jobs:
           if (-not (Test-Path -LiteralPath $sandboxExecutable -PathType Leaf)) {
             throw "Windows sandbox bootstrap did not produce an executable: $sandboxExecutable"
           }
-          $hostPrepExecutable = Join-Path (Split-Path -Parent $sandboxExecutable) 'wxc-host-prep.exe'
-          if (-not (Test-Path -LiteralPath $hostPrepExecutable -PathType Leaf)) {
-            throw "Windows sandbox bootstrap did not produce the MXC host-prep helper: $hostPrepExecutable"
-          }
-          & $hostPrepExecutable prepare-system-drive
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $hostPrepExecutable prepare-null-device --no-sacl --json
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $hostPrepExecutable verify-null-device --json
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $sandboxExecutable --probe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "executable=$sandboxExecutable" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
