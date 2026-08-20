@@ -2,26 +2,31 @@
 
 Status: active migration map for DB-020 / issue #107.
 
-This document records what the VM program replaces, what remains valuable, and exactly when removal becomes safe. It is not permission to delete runtime code during Stage 0.
+This document records what the VM program replaces, what remains valuable, and the new migration order.
 
 ## Governing rule
 
 DB-020 is the target repository-execution architecture.
 
-The required initial host providers are:
+Required initial host providers:
 
 - Windows -> Hyper-V;
 - Linux -> KVM/QEMU managed through libvirt.
 
-The current Linux/Bubblewrap path and experimental Windows ProcessContainer/AppContainer work in draft PR #106 are temporary migration scaffolding/historical implementation evidence.
+The migration now deliberately removes active host-sandbox repository execution **before** production VM implementation. The temporary gap is intentional:
 
-Do not extend the host sandbox stack as the long-term answer to repository execution. Security fixes that keep an interim path from becoming less safe are still allowed until the replacement path is accepted.
+- repository-controlled execution is unavailable and fail-closed;
+- no direct/uncontained host fallback is allowed;
+- trusted static/control-plane work may continue only where independently classified safe;
+- VM execution is restored later through the same exposed LEGO studs.
 
-Full removal happens only after the named replacement stage has produced exact evidence on both required host providers. A mechanism being architecturally superseded is not enough reason to delete the only currently working Linux execution boundary.
+This is an architectural test. If DevBridge cannot remain structurally coherent with no production repository execution provider registered, the coupling must be repaired before Hyper-V/KVM work proceeds.
+
+Historical handoffs, commits, PR #106 discussion, tests, and failed experiments remain evidence and are not erased.
 
 ## Stage-0 planning conclusions
 
-The architecture now fixes these invariants:
+The target architecture fixes these invariants:
 
 - host control plane and authoritative Git/publication remain trusted and host-only;
 - repository guests are untrusted even at administrator/root;
@@ -35,22 +40,22 @@ The architecture now fixes these invariants:
 - no host secrets or arbitrary writable host mounts are exposed to guests;
 - host↔guest command/file interaction is narrow and host-controlled;
 - no AppContainer/Bubblewrap layer is required inside the VM;
-- bridge/controller contracts are provider-neutral without pretending Hyper-V and libvirt expose identical raw state.
+- bridge/controller contracts are provider-neutral without pretending Hyper-V and libvirt expose identical raw state;
+- the old host sandbox is removed first rather than retained as a live fallback during VM construction.
 
-The following choices are deliberately deferred to their owning stages rather than treated as Stage-0 blockers:
+Stage ownership:
 
-- exact provider/environment/config schema and stable environment identifier — Stage 1;
-- Hyper-V management API details, KVM/libvirt management details, and image construction flow — Stage 2;
-- exact VM/domain/disk naming, start/stop, storage-pool and reseed mechanics — Stage 3;
-- exact Hyper-V and libvirt/QEMU bridge transports, framing, authentication/identity, binary transfer, and recovery — Stage 4;
-- exact guest bootstrap/package/tooling baseline — Stage 5;
-- source synchronization, candidate import, coding/model adapter topology, and private/authenticated service access without host-secret injection — Stage 6;
-- exact provider/guest qualification matrix, doctor evidence, recovery probes and provider resource policy — Stage 7;
-- installation/reconfiguration prompts, provider provisioning, and migration UX on Windows/Linux — Stage 8.
+- Stage 1 — expose/prove studs, establish no-provider fail-closed behavior, remove active sandbox execution;
+- Stage 2 — Hyper-V/KVM-libvirt provider capability + immutable base images;
+- Stage 3 — persistent repository VM lifecycle/storage;
+- Stage 4 — host↔guest bridge;
+- Stage 5 — guest bootstrap/network/tooling;
+- Stage 6 — restore repository-controlled execution through VMs only;
+- Stage 7 — real provider/security/recovery/replaceability qualification;
+- Stage 8 — installation/reconfiguration/migration UX;
+- Stage 9 — remove remaining migration/config/documentation scaffolding and finalize VM-only architecture.
 
 ## Researched provider primitives
-
-Stage 0 does not select final transport APIs, but the architecture is grounded in real provider mechanisms.
 
 ### Hyper-V
 
@@ -71,109 +76,95 @@ Relevant platform primitives include:
 - libvirt channel APIs;
 - QEMU Guest Agent over virtio-serial or vsock-capable transport for guest operations.
 
-QEMU Guest Agent is guest-controlled and may produce forged/spurious responses under a hostile guest. It is therefore a transport candidate, not an authority source. Host validation remains mandatory.
+QEMU Guest Agent is guest-controlled and may produce forged/spurious responses under a hostile guest. It is a transport candidate, not an authority source.
 
-## Category 1 — remove after VM replacement
+## Category 1 — remove in Stage 1 before VM implementation
 
-### Linux Bubblewrap provider
+### Linux Bubblewrap repository-execution provider
 
-Current main:
+Current-main removal targets include:
 
-- `src/runtime/bubblewrap-sandbox.js`
-- `src/runtime/bubblewrap-probe.js`
-- Bubblewrap-specific status constructors/fields in `src/runtime/sandbox-status.js`
-- Bubblewrap selection/normalization in `src/runtime/deterministic-sandbox.js`
-- Bubblewrap-specific package/AppArmor setup in `.github/workflows/ci.yml`
-- Bubblewrap-specific setup/docs/spec/test assumptions
+- `src/runtime/bubblewrap-sandbox.js`;
+- `src/runtime/bubblewrap-probe.js`;
+- Bubblewrap-specific status constructors/fields in `src/runtime/sandbox-status.js`;
+- Bubblewrap selection/normalization in `src/runtime/deterministic-sandbox.js`;
+- Bubblewrap-specific branches in process/deterministic runners;
+- Bubblewrap/AppArmor qualification/setup paths whose sole purpose is host repository execution;
+- Bubblewrap-specific filesystem/network policy and tests that do not express generic retained invariants.
 
-**Removal blocker:** Linux/KVM-QEMU-libvirt must be implemented, qualified in Stage 7, and installable/reconfigurable in Stage 8. Stage 9 must not remove Bubblewrap first and leave Linux hosts unable to execute repository code.
+**Stage-1 rule:** remove provider registration first, prove fail-closed no-provider behavior, repair leaked dependencies, then delete the active provider implementation. Do not wait for KVM/libvirt replacement because the migration explicitly accepts temporary repository-execution unavailability.
 
-### Windows ProcessContainer/AppContainer experiment
+### Windows ProcessContainer/AppContainer/MXC work
 
-Draft PR #106 contains the experimental Windows host-sandbox family. It is useful evidence but no longer the target architecture.
+Draft PR #106 is historical/superseded implementation evidence, not a live migration dependency.
 
-Files/families include or have included:
+Files/families have included:
 
-- `src/runtime/windows-processcontainer-sandbox.js`
-- `src/runtime/windows-processcontainer-compat-provider.js`
-- `src/runtime/windows-job-launcher.cs`
-- `src/runtime/windows-job-wrapper.ps1`
-- `src/bootstrap/windows-sandbox-runtime.mjs`
-- Windows sandbox provisioning/qualification workflow code
-- Windows ProcessContainer/AppContainer/MXC/native-helper tests
+- `src/runtime/windows-processcontainer-sandbox.js`;
+- `src/runtime/windows-processcontainer-compat-provider.js`;
+- `src/runtime/windows-job-launcher.cs`;
+- `src/runtime/windows-job-wrapper.ps1`;
+- `src/bootstrap/windows-sandbox-runtime.mjs`;
+- Windows sandbox provisioning/qualification code and tests.
 
-AppContainer SID reaping, Job Object experiments, ACL work, MXC provisioning, native AppContainer helpers, and compatibility naming are not required by DB-020.
-
-**Removal/retirement blocker:** Windows/Hyper-V Stage-7 qualification + Stage-8 setup integration. Stage 9 closes/retires PR #106 and deletes any merged/transplanted remnants that are no longer referenced.
+Do not merge or revive these merely to preserve a fallback. Any equivalent remnants already present on the active implementation head are Stage-1 deletion candidates. PR #106 may be retired when the Stage-1 removal is implemented; its history remains available.
 
 ### Host-filesystem sandbox policy
 
-Target-obsolete repository-execution concepts include:
+Active repository-execution semantics to remove/disable in Stage 1 include:
 
 - exposing host `workspace.externalReadRoots` to repository processes;
-- host project write + subtractive `.git` protection as the isolation model;
+- host project write + subtractive `.git` protection as the execution-isolation model;
 - host `/usr`, `/bin`, `/lib*`, SDK/toolchain read-root construction for repository workloads;
 - synthetic host HOME/TMP mounts used to hide operator state from repository processes;
-- host namespace network `deny`/`unrestricted` as the primary confidentiality boundary;
-- sandbox-specific host outside-read/write/network probes.
+- host namespace network `deny`/`unrestricted` as the primary repository-execution security model;
+- sandbox-specific outside-read/write/network probes;
+- any `allowUncontainedTools` or compatibility path that could turn provider absence into direct host execution.
 
-Config/document compatibility may remain temporarily so existing installations can start during migration. Stage 8 defines migration behavior; Stage 9 removes/deprecates obsolete fields cleanly.
+Configuration keys may remain temporarily recognized for migration/error reporting if needed, but they must not retain authority to execute repository code on the host.
 
-### Gitless host project projection
+### Sandbox-specific worker IPC mount/ACL plumbing
 
-Draft PR #106 introduced `src/runtime/project-projection.js` and tests to provide a disposable Gitless host project view.
+Remove host bind/ACL/mount transport that exists only to carry worker exchange through a host sandbox. Preserve the logical run/turn/result protocol, bounded parsing, identity binding, and recovery semantics.
 
-DB-020 replaces this with a persistent guest filesystem plus host↔guest source/candidate synchronization. The invariant worth retaining is **authoritative Git is never guest authority**; the specific host Gitless projection is removable.
+During the no-provider interval those logical protocols may be dormant for repository execution; Stage 4/6 reconnect them through VM transfer/result studs.
 
-**Removal blocker:** Stage 6 source sync/candidate import/drift/reseal acceptance + Stage 7 qualification.
+### Host-sandbox candidate-controlled validation
 
-### Sandbox-specific worker IPC mount plumbing
+Any self-update/candidate validation that executes untrusted candidate code through the host sandbox must become unavailable/fail-closed when Stage 1 removes the sandbox. Preserve DB-011 release identity, artifact identity, last-known-good, activation and rollback rules. VM candidate execution is restored later through Stage 6.
 
-Bubblewrap maps control-owned host files into fixed guest-like host namespace paths. PR #106 adds Windows staging/import variants because writable ACL semantics differ.
-
-The host bind/ACL mechanism is target-obsolete. The logical run/turn/result protocol is not.
-
-**Removal blocker:** Stage 4 bridge + Stage 6 worker result recovery acceptance on Hyper-V and KVM/libvirt.
-
-## Category 2 — refactor / retain
+## Category 2 — retain/refactor as generic LEGO structure
 
 ### Generic process/result behavior
 
-Retain provider-independent behavior from:
+Retain provider-independent behavior such as:
 
-- `src/runtime/process-runner.js`
-- `src/runtime/deterministic-process-runner.js`
-- bounded stdout/stderr capture, timeout/cancellation, result parsing, failure classification
-- `src/runtime/process-tree.js` where it still owns host-side helper/provider processes.
+- bounded stdout/stderr capture;
+- timeout/cancellation;
+- result parsing/failure classification;
+- host helper lifecycle where still needed for trusted/provider processes.
 
-Refactor repository execution so the runner invokes a provider/environment/bridge adapter rather than preparing a host sandbox launch.
+Do not retain an assumption that a generic runner must always resolve to a host `spawn()` of repository code. The no-provider state is a valid execution-provider outcome.
 
-### Deterministic operation registry and classification
+### Deterministic operation registry/classification
 
 Retain:
 
-- `src/runtime/deterministic-operation-registry.js`
-- closed parameter schemas and local executable/operation authority;
+- closed operation schemas;
+- local executable/operation authority;
 - fail-closed classification of unknown/dynamic operations as repository-controlled.
 
-Repository-controlled classes target the exact VM environment. Truly static/control operations remain host-side only when proven not to execute repository-controlled code.
+During Stages 1–5, repository-controlled classes fail unavailable rather than executing directly on the host.
 
 ### Worker/result protocols
 
-Retain semantic invariants from:
+Retain semantic invariants from `devbridge/worker-exchange-v1`, `devbridge/result-v1`, run/turn/context digest binding, bounded results, and control-owned consumption/recovery.
 
-- `src/runtime/worker-exchange.js`
-- `devbridge/worker-exchange-v1`
-- `devbridge/result-v1`
-- run/turn/context digest binding
-- bounded result size/parsing
-- control-owned consumption and recovery.
-
-Refactor current hard-link/inode/fixed host-mount implementation into bridge transfer objects/state. Guest output remains untrusted.
+Transport/mount details are replaceable; protocol meaning is not.
 
 ### Controller plans and proposal semantics
 
-Retain DB-013:
+Retain DB-013 invariants:
 
 - plans are data, not shell authority;
 - executable/argv/environment/path/provider authority stays local;
@@ -182,156 +173,141 @@ Retain DB-013:
 
 ### Authoritative Git/publication
 
-Retain intact in principle:
+Retain intact:
 
 - host-managed canonical repository identity/baseline resolution;
 - DB-017 publication baseline/candidate identity;
 - host staging/sealing/commit creation;
-- explicit expected remote-head CAS/reconciliation;
+- expected remote-head CAS/reconciliation;
 - host-only GitHub/SSH publication credentials;
 - publication/merge/release authority.
 
-Stage 6 changes how source/candidate bytes cross the VM boundary, not who owns Git authority.
+The no-provider interval must not move Git authority into an execution implementation.
 
 ### Recovery, leases, checkpoints, verification, supervision
 
-Retain:
-
-- DB-009 durable effects/reconciliation;
-- DB-007 checkpoint-and-proceed/hard gates;
-- DB-016 host-only identity/lease/fencing;
-- DB-018 cooperative daemon pause and local resource authority;
-- DB-019 risk-driven verification/exact durable evidence;
-- DB-011 release identity, candidate artifact identity, last-known-good, activation and rollback;
-- runtime/daemon lifecycle control.
-
-Refactor to add host platform/provider/image/writable-layer/environment/bridge identities as recovery/evidence inputs.
+Retain DB-009/007/016/018/019, DB-011 release identity/rollback, and runtime supervision. Provider absence and removal of an in-flight legacy effect must reconcile explicitly rather than being retried through an unsafe fallback.
 
 ### Tool inventory/onboarding
 
 Retain DB-015 observation-vs-authority, manifest/schema validation, bounded help parsing, secret-safe projection, and operation registration.
 
-Refactor repository-class discovery/probing/execution into the guest. Host inventory remains for control-plane prerequisites:
-
-- Hyper-V tools/readiness on Windows;
-- KVM/QEMU/libvirt tools/readiness on Linux.
+Repository-class tool execution is unavailable after Stage 1 until Stage 6 routes it to guests. Host inventory remains for trusted control-plane/provider prerequisites.
 
 ## Category 3 — historical evidence
 
-Preserve, do not rewrite:
+Preserve, do not rewrite as current architecture:
 
-- `docs/handoffs/DB-HO002-0819-1226.md` and checksum on PR #106;
-- `docs/handoffs/DB-HO004-0819-1702.md` and checksum on PR #106;
-- `docs/handoffs/DB-HO004-0819-1902.md` and checksum on PR #106;
+- handoffs/checksums on PR #106;
 - older sandbox/security testing reports under `docs/testing/`;
-- Git history, PR #106 discussion, CI runs, and failed/superseded experiments.
+- Git history;
+- PR #106 discussion;
+- CI runs;
+- failed/superseded sandbox experiments.
 
-Useful lessons to carry forward:
+Useful lessons remain:
 
-- configuration/provider presence is not enforcement evidence;
-- process/operation-tree ownership and cancellation must survive detached behavior;
+- configured provider presence is not enforcement evidence;
+- operation-tree ownership/cancellation matters;
 - writable result transport needs identity/replacement defenses;
-- authoritative Git should remain structurally outside untrusted execution;
+- authoritative Git must remain outside untrusted execution;
 - a failed integration disproves that implementation, not necessarily the underlying OS primitive;
 - cross-platform path/identity semantics must be explicit;
-- a guest agent/helper is not trusted merely because it is the official integration channel.
+- guest agents/helpers are untrusted when the guest is compromised.
 
-## Category 4 — blocked removal matrix
+## Category 4 — deferred compatibility cleanup after VM restoration
 
-| Legacy family | Replacement evidence required | Earliest removal owner |
+These items need not remain active execution mechanisms but may remain as migration/error-recognition surfaces until Stage 8/9:
+
+| Legacy family | Stage-1 behavior | Final cleanup owner |
 | --- | --- | --- |
-| Bubblewrap provider/probe/status | Linux KVM/libvirt provider + image + persistent environment + bridge + Stage-7 Linux-host boundary/workload acceptance + Stage-8 setup | Stage 9 |
-| Windows ProcessContainer/AppContainer/MXC/native helper | Hyper-V provider + image + persistent environment + bridge + Stage-7 Windows-host boundary/workload acceptance + Stage-8 setup | Stage 9 |
-| host `externalReadRoots` repository semantics | guest tooling/source flow works on both host providers without host path exposure; Stage-8 config migration defined | Stage 9 |
-| host sandbox network deny/share policy | network-on guest contract qualified with no host secrets on both providers | Stage 9 |
-| Gitless host projection | Stage-6 source sync/candidate import + drift/reseal acceptance on required providers | Stage 9 |
-| sandbox bind/ACL worker mailbox plumbing | Stage-4 bridge + Stage-6 worker result recovery acceptance on both provider families | Stage 9 |
-| sandbox-specific candidate validation | candidate-controlled tests execute through provider-native VM validation on Windows and Linux while DB-011 invariants pass | Stage 9 |
-| Bubblewrap/AppContainer qualification CI | Stage-7 real Hyper-V + KVM/libvirt qualification exists and is stable | Stage 9 |
-| sandbox-specific config/schema/help text | Stage-8 Windows/Linux setup migration handles existing installs | Stage 9 |
-| sandbox-specific tests | corresponding VM/provider/bridge/security/recovery tests cover retained invariants | Stage 9 |
+| `workspace.externalReadRoots` repository semantics | execution authority removed/ignored or rejected; no host execution | Stage 8/9 migration/schema cleanup |
+| `execution.allowUncontainedTools` | must not bypass no-provider fail-closed state | Stage 1 removes unsafe effect; Stage 8/9 removes/deprecates key |
+| sandbox profile fields | no longer authorize host repository execution | Stage 8/9 migration/schema/help cleanup |
+| Bubblewrap/AppContainer qualification CI | active provider qualification removed | Stage 1 replaces with no-provider/LEGO tests; Stage 7 adds real VM qualification |
+| sandbox-specific docs/status terminology | mark obsolete/no-provider state truthfully | Stage 9 final wording cleanup |
+| historical PR/handoffs/testing evidence | preserve | never delete merely for architectural tidiness |
 
-## Concrete current-main ownership map
+## Concrete current-main ownership map for Stage 1
 
-### Host sandbox implementation to replace
+### Remove/refactor from active repository execution
 
-- `src/runtime/bubblewrap-sandbox.js`
-- `src/runtime/bubblewrap-probe.js`
-- `src/runtime/deterministic-sandbox.js` provider selection/factory
-- `src/runtime/sandbox-status.js` sandbox-specific status vocabulary
-- sandbox-specific branches in `src/runtime/process-runner.js`
-- sandbox-specific branches in `src/runtime/deterministic-process-runner.js`
-- candidate sandbox use in `src/bootstrap/candidate-validator.mjs`.
+- `src/runtime/bubblewrap-sandbox.js`;
+- `src/runtime/bubblewrap-probe.js`;
+- `src/runtime/deterministic-sandbox.js` provider selection/factory;
+- sandbox-specific status vocabulary in `src/runtime/sandbox-status.js`;
+- sandbox-specific branches in `src/runtime/process-runner.js`;
+- sandbox-specific branches in `src/runtime/deterministic-process-runner.js`;
+- sandbox-dependent candidate execution in `src/bootstrap/candidate-validator.mjs`;
+- host filesystem/network projection machinery used only to make sandboxed repository execution possible;
+- active CI/bootstrap/setup wiring used only for legacy sandbox readiness.
 
-Likely target refactors replace these with provider/image/environment/bridge readiness rather than preserving a generic `sandbox` name indefinitely.
+The exact Stage-1 code-head audit is authoritative; this list is a starting inventory.
 
-### Control-plane infrastructure to retain/refactor
+### Retain/refactor control-plane infrastructure
 
-- `src/runtime/process-runner.js`
-- `src/runtime/deterministic-process-runner.js`
-- `src/runtime/deterministic-operation-registry.js`
-- `src/runtime/worker-exchange.js`
-- host-owned helper lifecycle utilities
-- runtime state/recovery/coordinator/Git/publication modules
-- DB-007/009/016/017/018/019 enforcement/evidence paths
+- generic portions of process/deterministic runners;
+- `src/runtime/deterministic-operation-registry.js`;
+- logical portions of `src/runtime/worker-exchange.js`;
+- host-owned helper lifecycle utilities;
+- runtime state/recovery/coordinator/Git/publication modules;
+- DB-007/009/016/017/018/019 enforcement/evidence paths;
 - bootstrap release-integrity and supervisor activation/rollback logic.
 
-### Configuration requiring Stage-8 migration design
+### Required no-provider behavior
 
-Current `config/devbridge.example.json` includes:
+Stage 1 must add or expose a provider-neutral unavailable state equivalent to:
 
-- `workspace.externalReadRoots`
-- `execution.allowUncontainedTools`
-- local tool profiles whose `sandbox` fields describe host filesystem/network semantics
-- no VM provider/image/environment configuration section.
+- no production repository execution provider registered;
+- repository-controlled execution rejected before host spawn;
+- no direct/uncontained compatibility fallback;
+- structured status/error distinguishing `provider unavailable` from guest command failure;
+- `doctor`/CLI/setup truthfully report repository execution unavailable;
+- generic controller/Git/recovery/verification modules remain usable where they do not require repository execution;
+- tests prove repository code cannot reach host execution merely because no provider is installed.
 
-Stage 1 defines new state/contracts; Stage 8 defines operator migration/reconfiguration. Stage 0 does not mutate the live config schema.
+The exact symbol/name may differ; behavior is normative.
 
-### CI/tests requiring later replacement
+## CI/test migration
 
-Current `.github/workflows/ci.yml` installs/configures Bubblewrap/AppArmor on Linux and gates Linux sandbox tests.
+Stage 1 replaces legacy live-sandbox qualification as an active requirement with cheap architectural/no-provider evidence:
 
-Do not remove that coverage while Linux host-sandbox execution remains live.
+1. generic unit/control-plane tests with no production execution provider;
+2. fake-provider attachment tests;
+3. direct-host fallback denial tests;
+4. repository-wide dependency checks for removed sandbox modules;
+5. tests that preserve generic worker/result/recovery/Git semantics without repository execution.
 
-Stage 7 adds real virtualization-capable qualification for:
+Stages 2–5 add VM subsystem/provider tests while normal repository task routing remains disabled.
 
-- Windows/Hyper-V;
-- Linux/KVM-QEMU-libvirt.
-
-Hosted CI may not expose nested virtualization. Self-hosted/dedicated provider-capable runners may be required; that infrastructure fact must be explicit rather than hidden behind mocks.
-
-Test semantics that survive the migration include fail-closed provider readiness, exact environment/evidence identity, secret non-exposure, authoritative Git isolation, bounded bridge/results, timeout/cancellation, lifecycle cleanup, recovery, candidate sealing, storage-lineage validation, and end-to-end workload acceptance.
+Stage 7 adds real virtualization-capable qualification for Windows/Hyper-V and Linux/KVM-QEMU-libvirt. Hosted CI may not expose nested virtualization; self-hosted/dedicated provider-capable runners may be required.
 
 ## Documentation migration map
 
-Stage 0 updates active docs so the architecture is unambiguous:
+Stage 0 updates active docs so the architecture and sequence are unambiguous:
 
-- `specs/DB-020-vm-execution-boundary.md` — normative target and provider parity;
+- `specs/DB-020-vm-execution-boundary.md` — normative target, provider parity, and intentional no-provider migration interval;
 - `specs/DB-003-security.md` — security/threat/network/secret model;
 - `specs/DB-008-git-supply-chain.md` — host Git authority + guest network/dependency model;
-- related execution/tool/runtime specs — defer to DB-020 for the target boundary;
 - `docs/architecture.md` — controller/provider/VM/bridge/dataflow overview;
-- `docs/roadmap.md` — issue #107 stages and both initial providers;
-- `docs/setup.md` / `docs/bootstrap.md` — distinguish current Bubblewrap behavior from future Hyper-V/KVM-libvirt setup;
-- `docs/tool-profiles.md` — host sandbox fields are transitional; guest tooling is target;
-- `AGENTS.md` — agents must not extend the old sandbox architecture as target and must preserve provider parity;
-- `README.md` — user-facing current-vs-target status.
+- `docs/roadmap.md` — sandbox-first staging;
+- `docs/vm-lego-studs.md` — unplug/delete/fake-provider/VM-attachment proof;
+- setup/bootstrap/tool-profile docs — current legacy fields must not imply continued host repository execution;
+- `AGENTS.md` — agents must not reintroduce host execution as a temporary fallback.
 
-Historical handoffs/testing reports are not rewritten.
+Historical handoffs/testing reports are preserved.
 
 ## Stage-0 sanity check
 
-The dual-provider direction is consistent with project principles:
+The revised sequence is consistent with project principles:
 
-- **correctness/containment:** the guest is the untrusted trust domain on both Windows and Linux hosts;
-- **recoverability:** provider/image/writable-layer/environment identities become DB-009 state; persistence is independent of command lifetime;
-- **Git/GitHub responsibility:** host credentials/authoritative refs never enter the guest;
-- **operator trust:** doctor reports observed provider/image/environment readiness, not configured aspirations;
-- **LEGO/SOLID:** Hyper-V and KVM/libvirt are replaceable provider adapters behind one contract;
-- **KISS:** two native host providers replace multiple host-process sandbox schemes without requiring nested sandboxing or a custom network proxy;
-- **checkpoint-and-proceed:** later stages can proceed independently unless research exposes a genuine authority choice;
-- **DB-019:** cheap contract/unit checks precede expensive real-provider qualification, while Stage-7 provider/security changes still trigger required evidence;
-- **setup UX:** Stage 8 owns discover-first provider provisioning on Windows and Linux;
-- **portability:** Linux is not treated as a future optional backend; it is a first implementation requirement.
+- **LEGO/SOLID:** physically removing the old brick before adding the new one is a stronger replaceability test than maintaining dual live providers;
+- **security:** the intentional gap fails closed; repository code never runs directly on the trusted host merely because the sandbox was removed;
+- **KISS:** avoids a long-lived dual sandbox+VM compatibility architecture;
+- **correctness:** exposed coupling is repaired before provider implementation instead of copied into Hyper-V/KVM adapters;
+- **recoverability:** provider absence is explicit durable state, not an implicit crash path;
+- **Git/GitHub responsibility:** host credentials/authoritative refs remain independent of execution availability;
+- **provider parity:** both Hyper-V and KVM/libvirt attach after the same sandbox-free boundary is proven;
+- **setup UX:** Stage 8 turns the VM-only execution path into the supported install/reconfiguration experience.
 
-No runtime code or live config schema is removed by Stage 0.
+No runtime code or live config schema is removed by Stage 0 itself.
