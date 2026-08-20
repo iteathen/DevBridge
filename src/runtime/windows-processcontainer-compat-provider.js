@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { access, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import process from 'node:process';
 import { PolicyError } from '../errors.js';
@@ -26,7 +25,6 @@ const MXC_SCHEMA_VERSION = '0.7.0-alpha';
 const MXC_PREREQUISITE_PROBE_TIMEOUT_MS = 35_000;
 const MXC_BOUNDARY_PROBE_TIMEOUT_MS = 40_000;
 const REAPER_TIMEOUT_MS = 15_000;
-const WINDOWS_JOB_WRAPPER_SCRIPT = fileURLToPath(new URL('./windows-job-wrapper.ps1', import.meta.url));
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const CREDENTIAL_ENVIRONMENT = new Set([
   'DEVBRIDGE_GITHUB_TOKEN',
@@ -149,13 +147,6 @@ async function resolveWindowsSandboxExecutable(stateDirectory, env) {
   }
   try { return await resolveExecutable('wxc-exec.exe', env); }
   catch { return null; }
-}
-
-async function resolveWindowsPowerShell(env) {
-  const systemRoot = env.SystemRoot ?? env.SYSTEMROOT ?? env.WINDIR ?? 'C:\\Windows';
-  const candidate = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  if (!(await exists(candidate))) throw new PolicyError('Windows ProcessContainer wrapper requires Windows PowerShell');
-  return canonicalExisting(candidate, 'Windows ProcessContainer wrapper host');
 }
 
 function launcherEnvironment(source = process.env) {
@@ -377,16 +368,9 @@ export class WindowsMxcCompatibilitySandboxProvider {
     };
 
     const mxcArgs = ['--config-base64', Buffer.from(JSON.stringify(config), 'utf8').toString('base64')];
-    const wrapperHost = await resolveWindowsPowerShell(this.#env);
-    const wrappedArguments = Buffer.from(windowsCreateProcessCommandLine(mxcArgs), 'utf8').toString('base64');
     return {
-      executable: wrapperHost,
-      args: [
-        '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-        '-File', WINDOWS_JOB_WRAPPER_SCRIPT,
-        '-Executable', this.#resolvedExecutable,
-        '-ArgumentsBase64', wrappedArguments,
-      ],
+      executable: this.#resolvedExecutable,
+      args: mxcArgs,
       cwd: project,
       env: launcherEnvironment(this.#env),
       containerId,
