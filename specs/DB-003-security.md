@@ -2,7 +2,7 @@
 
 Status: active
 
-Implementation status: current main enforces the verified Linux outer sandbox for proposal workers/repository-code execution, control-owned worker IPC, exact local execution authority, sanitized dynamic-operation onboarding, and current DB-007/DB-016/DB-018 capability/fencing/governance boundaries. Unsupported enforcement claims fail closed.
+Implementation status: current main still enforces the legacy Linux/Bubblewrap host sandbox for proposal workers and repository-code execution. DB-020 is now normative for the target repository-execution boundary: persistent untrusted VMs, with the trusted DevBridge controller and all host authority outside the guest. Unsupported enforcement claims continue to fail closed during migration.
 
 ## Fundamental rule
 
@@ -10,208 +10,243 @@ Remote content can request work; it cannot grant machine authority.
 
 DevBridge is the control-plane authority. Remote and local models are proposal engines. Human remote input is authoritative only for task authorship or decision classes that local operator policy explicitly delegates; it is not a general capability override.
 
-### Task authorship is real remote job-submission authority
+For repository-controlled execution, read this specification with DB-020. Where older host-sandbox concepts conflict with DB-020, DB-020 governs.
+
+## Task authorship is real remote job-submission authority
 
 A runner's local `github.trustedActorIds` determines which numeric GitHub actors may author trusted tasks for that runner's configured queue under DB-002.
 
-When local execution is enabled, a trusted task actor can cause development work to execute on that machine **inside the machine authority already granted by local policy**. The actor cannot grant arbitrary shell, executable, filesystem-root, environment, credential, network, sandbox, peer-trust, daemon-control, or publication capability through task text, but the actor is still a remote development-job submitter.
+When local execution is enabled, a trusted task actor can cause development work to execute on that machine **inside the machine authority already granted by local policy**. The actor cannot grant arbitrary shell, executable, host-filesystem, environment, credential, network, VM-management, peer-trust, daemon-control, or publication capability through task text, but the actor is still a remote development-job submitter.
 
-Do not derive `trustedActorIds` mechanically from repository collaborator/team membership. In a multi-developer deployment, repository collaboration, DB-016 coordination peer trust, DB-007 decision authority, and task-submission authority are separate permissions.
+Do not derive `trustedActorIds` mechanically from repository collaborator/team membership. Repository collaboration, DB-016 coordination peer trust, DB-007 decision authority, and task-submission authority are separate permissions.
 
-Current task envelopes are not cryptographically addressed to one destination installation. DB-016 leases prevent conflicting compliant task ownership; they do not decide which human may dispatch work to which workstation. If developer A must not dispatch work to developer B's runner, B's local queue/`trustedActorIds` policy must enforce that boundary today.
+Current task envelopes are not cryptographically addressed to one destination installation. DB-016 leases prevent conflicting compliant task ownership; they do not decide which human may dispatch work to which workstation. If developer A must not dispatch work to developer B's runner, B's local queue/`trustedActorIds` policy must enforce that boundary until a dedicated addressed-dispatch contract exists.
 
-A future per-installation routing protocol must narrow dispatch without weakening DB-002 exact GitHub provenance or creating a second remote capability-grant channel.
+## Trusted host and untrusted repository guests
 
-## Filesystem
+DB-020 makes the security partition explicit:
 
-- Project writes are confined to a poller-managed project/worktree root.
-- A remote task never supplies a local path.
-- Containment checks account for `..`, absolute paths, and symlink/junction escape where the platform exposes realpath/filesystem identity information.
-- Canonical-path checks are defense in depth, not a replacement for OS-level access controls where those are available.
-- DevBridge itself does not write outside managed state/workspace roots except through an explicitly configured operator-owned integration boundary.
-- A user's arbitrary existing checkout is not auto-cleaned or reset.
+- the DevBridge controller, daemon/control state, GitHub API client, coordination keys, release/signing state, VM-management adapter, authoritative Git state, candidate sealing, publication, and human-decision authority remain on the trusted host;
+- each repository execution environment is an untrusted VM and may be fully compromised, including administrator/root compromise;
+- repository content, package scripts, tests, build systems, tool plugins, coding-worker subprocesses, and guest-local Git are all untrusted guest state;
+- the guest receives no host credential broker, arbitrary writable host mount, host control-state path, authoritative Git administration, or hypervisor-management authority;
+- a guest process escaping only to guest root has not crossed the DevBridge trust boundary.
 
-### External reads
+The target security claim therefore does not depend on a second Bubblewrap/AppContainer/ProcessContainer layer inside the VM.
 
-Blanket read-only access to the rest of the machine is not the safe default: read access can expose SSH keys, cloud credentials, browser profiles, tokens, private documents, or other material that compromised code could exfiltrate through permitted output.
+During migration, the current host sandbox remains transitional scaffolding for already-supported execution. Its existence is not permission to keep extending host-process isolation as the target design.
 
-The default is therefore **deny arbitrary external reads**. Local configuration may add explicit read-only roots needed for toolchains, SDKs, package caches, or reference data. A verified OS/tool sandbox may expose additional system paths read-only when required.
+## Filesystem authority
+
+### Host filesystem
+
+Remote tasks never supply host local paths.
+
+DevBridge host-side code may access only the managed state/workspace/runtime roots and explicit operator-owned integration boundaries required by its control functions. Host path handling must still defend against traversal, symlink/junction/reparse escape, unsafe deletion, and unowned cleanup.
+
+An arbitrary existing user checkout is never auto-cleaned or reset.
+
+Repository guests must not receive arbitrary host filesystem visibility. In the DB-020 target:
+
+- repository source/candidate bytes cross through the narrow bridge as bounded transfer objects or guest-relative paths;
+- guests do not name host paths;
+- authoritative host `.git` / linked-worktree administration is not a guest mount;
+- operator home, DevBridge state, credential stores, release keys, coordination keys, and VM-management state are not guest-visible;
+- ordinary toolchains/SDKs/package caches needed by repository work belong in the guest environment rather than being exposed from arbitrary host read roots.
+
+`workspace.externalReadRoots` and similar host-read allowances are legacy migration concepts for repository execution. Stage 8/9 decide their config migration/removal; they are not part of the target VM authority model.
+
+### Guest filesystem
+
+A repository VM owns a persistent guest filesystem for ordinary development state. Guest root may read or mutate it completely.
+
+Persistence is not authority: build outputs, package caches, installed tools, guest configuration, and guest Git remain untrusted. Reset/reseed must be an explicit host-owned lifecycle operation under DB-020/DB-009.
 
 ## Process execution
 
-- Child processes use `shell: false`.
-- Executable identity and authority-bearing/static argv fragments come only from local configuration, built-in DevBridge code, or a control-owned validated local-operation manifest.
-- Untrusted tool documentation may shape only closed non-authority parameter slots inside an already locally delegated tool envelope as defined by DB-015; it never grants executable, shell, environment, credential, network, path-root, or arbitrary argv capability.
-- Allowed proposal-worker placeholders are structural values created by DevBridge (`projectDir`, `contextFile`, `resultFile`, `runId`).
-- Free-form task text is never interpolated into argv.
-- Shell-like executable profiles require an explicit unsafe/operator exception and are not provided by default.
-- Environment inheritance is allowlist-based.
-- GitHub control-plane credentials are not inherited by child tools.
-- stdout/stderr collection is bounded.
-- Timeouts are mandatory.
+Host control-plane child processes use `shell: false` unless an explicitly separate local adapter owns shell semantics. Free-form task text is never interpolated into host argv.
 
-`cwd` is not a sandbox. A coding-tool profile is executable only when DevBridge can attach/verify the required outer containment mechanism. A profile declaration is not enough.
+Executable identity and authority-bearing/static argv fragments come only from built-in DevBridge code, local configuration, or a control-owned validated local-operation manifest. Environment inheritance is allowlist-based and control credentials are not passed to untrusted execution.
 
-An explicit unsafe development override, where supported by local implementation, is operator authority and must be represented honestly as uncontained/unsafe rather than as equivalent to verified sandbox execution. The reference safe configuration keeps uncontained tools disabled.
+Repository-controlled executable work is classified separately from trusted/static host work:
 
-### Deterministic operation classes
+- **host control/static operations** may remain on the host only when their implementation cannot be redirected into repository-controlled code through plugins, hooks, config, filesystem indirection, shell expansion, or equivalent mechanisms;
+- **repository-controlled operations** execute inside the DB-020 repository VM after VM cutover;
+- **unknown future operations** default to the repository-controlled class until deliberately classified;
+- repository/controller/model content cannot reclassify an operation as trusted host execution.
 
-DevBridge distinguishes operations that can safely remain static/control-plane inspection from operations that execute repository-controlled code.
+`cwd` is not containment. A declaration that an operation is isolated is not evidence. Admission must verify the actual environment/provider required by its execution class.
 
-- Static inspection may execute without the repository-code sandbox only when its implementation itself cannot be redirected through filesystem indirection or repository-controlled execution.
-- Trusted control operations run under DevBridge authority and must not be mislabeled as static/untrusted execution.
-- Repository-code operations require the verified outer OS sandbox.
-- Unknown future registered deterministic operations default to the repository-code class until deliberately classified.
+The legacy current-main `sandbox` provider check remains an implementation fact during migration. It must be replaced by observed VM/provider/image/environment readiness before host sandbox removal.
 
-Classification metadata is not enforcement; process admission must check observed provider capability before launch.
+## Dynamic local-operation onboarding
 
-### Dynamic local-operation onboarding
+DB-015 permits a narrow local extension mechanism without changing the authority model.
 
-DB-015 permits a narrow local extension mechanism without changing the fundamental authority model:
+- Operator-authored operation manifests live in an explicitly configured local directory and are validated before registration.
+- Automatic unfamiliar-tool onboarding is off by default and requires local configuration to pre-authorize the exact command name plus fixed help-probe arguments.
+- Merely finding a binary, seeing its name in repository content, or receiving a GitHub request cannot trigger execution or registration.
+- Help/man/spec output is untrusted data and can populate only a bounded closed parameter schema after local probe authority already exists.
+- Authority-shaped parameter names, arbitrary argv, shell text, credential values, host paths, and capability grants are rejected.
+- Generated `tool.*` operations remain repository-controlled execution by default.
+- Generated manifests are persisted in a control-owned manifest root before activation and are reconciled on restart.
 
-- operator-authored operation manifests live in an explicitly configured local directory and are validated before registration;
-- automatic unfamiliar-tool onboarding is off by default and requires local configuration to pre-authorize the exact command name plus fixed help-probe arguments;
-- merely finding a binary in `PATH`, seeing its name in repository content, or receiving a GitHub request cannot trigger execution or registration;
-- when local auto-onboarding policy exists, the documentation probe itself is treated as untrusted repository-code execution and must run inside the verified OS sandbox with network denied, configured external read roots hidden, synthetic HOME/TMP, minimal environment, and no control-plane credentials/state;
-- help/man/spec output is untrusted data. It may be parsed into a bounded closed schema only after local executable/probe authority already exists; authority-shaped parameter names and arbitrary raw argv are rejected;
-- every generated `tool.*` operation remains in the fail-closed repository-code execution class and requires the verified OS sandbox for actual use;
-- generated manifests are persisted under the configured local manifest root before activation so restart/reconciliation does not reconstruct a different wrapper silently;
-- controller/GitHub/repository content cannot add or edit the local manifest root or auto-onboarding allowlist.
+Target execution behavior: unfamiliar-tool probes and generated repository-class operations run inside the appropriate repository VM, not in a host process sandbox. The guest may use normal networking under DB-020; confidentiality comes from withholding host secrets, not from assuming the help probe has no egress.
 
-A synthesized wrapper reduces application-specific source edits; it does not turn tool documentation into a capability grant.
+Host-side discovery remains appropriate for DevBridge control-plane prerequisites such as Node, Git, Hyper-V management, and bridge/bootstrap tools.
 
-### Credentialed control plane versus proposal workers
+## Host secrets and credentials
 
-Untrusted proposal/model workers, and any repository-controlled subprocesses they launch, are separated from the credentialed control plane by a **verified OS isolation boundary**. A profile declaration is not sufficient evidence. If the active host has no verified worker-isolation provider, proposal-worker execution fails closed.
+The trusted host owns all credentials that create DevBridge control authority.
 
-The current built-in Linux provider uses Bubblewrap. Other platforms may inspect/configure DevBridge, but they do not gain proposal-worker/repository-code execution merely because a tool profile says `sandbox.enforcement: os` or `tool`.
+Guests never receive, directly or through a broker:
 
-The worker boundary has these ownership rules:
+- `DEVBRIDGE_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, enterprise GitHub token variables, Git/SSH askpass variables, or `SSH_AUTH_SOCK` carrying host authority;
+- GitHub CLI credential storage;
+- coordination private keys;
+- release/signing keys or release-manifest selection authority;
+- daemon-control tokens/locks;
+- hypervisor-management credentials/capability;
+- arbitrary operator-home credentials.
 
-- DevBridge control state, daemon lock/stop/pause authority, GitHub CLI credential storage, SSH/user credential state, identity private keys, release authority, and other operator-home credential sources stay outside the worker mount namespace;
-- worker `HOME` and temporary directories are synthetic sandbox-owned locations rather than the operator home;
-- control-plane GitHub token variables (`DEVBRIDGE_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, enterprise variants, Git/SSH askpass variables, and `SSH_AUTH_SOCK`) are stripped even when a local tool profile requests them;
-- a non-control credential required by a coding service must be granted explicitly/narrowly by local tool configuration; stored operator-home coding-tool credentials are not made visible as a convenience;
-- project/candidate bytes are writable proposal state, but authoritative `.git` / linked-worktree administrative state is read-only or unreachable from the worker;
-- control-plane Git operations, state persistence, GitHub status/publication, lease transitions, hard-gate decisions, and daemon control execute outside this worker boundary;
-- worker-visible candidate state is poller-owned disposable/reconstructable state. A worker never receives authority merely because it can edit those bytes.
+Because DB-020 guests have network access by default, any secret present in a guest must be treated as exfiltratable.
 
-#### Worker IPC ownership
-
-Worker context/result exchange is **control-plane state**, not a reserved project directory.
-
-For every run/turn DevBridge creates a private exchange root under the configured state directory with exclusive run/turn ownership. The control-only manifest binds the exact run/turn to context/result file identities and SHA-256 of the context bytes. That manifest and mailbox root are never exposed to the worker.
-
-Only two exact endpoints are projected into the worker namespace:
-
-- the pre-created context file, read-only;
-- the pre-created result file, writable in place.
-
-The worker is instructed to overwrite the existing result file in place. It may not unlink, rename over, symlink, junction, or otherwise replace the mailbox object. Before privileged result consumption DevBridge revalidates control-owned directory/file type, service ownership where the host exposes a UID, private permissions on POSIX, recorded filesystem identity, context digest, and bounded result size. Reads use no-follow semantics where available and verify the opened file identity again.
-
-This means `.devbridge/<run>/<turn>` inside the proposal tree is not an IPC security mechanism and need not exist. Project cleanup/Git exclusion is independent of control-plane mailbox ownership.
+Private-source, coding-service, or other authenticated workflows therefore require explicit later designs that preserve the host-only authority rule. Stage 6 owns the exact coding/model-adapter topology and any narrowly scoped relay mechanism. Copying a host token into a persistent guest for convenience is not authorized.
 
 ## GitHub control-plane authentication
 
-GitHub authentication is local control-plane authority. Repository content, issue text, model output, and coding-tool configuration cannot select a credential source or cause a credential to be copied into the worker environment.
+GitHub authentication is local host authority. Repository content, issue text, model output, guest state, and coding-tool configuration cannot select a credential source or cause a credential to be copied into a guest.
 
-The current control plane supports these local credential sources:
+The current control plane supports:
 
-1. an explicit bounded list of environment-variable names, with the reference precedence `DEVBRIDGE_GITHUB_TOKEN`, `GH_TOKEN`, then `GITHUB_TOKEN`;
-2. when local policy uses `auto` or `github-cli`, the active credential already stored for the configured host by GitHub CLI, retrieved through `gh auth token --hostname <host>` with `shell: false`.
+1. an explicit bounded list of environment-variable names, with reference precedence `DEVBRIDGE_GITHUB_TOKEN`, `GH_TOKEN`, then `GITHUB_TOKEN`;
+2. when local policy uses `auto` or `github-cli`, the credential already stored for the configured host by GitHub CLI, retrieved with a fixed `gh auth token --hostname <host>` call using `shell: false`.
 
 Rules:
 
-- do not scan arbitrary environment-variable names looking for token-like values;
-- do not read repository files, arbitrary home-directory files, shell history, or coding-tool state to discover GitHub credentials;
-- environment-variable names are configuration; their values are secrets and are never serialized into config, run state, context capsules, diagnostics, or GitHub status;
-- the GitHub CLI fallback is a local credential broker only; token stdout is consumed by DevBridge and never forwarded to the coding tool;
-- one resolved credential is shared only by DevBridge adapters that explicitly require the same control-plane GitHub authority;
-- resolved credential values are included only in the local redaction set before outbound reporting;
-- `doctor` may report provider/source identity such as `GH_TOKEN` or `github-cli:github.com`, but never credential contents;
-- remote tasks cannot reorder providers, add environment-variable names, select a GitHub CLI account, or enable a broader auth mechanism;
-- future GitHub App authentication belongs behind this same local credential-provider boundary and must not weaken these rules.
+- do not scan arbitrary environment names or arbitrary files for token-like values;
+- environment-variable names are configuration; their values are secrets and never serialized into config, run state, context, diagnostics, inventory, VM metadata, or GitHub status;
+- GitHub CLI is a local credential broker only; token output remains inside the trusted host control plane;
+- resolved credentials are shared only with host adapters that explicitly require that authority;
+- secret values enter the local redaction set before outbound reporting;
+- `doctor` may report provider/source identity such as `GH_TOKEN` or `github-cli:github.com`, but never token contents;
+- remote tasks cannot reorder providers, add credential variables, select another account, or enable a broader auth mechanism.
+
+Future GitHub App authentication belongs behind the same local credential-provider boundary.
+
+## Narrow host↔guest bridge
+
+The DB-020 bridge is an authority boundary, not a shared-filesystem convenience layer.
+
+It may carry only bounded, locally admitted operations such as structured context, source/file transfer, guest command requests, command exit/output/liveness, and result/candidate retrieval.
+
+Guest-controlled input must not be able to name arbitrary host paths, host executables, Git refs, credentials, VM-management targets, daemon state, or publication effects. Bridge messages should use logical environment/run/operation identities, guest-relative paths, and opaque host transfer IDs.
+
+The exact transport is intentionally deferred to VM Stage 4. Transport selection must not change this authority partition.
+
+## Worker/result ownership
+
+The semantic worker protocol remains control-owned even when its transport changes.
+
+Current main uses a private host worker-exchange root and filesystem-identity/hard-link checks, then projects exact context/result files into Bubblewrap. Draft PR #106 contains additional Windows staging/ACL work. Those host-filesystem projection mechanisms are migration-specific.
+
+The durable invariants to retain are:
+
+- exact run/turn/environment identity;
+- control-generated context digest;
+- bounded result size and strict result protocol parsing;
+- no result becomes authority merely because the guest produced it;
+- ambiguous/interrupted result recovery revalidates exact identities before consumption;
+- guest output cannot overwrite host control state directly.
+
+VM Stage 4/6 will move these semantics onto the narrow bridge.
 
 ## Network
 
-Network access is a capability because it can fetch executable content and exfiltrate data. The policy distinguishes denied, restricted/sandbox-enforced, and explicitly unrestricted profiles.
+Repository guests have normal network connectivity by default under DB-020.
 
-Network policy should be phase-aware where practical. Provisioning, dependency fetch/install, build/test, loopback browser testing, proposal-model access, and publication do not require the same network authority. Arbitrary project/test code must not inherit publication credentials or broad network access merely because another phase needs them.
+This changes the repository-execution confidentiality model from the legacy host sandbox. DevBridge no longer relies on a default network-denied repository process to protect host secrets; it protects them by keeping them out of the guest trust domain entirely.
 
-A worker network mode is usable only when the verified isolation provider can actually enforce the requested mode. The current Bubblewrap worker adapter enforces `deny` by retaining the unshared network namespace and supports explicit `unrestricted` networking by sharing the host network namespace while retaining filesystem/control-state isolation; a declared `restricted` mode fails closed until a provider can enforce a real restricted policy.
+Consequences:
 
-DB-008 remains authoritative for first-class package-manager/dependency/browser phase isolation, which is not yet complete.
+- package managers, SDK installers, documentation, source downloads, test endpoints, browser workflows, and similar guest tools may use normal networking;
+- repository code may exfiltrate anything present in the guest, so host secrets must not be present;
+- guest networking does not grant GitHub publication, coordination, release, daemon, or hypervisor authority;
+- optional offline/restricted guest modes may exist for workload reasons, but they are not the required security foundation;
+- publication remains a host control-plane operation with host credentials.
+
+Network behavior for trusted host control-plane operations remains capability-scoped and minimal.
+
+## Authoritative Git and publication
+
+Authoritative Git is host-only under DB-008 and DB-020.
+
+The guest may have ordinary Git installed and may create arbitrary guest-local commits/branches/remotes. Those objects are untrusted development state and cannot satisfy DevBridge's candidate or publication authority.
+
+Source enters the guest through the host-controlled synchronization path. Candidate bytes return through the bridge. The host then validates the expected repository/baseline/run subject, applies/imports accepted changes into authoritative Git state, verifies/seals the exact candidate, and performs any permitted publication.
+
+Guests do not receive GitHub publication credentials or a writable mount of authoritative `.git` state.
 
 ## Human decisions and hard gates
 
 DB-007 defines checkpoints, decision boundaries, and hard gates. These mechanisms do not weaken this security policy.
 
-A trusted human decision may authorize only effects whose decision class is already enabled by local policy. In particular:
+A trusted human decision may authorize only effects whose decision class is already enabled by local policy. A remote approval cannot add a host filesystem root, executable, environment secret, credential, guest secret injection, VM-management capability, trusted task actor, trusted coordination peer, or isolation exception.
 
-- a remote comment cannot add a filesystem root, executable, environment secret, network capability, credential, trusted task actor, trusted coordination peer, or sandbox exception;
-- an approval cannot convert an unenforced sandbox claim into an enforced one;
-- capability expansion beyond the active local policy requires the local operator-policy mechanism, even if a maintainer requests it remotely;
-- approval for a payload-sensitive effect binds to the exact artifact subject under DB-007;
-- expired, stale, mismatched, or superseded approval has no effect.
+Approval cannot convert an unverified VM/provider/environment claim into verified enforcement. Payload-sensitive approval remains artifact-exact and expires/stales under DB-007.
 
-Human attention is not itself a reason to halt safe work. While a checkpoint or decision is pending, DevBridge may continue reversible work that stays within the current capability envelope and does not cross the gated decision boundary.
+Human attention is not a mutex: while a checkpoint is pending, DevBridge may continue reversible work inside the existing capability envelope without crossing the gated boundary.
 
 ## Multi-agent coordination is not capability authority
 
-DB-016 persistent keys, peer trust, leases, heartbeat/TTL, and fencing coordinate ownership among installations that are already locally authorized to participate.
+DB-016 persistent keys, peer trust, leases, heartbeat/TTL, and fencing coordinate ownership among installations already locally authorized to participate.
 
-A task lease does not grant:
+A task lease does not grant task authorship trust, repository permission, executable/tool authority, host/guest filesystem authority, credentials, VM-management authority, human approval, addressed-dispatch permission, or publication authority.
 
-- task authorship trust;
-- target repository permission;
-- executable/tool authority;
-- filesystem/network access;
-- credentials;
-- hard-gate approval;
-- per-human/per-workstation routing permission;
-- publication authority beyond the separately configured Git boundary.
-
-Unknown/unverifiable peer lease state fails closed for automatic acquisition. Lease loss/expiry fences subsequent DevBridge-authorized effects and aborts managed child execution where supported.
+Coordination private keys remain host-only and never enter repository guests. Lease loss/expiry fences later DevBridge-authorized effects and aborts/cancels managed execution where supported.
 
 ## Secrets and reporting
 
 Before data leaves the machine through GitHub status, checkpoint, decision request, inventory projection, lease/status projection, or handoff comments:
 
-- redact configured secret values;
-- redact recognizable credential-token forms;
+- redact configured secret values and recognizable credential forms;
 - redact additional locally configured sensitive patterns;
-- strip unsafe control/terminal escape characters;
+- strip unsafe control/terminal escapes;
 - bound output size;
-- never include a complete process environment;
-- avoid publishing machine-specific paths when a redacted/relative form is sufficient;
-- never publish private identity/release keys or control-plane credentials.
+- never include a complete process or guest environment;
+- avoid publishing machine-specific host paths when a relative/logical form is sufficient;
+- never publish private identity/release keys, host credentials, or sensitive VM-management details.
 
-Raw local evidence may be retained under bounded poller-owned state policy, but credentials/private keys must not be intentionally recorded there except in their explicit protected authority stores where required (for example the DB-016 local identity private key).
+Raw local evidence may be retained under bounded control-owned policy, but credentials/private keys are recorded only in their explicit protected authority stores where required.
 
 ## Resource containment and workstation governance
 
-Timeout, output limits, effective task concurrency, context size, lease timing, and child priority are bounded local policy/control behavior.
+Timeouts, output limits, effective task concurrency, context size, lease timing, and resource policy are bounded local authority.
 
-DB-018 currently provides:
+DB-018 currently provides serialized task admission, below-normal priority for legacy host child processes, and cooperative token-bound pause/resume. Process priority is QoS, not containment.
 
-- serialized task admission (effective concurrency one);
-- below-normal child-process priority by default for model and deterministic children;
-- cooperative token-bound pause/resume at safe daemon task-cycle boundaries.
+In the VM architecture, CPU/memory/disk/lifecycle constraints belong to the VM/provider/resource layer where the platform can actually enforce and report them. Stage 7 must avoid claiming quotas or cleanup guarantees the provider does not prove.
 
-Process priority is QoS, not a security sandbox or hard CPU quota. Strong CPU, memory, disk-growth, process-count, native-thread, or richer restricted-network containment requires verified platform adapters beyond portable Node APIs. Those gaps must be reported honestly rather than represented as enforced.
-
-A timeout must attempt to terminate the whole managed process tree using the platform containment provider rather than assuming termination of the immediate child is sufficient.
-
-`pause` must not be implemented as a process/thread freeze that breaks DB-016 lease heartbeat/fencing semantics. It is admission control at an existing safe boundary.
+Timeout/cancellation must stop the intended guest operation/process tree through the bridge/provider without deleting persistent repository disk state. Daemon pause remains admission control and must not break DB-016 lease heartbeat/fencing.
 
 ## Recovery safety
 
-Recovery code must not become a privileged bypass around normal safety rules.
+Recovery code must not become a privileged bypass.
 
-- Do not blindly delete Git lock files because they appear stale.
-- Do not destructively clean/reset an unmanaged checkout.
-- Prefer replacing a disposable poller-owned worktree over uncertain repair of Git administrative state.
-- Local repair agents remain proposal engines; they do not receive implicit authority to bypass path, file-class, test, sandbox, lease, hard-gate, or publication policy.
-- Cleanup may delete only state whose DevBridge ownership and containment can be established.
-- Interrupted worker mailboxes are reopened only from control-owned run/turn state; manifest/file identities and unchanged context are revalidated before any result is treated as a proposal.
-- Persisted verifying/publishing state must recheck current local candidate/baseline/lease/gate identity before later effects; stale verification or approval is never trusted merely because it was previously recorded.
+- Do not blindly delete Git locks or VM/disk objects because they appear stale.
+- Do not destructively clean/reset an unmanaged checkout or unowned VM/disk.
+- Observe exact host Git, VM, disk, environment, bridge, lease, candidate, and approval state before repeating effects.
+- A crashed/unreachable guest is infrastructure uncertainty, not permission to broaden host authority or discard persistent state.
+- Reset/reseed/delete require proven DevBridge ownership and the DB-020 lifecycle contract.
+- Imported guest results/candidates remain proposals and must re-enter normal validation/sealing.
+- Persisted verifying/publishing state rechecks current local candidate/baseline/lease/gate/environment identity before later effects; stale verification or approval is never trusted merely because it was previously recorded.
+
+## Verification requirements
+
+Security enforcement claims require observed evidence.
+
+During migration, legacy Bubblewrap capability reporting must remain truthful for the current live path. After VM cutover, repository-code readiness must instead bind to observed VM/provider/base-image/repository-environment/bridge evidence defined by DB-020 and Stage 7.
+
+At minimum later VM qualification must prove a hostile/administrator guest cannot obtain host credentials, authoritative Git/publication state, DevBridge control state, coordination/release keys, arbitrary host mounts/paths, or VM-management authority; normal guest network access must remain compatible with those confidentiality claims.
+
+DB-019 governs verification cost/evidence identity. Security/provider changes may require expensive qualification; valid exact evidence should still be reused when its candidate/environment/policy identity has not changed.
