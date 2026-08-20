@@ -2,7 +2,7 @@
 
 ## Disposable fast-track VM branch
 
-The `codex/temp-fast-functional` branch uses one persistent Ubuntu Hyper-V environment through the Stage 6 source/operation/candidate contract. Run `npm run fast:doctor`, `npm run fast:run`, or `npm run fast:daemon` from that branch. The fast configuration explicitly selects the VM attached to Hyper-V's existing `Default Switch`; it does not silently fall back to the host when the VM is unavailable.
+The `codex/temp-fast-functional` branch uses one persistent Ubuntu Hyper-V environment per admitted repository identity through the Stage 6 source/operation/candidate contract. Run `npm run fast:doctor`, `npm run fast:run`, or `npm run fast:daemon` from that branch. The fast configuration explicitly selects the VMs attached to Hyper-V's existing `Default Switch`; it does not silently fall back to the host when a VM is unavailable.
 
 Normal build, test, and repository work is headless. DevBridge keeps the VM running during active use and can resume a saved or paused environment without VMConnect. `scripts/fast-vm/manage-environment.ps1` provides exact-owned-target `Status`, `Save`, and `Resume` actions; `Show` is the explicit diagnostic action that opens a console.
 
@@ -97,7 +97,8 @@ Fresh configuration keeps execution, model adapters, coordination, dynamic tool 
 
 Review at least:
 
-- `github.queueRepository`
+- `github.queueRepositories`
+- `github.repositoryDiscovery`
 - `github.trustedActorIds`
 - `workspace.allowedOwners`
 - `workspace.baselineChannels`
@@ -128,6 +129,29 @@ GitHub credentials are host control-plane authority under DB-003/DB-008.
 DevBridge may use configured environment-variable providers or the current GitHub CLI credential for the configured hostname. Token values are not serialized into config/status/run state and are not forwarded to repository execution.
 
 Under DB-020 repository guests normally have network access, so host GitHub/SSH/publication credentials must remain absent from the guest. Private dependency/coding-service support requires explicit later scoped mechanisms rather than copying the host token into a persistent VM.
+
+## Multiple repository queues
+
+`github.queueRepositories` is the explicit local queue allowlist. DevBridge polls each selected queue through its own isolated runtime and state namespace while sharing one serialized GitHub client/rate budget. Effective task execution remains one task at a time. Issue numbers are always reported with their queue repository so identically numbered issues cannot collide.
+
+Authenticated discovery is separate local policy:
+
+```json
+{
+  "github": {
+    "queueRepositories": ["owner/control", "owner/project"],
+    "repositoryDiscovery": {
+      "enabled": false,
+      "affiliations": ["owner", "collaborator", "organization_member"],
+      "maxRepositories": 30
+    }
+  }
+}
+```
+
+When explicitly enabled, discovery uses GitHub's authenticated-user repository endpoint with conditional requests, a local owner allowlist, a hard result bound, and filters for active repositories with issues enabled. Configured repositories remain selected even when discovery has no matching result. The response reports when GitHub pagination indicates that the configured bound truncated discovery. See GitHub's [authenticated repository endpoint](https://docs.github.com/en/rest/repos/repos#list-repositories-for-the-authenticated-user) and [REST API best practices](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api).
+
+Token access is observation, not execution authority. Discovery never adds trusted task actors, enables execution, creates a VM, adopts a provider object, grants publication, or supplies guest credentials. Each newly selected repository still needs a host-observed immutable repository ID and an independently admitted persistent-environment route; otherwise repository execution fails closed for that queue while other queues can continue polling. Shared GitHub rate-limit exhaustion stops the whole repository set so one installation cannot evade its account-wide budget by adding queues.
 
 ## Persistent VM setup target
 

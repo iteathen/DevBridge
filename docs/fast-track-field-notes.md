@@ -305,6 +305,36 @@ Main-branch requirement exposed:
 - Stage 7 should qualify a persistent authenticated bridge transport as a first-class provider connection stud, including reconnect/reconcile, liveness, bounded buffering, cancellation, hostile response, target mismatch, lease loss, VM save/resume, and daemon restart behavior.
 - Ownership/provider observation should be cached only against exact identity and a short validity window, with forced re-observation at security-sensitive boundaries. Avoid a PowerShell/import/SSH handshake tax per 16 KiB frame.
 
+### Multiple repository polling and isolated UCI Arena environment
+
+Observed problem:
+
+- The original application composition owned one queue repository, one set of issue-number-keyed results, and one repository route. Pointing the same daemon at another project would either require a second process or risk state/identity collisions.
+- The authenticated GitHub token can observe more repositories than this workstation should automatically execute. Treating token visibility as task-author, VM, or publication authority would collapse several control-plane boundaries.
+- A single-route fast provisioning script would reject a second repository because replacing the route policy would discard the first repository's local authority.
+- The initial VM smoke assumed a root `package.json`, which was DevBridge-specific and failed against UCI Arena's mixed CMake/Python/Node layout even though VM execution itself was working.
+
+Fast-track solution and evidence:
+
+- Public configuration is plural-only: `github.queueRepositories` plus bounded `github.repositoryDiscovery`. No singular compatibility key was retained.
+- One shared GitHub session owns authentication, conditional validators, request serialization, and the account-wide rate budget. A bounded catalog selects configured repositories and, only when enabled, repositories returned by GitHub's authenticated-user endpoint that also pass local owner and active-issues filters.
+- A repository-set coordinator creates one otherwise ordinary isolated runtime per selected queue and cycles them serially. Result, rejection, projection, and error records carry the queue repository. A queue-local failure does not suppress later queues; a shared rate-limit failure stops globally.
+- The live token discovery check found 15 allowed-owner repositories with no pagination truncation. Discovery remains disabled in `config/devbridge.fast.json`; the fast configuration explicitly selects only `iteathen/DevBridge` and `iteathen/UCI_Arena`. This avoids polling or implying readiness for 13 repositories without local VM routes.
+- The provisioning helper now validates and atomically extends the existing route policy under an exclusive setup lock. It preserves the DevBridge route and its sole validation role, rejects a conflicting subject/profile, and appends UCI Arena without adopting any existing foreign VM.
+- UCI Arena immutable repository ID `1297121161` is routed to persistent environment `env-ae635988b113ca9e8d64eada003d7f18`, Hyper-V VM `db-env-f78d539a495cb04b`, provider UUID `bc83e95f-caec-4698-9ef3-fda4945adc0e`, and the same published base generation used by the first environment. The VM has its own owned differencing disk and provider record.
+- A managed host clone resolved exact `origin/main` commit `b8cc97a7b81b3a2ffe3d9f6b8135cd684d155934`. The generalized smoke used a neutral explicit source marker instead of assuming a package manager, synchronized the exact repository source through the UCI route, observed Linux/x64 and Node.js `v24.19.0`, and passed 4/4 `@uci-arena/time-profile-contract` tests. The warm rerun took `29.119` seconds and returned evidence bound to `iteathen/UCI_Arena`, repository ID `1297121161`, and run `fast-vm-smoke`.
+- `npm run fast:doctor` reported both configured queues and ready repository execution. A live `poll-once` and `npm run fast:run` each selected both queues, returned no queue-local errors/rejections, and kept `codex-fast` ineligible for automatic selection.
+- The repository-wide suite after multi-queue work passed: 513 total, 507 passed, 6 Windows capability skips, 0 failed.
+
+Main-branch requirements exposed:
+
+- Repository discovery needs a supported operator UX that previews additions and separately provisions/admits exact repository environments; discovery must never create authority by itself.
+- Per-repository runtime construction should stay replaceable and isolated, but repeated global inventory/foundation work should be shared only where the owning contract proves it is repository-neutral.
+- Stage 8 provisioning must support idempotent append/remove/reconfigure operations with durable intent, exact route-policy CAS/reconciliation, per-repository progress, and safe recovery after environment creation succeeds but route admission or health verification fails.
+- The disposable base currently clones one SSH host private identity into both repository VMs and both routes use the same wildcard known-host record. Exact provider UUID, ownership marker, repository subject, and observed address still gate the fast attachment, but shared guest host identity is not acceptable production multi-environment authentication. Stage 8 must generate and authentically enroll one key per exact environment.
+- Queue scheduling must eventually account for VM memory/CPU/idle policy without weakening the current one-effective-task rule or pretending all provider families expose identical resource semantics.
+- The initial UCI source transfer confirms that source shape is repository-specific. Qualification should cover large/mixed repositories, neutral source markers, content-cache bounds/garbage collection, and tool-profile readiness without importing project names into generic execution components.
+
 ## Production-work coverage audit
 
 The fast track has now exposed and recorded the following production work. The temporary solution column describes what made this disposable branch usable; it is not permission to move the shortcut to `main`.
@@ -335,6 +365,7 @@ The current evidence must not be overstated:
 - Save/resume recovery was proven by starting a new runtime after resume. An already-open persistent transport interrupted by save, provider restart, network change, or daemon restart still needs explicit reconcile tests; automatic replay of an ambiguous frame must remain forbidden.
 - The owned NAT setup remains incomplete because host TCP/IP/NAT mutation required elevation. The Default Switch route is usable fast-track evidence, not production network readiness.
 - The published base intentionally retained one SSH host identity. The clean probe proved unique-key generation, but authenticated enrollment is still absent.
+- The second repository environment proves multi-environment routing, but it also clones that disposable SSH host identity. This is fast-only evidence and increases the urgency of per-environment authenticated enrollment before any production multi-repository claim.
 - The immutable image contains the earlier one-shot bridge helper. Runtime staging of the current helper avoids a compatibility parser, but production needs versioned image/helper compatibility and deliberate image migration.
 - Cloud-init reports disabled after the installed image's first boot. It cannot currently be claimed as a supported repair/reconfiguration mechanism.
 - The content-addressed cache still contains now-unreachable positional blobs from the earlier protocol. They require exact cache-owned garbage collection, not legacy parsing.
@@ -363,7 +394,7 @@ Completed:
 - Foreign VM/switch/NAT inventory without adopting or mutating foreign objects.
 - Official media download and checksum, bounded NoCloud seed generation, and structurally verified no-prompt derived ISO.
 - Ubuntu builder installation, tool/helper/service verification, generalization, and immutable image publication.
-- Owned differencing-disk environment for immutable repository ID `1337742670`.
+- Separate owned differencing-disk environments for immutable repository IDs `1337742670` (DevBridge) and `1297121161` (UCI Arena).
 - Headless Default Switch attachment, DHCP observation, pinned SSH route, bridge health, and real Stage 6 repository execution.
 - Linux/x64 Node execution and 12 targeted tests through the exact VM route.
 - Content-addressed incremental source synchronization with guest inventory validation.
@@ -371,6 +402,7 @@ Completed:
 - Clean unattended installer boot, automatic poweroff, disk boot, and installed-tool/service verification without desktop control.
 - Exact repository-environment save/resume followed by a passing VM repository-execution smoke.
 - Opt-in-only coding-adapter inventory projection, full local qualification, live queue poll, and hidden daemon lifecycle proof.
+- Serialized two-repository polling with isolated queue state, a shared rate budget, and a real UCI Arena VM smoke.
 
 Next:
 
@@ -387,7 +419,7 @@ Next:
 - Real opt-in Codex smoke: passed using the explicitly selected adapter.
 - `npm run fast:run`: safe live queue cycle completed with an empty eligible queue, no selected coding adapter, no rejected task, and no inventory/onboarding error.
 - Hidden fast daemon start/status/pause/resume/stop smoke: passed; the final status had no active lock or pending control record.
-- Full Node test suite after the newest VM transport/cache/tool-inventory work: 504 total, 498 passed, 6 Windows-capability skips, 0 failed.
+- Full Node test suite after the multi-repository work: 513 total, 507 passed, 6 Windows-capability skips, 0 failed.
 - Repository preflight after the newest work: passed with 41 syntax files, 3 JSON files, and 34 targeted tests.
 - Live Hyper-V management: `Get-VMHost` succeeds after group membership/reboot.
 - Real Stage 6 smoke: Linux/x64, Node `v24.19.0`, 12/12 targeted tests passed, VM-bound evidence recorded.
@@ -396,3 +428,5 @@ Next:
 - Source-cache tests cover changed-only transfer and forged unknown-part rejection; targeted file-tree/workspace/repository tests pass under protocol `1.1.0`.
 - Fast topology tests prove windowless saved/paused resume commands and bounded endpoint reuse.
 - Persistent line-channel tests prove ordered multi-frame exchange and one shared first connection; real VM timing improved to `22.355` seconds changed and `21.077` seconds unchanged for two repository operations.
+- Live authenticated discovery selected 15 locally allowed-owner repositories with no truncation; fast configuration deliberately kept discovery disabled and explicitly selected only DevBridge plus UCI Arena.
+- Real UCI Arena Stage 6 smoke at `b8cc97a7b81b3a2ffe3d9f6b8135cd684d155934`: Linux/x64, Node `v24.19.0`, 4/4 repository tests passed, warm elapsed time `29.119` seconds, and evidence bound to immutable repository ID `1297121161`.
