@@ -1,6 +1,7 @@
 const PROTOCOL = 'devbridge/environment-foundation-status-v1';
 const SAFE_IDENTITY = /^[a-f0-9]{32}$/u;
 const SAFE_INSTANCE = /^[a-f0-9]{32,64}$/u;
+const SAFE_ENVIRONMENT = /^env-[a-f0-9]{32}$/u;
 const STATES = new Set(['ready', 'degraded', 'unavailable']);
 
 function capability(raw, name) {
@@ -67,6 +68,10 @@ function requireInstanceIdentity(value) {
   return value;
 }
 
+function requireEnvironmentIdentity(value) {
+  if (typeof value !== 'string' || !SAFE_ENVIRONMENT.test(value)) throw new TypeError('persistent environment identity is invalid');
+  return value;
+}
 
 function mediaObservation(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { usable: false, reason: 'image media observation is invalid', format: null, contentIdentity: null, parentIdentity: null, virtualSize: null };
@@ -108,6 +113,28 @@ function assertImages(value) {
   return value;
 }
 
+function unavailableLifecycle() {
+  const reason = 'persistent environments are unavailable';
+  return {
+    async ensure() { throw new Error(reason); },
+    async list() { return []; },
+    async observe() { throw new Error(reason); },
+    async start() { throw new Error(reason); },
+    async stop() { throw new Error(reason); },
+    async reset() { throw new Error(reason); },
+    async reseed() { throw new Error(reason); },
+    async remove() { throw new Error(reason); },
+    async reconcile() { return []; },
+    async protectedSourceIdentities() { return []; },
+  };
+}
+
+function assertLifecycle(value) {
+  const methods = ['ensure', 'list', 'observe', 'start', 'stop', 'reset', 'reseed', 'remove', 'reconcile', 'protectedSourceIdentities'];
+  if (!value || methods.some((name) => typeof value[name] !== 'function')) throw new TypeError('persistent environment lifecycle contract is incomplete');
+  return value;
+}
+
 function imageCapability(raw) {
   return capability(raw, 'images');
 }
@@ -116,12 +143,14 @@ export class EnvironmentFoundation {
   #identity;
   #control;
   #images;
+  #lifecycle;
 
-  constructor({ identity, control, images }) {
+  constructor({ identity, control, images, lifecycle = null }) {
     if (typeof identity !== 'string' || !SAFE_IDENTITY.test(identity)) throw new TypeError('environment foundation identity is invalid');
     this.#identity = identity;
     this.#control = assertControl(control);
     this.#images = assertImages(images);
+    this.#lifecycle = assertLifecycle(lifecycle ?? unavailableLifecycle());
   }
 
   async inspect() {
@@ -166,29 +195,48 @@ export class EnvironmentFoundation {
   }
 
   async retireImage(identity) { return this.#images.retire(identity); }
-  async collectImages(options) { return this.#images.collect(options); }
+
+  async collectImages(options = {}) {
+    const requested = Array.isArray(options?.protectedIdentities) ? options.protectedIdentities : [];
+    const protectedIdentities = [...new Set([...requested, ...await this.#lifecycle.protectedSourceIdentities()])];
+    return this.#images.collect({ ...options, protectedIdentities });
+  }
+
   async ensureNetwork() {
     await this.#control.ensureNetwork();
     const status = controlStatus(await this.#control.inspect(), this.#identity);
     return status.networking;
   }
+
   async releaseNetwork() {
     const result = await this.#control.releaseNetwork();
     return { changed: result?.released === true };
   }
+
   async ensureStorage() {
     await this.#control.ensureStorage();
     const status = controlStatus(await this.#control.inspect(), this.#identity);
     return status.storage;
   }
+
   async releaseStorage() {
     const result = await this.#control.releaseStorage();
     return { changed: result?.released === true };
   }
 
+  async ensureEnvironment(input) { return this.#lifecycle.ensure(input); }
+  async listEnvironments() { return this.#lifecycle.list(); }
+  async observeEnvironment(identity) { return this.#lifecycle.observe(requireEnvironmentIdentity(identity)); }
+  async startEnvironment(identity) { return this.#lifecycle.start(requireEnvironmentIdentity(identity)); }
+  async stopEnvironment(identity, options = {}) { return this.#lifecycle.stop(requireEnvironmentIdentity(identity), options); }
+  async resetEnvironment(identity) { return this.#lifecycle.reset(requireEnvironmentIdentity(identity)); }
+  async reseedEnvironment(identity, options) { return this.#lifecycle.reseed(requireEnvironmentIdentity(identity), options); }
+  async removeEnvironment(identity) { return this.#lifecycle.remove(requireEnvironmentIdentity(identity)); }
+
   async reconcile() {
     await this.#images.reconcile();
     await this.#control.reconcile();
+    await this.#lifecycle.reconcile();
     return this.inspect();
   }
 
@@ -196,14 +244,17 @@ export class EnvironmentFoundation {
     const local = requireInstanceIdentity(identity);
     return instanceObservation(local, await this.#control.observeInstance(local));
   }
+
   async startInstance(identity) {
     const local = requireInstanceIdentity(identity);
     return instanceObservation(local, await this.#control.startInstance(local));
   }
+
   async stopInstance(identity, options = {}) {
     const local = requireInstanceIdentity(identity);
     return instanceObservation(local, await this.#control.stopInstance(local, options));
   }
+
   async removeInstance(identity) {
     const local = requireInstanceIdentity(identity);
     return removalObservation(local, await this.#control.removeInstance(local));
