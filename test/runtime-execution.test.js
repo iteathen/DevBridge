@@ -1,0 +1,3 @@
+import test from 'node:test'; import assert from 'node:assert/strict'; import path from 'node:path'; import os from 'node:os'; import { scopeForExecutionDirectory } from '../src/app/runtime-execution.js';
+
+test('managed execution scope is derived only from the exact worktree topology',()=>{const root=path.join(os.tmpdir(),'workspaces');const dir=path.join(root,'worktrees','owner','repo','run-1');assert.deepEqual(scopeForExecutionDirectory(root,dir),{repository:'owner/repo',repositoryId:null,runId:'run-1'});assert.throws(()=>scopeForExecutionDirectory(root,path.join(root,'owner','repo')),/outside|exact managed run/u);assert.throws(()=>scopeForExecutionDirectory(root,path.join(root,'worktrees','owner','repo','run-1','nested')),/exact managed run/u);});
