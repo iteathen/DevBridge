@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import path from 'node:path';
 import { ProtocolError } from '../errors.js';
+import { ProjectRelativePathError, normalizeProjectRelativePath } from '../values/project-relative-path.js';
 
 export const CONTROLLER_PLAN_PROTOCOL = 'devbridge/controller-plan-v1';
 const MAX_PLAN_BYTES = 1_048_576;
@@ -50,26 +50,12 @@ function rejectAuthorityFields(value, name, depth = 0) {
 }
 
 export function normalizePlanPath(value, name = 'path') {
-  if (typeof value !== 'string' || value.length === 0 || value.length > 512 || value.includes('\0')) {
-    throw new ProtocolError(`${name} must be a bounded repository-relative path`);
+  try {
+    return normalizeProjectRelativePath(value);
+  } catch (error) {
+    if (!(error instanceof ProjectRelativePathError)) throw error;
+    throw new ProtocolError(`${name} ${error.message}`, { cause: error });
   }
-  const portable = value.replace(/\\/gu, '/');
-  if (portable.startsWith('/') || /^[A-Za-z]:\//u.test(portable) || portable.startsWith('//')) {
-    throw new ProtocolError(`${name} must not be absolute`);
-  }
-  const normalized = path.posix.normalize(portable);
-  if (normalized !== portable || normalized === '.' || normalized === '..' || normalized.startsWith('../')) {
-    throw new ProtocolError(`${name} must be normalized and must not traverse`);
-  }
-  const segments = normalized.split('/');
-  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
-    throw new ProtocolError(`${name} contains an unsafe path segment`);
-  }
-  const first = segments[0].toLowerCase();
-  if (first === '.git' || first === '.devbridge') {
-    throw new ProtocolError(`${name} targets a reserved DevBridge path`);
-  }
-  return normalized;
 }
 
 function normalizeDigest(value, name, { required = false } = {}) {

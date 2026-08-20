@@ -8,15 +8,10 @@ function isWithin(root, candidate) {
 
 export async function canonicalExternalDirectory(directory, excludedRoot) {
   if (directory == null) return null;
-  if (typeof directory !== 'string' || directory.length === 0 ||
-      typeof excludedRoot !== 'string' || excludedRoot.length === 0) {
-    throw new TypeError('directory boundary paths are required');
-  }
+  if (typeof directory !== 'string' || directory.length === 0 || typeof excludedRoot !== 'string' || excludedRoot.length === 0) throw new TypeError('directory boundary paths are required');
   const resolved = path.resolve(directory);
   const info = await lstat(resolved);
-  if (!info.isDirectory() || info.isSymbolicLink()) {
-    throw new Error('selected directory must be a real non-symlink directory');
-  }
+  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('selected directory must be a real non-symlink directory');
   let current = path.dirname(resolved);
   while (true) {
     const parentInfo = await lstat(current);
@@ -25,12 +20,7 @@ export async function canonicalExternalDirectory(directory, excludedRoot) {
     if (parent === current) break;
     current = parent;
   }
-  const [canonical, canonicalExcludedRoot] = await Promise.all([
-    realpath(resolved),
-    realpath(path.resolve(excludedRoot)),
-  ]);
-  if (isWithin(canonicalExcludedRoot, canonical)) {
-    throw new Error('selected directory must be outside the excluded root');
-  }
+  const [canonical, excluded] = await Promise.all([realpath(resolved), realpath(path.resolve(excludedRoot))]);
+  if (isWithin(excluded, canonical)) throw new Error('selected directory must be outside the excluded root');
   return canonical;
 }

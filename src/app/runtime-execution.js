@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { createRepositoryExecution, gitVisiblePathsFromResult } from './repository-execution.js';
+import { resolveBuiltInHelper } from './builtin-helper-resolver.js';
 
 const SAFE_SEGMENT = /^[A-Za-z0-9_.-]+$/u;
 const SAFE_RUN = /^[A-Za-z0-9_.-]{1,120}$/u;
@@ -71,6 +72,8 @@ export async function createRuntimeExecutionContext({
     },
     resolveTool: async (tool) => {
       if (DIRECT_TOOLS.has(tool)) return { program: tool, arguments: [] };
+      const builtIn = await resolveBuiltInHelper(tool);
+      if (builtIn) return builtIn;
       const profile = toolProfiles?.[tool];
       if (profile?.executable) return { program: programName(profile.executable), arguments: [] };
       if (!SAFE_PROGRAM.test(tool)) throw new Error('logical tool identity cannot be used as a guest program');

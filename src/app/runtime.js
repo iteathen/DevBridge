@@ -17,17 +17,14 @@ import { WorkspacePolicy } from '../security/workspace-policy.js';
 import { GitClient } from '../git/git-client.js';
 import { GitTaskLeaseStore } from '../git/task-lease-store.js';
 import { GitWorkspaceManager } from '../git/workspace-manager.js';
-import { ProcessRunner } from '../runtime/process-runner.js';
 import { DeterministicProcessRunner } from '../runtime/deterministic-process-runner.js';
 import { WorkerExchange } from '../runtime/worker-exchange.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
 import { loadLocalOperationManifests } from '../runtime/local-operation-manifest.js';
 import { ToolOnboarding } from '../runtime/tool-onboarding.js';
 import { canonicalExternalDirectory } from '../runtime/external-directory.js';
-import {
-  REPOSITORY_EXECUTION_REQUEST_PROTOCOL,
-  normalizeRepositoryExecutionResult,
-} from '../runtime/repository-execution.js';
+import { connectToolOnboarding } from './tool-onboarding-composition.js';
+import { composeWorkRunner } from './work-runner-composition.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { ToolInventoryService } from '../runtime/tool-inventory.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
@@ -42,29 +39,6 @@ import { DecisionGatedRunCoordinator, DecisionGatedWorkspaceManager } from '../r
 import { createRuntimeExecutionContext } from './runtime-execution.js';
 
 export { stateFileName } from '../state/state-file.js';
-
-function createToolProbe(execution) {
-  return Object.freeze({
-    inspect() {
-      const availability = execution.inspect();
-      return { ready: availability.ready === true, reason: availability.reason ?? null };
-    },
-    async run(request) {
-      return normalizeRepositoryExecutionResult(await execution.execute({
-        protocol: REPOSITORY_EXECUTION_REQUEST_PROTOCOL,
-        operation: `tool.probe:${request.name}`,
-        scope: request.context,
-        invocation: { tool: request.command, arguments: request.arguments, workingDirectory: '.' },
-        environment: request.environment,
-        transfers: [],
-        limits: request.limits,
-        stdin: null,
-        signal: null,
-        onActivity: null,
-      }));
-    },
-  });
-}
 
 function coordinationDefaults(config) {
   return config.coordination ?? {
@@ -216,7 +190,7 @@ export async function createRuntime(config, {
   });
   const repositoryExecution = runtimeExecution.repositoryExecution;
   const workerExchange = new WorkerExchange({ stateDirectory: config.state.directory });
-  const processRunner = new ProcessRunner({ workerExchange, repositoryExecution });
+  const processRunner = composeWorkRunner({ mailboxStore: workerExchange, activeExecution: repositoryExecution });
   const leaseProcessRunner = leaseExecutionContext
     ? leaseExecutionContext.wrapProcessRunner(processRunner)
     : processRunner;
@@ -244,13 +218,15 @@ export async function createRuntime(config, {
     ? await loadLocalOperationManifests({ directory: manifestDirectory, registry: operationRegistry })
     : [];
   const toolOnboarding = onboardingConfig.enabled
-    ? new ToolOnboarding({
+    ? connectToolOnboarding({
+        onboarding: new ToolOnboarding({
+          entries: onboardingConfig.autoIntegrate,
+          probeTimeoutMs: onboardingConfig.probeTimeoutMs,
+          maxHelpBytes: onboardingConfig.maxHelpBytes,
+        }),
+        directory: manifestDirectory,
         operationRegistry,
-        probe: createToolProbe(repositoryExecution),
-        manifestDirectory,
-        entries: onboardingConfig.autoIntegrate,
-        probeTimeoutMs: onboardingConfig.probeTimeoutMs,
-        maxHelpBytes: onboardingConfig.maxHelpBytes,
+        activeExecution: repositoryExecution,
       })
     : null;
   const deterministicControllerPlanExecutor = new ControllerPlanExecutor({

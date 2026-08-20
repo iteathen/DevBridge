@@ -95,6 +95,7 @@ export class RepositoryEnvironmentExecution {
         operation: request.operation,
         invocation: structuredClone(request.invocation),
         environment: structuredClone(request.environment),
+        transfers: request.transfers.map(({ name, direction }) => ({ name, direction })),
         limits: structuredClone(request.limits),
         stdin: request.stdin,
         signal: request.signal,

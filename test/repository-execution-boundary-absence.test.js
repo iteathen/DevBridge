@@ -14,7 +14,8 @@ const NEUTRAL_FILES = [
   'src/app/doctor.js',
   'src/bootstrap/secure-bootstrap.mjs',
   'src/runtime/repository-execution.js',
-  'src/runtime/process-runner.js',
+  'src/runtime/work-runner.js',
+  'src/app/work-runner-composition.js',
   'src/runtime/deterministic-process-runner.js',
   'src/runtime/deterministic-operation-security.js',
   'src/runtime/tool-inventory.js',
@@ -48,6 +49,5 @@ test('operation adapters and onboarding cannot resolve or inject host execution 
   assert.match(localManifest, /repositoryTool/u);
 
   const onboarding = await readFile(path.resolve('src/runtime/tool-onboarding.js'), 'utf8');
-  assert.doesNotMatch(onboarding, /resolveExecutable|processRunner|repositoryExecution|REPOSITORY_EXECUTION|sandbox\s*:/u);
-  assert.match(onboarding, /probe-unavailable/u);
+  assert.doesNotMatch(onboarding, /resolveExecutable|processRunner|sandbox\s*:|repository|provider|operationRegistry/u);
 });

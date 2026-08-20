@@ -13,7 +13,7 @@ const neutralFiles = [
 const businessFiles = [
   new URL('../src/run/controller-plan-executor.js', import.meta.url),
   new URL('../src/run/run-coordinator.js', import.meta.url),
-  new URL('../src/runtime/process-runner.js', import.meta.url),
+  new URL('../src/runtime/work-runner.js', import.meta.url),
   new URL('../src/runtime/deterministic-process-runner.js', import.meta.url),
 ];
 

@@ -10,10 +10,12 @@ import { validateToolProfile } from '../src/runtime/cli-profile.js';
 test('built-in native compiler profile is fixed, shell-free, and validates standard Windows environment names', () => {
   const profile = nativeCompilerDiagnosticProfile();
   assert.equal(profile.name, NATIVE_COMPILER_DIAGNOSTIC_PROFILE);
-  assert.equal(profile.executable, process.execPath);
+  assert.equal(profile.executable, NATIVE_COMPILER_DIAGNOSTIC_PROFILE);
+  assert.deepEqual(profile.args, []);
+  assert.equal(path.isAbsolute(profile.executable), false);
   assert.ok(profile.environment.pass.includes('ProgramFiles(x86)'));
   const validated = validateToolProfile(profile.name, profile);
-  assert.equal(validated.executable, process.execPath);
+  assert.equal(validated.executable, NATIVE_COMPILER_DIAGNOSTIC_PROFILE);
   assert.equal(validated.sandbox.outsideProjectWrite, false);
   assert.equal(validated.sandbox.network, 'deny');
 });

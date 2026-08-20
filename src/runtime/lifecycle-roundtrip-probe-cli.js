@@ -1,9 +1,8 @@
 #!/usr/bin/env node
-import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { runLifecycleRoundtripProbe } from './lifecycle-roundtrip-probe.js';
-import { WORKER_RESULT_FILE } from './worker-exchange.js';
+import { emitResult } from './result-emission.js';
 
 async function readStdin() {
   let text = '';
@@ -16,9 +15,6 @@ async function main() {
   const raw = await readStdin();
   const context = JSON.parse(raw);
   if (context?.protocol !== 'devbridge/context-v1') throw new Error('lifecycle roundtrip diagnostic requires devbridge/context-v1');
-  if (context?.bridge?.resultFile !== WORKER_RESULT_FILE) {
-    throw new Error('lifecycle roundtrip diagnostic requires the fixed DevBridge worker result endpoint');
-  }
 
   const projectRoot = path.resolve(process.cwd());
   const result = await runLifecycleRoundtripProbe({
@@ -26,7 +22,7 @@ async function main() {
     context,
     env: process.env
   });
-  await writeFile(WORKER_RESULT_FILE, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8' });
+  emitResult(result);
   process.stdout.write(`${JSON.stringify({ diagnostic: 'lifecycle-roundtrip', status: result.status })}\n`);
 }
 

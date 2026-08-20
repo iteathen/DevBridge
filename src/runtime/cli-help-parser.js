@@ -2,37 +2,31 @@ import { createHash } from 'node:crypto';
 import { PolicyError } from '../errors.js';
 
 const MAX_HELP_BYTES = 256 * 1024;
-const MAX_SYNTHESIZED_ARGUMENTS = 48;
-const FORBIDDEN_PARAMETER_NAMES = new Set([
+const MAX_ARGUMENTS = 48;
+const FORBIDDEN_NAMES = new Set([
   'command', 'shell', 'argv', 'args', 'executable', 'cwd', 'localpath', 'absolutepath',
   'environment', 'env', 'credentials', 'credential', 'capabilities', 'gitref', 'gitsha',
   'cleanuproot', 'module', 'plugin', 'faultinjection', 'exec', 'eval', 'require', 'chdir',
 ]);
 
-function codepointCompare(left, right) {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
+function compare(left, right) { return left < right ? -1 : left > right ? 1 : 0; }
 
-function normalizedParam(name) {
-  const normalized = String(name)
-    .replace(/^--?/u, '')
-    .replace(/[^A-Za-z0-9_-]+/gu, '_')
-    .replace(/-+/gu, '_')
-    .replace(/^_+|_+$/gu, '')
-    .toLowerCase();
+function parameterName(value) {
+  const normalized = String(value).replace(/^--?/u, '').replace(/[^A-Za-z0-9_-]+/gu, '_')
+    .replace(/-+/gu, '_').replace(/^_+|_+$/gu, '').toLowerCase();
   if (!/^[a-z][a-z0-9_-]{0,79}$/u.test(normalized)) return null;
-  if (FORBIDDEN_PARAMETER_NAMES.has(normalized.replace(/[_-]/gu, ''))) return null;
+  if (FORBIDDEN_NAMES.has(normalized.replace(/[_-]/gu, ''))) return null;
   return normalized;
 }
 
-function valueTypeForMetavar(raw) {
-  const value = String(raw ?? '').replace(/[<>\[\]]/gu, '').toUpperCase();
-  if (/(?:PATH|FILE|DIR|DIRECTORY|ROOT|DEST|SOURCE)/u.test(value)) return 'project-path';
-  if (/(?:NUM|COUNT|JOBS|THREADS|PORT|SIZE|LIMIT|DEPTH)/u.test(value)) return 'integer';
+function valueType(value) {
+  const normalized = String(value ?? '').replace(/[<>\[\]]/gu, '').toUpperCase();
+  if (/(?:PATH|FILE|DIR|DIRECTORY|ROOT|DEST|SOURCE)/u.test(normalized)) return 'project-path';
+  if (/(?:NUM|COUNT|JOBS|THREADS|PORT|SIZE|LIMIT|DEPTH)/u.test(normalized)) return 'integer';
   return 'string';
 }
 
-function parseCommands(lines) {
+function commandsFrom(lines) {
   const commands = [];
   let active = false;
   for (const line of lines) {
@@ -49,72 +43,68 @@ function parseCommands(lines) {
   return commands;
 }
 
-function parseOptions(lines, usedParams) {
-  const descriptors = [];
-  const seenFlags = new Set();
+function optionsFrom(lines, used) {
+  const result = [];
+  const flags = new Set();
   for (const line of lines) {
     const trimmed = line.trimStart();
     if (!trimmed.startsWith('-')) continue;
     const match = trimmed.match(/(?:^|[\s,])(--[A-Za-z0-9][A-Za-z0-9-]{0,79})(?:(?:=|\s+)(<[^>]{1,40}>|\[[A-Za-z][A-Za-z0-9_-]{0,39}\]|[A-Z][A-Z0-9_-]{0,39}(?=$|\s{2,})))?/u);
-    if (!match) continue;
-    const flag = match[1];
-    if (seenFlags.has(flag)) continue;
-    const param = normalizedParam(flag);
-    if (!param || usedParams.has(param)) continue;
-    seenFlags.add(flag);
-    usedParams.add(param);
-    descriptors.push(match[2]
-      ? { kind: 'option', param, flag, required: false, repeat: false, valueType: valueTypeForMetavar(match[2]) }
-      : { kind: 'flag', param, flag });
-    if (descriptors.length >= MAX_SYNTHESIZED_ARGUMENTS) break;
+    if (!match || flags.has(match[1])) continue;
+    const param = parameterName(match[1]);
+    if (!param || used.has(param)) continue;
+    flags.add(match[1]);
+    used.add(param);
+    result.push(match[2]
+      ? { kind: 'option', param, flag: match[1], required: false, repeat: false, valueType: valueType(match[2]) }
+      : { kind: 'flag', param, flag: match[1] });
+    if (result.length >= MAX_ARGUMENTS) break;
   }
-  return descriptors;
+  return result;
 }
 
 function usageTokens(lines) {
-  const usageLine = lines.find((line) => /^\s*usage\s*:/iu.test(line));
-  if (!usageLine) return [];
-  const body = usageLine.replace(/^\s*usage\s*:\s*/iu, '');
-  const matches = body.match(/<[^>]{1,40}>|\[[A-Za-z][A-Za-z0-9_-]{0,39}(?:\s+\.\.\.)?\](?:\.\.\.)?|\b[A-Z][A-Z0-9_-]{1,39}(?:\.\.\.)?/gu) ?? [];
+  const line = lines.find((entry) => /^\s*usage\s*:/iu.test(entry));
+  if (!line) return [];
+  const matches = line.replace(/^\s*usage\s*:\s*/iu, '')
+    .match(/<[^>]{1,40}>|\[[A-Za-z][A-Za-z0-9_-]{0,39}(?:\s+\.\.\.)?\](?:\.\.\.)?|\b[A-Z][A-Z0-9_-]{1,39}(?:\.\.\.)?/gu) ?? [];
   return matches.filter((token) => !/^\[?(?:OPTIONS?|FLAGS?)\]?(?:\.\.\.)?$/u.test(token));
 }
 
-function parsePositionals(lines, commands, usedParams, remaining) {
-  const descriptors = [];
-  for (const rawToken of usageTokens(lines)) {
-    if (descriptors.length >= remaining) break;
-    const optional = rawToken.startsWith('[');
-    const repeat = /\.\.\.?\]?$/u.test(rawToken) || /\s+\.\.\.\]$/u.test(rawToken);
-    const metavar = rawToken.replace(/[<>\[\]]/gu, '').replace(/\.\.\./gu, '').trim();
+function positionalsFrom(lines, commands, used, limit) {
+  const result = [];
+  for (const token of usageTokens(lines)) {
+    if (result.length >= limit) break;
+    const optional = token.startsWith('[');
+    const repeat = /\.\.\.?\]?$/u.test(token) || /\s+\.\.\.\]$/u.test(token);
+    const metavar = token.replace(/[<>\[\]]/gu, '').replace(/\.\.\./gu, '').trim();
     const upper = metavar.toUpperCase();
     if (['OPTION', 'OPTIONS', 'FLAG', 'FLAGS'].includes(upper)) continue;
     if ((upper === 'COMMAND' || upper === 'SUBCOMMAND') && commands.length > 0) {
-      if (usedParams.has('subcommand')) continue;
-      usedParams.add('subcommand');
-      descriptors.push({ kind: 'positional', param: 'subcommand', required: !optional, repeat: false, valueType: 'enum', values: [...commands].sort(codepointCompare) });
+      if (used.has('subcommand')) continue;
+      used.add('subcommand');
+      result.push({ kind: 'positional', param: 'subcommand', required: !optional, repeat: false, valueType: 'enum', values: [...commands].sort(compare) });
       continue;
     }
-    const param = normalizedParam(metavar);
-    if (!param || usedParams.has(param)) continue;
-    usedParams.add(param);
-    const descriptor = { kind: 'positional', param, required: !optional, repeat, valueType: valueTypeForMetavar(metavar) };
+    const param = parameterName(metavar);
+    if (!param || used.has(param)) continue;
+    used.add(param);
+    const descriptor = { kind: 'positional', param, required: !optional, repeat, valueType: valueType(metavar) };
     if (repeat) descriptor.maxItems = 16;
-    descriptors.push(descriptor);
+    result.push(descriptor);
   }
-  return descriptors;
+  return result;
 }
 
-export function parseCliHelp(helpText) {
-  if (typeof helpText !== 'string' || helpText.length === 0 || Buffer.byteLength(helpText, 'utf8') > MAX_HELP_BYTES) {
-    throw new PolicyError('CLI help text must be non-empty and bounded');
-  }
-  const clean = helpText.replace(/\r\n?/gu, '\n').replace(/[\u0000\u001b]/gu, '');
+export function parseCliHelp(value) {
+  if (typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value, 'utf8') > MAX_HELP_BYTES) throw new PolicyError('CLI help text must be non-empty and bounded');
+  const clean = value.replace(/\r\n?/gu, '\n').replace(/[\u0000\u001b]/gu, '');
   const lines = clean.split('\n').slice(0, 4096);
-  const commands = parseCommands(lines);
-  const usedParams = new Set();
-  const options = parseOptions(lines, usedParams);
+  const commands = commandsFrom(lines);
+  const used = new Set();
+  const options = optionsFrom(lines, used);
   return {
-    arguments: [...options, ...parsePositionals(lines, commands, usedParams, Math.max(0, MAX_SYNTHESIZED_ARGUMENTS - options.length))],
+    arguments: [...options, ...positionalsFrom(lines, commands, used, Math.max(0, MAX_ARGUMENTS - options.length))],
     commands,
     helpSha256: createHash('sha256').update(clean, 'utf8').digest('hex'),
   };

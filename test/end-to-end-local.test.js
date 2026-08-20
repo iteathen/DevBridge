@@ -8,7 +8,7 @@ import path from 'node:path';
 import { WorkspacePolicy } from '../src/security/workspace-policy.js';
 import { GitClient } from '../src/git/git-client.js';
 import { GitWorkspaceManager } from '../src/git/workspace-manager.js';
-import { ProcessRunner } from '../src/runtime/process-runner.js';
+import { composeWorkRunner } from '../src/app/work-runner-composition.js';
 import { WorkerExchange } from '../src/runtime/worker-exchange.js';
 import {
   REPOSITORY_EXECUTION_RESULT_PROTOCOL,
@@ -77,9 +77,9 @@ test('generic coordinator completes through a fake repository executor without p
   const stateDirectory = path.join(root, 'state');
   const stateStore = new JsonStateStore(path.join(stateDirectory, 'queue.json'));
   const observed = [];
-  const processRunner = new ProcessRunner({
-    workerExchange: new WorkerExchange({ stateDirectory }),
-    repositoryExecution: fakeRepositoryExecution(observed),
+  const processRunner = composeWorkRunner({
+    mailboxStore: new WorkerExchange({ stateDirectory }),
+    activeExecution: fakeRepositoryExecution(observed),
   });
 
   const profile = {

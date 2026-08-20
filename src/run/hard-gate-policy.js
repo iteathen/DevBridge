@@ -46,7 +46,7 @@ function securityCapability(file) {
     file === 'src/config.js' ||
     file.startsWith('src/security/') ||
     controlPlaneAuthority(file) ||
-    /^src\/runtime\/(?:.*sandbox.*|process-runner\.js|deterministic-process-runner\.js|cli-profile\.js|profile-security\.js|worker-exchange\.js|deterministic-operation-security\.js)$/u.test(file) ||
+    /^(?:src\/runtime\/(?:.*sandbox.*|work-runner\.js|result-emission\.js|deterministic-process-runner\.js|cli-profile\.js|profile-security\.js|worker-exchange\.js|deterministic-operation-security\.js)|src\/app\/work-runner-composition\.js)$/u.test(file) ||
     file === 'specs/DB-003-security.md';
 }
 

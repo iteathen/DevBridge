@@ -1,9 +1,8 @@
 #!/usr/bin/env node
-import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { runChatCProjectProbe } from './chat-c-project-probe.js';
-import { WORKER_RESULT_FILE } from './worker-exchange.js';
+import { emitResult } from './result-emission.js';
 
 async function readStdin() {
   let text = '';
@@ -17,9 +16,6 @@ async function main() {
   if (context?.protocol !== 'devbridge/context-v1') {
     throw new Error('chat C project diagnostic requires devbridge/context-v1');
   }
-  if (context?.bridge?.resultFile !== WORKER_RESULT_FILE) {
-    throw new Error('chat C project diagnostic requires the fixed DevBridge worker result endpoint');
-  }
 
   const projectRoot = path.resolve(process.cwd());
   // This profile ignores free-form task instructions for file contents, paths,
@@ -27,7 +23,7 @@ async function main() {
   // project is authored in trusted DevBridge runtime code by the chat-only
   // controller and materialized deterministically into the managed worktree.
   const result = await runChatCProjectProbe({ projectRoot, env: process.env });
-  await writeFile(WORKER_RESULT_FILE, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8' });
+  emitResult(result);
   process.stdout.write(`${JSON.stringify({ diagnostic: 'chat-c-project', status: result.status })}\n`);
 }
 

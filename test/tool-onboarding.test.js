@@ -1,36 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createOnboardingRecordPort } from '../src/app/tool-onboarding-composition.js';
 import { DeterministicOperationRegistry } from '../src/runtime/deterministic-operation-registry.js';
-import { LOCAL_OPERATION_MANIFEST_PROTOCOL } from '../src/runtime/local-operation-manifest.js';
 import { parseCliHelp } from '../src/runtime/cli-help-parser.js';
 import { ToolOnboarding } from '../src/runtime/tool-onboarding.js';
 import { validateToolOnboardingPolicy } from '../src/runtime/tool-onboarding-policy.js';
 
 const HELP = `Usage: magic-tool [OPTIONS] <INPUT>\n\nOptions:\n  --json                 Emit JSON\n  --jobs <COUNT>         Worker count\n  --output <PATH>        Project output path\n  --env <VALUE>          Dangerous authority-like parameter\n  --mode <WHEN>          Mode\n`;
+const ENTRY = Object.freeze({ command: 'magic-tool', operation: 'tool.magic', helpArgs: Object.freeze(['--help']) });
 
 function probe({ ready = true, reason = null, run = async () => { throw new Error('probe must not run'); } } = {}) {
   return { inspect: () => ({ ready, reason }), run };
 }
 
-function successfulProbe(overrides = {}) {
-  return {
-    exitCode: 0,
-    timedOut: false,
-    aborted: false,
-    outputTruncated: false,
-    stdout: HELP,
-    stderr: '',
-    ...overrides,
-  };
+function observation(overrides = {}) {
+  return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: HELP, stderr: '', ...overrides };
 }
 
-test('help parser synthesizes only bounded safe flags/options/positionals', () => {
+function records(overrides = {}) {
+  return { restore: async () => null, has: () => false, publish: async () => {}, ...overrides };
+}
+
+test('help parser synthesizes only bounded safe flags, options, and positionals', () => {
   const parsed = parseCliHelp(HELP);
   assert.match(parsed.helpSha256, /^[0-9a-f]{64}$/u);
-  assert.deepEqual(parsed.commands, []);
   assert.deepEqual(parsed.arguments, [
     { kind: 'flag', param: 'json', flag: '--json' },
     { kind: 'option', param: 'jobs', flag: '--jobs', required: false, repeat: false, valueType: 'integer' },
@@ -41,117 +38,105 @@ test('help parser synthesizes only bounded safe flags/options/positionals', () =
   assert.equal(parsed.arguments.some((entry) => entry.param === 'env'), false);
 });
 
-test('onboarding reports unavailable probes without executing or writing', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'db-onboarding-unavailable-'));
-  try {
-    const registry = new DeterministicOperationRegistry();
-    const service = new ToolOnboarding({
-      operationRegistry: registry,
-      probe: probe({ ready: false, reason: 'no-route' }),
-      manifestDirectory: root,
-      entries: [{ command: 'magic-tool', operation: 'tool.magic', helpArgs: ['--help'] }],
-    });
-    const result = await service.reconcile({ opaque: 'context' });
-    assert.deepEqual(result, {
-      changed: false,
-      events: [{ command: 'magic-tool', operation: 'tool.magic', state: 'probe-unavailable', reason: 'no-route' }],
-    });
-    assert.equal(registry.has('tool.magic'), false);
-    assert.deepEqual(await readdir(root), []);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+test('onboarding reports an unavailable temporary probe without publishing', async () => {
+  let published = false;
+  const onboarding = new ToolOnboarding({ entries: [ENTRY] });
+  const result = await onboarding.reconcile({
+    context: Object.freeze({ opaque: 'value' }),
+    probe: probe({ ready: false, reason: 'no-route' }),
+    records: records({ publish: async () => { published = true; } }),
+  });
+  assert.deepEqual(result, { changed: false, events: [{ command: 'magic-tool', operation: 'tool.magic', state: 'probe-unavailable', reason: 'no-route' }] });
+  assert.equal(published, false);
 });
 
-test('onboarding requires an opaque execution context before probing', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'db-onboarding-context-'));
-  try {
-    const service = new ToolOnboarding({
-      operationRegistry: new DeterministicOperationRegistry(),
-      probe: probe(),
-      manifestDirectory: root,
-      entries: [{ command: 'magic-tool', operation: 'tool.magic', helpArgs: ['--help'] }],
-    });
-    const result = await service.reconcile();
-    assert.equal(result.changed, false);
-    assert.equal(result.events[0].state, 'probe-context-required');
-    assert.match(result.events[0].reason, /exact execution context/u);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+test('onboarding requires and passes through an opaque context', async () => {
+  const onboarding = new ToolOnboarding({ entries: [ENTRY] });
+  const missing = await onboarding.reconcile({ probe: probe(), records: records() });
+  assert.equal(missing.events[0].state, 'probe-context-required');
 
-test('onboarding passes an opaque context through its neutral probe contract', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'db-onboarding-probe-'));
   const calls = [];
-  try {
-    const registry = new DeterministicOperationRegistry();
-    const service = new ToolOnboarding({
-      operationRegistry: registry,
-      probe: probe({ run: async (request) => { calls.push(request); return successfulProbe(); } }),
-      manifestDirectory: root,
-      entries: [{ command: 'magic-tool', operation: 'tool.magic', helpArgs: ['--help'] }],
+  const publications = [];
+  const context = Object.freeze({ subject: '42', activity: 'run-1' });
+  const result = await onboarding.reconcile({
+    context,
+    probe: probe({ run: async (request) => { calls.push(request); return observation(); } }),
+    records: records({ publish: async (value) => { publications.push(value); } }),
+  });
+  assert.equal(result.changed, true);
+  assert.equal(result.events[0].state, 'available-probed');
+  assert.equal(calls[0].context, context);
+  assert.equal(calls[0].command, 'magic-tool');
+  assert.deepEqual(publications[0].entry, ENTRY);
+  assert.match(publications[0].parsed.helpSha256, /^[0-9a-f]{64}$/u);
+});
+
+test('failed, timed-out, and truncated observations never publish', async () => {
+  for (const failed of [
+    observation({ exitCode: 2, stderr: 'bad' }),
+    observation({ timedOut: true }),
+    observation({ outputTruncated: true }),
+  ]) {
+    let published = false;
+    const result = await new ToolOnboarding({ entries: [ENTRY] }).reconcile({
+      context: {},
+      probe: probe({ run: async () => failed }),
+      records: records({ publish: async () => { published = true; } }),
     });
-    const context = Object.freeze({ subject: '42', activity: 'run-1' });
-    const result = await service.reconcile(context);
-    assert.equal(result.changed, true);
-    assert.equal(result.events[0].state, 'registered-probed');
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].name, 'tool.magic');
-    assert.equal(calls[0].command, 'magic-tool');
-    assert.equal(calls[0].context, context);
-    assert.equal(registry.has('tool.magic'), true);
-    const persisted = JSON.parse(await readFile(path.join(root, 'auto-tool.magic.json'), 'utf8'));
-    assert.equal(persisted.executable, 'magic-tool');
-    assert.equal(persisted.source.kind, 'help-synthesized');
-  } finally {
-    await rm(root, { recursive: true, force: true });
+    assert.equal(result.events[0].state, 'probe-failed');
+    assert.equal(published, false);
   }
 });
 
-test('an existing control-owned manifest registers without probing', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'db-onboarding-existing-'));
+test('composition persists before activation and restores the record after restart', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'db-onboarding-records-'));
+  const file = path.join(directory, 'auto-tool.magic.json');
   try {
-    const manifest = {
-      protocol: LOCAL_OPERATION_MANIFEST_PROTOCOL,
-      operation: 'tool.magic',
-      executable: 'magic-tool',
-      arguments: [{ kind: 'flag', param: 'json', flag: '--json' }],
-      requireAnyParameter: true,
-      source: { kind: 'help-synthesized', command: 'magic-tool', helpSha256: 'a'.repeat(64) },
+    const base = new DeterministicOperationRegistry();
+    const guarded = {
+      has: (name) => base.has(name),
+      register(name, adapter) {
+        assert.equal(existsSync(file), true, 'activation must follow durable persistence');
+        base.register(name, adapter);
+      },
     };
-    await writeFile(path.join(root, 'auto-tool.magic.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
-    const registry = new DeterministicOperationRegistry();
-    const service = new ToolOnboarding({
-      operationRegistry: registry,
-      probe: probe({ ready: false }),
-      manifestDirectory: root,
-      entries: [{ command: 'magic-tool', operation: 'tool.magic', helpArgs: ['--help'] }],
+    const first = new ToolOnboarding({ entries: [ENTRY] });
+    const result = await first.reconcile({
+      context: {},
+      probe: probe({ run: async () => observation() }),
+      records: createOnboardingRecordPort({ directory, operationRegistry: guarded }),
     });
-    const result = await service.reconcile();
-    assert.equal(result.changed, false);
-    assert.equal(result.events[0].state, 'registered-existing');
-    assert.equal(registry.has('tool.magic'), true);
+    assert.equal(result.changed, true);
+    assert.equal(base.has('tool.magic'), true);
+    assert.deepEqual(await readdir(directory), ['auto-tool.magic.json']);
+    const stored = JSON.parse(await readFile(file, 'utf8'));
+    assert.equal(stored.source.command, 'magic-tool');
+
+    const restarted = new DeterministicOperationRegistry();
+    const restored = await new ToolOnboarding({ entries: [ENTRY] }).reconcile({
+      probe: probe({ ready: false }),
+      records: createOnboardingRecordPort({ directory, operationRegistry: restarted }),
+    });
+    assert.equal(restored.changed, false);
+    assert.equal(restored.events[0].state, 'available-existing');
+    assert.equal(restarted.has('tool.magic'), true);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
-test('local onboarding policy rejects command construction and authority-shaped operations', () => {
-  assert.throws(
-    () => validateToolOnboardingPolicy({ autoIntegrate: [{ command: 'tool;rm', helpArgs: ['--help'] }] }),
-    /command is invalid/u,
-  );
-  assert.throws(
-    () => validateToolOnboardingPolicy({ autoIntegrate: [{ command: 'tool', helpArgs: ['help;rm'] }] }),
-    /fixed safe option arguments/u,
-  );
-  assert.throws(
-    () => validateToolOnboardingPolicy({ autoIntegrate: [{ command: 'tool', operation: 'shell.exec' }] }),
-    /operation is invalid/u,
-  );
-  assert.throws(
-    () => validateToolOnboardingPolicy({ autoIntegrate: [{ command: 'one', operation: 'tool.same' }, { command: 'two', operation: 'tool.same' }] }),
-    /duplicates operation/u,
-  );
+test('policy rejects command construction and authority-shaped operations', () => {
+  assert.throws(() => validateToolOnboardingPolicy({ autoIntegrate: [{ command: 'tool;rm' }] }), /command is invalid/u);
+  assert.throws(() => validateToolOnboardingPolicy({ autoIntegrate: [{ command: 'tool', helpArgs: ['help;rm'] }] }), /fixed safe option/u);
+  assert.throws(() => validateToolOnboardingPolicy({ autoIntegrate: [{ command: 'tool', operation: 'shell.exec' }] }), /operation is invalid/u);
+  assert.throws(() => validateToolOnboardingPolicy({ autoIntegrate: [{ command: 'one', operation: 'tool.same' }, { command: 'two', operation: 'tool.same' }] }), /duplicates operation/u);
+});
+
+test('isolated onboarding bricks cannot acquire topology dependencies', async () => {
+  const restrictions = new Map([
+    ['src/runtime/cli-help-parser.js', /node:fs|registry|repository|provider|topology|manifest/iu],
+    ['src/runtime/tool-onboarding-policy.js', /node:fs|probe|persist|composition|registry|repository|provider|topology|manifest/iu],
+    ['src/runtime/tool-onboarding.js', /node:fs|local-operation-manifest|repository-execution|operationRegistry|manifestDirectory|workspaceRoot|repository|provider|topology/iu],
+  ]);
+  for (const [file, forbidden] of restrictions) assert.doesNotMatch(await readFile(file, 'utf8'), forbidden, file);
 });

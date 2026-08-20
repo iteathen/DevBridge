@@ -6,6 +6,7 @@ import { createEnvironmentBootstrap } from './environment-bootstrap.js';
 import { createEnvironmentBridge } from './environment-bridge.js';
 import { createEnvironmentFoundation } from './environment-foundation.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
+import { extractResultEmission } from '../runtime/result-emission.js';
 import { RepositoryEnvironmentExecution } from '../runtime/repository-environment-execution.js';
 import {
   REPOSITORY_EXECUTION_STATUS_PROTOCOL,
@@ -28,6 +29,8 @@ const MAX_ROUTES = 256;
 const BRIDGE_OUTPUT_LIMIT = 3 * 1024 * 1024;
 const TRANSFER_LIMIT = 16 * 1024 * 1024;
 const MANIFEST_LIMIT = 24 * 1024 * 1024;
+const TOOL_RESOURCE_LIMIT = 4 * 1024 * 1024;
+const TOOL_RESOURCE_COUNT = 32;
 const AGENT_FILE = fileURLToPath(new URL('../guest/workspace-agent.mjs', import.meta.url));
 
 function requireObject(value, name) { if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`); return value; }
@@ -213,7 +216,7 @@ function parseAgentResult(outcome, action) {
   try { return JSON.parse(result.stdout); } catch { throw new Error(`${action} returned invalid structured output`); }
 }
 
-function descriptorFor(invocation, resolved, environment, stdin, transfers, protectedValues) {
+function descriptorFor(invocation, resolved, environment, stdin, transfers, protectedValues, entryLocation = null) {
   if (!resolved || typeof resolved.program !== 'string' || !SAFE_NAME.test(resolved.program)) throw new Error('logical tool did not resolve to a safe guest program');
   const fixed = resolved.arguments ?? [];
   if (!Array.isArray(fixed) || fixed.some((entry) => typeof entry !== 'string')) throw new Error('logical tool fixed arguments are invalid');
@@ -224,7 +227,12 @@ function descriptorFor(invocation, resolved, environment, stdin, transfers, prot
     if (!locationIndex.has(key)) { locationIndex.set(key, locations.length); locations.push({ class: kind, path: `ports/${name}` }); }
     return locationIndex.get(key);
   };
-  const argumentsList = fixed.map((value) => ({ kind: 'literal', value }));
+  const argumentsList = [];
+  if (entryLocation) {
+    locations.push(entryLocation);
+    argumentsList.push({ kind: 'location', index: 0 });
+  }
+  argumentsList.push(...fixed.map((value) => ({ kind: 'literal', value })));
   for (const argument of invocation.arguments) {
     if (argument.kind === 'literal') argumentsList.push({ kind: 'literal', value: argument.value });
     else argumentsList.push({ kind: 'location', index: locate(argument.kind, argument.name) });
@@ -240,6 +248,46 @@ function descriptorFor(invocation, resolved, environment, stdin, transfers, prot
     descriptor: { protocol: 'devbridge/work-operation-v1', program: resolved.program, arguments: argumentsList, environment, stdin },
     locations,
   };
+}
+
+function resourcePath(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 256 || value.includes('\\')) throw new Error('tool resource path is invalid');
+  const normalized = path.posix.normalize(value);
+  if (normalized !== value || normalized === '.' || normalized.startsWith('/') || normalized.startsWith('../') || normalized.split('/').some((part) => part === '..' || part === '')) {
+    throw new Error('tool resource path is not a normalized relative path');
+  }
+  return normalized;
+}
+
+async function stageToolResources(channel, target, resolved) {
+  const resources = resolved?.resources ?? [];
+  if (!Array.isArray(resources) || resources.length > TOOL_RESOURCE_COUNT) throw new Error('logical tool resources are invalid');
+  if (resources.length === 0) {
+    if (resolved?.entry != null) throw new Error('logical tool entry requires resources');
+    return null;
+  }
+  const normalized = [];
+  const paths = new Set();
+  let total = 0;
+  const digest = createHash('sha256');
+  for (const raw of resources) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !Buffer.isBuffer(raw.bytes)) throw new Error('logical tool resource is invalid');
+    const name = resourcePath(raw.path);
+    if (paths.has(name)) throw new Error('logical tool resource path is duplicated');
+    paths.add(name);
+    const bytes = Buffer.from(raw.bytes);
+    total += bytes.length;
+    if (total > TOOL_RESOURCE_LIMIT) throw new Error('logical tool resources exceed their bound');
+    digest.update(name, 'utf8').update('\0').update(bytes).update('\0');
+    normalized.push({ name, bytes });
+  }
+  const entry = resourcePath(resolved.entry);
+  if (!paths.has(entry)) throw new Error('logical tool entry is not present in its resources');
+  const root = `tools/${digest.digest('hex').slice(0, 32)}`;
+  for (const resource of normalized) {
+    await sendBytes(channel, target, resource.bytes, { class: 'input', path: `${root}/${resource.name}` });
+  }
+  return { class: 'input', path: `${root}/${entry}` };
 }
 
 export async function createRepositoryExecution({
@@ -365,17 +413,18 @@ export async function createRepositoryExecution({
           ensureActive(signal);
         },
 
-        async run({ invocation, environment, limits, stdin, signal = null, onActivity = null }) {
+        async run({ invocation, environment, transfers = [], limits, stdin, signal = null, onActivity = null }) {
           if (!source || !evidenceIdentity) throw new Error('repository execution session was not prepared');
           const resolved = await resolveTool(invocation.tool, { subject, profile: route.profile, scope: structuredClone(scope) });
-          const transferList = invocation.arguments.filter((entry) => entry.kind !== 'literal').map((entry) => ({ name: entry.name, direction: entry.kind }));
-          const materialized = descriptorFor(invocation, resolved, environment, stdin, transferList, protectedEnvironmentValues);
+          const entryLocation = await stageToolResources(channel, target, resolved);
+          const transferList = transfers;
+          const materialized = descriptorFor(invocation, resolved, environment, stdin, transferList, protectedEnvironmentValues, entryLocation);
           const descriptorBytes = Buffer.from(`${JSON.stringify(materialized.descriptor)}\n`, 'utf8');
           if (descriptorBytes.length > 8 * 1024 * 1024) throw new Error('repository operation descriptor exceeds the bounded staging limit');
           const descriptorDigest = createHash('sha256').update(descriptorBytes).digest('hex').slice(0, 32);
           const descriptorLocation = { class: 'input', path: `control/operation-${descriptorDigest}.json` };
           await sendBytes(channel, target, descriptorBytes, descriptorLocation);
-          return channel.execute(target, {
+          const outcome = await channel.execute(target, {
             program: 'node',
             arguments: [agentLocation, 'run', descriptorLocation, ...materialized.locations],
             directory: { class: 'work', path: invocation.workingDirectory },
@@ -383,6 +432,13 @@ export async function createRepositoryExecution({
             timeoutMs: limits.timeoutMs,
             maxOutputBytes: Math.min(limits.maxOutputBytes, BRIDGE_OUTPUT_LIMIT),
           }, { signal, onActivity });
+          if (outcome?.completion !== 'observed' || !outcome.result) return outcome;
+          const emitted = extractResultEmission(outcome.result.stdout);
+          if (emitted.text == null) return outcome;
+          const outputs = transferList.filter((entry) => entry.direction === 'output');
+          if (outputs.length !== 1) throw new Error('emitted result requires exactly one output action');
+          await sendBytes(channel, target, Buffer.from(`${emitted.text}\n`, 'utf8'), { class: 'output', path: `ports/${outputs[0].name}` });
+          return { ...outcome, result: { ...outcome.result, stdout: emitted.output } };
         },
 
         async output(name, port, { signal = null } = {}) {

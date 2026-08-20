@@ -116,7 +116,8 @@ function prior() {
 test('built-in transient recovery profile is fixed, shell-free, and capability-minimal', () => {
   const diagnostic = transientRecoveryDiagnosticProfile();
   assert.equal(diagnostic.name, TRANSIENT_RECOVERY_DIAGNOSTIC_PROFILE);
-  assert.equal(diagnostic.executable, process.execPath);
+  assert.equal(diagnostic.executable, TRANSIENT_RECOVERY_DIAGNOSTIC_PROFILE);
+  assert.deepEqual(diagnostic.args, []);
   assert.deepEqual(diagnostic.environment.pass, []);
   const validated = validateToolProfile(diagnostic.name, diagnostic);
   assert.equal(validated.sandbox.outsideProjectRead, 'deny');

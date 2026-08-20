@@ -35,7 +35,7 @@ export function validateToolProfile(name, raw, { allowUncontainedTools = false }
   if (!['tool', 'os', 'none'].includes(enforcement)) throw new ConfigurationError(`tools.${name}.sandbox.enforcement is invalid`);
 
   // sandbox.enforcement describes containment the tool/profile itself claims or
-  // expects. It is never permission to execute. ProcessRunner independently
+  // expects. It is never permission to execute. The outer execution boundary independently
   // requires a verified outer OS provider for every proposal-worker/profile
   // invocation, including profiles that declare "none" here.
   if (sandbox.outsideProjectWrite === true && !allowUncontainedTools) throw new PolicyError(`tools.${name} requests writes outside the project`);

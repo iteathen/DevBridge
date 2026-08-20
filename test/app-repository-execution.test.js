@@ -5,9 +5,12 @@ import { mkdtemp, mkdir, readFile, rm, writeFile, lstat } from 'node:fs/promises
 import os from 'node:os';
 import path from 'node:path';
 import { createRepositoryExecution, ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL, normalizeEnvironmentExecutionRoutes } from '../src/app/repository-execution.js';
+import { resolveBuiltInHelper } from '../src/app/builtin-helper-resolver.js';
+import { composeWorkRunner } from '../src/app/work-runner-composition.js';
 import { REPOSITORY_EXECUTION_REQUEST_PROTOCOL } from '../src/runtime/repository-execution.js';
-import { ProcessRunner } from '../src/runtime/process-runner.js';
 import { WorkerExchange } from '../src/runtime/worker-exchange.js';
+import { lifecycleRoundtripDiagnosticProfile } from '../src/runtime/builtin-tool-profiles.js';
+import { LIFECYCLE_ROUNDTRIP_NONCE } from '../src/runtime/lifecycle-roundtrip-probe.js';
 
 async function command(program,args,{cwd,input=null,env=process.env}={}){return new Promise((resolve,reject)=>{const child=spawn(program,args,{cwd,env,shell:false,stdio:['pipe','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',c=>stdout+=c);child.stderr.on('data',c=>stderr+=c);child.once('error',reject);child.once('exit',(code,signal)=>resolve({exitCode:code,signal,stdout,stderr}));if(input==null)child.stdin.end();else child.stdin.end(input);});}
 async function initGit(root){await command('git',['init','-q'],{cwd:root});await command('git',['config','user.name','Host'],{cwd:root});await command('git',['config','user.email','host@localhost'],{cwd:root});await command('git',['add','-A'],{cwd:root});await command('git',['commit','-q','-m','base'],{cwd:root});}
@@ -107,9 +110,9 @@ test('representative proposal worker uses only logical transfers through the exe
       createPreparation: async () => ({ ensure: async () => ({ generation: 'e'.repeat(64) }), connection: async () => ({ family: 'linux' }) }),
       createChannel: async () => localChannel(guest),
     });
-    const runner = new ProcessRunner({
-      workerExchange: new WorkerExchange({ stateDirectory: path.join(temp, 'control') }),
-      repositoryExecution: execution,
+    const runner = composeWorkRunner({
+      mailboxStore: new WorkerExchange({ stateDirectory: path.join(temp, 'control') }),
+      activeExecution: execution,
     });
     const runDir = path.join(host, '.devbridge', 'runs', 'turn-1');
     await mkdir(runDir, { recursive: true });
@@ -128,7 +131,64 @@ test('representative proposal worker uses only logical transfers through the exe
     assert.equal(result.exitCode, 0, result.stderr);
     assert.equal(result.result.status, 'complete');
     assert.equal(result.result.summary, 'bridge worker observed isolated input');
-    assert.equal(result.execution.location, 'repository');
+    assert.equal(Object.hasOwn(result, 'execution'), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('built-in helper bundle executes through the same neutral VM work contract', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'db-stage6-builtin-'));
+  const host = path.join(temp, 'host');
+  const guest = path.join(temp, 'guest');
+  try {
+    await mkdir(host);
+    await writeFile(path.join(host, 'README.md'), 'fixture\n');
+    await initGit(host);
+    const entry = {
+      record: { identity: 'env-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', subject: '789', profile: 'built-in' },
+      observation: { exists: true, owned: true, compatible: true, state: 'running' },
+    };
+    const state = {
+      inspect: async () => ({ ready: true, identity: 'f'.repeat(32), reason: null }),
+      listEnvironments: async () => [entry],
+      observeEnvironment: async () => entry,
+    };
+    const execution = await createRepositoryExecution({
+      stateDirectory: path.join(temp, 'state'), platform: 'linux',
+      routes: { protocol: ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL, routes: [{ subject: '789', profile: 'built-in', access: { family: 'linux' } }] },
+      rootFor: async () => host,
+      listPaths: async (root) => visible(root),
+      resolveSubject: async () => '789',
+      resolveTool: resolveBuiltInHelper,
+      createState: async () => state,
+      createPreparation: async () => ({ ensure: async () => ({ generation: 'a'.repeat(64) }), connection: async () => ({ family: 'linux' }) }),
+      createChannel: async () => localChannel(guest),
+    });
+    const runner = composeWorkRunner({
+      mailboxStore: new WorkerExchange({ stateDirectory: path.join(temp, 'control') }),
+      activeExecution: execution,
+    });
+    const runDir = path.join(host, '.devbridge', 'runs', 'turn-1');
+    await mkdir(runDir, { recursive: true });
+    const result = await runner.run({
+      profile: lifecycleRoundtripDiagnosticProfile(),
+      projectDir: host,
+      runDir,
+      runId: 'builtin-run',
+      repository: 'owner/repo',
+      repositoryId: '789',
+      context: {
+        protocol: 'devbridge/context-v1',
+        sequence: 1,
+        objective: `Execute ${LIFECYCLE_ROUNDTRIP_NONCE}.`,
+        priorSummary: `Carry ${LIFECYCLE_ROUNDTRIP_NONCE}.`,
+      },
+    });
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.equal(result.result.status, 'complete');
+    assert.match(result.result.summary, /Lifecycle roundtrip passed/u);
+    assert.equal(Object.hasOwn(result, 'execution'), false);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

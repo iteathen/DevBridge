@@ -72,6 +72,8 @@ Runtime-validation and tool-documentation probes never import a candidate delta.
 
 Production runtime wiring routes registered repository-code operations and proposal workers through the repository execution stud. Direct logical tools include Node, CMake, CTest, npm, and npx. Local profiles contribute only a bounded logical tool name; host executable paths are reduced to a safe program basename at the composition edge and are never sent as host paths.
 
+Shipped diagnostic helpers are also selected only by logical identity. Composition reads their trusted runtime resources, binds a digest, stages the bounded bundle through input capabilities, and invokes its environment-local entry location. Neither profile data nor the runner contains a host checkout path.
+
 Dynamic tool documentation probes require an exact task scope and execute through the same stud. Existing control-owned manifests can still be registered without probing.
 
 Static operations independently classified as trusted control-plane/static inspection remain host-side. Provider absence never changes an operation from repository-code to host execution.

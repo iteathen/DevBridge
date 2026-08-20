@@ -126,6 +126,8 @@ Repository-controlled profiles execute through the exact persistent VM environme
 
 If the provider/environment/bridge is unavailable, execution remains unavailable/fail-closed. No required Bubblewrap/AppContainer/ProcessContainer layer exists inside the VM.
 
+Built-in diagnostics use logical profile identities. The Stage 6 composition stages their bounded trusted helper resources into the selected environment and supplies the local entry capability transiently; profiles do not embed Node host paths or checkout-derived script paths.
+
 ## Networking
 
 Host-sandbox-era profiles may contain `sandbox.network`; after Stage 1 this field no longer authorizes a host repository-execution network mode.
