@@ -1,5 +1,15 @@
 # DevBridge setup
 
+## Disposable fast-track VM branch
+
+The `codex/temp-fast-functional` branch uses one persistent Ubuntu Hyper-V environment through the Stage 6 source/operation/candidate contract. Run `npm run fast:doctor`, `npm run fast:run`, or `npm run fast:daemon` from that branch. The fast configuration explicitly selects the VM attached to Hyper-V's existing `Default Switch`; it does not silently fall back to the host when the VM is unavailable.
+
+Normal build, test, and repository work is headless. DevBridge keeps the VM running during active use and can resume a saved or paused environment without VMConnect. `scripts/fast-vm/manage-environment.ps1` provides exact-owned-target `Status`, `Save`, and `Resume` actions; `Show` is the explicit diagnostic action that opens a console.
+
+Controller-submitted file changes and locally registered deterministic build/test operations are the normal path. The `codex-fast` adapter is available but has no default fallback: it runs only when a remote task explicitly requests it, or after an operator deliberately sets `execution.defaultTool` as a local opt-in.
+
+This branch still contains an intentionally temporary direct-host implementation, but `execution.fastHost` is disabled and configuration rejects enabling it with the VM topology. That implementation and the Default Switch/network/host-key shortcuts are not intended for `main`. See `docs/fast-track-field-notes.md` for exact evidence and the production problems each shortcut exposes.
+
 DevBridge is installed from one standalone stage-0 launcher and then keeps its managed runtime current through the secure supervisor.
 
 ## Current implementation versus VM target
