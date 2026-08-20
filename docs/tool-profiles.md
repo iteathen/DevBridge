@@ -1,167 +1,189 @@
-# Local Tool Profiles
+# Local tool profiles
 
-DevBridge does not hard-code one coding CLI. Local configuration defines proposal/model tool profiles; GitHub task text may select only a profile name that already exists in local policy.
+DevBridge does not hard-code one coding CLI. Local configuration may define proposal/model profiles; GitHub task text may select only a profile name that already exists in local policy.
 
-A profile is **local requested behavior**, not proof that containment exists. Do not let a task/repository synthesize a proposal-worker profile, and do not treat a local declaration as observed enforcement.
+A profile is **local requested behavior**, not proof that containment or a usable repository environment exists.
 
-Deterministic DB-013 operations are a separate preferred path. DB-015 dynamic `tool.*` onboarding also remains separate: it creates validated local deterministic-operation manifests, not arbitrary proposal-worker profiles.
+DB-020 changes the target execution model: repository-controlled tools execute inside persistent repository VMs. The required initial host providers are Windows/Hyper-V and Linux/KVM-QEMU-libvirt.
 
-## Profile fields
+Current pre-migration main still uses the legacy Linux/Bubblewrap host sandbox for supported proposal-worker/repository-code execution. Stage 1 removes that active host execution path before production VM implementation. From Stage 1 through Stage 5, repository-class tool execution is intentionally unavailable/fail-closed; Stage 6 restores it through VMs only.
 
-A current proposal-worker profile contains:
+Deterministic DB-013 operations remain preferred where model inference is unnecessary. DB-015 dynamic `tool.*` onboarding remains a separate validated local-operation mechanism.
 
-- `executable` — locally configured executable path/name resolved by DevBridge;
-- `args` — locally configured static argv strings with only structural placeholders;
-- `inputMode` — `stdin-json`, `stdin-text`, `context-file`, or `none`;
-- `timeoutMs` — bounded wall-clock runtime;
-- `maxOutputBytes` — bounded stdout/stderr capture;
-- `environment.pass` — explicit environment names that may be inherited, still subject to mandatory control-credential stripping;
-- `environment.set` — explicit static local values, still subject to mandatory control-credential stripping;
-- `sandbox.enforcement` — a **tool-local declaration** (`tool`, `os`, or `none`) describing containment the profile/tool claims or expects to provide itself; it never verifies or supplies DevBridge's outer worker boundary;
-- `sandbox.outsideProjectRead` — requested `deny`, `allowlist`, or `readonly` behavior;
-- `sandbox.outsideProjectWrite` — outside-project write request; the current verified proposal-worker provider intentionally rejects this;
-- `sandbox.network` — requested `deny`, `restricted`, or `unrestricted` behavior.
+## Host-sandbox-era profile fields
 
-The declared `sandbox` object is not the enforcement result. Proposal-worker execution independently requires DevBridge to attach and verify its own outer OS isolation provider. Provider observations are the security boundary.
+Current profiles may contain:
 
-`sandbox.enforcement: "none"` is valid for a tool that does not self-sandbox. It does **not** authorize uncontained host execution: `ProcessRunner` still refuses proposal-worker launch without the verified outer provider.
+- `executable`
+- `args`
+- `inputMode`
+- `timeoutMs`
+- `maxOutputBytes`
+- `environment.pass`
+- `environment.set`
+- `sandbox.enforcement`
+- `sandbox.outsideProjectRead`
+- `sandbox.outsideProjectWrite`
+- `sandbox.network`.
 
-DevBridge-owned built-in diagnostic profiles likewise do not become trusted merely from their own declaration. When a built-in profile executes through the proposal-worker path, the separately verified outer provider supplies containment.
+Before Stage 1 these fields may drive the host process-runner/Bubblewrap implementation where supported.
 
-## Allowed argv placeholders
+Stage 1 removes their ability to authorize repository-code host execution. Keys may remain temporarily recognized for migration/status/error compatibility, but they must not reactivate Bubblewrap or direct/uncontained host execution. Stage 8/9 owns deliberate operator-facing migration/deprecation.
 
-Only these structural placeholders are accepted:
+Do not design new repository-execution features around `outsideProjectRead`, host `externalReadRoots`, host sandbox network modes, or host executable projection.
+
+## Target VM-backed profile model
+
+A repository-execution profile should describe logical intent/capability while DevBridge resolves it inside the exact repository environment.
+
+Useful target concepts include:
+
+- logical profile/tool name;
+- required guest OS/profile or compatible set;
+- bounded structured arguments/placeholders;
+- input/result protocol;
+- timeout/output/liveness policy;
+- whether model/network service access is required;
+- required guest tool capability/version class;
+- provider/environment readiness requirements;
+- local credential policy, if any authenticated service is intentionally supported.
+
+It should **not** expose to remote/controller content:
+
+- host executable paths;
+- host PATH/tool roots;
+- host filesystem read roots;
+- Hyper-V VM names/VHDX paths/PowerShell management args;
+- libvirt domain/storage/network names as raw authority;
+- qcow2 paths/QEMU argv/libvirt XML;
+- bridge socket paths/transport parameters;
+- host credentials or environment values.
+
+The selected provider and exact repository environment are control-plane state.
+
+## Host versus guest executable identity
+
+Under DB-020, repository tools live in the guest trust domain after Stage 6.
+
+Examples:
+
+- Node/CMake/CTest/compiler/package-manager/coding CLI used for repository work -> guest tool;
+- Git/Node/provider tooling used by DevBridge's trusted host control plane -> host tool;
+- Hyper-V management tools -> host-only on Windows;
+- KVM/QEMU/libvirt management tools -> host-only on Linux.
+
+During the intentional no-provider interval, repository tools requiring execution are unavailable rather than resolved to host executables.
+
+A guest executable path may be useful internal bridge data, but it is not host authority and should normally be derived by guest bootstrap/tool resolution rather than remote task text.
+
+## Allowed structured placeholders
+
+Controller/profile placeholders remain structural, not free-form command injection.
+
+Host-sandbox-era placeholders may include:
 
 - `{projectDir}`
 - `{contextFile}`
 - `{resultFile}`
-- `{runId}`
+- `{runId}`.
 
-Other braces in local args are literal. A token such as `{instructions}` is rejected because remote free-form instructions must never become argv.
+The VM bridge replaces host-path-valued assumptions with logical guest path classes/opaque endpoints where needed. Do not preserve a placeholder merely to expose a host path into a guest.
 
-`{contextFile}` and `{resultFile}` are stable **worker-visible sandbox endpoints**, not host paths supplied by the task. Their host objects live in DevBridge control-owned state outside the proposal tree.
-
-A tool must overwrite the pre-created result file in place. Unlinking, renaming over, symlinking, junctioning, or replacing the mailbox object is rejected. Before privileged result consumption DevBridge revalidates ownership/type/permissions/filesystem identity where available, unchanged context digest, no-follow/open identity, and result size.
+Free-form instructions never become argv, shell text, provider-management arguments, or bridge transport configuration.
 
 ## Shell rule
 
-DevBridge invokes proposal workers with `shell: false`.
+Trusted DevBridge host control processes continue to use `shell: false` unless a separately reviewed local adapter deliberately owns shell semantics.
 
-Do not configure `cmd.exe`, PowerShell, Bash, or another shell merely to make a package-manager shim work. Shell-like executables require an explicit unsafe local exception and are not part of the safe reference path.
+Inside a guest, a repository tool may itself invoke a guest shell as ordinary untrusted development behavior. That does not grant host shell authority. The host bridge sends typed locally admitted operations rather than arbitrary remote shell text.
 
-On Windows, many npm global commands expose `.cmd` shims. Prefer the real executable or launch the package's JavaScript entry point with `node.exe` rather than inserting `cmd.exe /c` into the trust path.
+Provider absence never authorizes a host shell fallback for repository-controlled work.
 
-## Current outer worker-isolation boundary
+## Execution boundary across migration
 
-The verified built-in proposal-worker provider is Bubblewrap on Linux. DevBridge probes that provider before proposal-worker execution and fails closed when the boundary cannot be verified.
+### Before Stage 1
 
-Windows remains useful for configuration, static/control-plane work, and tests that do not require untrusted execution, but a profile declaration does not enable proposal-worker execution there. A future Windows provider must pass an equivalent filesystem/network/control-state boundary probe before this changes.
+Current pre-migration Linux main may use verified Bubblewrap for supported repository execution. Windows repository execution remains fail-closed on main.
 
-For Linux Bubblewrap proposal workers:
+### Stage 1 through Stage 5
 
-- `network: "deny"` is enforced with an isolated network namespace;
-- `network: "unrestricted"` is explicit and shares the host network namespace while retaining filesystem/control-state isolation;
-- `network: "restricted"` currently fails closed because the built-in provider does not implement DevBridge's restricted-network contract;
-- project proposal bytes are writable;
-- authoritative `.git`/linked-worktree administration is read-only or unreachable from the worker;
-- operator home, DevBridge control state, daemon authority, SSH/GitHub credential sources, and GitHub CLI credential storage are not exposed;
-- configured external read roots are projected read-only only when the local profile/policy requests that external-read mode;
-- outside-project writes are rejected before launch because the current provider has no such contract;
-- worker HOME/TMP are synthetic/private.
+There is deliberately **no production repository execution provider**.
 
-The provider verification probe uses harmless DevBridge-created sentinels. It proves project/run-scratch writes work while arbitrary outside reads/writes, DevBridge control-state reads, Git-administrative writes, denied network egress, and retained effective capabilities do not. `doctor` reports sanitized boolean observations, never sentinel paths/contents.
+Repository-class profile execution must fail before host spawn. In particular:
 
-## Control-plane credentials versus coding-service credentials
+- `execution.allowUncontainedTools` or equivalent cannot bypass provider absence;
+- profile `executable` cannot become direct-host authority for repository work;
+- sandbox settings cannot resurrect Bubblewrap/AppContainer/ProcessContainer;
+- proposal/model compatibility cannot silently drop containment;
+- candidate/tool probes requiring repository-controlled execution remain unavailable.
 
-GitHub control-plane authentication never belongs in a proposal-worker profile.
+### Stage 6 and later
 
-DevBridge strips its GitHub token variables and Git/SSH askpass/agent control channels from worker environments even if a profile requests them, and the worker namespace does not expose GitHub CLI credential storage.
+Repository-controlled profiles execute through the exact persistent VM environment:
 
-A coding service may still require its own credential. Grant only the narrow credential needed by that service through local configuration. Any secret deliberately inherited by the worker must be assumed readable by the worker and descendants. Do not expose broad operator-home credential stores for convenience.
+- Hyper-V repository VM on Windows host;
+- KVM/QEMU/libvirt repository VM on Linux host.
 
-Where possible, use a dedicated service credential with limited scope and keep the coding runtime separate from credential storage. Redaction is not a confidentiality boundary.
+If the provider/environment/bridge is unavailable, execution remains unavailable/fail-closed. No required Bubblewrap/AppContainer/ProcessContainer layer exists inside the VM.
 
-## Codex profile pattern
+## Networking
 
-A networked coding CLI should be installed in a dedicated tool/runtime root that can be exposed read-only without exposing the operator home or unrelated credential stores.
+Host-sandbox-era profiles may contain `sandbox.network`; after Stage 1 this field no longer authorizes a host repository-execution network mode.
 
-Representative Linux shape:
+DB-020 guests instead have normal network access by default. This supports package managers, SDK installers, source/documentation access, browser tests, and coding services.
 
-```json
-{
-  "workspace": {
-    "root": "/srv/devbridge/workspace",
-    "externalReadRoots": [
-      "/opt/devbridge-tools/codex-runtime"
-    ]
-  },
-  "execution": {
-    "enabled": true,
-    "modelAdaptersEnabled": true,
-    "defaultTool": "codex",
-    "maxConcurrentTasks": 1,
-    "maxTurns": 8,
-    "allowUncontainedTools": false
-  },
-  "tools": {
-    "codex": {
-      "executable": "/usr/bin/node",
-      "args": [
-        "/opt/devbridge-tools/codex-runtime/node_modules/@openai/codex/bin/codex.js",
-        "exec",
-        "--sandbox",
-        "workspace-write",
-        "-"
-      ],
-      "inputMode": "stdin-json",
-      "timeoutMs": 2700000,
-      "maxOutputBytes": 4194304,
-      "environment": {
-        "pass": ["OPENAI_API_KEY"],
-        "set": {}
-      },
-      "sandbox": {
-        "enforcement": "tool",
-        "outsideProjectRead": "allowlist",
-        "outsideProjectWrite": false,
-        "network": "unrestricted"
-      }
-    }
-  }
-}
-```
+The security consequence is explicit: anything placed in a guest may be exfiltrated. Host secrets therefore stay out of the guest.
 
-The outer verified Bubblewrap boundary is still mandatory even when Codex supplies a second inner workspace sandbox. `sandbox.enforcement: "tool"` records only that tool-side defense-in-depth expectation; DevBridge does not infer that the inner sandbox actually exists merely from this string.
+A future profile may request an optional offline/restricted guest mode for workload reasons, but network denial is not the foundational security boundary and is not an excuse to inject host credentials.
 
-`codex exec` is headless/non-interactive. DevBridge supplies the bounded context capsule through the configured transport and tells compatible tools where the optional structured result endpoint is projected.
+## Credentials
 
-Model adapters remain disabled by default in the reference configuration. Do not enable them when deterministic controller plans/operations are sufficient.
+GitHub control-plane authentication never belongs in a proposal/repository guest.
 
-## Declaration, provider, and observed enforcement
+Do not inject:
 
-Keep these concepts distinct in code, docs, inventory, and `doctor`:
+- DevBridge GitHub tokens;
+- host SSH agent/private keys;
+- coordination private keys;
+- release/signing keys;
+- daemon-control state;
+- provider-management credentials/capability.
 
-1. **declared policy** — the local tool-profile `sandbox` object;
-2. **configured enforcement provider** — the DevBridge-owned outer isolation implementation;
-3. **verified observed enforcement** — provider admission result and boundary-probe observations.
+A coding/model/package service may require authentication. Stage 6 must define any supported credential relay/scoped token topology explicitly. A broad host credential must not simply be copied into a persistent networked guest.
 
-A declaration alone never upgrades a profile to enforced or usable. Unsupported requested modes fail closed rather than silently degrading.
+Any credential intentionally placed in a guest must be treated as guest-visible/exfiltratable.
 
-A tool's own sandbox remains useful defense in depth, especially for restricting what an agent chooses to execute, but it is not DevBridge's evidence that host control state is isolated.
+## Tool installation and persistence
 
-## Workstation process priority
+After VM restoration, repository tools should normally be installed in the persistent guest environment, not projected read-only from the host.
 
-DB-018 applies below-normal OS priority by default to proposal/model child processes, using the actual spawned child PID before normal worker input proceeds.
+This allows per-repository state such as:
 
-The same priority policy is used for deterministic child operations. Supported internal levels are `normal`, `below-normal`, and `low`; elevated/unknown levels are rejected. If a requested non-normal priority cannot be applied, DevBridge terminates/fails the child instead of silently running it at normal priority.
+- `node_modules` / package caches;
+- compilers/SDK additions;
+- build-system caches;
+- coding CLI installs/config;
+- generated tool state
 
-Process priority is QoS, not a sandbox and not a hard CPU/memory/native-thread quota.
+to survive command and VM stop/start cycles.
 
-The current public profile schema does not make remote task text or repository content a priority selector. Resource governance remains local control-plane behavior.
+The immutable base image carries common broadly reusable tools; repo-specific additions live in the repository writable layer.
+
+Reset/reseed intentionally discards that untrusted persistent state and returns to the base/bootstrap generation.
+
+## Provider-specific guest bridge considerations
+
+Profile/controller code must remain transport-independent.
+
+Hyper-V transport candidates include PowerShell Direct for supported Windows guests and Hyper-V sockets/integration channels.
+
+KVM/libvirt transport candidates include QEMU Guest Agent and libvirt/QEMU channels. QEMU Guest Agent is guest-controlled and may forge responses under compromise; it is a transport, not evidence authority.
+
+A profile must not depend directly on `virsh`, libvirt XML, QGA JSON, PowerShell snippets, socket paths, or provider-specific file locations.
 
 ## Structured result protocol
 
-A compatible worker may overwrite the existing result endpoint with JSON such as:
+A compatible worker may produce `devbridge/result-v1` with fields such as:
 
 ```json
 {
@@ -176,22 +198,62 @@ A compatible worker may overwrite the existing result endpoint with JSON such as
 }
 ```
 
-`status` may be `complete`, `continue`, `blocked`, or `failed`.
+`complete` remains proposal intent, not host completion authority.
 
-A clean legacy worker exit without a result envelope may still be normalized by the current compatibility path, but structured output is strongly preferred because it preserves progress, tests, blockers, and bounded multi-turn intent across context resets.
+The bridge/worker exchange binds result bytes to exact run/environment/operation identity, bounds size, rejects malformed/ambiguous data, and returns them to host validation/sealing.
 
-Malformed structured output is a protocol failure rather than being silently ignored. A mailbox that was replaced, redirected, oversized, or whose control-owned context identity/digest changed is a security/policy failure before result parsing.
+A compromised guest may forge a `complete` result. That cannot create verified tests, a host commit, publication, lease ownership, or hard-gate approval.
 
-## Task authors do not configure tool authority
+## Inventory and dynamic `tool.*` operations
 
-A trusted task actor may request an already locally configured `preferredTool`, but task trust is not tool/profile authority.
+DB-015 remains authoritative:
 
-Do not add a profile, executable, credential, environment grant, filesystem root, or network mode merely because a trusted task author asks for it remotely. Those are local operator-policy changes. This remains true in multi-agent deployments: a DB-016 peer key/lease is coordination authority only.
+- inventory reports capability; it never creates it;
+- host inventory is for control-plane/provider prerequisites;
+- guest inventory is bound to exact repository environment generation;
+- unfamiliar-tool onboarding requires local allowlisting/delegation;
+- help/man/spec output is untrusted data;
+- generated operation schemas expose only bounded non-authority parameters;
+- repository-class generated tools execute inside the guest after Stage 6.
 
-## Dynamic `tool.*` operations are different
+During Stage 1–5, repository-class generated operations requiring execution are unavailable, not host-executed.
 
-DB-015 can synthesize bounded deterministic operation wrappers only after local pre-authorization of an exact command/help probe and verified sandbox execution of that probe. Help/man/spec text is data; it cannot create executable/path/environment/network authority.
+Do not implement dynamic onboarding by mutating proposal profiles from repository/GitHub text.
 
-Generated manifests live under an operator-owned local manifest root, are persisted before registration, and execute as repository-code operations behind the verified sandbox.
+## Declaration versus observed readiness
 
-Do not implement dynamic tool onboarding by mutating the proposal-worker profile set from repository/GitHub text.
+Keep distinct:
+
+1. locally declared profile intent;
+2. configured host provider/image/environment policy;
+3. observed provider/image/writable-layer/environment/bridge readiness;
+4. observed guest tool presence/usability;
+5. verified candidate/test evidence.
+
+No earlier layer automatically proves the later one.
+
+Examples:
+
+- profile configured != execution provider available;
+- Hyper-V installed != repository environment ready;
+- `/dev/kvm` exists != KVM/libvirt provider ready;
+- libvirt domain exists != correct qcow2 backing chain;
+- QEMU Guest Agent responds != trusted guest result;
+- guest tool present != registered operation authority;
+- model says tests pass != DB-019 verification evidence.
+
+## Workstation process/resource governance
+
+DB-018 host child priority is QoS for trusted/provider host processes, not containment and not permission for repository-code host execution.
+
+VM-backed repository workloads use provider-specific vCPU/memory/disk/lifecycle controls where Stage 7 proves them. A profile does not get to raise provider resources or create parallel scheduling authority from remote text.
+
+## Migration rule
+
+- **Stage 1:** remove active host-sandbox profile execution and unsafe direct-host fallbacks; preserve only deliberate config/status migration recognition.
+- **Stages 2–5:** no normal repository profile execution while VM providers/environments/bridge/tooling are built.
+- **Stage 6:** restore repository profile execution through persistent VMs only.
+- **Stage 8:** migrate/deprecate obsolete sandbox-era profile/config fields through discover-first setup.
+- **Stage 9:** remove remaining compatibility/terminology scaffolding and confirm one VM-only execution model.
+
+See DB-020, `docs/vm-lego-studs.md`, and `docs/vm-migration.md`.

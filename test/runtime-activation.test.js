@@ -73,9 +73,9 @@ test('candidate preparation validates and returns the exact tested separate runt
       validateCandidateFn: (_paths, runtime, _runner, options) => {
         events.push(`validated:${runtime.head}`);
         return {
-          tests: 'passed-sandboxed',
+          tests: 'passed',
           artifactSha256: options.expectedArtifactSha256,
-          sandbox: { provider: 'fixture', verified: true },
+          execution: { identity: 'fixture-execution', ready: true },
         };
       },
     },
@@ -85,6 +85,7 @@ test('candidate preparation validates and returns the exact tested separate runt
   assert.equal(candidate.head, head);
   assert.match(candidate.artifactSha256, /^[0-9a-f]{64}$/u);
   assert.equal(candidate.validation.artifactSha256, candidate.artifactSha256);
+  assert.equal(candidate.validation.execution.identity, 'fixture-execution');
   assert.equal(candidate.releaseIntegrity.mode, 'development');
 });
 

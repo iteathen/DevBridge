@@ -1,309 +1,249 @@
-# Implementation Roadmap
+# DevBridge roadmap
 
-This roadmap reflects the current `main` implementation after the security/capability campaign and issue #49 PRs through the DB-018 runtime-governance slice, plus the DB-019 verification-cost/evidence design contract tracked by issue #105.
+## Current checkpoint
 
-Work is organized by ownership boundary so the project stays reviewable and agents do not create half-connected features across the control plane.
+DevBridge already has a substantial host control plane: exact GitHub provenance, managed authoritative Git/workspaces, durable runs/recovery, controller plans, tool inventory/onboarding, checkpoint-and-proceed decisions, multi-agent leases/fencing, baseline-drift reverification, supervised self-update, cooperative pause/resource priority, and the DB-019 verification-governance contract.
 
-## Current operational checkpoint
+Repository-controlled execution is in an architectural transition and is currently not a capability worth preserving through a complicated live migration. The VM program therefore deliberately chooses a **sandbox-removal-first** sequence.
 
-DevBridge now has a complete local control-plane path for trusted task intake, managed development work, verification, recovery, and bounded publication on verified Linux hosts.
+- Current main contains the Linux/Bubblewrap host-sandbox implementation.
+- Draft PR #106 contains experimental Windows ProcessContainer/AppContainer work.
+- DB-020 supersedes both as the target architecture: persistent networked repository VMs, with trusted DevBridge controller/authority on the host.
+- The required initial host providers are Windows/Hyper-V and Linux/KVM-QEMU-libvirt.
+- The old sandbox path will be removed before production VM implementation.
+- After removal, repository-controlled execution is intentionally unavailable and fail-closed until the persistent VM path is ready.
+- No temporary direct-host/uncontained fallback is permitted during that gap.
 
-Implemented current-state capabilities include:
+This sequencing is an architectural test: DevBridge should remain coherent when the old execution brick is removed. If unrelated control-plane behavior collapses, the exposed coupling is repaired before VM implementation begins.
 
-- exact GitHub task/feedback/decision provenance with trusted numeric actor IDs and complete-current-content edit verification;
-- managed repository/worktree provisioning and hardened Git control operations;
-- durable multi-turn run state, restart recovery, and context capsules;
-- DB-007 artifact-exact hard gates before sensitive sealing/publication;
-- deterministic DB-013 controller plans and locally registered operations;
-- exact final-byte verification after deterministic operations/cleanup;
-- verified Linux Bubblewrap isolation for repository-code operations and proposal workers;
-- control-owned worker IPC outside proposal worktrees;
-- signed immutable production self-update release subjects with sandboxed candidate validation and last-known-good rollback;
-- sanitized local tool inventory and bounded sandboxed dynamic operation onboarding;
-- durable DB-014 chat-context rollover/resume;
-- DB-016 Ed25519 installation identity, signed task leases, exact Git-ref CAS, heartbeat/TTL recovery, fencing, and coordination branch namespacing;
-- DB-017 baseline drift reconciliation, fast-forward-only automated rebase, mandatory reverification, and exact verified-head publication CAS;
-- DB-018 cooperative pause/resume and below-normal child-process QoS;
-- effective serialized task admission (one task/run continuation at a time).
+## Active VM program — issue #107
 
-DB-019 now defines the next verification-governance contract: explicit test cost/tier metadata, risk-driven selection, exact reusable evidence identity, selective invalidation, resumable long suites, and suite-specific liveness/timeout policy. That contract is not yet fully implemented and is tracked in issue #105.
+The dependency order is authoritative. Each stage performs the project's planning/research gate before implementation and must not depend on a lower stage that has not landed.
 
-This is still pre-production software. The remaining work below is explicit rather than hidden behind optimistic status wording.
+### Stage 0 — architecture/spec ratification and migration inventory — #108
 
-## Security deployment boundary — current
+Goal: make the VM pivot and sandbox-first migration normative before implementation begins.
 
-A runner's `github.trustedActorIds` is a remote development-job submission allowlist.
+Deliverables:
 
-Current DB-016 coordination prevents conflicting compliant agents from owning the same task, but task envelopes do not yet carry a cryptographically bound destination-agent address. Therefore a shared team queue does not by itself ensure developer-to-developer workstation isolation.
+- DB-020 persistent VM execution-boundary contract;
+- Windows/Hyper-V and Linux/KVM-QEMU-libvirt as coequal first-class provider targets;
+- DB-003/DB-008 and related active documentation aligned to the VM trust model;
+- explicit network-on confidentiality implications;
+- persistent repository+provider+guest-OS environment lifetime/identity requirements;
+- provider-native storage model: VHDX differencing and qcow2 backing/overlays;
+- host-only authority/secrets enumeration;
+- transport-neutral narrow bridge contract with provider-specific adapters;
+- `docs/vm-migration.md` classification/removal map;
+- `docs/vm-lego-studs.md` sandbox-first connection-stud/replaceability plan.
 
-Until per-installation dispatch addressing exists, deployments that require developer A to be unable to dispatch work to developer B's machine must use runner-local queue/trusted-actor separation. Repository collaboration, coordination peer trust, and task-dispatch trust are different authorities.
+No runtime/config/CI cleanup belongs in this stage.
 
-This is the highest-value remaining issue #49 security/ergonomics clarification because the system must not imply that leases solve dispatch authorization.
-
-## Slice 0 — Foundation — complete
-
-Implemented and retained:
-
-- architecture/spec foundation;
-- typed task/feedback/context/status protocols;
-- local-authority-first capability model;
-- API budget/rate primitives;
-- path containment/redaction;
-- shell-free process execution;
-- checkpoint-and-proceed doctrine;
-- durable state-store ownership boundaries.
-
-No remaining work belongs in this slice unless a later feature reveals a foundation defect.
-
-## Slice 1 — Managed Git workspace and publication — core complete, identity/phase hardening remains
-
-Implemented:
+### Stage 1 — remove host sandbox execution, expose/prove studs, establish fail-closed no-provider state — #109
 
-- controlled Git adapter with isolated config/environment;
-- managed clone/fetch/origin verification;
-- per-run branches/worktrees;
-- immutable start baseline (`baseSha`);
-- separate advancing publication baseline (`publicationBaseSha`);
-- candidate validation/sealing;
-- dedicated task-branch publication;
-- exact verified-head publication payload identity;
-- explicit expected-remote-state CAS for first publication and rewrites;
-- ambiguous publication observation/reconciliation;
-- fast-forward-only upstream rebase and conflict restoration;
-- no-op publication elision;
-- reserved/runtime-path rejection;
-- conservative lock/recovery behavior.
-
-Remaining:
-
-- numeric GitHub repository-ID pinning plus rename/transfer reconciliation (DB-010);
-- formal bounded managed worktree/repository retention sweeper;
-- first-class submodule/LFS/package-manager phase authority (DB-008);
-- additional independently controlled verifier/publisher effects if product requirements expand beyond task branches.
-
-## Slice 2 — Durable coordinator, decisions, and recovery — critical paths complete, genericization remains
-
-Implemented:
-
-- authoritative durable `RunCoordinator` lifecycle;
-- exact task revision identity;
-- duplicate terminal suppression and active-revision deferral;
-- bounded result/turn protocol;
-- waiting-feedback and restart resumption;
-- checkpoint-and-proceed behavior;
-- artifact-exact sensitive candidate classification/gating;
-- exact decision provenance, TTL, supersession, and restart-safe gate state;
-- safe sealing/publication rechecks;
-- targeted effect reconciliation for candidate publication, update activation, chat projection, lease transitions, and other critical paths;
-- baseline/local-candidate drift reverification during normal and recovery finalization.
-
-Remaining:
-
-- a complete generic DB-009 effect journal/reconciliation abstraction for every future remote mutation rather than targeted implementations;
-- broader use of `decision-scope` automatic gating where it provides value over current stricter artifact-exact binding;
-- explicit operator recovery UX for unusual poisoned/unknown remote control refs/state;
-- stronger durable retention/cleanup policy across all long-lived run evidence.
-
-## Slice 3 — GitHub progress, provenance, and context — core complete, alternate sources/auth remain
-
-Implemented:
-
-- coalesced bounded/redacted status projection;
-- exact trusted continuation/cancel feedback provenance;
-- exact trusted decision provenance;
-- complete current-body/edit-history task provenance;
-- durable accepted/rejected provenance evidence;
-- DB-014 bounded chat handoff checkpoint/readback/latest-pointer protocol;
-- authenticated handoff projection with exact digest preservation;
-- compact tool-inventory projection/reference;
-- rate-budgeted conditional polling with persisted validators.
-
-Remaining:
-
-- GitHub App installation authentication as an alternative local credential provider;
-- optional webhook `TaskSource` if operational value justifies it;
-- optional human-readable label mirrors where useful, never as authority;
-- additional repository-ID hardening under DB-010.
-
-## Slice 4 — Sandbox, workers, and tool authority — Linux boundary complete, platform/phase work remains
-
-Implemented:
-
-- local tool profiles with closed argv placeholders;
-- shell-free process execution;
-- allowlisted environment inheritance and mandatory control-credential stripping;
-- timeout/output bounds and process-tree termination attempts;
-- static/trusted-control/repository-code operation classification;
-- fail-closed untrusted execution without verified outer provider;
-- verified Linux Bubblewrap filesystem/network/control-state boundary;
-- control-owned worker mailbox with file-identity/digest/no-follow defenses;
-- external reads denied by default and selectively projected read-only;
-- ordinary untrusted build/test network denial;
-- truthful `doctor` separation of declarations/provider/observed enforcement;
-- presence-only PATH inventory discovery;
-- locally pre-authorized sandboxed tool documentation probes;
-- persistent operator-owned dynamic `tool.*` manifests.
-
-Remaining:
-
-- verified Windows OS containment provider (Job Object/AppContainer or equivalent with matching boundary evidence);
-- verified providers for other supported non-Linux platforms;
-- explicit dependency fetch/install/build/test/browser phases with narrowly scoped network and cache authority (DB-008);
-- lifecycle-script/package-manager policy and trust-scoped caches;
-- browser/Playwright loopback/restricted-network provider if justified;
-- stronger complete tool/profile identity/version evidence.
-
-## Slice 5 — Self-update and runtime supervision — production-integrity path implemented
-
-Implemented:
-
-- separate supervisor and daemon runtime ownership;
-- mutable development/testing channel as explicit alpha mode;
-- signed immutable production release subject (repository/head/version/runtime artifact digest);
-- isolated candidate materialization;
-- verified sandboxed candidate preflight/tests with network denied and control state hidden;
-- post-validation and pre-activation exact artifact rechecks;
-- token-bound cooperative daemon drain;
-- atomic tested-candidate activation intent/evidence;
-- health/doctor window and last-known-good rollback;
-- unexpected daemon restart on the exact accepted runtime.
-
-Remaining:
-
-- verified candidate-execution sandbox on Windows/non-Linux platforms;
-- a formal release publication pipeline/tool if/when release operations become part of DevBridge itself;
-- alternate signed release transport/provider only if justified by deployment needs.
-
-## Slice 6 — Multi-agent coordination — first complete coordination boundary implemented
-
-Implemented under DB-016:
-
-- persistent local Ed25519 identity;
-- public SHA-256 fingerprint/address;
-- local trusted peer public keys;
-- signed bounded task lease subjects;
-- exact expected-value Git-ref CAS;
-- heartbeat/TTL/skew recovery;
-- same-identity session takeover only with exclusive local daemon-lock proof;
-- lease-loss/expiry fencing before workers, sealing, and publication;
-- child abort linkage where supported;
-- signed terminal release state;
-- coordination-enabled candidate branch namespacing.
-
-Remaining:
-
-- per-installation human/task dispatch addressing or another explicit routing authorization model for shared-team queues;
-- operator-facing `whoami` identity display;
-- peer inspection/administration UX (without letting remote content change trust);
-- lease list/diagnostic CLI;
-- explicit manual claim/release/recovery commands with safe expected-state semantics;
-- broader observability for coordinated fleets without leaking local authority/secrets.
-
-## Slice 7 — Baseline drift and reverification — core complete
-
-Implemented under DB-017:
-
-- immutable original baseline evidence;
-- separate current publication baseline;
-- same-ref fast-forward-only reconciliation;
-- exact pre-rebase restoration after conflict;
-- mandatory post-rebase model verification or deterministic replay;
-- bounded reverification after candidate/local baseline drift;
-- recovery-time reverification from persisted publishing state;
-- exact clean verified candidate identity;
-- publication bound to exact verified head;
-- explicit expected remote task-branch head and ambiguity reconciliation;
-- DB-016 fence preservation through publication wrappers.
-
-Remaining work is hardening/coverage discovered through future failures rather than a known missing core feature.
-
-## Slice 8 — Workstation governance and daemon control — cooperative core complete
-
-Implemented under DB-018:
-
-- effective serialized task admission;
-- below-normal child priority by default;
-- supported internal priority levels `normal`, `below-normal`, and `low`;
-- fail-closed priority application when non-normal priority cannot be set;
-- token-bound pause request/acknowledgement;
-- safe-boundary admission pause preserving worktrees/run/IPC state;
-- `status` requested-vs-acknowledged pause visibility;
-- `resume` ownership checks;
-- stop precedence while paused;
-- no normal polling/claiming while fully paused.
-
-Remaining:
-
-- hard OS CPU/memory/disk/process-count/native-thread quotas with a real platform resource-provider contract;
-- parallel scheduling only after explicit durable admission/lease/effect/liveness accounting exists;
-- richer local status telemetry such as worker CPU load only when it can be measured truthfully and cheaply.
-
-## Slice 9 — Verification cost and durable evidence — DB-019 design complete, implementation open in issue #105
-
-DB-019 defines the required control-plane model for long/expensive verification.
-
-Existing foundations already present:
-
-- DB-013 cheap preflight before broad CI;
-- per-operation timeout/output bounds;
-- coalesced long-running liveness projection;
-- DB-009 restart recovery that avoids unnecessary deterministic/model repetition when exact evidence remains valid;
-- DB-017 exact candidate/publication-baseline reverification identity;
-- DB-018 serialized task admission and child-process QoS.
-
-Remaining implementation under issue #105:
-
-- explicit verification tiers/classes and stable suite identities;
-- risk/ownership-driven test selection and locally controlled qualification triggers;
-- historical/expected runtime, timing, resource-class, and decomposability metadata;
-- deterministic cheap/high-signal ordering before expensive downstream suites;
-- exact durable verification evidence bound to candidate/baseline/test/policy/platform/sandbox/toolchain/config identities;
-- evidence reuse across restart/context rollover/publication recovery/repeated agent requests;
-- selective evidence invalidation rather than broad discard;
-- resumable/checkpointed long suites where semantics permit;
-- suite-specific expected/soft-slow/liveness/hard-timeout policy instead of a one-size-fits-all timeout;
-- bounded progress that distinguishes healthy long-running verification from a hang;
-- future resource-aware verification scheduling only behind explicit resource accounting.
-
-A universal 30-minute maximum is explicitly not the goal. Expensive tests remain mandatory where they provide unique required evidence; the goal is to make their cost deliberate and their results durable.
-
-## Slice 10 — Remaining UNIX-style CLI surfaces — open issue #49 work
-
-Currently implemented commands:
-
-- `doctor`
-- `poll-once`
-- `run-once`
-- `daemon`
-- `status`
-- `pause`
-- `resume`
-- `stop`
-- `restart`
-- `handoff-status`
-- `handoff-seed`
-- `handoff-project`
-
-Remaining requested/possible controls, to be implemented only behind the already-safe underlying contracts:
-
-- `whoami` identity display;
-- trusted-peer inspection/administration;
-- lease/lock listing;
-- manual claim and explicit safe lease release/recovery;
-- local `run --issue <id>` dry-run/simulation mode with no unintended GitHub effects;
-- local `verify --patch <file.diff>` candidate verification path;
-- optional structured `--json`/human output refinements where current commands do not already emit JSON.
-
-The CLI must expose existing authority; it must not become a second capability system or a shortcut around task provenance, leases, decision gates, sandboxing, publication CAS, verification-cost policy, or recovery.
-
-## Deferred until justified
-
-- database-server dependency;
-- arbitrary shell task format;
-- remote plugin marketplace or repository-controlled plugin installation;
-- paid GitHub services as a core correctness dependency;
-- broad host filesystem visibility for convenience;
-- parallel task execution without a first-class scheduler contract;
-- automatic default-branch merge/release/deployment as an ordinary trusted task side effect.
-
-These are not necessarily prohibited forever. They require evidence that the current simpler boundary no longer meets the workload and a design that preserves local authority.
+This is the architectural falsification stage and happens **before production VM implementation**.
+
+Sequence:
+
+1. inspect the exact current-head repository-execution path and map the existing connection studs at symbol/file level;
+2. classify each dependency as valid stud, implementation leak, missing stud, retained generic behavior, or provider-local detail;
+3. disable/remove legacy sandbox provider registration and establish a deliberate no-production-provider state;
+4. prove repository-controlled operations fail before host execution and cannot fall back to uncontained/direct host processes;
+5. repair abstraction leaks revealed by unplugging the sandbox;
+6. attach a minimal fake provider in tests through the exposed studs;
+7. delete the active Bubblewrap/host-sandbox execution implementation and active sandbox-specific wiring while preserving generic protocols/control-plane behavior and historical evidence;
+8. leave a bounded provider-neutral attachment surface for Hyper-V and KVM/libvirt.
+
+After Stage 1, trusted static/control-plane work may continue where independently classified safe, but repository-controlled execution is intentionally unavailable.
+
+### Stage 2 — Windows Hyper-V + Linux KVM/QEMU/libvirt backends and immutable base-image lifecycle — #110
+
+Implement both required host providers against the Stage-1 studs while repository execution remains disabled.
+
+Windows:
+
+- observed Hyper-V capability/management readiness;
+- immutable/versioned Windows/Linux guest VHD/VHDX base images;
+- provider networking and provider-owned object lifecycle.
+
+Linux:
+
+- observed KVM acceleration + libvirt/QEMU readiness;
+- normally locally authorized `qemu:///system` management or a justified narrower equivalent;
+- immutable/versioned Windows/Linux guest base images;
+- qcow2 base/backing identity;
+- provider networking/storage lifecycle.
+
+Both providers must expose truthful readiness and keep raw VM/domain/image/command authority local. If adding a provider requires broad controller/business rewrites, reopen Stage 1 instead of bypassing the studs.
+
+### Stage 3 — persistent per-repository/per-OS writable layers and VM lifecycle — #111
+
+Implement repository environment persistence on both providers.
+
+- Hyper-V: per-repository differencing VHD/VHDX where supported.
+- KVM/QEMU: per-repository qcow2 overlays/backing chains where supported.
+
+Prove stable environment identity, stop/start persistence, daemon/provider restart reconciliation, explicit reset/reseed, disk-chain integrity, concurrency control, and owned cleanup without silent reparent/rebase.
+
+Repository-controlled execution remains unavailable during this stage.
+
+### Stage 4 — provider-adapted host↔guest command/file bridge — #112
+
+Research/select concrete transports while preserving one typed host-controlled bridge contract behind the Stage-1 execution/transfer/result studs.
+
+Hyper-V candidates include integration channels/sockets and Windows-specific PowerShell Direct where appropriate.
+
+KVM/libvirt candidates include QEMU Guest Agent/virtio-serial/vsock and libvirt channel APIs. QEMU Guest Agent is guest-controlled/untrusted response data, not a security oracle.
+
+The bridge must provide exact environment/run/operation identity, bounded exec/input/output/file transfer, timeout/cancellation/liveness, no arbitrary host-path naming, no control credentials, and restart/recovery semantics.
+
+Repository-controlled execution remains unavailable to normal DevBridge task flow during this stage.
+
+### Stage 5 — guest bootstrap, networking, toolchain, development environment — #113
+
+Make persistent Windows/Linux guests useful for real development on both provider families.
+
+Target behavior:
+
+- normal guest networking enabled by default;
+- Node/CMake/CTest/native compiler/package-manager/browser/coding-tool workflows as needed by acceptance;
+- guest-local tooling/caches survive VM stop/restart;
+- no required Bubblewrap/AppContainer layer inside the guest;
+- no host credentials or arbitrary writable host mounts;
+- guest tool inventory/readiness observed through the bridge;
+- base-image/tooling updates versioned instead of mutating parents/backings beneath existing repository state.
+
+Repository-controlled execution is still not restored to normal controller/task routing here.
+
+### Stage 6 — restore repository-controlled execution through persistent VMs only — #114
+
+This is the functional restoration stage, not merely a live cutover from one simultaneously-running provider to another.
+
+Implement:
+
+- controller-plan deterministic operation routing to exact repository VM environments;
+- proposal/coding-worker execution through the VM bridge;
+- source synchronization into persistent guests;
+- candidate/result import back to the host;
+- host-authoritative Git/sealing/publication unchanged;
+- dynamic `tool.*` probing/execution in the guest;
+- package/build/test/browser repository execution in the guest;
+- runtime candidate-controlled validation through a provider-native VM validation environment;
+- exact drift/source/candidate identity checks;
+- authenticated external-service/private-source support only through explicit mechanisms that do not copy broad host authority into persistent guests.
+
+There is **no sandbox/direct-host fallback**. If the selected VM provider/environment is unavailable, repository execution remains unavailable/fail-closed.
+
+### Stage 7 — provider/guest matrix verification, doctor, recovery, CI, resources, security and replaceability acceptance — #115
+
+This is the replacement-acceptance gate.
+
+Add real evidence for both host providers:
+
+- Hyper-V provider/base-image/environment/bridge readiness;
+- KVM/QEMU/libvirt provider/base-image/environment/bridge readiness;
+- Windows/Linux guest workloads for every host/guest combination claimed supported;
+- root/admin-compromised guest cannot obtain host secrets, authoritative Git/publication state, daemon/coordination/release state, arbitrary host paths/mounts, or provider-management authority;
+- hostile/forged guest-agent/helper responses fail closed;
+- network-on guest confidentiality model;
+- VHDX parent/child and qcow2 backing/overlay identity;
+- persistent state, reset/reseed, timeout/cancellation, restart/recovery;
+- source/candidate import and host sealing;
+- runtime candidate VM validation;
+- DB-019 exact evidence identity and cost-aware qualification;
+- truthful provider-specific resource policy;
+- `doctor` distinguishes configuration from observed readiness;
+- fake-provider/stud tests still pass;
+- repository-wide checks confirm the deleted sandbox architecture has not been reintroduced and no direct-host fallback exists.
+
+Real virtualization qualification may require self-hosted/dedicated virtualization-capable runners. Do not replace real provider evidence with mocks because hosted CI lacks nested virtualization.
+
+### Stage 8 — Windows/Linux installer/setup/reconfiguration integration — #116
+
+Coordinate with issue #103.
+
+Setup should discover before prompting:
+
+Windows:
+
+- Hyper-V availability/privilege/image/environment state.
+
+Linux:
+
+- KVM acceleration, QEMU/libvirt service/provider/access, image/environment state.
+
+Both:
+
+- approved repositories and immutable repo IDs;
+- guest profiles/images;
+- storage implications;
+- bridge/bootstrap readiness;
+- resource defaults;
+- explicit prerequisites requiring elevation/reboot/package/service/group/session changes.
+
+Setup must suggest safe defaults, require explicit consent for authority-bearing changes, support re-entry for repair/reseed/migration, and deliberately migrate/deprecate legacy sandbox-era config instead of silently reinterpreting it.
+
+A fresh or migrated installation must never reactivate direct host repository execution if VM readiness is absent.
+
+### Stage 9 — finalize the VM-only architecture and remove migration scaffolding — #117
+
+The active sandbox runtime should already be gone from Stage 1. Stage 9 is therefore final simplification after Stage-7/8 acceptance.
+
+Expected work:
+
+- remove temporary no-provider migration diagnostics/scaffolding no longer needed once VM setup is the normal path;
+- remove/deprecate remaining sandbox-era config/schema/help compatibility after Stage 8 has an explicit migration story;
+- remove stale sandbox terminology from active docs/status surfaces;
+- remove dead compatibility tests/CI retained only for the migration period;
+- confirm no Bubblewrap/AppContainer/ProcessContainer runtime or direct-host repository-execution fallback remains;
+- preserve generic process/result capture, deterministic operation registry, worker/result protocol semantics, authoritative Git/publication, recovery, supervision, leases, checkpoints, and verification evidence;
+- retire/close draft PR #106 as superseded while preserving historical evidence;
+- confirm the final codebase has one coherent VM-only repository-execution architecture.
+
+If Stage 9 discovers active sandbox runtime is still structurally required, that is a failed earlier LEGO test and must be repaired rather than treated as routine cleanup.
+
+## Parallel active work
+
+### DB-019 verification-cost/evidence implementation — #105
+
+VM work integrates with DB-019:
+
+- provider/bridge/security changes can force qualification;
+- exact host platform/provider/image/environment/bridge identities participate in evidence;
+- long VM suites need liveness and suite-specific timing;
+- exact still-valid VM qualification should not be repeated merely because chat/daemon context rolled over.
+
+### Setup/reconfiguration UX — #103
+
+Issue #103 governs broader installation discovery/re-entry behavior. VM Stage 8 coordinates with it rather than creating a second unrelated setup wizard.
+
+### Remaining #49 work
+
+Issue #107 supersedes #49's repository-code sandbox-provider direction only.
+
+Unrelated #49 surfaces such as per-installation dispatch/addressing, CLI/product ergonomics, and future truthful resource governance remain separate unless a later issue explicitly moves them.
+
+## Other known boundaries
+
+These remain intentionally incomplete unless covered by the VM stages above:
+
+- complete generic remote-effect journaling/correlation for every future GitHub mutation;
+- per-installation human-to-workstation task addressing for shared team queues;
+- stronger numeric repository/tool/profile identity evidence outside Stage 1;
+- GitHub App installation authentication;
+- general parallel task scheduling;
+- default-branch merge/release/deployment as ordinary task effects.
+
+## Engineering rules for roadmap work
+
+For every VM stage:
+
+1. read `AGENTS.md`, active specs, DB-020, prerequisite VM stages, `docs/vm-migration.md`, and `docs/vm-lego-studs.md`;
+2. inspect the implementation being replaced/extended;
+3. research the relevant Hyper-V and/or KVM/QEMU/libvirt platform behavior and failure semantics where applicable;
+4. write a scoped plan covering ownership, state transitions, authority crossings, recovery, tests, provider parity, migration, and expected files;
+5. sanity-check against correctness/containment, persistence, recoverability, operator UX, performance, DB-019 verification cost, and LEGO replaceability/change-scope;
+6. never introduce direct-host repository execution merely to bridge the intentional no-provider period;
+7. proceed when no genuine architecture/authority choice remains; checkpoint only high-leverage architectural decisions.
+
+Preserve historical handoffs/audits rather than rewriting them to look current.

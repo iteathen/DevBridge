@@ -45,12 +45,10 @@ const runtimeB = {
     keyId: 'release-key',
   },
   validation: {
-    sandbox: {
-      provider: 'bubblewrap',
-      verified: true,
-      verification: 'boundary-probe',
-      filesystem: 'project-and-run-scratch-write-only',
-      network: 'denied',
+    execution: {
+      identity: 'fixture-execution',
+      ready: true,
+      artifactPreserved: true,
     },
   },
 };
@@ -64,7 +62,7 @@ function exactFakeDigest(runtimeDir) {
 }
 
 async function signedReleaseFiles(head = runtimeB.head) {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'pp-secure-supervisor-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-secure-supervisor-'));
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const release = { repository: RELEASE_REPOSITORY, head, artifactSha256: artifactB, version: '0.1.0' };
   const value = sign(null, releaseSubjectPayload(release), privateKey).toString('base64');
@@ -123,7 +121,7 @@ test('production supervisor ignores mutable stable movement that is not the sign
   assert.equal(stops, 0);
 });
 
-test('production supervisor validates only the signed head and journals exact artifact/sandbox evidence', async () => {
+test('production supervisor validates only the signed head and journals exact artifact/execution evidence', async () => {
   const files = await signedReleaseFiles();
   const records = [];
   let starts = 0;
@@ -165,8 +163,8 @@ test('production supervisor validates only the signed head and journals exact ar
   assert.equal(validated.candidate.artifactSha256, artifactB);
   assert.equal(validated.candidate.releaseIntegrity.mode, 'production');
   assert.equal(validated.candidate.releaseIntegrity.verified, true);
-  assert.equal(validated.candidate.validationSandbox.provider, 'bubblewrap');
-  assert.equal(validated.candidate.validationSandbox.network, 'denied');
+  assert.equal(validated.candidate.validationExecution.identity, 'fixture-execution');
+  assert.equal(validated.candidate.validationExecution.artifactPreserved, true);
   const healthy = records.find((record) => record.state === 'healthy');
   assert.equal(healthy.current.head, runtimeB.head);
   assert.equal(healthy.current.artifactSha256, artifactB);

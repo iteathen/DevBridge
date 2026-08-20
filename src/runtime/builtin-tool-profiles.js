@@ -10,14 +10,6 @@ const NATIVE_COMPILER_CLI = fileURLToPath(new URL('./native-compiler-probe-cli.j
 const TRANSIENT_RECOVERY_CLI = fileURLToPath(new URL('./transient-recovery-probe-cli.js', import.meta.url));
 const CHAT_C_PROJECT_CLI = fileURLToPath(new URL('./chat-c-project-probe-cli.js', import.meta.url));
 const LIFECYCLE_ROUNDTRIP_CLI = fileURLToPath(new URL('./lifecycle-roundtrip-probe-cli.js', import.meta.url));
-const BUILTIN_RUNTIME_ROOT = fileURLToPath(new URL('../', import.meta.url));
-
-const BUILTIN_PROFILE_NAMES = [
-  NATIVE_COMPILER_DIAGNOSTIC_PROFILE,
-  TRANSIENT_RECOVERY_DIAGNOSTIC_PROFILE,
-  CHAT_C_PROJECT_DIAGNOSTIC_PROFILE,
-  LIFECYCLE_ROUNDTRIP_DIAGNOSTIC_PROFILE,
-];
 
 function windowsToolchainEnvironment() {
   return {
@@ -25,21 +17,21 @@ function windowsToolchainEnvironment() {
       'PATH', 'Path', 'PATHEXT',
       'SYSTEMROOT', 'WINDIR', 'SystemDrive',
       'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432',
-      'TEMP', 'TMP', 'TMPDIR'
+      'TEMP', 'TMP', 'TMPDIR',
     ],
-    set: {}
+    set: {},
   };
 }
 
-function builtinSandbox({ outsideProjectRead = 'deny' } = {}) {
+function legacyIsolationDeclaration({ outsideProjectRead = 'deny' } = {}) {
+  // Retained only so existing local profile configuration remains parseable
+  // during the VM migration. These fields do not select or authorize a host
+  // execution boundary after Stage 1.
   return {
-    // These CLIs do not create their own sandbox. The declaration therefore
-    // remains "none" even though ProcessRunner requires a separately verified
-    // outer OS provider before any built-in profile can execute.
     enforcement: 'none',
     outsideProjectRead,
     outsideProjectWrite: false,
-    network: 'deny'
+    network: 'deny',
   };
 }
 
@@ -52,7 +44,7 @@ export function nativeCompilerDiagnosticProfile() {
     timeoutMs: 120_000,
     maxOutputBytes: 256 * 1024,
     environment: windowsToolchainEnvironment(),
-    sandbox: builtinSandbox({ outsideProjectRead: 'readonly' })
+    sandbox: legacyIsolationDeclaration({ outsideProjectRead: 'readonly' }),
   };
 }
 
@@ -65,7 +57,7 @@ export function transientRecoveryDiagnosticProfile() {
     timeoutMs: 30_000,
     maxOutputBytes: 64 * 1024,
     environment: { pass: [], set: {} },
-    sandbox: builtinSandbox()
+    sandbox: legacyIsolationDeclaration(),
   };
 }
 
@@ -78,7 +70,7 @@ export function chatCProjectDiagnosticProfile() {
     timeoutMs: 180_000,
     maxOutputBytes: 512 * 1024,
     environment: windowsToolchainEnvironment(),
-    sandbox: builtinSandbox({ outsideProjectRead: 'readonly' })
+    sandbox: legacyIsolationDeclaration({ outsideProjectRead: 'readonly' }),
   };
 }
 
@@ -91,7 +83,7 @@ export function lifecycleRoundtripDiagnosticProfile() {
     timeoutMs: 60_000,
     maxOutputBytes: 128 * 1024,
     environment: { pass: [], set: {} },
-    sandbox: builtinSandbox()
+    sandbox: legacyIsolationDeclaration(),
   };
 }
 
@@ -100,10 +92,6 @@ export function builtInToolProfiles() {
     [NATIVE_COMPILER_DIAGNOSTIC_PROFILE]: nativeCompilerDiagnosticProfile(),
     [TRANSIENT_RECOVERY_DIAGNOSTIC_PROFILE]: transientRecoveryDiagnosticProfile(),
     [CHAT_C_PROJECT_DIAGNOSTIC_PROFILE]: chatCProjectDiagnosticProfile(),
-    [LIFECYCLE_ROUNDTRIP_DIAGNOSTIC_PROFILE]: lifecycleRoundtripDiagnosticProfile()
+    [LIFECYCLE_ROUNDTRIP_DIAGNOSTIC_PROFILE]: lifecycleRoundtripDiagnosticProfile(),
   };
-}
-
-export function builtInToolReadRoots() {
-  return Object.fromEntries(BUILTIN_PROFILE_NAMES.map((name) => [name, [BUILTIN_RUNTIME_ROOT]]));
 }

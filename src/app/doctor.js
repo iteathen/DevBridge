@@ -2,90 +2,51 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { WorkspacePolicy } from '../security/workspace-policy.js';
 import { validateToolProfile } from '../runtime/cli-profile.js';
-import { resolveExecutable } from '../runtime/executable-resolver.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
-import { createDeterministicSandboxProvider } from '../runtime/deterministic-sandbox.js';
 import { operationSecurityDescription } from '../runtime/deterministic-operation-security.js';
 import { ToolInventoryService } from '../runtime/tool-inventory.js';
 import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
-import { enforcementProviderReport, profileSecurityDescription } from '../runtime/profile-security.js';
+import { profileSecurityDescription } from '../runtime/profile-security.js';
+import { UnavailableRepositoryExecution, assertRepositoryExecutionContract } from '../runtime/repository-execution.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { GitClient } from '../git/git-client.js';
 import { resolveGitHubCredential, publicGitHubCredentialStatus } from '../github/auth-provider.js';
 
-async function describeProfile(name, raw, {
-  source,
-  allowUncontainedTools,
-  resolveTools,
-  env,
-  enforcementProvider,
-}) {
+async function describeProfile(name, raw, { source, allowUncontainedTools, repositoryExecutionStatus }) {
   const profile = validateToolProfile(name, raw, { allowUncontainedTools });
-  const executable = resolveTools ? await resolveExecutable(profile.executable, env) : profile.executable;
-  return {
-    name,
-    executable,
-    inputMode: profile.inputMode,
-    layer: 'adapter',
-    source,
-    ...profileSecurityDescription(profile, enforcementProvider),
-  };
+  return { name, inputMode: profile.inputMode, layer: 'adapter', source, ...profileSecurityDescription(profile, repositoryExecutionStatus) };
 }
 
-export async function doctor(
-  config,
-  {
-    resolveTools = true,
-    checkGit = true,
-    checkGitHubAuth = true,
-    probeCoreCapabilities = true,
-    env = process.env,
-  } = {},
-) {
+export async function doctor(config, {
+  resolveTools = true,
+  checkGit = true,
+  checkGitHubAuth = true,
+  probeCoreCapabilities = true,
+  env = process.env,
+  repositoryExecution = null,
+} = {}) {
   const workspace = new WorkspacePolicy(config.workspace);
   const workspaceRoot = await workspace.ensureRoot();
   await mkdir(config.state.directory, { recursive: true, mode: 0o700 });
 
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
-  const deterministicSandboxProvider = createDeterministicSandboxProvider({
-    externalReadRoots: config.workspace.externalReadRoots,
-    workspaceRoot: config.workspace.root,
-    stateDirectory: config.state.directory,
-    env,
-  });
-  const observedSandbox = probeCoreCapabilities
-    ? await deterministicSandboxProvider.verify()
-    : deterministicSandboxProvider.inspect();
-  const enforcementProvider = enforcementProviderReport(observedSandbox);
+  const execution = repositoryExecution == null
+    ? new UnavailableRepositoryExecution({ reason: 'repository execution is intentionally unavailable until VM Stage 6' })
+    : assertRepositoryExecutionContract(repositoryExecution);
+  const repositoryExecutionStatus = execution.inspect();
 
   const builtIns = builtInToolProfiles();
-  for (const name of Object.keys(builtIns)) {
-    if (Object.hasOwn(config.tools, name)) {
-      throw new Error(`local tool profile name ${name} is reserved by DevBridge`);
-    }
-  }
+  for (const name of Object.keys(builtIns)) if (Object.hasOwn(config.tools, name)) throw new Error(`local tool profile name ${name} is reserved by DevBridge`);
 
   const tools = [];
   for (const [name, raw] of Object.entries(config.tools)) {
-    tools.push(await describeProfile(name, raw, {
-      source: 'local-profile',
-      allowUncontainedTools: config.execution.allowUncontainedTools,
-      resolveTools,
-      env,
-      enforcementProvider,
-    }));
+    tools.push(await describeProfile(name, raw, { source: 'local-profile', allowUncontainedTools: config.execution.allowUncontainedTools, repositoryExecutionStatus }));
   }
   const builtInTools = [];
   for (const [name, raw] of Object.entries(builtIns)) {
-    builtInTools.push(await describeProfile(name, raw, {
-      source: 'devbridge-builtin',
-      allowUncontainedTools: false,
-      resolveTools,
-      env,
-      enforcementProvider,
-    }));
+    builtInTools.push(await describeProfile(name, raw, { source: 'devbridge-builtin', allowUncontainedTools: false, repositoryExecutionStatus }));
   }
 
   if (config.execution.enabled && !config.execution.controllerPlansEnabled && tools.length === 0) {
@@ -95,47 +56,31 @@ export async function doctor(
     throw new Error(`execution.defaultTool does not exist: ${config.execution.defaultTool}`);
   }
 
-  const operations = operationRegistry.describe().map((entry) => ({
-    ...entry,
-    ...operationSecurityDescription(entry.name, enforcementProvider),
-  }));
-  const toolchains = probeCoreCapabilities
-    ? await toolchainRegistry.inspect()
-    : toolchainRegistry.names().map((name) => ({ name, available: null, layer: 'core' }));
+  const operations = operationRegistry.describe().map((entry) => ({ ...entry, ...operationSecurityDescription(entry.name, repositoryExecutionStatus) }));
+  const toolchains = probeCoreCapabilities ? await toolchainRegistry.inspect() : toolchainRegistry.names().map((name) => ({ name, available: null, layer: 'core' }));
   const faultInjection = new DeterministicFaultInjector(config.execution.faultInjection ?? {}).inspect();
   let toolInventory = null;
   if (probeCoreCapabilities) {
-    const inventoryService = new ToolInventoryService({
-      operationRegistry,
-      toolchainRegistry,
-      sandboxProvider: deterministicSandboxProvider,
-      profiles: { ...config.tools, ...builtIns },
-      deterministicProfileNames: Object.keys(builtIns),
-      modelAdaptersEnabled: config.execution.modelAdaptersEnabled,
-      allowUncontainedTools: config.execution.allowUncontainedTools,
-      env,
-      runtimeIdentity: { version: '0.1.0' },
-    });
-    toolInventory = await inventoryService.refresh();
+    toolInventory = await new ToolInventoryService({
+      operationRegistry, toolchainRegistry, repositoryExecution: execution,
+      profiles: { ...config.tools, ...builtIns }, deterministicProfileNames: Object.keys(builtIns),
+      modelAdaptersEnabled: config.execution.modelAdaptersEnabled, allowUncontainedTools: config.execution.allowUncontainedTools,
+      env, runtimeIdentity: { version: '0.1.0' },
+    }).refresh();
   }
 
   let gitVersion = null;
-  if (checkGit) {
-    const git = new GitClient({ executable: config.git.executable, syntheticHome: path.join(config.state.directory, 'git-home') });
-    gitVersion = await git.version();
-  }
+  if (checkGit) gitVersion = await new GitClient({ executable: config.git.executable, syntheticHome: path.join(config.state.directory, 'git-home') }).version();
 
   let githubAuth = publicGitHubCredentialStatus(config.github.auth, null);
   if (checkGitHubAuth) {
     const credential = await resolveGitHubCredential(config.github.auth, { env });
     githubAuth = publicGitHubCredentialStatus(config.github.auth, credential);
     if (config.execution.enabled && !githubAuth.available) {
-      throw new Error(
-        'GitHub authentication is required when execution is enabled. ' +
+      throw new Error('GitHub authentication is required when execution is enabled. ' +
         `Checked environment variables: ${githubAuth.environmentVariables.join(', ')}; ` +
         `GitHub CLI fallback: ${githubAuth.githubCliExecutable} auth token --hostname ${githubAuth.hostname}. ` +
-        'Set one of the environment variables or authenticate GitHub CLI locally.',
-      );
+        'Set one of the environment variables or authenticate GitHub CLI locally.');
     }
   }
 
@@ -151,25 +96,13 @@ export async function doctor(
     gitVersion,
     toolInventory,
     capabilities: {
-      enforcementProvider,
+      repositoryExecution: repositoryExecutionStatus,
       core: {
-        controllerPlans: {
-          enabled: config.execution.controllerPlansEnabled,
-          enforcementProvider,
-          // Backward-compatible alias. This has always described the observed
-          // DevBridge provider, never a profile's sandbox declaration.
-          sandbox: enforcementProvider,
-          operations,
-        },
+        controllerPlans: { enabled: config.execution.controllerPlansEnabled, repositoryExecution: repositoryExecutionStatus, operations },
         toolchains,
         faultInjection,
       },
-      adapters: {
-        enabled: config.execution.modelAdaptersEnabled,
-        enforcementProvider,
-        tools,
-        builtIns: builtInTools,
-      },
+      adapters: { enabled: config.execution.modelAdaptersEnabled, repositoryExecution: repositoryExecutionStatus, tools, builtIns: builtInTools },
     },
     tools,
   };

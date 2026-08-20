@@ -1,5 +1,10 @@
 import { spawn } from 'node:child_process';
 import { PolicyError } from '../errors.js';
+import {
+  REPOSITORY_EXECUTION_REQUEST_PROTOCOL,
+  assertRepositoryExecutionContract,
+  normalizeRepositoryExecutionResult,
+} from './repository-execution.js';
 import { applyChildProcessPriority } from './process-priority.js';
 import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
 
@@ -36,20 +41,20 @@ function abortedError(signal) {
 export class DeterministicProcessRunner {
   #sourceEnv;
   #faults;
-  #sandboxProvider;
+  #repositoryExecution;
   #processPriority;
   #setPriority;
 
   constructor({
     sourceEnv = process.env,
     faultInjector = null,
-    sandboxProvider = null,
+    repositoryExecution = null,
     processPriority = 'below-normal',
     setPriority = undefined,
   } = {}) {
     this.#sourceEnv = sourceEnv;
     this.#faults = faultInjector;
-    this.#sandboxProvider = sandboxProvider;
+    this.#repositoryExecution = repositoryExecution == null ? null : assertRepositoryExecutionContract(repositoryExecution);
     this.#processPriority = processPriority;
     this.#setPriority = setPriority;
   }
@@ -66,62 +71,59 @@ export class DeterministicProcessRunner {
     activityIntervalMs = DEFAULT_ACTIVITY_INTERVAL_MS,
     operation = null,
     executionClass = 'control-process',
-    sandbox = { required: false },
+    repository = null,
+    repositoryId = null,
+    runId = null,
+    repositoryTool = null,
+    repositoryWorkingDirectory = '.',
     signal = null,
   }) {
     if (signal?.aborted) throw abortedError(signal);
-    if (typeof executable !== 'string' || executable.length === 0) throw new PolicyError('deterministic operation executable is missing');
     if (!Array.isArray(args) || args.some((value) => typeof value !== 'string')) throw new PolicyError('deterministic operation args must be structural strings');
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 28_800_000) throw new PolicyError('deterministic operation timeout is out of range');
     if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1024 || maxOutputBytes > 16_777_216) throw new PolicyError('deterministic operation output limit is out of range');
     if (!Number.isInteger(activityIntervalMs) || activityIntervalMs < 10 || activityIntervalMs > 300_000) throw new PolicyError('deterministic activity interval is out of range');
     if (!EXECUTION_CLASSES.has(executionClass)) throw new PolicyError('deterministic operation execution class is invalid');
-    if (!sandbox || typeof sandbox !== 'object' || Array.isArray(sandbox)) throw new PolicyError('deterministic operation sandbox policy must be an object');
+
+    if (executionClass === 'repository-code') {
+      if (!this.#repositoryExecution) throw new PolicyError('repository-code execution is unavailable because no repository execution implementation is configured');
+      const status = this.#repositoryExecution.inspect();
+      if (status.ready !== true) throw new PolicyError(`repository-code execution is unavailable: ${status.reason ?? 'repository execution is not ready'}`);
+      if (typeof repository !== 'string' || repository.length === 0) throw new PolicyError('repository-code execution requires repository identity');
+      if (typeof runId !== 'string' || runId.length === 0) throw new PolicyError('repository-code execution requires run identity');
+      if (typeof repositoryTool !== 'string' || repositoryTool.length === 0) throw new PolicyError('repository-code execution requires a logical repository tool identity');
+      const result = normalizeRepositoryExecutionResult(await this.#repositoryExecution.execute({
+        protocol: REPOSITORY_EXECUTION_REQUEST_PROTOCOL,
+        operation: operation ?? 'repository.operation',
+        scope: { repository, repositoryId, runId },
+        invocation: {
+          tool: repositoryTool,
+          arguments: args,
+          workingDirectory: repositoryWorkingDirectory,
+        },
+        environment: { ...(environment.set ?? {}) },
+        transfers: [],
+        limits: { timeoutMs, maxOutputBytes },
+        stdin,
+        signal,
+        onActivity,
+      }));
+      return {
+        ...result,
+        execution: {
+          class: executionClass,
+          location: 'repository',
+          identity: result.evidence.identity,
+          scope: result.evidence.scope,
+        },
+        processPriority: null,
+      };
+    }
+
+    if (typeof executable !== 'string' || executable.length === 0) throw new PolicyError('deterministic host operation executable is missing');
 
     const env = boundedEnvironment(this.#sourceEnv, environment.pass ?? [], environment.set ?? {});
-    let spawnExecutable = executable;
-    let spawnArgs = args;
-    let spawnCwd = cwd;
-    let spawnEnv = env;
-    let sandboxEvidence = {
-      required: false,
-      provider: 'host',
-      verified: null,
-      verification: 'not-required',
-      filesystem: 'not-applicable',
-      network: 'not-applicable',
-      gitAdministrativeState: 'not-applicable',
-      executionClass,
-    };
-
-    if (executionClass === 'repository-code' || sandbox.required === true) {
-      if (!this.#sandboxProvider || typeof this.#sandboxProvider.prepareExecution !== 'function') {
-        throw new PolicyError('repository-code execution requires a verified sandbox provider; none is configured');
-      }
-      const prepared = await this.#sandboxProvider.prepareExecution({
-        executable,
-        args,
-        cwd,
-        env,
-        sandbox: {
-          ...sandbox,
-          required: true,
-          projectDir: sandbox.projectDir ?? cwd,
-        },
-        operation,
-      });
-      if (!prepared?.evidence?.verified) {
-        throw new PolicyError('repository-code execution refused because sandbox enforcement was not verified');
-      }
-      spawnExecutable = prepared.executable;
-      spawnArgs = prepared.args;
-      spawnCwd = prepared.cwd;
-      spawnEnv = prepared.env;
-      sandboxEvidence = { required: true, executionClass, ...prepared.evidence };
-    }
-    if (signal?.aborted) throw abortedError(signal);
-
-    const child = spawn(spawnExecutable, spawnArgs, containedSpawnOptions({ cwd: spawnCwd, env: spawnEnv, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
+    const child = spawn(executable, args, containedSpawnOptions({ cwd, env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
     let processPriority;
     try {
       processPriority = await applyChildProcessPriority(child, this.#processPriority, { setPriority: this.#setPriority });
@@ -146,22 +148,12 @@ export class DeterministicProcessRunner {
       if (!force && lastActivityEmitAt !== 0 && atMs - lastActivityEmitAt < activityIntervalMs) return;
       lastActivityEmitAt = atMs;
       const at = new Date(atMs).toISOString();
-      const payload = {
-        kind,
-        at,
-        startedAt,
-        elapsedMs: Math.max(0, atMs - startedAtMs),
-        lastOutputAt,
-        deadlineAt,
-        timeoutMs,
-        processAlive,
-      };
+      const payload = { kind, at, startedAt, elapsedMs: Math.max(0, atMs - startedAtMs), lastOutputAt, deadlineAt, timeoutMs, processAlive };
       if (stream) payload.stream = stream;
       if (bytes != null) payload.bytes = bytes;
       activityQueue = activityQueue.then(async () => {
         if (activityError) return;
-        try { await onActivity(payload); }
-        catch (error) { activityError = error; }
+        try { await onActivity(payload); } catch (error) { activityError = error; }
       });
     };
 
@@ -196,10 +188,7 @@ export class DeterministicProcessRunner {
     const onAbort = () => { aborted = true; terminate(); };
     signal?.addEventListener('abort', onAbort, { once: true });
     if (signal?.aborted) onAbort();
-    const timer = setTimeout(() => {
-      timedOut = true;
-      terminate();
-    }, timeoutMs);
+    const timer = setTimeout(() => { timedOut = true; terminate(); }, timeoutMs);
     timer.unref?.();
     const exit = await new Promise((resolve, reject) => {
       child.once('error', reject);
@@ -234,7 +223,7 @@ export class DeterministicProcessRunner {
       startedAt,
       finishedAt: new Date().toISOString(),
       lastOutputAt,
-      sandbox: sandboxEvidence,
+      execution: { class: executionClass, location: 'host', identity: 'host-control' },
       processPriority,
     };
   }

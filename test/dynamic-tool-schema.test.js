@@ -8,20 +8,20 @@ import {
 } from '../src/runtime/local-operation-manifest.js';
 import { ToolInventoryService } from '../src/runtime/tool-inventory.js';
 import { parseCliHelp } from '../src/runtime/tool-onboarding.js';
+import { REPOSITORY_EXECUTION_STATUS_PROTOCOL } from '../src/runtime/repository-execution.js';
 
-function sandboxStatus() {
+function repositoryExecution() {
   return {
-    requestedProvider: 'fixture',
-    provider: 'fixture',
-    platform: process.platform,
-    available: true,
-    verified: true,
-    verification: 'fixture-passed',
-    repositoryCodeExecution: true,
-    filesystem: 'verified-boundary',
-    network: 'verified-deny',
-    gitAdministrativeState: 'read-only',
-    processTree: 'isolated',
+    inspect() {
+      return {
+        protocol: REPOSITORY_EXECUTION_STATUS_PROTOCOL,
+        state: 'ready',
+        ready: true,
+        identity: 'fixture',
+        reason: null,
+      };
+    },
+    async execute() { throw new Error('inventory must not execute repository code'); },
   };
 }
 
@@ -43,11 +43,10 @@ test('dynamic operation inventory exposes only controller-facing parameter shape
     source: { kind: 'operator' },
   }));
 
-  const sandbox = sandboxStatus();
   const service = new ToolInventoryService({
     operationRegistry: registry,
     toolchainRegistry: { inspect: async () => [] },
-    sandboxProvider: { inspect: () => sandbox },
+    repositoryExecution: repositoryExecution(),
     discoverPathToolsEnabled: false,
   });
   const record = await service.refresh();
@@ -55,6 +54,7 @@ test('dynamic operation inventory exposes only controller-facing parameter shape
 
   assert.equal(operation.layer, 'local-manifest');
   assert.equal(operation.repositoryCode, true);
+  assert.equal(operation.repositoryExecutionRequired, true);
   assert.equal(operation.usable, true);
   assert.deepEqual(operation.parameterSchema, {
     protocol: 'devbridge/operation-parameters-v1',
@@ -91,7 +91,7 @@ test('path-shaped enum metadata is withheld rather than becoming a remote machin
   const service = new ToolInventoryService({
     operationRegistry: registry,
     toolchainRegistry: { inspect: async () => [] },
-    sandboxProvider: { inspect: () => sandboxStatus() },
+    repositoryExecution: repositoryExecution(),
     discoverPathToolsEnabled: false,
   });
   const record = await service.refresh();

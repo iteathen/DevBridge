@@ -1,221 +1,323 @@
-# Architecture
+# DevBridge architecture
 
-DevBridge is a local daemon/CLI and control plane that watches a narrowly configured GitHub issue queue for trusted structured tasks, owns a managed Git workspace, executes bounded deterministic operations or locally configured proposal workers, verifies candidate state, coordinates human/peer decisions, publishes only through controller-owned Git effects, and persists enough evidence to recover without model conversation memory.
+## Purpose and current transition
 
-## Current implementation boundary
+DevBridge is a trusted local control plane that turns remote development requests into bounded local work without giving remote content direct machine authority.
 
-The current mainline implements the architecture through DB-018. The previously planned managed workspace, durable coordinator, deterministic controller plans, hard decision gates, verified Linux execution sandbox, self-update isolation, exact GitHub provenance, tool inventory/onboarding, context rollover, multi-agent leases/fencing, baseline-drift reverification, and cooperative pause/resource-priority slices are now real control-plane behavior.
+DB-020 defines the target repository-execution architecture: **persistent, networked virtual machines are the sole required repository-code security boundary**.
 
-DB-019 is the active design contract for cost-aware verification and durable test evidence. Its complete planner/evidence-store behavior is not yet implemented; issue #105 tracks that work.
+The initial host-provider set is first-class on both supported host families:
 
-The current major boundaries that remain deliberately incomplete are summarized in `docs/roadmap.md`: non-Linux untrusted-code sandbox providers, first-class package-manager/network phases, complete generic remote-effect journaling, per-installation task addressing for shared-team queues, stronger repository/tool identity evidence, DB-019 verification-cost/evidence implementation, hard OS resource quotas/parallel scheduling, and the remaining issue #49 CLI surfaces.
+- Windows host -> Hyper-V;
+- Linux host -> KVM/QEMU managed through libvirt.
 
-## Control-plane model
+Current main has not completed that transition. It still contains the Linux/Bubblewrap host-sandbox implementation, while draft PR #106 contains superseded Windows ProcessContainer/AppContainer experimentation.
 
-DevBridge owns authoritative run state, Git workspace state, capability policy, task provenance, checkpoint/decision state, coordination lease state, verification identity/evidence, publication state, runtime-update state, and daemon lifecycle state.
+The approved migration does **not** keep the legacy sandbox live until VM replacement is complete. Stage 1 removes active host-sandbox repository execution first, establishes an explicit fail-closed no-provider state, and uses that removal to expose/prove the LEGO connection studs. Stages 2–5 build the VM system while normal repository-controlled execution remains unavailable. Stage 6 restores repository execution through VMs only.
 
-Remote and local LLMs do not own the control plane; they propose work to it. Repository content and subprocess output are also untrusted inputs unless a typed locally controlled adapter deliberately turns a specific observation into evidence.
+No direct/uncontained host fallback is allowed during the no-provider interval.
 
-The primary orchestration path is conceptually:
-
-`TaskSource -> ProvenanceGate -> RunCoordinator -> LeaseGate -> WorkspaceManager -> ControllerPlan/ProposalRunner -> VerificationPlanner/Verifier -> DecisionGate -> Publisher -> Reconciler`
-
-Supporting control-plane services provide state storage, rate budgeting, capability/sandbox admission, worker IPC, tool inventory, verification evidence, context rollover, runtime supervision, and daemon governance.
-
-Events may describe state changes and feed observability, but a durable coordinator and locally owned adapters decide authoritative lifecycle transitions. Hidden callback chains must not become execution authority.
+`docs/vm-migration.md` records the removal/retention inventory. `docs/vm-lego-studs.md` defines the unplug/delete/fake-provider/VM-attachment proof.
 
 ## Authority hierarchy
 
-Authority flows downward:
+DevBridge owns authoritative:
 
-1. local operator configuration, local control-state keys, and the host OS enforcement boundary;
-2. DevBridge's checked-in normative specs and implementation;
-3. locally configured delegation to specific numeric GitHub actors for task authorship or decision classes;
-4. locally configured trusted coordination peer public keys for lease verification;
-5. target-repository instructions such as `AGENTS.md`, which may guide project work but cannot grant machine capability;
-6. remote/local LLM output, repository content, web content, dependencies, generated files, tool documentation, and process output, which remain data/proposals.
+- task/feedback/decision provenance;
+- local capability policy;
+- repository identity and authorized baselines;
+- VM provider/image/environment lifecycle;
+- host↔guest bridge admission;
+- GitHub credentials and API mutation authority;
+- coordination identity, leases, and fencing;
+- authoritative Git/candidate/publication state;
+- verification planning/evidence;
+- checkpoints/hard-gate subjects;
+- durable run/effect/recovery state;
+- runtime release/activation/rollback state;
+- daemon lifecycle/control state.
 
-No lower level can grant itself authority from a higher level.
+Remote controllers, coding models, repository content, dependencies, guest tools, tests, guest Git, and process output are inputs/proposals. They do not own control-plane truth.
 
-A remote human decision is not a general override. It is accepted only when local policy delegates every triggered decision class to that actor and the exact current GitHub comment provenance plus run/task/checkpoint/subject identity match.
+## Trust domains
 
-A coordination peer signature is not task or execution authority. It authenticates lease ownership only.
+### Trusted host
 
-## Remote task admission and workstation dispatch
+The trusted host contains the DevBridge controller and host-only authority:
 
-GitHub tasks are accepted only when DevBridge can verify the exact current issue-body bytes and trusted edit provenance under DB-002/DB-010. Creator identity alone is insufficient.
+- GitHub and Git transport credentials;
+- DB-016 coordination private keys;
+- release/signing authority;
+- authoritative Git administration and publication refs;
+- daemon locks/control state;
+- run/effect/checkpoint/verification journals;
+- selected VM-provider management authority;
+- base-image registry and environment mapping.
 
-`github.trustedActorIds` is a local remote-job-submission allowlist. A trusted actor can request work on repositories already allowed by that runner; the task itself cannot provide local paths, executables, raw argv, environment values, credentials, sandbox exceptions, peer keys, or Git publication authority.
+Host code may run fixed/static control operations only when their implementation cannot be redirected into repository-controlled code.
 
-Current task envelopes are not addressed to a cryptographic agent identity. DB-016 prevents two compliant authorized installations from simultaneously owning the same task, but it does not decide which human is allowed to dispatch to which workstation.
+During the intentional Stage-1-to-Stage-5 no-provider interval, absence of a repository execution provider means repository-controlled work is unavailable. It never broadens the set of operations considered safe to run on the host.
 
-Therefore a deployment requiring strict cross-developer workstation isolation must currently enforce it with runner-local queue/trusted-actor policy. A shared repository collaborator list must not automatically become every runner's `trustedActorIds` list. Per-installation dispatch addressing/authorization is remaining roadmap work rather than an implied property of leases.
+### Untrusted repository environment
 
-## Core task flow
+A repository environment is one persistent VM bound to stable repository identity + host provider + enabled guest OS/profile + image/environment generation.
 
-1. `TaskSource` polls the configured GitHub queue using conditional authenticated requests and the DB-004 shared rate budget.
-2. The GitHub provenance adapter verifies exact issue-body identity and edit authorship before creating a trusted `TaskEnvelope`.
-3. Task parsing separates bounded objective/context fields from machine authority. Requested capabilities and preferred tool names are descriptive requests only.
-4. If DB-016 coordination is enabled, the daemon acquires or renews the signed task lease with exact Git-ref CAS before execution. Peer-held tasks defer.
-5. `RunCoordinator` creates or resumes durable run state and preserves immutable `baseSha` start evidence.
-6. `WorkspaceManager` maps `owner/name` into DevBridge-owned repositories/worktrees; tasks never supply a local path.
-7. The coordinator chooses either a deterministic controller-plan path or an explicitly enabled proposal/model adapter.
-8. Capability admission verifies the exact operation/profile, outer sandbox enforcement, environment/network policy, lease fence, and current daemon/run state before child launch.
-9. Worker IPC is projected from a control-owned mailbox outside the proposal worktree. Context bytes are read-only; the pre-created result object is writable in place and revalidated before privileged consumption.
-10. Candidate edits are verified against the current publication baseline. Controller-plan persistent outputs receive exact final-byte verification after deterministic operations and cleanup.
-11. DB-019 verification planning determines the locally required verification set from ownership/risk/qualification policy, reuses exact still-valid evidence, and orders cheap high-signal prerequisites before expensive downstream suites where dependencies permit.
-12. DB-007 locally classifies sensitive candidate effects. Pending gates do not stop unrelated safe work; matching artifact-exact approval is required before sensitive sealing/publication.
-13. DevBridge creates/records the exact candidate commit and verification evidence.
-14. Before publication, DB-016 lease ownership and DB-017 exact verified-head identity are rechecked. Publication uses controller-owned Git refs and explicit expected remote state.
-15. Ambiguous effects are observed/reconciled before retry. Durable state records the resolved outcome.
+Assume guest administrator/root compromise. The guest may control every guest-local process/file/service, package/tool installation, build/test output, coding worker, guest Git repository, and bridge helper/guest agent. It also has normal network access by default.
 
-## Managed Git/workspace model
+The host therefore exposes no secrets or authoritative writable state to it. Compromise of the guest may destroy/exfiltrate guest data; it must not grant host GitHub/publication/coordination/release/daemon/provider-management authority.
 
-DevBridge operates on poller-owned managed repositories and disposable/recoverable worktrees rather than destructively manipulating a developer's casual checkout.
+No required Bubblewrap/AppContainer/ProcessContainer layer exists inside the guest.
+
+## Provider model
+
+Controller logic depends on provider-neutral lifecycle/image/environment/bridge contracts. Provider adapters own platform details.
+
+The Stage-1 sandbox-free state must remain structurally coherent with no production provider registered. A test fake may attach for architecture tests, but it is not a production security fallback.
+
+### Windows / Hyper-V
+
+The Hyper-V adapter owns:
+
+- observed Hyper-V capability and management readiness;
+- Hyper-V VM identity/configuration;
+- immutable VHD/VHDX base-image inventory;
+- per-repository differencing-disk lineage;
+- provider networking;
+- provider-specific lifecycle/recovery;
+- the selected Hyper-V bridge transport(s).
+
+### Linux / KVM-QEMU-libvirt
+
+The Linux adapter owns:
+
+- observed KVM acceleration and libvirt provider readiness;
+- QEMU/libvirt domain identity/configuration;
+- immutable base-image inventory;
+- per-repository qcow2 backing/overlay lineage;
+- libvirt/QEMU networking/storage ownership;
+- provider-specific lifecycle/recovery;
+- the selected libvirt/QEMU bridge transport(s).
+
+The expected management direction is the locally authorized libvirt system provider, normally `qemu:///system`, unless Stage 2 research justifies a narrower equivalent adapter.
+
+`/dev/kvm`, `virsh`, QEMU binaries, Hyper-V installation, or a VM/domain name alone are not readiness evidence.
+
+## Control-plane flow
+
+The target primary path after Stage 6 is conceptually:
+
+`TaskSource -> ProvenanceGate -> RunCoordinator -> LeaseGate -> Host Repository/Baseline -> Repository VM -> Host Bridge -> Verification/Import -> DecisionGate -> Host Seal/Publish -> Reconciler`
+
+Detailed flow:
+
+1. DevBridge obtains a typed task from the configured queue/source.
+2. Provenance is verified against exact trusted actor/revision identity.
+3. Local policy resolves the repository, semantic baseline, requested capabilities, host provider, guest OS/profile, and required environment.
+4. DB-016 lease/fence state is acquired/revalidated when coordination is enabled.
+5. The host prepares authoritative source/baseline state and resolves the exact persistent repository environment.
+6. The host verifies provider/base-image/writable-layer/environment/bridge readiness.
+7. Source/context/files cross the narrow bridge using logical identities/guest-relative paths, not arbitrary host paths.
+8. Repository-controlled deterministic operations or optional coding workers execute inside the guest.
+9. Results/candidate files return as untrusted data through the bridge.
+10. The host validates exact run/repository/baseline/source/candidate identities and imports only permitted candidate bytes into authoritative host state.
+11. DB-019 selects/reuses required verification evidence; DB-007 handles consequential human gates without blocking unrelated safe work.
+12. DevBridge seals the exact host candidate.
+13. Before publication, lease, gate, verification, baseline, and remote predecessor state are rechecked.
+14. Host Git/GitHub adapters perform the permitted effect with explicit expected state.
+15. DB-009 observes/reconciles ambiguous external effects before retry.
+
+Before Stage 6, repository-controlled paths stop at provider availability/admission and fail closed; they do not continue as host execution.
+
+## Persistent environment and storage model
+
+Base OS/tooling images are immutable/versioned. Repository writable state is provider-native copy-on-write state where supported.
 
 Conceptually:
 
 ```text
-<workspace-root>/
-  repositories/<owner>/<repo>/
-  worktrees/<owner>/<repo>/<run-id>/
-  runs/<run-id>/
+base-images/
+  <provider>/<guest-profile>/<image-generation>/<immutable-base>
+
+environments/
+  <repository-id>/<provider>/<guest-profile>/<environment-generation>/
+    <provider-native-writable-layer>
+    lifecycle-state
+    bridge-state
 ```
 
-Control-owned durable state, worker mailbox state, identity keys, daemon control records, runtime activation state, verification evidence, and chat-handoff state live outside proposal trees under the configured DevBridge state/runtime roots.
+Exact paths/names are host-local implementation detail.
 
-A task names a repository (`owner/name`), never a local path. Local policy chooses allowed owners, workspace roots, baseline channels, publication branch prefixes, manifest roots, and other filesystem authority.
+Hyper-V uses differencing VHD/VHDX parent/child semantics. KVM/QEMU uses qcow2 backing/overlay semantics. Both relationships are identity-bearing state that must be revalidated rather than inferred from filenames.
 
-DevBridge does not auto-clean/reset an arbitrary existing dirty checkout. Uncertain managed-worktree repair prefers reconstruction/replacement over deleting unexplained Git locks or discarding unknown state.
+Stopping a VM/domain does not delete its writable layer. Host/daemon restart reconciles the same environment rather than creating another one blindly.
 
-## Baseline identity and drift
+Reset/reseed explicitly discards one contaminated environment generation and reconstructs it from an immutable base plus authoritative repository inputs. Reparent/rebase is never an implicit image migration shortcut.
 
-Every run records two distinct baseline concepts:
+## Narrow host↔guest bridge
 
-- `baseSha`: immutable start-of-run evidence;
-- `publicationBaseSha`: the exact baseline against which the current candidate is verified for publication.
+The bridge is the only normal command/file crossing between host control plane and repository guest.
 
-The active task remains bound to its authorized baseline ref/channel. Only same-ref fast-forward upstream movement may be automatically reconciled. Rewritten history checkpoints instead of silently changing authority.
+It supports bounded:
 
-Successful rebase invalidates prior verification. Model-assisted candidates consume a fresh bounded verification turn; deterministic controller plans replay their registered assertions/operations against the rebased state. Dirty/local-head/publication-baseline drift after verification invalidates evidence again before sealing/publication.
+- command/operation invocation;
+- structured context/input;
+- source/file transfer into the guest;
+- result/evidence/candidate retrieval;
+- exit/timeout/cancellation/liveness observation;
+- exact provider/environment/run/operation identity.
 
-DB-019 may preserve independent verification evidence only when its exact candidate/baseline/test/policy/environment identity remains applicable. It does not override DB-017 invalidation when the verified subject changed.
+Guest-controlled messages cannot name arbitrary host paths, host executables, Git refs, credentials, provider-management targets, or control-state objects.
 
-Publication binds the exact verified local head as payload identity and uses explicit expected remote head state. Symbolic `HEAD`, blind force, or unexplained remote branch state are not publication authority.
+Stage 4 selects provider transports after research.
 
-## Execution architecture
+Relevant primitives include Hyper-V integration channels/sockets and Windows-specific PowerShell Direct, plus libvirt/QEMU virtio channels, QEMU Guest Agent, and vsock-capable transports.
 
-The preferred path is:
+QEMU Guest Agent is not trusted guest evidence: a compromised guest may forge responses. That is acceptable only because the host treats every bridge response as untrusted data and validates the resulting host-side subject independently.
 
-`Primary chat controller -> DevBridge -> deterministic local operations -> verify -> seal/publish`
+## Git and source/candidate model
 
-A primary chat controller may author file content, expected outputs, bounded parameters, and execution intent. DevBridge owns materialization, executable selection, argv construction, environment policy, sandbox admission, process lifecycle, cleanup, Git identity, verification, and publication.
+Authoritative Git remains host-owned under DB-008/DB-017.
 
-Coding-model adapters remain optional compatibility/inference surfaces and are disabled by default in the reference configuration. Do not route deterministic compiler/test/Git/state work through a coding model merely because an adapter exists.
+The guest may have ordinary Git and arbitrary guest-local commits/remotes. Those are untrusted development state. The host does not mount authoritative `.git` writable into the guest and does not give the guest publication credentials.
 
-### Deterministic controller plans
+Source synchronization is host-to-guest. Candidate synchronization is guest-to-host. Stage 6 defines exact incremental transfer and drift/conflict handling.
 
-DB-013 controller plans are data, not remote shell scripts. They may propose bounded project file changes and invoke locally registered named operations with closed parameter schemas. They cannot provide executables, raw shell/argv, arbitrary local paths, cleanup roots, credentials, network authority, or arbitrary Git refs.
+Host sealing/publication continues to use exact candidate/baseline identity and explicit expected remote predecessor state. A guest commit SHA is never publication authority by itself.
 
-Persistent file proposals are verified by exact normalized bytes after all deterministic operations and scratch cleanup. Operation-generated persistent output is not implicitly authorized through changed-path lists.
+## Networking and secrets
 
-### Cost-aware verification
+Guests have networking enabled by default so package managers, SDK installers, documentation/source fetches, browser tests, coding services, and normal development tools work naturally.
 
-DB-019 treats verification cost and evidence lifecycle as control-plane state.
+The confidentiality rule is therefore simple: **do not put host secrets in the guest**.
 
-Tests/suites should have stable identities and locally controlled metadata for tier/class, ownership/risk tags, expected/historical runtime, timing policy, resource requirements, and decomposability where relevant.
+The following remain host-only:
 
-The planner selects the smallest verification set that still proves the required contracts. Security, sandbox, installer/bootstrap/runtime, Git/GitHub control, persistence/recovery, public protocol/schema, tool-authority, and platform-execution changes remain able to force broad expensive qualification.
+- GitHub tokens/CLI credentials;
+- host SSH agent/keys;
+- coordination private keys;
+- release/signing authority;
+- daemon-control tokens/state;
+- authoritative Git/publication state;
+- Hyper-V/libvirt/QEMU management authority;
+- arbitrary operator-home credentials.
 
-A long test is not automatically a problem. A one-size-fits-all timeout is. Registered suites use bounded suite-specific expected/slow/liveness/hard-timeout policy, and long execution must expose enough liveness to distinguish healthy work from a hang.
+Private dependency/coding-service workflows require explicit later scoped designs; they do not justify copying broad host credentials into persistent guests.
 
-Passing evidence is reusable only when its exact candidate/baseline/test/policy/platform/sandbox/toolchain/config identity still matches. Restart, chat rollover, or a repeated model request is not itself a reason to rerun an expensive suite.
+## Controller plans and deterministic operations
 
-Future verification parallelism must be resource-aware and cannot be inferred from a raw concurrency setting.
+DB-013 plans remain data, not command authority.
 
-### Dynamic tool onboarding
+DevBridge classifies execution:
 
-DB-015 lets local operators extend `tool.*` operations without source edits, but observation never creates authority.
+- static/control operations may run on host only when they provably cannot execute repository-controlled code;
+- repository-controlled operations are unavailable after Stage 1 until Stage 6 restores VM-backed routing;
+- after Stage 6, repository-controlled operations execute inside the bound repository VM;
+- unknown operations default to repository-controlled.
 
-PATH discovery is presence-only. Automatic unfamiliar-tool onboarding is disabled by default and requires exact local pre-authorization of the command/help probe. The probe itself runs as untrusted repository-code execution behind the verified OS boundary with network denied and control credentials/state hidden. Help/man/spec output may shape only a bounded non-authority parameter schema. The generated manifest is persisted under an operator-owned manifest root before activation.
+Controllers supply only bounded schema parameters, never raw shell/host argv/host paths/provider targets.
 
-## Verified worker/repository-code isolation
+Provider absence never reclassifies repository-controlled work as host-safe.
 
-A proposal/model worker or repository-controlled operation cannot launch solely because a tool profile claims sandboxing. DevBridge requires a separately observed outer isolation provider.
+## Tool inventory and onboarding
 
-The current built-in provider is Linux/Bubblewrap. Its admission probe verifies, with harmless control-created sentinels, that:
+DB-015 inventory reports observed capability; it never creates it.
 
-- project/run-scratch writes work;
-- arbitrary outside writes fail;
-- unrelated host/control-state reads fail;
-- authoritative Git administration is not writable;
-- denied network egress is actually denied;
-- expected capability dropping/isolation is present.
+Host inventory covers control-plane/provider prerequisites:
 
-Worker HOME/TMP are synthetic. Control-plane GitHub/SSH credential channels are stripped. Only explicitly configured non-control service credentials may be inherited by an enabled proposal profile.
+- Windows: Node, Git, Hyper-V management/bootstrap tools;
+- Linux: Node, Git, KVM/QEMU/libvirt management/bootstrap tools.
 
-Unsupported platforms fail closed for untrusted proposal-worker/repository-code execution. Static inspection/control-plane functionality remains available where safe.
+Repository toolchains are discovered/used inside the guest environment after VM restoration. Guest tool observations are bound to exact environment generation and remain untrusted planning evidence. Dynamic `tool.*` manifests/schema validation stays host-controlled, while actual repository-class probing/execution moves into the guest.
 
-## Human checkpoint-and-proceed control
+During the no-provider interval, repository-class probes requiring execution are unavailable rather than redirected to host tools.
 
-Human attention is orthogonal to the primary run lifecycle.
+## Verification and evidence
 
-A run may continue safe reversible work while an architectural or other consequential decision is pending. Only when the safe frontier is exhausted does it enter `waiting-decision`. Hard-gated effects remain prohibited until matching local delegation and exact decision provenance/subject binding are satisfied.
+DB-019 treats verification cost/evidence as control-plane state.
 
-Sensitive candidate approval is currently artifact-exact for automatic hard gates: changing candidate identity invalidates the prior approval. The exact subject is recomputed before sealing and again before task-branch publication, including restart-from-publishing recovery paths.
+VM/provider/bridge/security changes are legitimate qualification triggers. Documentation-only Stage 0 does not require a real VM suite that cannot exist yet; Stage 7 does.
 
-Capability expansion is never granted by a decision comment. Local policy remains required for new executable/filesystem/network/credential/sandbox/trust authority.
+Passing evidence should bind, as relevant, to:
 
-## Multi-agent coordination and fencing
+- exact candidate/baseline;
+- test/policy identity;
+- host platform/provider;
+- base-image identity;
+- repository environment generation;
+- writable-layer lineage;
+- bridge identity/version;
+- relevant guest toolchain/config.
 
-When coordination is enabled, each installation owns a persistent control-state Ed25519 keypair. Public-key SHA-256 is the stable fingerprint/address; the private key never enters task repositories, worker contexts, process environments, or public status.
+Restart/context rollover does not justify rerunning expensive tests when exact evidence remains valid. Environment reset/reseed/provider/image/candidate drift invalidates dependent evidence conservatively.
 
-Task leases are signed bounded subjects stored behind DevBridge-owned queue-repository refs. Transitions use explicit expected-value Git CAS. Labels/comments may mirror state for humans but are not ownership authority.
+Stage 1 additionally requires cheap no-provider, fake-provider, dependency/removal, and direct-host-fallback-denial evidence.
 
-Lease TTL/heartbeat lets a trusted peer reclaim crashed ownership after expiry/skew. A definite CAS loss fences immediately; ambiguous renewal does not invent a successor but expires naturally. Fence checks occur before new workers/operations and before sealing/publication, and active children receive an abort signal where the process containment path supports it.
+## Runtime supervision
 
-Lease release is a signed CAS state transition rather than blind ref deletion.
+DB-011 keeps release integrity, runtime artifact identity, activation, health checking, and last-known-good rollback on the trusted host.
 
-## Durable recovery and context rollover
+Candidate-controlled preflight/tests are untrusted executable code. Stage 1 disables/removes the legacy host-sandbox candidate execution path. Until Stage 6 provides a VM validation environment, candidate-controlled execution is unavailable/fail-closed while DB-011 identity/rollback rules remain intact.
 
-DevBridge treats model/chat context as disposable.
+Stage 6 restores candidate execution through a provider-native VM validation environment: Hyper-V on Windows, KVM/QEMU/libvirt on Linux.
 
-Run state, exact task/baseline/candidate identity, checkpoints, decisions, verification records, effect intent/outcome, cleanup ownership, and next-action evidence live in durable control state.
+Candidate networking may be available; host secrets/control state are not.
 
-DB-019 extends verification recovery: exact still-valid expensive test evidence should survive daemon restart, chat rollover, and publication recovery rather than being rerun reflexively. Decomposable suites may checkpoint completed cases when their semantics make those checkpoints trustworthy; changed candidate/environment/policy identities invalidate only evidence that can no longer be proven applicable.
+## Recovery
 
-DB-014 adds bounded `devbridge/chat-handoff-v1` checkpoints for coordinating-chat rollover. Handoffs bind repository/baseline/head/task identity, governing-document digests, stable completed action IDs, one exact next action, and a whole-record SHA-256. Fresh contexts observe/reconcile before acting and do not invent a new next step if the recorded action already occurred.
+DB-009's rule is universal:
 
-Large logs/diffs/test output belong behind bounded durable references rather than becoming a transcript dump.
+> Persist intent/evidence, observe exact current state, reconcile ambiguity, then repeat only what remains necessary.
 
-## Runtime supervision and self-update
+VM operations add durable objects that participate in that rule:
 
-The bootstrap supervisor is intentionally separate from the mutable daemon runtime.
+- base images;
+- VHDX differencing or qcow2 overlay chains;
+- repository environment records;
+- VM/domain lifecycle state;
+- bridge operation/transfer state;
+- source/candidate import subjects.
 
-Development mode follows a mutable testing channel as an explicit alpha risk. Production mode requires a locally trusted signed immutable release subject binding fixed repository identity, exact commit, version, and runtime artifact digest.
+A missing in-memory handle is not evidence that a VM/disk disappeared. A failed guest command is not permission to delete persistent environment state. Deletion/reset/reseed requires exact ownership proof.
 
-Candidate-controlled preflight/tests execute only inside the verified untrusted-code sandbox with control/runtime secrets hidden and network denied. The supervisor rechecks exact artifact identity after validation and at activation. The current daemon drains only after candidate acceptance, then the supervisor activates the exact tested candidate, runs health/doctor, and rolls back to last-known-good on failure.
+Provider removal in Stage 1 is also a recovery concern: durable work that depended on the deleted sandbox must reconcile to unavailable/failed state rather than being replayed through a direct-host fallback.
 
-## Daemon control and workstation governance
+## Human checkpoints
 
-The daemon has a token-bound singleton lock. Local `stop`, `pause`, and `resume` records bind to that exact lock owner so stale files cannot control a replacement process.
+DB-007 remains checkpoint-and-proceed.
 
-Pause is cooperative admission control at a safe task-cycle boundary. It does not freeze active threads/processes and therefore does not violate lease heartbeat/fencing semantics. A fully paused daemon performs no routine task polling/claiming. Stop has precedence over pause.
+Consequential decisions can gate a specific boundary while reversible work continues. Remote approval does not grant new host filesystem, credential, VM-management, executable, guest-secret, peer-trust, or publication capability.
 
-Model/deterministic child processes use below-normal OS priority by default. Failure to apply a requested non-normal priority fails the operation instead of silently degrading to normal priority. Priority is QoS only; it is not a security sandbox or hard resource quota.
+## Workstation/resource governance
 
-Task admission is currently serialized to one active task/run continuation per daemon cycle. Parallel worker scheduling requires a future explicit scheduler/lease/effect accounting contract. DB-019 likewise does not grant ad-hoc test parallelism; future verification concurrency must account for resource/exclusivity constraints explicitly.
+DB-018 currently provides serialized task admission, host child priority for trusted/provider processes, and cooperative pause/resume.
 
-## GitHub and publication authority
+Host process priority is QoS, not containment and cannot justify repository execution on the host during the no-provider interval.
 
-GitHub API operations are serialized/rate-budgeted and use persisted conditional validators where applicable. Status/tool-inventory/handoff projections are bounded, redacted, and coalesced rather than treated as a free event stream.
+VM resource limits/observations belong to the provider layer. Stage 7 reports only CPU/memory/disk/lifecycle constraints Hyper-V or libvirt/QEMU can actually enforce/observe. Persistent disk growth/cleanup is bounded without deleting unowned storage.
 
-Control-plane Git operations run outside proposal-worker authority under hardened environment/config rules. Automatic task-branch publication is separately locally authorized and disabled by default.
+DB-020 does not create general parallel task scheduling.
 
-DevBridge does not treat ordinary task text as authority to merge the default branch, force arbitrary refs, release/tag/deploy, or close issues. Those remain separate locally controlled effect classes.
+## Migration stages
+
+Issue #107 is the active program:
+
+1. Stage 0 — architecture/spec ratification and sandbox-first migration inventory (#108).
+2. Stage 1 — remove host sandbox execution, expose/prove LEGO studs, establish fail-closed no-provider state (#109).
+3. Stage 2 — Hyper-V + KVM/QEMU/libvirt host backends and base-image lifecycle (#110).
+4. Stage 3 — persistent repository/OS writable-layer and VM lifecycle on both providers (#111).
+5. Stage 4 — provider-adapted host↔guest command/file bridge (#112).
+6. Stage 5 — guest bootstrap/network/toolchain behavior (#113).
+7. Stage 6 — restore deterministic operations/workers/candidate execution through persistent VMs only (#114).
+8. Stage 7 — provider/guest matrix verification/doctor/recovery/CI/resource/security/LEGO acceptance (#115).
+9. Stage 8 — Windows/Linux installer/setup/reconfiguration integration (#116).
+10. Stage 9 — finalize VM-only architecture and remove remaining migration scaffolding (#117).
+
+Stages 2–5 deliberately operate while normal repository-controlled execution is unavailable. Do not reintroduce Bubblewrap/AppContainer/ProcessContainer or direct-host execution to bridge the gap.
 
 ## Documentation authority
 
-`specs/DB-001-system.md` through `specs/DB-019-verification-cost-evidence.md` are the current normative contracts. `AGENTS.md`, this architecture document, `docs/bootstrap.md`, `docs/tool-profiles.md`, `docs/testing/verification-governance.md`, and `docs/roadmap.md` describe the current operating/engineering view.
+`specs/DB-001` through `specs/DB-020` are the live normative contracts. DB-020 governs the target repository-execution security boundary and migration sequence.
 
-`docs/handoffs/` and point-in-time testing audits are historical evidence. They intentionally preserve the state that existed when written and do not override newer specs/mainline behavior.
+`AGENTS.md`, this architecture document, `docs/vm-migration.md`, `docs/vm-lego-studs.md`, `docs/bootstrap.md`, `docs/tool-profiles.md`, `docs/testing/verification-governance.md`, and `docs/roadmap.md` describe the current engineering/operating view.
+
+Checksum-bound handoffs and point-in-time testing audits are historical evidence. They remain valuable but do not override newer active specifications.

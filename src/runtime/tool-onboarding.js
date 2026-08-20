@@ -1,11 +1,8 @@
 import { createHash } from 'node:crypto';
-import { lstat, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import process from 'node:process';
 import { PolicyError } from '../errors.js';
-import { resolveExecutable } from './executable-resolver.js';
 import {
-  LOCAL_OPERATION_MANIFEST_PROTOCOL,
   createManifestOperationAdapter,
   validateLocalOperationManifest,
 } from './local-operation-manifest.js';
@@ -179,13 +176,6 @@ function generatedOperation(command, explicit = null) {
   return `tool.${suffix}`;
 }
 
-function probeEnvironment() {
-  const pass = process.platform === 'win32'
-    ? ['PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'SystemDrive']
-    : ['PATH'];
-  return { pass, set: { CI: '1' } };
-}
-
 function normalizePolicyEntry(raw, index) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new PolicyError(`tool onboarding autoIntegrate[${index}] must be an object`);
   for (const key of Object.keys(raw)) if (!['command', 'operation', 'helpArgs'].includes(key)) throw new PolicyError(`tool onboarding autoIntegrate[${index}].${key} is not allowed`);
@@ -234,28 +224,21 @@ async function readExistingManifest(filePath) {
 
 export class ToolOnboardingService {
   #registry;
-  #runner;
+  #repositoryExecution;
   #workspaceRoot;
   #manifestDirectory;
   #entries;
-  #env;
-  #maxHelpBytes;
-  #timeoutMs;
 
   constructor({
     operationRegistry,
-    processRunner,
+    repositoryExecution = null,
     workspaceRoot,
     manifestDirectory,
     autoIntegrate = [],
-    env = process.env,
-    maxHelpBytes = MAX_HELP_BYTES,
-    timeoutMs = 15_000,
   }) {
     if (!operationRegistry || typeof operationRegistry.register !== 'function') throw new TypeError('ToolOnboardingService requires an operation registry');
-    if (!processRunner || typeof processRunner.run !== 'function') throw new TypeError('ToolOnboardingService requires a deterministic process runner');
     this.#registry = operationRegistry;
-    this.#runner = processRunner;
+    this.#repositoryExecution = repositoryExecution;
     this.#workspaceRoot = path.resolve(workspaceRoot);
     this.#manifestDirectory = path.resolve(manifestDirectory);
     if (pathWithin(this.#workspaceRoot, this.#manifestDirectory)) {
@@ -267,9 +250,6 @@ export class ToolOnboardingService {
       if (operations.has(entry.operation)) throw new PolicyError(`tool onboarding duplicates operation ${entry.operation}`);
       operations.add(entry.operation);
     }
-    this.#env = env;
-    this.#maxHelpBytes = Math.min(MAX_HELP_BYTES, maxHelpBytes);
-    this.#timeoutMs = timeoutMs;
   }
 
   async #registerExisting(entry, manifestPath) {
@@ -278,61 +258,26 @@ export class ToolOnboardingService {
     if (existing.operation !== entry.operation || existing.executable !== entry.command) {
       throw new PolicyError(`generated manifest for ${entry.command} conflicts with local onboarding policy`);
     }
-    if (!this.#registry.has(entry.operation)) this.#registry.register(entry.operation, createManifestOperationAdapter(existing, { env: this.#env }));
+    if (!this.#registry.has(entry.operation)) this.#registry.register(entry.operation, createManifestOperationAdapter(existing));
     return { command: entry.command, operation: entry.operation, state: 'registered-existing', helpSha256: existing.source.helpSha256 ?? null };
   }
 
-  async #probe(entry) {
-    let executable;
-    try { executable = await resolveExecutable(entry.command, this.#env); }
-    catch {
-      return { command: entry.command, operation: entry.operation, state: 'unavailable' };
-    }
-    const probeRoot = await mkdtemp(path.join(this.#workspaceRoot, '.devbridge-tool-probe-'));
-    try {
-      const result = await this.#runner.run({
-        executable,
-        args: entry.helpArgs,
-        cwd: probeRoot,
-        timeoutMs: this.#timeoutMs,
-        maxOutputBytes: this.#maxHelpBytes,
-        environment: probeEnvironment(),
-        operation: `tool-onboarding.${entry.command}`,
-        executionClass: 'repository-code',
-        sandbox: {
-          required: true,
-          projectDir: probeRoot,
-          network: 'deny',
-          exposeConfiguredReadRoots: false,
-        },
-      });
-      if (result.timedOut) return { command: entry.command, operation: entry.operation, state: 'probe-timeout' };
-      if (result.outputTruncated) return { command: entry.command, operation: entry.operation, state: 'probe-output-truncated' };
-      const help = [result.stdout, result.stderr].filter(Boolean).join('\n');
-      if (!help.trim()) return { command: entry.command, operation: entry.operation, state: 'probe-no-documentation', exitCode: result.exitCode };
-      const parsed = parseCliHelp(help);
-      if (parsed.arguments.length === 0) return { command: entry.command, operation: entry.operation, state: 'probe-no-safe-interface', exitCode: result.exitCode };
-      const manifest = validateLocalOperationManifest({
-        protocol: LOCAL_OPERATION_MANIFEST_PROTOCOL,
-        operation: entry.operation,
-        executable: entry.command,
-        arguments: parsed.arguments,
-        timeoutMs: 120_000,
-        maxOutputBytes: 1024 * 1024,
-        requireAnyParameter: true,
-        source: { kind: 'help-synthesized', command: entry.command, helpSha256: parsed.helpSha256 },
-      });
-      return { command: entry.command, operation: entry.operation, state: 'synthesized', manifest, helpSha256: parsed.helpSha256, exitCode: result.exitCode };
-    } catch (error) {
+  #unavailableObservation(entry) {
+    const status = this.#repositoryExecution?.inspect?.() ?? null;
+    if (status?.ready !== true) {
       return {
         command: entry.command,
         operation: entry.operation,
-        state: 'probe-blocked',
-        errorClass: error?.name ?? 'Error',
+        state: 'repository-execution-unavailable',
+        reason: status?.reason ?? 'no repository execution implementation is configured',
       };
-    } finally {
-      await rm(probeRoot, { recursive: true, force: true });
     }
+    return {
+      command: entry.command,
+      operation: entry.operation,
+      state: 'repository-scope-required',
+      reason: 'automatic repository-class probing requires an exact repository environment and is restored in VM Stage 6',
+    };
   }
 
   async reconcile() {
@@ -345,7 +290,6 @@ export class ToolOnboardingService {
     this.#workspaceRoot = workspaceRoot;
     this.#manifestDirectory = manifestRoot;
     const events = [];
-    let changed = false;
     for (const entry of this.#entries) {
       const fileName = `auto-${entry.operation.replace(/[^A-Za-z0-9_.-]/gu, '-')}.json`;
       const manifestPath = path.join(manifestRoot, fileName);
@@ -358,32 +302,9 @@ export class ToolOnboardingService {
         events.push({ command: entry.command, operation: entry.operation, state: 'registered' });
         continue;
       }
-      const observation = await this.#probe(entry);
-      if (observation.state !== 'synthesized') {
-        events.push(observation);
-        continue;
-      }
-      const content = `${JSON.stringify(observation.manifest, null, 2)}\n`;
-      try {
-        await writeFile(manifestPath, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-      } catch (error) {
-        if (error?.code !== 'EEXIST') throw error;
-        const reconciled = await this.#registerExisting(entry, manifestPath);
-        if (!reconciled) throw new PolicyError(`tool onboarding could not reconcile generated manifest for ${entry.command}`);
-        events.push(reconciled);
-        continue;
-      }
-      this.#registry.register(entry.operation, createManifestOperationAdapter(observation.manifest, { env: this.#env }));
-      changed = true;
-      events.push({
-        command: entry.command,
-        operation: entry.operation,
-        state: 'registered-synthesized',
-        helpSha256: observation.helpSha256,
-        parameterCount: observation.manifest.arguments.filter((arg) => arg.param).length,
-      });
+      events.push(this.#unavailableObservation(entry));
     }
-    return { changed, events };
+    return { changed: false, events };
   }
 }
 

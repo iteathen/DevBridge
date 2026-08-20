@@ -2,7 +2,7 @@
 
 `devbridge.mjs` is the canonical stage-0 launcher for DevBridge on a machine with Node.js 22.16.0+ and Git.
 
-Stage 0 is intentionally small. It establishes the fixed managed DevBridge checkout needed to reach the secure bootstrap; it does not replace the supervisor's candidate-validation, activation, or rollback authority.
+Stage 0 is intentionally small. It establishes the fixed managed DevBridge checkout needed to reach the secure bootstrap; it does not replace the supervisor's candidate-validation, activation, rollback, or VM-provider authority.
 
 For the shortest installation path, see `docs/setup.md`.
 
@@ -11,153 +11,161 @@ For the shortest installation path, see `docs/setup.md`.
 The downloaded launcher uses only Node.js built-ins plus the local `git` executable. It:
 
 1. enforces the supported Node.js version;
-2. parses only the local bootstrap arguments needed to resolve the DevBridge home;
+2. parses only local bootstrap arguments needed to resolve the DevBridge home;
 3. defaults the home to `~/.devbridge`;
 4. creates private bootstrap Git HOME/hooks directories;
 5. suppresses inherited Git/SSH authority and interactive credential prompting;
-6. on a fresh home, shallow-clones the fixed `https://github.com/iteathen/DevBridge.git` `main` branch into the managed runtime;
-7. verifies the managed checkout origin is the fixed DevBridge repository and the checkout is clean;
+6. on a fresh home, shallow-clones fixed `https://github.com/iteathen/DevBridge.git` `main` into the managed runtime;
+7. verifies origin and clean checkout shape;
 8. verifies `package.json` identifies `devbridge` and the managed secure-bootstrap module exists; and
-9. dynamically imports/calls that managed secure bootstrap with the original user arguments.
+9. transfers control to managed secure bootstrap.
 
-If a managed runtime already exists, stage 0 verifies it and transfers control without replacing it. Ordinary runtime updates therefore remain behind the supervisor's candidate-validation boundary.
+If a managed runtime already exists, stage 0 verifies it and transfers control without replacing it. Ordinary runtime updates remain behind DB-011's candidate-validation boundary.
 
-`--no-update` requires an existing managed runtime; it cannot be used to bootstrap an empty home.
+`--no-update` requires an existing managed runtime; it cannot bootstrap an empty home.
 
-## Release-integrity modes
+## What stage 0 does not authorize
 
-### Development / testing
+The standalone launcher does not:
 
-Development mode is the default alpha/self-hosting mode. The locally compiled-in testing channel currently resolves to `main`.
+- enable repository execution;
+- choose trusted task actors;
+- enable model adapters;
+- choose repository VM environments;
+- install/configure Hyper-V, KVM, QEMU, or libvirt;
+- create provider-managed VMs/domains/images/networks;
+- expose host credentials to repository code;
+- create publication authority;
+- activate an unverified runtime candidate.
 
-A new update candidate's own preflight/tests never execute directly with supervisor authority. Candidate-controlled validation requires the verified repository-code sandbox. If the required sandbox is unavailable, automatic candidate activation fails closed and the current runtime remains running.
+Those remain secure-bootstrap/supervisor/local-policy concerns.
 
-### Production
+## Current execution-provider transition
 
-Production mode is explicit and stable-only:
+DB-020 defines the target repository-code boundary: persistent untrusted VMs with two required initial host providers:
 
-```text
-node ~/.devbridge/bin/devbridge.mjs \
-  --channel stable \
-  --release-mode production \
-  --release-manifest /etc/devbridge/release.json \
-  --release-public-key /etc/devbridge/release-ed25519.pub.pem
-```
+- Windows -> Hyper-V;
+- Linux -> KVM/QEMU managed through libvirt.
 
-Both release files are local operator authority. Remote tasks, feedback, decisions, repository content, model output, and candidate code cannot select or modify them through DevBridge protocols.
+That target is not yet implemented in current main.
 
-The release manifest uses the DevBridge namespace and repository identity:
+- Current pre-migration Linux repository-code/candidate-controlled execution uses Bubblewrap when available/verified.
+- Current Windows repository-code/candidate-controlled execution remains fail-closed on main.
+- Draft PR #106's ProcessContainer/AppContainer work is superseded by the VM program.
 
-```json
-{
-  "protocol": "devbridge/release-manifest-v1",
-  "release": {
-    "repository": "iteathen/DevBridge",
-    "head": "40-hex-git-commit-sha",
-    "artifactSha256": "64-hex-runtime-artifact-sha256",
-    "version": "0.1.0"
-  },
-  "signature": {
-    "algorithm": "ed25519",
-    "keyId": "operator-release-key-id",
-    "value": "base64-ed25519-signature"
-  }
-}
-```
+The approved sequence removes active host-sandbox repository execution in Stage 1 before production VM implementation. From Stage 1 through Stage 5, repository-controlled and candidate-controlled execution that requires untrusted code execution is intentionally unavailable/fail-closed. Stage 6 restores it through VM providers only.
 
-`artifactSha256` is the platform-neutral `devbridge/runtime-artifact-v1` digest over sorted runtime directories, file paths+bytes, and symlink paths+targets, excluding only the checkout root `.git` administration directory.
+The stage-0 launcher must not grow direct-host execution or provider provisioning logic merely because the migration temporarily has no repository execution provider. VM Stage 8 owns supported Windows/Linux provider setup/reconfiguration after lower provider/image/environment/bridge stages exist.
 
-Production acceptance requires the manifest signature, fixed repository identity, exact Git head, stable transport head, package version, and supervisor-computed artifact SHA-256 to agree before candidate code executes. Production never silently degrades to development mode.
+## Managed secure bootstrap
 
-## Candidate validation boundary
+Managed bootstrap owns local initialization/update preparation, including:
 
-After static release-integrity checks and before activation, candidate-controlled preflight/tests run through the verified outer OS isolation architecture used for untrusted repository-code execution.
+- private DevBridge home/runtime/state/config locations;
+- canonical config-example materialization on first install;
+- repository/origin/runtime-shape verification;
+- update-policy selection from local configuration;
+- handoff to supervisor/CLI after local prerequisites are checked.
 
-The candidate receives at most:
+Existing operator configuration is not silently rewritten during self-update.
 
-- its own candidate runtime tree;
-- bounded scratch/TMP;
-- locally approved system/toolchain reads; and
-- a minimal fixed environment.
+When VM support lands, bootstrap/setup may invoke separately owned provider setup/provisioning adapters, but repository/controller text never becomes Hyper-V/libvirt/QEMU/image/host-path authority.
 
-It does not receive DevBridge operator config, activation/control state, current/last-known-good runtime siblings, daemon authority, GitHub CLI/SSH/control credentials, token variables, writable Git administration, or network egress in the v0.1 validation profile.
+## Runtime update authority
 
-The supervisor recomputes runtime artifact SHA-256 after validation. Any candidate mutation invalidates the candidate even when validation commands report success. The exact artifact identity is checked again at activation.
+DB-011 remains normative.
 
-Candidate `doctor` is a post-acceptance health check, not pre-acceptance trust evidence.
+The supervisor, not the standalone launcher, owns:
 
-The current verified candidate-validation provider is Bubblewrap on Linux. Candidate validation fails closed on unsupported hosts until an equivalent verified provider exists.
+- development/testing versus production release policy;
+- signed production release manifests/public keys;
+- candidate repository/head/version/artifact identity;
+- untrusted candidate execution admission;
+- daemon drain;
+- activation/health checking;
+- last-known-good rollback.
 
-## First run and local configuration
+A mutable branch is transport, not production release authority.
 
-On first run, the secure bootstrap creates `~/.devbridge/config.json` from `config/devbridge.example.json` only when no local config exists, reports that the file must be reviewed, and exits. Execution remains disabled in the reference config.
+## Candidate-controlled validation
 
-GitHub authentication defaults to local `auto` mode. The runtime checks configured bounded environment-variable names, including `DEVBRIDGE_GITHUB_TOKEN`, and may fall back to the active GitHub CLI credential for the configured host. `doctor` may report the provider/source but never token contents.
+Before acceptance, candidate code is untrusted executable input.
 
-Control-plane GitHub credentials are not inherited by runtime-candidate validation or proposal-worker processes.
+Current pre-migration main verifies a host Bubblewrap sandbox and executes candidate preflight/tests there. Stage 1 removes/disables that host execution path with the rest of the sandbox architecture.
 
-## Supervised update sequence
+From Stage 1 until Stage 6, candidate-controlled validation that would execute untrusted candidate code is unavailable/fail-closed. This does **not** weaken DB-011 release integrity: exact candidate identity, signature/digest checks, last-known-good, activation gates, and rollback remain authoritative. It means a candidate requiring executable validation cannot be accepted through an unsafe host fallback.
 
-After initial setup, the secure supervisor owns updates:
+Stage 6 restores candidate execution through provider-native VM validation:
 
-1. observe local update/release policy and current exact runtime identity;
-2. resolve the candidate subject;
-3. materialize candidate bytes separately without draining the current daemon;
-4. verify origin/ref/head and clean runtime shape;
-5. compute candidate artifact SHA-256;
-6. in production, verify the signed immutable release subject;
-7. verify the OS candidate-validation provider;
-8. run candidate preflight/tests inside the sandbox;
-9. recompute artifact SHA-256 and reject mutation;
-10. persist bounded validation evidence;
-11. request the current daemon's token-bound cooperative stop;
-12. wait for the active cycle to reach its safe boundary and exit;
-13. activate the exact tested candidate;
-14. launch it and require the health window plus `doctor`;
-15. record healthy only after checks pass; and
-16. restore/retain last-known-good on activation or health failure.
+- Hyper-V validation environment on Windows hosts;
+- KVM/QEMU/libvirt validation environment on Linux hosts.
 
-The supervisor never overwrites files beneath a live daemon. If an existing daemon does not stop through the verified cooperative control path, DevBridge fails closed rather than force-killing an unverified process.
+VM validation sequence:
 
-An unexpected nonzero daemon exit may restart the same exact accepted runtime after bounded local backoff. A clean daemon exit without a pending update is treated as an intentional stop.
+1. host/supervisor resolves and hashes exact candidate artifact;
+2. production signature/repository/head/version/digest checks occur on the trusted host before candidate code executes;
+3. supervisor verifies the host provider + validation environment;
+4. exact candidate subject is transferred into the untrusted VM without arbitrary host mounts or control credentials;
+5. candidate-controlled preflight/tests execute there;
+6. bounded evidence returns through the host-controlled bridge;
+7. host rechecks exact candidate artifact identity;
+8. only then may the supervisor drain/activate the candidate;
+9. post-activation health/`doctor` remains separate acceptance evidence;
+10. rollback keeps previous exact runtime available until candidate is healthy.
 
-## Daemon pause/resume interaction
+The candidate validation VM may be dedicated/reseedable instead of a persistent project VM as long as DB-020's trust partition is preserved.
 
-DB-018 defines cooperative runtime `pause`/`resume`.
+Provider absence never authorizes direct/uncontained candidate execution on the host.
 
-Pause is an admission pause, not an OS process/thread freeze. It binds to the exact daemon control token, is acknowledged at a safe task-cycle boundary, prevents new polling/admission, and preserves durable run/worktree/IPC/checkpoint/lease evidence. `stop` takes precedence over pause.
+## Provider setup ownership
 
-The stage-0/bootstrap command parser currently handles:
+Stage 8 must keep provider setup separate from the minimal downloaded launcher.
 
-```text
-doctor
-poll-once
-run-once
-daemon
-status
-stop
-restart
-```
+Windows setup may discover/prepare DevBridge-owned Hyper-V images/environments without casually changing operator-owned Hyper-V infrastructure.
 
-The installed `devbridge` runtime CLI additionally exposes DB-014 handoff commands and DB-018 `pause`/`resume`.
+Linux setup may discover/prepare KVM/QEMU/libvirt images/environments without casually removing/changing shared libvirt services, domains, storage pools, networks, or system virtualization policy.
+
+Provider readiness is observed, not inferred from installation/presence.
+
+## Development/testing versus production
+
+Development mode may follow the locally selected mutable testing channel as explicit alpha behavior.
+
+Production requires an independently signed immutable release subject binding fixed repository identity, exact Git head, package version, and exact runtime artifact digest.
+
+VM execution does not change those release-integrity rules. A guest test pass does not sign or approve a candidate.
+
+During the no-provider interval, an executable candidate that cannot satisfy required validation remains unaccepted rather than being tested directly on the host.
+
+## Daemon control
+
+`status`, `pause`, `resume`, `stop`, and `restart` remain host control operations.
+
+Pause is cooperative admission control, not OS thread/process/VM suspension. Stop has precedence over pause.
+
+A provider/environment may persist while the daemon is paused/stopped; persistent repository disks are not cleanup side effects of daemon control.
 
 ## Trust-boundary summary
 
-- Runtime repository identity is fixed in launcher/control code; remote content cannot select another source.
-- Remote content cannot select release mode, update channel, release manifest/key, runtime root, operator config, executable, environment authority, or credential source.
-- Bootstrap Git operations suppress inherited Git/SSH authority, hooks, interactive prompting, and dangerous local/ext transports.
-- Operator config and activation state remain outside candidate-validation visibility.
-- Last-known-good is not drained until the candidate passes the pre-activation integrity+sandbox boundary.
+- Runtime repository identity is fixed in launcher/control code.
+- Remote content cannot select release mode, update channel, signing material, runtime root, host provider, base image path, VM/domain name, libvirt XML, QEMU argv, PowerShell management snippet, operator config, executable, environment authority, or credential source.
+- Bootstrap Git suppresses inherited Git/SSH authority, hooks, interactive prompting, and dangerous transports.
+- Operator config/activation/provider-management state remains outside untrusted candidate visibility.
+- No production execution provider means untrusted executable candidate/repository work is unavailable; it does not authorize direct host execution.
+- Last-known-good is not drained until candidate passes pre-activation integrity + required verified execution-environment checks.
 - Development mutable-channel following remains explicitly alpha.
-- Production unattended deployment requires an independently signed immutable release subject plus verified candidate-execution containment.
+- Production unattended deployment requires an independently signed immutable release subject plus verified candidate VM isolation where executable candidate validation is required.
 
 ## Related docs/specs
 
-- `docs/setup.md`: minimal installation and operation.
-- DB-003: local capability/sandbox authority.
-- DB-008: Git/supply-chain execution boundaries.
+- `docs/setup.md`: installation/current-vs-target behavior.
+- `docs/architecture.md`: provider/VM/bridge/control-plane model.
+- `docs/vm-migration.md`: sandbox-first removal/retention inventory.
+- `docs/vm-lego-studs.md`: connection-stud/replaceability plan.
+- DB-003: local capability/security authority.
+- DB-008: Git/supply-chain boundary.
 - DB-009: durable effects/recovery.
-- DB-010: provenance/control channels.
-- DB-011: runtime supervision and zero-touch updates.
-- DB-013: deterministic controller-plan infrastructure.
-- DB-018: workstation governance and cooperative pause.
+- DB-011: runtime supervision/release integrity.
+- DB-013: deterministic controller plans.
+- DB-018: workstation governance/pause.
+- DB-020: persistent VM execution boundary.

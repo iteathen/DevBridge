@@ -1,86 +1,53 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { profileSecurityDescription, enforcementProviderReport } from '../src/runtime/profile-security.js';
-import { verifiedBubblewrapStatus } from '../src/runtime/sandbox-status.js';
+import { profileSecurityDescription, repositoryExecutionReport } from '../src/runtime/profile-security.js';
+import { REPOSITORY_EXECUTION_STATUS_PROTOCOL } from '../src/runtime/repository-execution.js';
 
 function profile(overrides = {}) {
   return {
     name: 'fixture',
     sandbox: {
-      enforcement: 'os',
-      outsideProjectRead: 'deny',
-      outsideProjectWrite: false,
-      network: 'deny',
-      ...overrides,
+      enforcement: 'os', outsideProjectRead: 'deny', outsideProjectWrite: false, network: 'deny', ...overrides,
     },
   };
 }
 
-test('an os declaration alone never produces verified or usable enforcement', () => {
-  const result = profileSecurityDescription(profile(), {
-    requestedProvider: 'auto',
-    provider: 'bubblewrap',
-    platform: process.platform,
-    available: true,
-    verified: false,
-    verification: 'not-probed',
-    filesystem: 'unverified',
-    network: 'unverified',
-    gitAdministrativeState: 'unverified',
-    processTree: 'unverified',
-    reason: null,
-    boundaryProbe: { attempted: false, verified: false, observations: null },
-  });
+const unavailable = {
+  protocol: REPOSITORY_EXECUTION_STATUS_PROTOCOL,
+  state: 'unavailable', ready: false, identity: null, reason: 'no production implementation',
+};
+const ready = {
+  protocol: REPOSITORY_EXECUTION_STATUS_PROTOCOL,
+  state: 'ready', ready: true, identity: 'fixture', reason: null,
+};
+
+test('legacy profile declaration never becomes repository-execution authority', () => {
+  const result = profileSecurityDescription(profile(), unavailable);
+  assert.equal(result.declaredPolicy.legacy, true);
   assert.equal(result.declaredPolicy.toolEnforcement, 'os');
-  assert.equal(result.enforcement.verified, false);
-  assert.equal(result.enforcement.usable, false);
-  assert.equal(result.enforcement.verification, 'not-probed');
+  assert.equal(result.execution.ready, false);
+  assert.equal(result.execution.usable, false);
+  assert.equal(result.execution.reason, 'no production implementation');
 });
 
-test('verified provider evidence is reported separately from the tool declaration', () => {
-  const provider = verifiedBubblewrapStatus({ requestedProvider: 'auto' });
-  const result = profileSecurityDescription(profile({ enforcement: 'none' }), provider);
+test('repository execution readiness is reported independently from legacy declaration', () => {
+  const result = profileSecurityDescription(profile({ enforcement: 'none' }), ready);
   assert.equal(result.declaredPolicy.toolEnforcement, 'none');
-  assert.equal(result.enforcement.provider, 'bubblewrap');
-  assert.equal(result.enforcement.verified, true);
-  assert.equal(result.enforcement.usable, true);
-  assert.equal(result.enforcement.boundaryProbe.verified, true);
-  assert.equal(result.enforcement.boundaryProbe.observations.arbitraryOutsideReadDenied, true);
-  assert.equal(result.enforcement.boundaryProbe.observations.arbitraryOutsideWriteDenied, true);
-  assert.equal(result.enforcement.boundaryProbe.observations.networkEgressDenied, true);
+  assert.equal(result.execution.identity, 'fixture');
+  assert.equal(result.execution.ready, true);
+  assert.equal(result.execution.usable, true);
 });
 
-test('unsupported requested capability remains unusable even with a verified provider', () => {
-  const provider = verifiedBubblewrapStatus({ requestedProvider: 'auto' });
-  const restricted = profileSecurityDescription(profile({ network: 'restricted' }), provider);
-  assert.equal(restricted.enforcement.verified, true);
-  assert.equal(restricted.enforcement.usable, false);
-  assert.equal(restricted.enforcement.network, 'unsupported-request');
-  assert.match(restricted.enforcement.reason, /restricted network mode/u);
-
-  const outsideWrite = profileSecurityDescription(profile({ outsideProjectWrite: true }), provider);
-  assert.equal(outsideWrite.enforcement.verified, true);
-  assert.equal(outsideWrite.enforcement.usable, false);
-  assert.match(outsideWrite.enforcement.reason, /writes outside/u);
+test('legacy outside-write request cannot widen a ready execution boundary', () => {
+  const result = profileSecurityDescription(profile({ outsideProjectWrite: true }), ready);
+  assert.equal(result.execution.ready, true);
+  assert.equal(result.execution.usable, false);
+  assert.match(result.execution.reason, /does not grant host authority/u);
 });
 
-test('failed boundary-probe status is represented as attempted but unverified', () => {
-  const reported = enforcementProviderReport({
-    requestedProvider: 'bubblewrap',
-    provider: 'bubblewrap',
-    platform: 'linux',
-    available: true,
-    verified: false,
-    verification: 'boundary-probe-failed',
-    repositoryCodeExecution: false,
-    filesystem: 'unenforced',
-    network: 'unenforced',
-    gitAdministrativeState: 'unenforced',
-    processTree: 'managed-by-parent-runner',
-    boundaryProbe: { attempted: false, verified: false, observations: null },
-    reason: 'fixture failure',
-  });
-  assert.equal(reported.boundaryProbe.attempted, true);
-  assert.equal(reported.boundaryProbe.verified, false);
-  assert.equal(reported.verified, false);
+test('missing execution status normalizes to explicit unavailable state', () => {
+  const result = repositoryExecutionReport();
+  assert.equal(result.state, 'unavailable');
+  assert.equal(result.ready, false);
+  assert.equal(result.identity, null);
 });
