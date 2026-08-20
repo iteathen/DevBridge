@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { copyFile, lstat, mkdir, mkdtemp, readdir, realpath, rm } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, readdir, realpath, rm, rmdir } from 'node:fs/promises';
 import path from 'node:path';
 import { PolicyError } from '../errors.js';
 
@@ -180,7 +180,7 @@ export async function createGitlessProjectProjection({ workspaceRoot, projectDir
       await rm(projection, { recursive: true, force: true });
       try {
         const remaining = await readdir(parent);
-        if (remaining.length === 0) await rm(parent, { recursive: false, force: true });
+        if (remaining.length === 0) await rmdir(parent);
       } catch (error) {
         if (error?.code !== 'ENOENT' && error?.code !== 'ENOTEMPTY') throw error;
       }
