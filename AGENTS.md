@@ -17,7 +17,7 @@ For each meaningful change:
 
 Do not let a model/chat context become the only record of work. Durable run state, exact evidence, and bounded context handoffs are product requirements.
 
-For VM program issues #107–#117, every stage has an additional mandatory planning gate: read DB-020 and prerequisite VM stages, inspect the exact implementation being replaced/extended, research the relevant Hyper-V and/or KVM/QEMU/libvirt behavior, write/sanity-check a scoped plan, and proceed unless research exposes a genuine architecture/authority decision.
+For VM program issues #107–#117, every stage has an additional mandatory planning gate: read DB-020 and prerequisite VM stages, inspect the exact implementation being removed/extended, read `docs/vm-migration.md` and `docs/vm-lego-studs.md`, research relevant Hyper-V and/or KVM/QEMU/libvirt behavior, write/sanity-check a scoped plan, and proceed unless research exposes a genuine architecture/authority decision.
 
 ## Design hierarchy
 
@@ -40,7 +40,7 @@ A model may propose source, tests, locally registered operations, repairs, archi
 
 ## DB-020 repository-execution architecture
 
-DB-020 is normative for the **target** repository-code security boundary.
+DB-020 is normative for the **target** repository-code security boundary and the sandbox-first migration sequence.
 
 Repository-controlled execution belongs in persistent untrusted VMs. The required initial host providers are:
 
@@ -66,15 +66,28 @@ Provider-native persistent storage is identity-bearing state:
 
 Do not infer parent/backing identity from filenames. Do not silently reparent/rebase persistent state when an image generation changes.
 
-### Current migration state
+### Current migration state and required sequence
 
-Current main still uses verified Linux/Bubblewrap for supported repository-code execution. Draft PR #106 contains superseded Windows host-sandbox experiments.
+Current main still contains Linux/Bubblewrap repository-code execution. Draft PR #106 contains superseded Windows host-sandbox experiments.
 
-Those mechanisms are **transitional**, not the target architecture. Do not extend Bubblewrap/AppContainer/ProcessContainer/Gitless host projection as the long-term answer unless an interim security fix is necessary to keep the live path from becoming less safe.
+The approved migration deliberately **removes active host-sandbox repository execution before production VM implementation**.
 
-Stage 9 must not remove Bubblewrap before the Linux KVM/QEMU/libvirt path is qualified and installable. The migration must not turn DevBridge into Windows-only software.
+Stage 1 must locate/prove the existing execution connection studs, unplug provider registration, establish explicit fail-closed no-provider behavior, repair abstraction leaks revealed by removal, prove a test fake attaches through the studs, and delete active Bubblewrap/AppContainer/ProcessContainer-style repository-execution runtime/wiring while preserving generic behavior and historical evidence.
 
-Read `docs/vm-migration.md` before removing/refactoring sandbox-era code.
+After Stage 1 and through Stages 2–5:
+
+- normal repository-controlled execution is intentionally unavailable;
+- provider absence fails before repository code is spawned on the host;
+- `allowUncontainedTools`, direct-process compatibility, candidate-validation shortcuts, shell fallbacks, or setup modes must not create direct/uncontained host repository execution;
+- trusted static/control-plane work may continue only where independently classified as not executing repository-controlled code.
+
+Stage 6 restores repository-controlled execution **through persistent VMs only**. If the required VM provider/environment is unavailable, execution remains unavailable/fail-closed.
+
+Stage 7 proves security, real provider behavior, absence of host fallbacks, and LEGO replaceability. Stage 8 makes the VM-only path installable/reconfigurable. Stage 9 removes remaining migration/configuration/documentation scaffolding; it is not the primary sandbox-deletion stage.
+
+If removing the old sandbox or adding Hyper-V/KVM requires broad rewrites of controllers, Git authority, recovery, verification, or worker semantics, treat that as evidence the LEGO connection studs are malformed. Repair the owning boundary before proceeding.
+
+Read `docs/vm-migration.md` and `docs/vm-lego-studs.md` before removing/refactoring sandbox-era or VM-provider code.
 
 ## Preferred execution path
 
@@ -151,6 +164,8 @@ DB-015 is normative.
 
 Under DB-020, repository-class tool discovery/probing/execution belongs inside the exact repository VM. Host inventory remains for control-plane/provider prerequisites such as Node/Git/Hyper-V/KVM/QEMU/libvirt/bridge tooling.
 
+During the intentional no-provider interval, repository-class probes that require execution are unavailable rather than redirected to the host.
+
 Guest networking may be normal during tool probing; confidentiality comes from absent host secrets, not an assumed network-denied host sandbox.
 
 ## Multi-agent identity, leases, and fencing
@@ -194,7 +209,7 @@ DB-018 is normative.
 
 - Effective task admission remains serialized to one task/run continuation.
 - `execution.maxConcurrentTasks` is not authority to invent a worker pool.
-- Current host child processes use below-normal priority by default; priority is QoS, not containment.
+- Host process priority is QoS, not containment and must not be used to justify repository-code host execution during the no-provider interval.
 - Supported host priority classes are `normal`, `below-normal`, and `low`; elevated/unknown values are rejected.
 - Failure to apply requested non-normal priority fails the operation rather than silently degrading.
 - `pause` is token-bound cooperative admission control at a safe task-cycle boundary, not `SIGSTOP`, thread suspension, or VM suspension.
@@ -247,6 +262,7 @@ A remote decision cannot grant host paths, credentials, provider-management auth
 - Guest filesystem state is untrusted, even when persistent.
 - Guest-agent/helper responses are untrusted, even when using official Hyper-V/QEMU integration channels.
 - A declaration is not enforcement. Observe provider/image/environment/bridge state before claiming readiness.
+- No production execution provider means repository-controlled execution is unavailable; it never means "run it directly on the host".
 - Do not auto-reset/clean/discard an arbitrary dirty developer checkout or an unowned VM/disk/domain.
 
 ## GitHub API / external effects
@@ -278,7 +294,7 @@ Read combinations appropriate to the task:
 - baseline drift: DB-008/009/013/016/017;
 - pause/resource governance: DB-004/009/011/012/016/018/020;
 - verification cost/evidence: DB-009/013/017/018/019/020;
-- VM program: DB-003/008/009/011/013/015/017/018/019/020 plus prerequisite VM issues and `docs/vm-migration.md`.
+- VM program: DB-003/008/009/011/013/015/017/018/019/020 plus prerequisite VM issues, `docs/vm-migration.md`, and `docs/vm-lego-studs.md`.
 
 Historical handoffs/audits are evidence of their checkpoint, not live authority. Do not rewrite checksum-bound history to make it look current.
 
@@ -290,6 +306,9 @@ Boundary tests are mandatory for any claimed capability, including:
 
 - path/identity escape and unowned cleanup;
 - credential stripping/non-exposure;
+- no-production-provider fail-closed behavior;
+- denial of direct/uncontained host repository execution;
+- fake-provider attachment through the same execution studs;
 - provider readiness versus configuration;
 - provider/image/writable-layer/environment identity mismatch;
 - hostile/forged bridge responses and bounded output;
@@ -301,6 +320,7 @@ Boundary tests are mandatory for any claimed capability, including:
 - hard-gate subject binding;
 - verification evidence reuse/invalidation;
 - provider-specific storage lineage (VHDX differencing and qcow2 backing/overlays);
-- real Hyper-V and KVM/libvirt qualification before Stage-9 cleanup.
+- real Hyper-V and KVM/libvirt qualification before final Stage-9 migration cleanup;
+- repository-wide absence of resurrected Bubblewrap/AppContainer/ProcessContainer/direct-host repository-execution fallback.
 
 A passing happy-path test alone is not sufficient for a capability boundary.
