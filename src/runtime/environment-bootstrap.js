@@ -1,13 +1,17 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 export const ENVIRONMENT_BOOTSTRAP_PROTOCOL = 'devbridge/environment-bootstrap-v1';
+export const ENVIRONMENT_BOOTSTRAP_VERSION = '1.0.0';
 
-const SAFE_TARGET = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
-const SAFE_NAME = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/u;
+const TARGET = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
+const REQUEST = /^[a-f0-9]{32}$/u;
 const DIGEST = /^[a-f0-9]{64}$/u;
-const MAX_CHECKS = 32;
-const MAX_VARIANTS = 8;
-const MAX_ARGUMENTS = 16;
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
+const MAX_REQUIREMENTS = 64;
+const MAX_PROTECTED_NAMES = 64;
+const MAX_REASON_BYTES = 2_048;
+const MAX_RESPONSE_BYTES = 256 * 1024;
 
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
@@ -18,176 +22,289 @@ function onlyKeys(value, allowed, name) {
   for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`${name}.${key} is not allowed`);
 }
 
-function targetToken(value) {
-  if (typeof value !== 'string' || !SAFE_TARGET.test(value)) throw new TypeError('bootstrap target must be an opaque local token');
-  return value;
-}
-
-function boundedString(value, name, maxBytes = 4096) {
-  if (typeof value !== 'string' || value.length === 0 || value.includes('\0') || Buffer.byteLength(value, 'utf8') > maxBytes) {
-    throw new TypeError(`${name} must be a bounded non-empty string`);
+function boundedString(value, name, { maxBytes = 4_096, allowEmpty = false } = {}) {
+  if (typeof value !== 'string' || (!allowEmpty && value.length === 0) || value.includes('\0') || Buffer.byteLength(value, 'utf8') > maxBytes) {
+    throw new TypeError(`${name} is invalid`);
   }
   return value;
 }
 
-function codepointCompare(left, right) { return left < right ? -1 : left > right ? 1 : 0; }
+function safeId(value, name) {
+  if (typeof value !== 'string' || !SAFE_ID.test(value)) throw new TypeError(`${name} is invalid`);
+  return value;
+}
+
+function targetId(value) {
+  if (typeof value !== 'string' || !TARGET.test(value)) throw new TypeError('bootstrap target is invalid');
+  return value;
+}
+
+function requestId(value = null) {
+  if (value == null) return randomBytes(16).toString('hex');
+  if (typeof value !== 'string' || !REQUEST.test(value)) throw new TypeError('bootstrap request identity is invalid');
+  return value;
+}
+
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  if (value && typeof value === 'object') return `{${Object.keys(value).sort(codepointCompare).map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+  }
   return JSON.stringify(value);
+}
+
+function sha256(value) {
+  return createHash('sha256').update(typeof value === 'string' ? value : stableJson(value), 'utf8').digest('hex');
+}
+
+function normalizeSource(raw) {
+  const value = requireObject(raw, 'bootstrap basis.source');
+  onlyKeys(value, new Set(['identity', 'revision', 'digest']), 'bootstrap basis.source');
+  const digest = String(value.digest ?? '').toLowerCase();
+  if (!DIGEST.test(digest)) throw new TypeError('bootstrap basis.source.digest is invalid');
+  return {
+    identity: safeId(value.identity, 'bootstrap basis.source.identity'),
+    revision: safeId(value.revision, 'bootstrap basis.source.revision'),
+    digest,
+  };
 }
 
 function normalizeBasis(raw) {
   const value = requireObject(raw, 'bootstrap basis');
-  onlyKeys(value, new Set(['identity', 'revision', 'digest']), 'bootstrap basis');
-  const identity = boundedString(value.identity, 'bootstrap basis.identity', 256);
-  const revision = boundedString(value.revision, 'bootstrap basis.revision', 256);
-  const digest = String(value.digest ?? '').toLowerCase();
-  if (!DIGEST.test(digest)) throw new TypeError('bootstrap basis.digest must be a sha256 digest');
-  return { identity, revision, digest };
+  onlyKeys(value, new Set(['subject', 'generation', 'profile', 'variant', 'source']), 'bootstrap basis');
+  if (!Number.isSafeInteger(value.generation) || value.generation < 1) throw new TypeError('bootstrap basis.generation is invalid');
+  return {
+    subject: boundedString(value.subject, 'bootstrap basis.subject', { maxBytes: 512 }),
+    generation: value.generation,
+    profile: safeId(value.profile, 'bootstrap basis.profile'),
+    variant: safeId(value.variant, 'bootstrap basis.variant'),
+    source: normalizeSource(value.source),
+  };
 }
 
-function normalizeVariant(raw, checkIndex, variantIndex) {
-  const value = requireObject(raw, `bootstrap checks[${checkIndex}].variants[${variantIndex}]`);
-  onlyKeys(value, new Set(['program', 'arguments']), `bootstrap checks[${checkIndex}].variants[${variantIndex}]`);
-  if (typeof value.program !== 'string' || !SAFE_NAME.test(value.program) || /[\\/]/u.test(value.program)) {
-    throw new TypeError(`bootstrap checks[${checkIndex}].variants[${variantIndex}].program must be a logical executable identity`);
+function normalizePlan(raw) {
+  const value = requireObject(raw, 'bootstrap plan');
+  onlyKeys(value, new Set(['revision', 'requirements', 'protectedNames', 'networkRequired']), 'bootstrap plan');
+  const requirements = value.requirements ?? [];
+  if (!Array.isArray(requirements) || requirements.length > MAX_REQUIREMENTS) throw new TypeError('bootstrap plan.requirements is invalid');
+  const normalizedRequirements = [...new Set(requirements.map((entry, index) => safeId(entry, `bootstrap plan.requirements[${index}]`)))].sort();
+  const protectedNames = value.protectedNames ?? [];
+  if (!Array.isArray(protectedNames) || protectedNames.length > MAX_PROTECTED_NAMES) throw new TypeError('bootstrap plan.protectedNames is invalid');
+  const normalizedProtected = [...new Set(protectedNames.map((entry, index) => {
+    if (typeof entry !== 'string' || !ENV_NAME.test(entry)) throw new TypeError(`bootstrap plan.protectedNames[${index}] is invalid`);
+    return entry;
+  }))].sort();
+  if (value.networkRequired != null && typeof value.networkRequired !== 'boolean') throw new TypeError('bootstrap plan.networkRequired must be boolean');
+  return {
+    revision: safeId(value.revision, 'bootstrap plan.revision'),
+    requirements: normalizedRequirements,
+    protectedNames: normalizedProtected,
+    networkRequired: value.networkRequired !== false,
+  };
+}
+
+function normalizeCapability(raw, index) {
+  const value = requireObject(raw, `bootstrap observation.capabilities[${index}]`);
+  onlyKeys(value, new Set(['id', 'present', 'usable', 'version', 'reason']), `bootstrap observation.capabilities[${index}]`);
+  if (typeof value.present !== 'boolean' || typeof value.usable !== 'boolean' || (value.usable && !value.present)) {
+    throw new TypeError('bootstrap capability presence/usability is inconsistent');
   }
-  const args = value.arguments ?? [];
-  if (!Array.isArray(args) || args.length > MAX_ARGUMENTS || args.some((entry) => typeof entry !== 'string' || entry.includes('\0') || Buffer.byteLength(entry, 'utf8') > 1024)) {
-    throw new TypeError(`bootstrap checks[${checkIndex}].variants[${variantIndex}].arguments is invalid`);
+  return {
+    id: safeId(value.id, 'bootstrap capability.id'),
+    present: value.present,
+    usable: value.usable,
+    version: value.version == null ? null : boundedString(value.version, 'bootstrap capability.version', { maxBytes: 512, allowEmpty: true }),
+    reason: value.reason == null ? null : boundedString(value.reason, 'bootstrap capability.reason', { maxBytes: MAX_REASON_BYTES }),
+  };
+}
+
+function normalizeNetwork(raw) {
+  const value = requireObject(raw, 'bootstrap observation.network');
+  onlyKeys(value, new Set(['nameResolution', 'secureWeb', 'reason']), 'bootstrap observation.network');
+  if (typeof value.nameResolution !== 'boolean' || typeof value.secureWeb !== 'boolean') throw new TypeError('bootstrap network observation is invalid');
+  return {
+    nameResolution: value.nameResolution,
+    secureWeb: value.secureWeb,
+    reason: value.reason == null ? null : boundedString(value.reason, 'bootstrap observation.network.reason', { maxBytes: MAX_REASON_BYTES }),
+  };
+}
+
+function normalizeObservation(raw, expected) {
+  let serialized;
+  try { serialized = JSON.stringify(raw); } catch { throw new TypeError('bootstrap response is not serializable'); }
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_RESPONSE_BYTES) throw new TypeError('bootstrap response is oversized');
+  const value = requireObject(raw, 'bootstrap response');
+  onlyKeys(value, new Set(['protocol', 'request', 'target', 'action', 'ok', 'body', 'error']), 'bootstrap response');
+  if (value.protocol !== ENVIRONMENT_BOOTSTRAP_PROTOCOL || value.request !== expected.request || value.target !== expected.target || value.action !== expected.action) {
+    throw new Error('bootstrap response identity does not match the request');
   }
-  return { program: value.program, arguments: [...args] };
-}
-
-function normalizeCheck(raw, index) {
-  const value = requireObject(raw, `bootstrap checks[${index}]`);
-  onlyKeys(value, new Set(['name', 'variants']), `bootstrap checks[${index}]`);
-  if (typeof value.name !== 'string' || !SAFE_NAME.test(value.name)) throw new TypeError(`bootstrap checks[${index}].name is invalid`);
-  if (!Array.isArray(value.variants) || value.variants.length === 0 || value.variants.length > MAX_VARIANTS) {
-    throw new TypeError(`bootstrap checks[${index}].variants must contain 1-${MAX_VARIANTS} entries`);
+  if (value.ok !== true) {
+    const error = requireObject(value.error, 'bootstrap response.error');
+    const message = boundedString(error.message ?? 'bootstrap exchange failed', 'bootstrap response.error.message', { maxBytes: MAX_REASON_BYTES });
+    throw new Error(message);
   }
-  return { name: value.name, variants: value.variants.map((entry, variantIndex) => normalizeVariant(entry, index, variantIndex)) };
-}
-
-function normalizeConnectivity(raw) {
-  const value = requireObject(raw, 'bootstrap connectivity');
-  onlyKeys(value, new Set(['host', 'url']), 'bootstrap connectivity');
-  const host = boundedString(value.host, 'bootstrap connectivity.host', 253).toLowerCase();
-  if (!/^[A-Za-z0-9.-]+$/u.test(host) || host.startsWith('.') || host.endsWith('.')) throw new TypeError('bootstrap connectivity.host is invalid');
-  let url;
-  try { url = new URL(boundedString(value.url, 'bootstrap connectivity.url', 2048)); }
-  catch { throw new TypeError('bootstrap connectivity.url is invalid'); }
-  if (url.protocol !== 'https:' || url.username || url.password || url.hash) throw new TypeError('bootstrap connectivity.url must be direct HTTPS without credentials');
-  return { host, url: url.toString() };
-}
-
-export function normalizeBootstrapDeclaration(raw) {
-  const value = requireObject(raw, 'bootstrap declaration');
-  onlyKeys(value, new Set(['basis', 'checks', 'connectivity']), 'bootstrap declaration');
-  if (!Array.isArray(value.checks) || value.checks.length === 0 || value.checks.length > MAX_CHECKS) {
-    throw new TypeError(`bootstrap checks must contain 1-${MAX_CHECKS} entries`);
+  if (value.error != null) throw new Error('successful bootstrap response must not include error');
+  const body = requireObject(value.body, 'bootstrap response.body');
+  onlyKeys(body, new Set(['generation', 'basisDigest', 'revision', 'network', 'capabilities', 'protectedPresent', 'reason']), 'bootstrap response.body');
+  const capabilities = body.capabilities;
+  if (!Array.isArray(capabilities) || capabilities.length > MAX_REQUIREMENTS + 32) throw new TypeError('bootstrap observation.capabilities is invalid');
+  const normalizedCapabilities = capabilities.map(normalizeCapability);
+  const ids = new Set();
+  for (const capability of normalizedCapabilities) {
+    if (ids.has(capability.id)) throw new TypeError('bootstrap observation contains duplicate capability identities');
+    ids.add(capability.id);
   }
-  const checks = value.checks.map(normalizeCheck);
-  if (new Set(checks.map((entry) => entry.name)).size !== checks.length) throw new TypeError('bootstrap check names must be unique');
-  return { basis: normalizeBasis(value.basis), checks, connectivity: normalizeConnectivity(value.connectivity) };
+  const protectedPresent = body.protectedPresent ?? [];
+  if (!Array.isArray(protectedPresent) || protectedPresent.length > MAX_PROTECTED_NAMES) throw new TypeError('bootstrap observation.protectedPresent is invalid');
+  const normalizedProtected = protectedPresent.map((entry, index) => {
+    if (typeof entry !== 'string' || !ENV_NAME.test(entry)) throw new TypeError(`bootstrap observation.protectedPresent[${index}] is invalid`);
+    return entry;
+  });
+  return {
+    generation: body.generation == null ? null : (() => {
+      const value = String(body.generation).toLowerCase();
+      if (!DIGEST.test(value)) throw new TypeError('bootstrap observation.generation is invalid');
+      return value;
+    })(),
+    basisDigest: body.basisDigest == null ? null : (() => {
+      const value = String(body.basisDigest).toLowerCase();
+      if (!DIGEST.test(value)) throw new TypeError('bootstrap observation.basisDigest is invalid');
+      return value;
+    })(),
+    revision: body.revision == null ? null : safeId(body.revision, 'bootstrap observation.revision'),
+    network: normalizeNetwork(body.network),
+    capabilities: normalizedCapabilities.sort((left, right) => left.id.localeCompare(right.id)),
+    protectedPresent: [...new Set(normalizedProtected)].sort(),
+    reason: body.reason == null ? null : boundedString(body.reason, 'bootstrap observation.reason', { maxBytes: MAX_REASON_BYTES }),
+  };
 }
 
-export function bootstrapGeneration(raw) {
-  const declaration = normalizeBootstrapDeclaration(raw);
-  return createHash('sha256').update(stableJson({ protocol: ENVIRONMENT_BOOTSTRAP_PROTOCOL, declaration }), 'utf8').digest('hex');
+function statusFrom(observation, expected) {
+  const byId = new Map(observation.capabilities.map((entry) => [entry.id, entry]));
+  const missing = expected.plan.requirements.filter((id) => byId.get(id)?.usable !== true);
+  const generationReady = observation.generation === expected.generation && observation.basisDigest === expected.basisDigest && observation.revision === expected.plan.revision;
+  const networkReady = !expected.plan.networkRequired || (observation.network.nameResolution && observation.network.secureWeb);
+  const secretsReady = observation.protectedPresent.length === 0;
+  const ready = generationReady && networkReady && missing.length === 0 && secretsReady;
+  const reasons = [];
+  if (!generationReady) reasons.push('bootstrap generation is not applied to the exact basis');
+  if (!networkReady) reasons.push(observation.network.reason ?? 'required network checks are not ready');
+  if (missing.length > 0) reasons.push(`required capabilities are unavailable: ${missing.join(', ')}`);
+  if (!secretsReady) reasons.push(`protected environment names are present: ${observation.protectedPresent.join(', ')}`);
+  if (observation.reason) reasons.push(observation.reason);
+  return Object.freeze({
+    ready,
+    state: ready ? 'ready' : generationReady ? 'degraded' : 'unavailable',
+    reason: ready ? null : [...new Set(reasons)].join('; '),
+    generation: expected.generation,
+    basisDigest: expected.basisDigest,
+    revision: expected.plan.revision,
+    basis: structuredClone(expected.basis),
+    network: Object.freeze({ ...observation.network }),
+    capabilities: Object.freeze(observation.capabilities.map((entry) => Object.freeze({ ...entry }))),
+    protectedPresent: Object.freeze([...observation.protectedPresent]),
+  });
 }
 
-function normalizeCapability(raw, expectedName) {
-  const value = requireObject(raw, `bootstrap capability ${expectedName}`);
-  onlyKeys(value, new Set(['name', 'present', 'usable', 'version', 'reason']), `bootstrap capability ${expectedName}`);
-  if (value.name !== expectedName) throw new Error('bootstrap capability identity changed');
-  if (typeof value.present !== 'boolean' || typeof value.usable !== 'boolean' || (value.usable && !value.present)) throw new TypeError('bootstrap capability state is invalid');
-  const version = value.version == null ? null : boundedString(String(value.version), 'bootstrap capability.version', 512);
-  const reason = value.reason == null ? null : boundedString(String(value.reason), 'bootstrap capability.reason', 2048);
-  if (!value.usable && !reason) throw new TypeError('bootstrap capability requires a reason when unusable');
-  return Object.freeze({ name: expectedName, present: value.present, usable: value.usable, version, reason });
-}
-
-function normalizeNetworkEntry(raw, name) {
-  const value = requireObject(raw, `bootstrap network.${name}`);
-  onlyKeys(value, new Set(['usable', 'reason']), `bootstrap network.${name}`);
-  if (typeof value.usable !== 'boolean') throw new TypeError(`bootstrap network.${name}.usable must be boolean`);
-  const reason = value.reason == null ? null : boundedString(String(value.reason), `bootstrap network.${name}.reason`, 2048);
-  if (!value.usable && !reason) throw new TypeError(`bootstrap network.${name} requires a reason when unusable`);
-  return Object.freeze({ usable: value.usable, reason });
-}
-
-function normalizeObservation(raw, target, declaration, generation) {
-  const value = requireObject(raw, 'bootstrap observation');
-  onlyKeys(value, new Set(['protocol', 'generation', 'applied', 'network', 'capabilities', 'isolation']), 'bootstrap observation');
-  if (value.protocol !== ENVIRONMENT_BOOTSTRAP_PROTOCOL) throw new Error('bootstrap observation protocol is incompatible');
-  if (value.generation !== generation) throw new Error('bootstrap observation generation changed');
-  if (typeof value.applied !== 'boolean') throw new TypeError('bootstrap observation.applied must be boolean');
-  const network = requireObject(value.network, 'bootstrap observation.network');
-  onlyKeys(network, new Set(['dns', 'https']), 'bootstrap observation.network');
-  const normalizedNetwork = Object.freeze({ dns: normalizeNetworkEntry(network.dns, 'dns'), https: normalizeNetworkEntry(network.https, 'https') });
-  if (!Array.isArray(value.capabilities) || value.capabilities.length !== declaration.checks.length) throw new TypeError('bootstrap observation capabilities do not match the declaration');
-  const byName = new Map(value.capabilities.map((entry) => [entry?.name, entry]));
-  if (byName.size !== value.capabilities.length) throw new TypeError('bootstrap observation capability names are duplicated');
-  const capabilities = declaration.checks.map((entry) => normalizeCapability(byName.get(entry.name), entry.name));
-  const isolation = requireObject(value.isolation, 'bootstrap observation.isolation');
-  onlyKeys(isolation, new Set(['clean', 'unexpectedNames']), 'bootstrap observation.isolation');
-  if (typeof isolation.clean !== 'boolean' || !Array.isArray(isolation.unexpectedNames) || isolation.unexpectedNames.length > 64 || isolation.unexpectedNames.some((entry) => typeof entry !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(entry))) {
-    throw new TypeError('bootstrap observation isolation state is invalid');
-  }
-  if (isolation.clean !== (isolation.unexpectedNames.length === 0)) throw new TypeError('bootstrap observation isolation aggregate is inconsistent');
-  const ready = value.applied && normalizedNetwork.dns.usable && normalizedNetwork.https.usable && isolation.clean && capabilities.every((entry) => entry.usable);
-  return Object.freeze({ protocol: ENVIRONMENT_BOOTSTRAP_PROTOCOL, target, generation, ready, basis: Object.freeze({ ...declaration.basis }), network: normalizedNetwork, capabilities: Object.freeze(capabilities), isolation: Object.freeze({ clean: isolation.clean, unexpectedNames: Object.freeze([...isolation.unexpectedNames]) }) });
-}
-
-function assertPort(value, name) {
-  if (typeof value !== 'function') throw new TypeError(`bootstrap ${name} port must be a function`);
-  return value;
+function expectedState(basis, plan) {
+  const basisDigest = sha256(basis);
+  const generation = sha256({ protocol: ENVIRONMENT_BOOTSTRAP_PROTOCOL, version: ENVIRONMENT_BOOTSTRAP_VERSION, basis, plan });
+  return { basis, basisDigest, plan, generation };
 }
 
 export class EnvironmentBootstrap {
+  #basis;
+  #plan;
   #prepare;
   #exchange;
-  #restart;
+  #cycle;
+  #settleMs;
+  #pollMs;
 
-  constructor({ prepare, exchange, restart }) {
-    this.#prepare = assertPort(prepare, 'prepare');
-    this.#exchange = assertPort(exchange, 'exchange');
-    this.#restart = assertPort(restart, 'restart');
+  constructor({ basis, plan, prepare, exchange, cycle = null, settleMs = 0, pollMs = 1_000 }) {
+    if (typeof basis !== 'function') throw new TypeError('bootstrap basis must be a function');
+    if (typeof plan !== 'function') throw new TypeError('bootstrap plan must be a function');
+    if (typeof prepare !== 'function') throw new TypeError('bootstrap prepare must be a function');
+    if (typeof exchange !== 'function') throw new TypeError('bootstrap exchange must be a function');
+    if (cycle != null && typeof cycle !== 'function') throw new TypeError('bootstrap cycle must be a function');
+    if (!Number.isSafeInteger(settleMs) || settleMs < 0 || settleMs > 300_000) throw new TypeError('bootstrap settleMs is invalid');
+    if (!Number.isSafeInteger(pollMs) || pollMs < 100 || pollMs > 30_000) throw new TypeError('bootstrap pollMs is invalid');
+    this.#basis = basis;
+    this.#plan = plan;
+    this.#prepare = prepare;
+    this.#exchange = exchange;
+    this.#cycle = cycle;
+    this.#settleMs = settleMs;
+    this.#pollMs = pollMs;
   }
 
-  async #observe(target, declaration, generation, operation) {
-    const raw = await this.#exchange(target, { protocol: ENVIRONMENT_BOOTSTRAP_PROTOCOL, operation, generation, declaration });
-    return normalizeObservation(raw, target, declaration, generation);
+  async #expected(target) {
+    const basis = normalizeBasis(await this.#basis(target));
+    const plan = normalizePlan(await this.#plan(structuredClone(basis)));
+    return expectedState(basis, plan);
   }
 
-  async ensure(rawTarget, rawDeclaration) {
-    const target = targetToken(rawTarget);
-    const declaration = normalizeBootstrapDeclaration(rawDeclaration);
-    const generation = bootstrapGeneration(declaration);
-    const prepared = requireObject(await this.#prepare(target, { generation, basis: { ...declaration.basis } }), 'bootstrap prepare result');
-    onlyKeys(prepared, new Set(['ready', 'reason']), 'bootstrap prepare result');
-    if (prepared.ready !== true) throw new Error(String(prepared.reason ?? 'bootstrap target preparation did not become ready'));
-    return this.#observe(target, declaration, generation, 'apply');
+  async #send(target, action, expected, { request = null } = {}) {
+    const identity = requestId(request);
+    const frame = {
+      protocol: ENVIRONMENT_BOOTSTRAP_PROTOCOL,
+      request: identity,
+      target,
+      action,
+      body: {
+        generation: expected.generation,
+        basisDigest: expected.basisDigest,
+        revision: expected.plan.revision,
+        requirements: expected.plan.requirements,
+        protectedNames: expected.plan.protectedNames,
+        networkRequired: expected.plan.networkRequired,
+      },
+    };
+    const response = await this.#exchange(target, structuredClone(frame));
+    return normalizeObservation(response, frame);
   }
 
-  async inspect(rawTarget, rawDeclaration) {
-    const target = targetToken(rawTarget);
-    const declaration = normalizeBootstrapDeclaration(rawDeclaration);
-    const generation = bootstrapGeneration(declaration);
-    return this.#observe(target, declaration, generation, 'observe');
+  async inspect(rawTarget) {
+    const target = targetId(rawTarget);
+    const expected = await this.#expected(target);
+    const observation = await this.#send(target, 'inspect', expected);
+    return statusFrom(observation, expected);
   }
 
-  async cycle(rawTarget, rawDeclaration) {
-    const target = targetToken(rawTarget);
-    const before = await this.ensure(target, rawDeclaration);
-    if (!before.ready) return { before, after: null, stable: false };
-    const restarted = requireObject(await this.#restart(target), 'bootstrap restart result');
-    onlyKeys(restarted, new Set(['identity', 'ready', 'reason']), 'bootstrap restart result');
-    if (restarted.identity !== target) throw new Error('bootstrap target identity changed across restart');
-    if (restarted.ready !== true) throw new Error(String(restarted.reason ?? 'bootstrap target did not become ready after restart'));
-    const after = await this.inspect(target, rawDeclaration);
-    return { before, after, stable: before.generation === after.generation && after.ready };
+  async ensure(rawTarget) {
+    const target = targetId(rawTarget);
+    const expected = await this.#expected(target);
+    await this.#prepare(target, structuredClone(expected.basis));
+    let observation = await this.#send(target, 'inspect', expected);
+    let status = statusFrom(observation, expected);
+    if (status.ready) return status;
+    observation = await this.#send(target, 'apply', expected);
+    status = statusFrom(observation, expected);
+    if (status.ready) return status;
+    const deadline = Date.now() + this.#settleMs;
+    while (!status.ready && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(this.#pollMs, Math.max(1, deadline - Date.now()))));
+      observation = await this.#send(target, 'apply', expected);
+      status = statusFrom(observation, expected);
+    }
+    if (!status.ready) throw new Error(status.reason ?? 'bootstrap did not become ready');
+    return status;
   }
+
+  async verifyContinuity(rawTarget) {
+    const target = targetId(rawTarget);
+    if (!this.#cycle) throw new Error('bootstrap continuity check is unavailable');
+    const before = await this.ensure(target);
+    const beforeBasis = sha256(before.basis);
+    await this.#cycle(target);
+    const after = await this.ensure(target);
+    if (sha256(after.basis) !== beforeBasis || after.generation !== before.generation) {
+      throw new Error('bootstrap continuity changed across the lifecycle cycle');
+    }
+    return after;
+  }
+}
+
+export function environmentBootstrapGeneration({ basis, plan }) {
+  return expectedState(normalizeBasis(basis), normalizePlan(plan)).generation;
 }
