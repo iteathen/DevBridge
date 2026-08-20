@@ -26,9 +26,9 @@ async function exists(filePath) {
 test('chat-authored C project profile is fixed and model-free', () => {
   const profile = chatCProjectDiagnosticProfile();
   assert.equal(profile.name, CHAT_C_PROJECT_DIAGNOSTIC_PROFILE);
-  assert.equal(profile.executable, process.execPath);
-  assert.equal(profile.args.length, 1);
-  assert.doesNotMatch(profile.args[0], /codex|spark/iu);
+  assert.equal(profile.executable, CHAT_C_PROJECT_DIAGNOSTIC_PROFILE);
+  assert.deepEqual(profile.args, []);
+  assert.equal(path.isAbsolute(profile.executable), false);
   const validated = validateToolProfile(profile.name, profile);
   assert.equal(validated.sandbox.outsideProjectWrite, false);
   assert.equal(validated.sandbox.network, 'deny');

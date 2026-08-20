@@ -27,7 +27,9 @@ function context() {
 test('built-in lifecycle roundtrip profile is fixed and capability-minimal', () => {
   const profile = lifecycleRoundtripDiagnosticProfile();
   assert.equal(profile.name, LIFECYCLE_ROUNDTRIP_DIAGNOSTIC_PROFILE);
-  assert.equal(profile.executable, process.execPath);
+  assert.equal(profile.executable, LIFECYCLE_ROUNDTRIP_DIAGNOSTIC_PROFILE);
+  assert.deepEqual(profile.args, []);
+  assert.equal(path.isAbsolute(profile.executable), false);
   assert.deepEqual(profile.environment.pass, []);
   const validated = validateToolProfile(profile.name, profile);
   assert.equal(validated.sandbox.outsideProjectRead, 'deny');

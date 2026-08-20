@@ -2,7 +2,7 @@ import { access, lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { PolicyError } from '../errors.js';
-import { normalizePlanPath } from '../run/controller-plan.js';
+import { ProjectRelativePathError, normalizeProjectRelativePath } from '../values/project-relative-path.js';
 import { deterministicOperationSecurity } from './deterministic-operation-security.js';
 import { createCoreToolchainRegistry } from './toolchain-registry.js';
 
@@ -22,8 +22,16 @@ function isWithin(root, candidate) {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
+function policyPath(value, name) {
+  try {
+    return normalizeProjectRelativePath(value);
+  } catch (error) {
+    if (!(error instanceof ProjectRelativePathError)) throw error;
+    throw new PolicyError(`${name} ${error.message}`, { cause: error });
+  }
+}
 function projectPath(projectDir, relative, name) {
-  const safe = normalizePlanPath(relative, name);
+  const safe = policyPath(relative, name);
   const resolved = path.resolve(projectDir, safe);
   const rel = path.relative(path.resolve(projectDir), resolved);
   if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new PolicyError(`${name} escaped project root`);
@@ -146,9 +154,9 @@ function nodeScriptAdapter({ mode }) {
       onlyKeys(params, allowed, mode);
       if (mode === 'node.test') {
         if (!Array.isArray(params.paths) || params.paths.length === 0 || params.paths.length > 32) throw new PolicyError('node.test paths must contain 1-32 project-relative paths');
-        return { paths: params.paths.map((value, index) => normalizePlanPath(value, `node.test.paths[${index}]`)) };
+        return { paths: params.paths.map((value, index) => policyPath(value, `node.test.paths[${index}]`)) };
       }
-      return { path: normalizePlanPath(params.path, `${mode}.path`) };
+      return { path: policyPath(params.path, `${mode}.path`) };
     },
     async execute(params, { projectDir, processRunner, onActivity }) {
       if (mode === 'node.test') {
@@ -208,7 +216,7 @@ function cmakeConfigureAdapter() {
       const params = objectParams(raw, 'cmake.configure');
       onlyKeys(params, new Set(['sourcePath', 'buildId', 'buildType', 'generator', 'architecture']), 'cmake.configure');
       return {
-        sourcePath: normalizePlanPath(params.sourcePath ?? 'CMakeLists.txt', 'cmake.configure sourcePath'),
+        sourcePath: policyPath(params.sourcePath ?? 'CMakeLists.txt', 'cmake.configure sourcePath'),
         buildId: safeId(params.buildId, 'cmake.configure buildId'),
         buildType: safeBuildType(params.buildType, 'cmake.configure buildType'),
         generator: safeGenerator(params.generator),

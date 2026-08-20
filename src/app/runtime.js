@@ -1,4 +1,3 @@
-import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { JsonStateStore } from '../state/json-state-store.js';
 import { stateFileName } from '../state/state-file.js';
@@ -18,13 +17,15 @@ import { WorkspacePolicy } from '../security/workspace-policy.js';
 import { GitClient } from '../git/git-client.js';
 import { GitTaskLeaseStore } from '../git/task-lease-store.js';
 import { GitWorkspaceManager } from '../git/workspace-manager.js';
-import { ProcessRunner } from '../runtime/process-runner.js';
 import { DeterministicProcessRunner } from '../runtime/deterministic-process-runner.js';
 import { UnavailableRepositoryExecution } from '../runtime/repository-execution.js';
 import { WorkerExchange } from '../runtime/worker-exchange.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
 import { loadLocalOperationManifests } from '../runtime/local-operation-manifest.js';
-import { ToolOnboardingService } from '../runtime/tool-onboarding.js';
+import { ToolOnboarding } from '../runtime/tool-onboarding.js';
+import { canonicalExternalDirectory } from '../runtime/external-directory.js';
+import { connectToolOnboarding } from './tool-onboarding-composition.js';
+import { composeWorkRunner } from './work-runner-composition.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { ToolInventoryService } from '../runtime/tool-inventory.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
@@ -40,38 +41,6 @@ import { DecisionGatedRunCoordinator, DecisionGatedWorkspaceManager } from '../r
 export { stateFileName } from '../state/state-file.js';
 
 const REPOSITORY_EXECUTION_UNAVAILABLE_REASON = 'repository execution is intentionally unavailable until VM Stage 6';
-
-function isWithin(root, candidate) {
-  const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-}
-
-async function canonicalLocalManifestDirectory(directory, workspaceRoot) {
-  if (!directory) return null;
-  const resolved = path.resolve(directory);
-  const info = await lstat(resolved);
-  if (!info.isDirectory() || info.isSymbolicLink()) {
-    throw new Error('execution.toolOnboarding.manifestDirectory must be a real non-symlink directory');
-  }
-  let current = path.dirname(resolved);
-  while (true) {
-    const parentInfo = await lstat(current);
-    if (parentInfo.isSymbolicLink()) {
-      throw new Error('execution.toolOnboarding.manifestDirectory must not use filesystem indirection');
-    }
-    const parent = path.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  const [canonical, canonicalWorkspaceRoot] = await Promise.all([
-    realpath(resolved),
-    realpath(path.resolve(workspaceRoot)),
-  ]);
-  if (isWithin(canonicalWorkspaceRoot, canonical)) {
-    throw new Error('execution.toolOnboarding.manifestDirectory must be outside the controller-writable workspace root');
-  }
-  return canonical;
-}
 
 function coordinationDefaults(config) {
   return config.coordination ?? {
@@ -207,7 +176,7 @@ export async function createRuntime(config, {
   const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
   const repositoryExecution = new UnavailableRepositoryExecution({ reason: REPOSITORY_EXECUTION_UNAVAILABLE_REASON });
   const workerExchange = new WorkerExchange({ stateDirectory: config.state.directory });
-  const processRunner = new ProcessRunner({ workerExchange, repositoryExecution });
+  const processRunner = composeWorkRunner({ mailboxStore: workerExchange, activeExecution: repositoryExecution });
   const leaseProcessRunner = leaseExecutionContext
     ? leaseExecutionContext.wrapProcessRunner(processRunner)
     : processRunner;
@@ -229,17 +198,20 @@ export async function createRuntime(config, {
     maxHelpBytes: 262_144,
     probeTimeoutMs: 15_000,
   };
-  const manifestDirectory = await canonicalLocalManifestDirectory(onboardingConfig.manifestDirectory, config.workspace.root);
+  const manifestDirectory = await canonicalExternalDirectory(onboardingConfig.manifestDirectory, config.workspace.root);
   const localOperationManifests = manifestDirectory
     ? await loadLocalOperationManifests({ directory: manifestDirectory, registry: operationRegistry })
     : [];
   const toolOnboarding = onboardingConfig.enabled
-    ? new ToolOnboardingService({
+    ? connectToolOnboarding({
+        onboarding: new ToolOnboarding({
+          entries: onboardingConfig.autoIntegrate,
+          probeTimeoutMs: onboardingConfig.probeTimeoutMs,
+          maxHelpBytes: onboardingConfig.maxHelpBytes,
+        }),
+        directory: manifestDirectory,
         operationRegistry,
-        repositoryExecution,
-        workspaceRoot: config.workspace.root,
-        manifestDirectory,
-        autoIntegrate: onboardingConfig.autoIntegrate,
+        activeExecution: repositoryExecution,
       })
     : null;
   const deterministicControllerPlanExecutor = new ControllerPlanExecutor({

@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DeterministicProcessRunner } from '../src/runtime/deterministic-process-runner.js';
-import { ProcessRunner } from '../src/runtime/process-runner.js';
+import { composeWorkRunner } from '../src/app/work-runner-composition.js';
 import { applyChildProcessPriority, processPriorityValue } from '../src/runtime/process-priority.js';
 import {
   REPOSITORY_EXECUTION_RESULT_PROTOCOL,
@@ -90,9 +90,9 @@ test('repository worker execution does not inherit host process-priority mechani
   const projectDir = path.join(root, 'project');
   await mkdir(projectDir);
   try {
-    const runner = new ProcessRunner({
-      workerExchange: new WorkerExchange({ stateDirectory: path.join(root, 'state') }),
-      repositoryExecution: fakeRepositoryExecution(),
+    const runner = composeWorkRunner({
+      mailboxStore: new WorkerExchange({ stateDirectory: path.join(root, 'state') }),
+      activeExecution: fakeRepositoryExecution(),
     });
     const result = await runner.run({
       profile: workerProfile,
@@ -103,8 +103,8 @@ test('repository worker execution does not inherit host process-priority mechani
       context: { objective: 'priority fixture' },
     });
     assert.equal(result.exitCode, 0);
-    assert.equal(result.processPriority, null);
-    assert.equal(result.execution.location, 'repository');
+    assert.equal(Object.hasOwn(result, 'processPriority'), false);
+    assert.equal(Object.hasOwn(result, 'execution'), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

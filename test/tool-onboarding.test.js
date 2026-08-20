@@ -1,30 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createOnboardingRecordPort } from '../src/app/tool-onboarding-composition.js';
 import { DeterministicOperationRegistry } from '../src/runtime/deterministic-operation-registry.js';
-import { LOCAL_OPERATION_MANIFEST_PROTOCOL } from '../src/runtime/local-operation-manifest.js';
-import { REPOSITORY_EXECUTION_STATUS_PROTOCOL } from '../src/runtime/repository-execution.js';
-import { parseCliHelp, ToolOnboardingService, validateToolOnboardingPolicy } from '../src/runtime/tool-onboarding.js';
+import { parseCliHelp } from '../src/runtime/cli-help-parser.js';
+import { ToolOnboarding } from '../src/runtime/tool-onboarding.js';
+import { validateToolOnboardingPolicy } from '../src/runtime/tool-onboarding-policy.js';
 
 const HELP = `Usage: magic-tool [OPTIONS] <INPUT>\n\nOptions:\n  --json                 Emit JSON\n  --jobs <COUNT>         Worker count\n  --output <PATH>        Project output path\n  --env <VALUE>          Dangerous authority-like parameter\n  --mode <WHEN>          Mode\n`;
+const ENTRY = Object.freeze({ command: 'magic-tool', operation: 'tool.magic', helpArgs: Object.freeze(['--help']) });
 
-function executionStatus(ready) {
-  return {
-    inspect() {
-      return ready
-        ? { protocol: REPOSITORY_EXECUTION_STATUS_PROTOCOL, state: 'ready', ready: true, identity: 'fixture', reason: null }
-        : { protocol: REPOSITORY_EXECUTION_STATUS_PROTOCOL, state: 'unavailable', ready: false, identity: null, reason: 'stage-1-no-provider' };
-    },
-    async execute() { throw new Error('onboarding must not execute without exact repository scope'); },
-  };
+function probe({ ready = true, reason = null, run = async () => { throw new Error('probe must not run'); } } = {}) {
+  return { inspect: () => ({ ready, reason }), run };
 }
 
-test('help parser synthesizes only bounded safe flags/options/positionals', () => {
+function observation(overrides = {}) {
+  return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: HELP, stderr: '', ...overrides };
+}
+
+function records(overrides = {}) {
+  return { restore: async () => null, has: () => false, publish: async () => {}, ...overrides };
+}
+
+test('help parser synthesizes only bounded safe flags, options, and positionals', () => {
   const parsed = parseCliHelp(HELP);
   assert.match(parsed.helpSha256, /^[0-9a-f]{64}$/u);
-  assert.deepEqual(parsed.commands, []);
   assert.deepEqual(parsed.arguments, [
     { kind: 'flag', param: 'json', flag: '--json' },
     { kind: 'option', param: 'jobs', flag: '--jobs', required: false, repeat: false, valueType: 'integer' },
@@ -35,98 +38,105 @@ test('help parser synthesizes only bounded safe flags/options/positionals', () =
   assert.equal(parsed.arguments.some((entry) => entry.param === 'env'), false);
 });
 
-test('automatic onboarding does not probe host executables during the Stage-1 no-provider interval', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'db-onboarding-unavailable-'));
-  const workspace = path.join(root, 'workspace');
-  const manifests = path.join(root, 'manifests');
-  await Promise.all([mkdir(workspace), mkdir(manifests)]);
-  try {
-    const registry = new DeterministicOperationRegistry();
-    const service = new ToolOnboardingService({
-      operationRegistry: registry,
-      repositoryExecution: executionStatus(false),
-      workspaceRoot: workspace,
-      manifestDirectory: manifests,
-      autoIntegrate: [{ command: 'magic-tool', operation: 'tool.magic' }],
+test('onboarding reports an unavailable temporary probe without publishing', async () => {
+  let published = false;
+  const onboarding = new ToolOnboarding({ entries: [ENTRY] });
+  const result = await onboarding.reconcile({
+    context: Object.freeze({ opaque: 'value' }),
+    probe: probe({ ready: false, reason: 'no-route' }),
+    records: records({ publish: async () => { published = true; } }),
+  });
+  assert.deepEqual(result, { changed: false, events: [{ command: 'magic-tool', operation: 'tool.magic', state: 'probe-unavailable', reason: 'no-route' }] });
+  assert.equal(published, false);
+});
+
+test('onboarding requires and passes through an opaque context', async () => {
+  const onboarding = new ToolOnboarding({ entries: [ENTRY] });
+  const missing = await onboarding.reconcile({ probe: probe(), records: records() });
+  assert.equal(missing.events[0].state, 'probe-context-required');
+
+  const calls = [];
+  const publications = [];
+  const context = Object.freeze({ subject: '42', activity: 'run-1' });
+  const result = await onboarding.reconcile({
+    context,
+    probe: probe({ run: async (request) => { calls.push(request); return observation(); } }),
+    records: records({ publish: async (value) => { publications.push(value); } }),
+  });
+  assert.equal(result.changed, true);
+  assert.equal(result.events[0].state, 'available-probed');
+  assert.equal(calls[0].context, context);
+  assert.equal(calls[0].command, 'magic-tool');
+  assert.deepEqual(publications[0].entry, ENTRY);
+  assert.match(publications[0].parsed.helpSha256, /^[0-9a-f]{64}$/u);
+});
+
+test('failed, timed-out, and truncated observations never publish', async () => {
+  for (const failed of [
+    observation({ exitCode: 2, stderr: 'bad' }),
+    observation({ timedOut: true }),
+    observation({ outputTruncated: true }),
+  ]) {
+    let published = false;
+    const result = await new ToolOnboarding({ entries: [ENTRY] }).reconcile({
+      context: {},
+      probe: probe({ run: async () => failed }),
+      records: records({ publish: async () => { published = true; } }),
     });
-    const result = await service.reconcile();
-    assert.equal(result.changed, false);
-    assert.equal(result.events[0].state, 'repository-execution-unavailable');
-    assert.equal(result.events[0].reason, 'stage-1-no-provider');
-    assert.equal(registry.has('tool.magic'), false);
-    assert.deepEqual(await readdir(manifests), []);
-  } finally {
-    await rm(root, { recursive: true, force: true });
+    assert.equal(result.events[0].state, 'probe-failed');
+    assert.equal(published, false);
   }
 });
 
-test('a ready executor still does not authorize onboarding without an exact repository environment', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'db-onboarding-scope-'));
-  const workspace = path.join(root, 'workspace');
-  const manifests = path.join(root, 'manifests');
-  await Promise.all([mkdir(workspace), mkdir(manifests)]);
+test('composition persists before activation and restores the record after restart', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'db-onboarding-records-'));
+  const file = path.join(directory, 'auto-tool.magic.json');
   try {
-    const service = new ToolOnboardingService({
-      operationRegistry: new DeterministicOperationRegistry(),
-      repositoryExecution: executionStatus(true),
-      workspaceRoot: workspace,
-      manifestDirectory: manifests,
-      autoIntegrate: [{ command: 'magic-tool', operation: 'tool.magic' }],
-    });
-    const result = await service.reconcile();
-    assert.equal(result.changed, false);
-    assert.equal(result.events[0].state, 'repository-scope-required');
-    assert.match(result.events[0].reason, /exact repository environment/u);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('an existing control-owned synthesized manifest can be registered without probing', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'db-onboarding-existing-'));
-  const workspace = path.join(root, 'workspace');
-  const manifests = path.join(root, 'manifests');
-  await Promise.all([mkdir(workspace), mkdir(manifests)]);
-  try {
-    const manifest = {
-      protocol: LOCAL_OPERATION_MANIFEST_PROTOCOL,
-      operation: 'tool.magic',
-      executable: 'magic-tool',
-      arguments: [{ kind: 'flag', param: 'json', flag: '--json' }],
-      requireAnyParameter: true,
-      source: { kind: 'help-synthesized', command: 'magic-tool', helpSha256: 'a'.repeat(64) },
+    const base = new DeterministicOperationRegistry();
+    const guarded = {
+      has: (name) => base.has(name),
+      register(name, adapter) {
+        assert.equal(existsSync(file), true, 'activation must follow durable persistence');
+        base.register(name, adapter);
+      },
     };
-    await writeFile(path.join(manifests, 'auto-tool.magic.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
-    const registry = new DeterministicOperationRegistry();
-    const service = new ToolOnboardingService({
-      operationRegistry: registry,
-      repositoryExecution: executionStatus(false),
-      workspaceRoot: workspace,
-      manifestDirectory: manifests,
-      autoIntegrate: [{ command: 'magic-tool', operation: 'tool.magic' }],
+    const first = new ToolOnboarding({ entries: [ENTRY] });
+    const result = await first.reconcile({
+      context: {},
+      probe: probe({ run: async () => observation() }),
+      records: createOnboardingRecordPort({ directory, operationRegistry: guarded }),
     });
-    const result = await service.reconcile();
-    assert.equal(result.changed, false);
-    assert.equal(result.events[0].state, 'registered-existing');
-    assert.equal(registry.has('tool.magic'), true);
-    const stored = JSON.parse(await readFile(path.join(manifests, 'auto-tool.magic.json'), 'utf8'));
+    assert.equal(result.changed, true);
+    assert.equal(base.has('tool.magic'), true);
+    assert.deepEqual(await readdir(directory), ['auto-tool.magic.json']);
+    const stored = JSON.parse(await readFile(file, 'utf8'));
     assert.equal(stored.source.command, 'magic-tool');
+
+    const restarted = new DeterministicOperationRegistry();
+    const restored = await new ToolOnboarding({ entries: [ENTRY] }).reconcile({
+      probe: probe({ ready: false }),
+      records: createOnboardingRecordPort({ directory, operationRegistry: restarted }),
+    });
+    assert.equal(restored.changed, false);
+    assert.equal(restored.events[0].state, 'available-existing');
+    assert.equal(restarted.has('tool.magic'), true);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
-test('local onboarding policy rejects remote-shell shaped configuration', () => {
-  assert.throws(
-    () => validateToolOnboardingPolicy({ autoIntegrate: [{ command: 'tool;rm', helpArgs: ['--help'] }] }),
-    /command is invalid/u,
-  );
-  assert.throws(
-    () => validateToolOnboardingPolicy({ autoIntegrate: [{ command: 'tool', helpArgs: ['help;rm'] }] }),
-    /fixed safe option arguments/u,
-  );
-  assert.throws(
-    () => validateToolOnboardingPolicy({ autoIntegrate: [{ command: 'tool', operation: 'shell.exec' }] }),
-    /operation is invalid/u,
-  );
+test('policy rejects command construction and authority-shaped operations', () => {
+  assert.throws(() => validateToolOnboardingPolicy({ autoIntegrate: [{ command: 'tool;rm' }] }), /command is invalid/u);
+  assert.throws(() => validateToolOnboardingPolicy({ autoIntegrate: [{ command: 'tool', helpArgs: ['help;rm'] }] }), /fixed safe option/u);
+  assert.throws(() => validateToolOnboardingPolicy({ autoIntegrate: [{ command: 'tool', operation: 'shell.exec' }] }), /operation is invalid/u);
+  assert.throws(() => validateToolOnboardingPolicy({ autoIntegrate: [{ command: 'one', operation: 'tool.same' }, { command: 'two', operation: 'tool.same' }] }), /duplicates operation/u);
+});
+
+test('isolated onboarding bricks cannot acquire topology dependencies', async () => {
+  const restrictions = new Map([
+    ['src/runtime/cli-help-parser.js', /node:fs|registry|repository|provider|topology|manifest/iu],
+    ['src/runtime/tool-onboarding-policy.js', /node:fs|probe|persist|composition|registry|repository|provider|topology|manifest/iu],
+    ['src/runtime/tool-onboarding.js', /node:fs|local-operation-manifest|repository-execution|operationRegistry|manifestDirectory|workspaceRoot|repository|provider|topology/iu],
+  ]);
+  for (const [file, forbidden] of restrictions) assert.doesNotMatch(await readFile(file, 'utf8'), forbidden, file);
 });

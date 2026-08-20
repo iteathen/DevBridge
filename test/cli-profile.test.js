@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { validateToolProfile, expandProfileArgs } from '../src/runtime/cli-profile.js';
 import { PolicyError } from '../src/errors.js';
 
-test('a profile may declare no self-sandbox because outer enforcement is owned by ProcessRunner', () => {
+test('a profile may declare no self-sandbox because containment is enforced outside the profile', () => {
   const profile = validateToolProfile('tool', { executable: 'tool', args: [] });
   assert.equal(profile.sandbox.enforcement, 'none');
   assert.equal(profile.sandbox.outsideProjectRead, 'deny');

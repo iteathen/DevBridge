@@ -1,7 +1,7 @@
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { PolicyError } from '../errors.js';
-import { normalizePlanPath } from '../run/controller-plan.js';
+import { ProjectRelativePathError, normalizeProjectRelativePath } from '../values/project-relative-path.js';
 
 export const LOCAL_OPERATION_MANIFEST_PROTOCOL = 'devbridge/local-operation-manifest-v1';
 export const OPERATION_PARAMETER_SCHEMA_PROTOCOL = 'devbridge/operation-parameters-v1';
@@ -224,7 +224,14 @@ function encodeValue(descriptor, value, name) {
     if (typeof value !== 'string' || !descriptor.values.includes(value)) throw new PolicyError(`${name} is not an allowed enum value`);
     return value;
   }
-  if (descriptor.valueType === 'project-path') return normalizePlanPath(value, name);
+  if (descriptor.valueType === 'project-path') {
+    try {
+      return normalizeProjectRelativePath(value);
+    } catch (error) {
+      if (!(error instanceof ProjectRelativePathError)) throw error;
+      throw new PolicyError(`${name} ${error.message}`, { cause: error });
+    }
+  }
   return boundedScalar(value, name);
 }
 

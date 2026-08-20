@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseResultJsonText } from '../src/runtime/process-runner.js';
+import { parseResultJsonText } from '../src/runtime/result-json.js';
 import { parseToolResult } from '../src/run/result-envelope.js';
 
 const complete = {

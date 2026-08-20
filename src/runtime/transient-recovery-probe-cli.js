@@ -2,7 +2,7 @@
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
-import { WORKER_RESULT_FILE } from './worker-exchange.js';
+import { emitResult } from './result-emission.js';
 
 const CAPACITY_ERROR = 'ERROR: Selected model is at capacity. Please try a different model.';
 const STATE_PROTOCOL = 'devbridge/transient-recovery-probe-v1';
@@ -31,13 +31,9 @@ async function readAttempt(stateFile) {
 async function main() {
   const context = JSON.parse(await readStdin());
   if (context?.protocol !== 'devbridge/context-v1') throw new Error('transient recovery diagnostic requires devbridge/context-v1');
-  if (context?.bridge?.resultFile !== WORKER_RESULT_FILE) {
-    throw new Error('transient recovery diagnostic requires the fixed DevBridge worker result endpoint');
-  }
-
-  const runId = String(context?.bridge?.runId ?? '');
+  const runId = String(context?.actions?.identity ?? '');
   if (!SAFE_RUN_ID.test(runId) || runId === '.' || runId === '..') {
-    throw new Error('transient recovery diagnostic requires a safe DevBridge runId');
+    throw new Error('transient recovery diagnostic requires a safe work identity');
   }
 
   // This is disposable probe progress only, not control-plane authority or IPC.
@@ -63,7 +59,7 @@ async function main() {
     nextStep: null,
     blocker: null
   };
-  await writeFile(WORKER_RESULT_FILE, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8' });
+  emitResult(result);
   await rm(stateFile, { force: true });
   process.stdout.write(`${JSON.stringify({ diagnostic: 'transient-recovery', attempt, status: 'complete' })}\n`);
 }

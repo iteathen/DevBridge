@@ -7,7 +7,7 @@ import {
   createManifestOperationAdapter,
 } from '../src/runtime/local-operation-manifest.js';
 import { ToolInventoryService } from '../src/runtime/tool-inventory.js';
-import { parseCliHelp } from '../src/runtime/tool-onboarding.js';
+import { parseCliHelp } from '../src/runtime/cli-help-parser.js';
 import { REPOSITORY_EXECUTION_STATUS_PROTOCOL } from '../src/runtime/repository-execution.js';
 
 function repositoryExecution() {
