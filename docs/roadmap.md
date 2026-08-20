@@ -1,309 +1,225 @@
-# Implementation Roadmap
+# DevBridge roadmap
 
-This roadmap reflects the current `main` implementation after the security/capability campaign and issue #49 PRs through the DB-018 runtime-governance slice, plus the DB-019 verification-cost/evidence design contract tracked by issue #105.
+## Current checkpoint
 
-Work is organized by ownership boundary so the project stays reviewable and agents do not create half-connected features across the control plane.
+DevBridge already has a substantial host control plane: exact GitHub provenance, managed authoritative Git/workspaces, durable runs/recovery, controller plans, tool inventory/onboarding, checkpoint-and-proceed decisions, multi-agent leases/fencing, baseline-drift reverification, supervised self-update, cooperative pause/resource priority, and the DB-019 verification-governance contract.
 
-## Current operational checkpoint
+Repository-controlled execution is in an architectural transition.
 
-DevBridge now has a complete local control-plane path for trusted task intake, managed development work, verification, recovery, and bounded publication on verified Linux hosts.
+- Current main has a verified Linux/Bubblewrap host sandbox for supported repository-code execution.
+- Draft PR #106 contains experimental Windows ProcessContainer/AppContainer work.
+- DB-020 now supersedes both mechanisms as the **target** architecture: persistent networked repository VMs, with the trusted DevBridge controller and all authoritative secrets/Git/publication state on the host.
+- The old sandbox paths remain only until the VM replacement is implemented and qualified.
 
-Implemented current-state capabilities include:
+Do not extend Bubblewrap/AppContainer/ProcessContainer/Gitless host projection as the long-term solution unless an interim security fix is required to keep the currently live path safe.
 
-- exact GitHub task/feedback/decision provenance with trusted numeric actor IDs and complete-current-content edit verification;
-- managed repository/worktree provisioning and hardened Git control operations;
-- durable multi-turn run state, restart recovery, and context capsules;
-- DB-007 artifact-exact hard gates before sensitive sealing/publication;
-- deterministic DB-013 controller plans and locally registered operations;
-- exact final-byte verification after deterministic operations/cleanup;
-- verified Linux Bubblewrap isolation for repository-code operations and proposal workers;
-- control-owned worker IPC outside proposal worktrees;
-- signed immutable production self-update release subjects with sandboxed candidate validation and last-known-good rollback;
-- sanitized local tool inventory and bounded sandboxed dynamic operation onboarding;
-- durable DB-014 chat-context rollover/resume;
-- DB-016 Ed25519 installation identity, signed task leases, exact Git-ref CAS, heartbeat/TTL recovery, fencing, and coordination branch namespacing;
-- DB-017 baseline drift reconciliation, fast-forward-only automated rebase, mandatory reverification, and exact verified-head publication CAS;
-- DB-018 cooperative pause/resume and below-normal child-process QoS;
-- effective serialized task admission (one task/run continuation at a time).
+## Active VM program — issue #107
 
-DB-019 now defines the next verification-governance contract: explicit test cost/tier metadata, risk-driven selection, exact reusable evidence identity, selective invalidation, resumable long suites, and suite-specific liveness/timeout policy. That contract is not yet fully implemented and is tracked in issue #105.
+The dependency order is authoritative. Each stage performs the project's planning/research gate before implementation and must not depend on a lower stage that has not landed.
 
-This is still pre-production software. The remaining work below is explicit rather than hidden behind optimistic status wording.
+### Stage 0 — architecture/spec ratification and migration inventory — #108
 
-## Security deployment boundary — current
+Goal: make the VM pivot normative before code implementation begins.
 
-A runner's `github.trustedActorIds` is a remote development-job submission allowlist.
+Deliverables:
 
-Current DB-016 coordination prevents conflicting compliant agents from owning the same task, but task envelopes do not yet carry a cryptographically bound destination-agent address. Therefore a shared team queue does not by itself ensure developer-to-developer workstation isolation.
+- DB-020 persistent VM execution-boundary contract;
+- DB-003/DB-008 and related active documentation aligned to the VM trust model;
+- explicit network-on confidentiality implications;
+- persistent repository+guest-OS environment lifetime/identity requirements;
+- host-only authority/secrets enumeration;
+- transport-neutral narrow bridge contract;
+- Windows/Hyper-V initial provider target plus truthful future-provider abstraction;
+- `docs/vm-migration.md` classification/removal map.
 
-Until per-installation dispatch addressing exists, deployments that require developer A to be unable to dispatch work to developer B's machine must use runner-local queue/trusted-actor separation. Repository collaboration, coordination peer trust, and task-dispatch trust are different authorities.
+No runtime/config/CI cleanup belongs in this stage.
 
-This is the highest-value remaining issue #49 security/ergonomics clarification because the system must not imply that leases solve dispatch authorization.
-
-## Slice 0 — Foundation — complete
-
-Implemented and retained:
-
-- architecture/spec foundation;
-- typed task/feedback/context/status protocols;
-- local-authority-first capability model;
-- API budget/rate primitives;
-- path containment/redaction;
-- shell-free process execution;
-- checkpoint-and-proceed doctrine;
-- durable state-store ownership boundaries.
-
-No remaining work belongs in this slice unless a later feature reveals a foundation defect.
-
-## Slice 1 — Managed Git workspace and publication — core complete, identity/phase hardening remains
-
-Implemented:
+### Stage 1 — VM control-plane contracts and stable repository/OS identity — #109
 
-- controlled Git adapter with isolated config/environment;
-- managed clone/fetch/origin verification;
-- per-run branches/worktrees;
-- immutable start baseline (`baseSha`);
-- separate advancing publication baseline (`publicationBaseSha`);
-- candidate validation/sealing;
-- dedicated task-branch publication;
-- exact verified-head publication payload identity;
-- explicit expected-remote-state CAS for first publication and rewrites;
-- ambiguous publication observation/reconciliation;
-- fast-forward-only upstream rebase and conflict restoration;
-- no-op publication elision;
-- reserved/runtime-path rejection;
-- conservative lock/recovery behavior.
-
-Remaining:
-
-- numeric GitHub repository-ID pinning plus rename/transfer reconciliation (DB-010);
-- formal bounded managed worktree/repository retention sweeper;
-- first-class submodule/LFS/package-manager phase authority (DB-008);
-- additional independently controlled verifier/publisher effects if product requirements expand beyond task branches.
-
-## Slice 2 — Durable coordinator, decisions, and recovery — critical paths complete, genericization remains
-
-Implemented:
-
-- authoritative durable `RunCoordinator` lifecycle;
-- exact task revision identity;
-- duplicate terminal suppression and active-revision deferral;
-- bounded result/turn protocol;
-- waiting-feedback and restart resumption;
-- checkpoint-and-proceed behavior;
-- artifact-exact sensitive candidate classification/gating;
-- exact decision provenance, TTL, supersession, and restart-safe gate state;
-- safe sealing/publication rechecks;
-- targeted effect reconciliation for candidate publication, update activation, chat projection, lease transitions, and other critical paths;
-- baseline/local-candidate drift reverification during normal and recovery finalization.
-
-Remaining:
-
-- a complete generic DB-009 effect journal/reconciliation abstraction for every future remote mutation rather than targeted implementations;
-- broader use of `decision-scope` automatic gating where it provides value over current stricter artifact-exact binding;
-- explicit operator recovery UX for unusual poisoned/unknown remote control refs/state;
-- stronger durable retention/cleanup policy across all long-lived run evidence.
-
-## Slice 3 — GitHub progress, provenance, and context — core complete, alternate sources/auth remain
-
-Implemented:
-
-- coalesced bounded/redacted status projection;
-- exact trusted continuation/cancel feedback provenance;
-- exact trusted decision provenance;
-- complete current-body/edit-history task provenance;
-- durable accepted/rejected provenance evidence;
-- DB-014 bounded chat handoff checkpoint/readback/latest-pointer protocol;
-- authenticated handoff projection with exact digest preservation;
-- compact tool-inventory projection/reference;
-- rate-budgeted conditional polling with persisted validators.
-
-Remaining:
-
-- GitHub App installation authentication as an alternative local credential provider;
-- optional webhook `TaskSource` if operational value justifies it;
-- optional human-readable label mirrors where useful, never as authority;
-- additional repository-ID hardening under DB-010.
-
-## Slice 4 — Sandbox, workers, and tool authority — Linux boundary complete, platform/phase work remains
-
-Implemented:
-
-- local tool profiles with closed argv placeholders;
-- shell-free process execution;
-- allowlisted environment inheritance and mandatory control-credential stripping;
-- timeout/output bounds and process-tree termination attempts;
-- static/trusted-control/repository-code operation classification;
-- fail-closed untrusted execution without verified outer provider;
-- verified Linux Bubblewrap filesystem/network/control-state boundary;
-- control-owned worker mailbox with file-identity/digest/no-follow defenses;
-- external reads denied by default and selectively projected read-only;
-- ordinary untrusted build/test network denial;
-- truthful `doctor` separation of declarations/provider/observed enforcement;
-- presence-only PATH inventory discovery;
-- locally pre-authorized sandboxed tool documentation probes;
-- persistent operator-owned dynamic `tool.*` manifests.
-
-Remaining:
-
-- verified Windows OS containment provider (Job Object/AppContainer or equivalent with matching boundary evidence);
-- verified providers for other supported non-Linux platforms;
-- explicit dependency fetch/install/build/test/browser phases with narrowly scoped network and cache authority (DB-008);
-- lifecycle-script/package-manager policy and trust-scoped caches;
-- browser/Playwright loopback/restricted-network provider if justified;
-- stronger complete tool/profile identity/version evidence.
-
-## Slice 5 — Self-update and runtime supervision — production-integrity path implemented
-
-Implemented:
-
-- separate supervisor and daemon runtime ownership;
-- mutable development/testing channel as explicit alpha mode;
-- signed immutable production release subject (repository/head/version/runtime artifact digest);
-- isolated candidate materialization;
-- verified sandboxed candidate preflight/tests with network denied and control state hidden;
-- post-validation and pre-activation exact artifact rechecks;
-- token-bound cooperative daemon drain;
-- atomic tested-candidate activation intent/evidence;
-- health/doctor window and last-known-good rollback;
-- unexpected daemon restart on the exact accepted runtime.
-
-Remaining:
-
-- verified candidate-execution sandbox on Windows/non-Linux platforms;
-- a formal release publication pipeline/tool if/when release operations become part of DevBridge itself;
-- alternate signed release transport/provider only if justified by deployment needs.
-
-## Slice 6 — Multi-agent coordination — first complete coordination boundary implemented
-
-Implemented under DB-016:
-
-- persistent local Ed25519 identity;
-- public SHA-256 fingerprint/address;
-- local trusted peer public keys;
-- signed bounded task lease subjects;
-- exact expected-value Git-ref CAS;
-- heartbeat/TTL/skew recovery;
-- same-identity session takeover only with exclusive local daemon-lock proof;
-- lease-loss/expiry fencing before workers, sealing, and publication;
-- child abort linkage where supported;
-- signed terminal release state;
-- coordination-enabled candidate branch namespacing.
-
-Remaining:
-
-- per-installation human/task dispatch addressing or another explicit routing authorization model for shared-team queues;
-- operator-facing `whoami` identity display;
-- peer inspection/administration UX (without letting remote content change trust);
-- lease list/diagnostic CLI;
-- explicit manual claim/release/recovery commands with safe expected-state semantics;
-- broader observability for coordinated fleets without leaking local authority/secrets.
-
-## Slice 7 — Baseline drift and reverification — core complete
-
-Implemented under DB-017:
-
-- immutable original baseline evidence;
-- separate current publication baseline;
-- same-ref fast-forward-only reconciliation;
-- exact pre-rebase restoration after conflict;
-- mandatory post-rebase model verification or deterministic replay;
-- bounded reverification after candidate/local baseline drift;
-- recovery-time reverification from persisted publishing state;
-- exact clean verified candidate identity;
-- publication bound to exact verified head;
-- explicit expected remote task-branch head and ambiguity reconciliation;
-- DB-016 fence preservation through publication wrappers.
-
-Remaining work is hardening/coverage discovered through future failures rather than a known missing core feature.
-
-## Slice 8 — Workstation governance and daemon control — cooperative core complete
-
-Implemented under DB-018:
-
-- effective serialized task admission;
-- below-normal child priority by default;
-- supported internal priority levels `normal`, `below-normal`, and `low`;
-- fail-closed priority application when non-normal priority cannot be set;
-- token-bound pause request/acknowledgement;
-- safe-boundary admission pause preserving worktrees/run/IPC state;
-- `status` requested-vs-acknowledged pause visibility;
-- `resume` ownership checks;
-- stop precedence while paused;
-- no normal polling/claiming while fully paused.
-
-Remaining:
-
-- hard OS CPU/memory/disk/process-count/native-thread quotas with a real platform resource-provider contract;
-- parallel scheduling only after explicit durable admission/lease/effect/liveness accounting exists;
-- richer local status telemetry such as worker CPU load only when it can be measured truthfully and cheaply.
-
-## Slice 9 — Verification cost and durable evidence — DB-019 design complete, implementation open in issue #105
-
-DB-019 defines the required control-plane model for long/expensive verification.
-
-Existing foundations already present:
-
-- DB-013 cheap preflight before broad CI;
-- per-operation timeout/output bounds;
-- coalesced long-running liveness projection;
-- DB-009 restart recovery that avoids unnecessary deterministic/model repetition when exact evidence remains valid;
-- DB-017 exact candidate/publication-baseline reverification identity;
-- DB-018 serialized task admission and child-process QoS.
-
-Remaining implementation under issue #105:
-
-- explicit verification tiers/classes and stable suite identities;
-- risk/ownership-driven test selection and locally controlled qualification triggers;
-- historical/expected runtime, timing, resource-class, and decomposability metadata;
-- deterministic cheap/high-signal ordering before expensive downstream suites;
-- exact durable verification evidence bound to candidate/baseline/test/policy/platform/sandbox/toolchain/config identities;
-- evidence reuse across restart/context rollover/publication recovery/repeated agent requests;
-- selective evidence invalidation rather than broad discard;
-- resumable/checkpointed long suites where semantics permit;
-- suite-specific expected/soft-slow/liveness/hard-timeout policy instead of a one-size-fits-all timeout;
-- bounded progress that distinguishes healthy long-running verification from a hang;
-- future resource-aware verification scheduling only behind explicit resource accounting.
-
-A universal 30-minute maximum is explicitly not the goal. Expensive tests remain mandatory where they provide unique required evidence; the goal is to make their cost deliberate and their results durable.
-
-## Slice 10 — Remaining UNIX-style CLI surfaces — open issue #49 work
-
-Currently implemented commands:
-
-- `doctor`
-- `poll-once`
-- `run-once`
-- `daemon`
-- `status`
-- `pause`
-- `resume`
-- `stop`
-- `restart`
-- `handoff-status`
-- `handoff-seed`
-- `handoff-project`
-
-Remaining requested/possible controls, to be implemented only behind the already-safe underlying contracts:
-
-- `whoami` identity display;
-- trusted-peer inspection/administration;
-- lease/lock listing;
-- manual claim and explicit safe lease release/recovery;
-- local `run --issue <id>` dry-run/simulation mode with no unintended GitHub effects;
-- local `verify --patch <file.diff>` candidate verification path;
-- optional structured `--json`/human output refinements where current commands do not already emit JSON.
-
-The CLI must expose existing authority; it must not become a second capability system or a shortcut around task provenance, leases, decision gates, sandboxing, publication CAS, verification-cost policy, or recovery.
-
-## Deferred until justified
-
-- database-server dependency;
-- arbitrary shell task format;
-- remote plugin marketplace or repository-controlled plugin installation;
-- paid GitHub services as a core correctness dependency;
-- broad host filesystem visibility for convenience;
-- parallel task execution without a first-class scheduler contract;
-- automatic default-branch merge/release/deployment as an ordinary trusted task side effect.
-
-These are not necessarily prohibited forever. They require evidence that the current simpler boundary no longer meets the workload and a design that preserves local authority.
+Define provider-neutral but Hyper-V-grounded ports/state for:
+
+- stable repository identity, preferring verified immutable GitHub repository ID over display name alone;
+- guest OS/profile identity;
+- base-image identity/generation;
+- repository environment identity/generation;
+- persistent child-disk identity;
+- lifecycle/recovery states;
+- bridge capability/readiness identity;
+- reset/reseed/delete ownership semantics.
+
+This stage defines contracts/state, not a speculative multi-hypervisor framework.
+
+### Stage 2 — Hyper-V backend and immutable base-image lifecycle — #110
+
+Implement the trusted Windows-host Hyper-V management adapter and versioned base-image lifecycle.
+
+Prove:
+
+- locally controlled Hyper-V discovery/readiness;
+- immutable/versioned Windows and Linux guest base images;
+- exact image identity and compatibility metadata;
+- safe image creation/update/retention;
+- no guest authority over hypervisor management;
+- recovery from interrupted image lifecycle operations.
+
+### Stage 3 — persistent per-repository/per-OS disk and VM lifecycle — #111
+
+Implement repository environment materialization and persistence.
+
+Where Hyper-V supports it, use per-repository differencing/child VHD/VHDX disks based on immutable parents.
+
+Prove:
+
+- one stable environment per repository identity + enabled guest OS/profile + generation;
+- stop/shutdown retains disk/tool/build/repository state;
+- host/daemon restart rediscover/reconcile rather than duplicate;
+- parent/child chain integrity;
+- explicit reset/reseed and owned deletion;
+- no unowned VM/disk cleanup.
+
+### Stage 4 — narrow host↔guest command/file bridge — #112
+
+Research and select the concrete transport(s) for Windows and Linux guests.
+
+The solution must preserve DB-020's transport-independent authority contract:
+
+- exact environment/run/operation identity;
+- bounded structured command input;
+- bounded file/source transfer into guest;
+- bounded result/candidate retrieval;
+- timeout/cancellation/liveness;
+- no arbitrary host-path naming;
+- no credential/control-state/VM-management crossing;
+- restart/recovery semantics.
+
+PowerShell Direct, Hyper-V sockets/integration channels, network transports, or combinations may be considered; Stage 4 chooses based on actual platform behavior rather than convenience assumptions.
+
+### Stage 5 — guest bootstrap, networking, toolchain, development environment — #113
+
+Make persistent Windows/Linux guests useful for real development.
+
+Target behavior:
+
+- normal guest networking enabled by default;
+- Node/CMake/CTest/native compiler/package-manager/browser/coding-tool workflows as needed by acceptance;
+- guest-local tooling/caches survive VM stop/restart;
+- no required Bubblewrap/AppContainer layer inside the guest;
+- no host credentials or arbitrary writable host mounts;
+- guest tool inventory/readiness can be observed through the bridge;
+- base-image/tooling updates are versioned rather than mutating parents under existing children.
+
+### Stage 6 — route deterministic operations, workers, and candidate execution through VMs — #114
+
+Move repository-controlled execution off the trusted host.
+
+Implement:
+
+- controller-plan deterministic operation routing to the bound repository environment;
+- proposal/coding-worker execution through the VM bridge;
+- source synchronization into persistent guests;
+- candidate/result import back to the host;
+- host-authoritative Git/sealing/publication unchanged;
+- dynamic `tool.*` probing/execution in the guest;
+- package/build/test/browser repository execution in the guest;
+- runtime candidate-controlled validation through an appropriate VM validation environment;
+- exact drift/source/candidate identity checks;
+- authenticated external-service/private-source support only through an explicit mechanism that does not copy broad host authority into persistent guests.
+
+### Stage 7 — verification, doctor, recovery, CI, resources, security acceptance — #115
+
+This is the replacement-acceptance gate.
+
+Add real evidence for:
+
+- Hyper-V/provider/base-image/environment/bridge readiness;
+- Windows and Linux guest end-to-end workloads;
+- root/admin-compromised guest cannot obtain host secrets, authoritative Git/publication state, daemon/coordination/release state, arbitrary host paths/mounts, or hypervisor authority;
+- network-on guest confidentiality model;
+- persistent disk survival across command/VM/daemon/host lifecycle tests where practical;
+- bridge timeout/cancellation/recovery;
+- reset/reseed contamination recovery;
+- source/candidate import and host sealing;
+- runtime candidate VM validation;
+- DB-019 exact evidence identity and cost-aware qualification;
+- truthful VM CPU/memory/disk/lifecycle/resource observations/limits;
+- `doctor` distinguishes configuration from observed readiness;
+- CI includes real Hyper-V VM-boundary qualification on appropriate runners/infrastructure.
+
+Only after this stage provides replacement evidence can legacy sandbox removal be considered.
+
+### Stage 8 — installer/setup/reconfiguration integration — #116
+
+Integrate VM support into the installation/setup workflow coordinated with issue #103.
+
+Setup should:
+
+- discover host/platform/account/repository facts before prompting where safe;
+- detect Hyper-V/provider readiness and explain required local operator actions;
+- discover/suggest appropriate repositories/guest OS profiles/base images;
+- require explicit operator approval before enabling recommended capabilities;
+- support re-entering discovery/setup later to add/remove/change repositories, guest profiles, image policy, or execution capabilities;
+- migrate/deprecate legacy sandbox config deliberately rather than silently rewriting local authority;
+- keep execution disabled until the required VM provider/image/environment readiness is verified.
+
+### Stage 9 — remove legacy host sandbox machinery and retire PR #106 — #117
+
+After Stage 7 acceptance and Stage 8 deployability:
+
+- remove Bubblewrap provider/probe/status and Bubblewrap/AppArmor CI setup no longer required;
+- remove/refuse obsolete host `externalReadRoots` repository-execution semantics;
+- remove ProcessContainer/AppContainer/MXC/native-helper experiments/remnants;
+- remove Gitless host project-projection scaffolding;
+- remove sandbox-specific host worker IPC bind/ACL projection;
+- remove host-sandbox candidate validation;
+- delete/rewrite obsolete sandbox tests/docs/config surfaces only after equivalent VM invariants are covered;
+- retain generic process/result capture, deterministic operation registry, worker/result protocol semantics, authoritative Git/publication, recovery, supervision, leases, checkpoints, and verification evidence;
+- close/retire draft PR #106 with a clear historical pointer rather than pretending its work never happened.
+
+`docs/vm-migration.md` is the concrete removal/blocker inventory.
+
+## Parallel active work
+
+### DB-019 verification-cost/evidence implementation — #105
+
+The DB-019 contract is active but its complete planner/evidence-store implementation remains separate work.
+
+VM implementation should integrate with, not bypass, it:
+
+- VM/provider/bridge/security changes can force qualification;
+- exact environment/image/provider identities participate in evidence;
+- long VM suites need liveness and suite-specific timing;
+- exact still-valid VM qualification should not be repeated merely because chat/daemon context rolled over.
+
+### Setup/reconfiguration UX — #103
+
+Issue #103 governs broader installation discovery/re-entry behavior. VM Stage 8 coordinates with it rather than creating a second unrelated setup wizard.
+
+### Remaining #49 work
+
+Issue #107 supersedes #49's repository-code sandbox-provider direction only.
+
+Unrelated #49 surfaces such as per-installation dispatch/addressing, CLI/product ergonomics, and future truthful resource governance remain separate unless a later issue explicitly moves them.
+
+## Other known boundaries
+
+These remain intentionally incomplete unless covered by the VM stages above:
+
+- complete generic remote-effect journaling/correlation for every future GitHub mutation;
+- per-installation human-to-workstation task addressing for shared team queues;
+- stronger numeric repository/tool/profile identity evidence outside the VM-specific Stage-1 work;
+- GitHub App installation authentication;
+- general parallel task scheduling;
+- default-branch merge/release/deployment as ordinary task effects.
+
+## Engineering rules for roadmap work
+
+For every VM stage:
+
+1. read `AGENTS.md`, active specs, DB-020, the prerequisite VM stages, and `docs/vm-migration.md`;
+2. inspect the implementation being replaced/extended;
+3. research relevant Hyper-V/Windows/Linux APIs and failure semantics;
+4. write a scoped plan covering ownership, state transitions, authority crossings, recovery, tests, migration, and expected files;
+5. sanity-check against correctness/containment, persistence, recoverability, operator UX, performance, and DB-019 verification cost;
+6. proceed when no genuine architecture/authority choice remains; checkpoint only high-leverage architectural decisions.
+
+Preserve historical handoffs/audits rather than rewriting them to look current.
