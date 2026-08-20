@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -136,7 +136,7 @@ test('non-Git project uses its existing directory directly', async () => {
     await writeFile(path.join(project, 'fixture.txt'), 'plain\n');
     const view = await createGitlessProjectProjection({ workspaceRoot: workspace, projectDir: project });
     assert.equal(view.projected, false);
-    assert.equal(path.resolve(view.projectDir), path.resolve(project));
+    assert.equal(await realpath(view.projectDir), await realpath(project));
     await view.importChanges();
     await view.cleanup();
   } finally {
