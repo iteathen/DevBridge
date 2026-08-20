@@ -6,13 +6,13 @@ A profile is **local requested behavior**, not proof that containment or a usabl
 
 DB-020 changes the target execution model: repository-controlled tools execute inside persistent repository VMs. The required initial host providers are Windows/Hyper-V and Linux/KVM-QEMU-libvirt.
 
-Current main still uses the legacy Linux/Bubblewrap host sandbox for supported proposal-worker/repository-code execution. The host-sandbox fields below are therefore transitional compatibility, not the target architecture.
+Current pre-migration main still uses the legacy Linux/Bubblewrap host sandbox for supported proposal-worker/repository-code execution. Stage 1 removes that active host execution path before production VM implementation. From Stage 1 through Stage 5, repository-class tool execution is intentionally unavailable/fail-closed; Stage 6 restores it through VMs only.
 
-Deterministic DB-013 operations remain the preferred path where model inference is unnecessary. DB-015 dynamic `tool.*` onboarding remains a separate validated local-operation mechanism.
+Deterministic DB-013 operations remain preferred where model inference is unnecessary. DB-015 dynamic `tool.*` onboarding remains a separate validated local-operation mechanism.
 
-## Current transitional profile fields
+## Host-sandbox-era profile fields
 
-Current proposal-worker profiles may contain:
+Current profiles may contain:
 
 - `executable`
 - `args`
@@ -26,13 +26,15 @@ Current proposal-worker profiles may contain:
 - `sandbox.outsideProjectWrite`
 - `sandbox.network`.
 
-Today these fields drive the host process-runner/Bubblewrap implementation where supported.
+Before Stage 1 these fields may drive the host process-runner/Bubblewrap implementation where supported.
 
-Do not design new long-term repository-execution features around `outsideProjectRead`, host `externalReadRoots`, host sandbox network modes, or host executable projection. Stage 8/9 will migrate/deprecate obsolete fields after VM-backed execution exists.
+Stage 1 removes their ability to authorize repository-code host execution. Keys may remain temporarily recognized for migration/status/error compatibility, but they must not reactivate Bubblewrap or direct/uncontained host execution. Stage 8/9 owns deliberate operator-facing migration/deprecation.
+
+Do not design new repository-execution features around `outsideProjectRead`, host `externalReadRoots`, host sandbox network modes, or host executable projection.
 
 ## Target VM-backed profile model
 
-A repository-execution profile should ultimately describe logical intent/capability, while DevBridge resolves it inside the exact repository environment.
+A repository-execution profile should describe logical intent/capability while DevBridge resolves it inside the exact repository environment.
 
 Useful target concepts include:
 
@@ -57,60 +59,76 @@ It should **not** expose to remote/controller content:
 - bridge socket paths/transport parameters;
 - host credentials or environment values.
 
-The selected host provider and exact repository environment are control-plane state.
+The selected provider and exact repository environment are control-plane state.
 
 ## Host versus guest executable identity
 
-Under DB-020, repository tools live in the guest trust domain.
+Under DB-020, repository tools live in the guest trust domain after Stage 6.
 
 Examples:
 
-- Node/CMake/CTest/compiler/package-manager/coding CLI used for repository work -> guest tool.
-- Git/Node/provider tooling used by DevBridge's trusted host control plane -> host tool.
-- Hyper-V management tools -> host-only on Windows.
+- Node/CMake/CTest/compiler/package-manager/coding CLI used for repository work -> guest tool;
+- Git/Node/provider tooling used by DevBridge's trusted host control plane -> host tool;
+- Hyper-V management tools -> host-only on Windows;
 - KVM/QEMU/libvirt management tools -> host-only on Linux.
 
-A guest executable path may be useful internal bridge data, but it is not host authority and should normally be derived by the guest bootstrap/tool resolver rather than supplied by remote task text.
+During the intentional no-provider interval, repository tools requiring execution are unavailable rather than resolved to host executables.
+
+A guest executable path may be useful internal bridge data, but it is not host authority and should normally be derived by guest bootstrap/tool resolution rather than remote task text.
 
 ## Allowed structured placeholders
 
 Controller/profile placeholders remain structural, not free-form command injection.
 
-Current host-runner placeholders include:
+Host-sandbox-era placeholders may include:
 
 - `{projectDir}`
 - `{contextFile}`
 - `{resultFile}`
 - `{runId}`.
 
-The VM bridge may replace host-path-valued placeholders with logical guest path classes/opaque endpoints. Do not preserve a placeholder merely to expose a host path into the guest.
+The VM bridge replaces host-path-valued assumptions with logical guest path classes/opaque endpoints where needed. Do not preserve a placeholder merely to expose a host path into a guest.
 
-Free-form instructions never become argv, shell text, provider management arguments, or bridge transport configuration.
+Free-form instructions never become argv, shell text, provider-management arguments, or bridge transport configuration.
 
 ## Shell rule
 
-DevBridge host control processes continue to use `shell: false` unless a separately reviewed local adapter deliberately owns shell semantics.
+Trusted DevBridge host control processes continue to use `shell: false` unless a separately reviewed local adapter deliberately owns shell semantics.
 
-Inside a guest, a repository tool may itself invoke a guest shell as ordinary untrusted development behavior. That does not grant host shell authority. The host bridge still sends typed locally admitted operations rather than arbitrary remote shell text.
+Inside a guest, a repository tool may itself invoke a guest shell as ordinary untrusted development behavior. That does not grant host shell authority. The host bridge sends typed locally admitted operations rather than arbitrary remote shell text.
 
-## Current outer isolation boundary
+Provider absence never authorizes a host shell fallback for repository-controlled work.
 
-Current main's built-in proposal-worker provider is Bubblewrap on Linux. DevBridge verifies that provider before current host-sandboxed worker execution and fails closed where unavailable.
+## Execution boundary across migration
 
-This is a **current implementation statement only**.
+### Before Stage 1
 
-DB-020's target outer boundary is the VM:
+Current pre-migration Linux main may use verified Bubblewrap for supported repository execution. Windows repository execution remains fail-closed on main.
+
+### Stage 1 through Stage 5
+
+There is deliberately **no production repository execution provider**.
+
+Repository-class profile execution must fail before host spawn. In particular:
+
+- `execution.allowUncontainedTools` or equivalent cannot bypass provider absence;
+- profile `executable` cannot become direct-host authority for repository work;
+- sandbox settings cannot resurrect Bubblewrap/AppContainer/ProcessContainer;
+- proposal/model compatibility cannot silently drop containment;
+- candidate/tool probes requiring repository-controlled execution remain unavailable.
+
+### Stage 6 and later
+
+Repository-controlled profiles execute through the exact persistent VM environment:
 
 - Hyper-V repository VM on Windows host;
 - KVM/QEMU/libvirt repository VM on Linux host.
 
-No required Bubblewrap/AppContainer/ProcessContainer layer exists inside that VM.
-
-Stage 9 removes the host sandbox path only after both required host providers are qualified and installable. Linux support must not disappear during that cleanup.
+If the provider/environment/bridge is unavailable, execution remains unavailable/fail-closed. No required Bubblewrap/AppContainer/ProcessContainer layer exists inside the VM.
 
 ## Networking
 
-Current host profiles expose `sandbox.network` because Bubblewrap implements host-process network policy.
+Host-sandbox-era profiles may contain `sandbox.network`; after Stage 1 this field no longer authorizes a host repository-execution network mode.
 
 DB-020 guests instead have normal network access by default. This supports package managers, SDK installers, source/documentation access, browser tests, and coding services.
 
@@ -137,7 +155,7 @@ Any credential intentionally placed in a guest must be treated as guest-visible/
 
 ## Tool installation and persistence
 
-Repository tools should normally be installed in the persistent guest environment, not projected read-only from the host.
+After VM restoration, repository tools should normally be installed in the persistent guest environment, not projected read-only from the host.
 
 This allows per-repository state such as:
 
@@ -196,13 +214,15 @@ DB-015 remains authoritative:
 - unfamiliar-tool onboarding requires local allowlisting/delegation;
 - help/man/spec output is untrusted data;
 - generated operation schemas expose only bounded non-authority parameters;
-- repository-class generated tools execute inside the guest.
+- repository-class generated tools execute inside the guest after Stage 6.
+
+During Stage 1–5, repository-class generated operations requiring execution are unavailable, not host-executed.
 
 Do not implement dynamic onboarding by mutating proposal profiles from repository/GitHub text.
 
 ## Declaration versus observed readiness
 
-Keep these concepts distinct:
+Keep distinct:
 
 1. locally declared profile intent;
 2. configured host provider/image/environment policy;
@@ -214,6 +234,7 @@ No earlier layer automatically proves the later one.
 
 Examples:
 
+- profile configured != execution provider available;
 - Hyper-V installed != repository environment ready;
 - `/dev/kvm` exists != KVM/libvirt provider ready;
 - libvirt domain exists != correct qcow2 backing chain;
@@ -223,18 +244,16 @@ Examples:
 
 ## Workstation process/resource governance
 
-DB-018 below-normal host child priority remains transitional QoS for current host processes.
+DB-018 host child priority is QoS for trusted/provider host processes, not containment and not permission for repository-code host execution.
 
 VM-backed repository workloads use provider-specific vCPU/memory/disk/lifecycle controls where Stage 7 proves them. A profile does not get to raise provider resources or create parallel scheduling authority from remote text.
 
 ## Migration rule
 
-During VM Stages 1–8, keep current host-sandbox profile behavior working where needed for supported mainline execution, but do not add new architectural dependencies on it.
+- **Stage 1:** remove active host-sandbox profile execution and unsafe direct-host fallbacks; preserve only deliberate config/status migration recognition.
+- **Stages 2–5:** no normal repository profile execution while VM providers/environments/bridge/tooling are built.
+- **Stage 6:** restore repository profile execution through persistent VMs only.
+- **Stage 8:** migrate/deprecate obsolete sandbox-era profile/config fields through discover-first setup.
+- **Stage 9:** remove remaining compatibility/terminology scaffolding and confirm one VM-only execution model.
 
-Stage 9 removes/deprecates host-sandbox-only profile/config semantics after:
-
-- Hyper-V replacement acceptance;
-- KVM/QEMU/libvirt replacement acceptance;
-- Stage-8 config/setup migration.
-
-See DB-020 and `docs/vm-migration.md`.
+See DB-020, `docs/vm-lego-studs.md`, and `docs/vm-migration.md`.
