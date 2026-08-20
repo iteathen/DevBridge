@@ -10,14 +10,60 @@ import { GitClient } from '../src/git/git-client.js';
 import { GitWorkspaceManager } from '../src/git/workspace-manager.js';
 import { ProcessRunner } from '../src/runtime/process-runner.js';
 import { WorkerExchange } from '../src/runtime/worker-exchange.js';
+import {
+  REPOSITORY_EXECUTION_RESULT_PROTOCOL,
+  REPOSITORY_EXECUTION_STATUS_PROTOCOL,
+  normalizeRepositoryExecutionRequest,
+} from '../src/runtime/repository-execution.js';
 import { JsonStateStore } from '../src/state/json-state-store.js';
 import { RunCoordinator } from '../src/run/run-coordinator.js';
 
 const exec = promisify(execFile);
 async function git(cwd, args) { return exec('git', args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }); }
 
-test('first-version local pipeline turns a task into a sealed candidate commit', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'pp-e2e-'));
+function fakeRepositoryExecution(observed) {
+  return {
+    inspect() {
+      return {
+        protocol: REPOSITORY_EXECUTION_STATUS_PROTOCOL,
+        state: 'ready',
+        ready: true,
+        identity: 'fake-e2e',
+        reason: null,
+      };
+    },
+    async execute(raw) {
+      const request = normalizeRepositoryExecutionRequest(raw);
+      observed.push(request);
+      const resultTransfer = request.transfers.find((entry) => entry.name === 'result');
+      await resultTransfer.port.write(`${JSON.stringify({
+        protocol: 'devbridge/result-v1',
+        status: 'complete',
+        summary: 'fake repository execution completed',
+        progress: [],
+        tests: [{ name: 'fake-execution', status: 'pass' }],
+        nextStep: null,
+      })}\n`);
+      return {
+        protocol: REPOSITORY_EXECUTION_RESULT_PROTOCOL,
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        aborted: false,
+        outputTruncated: false,
+        stdout: '',
+        stderr: '',
+        startedAt: null,
+        finishedAt: null,
+        lastOutputAt: null,
+        evidence: { identity: 'fake-e2e', scope: request.scope },
+      };
+    },
+  };
+}
+
+test('generic coordinator completes through a fake repository executor without provider-specific controller logic', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-e2e-fake-execution-'));
   const source = path.join(root, 'source');
   await exec('git', ['init', '-b', 'main', source]);
   await writeFile(path.join(source, 'README.md'), 'before\n');
@@ -30,71 +76,35 @@ test('first-version local pipeline turns a task into a sealed candidate commit',
   const workspaceManager = new GitWorkspaceManager({ workspacePolicy: policy, gitClient, remoteUrlResolver: () => source });
   const stateDirectory = path.join(root, 'state');
   const stateStore = new JsonStateStore(path.join(stateDirectory, 'queue.json'));
+  const observed = [];
   const processRunner = new ProcessRunner({
     workerExchange: new WorkerExchange({ stateDirectory }),
-    sandboxProvider: {
-      async prepareExecution({ executable, args, cwd, env, sandbox }) {
-        assert.equal(sandbox.required, true);
-        assert.equal(typeof sandbox.ipc?.resultSource, 'string');
-        assert.equal(typeof sandbox.ipc?.resultTarget, 'string');
-        return {
-          executable,
-          args: args.map((value) => value === sandbox.ipc.resultTarget ? sandbox.ipc.resultSource : value),
-          cwd,
-          env,
-          evidence: {
-            provider: 'e2e-test-boundary',
-            verified: true,
-            verification: 'test-fixture',
-            filesystem: 'test-only-exact-result-path-translation',
-            network: 'denied',
-            gitAdministrativeState: 'test-fixture',
-            workerIpc: 'control-owned-exact-file-bindings',
-          },
-        };
-      },
-    },
+    repositoryExecution: fakeRepositoryExecution(observed),
   });
 
-  const fixtureCode = `
-    const fs = require('node:fs');
-    let input = '';
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', chunk => input += chunk);
-    process.stdin.on('end', () => {
-      JSON.parse(input);
-      fs.writeFileSync('README.md', 'after\\n');
-      fs.writeFileSync(process.argv[1], JSON.stringify({
-        protocol: 'devbridge/result-v1',
-        status: 'complete',
-        summary: 'fixture finished',
-        progress: ['edited README'],
-        tests: [{ name: 'fixture', status: 'pass' }],
-        nextStep: null
-      }));
-    });
-  `;
   const profile = {
-    executable: process.execPath,
-    args: ['-e', fixtureCode, '{resultFile}'],
+    name: 'fixture',
+    executable: '/host/path/is-not-the-execution-contract',
+    args: ['--result', '{resultFile}'],
     inputMode: 'stdin-json',
     timeoutMs: 10_000,
     maxOutputBytes: 64 * 1024,
-    environment: { pass: ['PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP'], set: {} },
-    sandbox: { enforcement: 'os', outsideProjectRead: 'deny', outsideProjectWrite: false, network: 'deny' }
+    environment: { pass: ['PATH'], set: {} },
+    sandbox: { enforcement: 'none', outsideProjectRead: 'deny', outsideProjectWrite: false, network: 'deny' },
   };
   const task = {
     queueRepository: 'owner/queue',
     issueNumber: 42,
     actorId: '1',
     revision: 'c'.repeat(64),
+    targetRepository: 'owner/repo',
     envelope: {
       target: { repository: 'owner/repo' },
-      instructions: 'Change README.',
+      instructions: 'Exercise the generic execution path.',
       preferredTool: 'fixture',
       requestedCapabilities: ['project.write', 'process.execute'],
-      context: { summary: 'local acceptance test', constraints: [] }
-    }
+      context: { summary: 'Stage-1 fake-provider acceptance', constraints: [] },
+    },
   };
 
   const coordinator = new RunCoordinator({
@@ -105,18 +115,21 @@ test('first-version local pipeline turns a task into a sealed candidate commit',
     tools: { fixture: profile },
     defaultTool: 'fixture',
     maxTurns: 2,
-    autoPushTaskBranches: false
+    autoPushTaskBranches: false,
   });
 
   const result = await coordinator.executeTask(task);
   assert.equal(result.status, 'completed');
   assert.equal(result.published, false);
-  assert.deepEqual(result.changedFiles, ['README.md']);
+  assert.deepEqual(result.changedFiles, []);
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].scope.repository, 'owner/repo');
+  assert.equal(observed[0].invocation.tool, 'fixture');
+  assert.doesNotMatch(JSON.stringify(observed[0].invocation), /host\/path/u);
 
   const worktree = workspaceManager.worktreePath('owner/repo', result.runId);
-  assert.equal(await readFile(path.join(worktree, 'README.md'), 'utf8'), 'after\n');
+  assert.equal(await readFile(path.join(worktree, 'README.md'), 'utf8'), 'before\n');
   assert.equal((await git(worktree, ['status', '--porcelain=v1'])).stdout.trim(), '');
-  assert.match((await git(worktree, ['log', '-1', '--pretty=%s'])).stdout.trim(), /^DevBridge issue #42 /);
 
   const second = await coordinator.executeTask(task);
   assert.equal(second.skipped, true);

@@ -7,7 +7,7 @@ import {
 } from '../src/runtime/toolchain-registry.js';
 import { createCoreOperationRegistry } from '../src/runtime/deterministic-operation-registry.js';
 
-test('core toolchain registry exposes locally resolved Node, CMake, CTest, compiler, and linker names', () => {
+test('core toolchain registry exposes locally resolved host-control tool names', () => {
   const registry = createCoreToolchainRegistry({ env: { PATH: '' } });
   assert.deepEqual(registry.names(), ['cmake', 'ctest', 'native.c', 'native.linker', 'node']);
 });
@@ -48,15 +48,16 @@ test('core operation registry removes generic node.run and exposes purpose-speci
   ]);
 });
 
-test('CMake operations derive argv locally and put build state only in managed scratch', async () => {
-  const toolchains = new LocalToolchainRegistry()
-    .register('cmake', async () => ({ executable: '/local/cmake', family: 'cmake' }))
-    .register('ctest', async () => ({ executable: '/local/ctest', family: 'ctest' }));
-  const registry = createCoreOperationRegistry({ toolchainRegistry: toolchains });
+test('repository CMake operations derive only logical tool and environment-relative scratch arguments', async () => {
+  const resolvingToolchains = new LocalToolchainRegistry()
+    .register('cmake', async () => { throw new Error('repository CMake must not resolve a host executable'); })
+    .register('ctest', async () => { throw new Error('repository CTest must not resolve a host executable'); });
+  const registry = createCoreOperationRegistry({ toolchainRegistry: resolvingToolchains });
   const observed = [];
   const context = {
     projectDir: path.resolve('/project'),
-    scratch: { directory: async (id) => path.resolve('/managed-scratch', id) },
+    repository: 'owner/project',
+    runId: 'run-1',
     processRunner: {
       run: async (request) => {
         observed.push(request);
@@ -74,10 +75,19 @@ test('CMake operations derive argv locally and put build state only in managed s
   await registry.execute('cmake.build', { buildId: 'release', config: 'Release', target: 'all' }, context);
   await registry.execute('ctest.run', { buildId: 'release', config: 'Release' }, context);
 
+  assert.equal(observed[0].repositoryTool, 'cmake');
   assert.deepEqual(observed[0].args, [
-    '-S', '.', '-B', path.resolve('/managed-scratch', 'cmake-release'), '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
+    '-S', '.', '-B', 'scratch/cmake-release', '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
   ]);
-  assert.deepEqual(observed[1].args, ['--build', path.resolve('/managed-scratch', 'cmake-release'), '--config', 'Release', '--target', 'all']);
-  assert.deepEqual(observed[2].args, ['--test-dir', path.resolve('/managed-scratch', 'cmake-release'), '--output-on-failure', '-C', 'Release']);
+  assert.equal(observed[1].repositoryTool, 'cmake');
+  assert.deepEqual(observed[1].args, ['--build', 'scratch/cmake-release', '--config', 'Release', '--target', 'all']);
+  assert.equal(observed[2].repositoryTool, 'ctest');
+  assert.deepEqual(observed[2].args, ['--test-dir', 'scratch/cmake-release', '--output-on-failure', '-C', 'Release']);
+  for (const entry of observed) {
+    assert.equal(entry.executionClass, 'repository-code');
+    assert.equal(entry.repository, 'owner/project');
+    assert.equal(entry.runId, 'run-1');
+    assert.equal(entry.args.some((arg) => typeof arg === 'string' && path.isAbsolute(arg)), false);
+  }
   assert.throws(() => registry.validate('cmake.configure', { buildId: 'x', arguments: ['--trace'] }), /parameter arguments is not allowed/u);
 });

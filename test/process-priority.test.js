@@ -6,39 +6,42 @@ import path from 'node:path';
 import { DeterministicProcessRunner } from '../src/runtime/deterministic-process-runner.js';
 import { ProcessRunner } from '../src/runtime/process-runner.js';
 import { applyChildProcessPriority, processPriorityValue } from '../src/runtime/process-priority.js';
+import {
+  REPOSITORY_EXECUTION_RESULT_PROTOCOL,
+  REPOSITORY_EXECUTION_STATUS_PROTOCOL,
+  normalizeRepositoryExecutionRequest,
+} from '../src/runtime/repository-execution.js';
 import { WorkerExchange } from '../src/runtime/worker-exchange.js';
-
-function verifiedSandbox() {
-  return {
-    async prepareExecution({ executable, args, cwd, env }) {
-      return {
-        executable,
-        args,
-        cwd,
-        env,
-        evidence: {
-          provider: 'priority-test',
-          verified: true,
-          verification: 'fixture',
-          filesystem: 'test-only',
-          network: 'denied',
-          gitAdministrativeState: 'read-only-or-unreachable',
-        },
-      };
-    },
-  };
-}
 
 const workerProfile = {
   name: 'priority-fixture',
-  executable: process.execPath,
-  args: ['-e', 'process.stdin.resume();process.stdin.on("end",()=>process.exit(0))'],
+  executable: '/host/executable/not-used-by-repository-execution',
+  args: ['--result', '{resultFile}'],
   inputMode: 'stdin-json',
   timeoutMs: 5000,
   maxOutputBytes: 8192,
   environment: { pass: [], set: {} },
-  sandbox: { enforcement: 'os', outsideProjectRead: 'deny', outsideProjectWrite: false, network: 'deny' },
+  sandbox: { enforcement: 'none', outsideProjectRead: 'deny', outsideProjectWrite: false, network: 'deny' },
 };
+
+function fakeRepositoryExecution() {
+  return {
+    inspect() {
+      return { protocol: REPOSITORY_EXECUTION_STATUS_PROTOCOL, state: 'ready', ready: true, identity: 'priority-fixture', reason: null };
+    },
+    async execute(raw) {
+      const request = normalizeRepositoryExecutionRequest(raw);
+      const output = request.transfers.find((entry) => entry.name === 'result');
+      await output.port.write(`${JSON.stringify({ protocol: 'devbridge/result-v1', status: 'complete', summary: 'done' })}\n`);
+      return {
+        protocol: REPOSITORY_EXECUTION_RESULT_PROTOCOL,
+        exitCode: 0, signal: null, timedOut: false, aborted: false, outputTruncated: false,
+        stdout: '', stderr: '', startedAt: null, finishedAt: null, lastOutputAt: null,
+        evidence: { identity: 'priority-fixture', scope: request.scope },
+      };
+    },
+  };
+}
 
 test('priority mapping uses the platform below-normal and low constants', () => {
   assert.equal(processPriorityValue('below-normal'), os.constants.priority.PRIORITY_BELOW_NORMAL);
@@ -60,7 +63,7 @@ test('priority helper applies the exact requested level to the spawned child PID
   });
 });
 
-test('deterministic process runner applies configured priority to the actual child before operation input', async () => {
+test('trusted host deterministic process runner applies configured priority to the actual child', async () => {
   const calls = [];
   const runner = new DeterministicProcessRunner({
     processPriority: 'below-normal',
@@ -72,45 +75,42 @@ test('deterministic process runner applies configured priority to the actual chi
     cwd: process.cwd(),
     timeoutMs: 5000,
     stdin: 'fixture',
+    executionClass: 'control-process',
   });
   assert.equal(result.exitCode, 0);
   assert.equal(calls.length, 1);
   assert.ok(Number.isSafeInteger(calls[0][0]) && calls[0][0] > 0);
   assert.equal(calls[0][1], os.constants.priority.PRIORITY_BELOW_NORMAL);
   assert.equal(result.processPriority.applied, true);
+  assert.equal(result.execution.location, 'host');
 });
 
-test('model process runner applies the same configured priority policy', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'pp-priority-worker-'));
+test('repository worker execution does not inherit host process-priority mechanics', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-priority-worker-'));
   const projectDir = path.join(root, 'project');
-  const stateDirectory = path.join(root, 'state');
   await mkdir(projectDir);
   try {
-    const calls = [];
     const runner = new ProcessRunner({
-      workerExchange: new WorkerExchange({ stateDirectory }),
-      sandboxProvider: verifiedSandbox(),
-      processPriority: 'low',
-      setPriority: (pid, value) => calls.push([pid, value]),
+      workerExchange: new WorkerExchange({ stateDirectory: path.join(root, 'state') }),
+      repositoryExecution: fakeRepositoryExecution(),
     });
     const result = await runner.run({
       profile: workerProfile,
       projectDir,
       runDir: path.join(projectDir, '.devbridge', 'priority-run', 'turn-1'),
       runId: 'priority-run',
+      repository: 'owner/project',
       context: { objective: 'priority fixture' },
     });
     assert.equal(result.exitCode, 0);
-    assert.equal(calls.length, 1);
-    assert.ok(Number.isSafeInteger(calls[0][0]) && calls[0][0] > 0);
-    assert.equal(calls[0][1], os.constants.priority.PRIORITY_LOW);
-    assert.equal(result.processPriority.level, 'low');
+    assert.equal(result.processPriority, null);
+    assert.equal(result.execution.location, 'repository');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('requested priority failure fails closed instead of silently running at normal priority', async () => {
+test('requested host priority failure fails closed instead of silently running at normal priority', async () => {
   const runner = new DeterministicProcessRunner({
     processPriority: 'below-normal',
     setPriority: () => { throw new Error('priority denied'); },
@@ -121,6 +121,7 @@ test('requested priority failure fails closed instead of silently running at nor
       args: ['-e', 'setInterval(()=>{},1000)'],
       cwd: process.cwd(),
       timeoutMs: 5000,
+      executionClass: 'control-process',
     }),
     /failed to apply configured child process priority below-normal/u,
   );

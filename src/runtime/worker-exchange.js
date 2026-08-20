@@ -14,13 +14,11 @@ const DEFAULT_RESULT_LIMIT = 1_048_576;
 const MANIFEST_LIMIT = 64 * 1024;
 
 function sha256(text) { return createHash('sha256').update(text, 'utf8').digest('hex'); }
-
 function validateSegment(value, name) {
   const text = String(value ?? '');
   if (!SAFE_SEGMENT.test(text) || text === '.' || text === '..') throw new PolicyError(`${name} is not a safe worker-exchange identity segment`);
   return text;
 }
-
 function identityOf(info) { return { dev: String(info.dev), ino: String(info.ino) }; }
 function sameIdentity(info, expected) {
   if (!expected || typeof expected !== 'object') return false;
@@ -109,14 +107,13 @@ async function readAnchoredFile({ candidate, anchor, expectedCandidateIdentity =
     await Promise.all([candidateHandle.close().catch(() => {}), anchorHandle.close().catch(() => {})]);
   }
 }
-
 async function writeAnchoredFile({ candidate, anchor, expectedCandidateIdentity, expectedAnchorIdentity, bytes, maxBytes }) {
   const payload = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
   if (payload.length > maxBytes) throw new PolicyError(`worker result transfer exceeds ${maxBytes} bytes`);
   const beforeCandidate = await secureStat(candidate, 'file', expectedCandidateIdentity);
   const beforeAnchor = await secureStat(anchor, 'file', expectedAnchorIdentity);
   assertAnchoredPair(beforeCandidate, beforeAnchor, candidate);
-  const candidateHandle = await openNoFollow(candidate, constants.O_WRONLY | constants.O_TRUNC);
+  const candidateHandle = await openNoFollow(candidate, constants.O_RDWR);
   const anchorHandle = await openNoFollow(anchor, constants.O_RDONLY);
   try {
     const openedCandidate = await candidateHandle.stat({ bigint: true });
@@ -124,6 +121,7 @@ async function writeAnchoredFile({ candidate, anchor, expectedCandidateIdentity,
     assertOpenedFile(openedCandidate, candidate);
     assertOpenedFile(openedAnchor, anchor);
     assertAnchoredPair(openedCandidate, openedAnchor, candidate);
+    await candidateHandle.truncate(0);
     if (payload.length > 0) await candidateHandle.writeFile(payload);
     await candidateHandle.sync();
   } finally {
@@ -133,7 +131,6 @@ async function writeAnchoredFile({ candidate, anchor, expectedCandidateIdentity,
   const afterAnchor = await secureStat(anchor, 'file', expectedAnchorIdentity);
   assertAnchoredPair(afterCandidate, afterAnchor, candidate);
 }
-
 async function readControlManifest(candidate, anchor) {
   const read = await readAnchoredFile({ candidate, anchor, maxBytes: MANIFEST_LIMIT });
   if (read.tooLarge) throw new PolicyError('worker-exchange manifest exceeds the control-plane size bound');
@@ -151,7 +148,6 @@ class WorkerMailbox {
   #resultFile;
   #resultAnchorFile;
   #manifest;
-
   constructor({ turnRoot, contextFile, contextAnchorFile, resultFile, resultAnchorFile, manifest }) {
     this.#turnRoot = turnRoot;
     this.#contextFile = contextFile;
@@ -160,10 +156,8 @@ class WorkerMailbox {
     this.#resultAnchorFile = resultAnchorFile;
     this.#manifest = manifest;
   }
-
   get contextFile() { return this.#contextFile; }
   get resultFile() { return this.#resultFile; }
-
   inputTransfer() {
     return {
       name: WORKER_CONTEXT_TRANSFER,
@@ -182,7 +176,6 @@ class WorkerMailbox {
       },
     };
   }
-
   outputTransfer({ maxBytes = DEFAULT_RESULT_LIMIT } = {}) {
     if (!Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > 16_777_216) throw new PolicyError('worker result size bound is invalid');
     return {
@@ -200,7 +193,6 @@ class WorkerMailbox {
       },
     };
   }
-
   async consumeResult({ maxBytes = DEFAULT_RESULT_LIMIT } = {}) {
     if (!Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > 16_777_216) throw new PolicyError('worker result size bound is invalid');
     await secureStat(this.#turnRoot, 'directory', this.#manifest.turnIdentity);
@@ -227,7 +219,6 @@ class WorkerMailbox {
 export class WorkerExchange {
   #stateDirectory;
   #rootDirectory;
-
   constructor({ stateDirectory } = {}) {
     if (typeof stateDirectory !== 'string' || stateDirectory.trim() === '') throw new PolicyError('worker exchange requires a control-plane state directory');
     this.#stateDirectory = path.resolve(stateDirectory);
@@ -250,7 +241,6 @@ export class WorkerExchange {
       manifestAnchorFile: path.join(turnRoot, '.manifest-anchor'),
     };
   }
-
   async prepareTurn({ runId, turnId, context }) {
     await this.#ensureRoot();
     const paths = this.#paths(runId, turnId);
@@ -293,7 +283,6 @@ export class WorkerExchange {
     assertAnchoredPair(manifestInfo, manifestAnchorInfo, paths.manifestFile);
     return new WorkerMailbox({ turnRoot: paths.turnRoot, contextFile: paths.contextFile, contextAnchorFile: paths.contextAnchorFile, resultFile: paths.resultFile, resultAnchorFile: paths.resultAnchorFile, manifest });
   }
-
   async openTurn({ runId, turnId }) {
     await this.#ensureRoot();
     const paths = this.#paths(runId, turnId);
@@ -301,9 +290,7 @@ export class WorkerExchange {
     await secureStat(paths.turnRoot, 'directory');
     const manifest = await readControlManifest(paths.manifestFile, paths.manifestAnchorFile);
     if (manifest.runId !== paths.safeRunId || manifest.turnId !== paths.safeTurnId) throw new PolicyError('worker-exchange manifest does not match the requested run/turn identity');
-    if (manifest.transfers?.input !== WORKER_CONTEXT_TRANSFER || manifest.transfers?.output !== WORKER_RESULT_TRANSFER) {
-      throw new PolicyError('worker-exchange manifest transfer identities are invalid');
-    }
+    if (manifest.transfers?.input !== WORKER_CONTEXT_TRANSFER || manifest.transfers?.output !== WORKER_RESULT_TRANSFER) throw new PolicyError('worker-exchange manifest transfer identities are invalid');
     await secureStat(paths.turnRoot, 'directory', manifest.turnIdentity);
     const contextInfo = await secureStat(paths.contextFile, 'file', manifest.contextIdentity);
     const contextAnchorInfo = await secureStat(paths.contextAnchorFile, 'file', manifest.contextAnchorIdentity);
