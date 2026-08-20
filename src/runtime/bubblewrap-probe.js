@@ -58,7 +58,7 @@ function canConnect() {
 export function effectiveSandboxProbeTimeoutMs(executable, timeoutMs, platform = process.platform) {
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new TypeError('sandbox probe timeout must be a positive integer');
   if (platform !== 'win32') return timeoutMs;
-  const basename = path.basename(String(executable)).toLowerCase();
+  const basename = path.win32.basename(String(executable)).toLowerCase();
   if (basename !== 'powershell.exe') return timeoutMs;
   return Math.max(timeoutMs, WINDOWS_PROCESSCONTAINER_WRAPPER_TIMEOUT_FLOOR_MS);
 }
