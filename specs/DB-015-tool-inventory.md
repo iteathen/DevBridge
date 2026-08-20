@@ -2,73 +2,54 @@
 
 Status: active
 
-Read with DB-003, DB-004, DB-005, DB-010, DB-012, DB-013, DB-019, and DB-020.
-
-Implementation status: current main inventories host-local registered tools and uses the transitional verified Linux/Bubblewrap sandbox for repository-class dynamic operations. DB-020 is normative for the target execution model: repository tools live/discover/execute inside persistent untrusted repository VMs, while host inventory is reserved for control-plane prerequisites and host-owned adapters.
+Read with DB-003, DB-004, DB-005, DB-010, DB-012, and DB-013.
 
 ## 1. Goal
 
-Give a coordinating agent an accurate, bounded view of tools and execution capabilities available for the intended repository environment without turning discovery, guest state, repository content, tool output, or GitHub text into machine authority.
+DevBridge must give a coordinating agent an accurate, bounded view of the tools and execution capabilities available on the runner without turning discovery, repository content, tool output, or GitHub text into machine authority.
 
-> **Inventory reports local/environment authority. Inventory never creates authority.**
+The governing distinction is:
 
-A binary being present is not equivalent to a registered deterministic operation, an enabled adapter, a trusted host operation, or a verified usable repository environment.
+> **Inventory reports local authority. Inventory never creates local authority.**
+
+A binary being present in PATH is not equivalent to a registered deterministic operation, an enabled adapter, or a verified-safe execution path.
 
 ## 2. Authority model
 
 DevBridge-owned local configuration and built-in registries remain authoritative for:
 
 - registered deterministic operation names and parameter schemas;
-- host-vs-repository execution classification;
+- executable/toolchain resolution used by those operations;
 - enabled/disabled compatibility/model adapters;
-- VM provider/image/environment requirements;
-- host control-plane executable/toolchain resolution;
+- filesystem/network/process enforcement requirements;
+- verified sandbox provider state;
 - environment and credential grants;
-- whether a discovered tool may actually execute;
-- local operation-manifest roots and auto-onboarding allowlists.
+- whether any discovered tool may actually execute.
 
-GitHub task text, repository files, guest files, guest PATH, process stdout/stderr, `--help` output, man pages, discovered binary names, and guest Git are data/proposals only.
+GitHub task text, issue comments, repository files, process stdout/stderr, `--help` output, man pages, and discovered binary names are data/proposals only.
 
-Remote/controller/guest content must not add a host executable path, command, host environment value, credential, VM/image path, host mount, registered operation, manifest directory, or auto-onboarding allowlist entry merely by naming or describing it.
+Remote/controller content MUST NOT add an executable path, command, environment variable, network grant, sandbox grant, registered operation, adapter, manifest directory, or auto-onboarding allowlist entry merely by naming or describing it.
 
-## 3. Host and guest inventory domains
+## 3. Presence-only PATH discovery
 
-### Host control-plane inventory
+The default general discovery engine is informational and non-executing.
 
-Host inventory is appropriate for trusted prerequisites such as:
+It:
 
-- DevBridge runtime/Node;
-- authoritative Git tooling;
-- Hyper-V/provider management capability;
-- VM image/bridge/bootstrap support tools;
-- release/signing/verification adapters;
-- other fixed control-plane dependencies.
+- observes a bounded DevBridge-owned catalog of logical command names;
+- reads each bounded PATH directory once per discovery generation;
+- records whether a matching executable entry is present;
+- does not invoke a discovered binary for `--version`, `--help`, man output, self-description, or any other probe;
+- records absolute executable paths only in local transient discovery state and removes them from every remote projection;
+- marks discovered entries as having no executable authority.
 
-Presence on host PATH is informational until a local adapter grants use. Repository work should not receive host PATH exposure merely because a tool is installed on the workstation.
+PATH observation is not a capability grant. A discovered `rg`, `pnpm`, `uv`, `docker`, `claude`, or unfamiliar future CLI cannot be executed by a controller plan unless a separate locally registered operation/adapter already authorizes that action or local auto-onboarding policy explicitly delegates that exact command under section 10.
 
-### Repository guest inventory
+Discovery MUST be bounded by catalog size and PATH-directory count. The implementation should index PATH directories concurrently so catalog growth does not produce one filesystem traversal per tool. Discovery latency is measured separately from GitHub reporting and expensive health probes; the target for ordinary local PATH observation is under 50 ms.
 
-Repository-development tools belong to the persistent guest environment under DB-020, including compilers, CMake/CTest, package managers, SDKs, browsers, language toolchains, coding CLIs, and local/generated `tool.*` targets.
+## 4. Tool inventory protocol
 
-Guest observations are bound to the exact repository environment/generation and guest OS/profile. A tool present in one repository/OS environment is not automatically available in another.
-
-Guest administrator/root can tamper with every observed tool. Presence/version/help output therefore informs planning and test selection; it never converts guest bytes into trusted host authority.
-
-## 4. Presence-only discovery
-
-The general discovery engine should be informational and non-authoritative.
-
-For host control-plane catalog entries it may observe bounded PATH directories without executing unfamiliar binaries.
-
-For repository tool planning, Stage 5/6 should provide an equivalent bounded guest inventory through the host-controlled bridge. It should report logical tool presence and sanitized metadata without exposing host paths or granting arbitrary execution.
-
-Discovery should be bounded by catalog size, environment count, output size, and time. Repeated catalog growth should not cause one expensive guest boot/process per tool when a single indexed observation can provide the same evidence.
-
-A discovered `rg`, `pnpm`, `uv`, `docker`, `claude`, or future CLI cannot be invoked by a controller plan until a separate locally registered operation/adapter or locally authorized onboarding rule permits it.
-
-## 5. Inventory protocols
-
-The normalized inventory protocol remains:
+The normalized inventory protocol is:
 
 `devbridge/tool-inventory-v1`
 
@@ -80,210 +61,269 @@ A compact context reference uses:
 
 `devbridge/tool-inventory-ref-v1`
 
-A dynamic operation may expose a controller-facing schema using:
+A dynamic operation may additionally publish a controller-facing parameter schema using:
 
 `devbridge/operation-parameters-v1`
 
-The normalized inventory contains bounded information from these domains.
+The normalized inventory contains at least:
 
-### Runtime/control plane
+### Runtime
 
 - DevBridge family/version;
-- exact runtime commit identity when trustworthy;
+- exact runtime commit identity when locally known and trustworthy;
 - Node family/version;
-- coarse host platform/architecture.
+- coarse platform and architecture.
 
-### Repository execution environment
+### Verified enforcement
 
-For VM-backed repository execution, observed readiness should include sanitized identities/status such as:
+Observed provider state is separate from requested/declared policy and includes only bounded sanitized fields such as:
 
-- requested execution provider/class;
-- actual provider (initially Hyper-V after implementation);
-- verified/available state;
-- guest OS/profile;
-- base-image identity/version/generation;
-- repository environment identity/generation;
-- persistent disk/lifecycle readiness classification;
-- bridge readiness classification;
-- whether repository-controlled execution is actually permitted.
+- requested provider;
+- actual provider;
+- available/verified state;
+- verification classification;
+- filesystem/network/Git-administrative/process-tree enforcement summaries;
+- whether repository-code execution is actually permitted.
 
-Configured values are not verified enforcement. Presence of Hyper-V, a base-image path, or a VM name alone must not be projected as ready.
-
-During migration the current Bubblewrap observed-enforcement fields may remain for the live implementation, but remote consumers must not infer that Bubblewrap is the target architecture after DB-020.
+A configuration claim MUST NOT be reported as verified enforcement.
 
 ### Deterministic operations
 
-For each registered operation project:
+For each locally registered deterministic operation:
 
-- logical name;
+- logical operation name;
 - implementation layer;
-- execution class (trusted/static host or repository-controlled guest);
+- execution class;
 - whether repository code may execute;
-- required environment/provider class;
-- whether that requirement is presently satisfied;
-- guest OS/profile requirements where relevant.
+- required enforcement class;
+- whether that requirement is presently satisfied.
 
-For dynamic local-manifest operations, the projection may expose only the validated public parameter schema: name, kind (`flag`, `option`, `positional`), public value type, required/repeat bounds, safe enums, and required-parameter state.
+For dynamically registered local-manifest operations, the projection MAY also expose the validated controller parameter schema:
 
-It must not expose host executable identity, fixed literal argv, option flags, shell text, environment values, local host paths, VM-management details, credential locations, or other authority-bearing construction.
+- parameter name;
+- parameter kind (`flag`, `option`, or `positional`);
+- public value type (`boolean`, `string`, `project-path`, `integer`, or bounded `enum`);
+- required/repeat state and repeat bound;
+- safe enum values;
+- whether at least one parameter is required.
+
+The public parameter schema MUST NOT expose executable identity, fixed literal argv, option flags, shell text, environment values, local paths, timeout implementation details, help-probe argv, or any other authority-bearing argv construction. If schema metadata cannot be projected safely without path/secret disclosure, DevBridge omits the schema rather than publishing a partially unsafe representation.
+
+Security classification comes from DevBridge's control-owned operation-security registry, not controller text or repository/tool output. Unknown/dynamic `tool.*` operations remain repository-code execution and require verified OS sandbox enforcement.
 
 ### Toolchains
 
-For each locally registered host or guest toolchain expose only bounded planning metadata such as logical family, environment scope, available/unavailable, sanitized version, coarse discovery source, and health classification.
+For each locally registered toolchain:
 
-Absolute host executable/compiler/linker paths and raw path-bearing resolver errors must not be projected.
+- logical name/family;
+- available/unavailable;
+- bounded sanitized version when safe;
+- coarse discovery source class;
+- health classification.
+
+Absolute compiler/linker/executable paths and raw resolver errors MUST NOT be projected.
 
 ### Compatibility/model adapters
 
-For each configured adapter expose bounded fields such as profile name, adapter class, enabled/disabled, environment scope, executable/tool presence, usable/unusable, selection eligibility, input protocol, and observed execution-environment readiness.
+For each locally configured or built-in adapter:
 
-Credentials, credential locations, raw command lines, host paths, complete environments, and secret-bearing errors must not be projected.
+- profile name;
+- adapter class;
+- enabled/disabled;
+- executable available/unavailable;
+- usable/unusable;
+- eligibility for automatic selection;
+- input protocol;
+- declared profile sandbox policy;
+- observed outer enforcement status.
+
+Credentials, environment values, credential locations, command-line details, user-home paths, and executable paths MUST NOT be projected.
 
 ### General discovered tools
 
-Presence-only entries contain planning metadata such as logical name, category, environment identity reference, present/absent, observation class, coarse source, probe state, and explicit non-authority state.
+Presence-only discovery entries contain only bounded planning metadata such as:
 
-## 6. Normalization, digest, and generation
+- logical name;
+- category;
+- present/absent;
+- observation/health class;
+- coarse source (`PATH`);
+- probe state (`not-executed`);
+- explicit `executableAuthority: false` / informational-only state.
 
-Normalized inventory uses deterministic code-point ordering and canonical fields before SHA-256 calculation. Locale-dependent sorting is not allowed at a digest boundary.
+## 5. Normalization, digest, and generation
 
-Dynamic presentation fields such as timestamps and measured duration are outside the normalized digest.
+The normalized inventory uses deterministic code-point ordering and canonical field ordering before SHA-256 calculation. Locale-dependent sorting is not permitted in a digest boundary.
 
-If normalized inventory is unchanged, digest remains identical, generation does not advance, and GitHub projection does not write again.
+Dynamic presentation fields such as generation timestamp and measured discovery duration are outside the normalized digest.
 
-A material capability/schema/provider/image/environment/tool availability change produces a new digest/generation.
+If the normalized inventory is unchanged:
 
-Repository-environment identity is part of the subject: a tool observation from an old/reseeded environment generation cannot be silently reused for the replacement environment.
+- its digest remains identical;
+- generation does not advance;
+- GitHub projection does not write again.
 
-## 7. GitHub projection
+If a material capability, parameter-schema, enforcement, or availability fact changes, a new digest and generation are emitted.
 
-The coordinating agent receives a machine-readable DevBridge-owned issue comment using:
+## 6. GitHub projection
+
+The coordinating agent receives a machine-readable projection through a DevBridge-owned issue comment using:
 
 `devbridge/tool-inventory-projection-v1`
 
-The projection is bounded, secret-safe, rate-budgeted, and updates/coalesces only the exact comment ID retained in DevBridge control state.
+The projection:
 
-A marker-looking GitHub comment is not ownership proof. DevBridge never searches for and adopts arbitrary marker-looking comments after losing state.
+- contains the normalized inventory plus digest/generation;
+- is bounded by the existing GitHub comment budget;
+- passes through secret detection/redaction safeguards;
+- refuses publication if redaction would make the digest-bearing payload diverge;
+- updates/coalesces the exact comment ID retained in DevBridge control state;
+- suppresses writes when the normalized digest is unchanged;
+- uses the shared GitHub rate/mutation budget.
 
-If safe redaction would make a digest-bearing payload diverge, refuse publication rather than silently publishing a different subject.
+### Projection ownership
 
-Ordinary status should carry only the compact inventory digest/generation reference.
+A marker-looking GitHub comment is not proof that DevBridge owns it.
 
-## 8. Refresh and routing
+On first publication DevBridge creates a new comment and durably records the returned comment ID. Later updates target only that control-state-owned ID. If it is deleted, DevBridge may create a replacement and update control state.
 
-Inventory refreshes when relevant local/environment state can change, including:
+DevBridge MUST NOT search for and adopt arbitrary marker-looking comments after losing state. A malicious/repository-authored comment therefore cannot forge the runner's authoritative capability projection by copying its heading, marker, or JSON shape.
 
-- runtime startup/activation;
-- normal task planning/admission cycles;
-- VM provider/image/environment lifecycle change;
-- environment reset/reseed;
-- bridge readiness change;
-- explicit toolchain refresh/probe;
-- successful dynamic operation registration;
-- requested-capability failure that invalidates stale availability.
+## 7. Status/context reference
 
-Guest inventory collection must not become an accidental boot/probe storm. Persisted exact environment/tool observations may be reused while their identity/freshness contract remains valid.
+Ordinary DevBridge status context SHOULD include only the compact inventory reference (protocol, digest, generation), not duplicate the full inventory in every status update.
 
-A coordinating agent may choose among capabilities DevBridge already exposes. Presence-only names remain planning hints.
+This lets the coordinating agent bind a task/status context to the current capabilities comment while controlling GitHub and context-window cost.
 
-Fallback behavior remains:
+## 8. Refresh and routing behavior
 
-1. prefer a locally registered, currently usable operation/environment;
-2. choose another already registered capability when the plan schema permits it;
-3. otherwise report the missing capability and continue normal feedback/recovery semantics;
-4. never fall back by constructing raw shell/argv or mounting a host tool from remote text.
+Inventory is refreshed:
+
+- when a runtime is created/startup occurs;
+- once per normal runner cycle before task dispatch;
+- by capability/doctor probing;
+- naturally after runtime activation because the new runtime starts a new inventory generation;
+- after a locally registered toolchain is explicitly refreshed/probed;
+- after successful dynamic operation registration;
+- after a requested capability failure when the owning registry invalidates stale availability.
+
+Presence-only general PATH discovery is rerun each cycle so newly installed or removed catalog tools can be observed without executing them.
+
+Inventory/projection failure is informational infrastructure failure and MUST NOT broaden authority or silently mark unavailable capabilities usable. GitHub projection is started independently of task execution so reporting latency does not become execution authority or unnecessarily serialize task dispatch.
+
+Automatic unfamiliar-tool help probing is not allowed to become task-dispatch latency. The normal cycle dispatches work using the exact inventory already projected/referenced for that work, then reconciles locally pre-authorized dynamic onboarding. A newly registered capability is reflected by a new inventory digest and is eligible for subsequent planning/work, not retroactively inserted into the task that triggered its discovery.
+
+A coordinating agent may use the inventory to choose among capabilities DevBridge already exposes. It may avoid an unavailable toolchain or prefer an operation whose enforcement requirements are currently satisfied. Presence-only discovered names are planning hints only.
+
+Fallback behavior is:
+
+1. prefer a locally registered, currently usable capability;
+2. if unavailable, choose another already registered capability when the plan schema supports it;
+3. otherwise report the missing capability and continue through normal feedback/recovery semantics;
+4. never fall back by constructing raw shell/argv commands from remote text.
 
 ## 9. Operator-authored local operation manifests
 
-`devbridge/local-operation-manifest-v1` remains the local extension point.
+DevBridge supports a local extension point using:
 
-The manifest directory is explicit host operator authority and is never inside repository/guest authority.
+`devbridge/local-operation-manifest-v1`
 
-Manifest loading must:
+The manifest directory is an explicit local operator configuration value. It is not under repository/controller authority.
 
-- require a canonical real local directory and regular non-symlink JSON files;
-- bound count/size;
-- reject duplicate registrations;
-- require dynamic names under `tool.*`;
-- validate local operation policy before registration;
-- use a closed bounded argument descriptor language;
-- reject authority-shaped controller parameters such as executable, command, shell, argv, environment, credential, host path, Git ref/SHA, cleanup root, VM/image/provider target, plugin/module, or fault controls;
-- bound strings/integers/enums/repeat values;
-- validate project-relative values against the repository candidate/source contract;
-- prohibit generic values that smuggle option syntax, absolute host paths, or traversal.
+Manifest loading MUST:
 
-The manifest may contain fixed local adapter structure. That local authority is not projected publicly.
+- require a canonical real directory and regular non-symlink JSON files;
+- bound manifest file count and byte size;
+- reject duplicate operation registration;
+- require dynamic operation names under `tool.*`;
+- validate executable identity/resolution policy locally;
+- use a closed bounded argument descriptor language rather than raw remote argv;
+- reject controller parameter names that resemble control-plane authority fields such as executable, command, shell, argv, environment, credentials, local path, Git ref/SHA, cleanup root, plugin/module, or fault-injection controls;
+- bound string/integer/enum/repeat values and validate project-relative paths through the ordinary controller-plan path policy;
+- prohibit generic parameter values from beginning with `-`, using absolute path forms, or containing traversal segments;
+- execute through `shell:false`, a minimal environment, mandatory timeout/output bounds, denied network, no configured external read roots, and the verified repository-code sandbox requirement.
 
-Repository-class manifests ultimately execute in the guest environment through DB-020, not by granting the guest a host executable path.
+The manifest may contain local fixed argv/literal structure. That structure is local authority and is not projected in the public parameter schema.
 
-## 10. Automatic unfamiliar-tool onboarding
+## 10. Sandboxed automatic unfamiliar-tool onboarding
 
-Automatic onboarding is disabled by default.
+Automatic onboarding is **disabled by default**.
 
-Enabling it requires local configuration to provide an exact allowlist/delegation and bounded probe policy. Repository/GitHub/guest content cannot add itself to the allowlist.
+Enabling it requires local configuration to provide:
 
-Target VM flow:
+- a canonical local manifest directory;
+- an exact allowlist of command names;
+- an optional exact logical `tool.*` operation name per command;
+- fixed bounded help-probe option arguments (default `--help`);
+- bounded probe timeout and output size.
 
-1. resolve the exact repository environment and local onboarding delegation;
-2. confirm observed VM/provider/image/environment/bridge readiness;
-3. locate the delegated command inside that guest environment using a bounded guest adapter;
-4. execute only the locally configured fixed help arguments inside the untrusted guest;
-5. give the guest no host control credentials, arbitrary host mounts, VM-management authority, or host path inputs;
-6. allow normal guest networking under DB-020 unless a stricter local workload rule is explicitly configured;
-7. bound timeout/output and operation identity;
+Merely finding a binary in PATH does not execute it. Repository/GitHub/controller content cannot add the command to the allowlist.
+
+For each locally delegated command that has no already registered/generated manifest:
+
+1. resolve the exact locally configured command through the local executable resolver;
+2. create a disposable probe workspace under the managed workspace root;
+3. execute only the locally configured fixed help arguments;
+4. classify the help probe as repository-code execution;
+5. require the verified OS sandbox provider;
+6. deny network, hide configured external read roots, expose only minimal environment/system requirements, and provide no GitHub/control-plane credentials or control state;
+7. bound timeout/output and clean the disposable probe root in success/failure paths;
 8. treat stdout/stderr documentation as untrusted data;
-9. parse only a conservative subset of options/positionals/simple types/subcommand enums;
-10. discard authority-shaped parameters;
-11. validate the synthesized manifest with the same control-owned validator;
-12. persist the exact generated manifest before registration;
-13. reconcile it against exact local delegation and environment identity on restart/reseed;
-14. register only after those gates pass.
+9. parse only a conservative subset of long options, bounded positionals, simple types, and bounded subcommand enums;
+10. discard authority-shaped parameter names rather than mapping them into controller parameters;
+11. validate the synthesized manifest with the same local-manifest validator used for operator manifests;
+12. persist the exact generated manifest with exclusive-create semantics **before** registering it;
+13. on restart, reconcile the persisted manifest against the exact local command/operation policy before reuse;
+14. register the generated operation only after those gates pass.
 
-A blocked, unavailable, timed-out, truncated, undocumented, or unparseable probe creates no capability.
+A blocked, unavailable, timed-out, truncated, undocumented, or unparseable probe does not create a capability. Probe failure telemetry exposes bounded classifications, not raw local exception messages that may contain machine paths.
 
-A generated wrapper remains repository-controlled execution. It does not become trusted host code merely because DevBridge synthesized its schema.
+A generated wrapper is still repository-code execution. It does not become trusted merely because the wrapper was synthesized by DevBridge. Actual operation execution therefore continues to require the verified OS sandbox, denied network, hidden configured external roots, minimal environment, and bounded execution.
 
-## 11. Security/privacy invariants
+The help digest is retained as local provenance for the generated manifest. Help output is not itself authority and cannot choose executable identity, shell behavior, environment, credentials, network, external read roots, cleanup scope, Git authority, or arbitrary argv.
 
-Remote inventory must not contain:
+## 11. Security and privacy invariants
 
-- absolute host executable/compiler/linker paths;
+Remote inventory MUST NOT contain:
+
+- absolute executable/compiler/linker paths;
 - operator-home or arbitrary machine paths;
-- secret/credential values or locations;
+- secret or credential values;
+- credential locations;
 - arbitrary environment values;
-- raw host command lines or authority-bearing fixed argv;
-- host VM-management endpoints/credentials or sensitive image paths;
-- raw local/guest errors that may expose secrets/paths unnecessarily;
-- an enforcement claim derived only from configuration.
+- raw command lines or option flags for dynamic operations;
+- fixed local argv literals;
+- raw discovery/probe errors that may contain paths;
+- an enforcement claim derived only from profile configuration.
 
-Repository/guest/tool output cannot expand authority. Unknown operations remain fail-closed repository-controlled execution.
+Repository/tool output cannot expand inventory authority. Unknown operation names remain subject to the existing fail-closed repository-code classification rather than becoming safe because they appear in discovered tools.
 
-Local onboarding policy and manifest roots remain host-only and are not writable through controller-plan or bridge/project paths.
+Local onboarding policy and the local manifest directory are operator authority and MUST NOT be writable through controller-plan/repository paths.
 
 ## 12. Required tests
 
-Tests/qualification must cover at least:
+At minimum tests cover:
 
-1. host presence-only discovery does not execute unfamiliar binaries or grant authority;
-2. guest inventory binds observations to exact repository environment/guest OS generation;
-3. a present guest tool does not expand the operation registry;
-4. repository-code operation usability changes only with verified VM/provider/image/environment/bridge state after cutover;
-5. model adapter enabled state remains distinct from binary presence;
-6. requested configuration remains distinct from observed execution readiness;
-7. host paths/secrets/raw path-bearing errors are absent from serialized inventory;
-8. stable normalized input produces stable digest/generation; material environment/tool/schema change changes it;
-9. GitHub projection creates/updates only its control-owned comment and suppresses no-change writes;
-10. marker-looking comments are never adopted as authority;
-11. secret-bearing digest payloads are refused rather than silently altered;
-12. status carries only compact inventory reference;
-13. environment reset/reseed invalidates stale guest tool observations;
-14. local manifests reject duplicate, symlink/indirection, authority-shaped, raw-argv, absolute/traversal and invalid enum/required-parameter inputs;
-15. repository-class manifest operations execute in the guest and cannot gain host paths/credentials/VM-management authority;
-16. auto onboarding does not run for unavailable/non-allowlisted tools;
-17. help probes execute inside the exact guest environment with bounded input/output and no host authority;
-18. failed/unsafe probes do not register or persist a capability;
-19. synthesized manifests persist before registration and reconcile against exact environment/delegation identity;
-20. help parsing filters authority-shaped parameters;
-21. dynamic operation inventory exposes useful public schema while omitting authority-bearing construction;
-22. discovery/onboarding/projection failure never broadens authority or unnecessarily blocks current task dispatch;
-23. current transitional Bubblewrap status remains honestly reported until Stage 9 removes it.
+1. PATH discovery finds present and absent catalog entries while reading each PATH directory once.
+2. General discovery performs no version/help subprocess execution and marks entries as non-authoritative.
+3. Unfamiliar present tools do not expand the locally registered operation set.
+4. Repository-code operation usability changes only with verified enforcement state.
+5. Model adapter disabled state remains distinct from executable presence.
+6. Declared profile policy remains distinct from observed enforcement.
+7. Absolute executable/linker paths and raw path-bearing errors are absent from serialized inventory.
+8. Stable input produces a stable digest/generation; material capability/schema change changes it.
+9. GitHub projection creates one control-owned comment, updates that exact ID, and suppresses no-change writes.
+10. Marker-looking comments are never adopted as authority.
+11. Secret-bearing digest payloads are refused rather than silently redacted and published.
+12. Ordinary status context carries only the compact inventory digest/generation reference.
+13. Toolchain refresh invalidates stale cached availability before re-probing.
+14. Operator local manifests reject duplicate registrations, symlink/indirection paths, authority-shaped parameters, raw argv smuggling, absolute/traversal parameter values, invalid enums, and missing required parameters.
+15. Local-manifest operation execution emits only the validated structural argv and forces repository-code sandbox execution with network denied and configured external reads hidden.
+16. Automatic onboarding does not run for an unavailable/non-allowlisted tool and never turns presence-only discovery into execution authority.
+17. Automatic help probes request the verified repository-code sandbox with minimal environment/no GitHub credentials, denied network, and hidden configured external roots.
+18. Blocked/timeout/truncated/no-safe-interface probes do not register or persist a capability.
+19. Synthesized manifests are persisted before registration and are reused/reconciled without re-probing after restart.
+20. Help parsing filters authority-shaped parameters and maps command/subcommand choices to a bounded non-authority `subcommand` enum.
+21. Dynamic operation inventory exposes the controller parameter schema needed for use while omitting executable, fixed literals, option flags, help argv, and path-shaped unsafe enum metadata.
+22. Dynamic operations remain unusable when verified repository-code enforcement is unavailable.
+23. Discovery/onboarding/projection failure never broadens execution authority or blocks current task dispatch merely to complete an unfamiliar-tool probe.
