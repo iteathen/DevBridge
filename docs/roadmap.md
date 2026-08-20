@@ -8,8 +8,9 @@ Repository-controlled execution is in an architectural transition.
 
 - Current main has a verified Linux/Bubblewrap host sandbox for supported repository-code execution.
 - Draft PR #106 contains experimental Windows ProcessContainer/AppContainer work.
-- DB-020 now supersedes both mechanisms as the **target** architecture: persistent networked repository VMs, with the trusted DevBridge controller and all authoritative secrets/Git/publication state on the host.
-- The old sandbox paths remain only until the VM replacement is implemented and qualified.
+- DB-020 supersedes both as the **target** architecture: persistent networked repository VMs, with trusted DevBridge controller/authority on the host.
+- The required initial host providers are Windows/Hyper-V and Linux/KVM-QEMU-libvirt.
+- The old sandbox paths remain only until the VM replacement is implemented, qualified, and installable without dropping either supported host family.
 
 Do not extend Bubblewrap/AppContainer/ProcessContainer/Gitless host projection as the long-term solution unless an interim security fix is required to keep the currently live path safe.
 
@@ -24,79 +25,75 @@ Goal: make the VM pivot normative before code implementation begins.
 Deliverables:
 
 - DB-020 persistent VM execution-boundary contract;
+- Windows/Hyper-V and Linux/KVM-QEMU-libvirt named as coequal first-class provider targets;
 - DB-003/DB-008 and related active documentation aligned to the VM trust model;
 - explicit network-on confidentiality implications;
-- persistent repository+guest-OS environment lifetime/identity requirements;
+- persistent repository+provider+guest-OS environment lifetime/identity requirements;
+- provider-native storage model: VHDX differencing and qcow2 backing/overlays;
 - host-only authority/secrets enumeration;
-- transport-neutral narrow bridge contract;
-- Windows/Hyper-V initial provider target plus truthful future-provider abstraction;
+- transport-neutral narrow bridge contract with provider-specific adapters;
 - `docs/vm-migration.md` classification/removal map.
 
 No runtime/config/CI cleanup belongs in this stage.
 
-### Stage 1 — VM control-plane contracts and stable repository/OS identity — #109
+### Stage 1 — VM control-plane contracts and stable provider/repository/OS identity — #109
 
-Define provider-neutral but Hyper-V-grounded ports/state for:
+Define one typed model for:
 
+- provider identity;
 - stable repository identity, preferring verified immutable GitHub repository ID over display name alone;
 - guest OS/profile identity;
 - base-image identity/generation;
 - repository environment identity/generation;
-- persistent child-disk identity;
+- persistent writable-layer identity;
 - lifecycle/recovery states;
 - bridge capability/readiness identity;
 - reset/reseed/delete ownership semantics.
 
-This stage defines contracts/state, not a speculative multi-hypervisor framework.
+The contract must support Hyper-V and KVM/libvirt without a fake lowest-common-denominator model and without raw provider command passthrough.
 
-### Stage 2 — Hyper-V backend and immutable base-image lifecycle — #110
+### Stage 2 — Windows Hyper-V + Linux KVM/QEMU/libvirt backends and immutable base-image lifecycle — #110
 
-Implement the trusted Windows-host Hyper-V management adapter and versioned base-image lifecycle.
+Implement both required host providers.
 
-Prove:
+Windows:
 
-- locally controlled Hyper-V discovery/readiness;
-- immutable/versioned Windows and Linux guest base images;
-- exact image identity and compatibility metadata;
-- safe image creation/update/retention;
-- no guest authority over hypervisor management;
-- recovery from interrupted image lifecycle operations.
+- observed Hyper-V capability/management readiness;
+- immutable/versioned Windows/Linux guest VHD/VHDX base images;
+- provider networking and provider-owned object lifecycle.
 
-### Stage 3 — persistent per-repository/per-OS disk and VM lifecycle — #111
+Linux:
 
-Implement repository environment materialization and persistence.
+- observed KVM acceleration + libvirt/QEMU readiness;
+- normally locally authorized `qemu:///system` management or a justified narrower equivalent;
+- immutable/versioned Windows/Linux guest base images;
+- qcow2 base/backing identity;
+- provider networking/storage lifecycle.
 
-Where Hyper-V supports it, use per-repository differencing/child VHD/VHDX disks based on immutable parents.
+Both providers must expose truthful readiness and keep raw VM/domain/image/command authority local.
 
-Prove:
+### Stage 3 — persistent per-repository/per-OS writable layers and VM lifecycle — #111
 
-- one stable environment per repository identity + enabled guest OS/profile + generation;
-- stop/shutdown retains disk/tool/build/repository state;
-- host/daemon restart rediscover/reconcile rather than duplicate;
-- parent/child chain integrity;
-- explicit reset/reseed and owned deletion;
-- no unowned VM/disk cleanup.
+Implement repository environment persistence on both providers.
 
-### Stage 4 — narrow host↔guest command/file bridge — #112
+- Hyper-V: per-repository differencing VHD/VHDX where supported.
+- KVM/QEMU: per-repository qcow2 overlays/backing chains where supported.
 
-Research and select the concrete transport(s) for Windows and Linux guests.
+Prove stable environment identity, stop/start persistence, daemon/provider restart reconciliation, explicit reset/reseed, disk-chain integrity, concurrency control, and owned cleanup without silent reparent/rebase.
 
-The solution must preserve DB-020's transport-independent authority contract:
+### Stage 4 — provider-adapted host↔guest command/file bridge — #112
 
-- exact environment/run/operation identity;
-- bounded structured command input;
-- bounded file/source transfer into guest;
-- bounded result/candidate retrieval;
-- timeout/cancellation/liveness;
-- no arbitrary host-path naming;
-- no credential/control-state/VM-management crossing;
-- restart/recovery semantics.
+Research/select concrete transports while preserving one typed host-controlled bridge contract.
 
-PowerShell Direct, Hyper-V sockets/integration channels, network transports, or combinations may be considered; Stage 4 chooses based on actual platform behavior rather than convenience assumptions.
+Hyper-V candidates include integration channels/sockets and Windows-specific PowerShell Direct where appropriate.
+
+KVM/libvirt candidates include QEMU Guest Agent/virtio-serial/vsock and libvirt channel APIs. QEMU Guest Agent is guest-controlled/untrusted response data, not a security oracle.
+
+The bridge must provide exact environment/run/operation identity, bounded exec/input/output/file transfer, timeout/cancellation/liveness, no arbitrary host-path naming, no control credentials, and restart/recovery semantics.
 
 ### Stage 5 — guest bootstrap, networking, toolchain, development environment — #113
 
-Make persistent Windows/Linux guests useful for real development.
+Make persistent Windows/Linux guests useful for real development on both provider families.
 
 Target behavior:
 
@@ -105,8 +102,8 @@ Target behavior:
 - guest-local tooling/caches survive VM stop/restart;
 - no required Bubblewrap/AppContainer layer inside the guest;
 - no host credentials or arbitrary writable host mounts;
-- guest tool inventory/readiness can be observed through the bridge;
-- base-image/tooling updates are versioned rather than mutating parents under existing children.
+- guest tool inventory/readiness observed through the bridge;
+- base-image/tooling updates versioned instead of mutating parents/backings beneath existing repository state.
 
 ### Stage 6 — route deterministic operations, workers, and candidate execution through VMs — #114
 
@@ -114,66 +111,81 @@ Move repository-controlled execution off the trusted host.
 
 Implement:
 
-- controller-plan deterministic operation routing to the bound repository environment;
+- controller-plan deterministic operation routing to exact repository environments;
 - proposal/coding-worker execution through the VM bridge;
 - source synchronization into persistent guests;
 - candidate/result import back to the host;
 - host-authoritative Git/sealing/publication unchanged;
 - dynamic `tool.*` probing/execution in the guest;
 - package/build/test/browser repository execution in the guest;
-- runtime candidate-controlled validation through an appropriate VM validation environment;
+- runtime candidate-controlled validation through a provider-native VM validation environment;
 - exact drift/source/candidate identity checks;
-- authenticated external-service/private-source support only through an explicit mechanism that does not copy broad host authority into persistent guests.
+- authenticated external-service/private-source support only through explicit mechanisms that do not copy broad host authority into persistent guests.
 
-### Stage 7 — verification, doctor, recovery, CI, resources, security acceptance — #115
+### Stage 7 — provider/guest matrix verification, doctor, recovery, CI, resources, security acceptance — #115
 
 This is the replacement-acceptance gate.
 
-Add real evidence for:
+Add real evidence for both host providers:
 
-- Hyper-V/provider/base-image/environment/bridge readiness;
-- Windows and Linux guest end-to-end workloads;
-- root/admin-compromised guest cannot obtain host secrets, authoritative Git/publication state, daemon/coordination/release state, arbitrary host paths/mounts, or hypervisor authority;
+- Hyper-V provider/base-image/environment/bridge readiness;
+- KVM/QEMU/libvirt provider/base-image/environment/bridge readiness;
+- Windows/Linux guest workloads for every host/guest combination claimed supported;
+- root/admin-compromised guest cannot obtain host secrets, authoritative Git/publication state, daemon/coordination/release state, arbitrary host paths/mounts, or provider-management authority;
+- hostile/forged guest-agent/helper responses fail closed;
 - network-on guest confidentiality model;
-- persistent disk survival across command/VM/daemon/host lifecycle tests where practical;
-- bridge timeout/cancellation/recovery;
-- reset/reseed contamination recovery;
+- VHDX parent/child and qcow2 backing/overlay identity;
+- persistent state, reset/reseed, timeout/cancellation, restart/recovery;
 - source/candidate import and host sealing;
 - runtime candidate VM validation;
 - DB-019 exact evidence identity and cost-aware qualification;
-- truthful VM CPU/memory/disk/lifecycle/resource observations/limits;
-- `doctor` distinguishes configuration from observed readiness;
-- CI includes real Hyper-V VM-boundary qualification on appropriate runners/infrastructure.
+- truthful provider-specific resource policy;
+- `doctor` distinguishes configuration from observed readiness.
 
-Only after this stage provides replacement evidence can legacy sandbox removal be considered.
+Real virtualization qualification may require self-hosted/dedicated virtualization-capable runners. Do not replace real provider evidence with mocks because hosted CI lacks nested virtualization.
 
-### Stage 8 — installer/setup/reconfiguration integration — #116
+### Stage 8 — Windows/Linux installer/setup/reconfiguration integration — #116
 
-Integrate VM support into the installation/setup workflow coordinated with issue #103.
+Coordinate with issue #103.
 
-Setup should:
+Setup should discover before prompting:
 
-- discover host/platform/account/repository facts before prompting where safe;
-- detect Hyper-V/provider readiness and explain required local operator actions;
-- discover/suggest appropriate repositories/guest OS profiles/base images;
-- require explicit operator approval before enabling recommended capabilities;
-- support re-entering discovery/setup later to add/remove/change repositories, guest profiles, image policy, or execution capabilities;
-- migrate/deprecate legacy sandbox config deliberately rather than silently rewriting local authority;
-- keep execution disabled until the required VM provider/image/environment readiness is verified.
+Windows:
+
+- Hyper-V availability/privilege/image/environment state.
+
+Linux:
+
+- KVM acceleration, QEMU/libvirt service/provider/access, image/environment state.
+
+Both:
+
+- approved repositories and immutable repo IDs;
+- guest profiles/images;
+- storage implications;
+- bridge/bootstrap readiness;
+- resource defaults;
+- explicit prerequisites requiring elevation/reboot/package/service/group/session changes.
+
+Setup must suggest safe defaults, require explicit consent for authority-bearing changes, support re-entry for repair/reseed/migration, and deliberately migrate/deprecate legacy sandbox config instead of silently reinterpreting it.
 
 ### Stage 9 — remove legacy host sandbox machinery and retire PR #106 — #117
 
-After Stage 7 acceptance and Stage 8 deployability:
+Full retirement is hard-gated on applicable Stage-7/8 completion for **both** required host providers.
 
-- remove Bubblewrap provider/probe/status and Bubblewrap/AppArmor CI setup no longer required;
+After that:
+
+- remove Bubblewrap provider/probe/status and obsolete Bubblewrap/AppArmor qualification;
 - remove/refuse obsolete host `externalReadRoots` repository-execution semantics;
 - remove ProcessContainer/AppContainer/MXC/native-helper experiments/remnants;
 - remove Gitless host project-projection scaffolding;
 - remove sandbox-specific host worker IPC bind/ACL projection;
 - remove host-sandbox candidate validation;
-- delete/rewrite obsolete sandbox tests/docs/config surfaces only after equivalent VM invariants are covered;
+- delete/rewrite obsolete sandbox tests/docs/config only after equivalent VM invariants exist;
 - retain generic process/result capture, deterministic operation registry, worker/result protocol semantics, authoritative Git/publication, recovery, supervision, leases, checkpoints, and verification evidence;
-- close/retire draft PR #106 with a clear historical pointer rather than pretending its work never happened.
+- close/retire draft PR #106 with historical pointers.
+
+Stage 9 must not remove Bubblewrap and thereby make Linux hosts unsupported before KVM/libvirt is qualified/installable.
 
 `docs/vm-migration.md` is the concrete removal/blocker inventory.
 
@@ -181,12 +193,10 @@ After Stage 7 acceptance and Stage 8 deployability:
 
 ### DB-019 verification-cost/evidence implementation — #105
 
-The DB-019 contract is active but its complete planner/evidence-store implementation remains separate work.
+VM work integrates with DB-019:
 
-VM implementation should integrate with, not bypass, it:
-
-- VM/provider/bridge/security changes can force qualification;
-- exact environment/image/provider identities participate in evidence;
+- provider/bridge/security changes can force qualification;
+- exact host platform/provider/image/environment/bridge identities participate in evidence;
 - long VM suites need liveness and suite-specific timing;
 - exact still-valid VM qualification should not be repeated merely because chat/daemon context rolled over.
 
@@ -206,7 +216,7 @@ These remain intentionally incomplete unless covered by the VM stages above:
 
 - complete generic remote-effect journaling/correlation for every future GitHub mutation;
 - per-installation human-to-workstation task addressing for shared team queues;
-- stronger numeric repository/tool/profile identity evidence outside the VM-specific Stage-1 work;
+- stronger numeric repository/tool/profile identity evidence outside Stage 1;
 - GitHub App installation authentication;
 - general parallel task scheduling;
 - default-branch merge/release/deployment as ordinary task effects.
@@ -215,10 +225,10 @@ These remain intentionally incomplete unless covered by the VM stages above:
 
 For every VM stage:
 
-1. read `AGENTS.md`, active specs, DB-020, the prerequisite VM stages, and `docs/vm-migration.md`;
+1. read `AGENTS.md`, active specs, DB-020, prerequisite VM stages, and `docs/vm-migration.md`;
 2. inspect the implementation being replaced/extended;
-3. research relevant Hyper-V/Windows/Linux APIs and failure semantics;
-4. write a scoped plan covering ownership, state transitions, authority crossings, recovery, tests, migration, and expected files;
+3. research the relevant Hyper-V and/or KVM/QEMU/libvirt platform behavior and failure semantics;
+4. write a scoped plan covering ownership, state transitions, authority crossings, recovery, tests, provider parity, migration, and expected files;
 5. sanity-check against correctness/containment, persistence, recoverability, operator UX, performance, and DB-019 verification cost;
 6. proceed when no genuine architecture/authority choice remains; checkpoint only high-leverage architectural decisions.
 
