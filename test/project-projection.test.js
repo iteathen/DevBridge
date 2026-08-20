@@ -82,7 +82,7 @@ test('Gitless project projection accepts a host-managed workspace ancestor alias
   }
 });
 
-test('Gitless project projection rejects worker-created Git administrative paths', async () => {
+test('Gitless project projection rejects worker-created case-variant Git administrative paths', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-project-projection-git-'));
   const workspace = path.join(root, 'workspace');
   const project = path.join(workspace, 'project');
@@ -92,8 +92,8 @@ test('Gitless project projection rejects worker-created Git administrative paths
     await writeFile(path.join(project, 'README.md'), 'before\n');
     const view = await createGitlessProjectProjection({ workspaceRoot: workspace, projectDir: project });
     try {
-      await mkdir(path.join(view.projectDir, '.git'));
-      await writeFile(path.join(view.projectDir, '.git', 'config'), 'worker-git\n');
+      await mkdir(path.join(view.projectDir, '.GIT'));
+      await writeFile(path.join(view.projectDir, '.GIT', 'config'), 'worker-git\n');
       await assert.rejects(() => view.importChanges(), /protected path/u);
       assert.equal(await readFile(path.join(project, '.git', 'config'), 'utf8'), 'git-sentinel\n');
       assert.equal(await readFile(path.join(project, 'README.md'), 'utf8'), 'before\n');
