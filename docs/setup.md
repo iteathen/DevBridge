@@ -19,14 +19,22 @@ Current main still behaves as follows:
 - Windows can run installation/configuration/static/control-plane operations, but current-main repository-code execution remains fail-closed.
 - Draft PR #106's Windows ProcessContainer/AppContainer work is superseded migration evidence and is not the supported target.
 
+The approved migration sequence removes the Linux host-sandbox execution path in Stage 1 **before** production VM providers are implemented. After Stage 1, repository-controlled execution is intentionally unavailable/fail-closed through Stages 2–5. Stage 6 restores it through persistent VMs only.
+
+Do not preserve functionality by introducing direct/uncontained host execution during that interval.
+
 Do not install/configure Hyper-V or KVM/libvirt expecting current main to use those providers yet. VM Stage 8 (#116), coordinated with setup/reconfiguration issue #103, adds supported provider discovery/provisioning after the lower VM stages are implemented and qualified.
 
 ## Current requirements
 
+Pre-migration current main requires:
+
 - Node.js 22.16.0 or newer
 - Git
 - a GitHub account with access to the configured task queue and target repositories
-- Linux + Bubblewrap only when using the current transitional untrusted-execution path
+- Linux + Bubblewrap only when using the current pre-Stage-1 repository-execution path
+
+After Stage 1, Bubblewrap is no longer a repository-execution prerequisite because repository execution itself is deliberately unavailable until VM restoration.
 
 Future VM requirements are provider-specific:
 
@@ -62,9 +70,9 @@ node ~/.devbridge/bin/devbridge.mjs
 
 PowerShell users can use `$HOME\.devbridge\bin\devbridge.mjs` in the same commands.
 
-## Current Linux Bubblewrap prerequisite
+## Pre-Stage-1 Linux Bubblewrap prerequisite
 
-This section describes **transitional current-main behavior**, not the DB-020 target architecture.
+This section describes **current-main behavior before Stage 1**, not the DB-020 target architecture.
 
 Linux hosts that enable current repository-code/proposal-worker execution need a working Bubblewrap installation whose user-namespace/AppArmor policy permits DevBridge's verification probe.
 
@@ -72,7 +80,7 @@ Install Bubblewrap/AppArmor through normal system administration. Repository tas
 
 `doctor` must report observed provider state. A configured provider name or installed `bwrap` executable alone is not proof of enforcement.
 
-Stage 9 removes this prerequisite only after the Linux KVM/QEMU/libvirt provider is qualified and installable, so the VM migration does not drop Linux-host execution support.
+Stage 1 removes this execution path rather than keeping Bubblewrap live until KVM/libvirt replacement. From that point until Stage 6, Linux repository execution is intentionally unavailable rather than falling back to the host.
 
 ## Configuration authority
 
@@ -96,17 +104,21 @@ Review at least:
 - `publication.*`
 - local tool profiles/credentials.
 
-`workspace.externalReadRoots`, proposal profile `sandbox.*`, and `execution.allowUncontainedTools` are part of the current host-sandbox-era surface. They remain for migration compatibility until VM Stage 8 defines exact config migration and Stage 9 removes/deprecates obsolete semantics. They are not the DB-020 target mechanism for exposing repository tools to host files.
+`workspace.externalReadRoots`, proposal profile `sandbox.*`, and `execution.allowUncontainedTools` are host-sandbox-era surface. Stage 1 removes their ability to authorize repository-code host execution. Stage 8 defines deliberate operator-facing migration/deprecation, and Stage 9 removes remaining compatibility where appropriate.
+
+`execution.allowUncontainedTools` or equivalent must never bypass the no-provider state.
 
 Existing operator configuration is never silently rewritten during self-update.
 
-## Execution remains opt-in
+## Execution remains opt-in and provider-bound
 
 Setting `execution.enabled` is local machine authority. Task text cannot enable it.
 
-Current main fails closed if a requested repository-code execution class lacks the provider it actually implements/verifies.
+Current pre-migration main fails closed if a requested repository-code execution class lacks the provider it actually implements/verifies.
 
-Future VM-backed execution similarly requires observed provider + image + repository environment + bridge readiness before DevBridge reports repository execution usable.
+After Stage 1, **all** repository-controlled execution fails unavailable while no production provider exists, even if `execution.enabled` remains configured.
+
+After Stage 6, VM-backed execution additionally requires observed provider + image + repository environment + bridge readiness. If any are missing, execution remains unavailable; it never redirects to direct host execution.
 
 ## GitHub authentication
 
@@ -152,6 +164,8 @@ Discover where safe:
 
 Do not blindly prompt for repository names, local paths, provider object names, or provider details that can be safely discovered and verified. Do not auto-enable discovered capabilities merely because they exist.
 
+VM readiness failure must degrade/fail closed; setup never recreates the removed host repository-execution path.
+
 ## Provider-owned versus operator-owned infrastructure
 
 DevBridge setup must distinguish its own VM artifacts from shared operator infrastructure.
@@ -166,12 +180,12 @@ Stage 0 establishes only the fixed managed checkout needed to reach the secure s
 
 DB-011 owns update policy, signed production release subjects, exact runtime artifact identity, candidate validation, daemon drain, activation health, and rollback.
 
-Current main runs candidate-controlled validation behind the transitional verified host sandbox. DB-020 targets provider-native VM isolation:
+Current pre-migration main runs candidate-controlled validation behind the host sandbox. Stage 1 disables/removes that execution path. Until Stage 6 provides provider-native VM validation, candidate-controlled execution is unavailable/fail-closed while release identity/last-known-good/rollback remain intact.
 
-- Hyper-V validation environment on Windows;
-- KVM/QEMU/libvirt validation environment on Linux.
+Stage 6 restores VM validation through:
 
-Until that migration lands, do not report candidate VM validation as available.
+- Hyper-V on Windows;
+- KVM/QEMU/libvirt on Linux.
 
 ## Operator control
 
@@ -200,8 +214,9 @@ Future VM lifecycle commands/setup surfaces preserve persistent repository disk 
 
 `doctor` reports observed capabilities, not aspirations.
 
-- Current main: expect Bubblewrap verification for supported Linux repository execution and fail-closed Windows repository execution.
+- Pre-Stage-1 current main: expect Bubblewrap verification for supported Linux repository execution and fail-closed Windows repository execution.
+- Stage 1 through Stage 5: expect repository execution unavailable/no-provider while trusted control-plane functions may remain usable.
 - VM transition: do not interpret partial Hyper-V, KVM, libvirt, image, VM/domain, or bridge state as completed DB-020 support.
-- After Stage 7/8: expect exact provider/image/writable-layer/environment/bridge readiness evidence.
+- After Stage 7/8: expect exact provider/image/writable-layer/environment/bridge readiness evidence and no host fallback.
 
-See `docs/roadmap.md` for staging and `docs/vm-migration.md` for legacy-removal blockers.
+See `docs/roadmap.md` for staging, `docs/vm-lego-studs.md` for replaceability, and `docs/vm-migration.md` for removal/retention details.
