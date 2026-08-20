@@ -149,7 +149,12 @@ export class RunCoordinator {
 
   #selectProfile(task) {
     const preferred = task.envelope.preferredTool;
-    const name = preferred && Object.hasOwn(this.#tools, preferred) ? preferred : this.#defaultTool;
+    if (preferred && !Object.hasOwn(this.#tools, preferred)) {
+      throw new PolicyError(`requested local coding tool is unavailable: ${preferred}`);
+    }
+    // A controller plan always wins. The configured default is only the fallback
+    // for a task that arrived without an executable plan.
+    const name = preferred || this.#defaultTool;
     if (!this.#modelAdaptersEnabled && !this.#deterministicProfileNames.has(name)) {
       throw new PolicyError('coding-model adapters are disabled by local policy; submit a controller plan or explicitly enable a compatibility adapter');
     }

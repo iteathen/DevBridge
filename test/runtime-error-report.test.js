@@ -38,7 +38,8 @@ function state(stage = 'waiting-feedback') {
 test('reports a nonterminal runtime error against the active run', async () => {
   const reports = [];
   const runtime = {
-    config: { github: { queueRepository: 'iteathen/DevBridge' } },
+    config: { github: { queueRepositories: ['iteathen/DevBridge'] } },
+    queueRepository: 'iteathen/DevBridge',
     stateStore: {
       entries: async () => [
         ['run.iteathen/DevBridge#3.old', state('failed')],
@@ -66,7 +67,8 @@ test('reports a nonterminal runtime error against the active run', async () => {
 
 test('does nothing when there is no active run', async () => {
   const runtime = {
-    config: { github: { queueRepository: 'iteathen/DevBridge' } },
+    config: { github: { queueRepositories: ['iteathen/DevBridge'] } },
+    queueRepository: 'iteathen/DevBridge',
     stateStore: { entries: async () => [['run.x', state('completed')]] },
     statusReporter: { publish: async () => { throw new Error('must not publish'); } },
   };

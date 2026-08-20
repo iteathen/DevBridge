@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "github": {
+    "queueRepositories": ["iteathen/DevBridge", "iteathen/UCI_Arena"],
+    "repositoryDiscovery": {
+      "enabled": false,
+      "affiliations": ["owner", "collaborator", "organization_member"],
+      "maxRepositories": 30
+    },
+    "taskLabel": "devbridge:ready",
+    "trustedActorIds": ["1775584"],
+    "auth": {
+      "mode": "auto",
+      "environmentVariables": ["DEVBRIDGE_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"],
+      "githubCliExecutable": "gh",
+      "hostname": "github.com"
+    },
+    "apiVersion": "2026-03-10",
+    "pollIntervalMs": 15000
+  },
+  "workspace": {
+    "root": "~/.devbridge-fast/workspaces",
+    "allowCreate": true,
+    "allowedOwners": ["iteathen"],
+    "externalReadRoots": [],
+    "baselineChannels": { "production": "main", "testing": "main" },
+    "defaultBaselineChannel": "testing"
+  },
+  "state": { "directory": "~/.devbridge-fast/state" },
+  "execution": {
+    "enabled": true,
+    "fastHost": false,
+    "fastVmDefaultSwitch": true,
+    "controllerPlansEnabled": true,
+    "modelAdaptersEnabled": true,
+    "defaultTool": null,
+    "maxConcurrentTasks": 1,
+    "maxTurns": 8,
+    "allowUncontainedTools": true
+  },
+  "publication": {
+    "autoPushTaskBranches": true,
+    "forceNoOpPublication": false,
+    "branchPrefix": "devbridge-fast"
+  },
+  "daemon": { "errorBackoffMs": 5000 },
+  "status": { "progressIntervalMs": 30000, "maxCommentBytes": 48000 },
+  "tools": {
+    "codex-fast": {
+      "executable": "codex",
+      "args": [
+        "--ask-for-approval",
+        "never",
+        "exec",
+        "--ignore-user-config",
+        "--model",
+        "gpt-5.5",
+        "--ephemeral",
+        "--sandbox",
+        "workspace-write",
+        "--color",
+        "never",
+        "--output-last-message",
+        "{resultFile}",
+        "-"
+      ],
+      "inputMode": "stdin-json",
+      "timeoutMs": 2700000,
+      "maxOutputBytes": 4194304,
+      "environment": { "pass": [], "set": {} },
+      "sandbox": {
+        "enforcement": "tool",
+        "outsideProjectRead": "readonly",
+        "outsideProjectWrite": false,
+        "network": "unrestricted"
+      }
+    }
+  }
+}

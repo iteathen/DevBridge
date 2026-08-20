@@ -16,9 +16,9 @@ async function command(program,args,{cwd,input=null,env=process.env}={}){return 
 async function initGit(root){await command('git',['init','-q'],{cwd:root});await command('git',['config','user.name','Host'],{cwd:root});await command('git',['config','user.email','host@localhost'],{cwd:root});await command('git',['add','-A'],{cwd:root});await command('git',['commit','-q','-m','base'],{cwd:root});}
 async function visible(root){const r=await command('git',['ls-files','-co','--exclude-standard','-z'],{cwd:root});assert.equal(r.exitCode,0,r.stderr);return r.stdout.split('\0').filter(Boolean);}
 
-function localChannel(root){const classes={};for(const name of ['input','work','output','cache','scratch'])classes[name]=path.join(root,name);const ensure=async()=>{for(const dir of Object.values(classes))await mkdir(dir,{recursive:true});};const locate=async(location,{forInput=false}={})=>{await ensure();const candidate=path.join(classes[location.class],...location.path.split('/').filter(x=>x!=='.'));if(!forInput)await mkdir(path.dirname(candidate),{recursive:true});return candidate;};return {
+function localChannel(root,{onPut=()=>{}}={}){const classes={};for(const name of ['input','work','output','cache','scratch'])classes[name]=path.join(root,name);const ensure=async()=>{for(const dir of Object.values(classes))await mkdir(dir,{recursive:true});};const locate=async(location,{forInput=false}={})=>{await ensure();const candidate=path.join(classes[location.class],...location.path.split('/').filter(x=>x!=='.'));if(!forInput)await mkdir(path.dirname(candidate),{recursive:true});return candidate;};return {
  async health(){await ensure();return{ready:true,version:'1.0.0',features:['health','execute','observe','cancel','put','get'],reason:null};},
- async put(_target,source,destination,{maxBytes=32*1024*1024}={}){const file=await locate(destination);let offset=0;const chunks=[];while(true){const part=await source.read({offset,limit:Math.min(16*1024,maxBytes-offset)});const data=Buffer.from(part.data);chunks.push(data);offset+=data.length;if(part.eof)break;if(offset>=maxBytes)throw new Error('put limit');}await writeFile(file,Buffer.concat(chunks));return{bytes:offset,digest:'x'};},
+ async put(_target,source,destination,{maxBytes=32*1024*1024}={}){onPut(structuredClone(destination));const file=await locate(destination);let offset=0;const chunks=[];while(true){const part=await source.read({offset,limit:Math.min(16*1024,maxBytes-offset)});const data=Buffer.from(part.data);chunks.push(data);offset+=data.length;if(part.eof)break;if(offset>=maxBytes)throw new Error('put limit');}await writeFile(file,Buffer.concat(chunks));return{bytes:offset,digest:'x'};},
  async get(_target,source,sink,{maxBytes=32*1024*1024}={}){const file=await locate(source,{forInput:true});const data=await readFile(file);if(data.length>maxBytes)throw new Error('get limit');await sink.write({offset:0,data,eof:true,digest:'x'});return{bytes:data.length,digest:'x'};},
  async execute(_target,operation,{signal=null,onActivity=null}={}){await ensure();const args=[];for(const arg of operation.arguments){if(typeof arg==='string')args.push(arg);else args.push(await locate(arg,{forInput:arg.class==='input'}));}const cwd=operation.directory.path==='.'?classes[operation.directory.class]:await locate(operation.directory);onActivity?.({state:'running'});if(signal?.aborted)return{completion:'observed',result:{exitCode:null,signal:null,timedOut:false,aborted:true,outputTruncated:false,stdout:'',stderr:'',startedAt:null,finishedAt:null,lastOutputAt:null}};const startedAt=new Date().toISOString();const r=await command(operation.program,args,{cwd,input:operation.input,env:{...process.env,...operation.environment}});return{completion:'observed',result:{exitCode:r.exitCode,signal:r.signal,timedOut:false,aborted:false,outputTruncated:false,stdout:r.stdout,stderr:r.stderr,startedAt,finishedAt:new Date().toISOString(),lastOutputAt:r.stdout||r.stderr?new Date().toISOString():null}};}
 };}
@@ -26,6 +26,77 @@ function localChannel(root){const classes={};for(const name of ['input','work','
 function request(args,{tool='node',operation='test.operation',environment={CI:'1'}}={}){return{protocol:REPOSITORY_EXECUTION_REQUEST_PROTOCOL,operation,scope:{repository:'owner/repo',repositoryId:'123',runId:'run-1'},invocation:{tool,arguments:args,workingDirectory:'.'},environment,transfers:[],limits:{timeoutMs:120000,maxOutputBytes:1024*1024},stdin:null,signal:null,onActivity:null};}
 
 test('route policy accepts only stable numeric subjects and one validation environment',()=>{assert.throws(()=>normalizeEnvironmentExecutionRoutes({protocol:ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL,routes:[{subject:'owner-repo',profile:'linux',access:{family:'linux'}}]}),/numeric stable identity/u);assert.throws(()=>normalizeEnvironmentExecutionRoutes({protocol:ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL,routes:[{subject:'1',profile:'left',validation:true,access:{family:'linux'}},{subject:'2',profile:'right',validation:true,access:{family:'linux'}}]}),/multiple validation routes/u);});
+
+test('source synchronization sends only missing or changed cached parts', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'db-stage6-source-cache-'));
+  const host = path.join(temp, 'host');
+  const guest = path.join(temp, 'guest');
+  const partWrites = [];
+  try {
+    await mkdir(host);
+    await writeFile(path.join(host, 'a.txt'), 'alpha\n');
+    await writeFile(path.join(host, 'b.txt'), 'bravo\n');
+    await initGit(host);
+    const entry = { record: { identity: 'env-11111111111111111111111111111111', subject: '123', profile: 'cache' }, observation: { exists: true, owned: true, compatible: true, state: 'running' } };
+    const state = { inspect: async () => ({ ready: true, identity: 'a'.repeat(32) }), listEnvironments: async () => [entry], observeEnvironment: async () => entry };
+    const execution = await createRepositoryExecution({
+      stateDirectory: path.join(temp, 'state'), platform: 'linux',
+      routes: { protocol: ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL, routes: [{ subject: '123', profile: 'cache', access: { family: 'linux' } }] },
+      rootFor: async () => host, listPaths: async (root) => visible(root), resolveSubject: async () => '123', resolveTool: async (tool) => ({ program: tool, arguments: [] }),
+      createState: async () => state, createPreparation: async () => ({ ensure: async () => ({ generation: 'b'.repeat(64) }), connection: async () => ({ family: 'linux' }) }),
+      createChannel: async () => localChannel(guest, { onPut: (destination) => { if (destination.class === 'input' && destination.path.startsWith('source/part-')) partWrites.push(destination.path); } }),
+    });
+    await execution.execute(request(['-e', '']));
+    assert.equal(partWrites.length, 2);
+    const initialParts = new Set(partWrites);
+    partWrites.length = 0;
+    await writeFile(path.join(host, 'b.txt'), 'changed\n');
+    await execution.execute(request(['-e', '']));
+    assert.equal(partWrites.length, 1);
+    assert.match(partWrites[0], /^source\/part-[a-f0-9]{64}$/u);
+    assert.equal(initialParts.has(partWrites[0]), false);
+    partWrites.length = 0;
+    await execution.execute(request(['-e', '']));
+    assert.equal(partWrites.length, 0);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('source synchronization rejects a guest-supplied unknown part request', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'db-stage6-source-inventory-'));
+  const host = path.join(temp, 'host');
+  const guest = path.join(temp, 'guest');
+  try {
+    await mkdir(host);
+    await writeFile(path.join(host, 'a.txt'), 'alpha\n');
+    await initGit(host);
+    const entry = { record: { identity: 'env-22222222222222222222222222222222', subject: '123', profile: 'inventory' }, observation: { exists: true, owned: true, compatible: true, state: 'running' } };
+    const state = { inspect: async () => ({ ready: true, identity: 'a'.repeat(32) }), listEnvironments: async () => [entry], observeEnvironment: async () => entry };
+    const base = localChannel(guest);
+    const channel = {
+      ...base,
+      async execute(target, operation, options) {
+        const result = await base.execute(target, operation, options);
+        if (operation.arguments.some((value) => value === 'prepare')) {
+          const parsed = JSON.parse(result.result.stdout);
+          parsed.missingParts.push(`part-${'f'.repeat(64)}`);
+          result.result.stdout = `${JSON.stringify(parsed)}\n`;
+        }
+        return result;
+      },
+    };
+    const execution = await createRepositoryExecution({
+      stateDirectory: path.join(temp, 'state'), platform: 'linux',
+      routes: { protocol: ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL, routes: [{ subject: '123', profile: 'inventory', access: { family: 'linux' } }] },
+      rootFor: async () => host, listPaths: async (root) => visible(root), resolveSubject: async () => '123', resolveTool: async (tool) => ({ program: tool, arguments: [] }),
+      createState: async () => state, createPreparation: async () => ({ ensure: async () => ({ generation: 'b'.repeat(64) }), connection: async () => ({ family: 'linux' }) }), createChannel: async () => channel,
+    });
+    await assert.rejects(() => execution.execute(request(['-e', ''])), /unknown or duplicate part/u);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
 
 test('production composition round-trips Node/CMake/CTest candidate bytes and preserves ignored guest state across source resync',async()=>{const temp=await mkdtemp(path.join(os.tmpdir(),'db-stage6-app-'));const host=path.join(temp,'host');const guest=path.join(temp,'guest');try{await mkdir(host);await writeFile(path.join(host,'.gitignore'),'build/\n');await writeFile(path.join(host,'a.txt'),'alpha\n');await writeFile(path.join(host,'CMakeLists.txt'),'cmake_minimum_required(VERSION 3.20)\nproject(BridgeFlow NONE)\nenable_testing()\nadd_test(NAME bridge COMMAND "${CMAKE_COMMAND}" -E echo bridge-passed)\n');await initGit(host);const entry={record:{identity:'env-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',subject:'123',profile:'linux-dev'},observation:{exists:true,owned:true,compatible:true,state:'running'}};const fakeState={inspect:async()=>({ready:true,identity:'f'.repeat(32),reason:null}),listEnvironments:async()=>[entry],observeEnvironment:async()=>entry};const channel=localChannel(guest);const routes={protocol:ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL,routes:[{subject:'123',profile:'linux-dev',preferred:true,access:{family:'linux'}}]};const execution=await createRepositoryExecution({stateDirectory:path.join(temp,'state'),platform:'linux',routes,protectedValues:['secret-sentinel'],rootFor:async()=>host,listPaths:async(root)=>visible(root),resolveSubject:async(scope)=>scope.repositoryId,resolveTool:async(tool)=>({program:tool,arguments:[]}),createState:async()=>fakeState,createPreparation:async()=>({ensure:async()=>({generation:'b'.repeat(64)}),connection:async()=>({family:'linux'})}),createChannel:async()=>channel});assert.equal(execution.inspect().ready,true);
  const first=await execution.execute(request(['-e',`const fs=require('node:fs');fs.mkdirSync('build',{recursive:true});fs.writeFileSync('build/cache','persist');fs.writeFileSync('a.txt','changed\\n');fs.writeFileSync('new.txt','new\\n');console.log('first')`]));assert.equal(first.exitCode,0);assert.match(first.evidence.identity,/^execution-/u);assert.equal(await readFile(path.join(host,'a.txt'),'utf8'),'changed\n');assert.equal(await readFile(path.join(host,'new.txt'),'utf8'),'new\n');await assert.rejects(readFile(path.join(host,'build','cache')),{code:'ENOENT'});

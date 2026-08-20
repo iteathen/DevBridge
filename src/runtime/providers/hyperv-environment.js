@@ -7,6 +7,7 @@ const TOKEN = /^[a-f0-9]{32}$/u;
 const INSTANCE = /^[a-f0-9]{32,64}$/u;
 const POWERSHELL = 'powershell.exe';
 const COMMAND_ARGS = ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand'];
+const POWERSHELL_PREAMBLE = "$ProgressPreference = 'SilentlyContinue'\n";
 
 function encodeScript(script) {
   return Buffer.from(script, 'utf16le').toString('base64');
@@ -15,7 +16,7 @@ function encodeScript(script) {
 function parseJson(result, action) {
   if (!result || result.exitCode !== 0 || result.timedOut || result.aborted || result.outputTruncated) {
     const detail = result?.stderr?.trim() || result?.stdout?.trim() || `${action} failed`;
-    throw new Error(detail.slice(0, 2_048));
+    throw new Error(detail.slice(-2_048));
   }
   try { return JSON.parse(result.stdout); } catch { throw new Error(`${action} returned invalid structured output`); }
 }
@@ -91,7 +92,7 @@ function Prefix-Overlaps([string]$candidate, [string]$existing) {
   if ($candidate -notmatch '^([0-9.]+)/(\d+)$') { return $true }
   $candidateAddress = $Matches[1]; $candidateBits = [int]$Matches[2]
   $bits = [Math]::Min($candidateBits, $existingBits)
-  $mask = if ($bits -eq 0) { [uint32]0 } else { [uint32]([uint64]0xffffffff -shl (32 - $bits)) }
+  $mask = if ($bits -eq 0) { [uint32]0 } else { [uint32](([uint64]4294967295 -shr (32 - $bits)) -shl (32 - $bits)) }
   return ((Convert-IPv4ToUInt32 $candidateAddress) -band $mask) -eq ((Convert-IPv4ToUInt32 $existingAddress) -band $mask)
 }
 $switch = Get-VMSwitch -ErrorAction Stop | Where-Object { $_.Name -eq $data.name } | Select-Object -First 1
@@ -234,7 +235,7 @@ export class HyperVEnvironment {
   async #run(script, payload = {}, timeoutMs = 20_000) {
     return parseJson(await this.#invoke({
       executable: POWERSHELL,
-      arguments: [...COMMAND_ARGS, encodeScript(script)],
+      arguments: [...COMMAND_ARGS, encodeScript(`${POWERSHELL_PREAMBLE}${script}`)],
       input: JSON.stringify(payload),
       timeoutMs,
       maxOutputBytes: 1024 * 1024,

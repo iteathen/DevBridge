@@ -32,7 +32,28 @@ async function exchange(root, frame, env = {}) {
   });
 }
 
+async function exchangeLines(root, frames) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [agent, '--exchange-lines'], {
+      env: { ...process.env, DEVBRIDGE_GUEST_BRIDGE_ROOT: root, DEVBRIDGE_GUEST_TARGET: target },
+      stdio: ['pipe', 'pipe', 'pipe'], shell: false, windowsHide: true,
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('close', (code) => {
+      if (code !== 0) return reject(new Error(stderr || `agent exited ${code}`));
+      try { resolve(stdout.trim().split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line))); }
+      catch (error) { reject(new Error(`invalid agent stream output: ${stdout}`, { cause: error })); }
+    });
+    child.stdin.end(`${frames.map((value) => JSON.stringify(value)).join('\n')}\n`);
+  });
+}
+
 function frame(request, kind, body = {}) { return { protocol, request, target, kind, body }; }
+async function cleanup(root) { await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }); }
 
 async function observeUntil(root, request, predicate, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
@@ -58,7 +79,16 @@ test('health reports the exact protocol feature surface and target binding', asy
     const rejected = await exchange(root, forged);
     assert.equal(rejected.ok, false);
     assert.match(rejected.error.message, /target does not match/u);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await cleanup(root); }
+});
+
+test('line exchange carries multiple ordered frames through one guest process', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-bridge-agent-lines-'));
+  try {
+    const responses = await exchangeLines(root, [frame('1'.repeat(32), 'health'), frame('2'.repeat(32), 'health')]);
+    assert.deepEqual(responses.map((value) => value.request), ['1'.repeat(32), '2'.repeat(32)]);
+    assert.equal(responses.every((value) => value.ok === true && value.body.version === '1.0.0'), true);
+  } finally { await cleanup(root); }
 });
 
 test('put/get roundtrip is digest-bound and traversal is rejected', async () => {
@@ -74,7 +104,7 @@ test('put/get roundtrip is digest-bound and traversal is rejected', async () => 
     const bad = await exchange(root, frame('5'.repeat(32), 'put', { destination: { class: 'input', path: '../escape' }, offset: 0, data: '', eof: true, digest: createHash('sha256').update('').digest('hex') }));
     assert.equal(bad.ok, false);
     assert.match(bad.error.message, /invalid segment/u);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await cleanup(root); }
 });
 
 test('put accepts an exact final-chunk replay without rewriting the destination', async () => {
@@ -87,7 +117,7 @@ test('put accepts an exact final-chunk replay without rewriting the destination'
     assert.equal((await exchange(root, frame(request, 'put', body))).ok, true);
     assert.equal((await exchange(root, frame(request, 'put', body))).ok, true);
     assert.equal(await readFile(path.join(root, 'input', 'replay.bin'), 'utf8'), 'replay');
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await cleanup(root); }
 });
 
 test('execute is durable, asynchronous, and exact replay does not repeat side effects', async () => {
@@ -107,7 +137,7 @@ test('execute is durable, asynchronous, and exact replay does not repeat side ef
     const replay = await exchange(root, frame(request, 'execute', operation));
     assert.equal(replay.body.state, 'completed');
     assert.equal(await readFile(path.join(root, 'work', 'count.txt'), 'utf8'), '1');
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await cleanup(root); }
 });
 
 
@@ -121,11 +151,11 @@ test('concurrent exact execute requests are fenced to one guest-side effect', as
       directory: { class: 'work', path: '.' }, environment: {}, input: null, timeoutMs: 5_000, maxOutputBytes: 4096,
     };
     const [left, right] = await Promise.all([exchange(root, frame(request, 'execute', operation)), exchange(root, frame(request, 'execute', operation))]);
-    assert.equal(left.ok, true);
-    assert.equal(right.ok, true);
+    assert.equal(left.ok, true, JSON.stringify(left));
+    assert.equal(right.ok, true, JSON.stringify(right));
     await observeUntil(root, request, (body) => body.state === 'completed');
     assert.equal(await readFile(path.join(root, 'work', 'concurrent.txt'), 'utf8'), '1');
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await cleanup(root); }
 });
 
 test('logical location arguments resolve only inside guest class roots', async () => {
@@ -144,7 +174,7 @@ test('logical location arguments resolve only inside guest class roots', async (
     const completed = await observeUntil(root, request, (body) => body.state === 'completed');
     assert.equal(completed.result.exitCode, 0);
     assert.equal(await readFile(path.join(root, 'output', 'ports', 'result.txt'), 'utf8'), 'location-payload');
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await cleanup(root); }
 });
 
 
@@ -160,7 +190,7 @@ test('guest operations inherit only a minimal local runtime environment plus exp
     await exchange(root, frame(request, 'execute', operation));
     const completed = await observeUntil(root, request, (body) => body.state === 'completed');
     assert.equal(Buffer.from(completed.result.stdout, 'base64').toString('utf8'), 'none|present');
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await cleanup(root); }
 });
 
 test('same request identity cannot be reused for a changed operation', async () => {
@@ -173,7 +203,7 @@ test('same request identity cannot be reused for a changed operation', async () 
     const changed = await exchange(root, frame(request, 'execute', { ...base, arguments: ['-e', "console.log('b')"] }));
     assert.equal(changed.ok, false);
     assert.match(changed.error.message, /reused for a different operation/u);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await cleanup(root); }
 });
 
 test('cancellation is request-bound and completion becomes observable', async () => {
@@ -189,7 +219,7 @@ test('cancellation is request-bound and completion becomes observable', async ()
     assert.equal(cancelled.ok, true);
     const completed = await observeUntil(root, request, (body) => body.state === 'completed', 8_000);
     assert.equal(completed.result.aborted, true);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await cleanup(root); }
 });
 
 test('guest-side timeout terminates the operation and records timedOut', async () => {
@@ -200,7 +230,7 @@ test('guest-side timeout terminates the operation and records timedOut', async (
     await exchange(root, frame(request, 'execute', operation));
     const completed = await observeUntil(root, request, (body) => body.state === 'completed', 8_000);
     assert.equal(completed.result.timedOut, true);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await cleanup(root); }
 });
 
 test('malformed and unknown request fields fail closed', async () => {
@@ -209,5 +239,5 @@ test('malformed and unknown request fields fail closed', async () => {
     const invalid = await exchange(root, { ...frame('c'.repeat(32), 'health'), provider: 'foreign' });
     assert.equal(invalid.ok, false);
     assert.match(invalid.error.message, /provider is not allowed/u);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await cleanup(root); }
 });

@@ -20,8 +20,9 @@ function cycleRuntime(overrides = {}) {
   return {
     config: {
       execution: { enabled: true },
-      github: { queueRepository: 'iteathen/DevBridge', pollIntervalMs: 60_000 },
+      github: { queueRepositories: ['iteathen/DevBridge'], pollIntervalMs: 60_000 },
     },
+    queueRepository: 'iteathen/DevBridge',
     stateStore: { entries: async () => [] },
     rateBudget: {
       recommendedPollIntervalMs: (value) => value,

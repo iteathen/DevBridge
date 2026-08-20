@@ -188,3 +188,23 @@ test('a newer task revision is deferred while an older revision of the same issu
   assert.equal(result.requestedRevision, newTask.revision);
   assert.equal(prepared, 0);
 });
+
+test('a configured coding adapter is not selected without remote or operator opt-in', async () => {
+  let runs = 0;
+  const requested = task();
+  requested.envelope.preferredTool = null;
+  const coordinator = new RunCoordinator({
+    stateStore: new MemoryStore(),
+    workspaceManager: { prepareRun: async () => { throw new Error('must not prepare'); } },
+    processRunner: { run: async () => { runs += 1; throw new Error('must not run'); } },
+    queueRepository: 'owner/queue',
+    tools: { 'codex-fast': profile },
+    defaultTool: null,
+    modelAdaptersEnabled: true,
+  });
+
+  const result = await coordinator.executeTask(requested);
+  assert.equal(result.status, 'failed');
+  assert.match(result.error.message, /no locally configured coding tool/u);
+  assert.equal(runs, 0);
+});

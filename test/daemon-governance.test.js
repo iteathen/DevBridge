@@ -38,6 +38,7 @@ function daemonConfig(stateDirectory) {
 function idleRuntime(config, counter) {
   return {
     config: { ...config, execution: { enabled: false } },
+    queueRepository: 'owner/queue',
     toolInventory: null,
     toolOnboarding: null,
     rateBudget: {
@@ -47,6 +48,21 @@ function idleRuntime(config, counter) {
       },
       snapshot() { return {}; },
     },
+  };
+}
+
+function idleRuntimeSet(config, counter) {
+  const runtime = idleRuntime(config, counter);
+  return {
+    config: runtime.config,
+    selection: {
+      records: [{ name: 'owner/queue', id: null, source: 'configured', private: null, permissions: null }],
+      discoveryEnabled: false,
+      discoveredCount: 0,
+      unchanged: true,
+    },
+    runtimes: [runtime],
+    session: { rateBudget: runtime.rateBudget },
   };
 }
 
@@ -92,7 +108,7 @@ test('daemon acknowledges pause only at a cycle boundary and performs no new cyc
   const controller = new AbortController();
   const running = runDaemon(config, {
     signal: controller.signal,
-    runtimeFactory: async () => idleRuntime(config, counter),
+    runtimeSetFactory: async () => idleRuntimeSet(config, counter),
     onEvent: (event) => events.push(event.type),
   });
 
@@ -122,7 +138,7 @@ test('stop wins while paused and the daemon releases its lock without requiring 
   const lockPath = path.join(root, 'daemon.lock');
   const counter = { cycles: 0 };
   const running = runDaemon(config, {
-    runtimeFactory: async () => idleRuntime(config, counter),
+    runtimeSetFactory: async () => idleRuntimeSet(config, counter),
   });
 
   await waitUntil(() => counter.cycles >= 1);

@@ -15,7 +15,7 @@ The downloaded launcher uses only Node.js built-ins plus the local `git` executa
 3. defaults the home to `~/.devbridge`;
 4. creates private bootstrap Git HOME/hooks directories;
 5. suppresses inherited Git/SSH authority and interactive credential prompting;
-6. on a fresh home, shallow-clones fixed `https://github.com/iteathen/DevBridge.git` `main` into the managed runtime;
+6. on this disposable fast branch, shallow-clones fixed `https://github.com/iteathen/DevBridge.git` branch `codex/temp-fast-functional` into the managed runtime;
 7. verifies origin and clean checkout shape;
 8. verifies `package.json` identifies `devbridge` and the managed secure-bootstrap module exists; and
 9. transfers control to managed secure bootstrap.
@@ -128,7 +128,7 @@ Provider readiness is observed, not inferred from installation/presence.
 
 ## Development/testing versus production
 
-Development mode may follow the locally selected mutable testing channel as explicit alpha behavior.
+Development mode follows `codex/temp-fast-functional` as the explicit disposable testing channel on this branch. Stable production transport remains `main`.
 
 Production requires an independently signed immutable release subject binding fixed repository identity, exact Git head, package version, and exact runtime artifact digest.
 

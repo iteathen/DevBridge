@@ -1,5 +1,5 @@
-import { TaskLeaseLostError } from '../errors.js';
-import { createRuntime } from './runtime.js';
+import { RateLimitError, TaskLeaseLostError } from '../errors.js';
+import { createRuntimeSet } from './runtime-set.js';
 import { runIdForTask } from '../run/run-coordinator.js';
 
 const TERMINAL_RUN_STAGES = new Set(['completed', 'failed', 'cancelled']);
@@ -51,7 +51,7 @@ function startInventoryProjection(runtime, issueNumber, record, projections, pro
 }
 
 async function oldestPendingTask(runtime) {
-  const entries = await runtime.stateStore.entries(`run.${runtime.config.github.queueRepository}#`);
+  const entries = await runtime.stateStore.entries(`run.${runtime.queueRepository}#`);
   const pending = entries
     .map(([, value]) => value)
     .filter((state) => state?.task && !TERMINAL_RUN_STAGES.has(state.stage))
@@ -201,10 +201,73 @@ export async function runCycle(runtime) {
   };
 }
 
+function scopedEntries(repository, entries) {
+  return (entries ?? []).map((entry) => ({ queueRepository: repository, ...entry }));
+}
+
+export async function runRuntimeSetCycle(runtimeSet, { onRuntimeError = async () => null } = {}) {
+  if (!runtimeSet || !Array.isArray(runtimeSet.runtimes) || runtimeSet.runtimes.length === 0) {
+    throw new TypeError('runRuntimeSetCycle requires at least one isolated runtime');
+  }
+  const cycles = [];
+  const errors = [];
+  for (const runtime of runtimeSet.runtimes) {
+    try {
+      const result = await runCycle(runtime);
+      cycles.push({
+        queueRepository: runtime.queueRepository,
+        executionEnabled: result.executionEnabled,
+        unchanged: result.unchanged ?? null,
+        results: scopedEntries(runtime.queueRepository, result.results),
+        rejected: scopedEntries(runtime.queueRepository, result.rejected),
+        toolInventory: result.toolInventory,
+        toolInventoryError: result.toolInventoryError,
+        toolOnboarding: result.toolOnboarding,
+        inventoryProjections: scopedEntries(runtime.queueRepository, result.inventoryProjections),
+        recommendedPollIntervalMs: result.recommendedPollIntervalMs,
+      });
+    } catch (error) {
+      if (error instanceof RateLimitError || error instanceof TaskLeaseLostError) throw error;
+      let report = null;
+      try { report = await onRuntimeError(runtime, error); }
+      catch (reportError) {
+        report = { reported: false, reason: 'runtime-error-report-failed', error: { name: reportError.name, message: reportError.message } };
+      }
+      errors.push({
+        queueRepository: runtime.queueRepository,
+        error: { name: error.name, message: error.message },
+        report,
+      });
+    }
+  }
+  const recommendedPollIntervalMs = Math.max(
+    runtimeSet.config.github.pollIntervalMs,
+    ...cycles.map((entry) => entry.recommendedPollIntervalMs ?? 0),
+  );
+  return {
+    repositories: runtimeSet.selection.records,
+    discovery: {
+      enabled: runtimeSet.selection.discoveryEnabled,
+      discoveredCount: runtimeSet.selection.discoveredCount,
+      unchanged: runtimeSet.selection.unchanged,
+      truncated: runtimeSet.selection.truncated,
+    },
+    executionEnabled: runtimeSet.config.execution.enabled,
+    unchanged: errors.length === 0 && cycles.every((entry) => entry.unchanged === true),
+    results: cycles.flatMap((entry) => entry.results),
+    rejected: cycles.flatMap((entry) => entry.rejected),
+    errors,
+    sources: cycles,
+    recommendedPollIntervalMs,
+    rateLimit: runtimeSet.session.rateBudget.snapshot(),
+  };
+}
+
 export async function runOnce(config, {
   env = process.env,
   fetchImpl = globalThis.fetch,
-  runtimeFactory = createRuntime,
+  runtimeSetFactory = createRuntimeSet,
 } = {}) {
-  return runCycle(await runtimeFactory(config, { env, fetchImpl, coordinationExclusive: false }));
+  const runtimeSet = await runtimeSetFactory(config, { env, fetchImpl, coordinationExclusive: false });
+  return runRuntimeSetCycle(runtimeSet);
 }

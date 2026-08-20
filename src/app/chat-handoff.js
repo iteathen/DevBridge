@@ -3,8 +3,11 @@ import { ChatHandoffStore } from '../context/chat-handoff.js';
 import { JsonStateStore } from '../state/json-state-store.js';
 import { stateFileName } from '../state/state-file.js';
 
-export function createLocalChatHandoffStore(config) {
-  const stateStore = new JsonStateStore(path.join(config.state.directory, stateFileName(config.github.queueRepository)));
+export function createLocalChatHandoffStore(config, queueRepository) {
+  if (typeof queueRepository !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(queueRepository)) {
+    throw new TypeError('chat handoff queue repository must be owner/name');
+  }
+  const stateStore = new JsonStateStore(path.join(config.state.directory, stateFileName(queueRepository)));
   return new ChatHandoffStore({
     stateStore,
     maxBytes: config.contextRollover.maxHandoffBytes,
@@ -12,8 +15,8 @@ export function createLocalChatHandoffStore(config) {
   });
 }
 
-export async function chatHandoffStatus(config, repository = config.github.queueRepository) {
-  const store = createLocalChatHandoffStore(config);
+export async function chatHandoffStatus(config, repository) {
+  const store = createLocalChatHandoffStore(config, repository);
   const latest = await store.loadLatest(repository);
   if (!latest) return { ready: false, repository };
   return {
@@ -32,7 +35,7 @@ export async function chatHandoffStatus(config, repository = config.github.queue
   };
 }
 
-export async function chatHandoffSeed(config, repository = config.github.queueRepository) {
+export async function chatHandoffSeed(config, repository) {
   const status = await chatHandoffStatus(config, repository);
   return status.ready ? status.seed : null;
 }

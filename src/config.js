@@ -15,6 +15,7 @@ const GIT_BRANCH_RE = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/;
 const ENVIRONMENT_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const HOSTNAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 const GITHUB_AUTH_MODES = new Set(['auto', 'environment', 'github-cli']);
+const REPOSITORY_AFFILIATIONS = new Set(['owner', 'collaborator', 'organization_member']);
 const CONTEXT_BUDGET_UNITS = new Set(['tokens', 'bytes', 'proxy']);
 const DECISION_CLASS_SET = new Set(DECISION_CLASSES);
 
@@ -111,6 +112,44 @@ function normalizeGitHubAuth(github) {
     environmentVariables,
     githubCliExecutable: requireString(auth.githubCliExecutable ?? 'gh', 'github.auth.githubCliExecutable'),
     hostname: hostname.toLowerCase(),
+  };
+}
+
+function normalizeQueueRepositories(github) {
+  if (!Array.isArray(github.queueRepositories) || github.queueRepositories.length === 0 || github.queueRepositories.length > 30) {
+    throw new ConfigurationError('github.queueRepositories must contain 1-30 owner/name repositories');
+  }
+  const repositories = github.queueRepositories.map((value, index) => {
+    const repository = requireString(value, `github.queueRepositories[${index}]`);
+    if (!REPOSITORY_RE.test(repository)) throw new ConfigurationError(`github.queueRepositories[${index}] must be owner/name`);
+    return repository;
+  });
+  const identities = new Set(repositories.map((value) => value.toLowerCase()));
+  if (identities.size !== repositories.length) throw new ConfigurationError('github.queueRepositories must not contain duplicates');
+  return repositories;
+}
+
+function normalizeRepositoryDiscovery(github) {
+  const raw = requireObject(github.repositoryDiscovery ?? {}, 'github.repositoryDiscovery');
+  const enabled = raw.enabled == null ? false : requireBoolean(raw.enabled, 'github.repositoryDiscovery.enabled');
+  const affiliations = raw.affiliations ?? ['owner', 'collaborator', 'organization_member'];
+  if (!Array.isArray(affiliations) || affiliations.length === 0 || affiliations.length > REPOSITORY_AFFILIATIONS.size) {
+    throw new ConfigurationError('github.repositoryDiscovery.affiliations must contain 1-3 supported affiliations');
+  }
+  const normalized = affiliations.map((value, index) => {
+    const affiliation = requireString(value, `github.repositoryDiscovery.affiliations[${index}]`);
+    if (!REPOSITORY_AFFILIATIONS.has(affiliation)) {
+      throw new ConfigurationError('github.repositoryDiscovery.affiliations supports owner, collaborator, and organization_member');
+    }
+    return affiliation;
+  });
+  if (new Set(normalized).size !== normalized.length) {
+    throw new ConfigurationError('github.repositoryDiscovery.affiliations must not contain duplicates');
+  }
+  return {
+    enabled,
+    affiliations: normalized,
+    maxRepositories: requireInteger(raw.maxRepositories ?? 30, 'github.repositoryDiscovery.maxRepositories', { min: 1 }),
   };
 }
 
@@ -218,8 +257,9 @@ export function validateConfig(raw) {
   if (config.version !== 1) throw new ConfigurationError('config.version must be 1');
 
   const github = requireObject(config.github, 'github');
-  const queueRepository = requireString(github.queueRepository, 'github.queueRepository');
-  if (!REPOSITORY_RE.test(queueRepository)) throw new ConfigurationError('github.queueRepository must be owner/name');
+  const queueRepositories = normalizeQueueRepositories(github);
+  const repositoryDiscovery = normalizeRepositoryDiscovery(github);
+  if (repositoryDiscovery.maxRepositories > 100) throw new ConfigurationError('github.repositoryDiscovery.maxRepositories must be <= 100');
 
   const trustedActorIds = github.trustedActorIds;
   if (!Array.isArray(trustedActorIds) || trustedActorIds.length === 0 || trustedActorIds.some((id) => !/^\d+$/.test(String(id)))) {
@@ -254,11 +294,15 @@ export function validateConfig(raw) {
   if (decisionApprovalTtlMs > 2_592_000_000) throw new ConfigurationError('execution.decisionApprovalTtlMs must be <= 2592000000');
   const architectureGateFileThreshold = requireInteger(execution.architectureGateFileThreshold ?? 20, 'execution.architectureGateFileThreshold', { min: 2 });
   const architectureGateOwnerThreshold = requireInteger(execution.architectureGateOwnerThreshold ?? 4, 'execution.architectureGateOwnerThreshold', { min: 2 });
+  const fastHost = execution.fastHost === true;
+  const fastVmDefaultSwitch = execution.fastVmDefaultSwitch === true;
+  if (fastHost && fastVmDefaultSwitch) throw new ConfigurationError('execution.fastHost and execution.fastVmDefaultSwitch are mutually exclusive');
 
   return {
     version: 1,
     github: {
-      queueRepository,
+      queueRepositories,
+      repositoryDiscovery,
       taskLabel: requireString(github.taskLabel ?? 'devbridge:ready', 'github.taskLabel'),
       trustedActorIds: trustedActorIds.map(String),
       tokenEnv: githubAuth.environmentVariables[0],
@@ -293,6 +337,8 @@ export function validateConfig(raw) {
     },
     execution: {
       enabled: execution.enabled === true,
+      fastHost,
+      fastVmDefaultSwitch,
       controllerPlansEnabled: execution.controllerPlansEnabled !== false,
       modelAdaptersEnabled: execution.modelAdaptersEnabled === true,
       defaultTool: execution.defaultTool == null ? null : requireString(execution.defaultTool, 'execution.defaultTool'),

@@ -10,7 +10,7 @@ import { ENVIRONMENT_FOUNDATION_STATUS_PROTOCOL } from '../src/runtime/environme
 function configFor(root) {
   return validateConfig({
     version: 1,
-    github: { queueRepository: 'iteathen/DevBridge', trustedActorIds: ['1775584'], rateLimit: {} },
+    github: { queueRepositories: ['iteathen/DevBridge'], repositoryDiscovery: { enabled: false, affiliations: ['owner'], maxRepositories: 30 }, trustedActorIds: ['1775584'], rateLimit: {} },
     workspace: { root: path.join(root, 'workspace'), allowedOwners: ['iteathen'], allowCreate: true },
     state: { directory: path.join(root, 'state') },
     execution: { enabled: true, controllerPlansEnabled: true, modelAdaptersEnabled: false, faultInjection: { enabled: false, rules: [] } },

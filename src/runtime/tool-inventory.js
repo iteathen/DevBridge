@@ -86,12 +86,13 @@ function runtimeProjection(identity) {
 }
 
 export class ToolInventoryService {
-  #operations; #toolchains; #repositoryExecution; #profiles; #deterministicProfiles; #modelAdaptersEnabled; #allowUncontained; #env; #discoverPathToolsEnabled; #runtimeIdentity; #current = null; #generation = 0;
-  constructor({ operationRegistry, toolchainRegistry, repositoryExecution = null, profiles = {}, deterministicProfileNames = [], modelAdaptersEnabled = false, allowUncontainedTools = false, env = process.env, discoverPathToolsEnabled = true, runtimeIdentity = {} }) {
+  #operations; #toolchains; #repositoryExecution; #profiles; #deterministicProfiles; #modelAdaptersEnabled; #defaultTool; #allowUncontained; #env; #discoverPathToolsEnabled; #runtimeIdentity; #current = null; #generation = 0;
+  constructor({ operationRegistry, toolchainRegistry, repositoryExecution = null, profiles = {}, deterministicProfileNames = [], modelAdaptersEnabled = false, defaultTool = null, allowUncontainedTools = false, env = process.env, discoverPathToolsEnabled = true, runtimeIdentity = {} }) {
     if (!operationRegistry || typeof operationRegistry.names !== 'function') throw new TypeError('ToolInventoryService requires an operation registry');
     if (!toolchainRegistry || typeof toolchainRegistry.inspect !== 'function') throw new TypeError('ToolInventoryService requires a toolchain registry');
     this.#operations = operationRegistry; this.#toolchains = toolchainRegistry; this.#repositoryExecution = repositoryExecution;
-    this.#profiles = profiles; this.#deterministicProfiles = new Set(deterministicProfileNames); this.#modelAdaptersEnabled = modelAdaptersEnabled === true;
+    if (defaultTool != null && (typeof defaultTool !== 'string' || defaultTool.length === 0)) throw new TypeError('ToolInventoryService defaultTool is invalid');
+    this.#profiles = profiles; this.#deterministicProfiles = new Set(deterministicProfileNames); this.#modelAdaptersEnabled = modelAdaptersEnabled === true; this.#defaultTool = defaultTool;
     this.#allowUncontained = allowUncontainedTools === true; this.#env = env; this.#discoverPathToolsEnabled = discoverPathToolsEnabled === true; this.#runtimeIdentity = runtimeIdentity;
   }
   current() { return this.#current ? structuredClone(this.#current) : null; }
@@ -120,7 +121,7 @@ export class ToolInventoryService {
       const execution = { ...sanitizeRepositoryExecution(status), usable: security.execution.usable === true };
       const available = execution.ready === true;
       const usable = enabled && available && execution.usable;
-      entries.push({ name: publicName, adapterClass, enabled, available, usable, eligibleForAutomaticSelection: usable && adapterClass === 'model-adapter', inputMode: profile.inputMode,
+      entries.push({ name: publicName, adapterClass, enabled, available, usable, eligibleForAutomaticSelection: usable && name === this.#defaultTool, inputMode: profile.inputMode,
         declaredPolicy: security.declaredPolicy, execution, errorClass: available ? null : 'repository-execution-unavailable' });
     }
     return entries;

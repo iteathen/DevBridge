@@ -7,6 +7,7 @@ import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
 export const SOURCE_REPOSITORY = 'https://github.com/iteathen/DevBridge.git';
+export const SOURCE_BRANCH = 'codex/temp-fast-functional';
 const MINIMUM_NODE = Object.freeze([22, 16, 0]);
 const CAPTURE_LIMIT = 4 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -149,7 +150,7 @@ export function ensureStage0Runtime(args, paths, runner = defaultRunner) {
   mkdirSync(paths.hooks, { recursive: true });
   if (!existsSync(paths.runtime)) {
     if (args.noUpdate) fail('--no-update requires an existing managed DevBridge runtime.');
-    runGit(['clone', '--no-tags', '--depth', '1', '--single-branch', '--branch', 'main', SOURCE_REPOSITORY, paths.runtime], { paths, runner });
+    runGit(['clone', '--no-tags', '--depth', '1', '--single-branch', '--branch', SOURCE_BRANCH, SOURCE_REPOSITORY, paths.runtime], { paths, runner });
   }
   validateRuntimeRepository(paths, runner);
   return validateRuntimeShape(paths.runtime);

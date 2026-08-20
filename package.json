@@ -16,7 +16,10 @@
     "doctor": "node ./src/cli.js doctor",
     "poll-once": "node ./src/cli.js poll-once",
     "run-once": "node ./src/cli.js run-once",
-    "daemon": "node ./src/cli.js daemon"
+    "daemon": "node ./src/cli.js daemon",
+    "fast:doctor": "node ./src/cli.js doctor --config ./config/devbridge.fast.json",
+    "fast:run": "node ./src/cli.js run-once --config ./config/devbridge.fast.json",
+    "fast:daemon": "node ./src/cli.js daemon --config ./config/devbridge.fast.json"
   },
   "license": "AGPL-3.0-only"
 }

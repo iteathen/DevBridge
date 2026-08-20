@@ -8,7 +8,7 @@ import { CHAT_HANDOFF_PROTOCOL, chatHandoffDigest, parseChatResumeSeed } from '.
 
 function config(stateDirectory) {
   return {
-    github: { queueRepository: 'iteathen/DevBridge' },
+    github: { queueRepositories: ['iteathen/DevBridge'] },
     state: { directory: stateDirectory },
     contextRollover: { maxHandoffBytes: 32_768, maxRetained: 8 },
   };
@@ -41,17 +41,17 @@ function fixture() {
 test('local handoff status and seed require no GitHub credential or remote request', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'pp-chat-handoff-app-'));
   const localConfig = config(directory);
-  const store = createLocalChatHandoffStore(localConfig);
+  const store = createLocalChatHandoffStore(localConfig, 'iteathen/DevBridge');
   const checkpoint = await store.checkpoint(fixture());
 
-  const status = await chatHandoffStatus(localConfig);
+  const status = await chatHandoffStatus(localConfig, 'iteathen/DevBridge');
   assert.equal(status.ready, true);
   assert.equal(status.handoffId, 'ui-rollover-fixture');
   assert.equal(status.digest, checkpoint.record.digest);
   assert.equal(status.nextActionId, 'observe-ci');
   assert.deepEqual(status.handoff, checkpoint.record.handoff);
 
-  const seed = await chatHandoffSeed(localConfig);
+  const seed = await chatHandoffSeed(localConfig, 'iteathen/DevBridge');
   assert.equal(seed, status.seed);
   const parsed = parseChatResumeSeed(seed);
   assert.equal(parsed.digest, chatHandoffDigest(fixture()));
@@ -60,7 +60,7 @@ test('local handoff status and seed require no GitHub credential or remote reque
 
 test('local handoff status reports absence without creating remote authority', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'pp-chat-handoff-empty-'));
-  const status = await chatHandoffStatus(config(directory));
+  const status = await chatHandoffStatus(config(directory), 'iteathen/DevBridge');
   assert.deepEqual(status, { ready: false, repository: 'iteathen/DevBridge' });
-  assert.equal(await chatHandoffSeed(config(directory)), null);
+  assert.equal(await chatHandoffSeed(config(directory), 'iteathen/DevBridge'), null);
 });

@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { createRepositoryExecution, gitVisiblePathsFromResult } from './repository-execution.js';
 import { resolveBuiltInHelper } from './builtin-helper-resolver.js';
+import { createFastHostRepositoryExecution } from './fast-host-repository-execution.js';
+import { createFastVmRepositoryExecution } from './fast-vm-repository-execution.js';
 
 const SAFE_SEGMENT = /^[A-Za-z0-9_.-]+$/u;
 const SAFE_RUN = /^[A-Za-z0-9_.-]{1,120}$/u;
@@ -53,13 +55,8 @@ export async function createRuntimeExecutionContext({
 } = {}) {
   if (!config || !workspaceManager || !gitClient || !client) throw new TypeError('runtime execution composition is incomplete');
   const repositoryIds = new Map();
-  const repositoryExecution = await createRepositoryExecution({
-    stateDirectory: config.state.directory,
-    env,
-    protectedValues,
-    rootFor: async (scope) => workspaceManager.worktreePath(scope.repository, scope.runId),
-    listPaths: async (root) => gitVisiblePathsFromResult(await gitClient.run(['ls-files', '-co', '--exclude-standard', '-z'], { cwd: root })),
-    resolveSubject: async (scope) => {
+  const rootFor = async (scope) => workspaceManager.worktreePath(scope.repository, scope.runId);
+  const resolveSubject = async (scope) => {
       if (scope.repositoryId != null) return String(scope.repositoryId);
       if (repositoryIds.has(scope.repository)) return repositoryIds.get(scope.repository);
       const response = await client.request('GET', repositoryEndpoint(scope.repository));
@@ -69,17 +66,43 @@ export async function createRuntimeExecutionContext({
       const identity = String(observed.id);
       repositoryIds.set(scope.repository, identity);
       return identity;
-    },
-    resolveTool: async (tool) => {
+  };
+  const resolveTool = async (tool, { host = false } = {}) => {
       if (DIRECT_TOOLS.has(tool)) return { program: tool, arguments: [] };
       const builtIn = await resolveBuiltInHelper(tool);
       if (builtIn) return builtIn;
       const profile = toolProfiles?.[tool];
-      if (profile?.executable) return { program: programName(profile.executable), arguments: [] };
+      if (profile?.executable) return { program: host ? profile.executable : programName(profile.executable), arguments: [] };
       if (!SAFE_PROGRAM.test(tool)) throw new Error('logical tool identity cannot be used as a guest program');
       return { program: tool, arguments: [] };
-    },
-  });
+  };
+  const repositoryExecution = config.execution.fastVmDefaultSwitch
+    ? await createFastVmRepositoryExecution({
+        stateDirectory: config.state.directory,
+        env,
+        protectedValues,
+        rootFor,
+        listPaths: async (root) => gitVisiblePathsFromResult(await gitClient.run(['ls-files', '-co', '--exclude-standard', '-z'], { cwd: root })),
+        resolveSubject,
+        resolveTool,
+      })
+    : config.execution.fastHost
+      ? createFastHostRepositoryExecution({
+        stateDirectory: config.state.directory,
+        env,
+        sourceEnv: env,
+        rootFor,
+        resolveTool: (tool) => resolveTool(tool, { host: true }),
+      })
+      : await createRepositoryExecution({
+          stateDirectory: config.state.directory,
+          env,
+          protectedValues,
+          rootFor,
+          listPaths: async (root) => gitVisiblePathsFromResult(await gitClient.run(['ls-files', '-co', '--exclude-standard', '-z'], { cwd: root })),
+          resolveSubject,
+          resolveTool,
+        });
   return Object.freeze({
     repositoryExecution,
     scope(delegate) { return scopedRunner(delegate, config.workspace.root); },

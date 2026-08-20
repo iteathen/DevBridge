@@ -3,9 +3,6 @@ import { JsonStateStore } from '../state/json-state-store.js';
 import { stateFileName } from '../state/state-file.js';
 import { ChatHandoffStore } from '../context/chat-handoff.js';
 import { ContextBudgetManager } from '../context/context-budget.js';
-import { RateBudget } from '../github/rate-budget.js';
-import { GitHubRestClient } from '../github/rest-client.js';
-import { resolveGitHubCredential } from '../github/auth-provider.js';
 import { IssueTaskSource } from '../github/issue-task-source.js';
 import { IssueFeedbackSource } from '../github/issue-feedback-source.js';
 import { IssueDecisionSource } from '../github/issue-decision-source.js';
@@ -37,6 +34,7 @@ import { TaskLeaseManager } from '../run/task-lease-manager.js';
 import { HardGateController } from '../run/hard-gate-controller.js';
 import { DecisionGatedRunCoordinator, DecisionGatedWorkspaceManager } from '../run/decision-gated-coordinator.js';
 import { createRuntimeExecutionContext } from './runtime-execution.js';
+import { createGitHubSession } from './github-session.js';
 
 export { stateFileName } from '../state/state-file.js';
 
@@ -55,11 +53,16 @@ export async function createRuntime(config, {
   env = process.env,
   fetchImpl = globalThis.fetch,
   coordinationExclusive = false,
+  queueRepository = config?.github?.queueRepositories?.[0] ?? null,
+  githubSession = null,
 } = {}) {
   if (typeof coordinationExclusive !== 'boolean') throw new TypeError('createRuntime coordinationExclusive must be a boolean');
+  if (typeof queueRepository !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(queueRepository)) {
+    throw new TypeError('createRuntime queueRepository must be owner/name');
+  }
   const workspacePolicy = new WorkspacePolicy(config.workspace);
   await workspacePolicy.ensureRoot();
-  const stateStore = new JsonStateStore(path.join(config.state.directory, stateFileName(config.github.queueRepository)));
+  const stateStore = new JsonStateStore(path.join(config.state.directory, stateFileName(queueRepository)));
   const chatHandoffStore = new ChatHandoffStore({
     stateStore,
     maxBytes: config.contextRollover.maxHandoffBytes,
@@ -74,19 +77,17 @@ export async function createRuntime(config, {
         hardRatio: config.contextRollover.hardRatio,
       })
     : null;
-  const rateBudget = new RateBudget(config.github.rateLimit);
-  const credential = await resolveGitHubCredential(config.github.auth, { env });
-  const tokenProvider = async () => credential?.token ?? null;
-  const client = new GitHubRestClient({ apiVersion: config.github.apiVersion, tokenProvider, stateStore, rateBudget, mutationIntervalMs: config.github.rateLimit.mutationIntervalMs, fetchImpl });
-  const taskSource = new IssueTaskSource({ client, queueRepository: config.github.queueRepository, taskLabel: config.github.taskLabel, trustedActorIds: config.github.trustedActorIds });
-  const feedbackSource = new IssueFeedbackSource({ client, queueRepository: config.github.queueRepository, trustedActorIds: config.github.trustedActorIds });
-  const decisionSource = new IssueDecisionSource({ client, queueRepository: config.github.queueRepository });
-  const secretValues = credential ? [credential.token] : [];
+  const session = githubSession ?? await createGitHubSession(config, { env, fetchImpl });
+  const { client, rateBudget, tokenProvider } = session;
+  const secretValues = [...session.secretValues];
+  const taskSource = new IssueTaskSource({ client, queueRepository, taskLabel: config.github.taskLabel, trustedActorIds: config.github.trustedActorIds });
+  const feedbackSource = new IssueFeedbackSource({ client, queueRepository, trustedActorIds: config.github.trustedActorIds });
+  const decisionSource = new IssueDecisionSource({ client, queueRepository });
   let toolInventory = null;
   const statusReporter = new IssueStatusReporter({
     client,
     stateStore,
-    queueRepository: config.github.queueRepository,
+    queueRepository,
     progressIntervalMs: config.status.progressIntervalMs,
     maxCommentBytes: config.status.maxCommentBytes,
     secretValues,
@@ -95,14 +96,14 @@ export async function createRuntime(config, {
   const chatHandoffProjector = new ChatHandoffProjector({
     client,
     stateStore,
-    queueRepository: config.github.queueRepository,
+    queueRepository,
     maxCommentBytes: config.status.maxCommentBytes,
     secretValues,
   });
   const toolInventoryProjector = new ToolInventoryProjector({
     client,
     stateStore,
-    queueRepository: config.github.queueRepository,
+    queueRepository,
     maxCommentBytes: config.status.maxCommentBytes,
     secretValues,
   });
@@ -137,7 +138,7 @@ export async function createRuntime(config, {
       workspaceManager,
       gitClient,
       tokenProvider,
-      queueRepository: config.github.queueRepository,
+      queueRepository,
       fetchTimeoutMs: config.git.fetchTimeoutMs,
     });
     taskLeaseManager = new TaskLeaseManager({
@@ -161,7 +162,7 @@ export async function createRuntime(config, {
   const gatedWorkspaceManager = new DecisionGatedWorkspaceManager({
     delegate: workspaceManager,
     stateStore,
-    queueRepository: config.github.queueRepository,
+    queueRepository,
     gateController: hardGateController,
   });
   const executionWorkspaceManager = leaseExecutionContext
@@ -247,6 +248,7 @@ export async function createRuntime(config, {
     profiles: tools,
     deterministicProfileNames,
     modelAdaptersEnabled: config.execution.modelAdaptersEnabled,
+    defaultTool: config.execution.defaultTool,
     allowUncontainedTools: config.execution.allowUncontainedTools,
     env,
     runtimeIdentity: { version: '0.1.0' },
@@ -260,7 +262,7 @@ export async function createRuntime(config, {
     controllerPlanExecutor,
     statusReporter,
     feedbackSource,
-    queueRepository: config.github.queueRepository,
+    queueRepository,
     tools,
     defaultTool: config.execution.defaultTool,
     maxTurns: config.execution.maxTurns,
@@ -276,12 +278,13 @@ export async function createRuntime(config, {
     stateStore,
     statusReporter,
     gateController: hardGateController,
-    queueRepository: config.github.queueRepository,
+    queueRepository,
     maxTurns: config.execution.maxTurns,
   });
 
   return {
     config,
+    queueRepository,
     stateStore,
     chatHandoffStore,
     chatHandoffProjector,

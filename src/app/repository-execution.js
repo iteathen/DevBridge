@@ -216,6 +216,21 @@ function parseAgentResult(outcome, action) {
   try { return JSON.parse(result.stdout); } catch { throw new Error(`${action} returned invalid structured output`); }
 }
 
+function missingSourceParts(raw, manifest) {
+  const value = requireObject(raw, 'workspace preparation result');
+  onlyKeys(value, new Set(['ready', 'appliedDigest', 'expectedDigest', 'missingParts']), 'workspace preparation result');
+  if (value.ready !== true || value.expectedDigest !== manifest.digest) throw new Error('guest source preparation did not bind the expected digest');
+  if (value.appliedDigest != null && !/^[a-f0-9]{64}$/u.test(value.appliedDigest)) throw new Error('guest source preparation returned an invalid applied digest');
+  if (!Array.isArray(value.missingParts)) throw new Error('guest source preparation returned an invalid part inventory');
+  const expected = new Set(manifest.entries.flatMap((entry) => entry.type === 'file' ? entry.parts.map((part) => part.name) : []));
+  const seen = new Set();
+  for (const name of value.missingParts) {
+    if (typeof name !== 'string' || !expected.has(name) || seen.has(name)) throw new Error('guest source preparation returned an unknown or duplicate part');
+    seen.add(name);
+  }
+  return { appliedDigest: value.appliedDigest, missingParts: seen };
+}
+
 function descriptorFor(invocation, resolved, environment, stdin, transfers, protectedValues, entryLocation = null) {
   if (!resolved || typeof resolved.program !== 'string' || !SAFE_NAME.test(resolved.program)) throw new Error('logical tool did not resolve to a safe guest program');
   const fixed = resolved.arguments ?? [];
@@ -387,17 +402,20 @@ export async function createRepositoryExecution({
           source = await snapshot();
           ensureActive(signal);
           await sendBytes(channel, target, agentBytes, agentLocation);
-          const prepared = await runAgent('prepare', [stateLocation, source.manifest.digest], { timeoutMs: 60_000, signal, onActivity });
-          if (prepared.parsed.appliedDigest !== source.manifest.digest) {
+          await sendBytes(channel, target, source.manifestBytes(), sourceManifestLocation);
+          const prepared = await runAgent('prepare', [sourceManifestLocation, stateLocation], { timeoutMs: 60_000, maxOutputBytes: BRIDGE_OUTPUT_LIMIT, signal, onActivity });
+          const inventory = missingSourceParts(prepared.parsed, source.manifest);
+          if (inventory.appliedDigest !== source.manifest.digest) {
             for (const entry of source.manifest.entries) {
               if (entry.type !== 'file') continue;
               for (const part of entry.parts) {
+                if (!inventory.missingParts.has(part.name)) continue;
                 ensureActive(signal);
                 const destination = { class: 'input', path: `source/${part.name}` };
                 await channel.put(target, { read: (request) => source.readPart(part.name, request) }, destination, { maxBytes: Math.max(1, part.size) });
+                inventory.missingParts.delete(part.name);
               }
             }
-            await sendBytes(channel, target, source.manifestBytes(), sourceManifestLocation);
             const applied = await runAgent('apply', [sourceManifestLocation, stateLocation], { timeoutMs: 10 * 60_000, signal, onActivity });
             if (applied.parsed.digest !== source.manifest.digest) throw new Error('guest source synchronization did not bind the expected digest');
           }

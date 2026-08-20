@@ -5,13 +5,13 @@ import path from 'node:path';
 
 export const FILE_TREE_PROTOCOL = 'devbridge/file-tree-v1';
 export const FILE_TREE_DELTA_PROTOCOL = 'devbridge/file-tree-delta-v1';
-export const FILE_TREE_VERSION = '1.0.0';
+export const FILE_TREE_VERSION = '1.1.0';
 export const FILE_TREE_PART_BYTES = 32 * 1024 * 1024;
 const MAX_ENTRIES = 100_000;
 const MAX_TREE_BYTES = 8 * 1024 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 24 * 1024 * 1024;
 const DIGEST = /^[a-f0-9]{64}$/u;
-const PART_NAME = /^part-[0-9]{1,6}-[0-9]{1,6}$/u;
+const PART_NAME = /^part-[a-f0-9]{64}$/u;
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
@@ -108,8 +108,8 @@ export async function snapshotFileTree({ root, listPaths, acceptPath = () => tru
     const parts = [];
     for (let offset = 0, index = 0; offset < info.size || (info.size === 0 && index === 0); index += 1) {
       const length = info.size === 0 ? 0 : Math.min(partBytes, info.size - offset);
-      const name = `part-${entries.length}-${index}`;
       const digest = length === 0 ? sha256(Buffer.alloc(0)) : await partDigest(candidate, offset, length);
+      const name = `part-${digest}`;
       parts.push({ name, offset, size: length, digest });
       if (info.size === 0) break;
       offset += length;
@@ -182,10 +182,11 @@ export function normalizeFileTreeDelta(raw, { root = path.parse(process.cwd()).r
     const parts = entry.parts.map((rawPart, partIndex) => {
       const part = requireObject(rawPart, `file tree delta part[${partIndex}]`);
       onlyKeys(part, new Set(['name', 'offset', 'size', 'digest']), 'file tree delta part');
-      if (typeof part.name !== 'string' || !PART_NAME.test(part.name)) throw new TypeError('file tree delta part name is invalid');
+      const partDigestValue = exactDigest(part.digest, 'file tree delta part digest');
+      if (typeof part.name !== 'string' || !PART_NAME.test(part.name) || part.name !== `part-${partDigestValue}`) throw new TypeError('file tree delta part name is invalid');
       if (!Number.isSafeInteger(part.offset) || part.offset !== expectedOffset || !Number.isSafeInteger(part.size) || part.size < 0 || part.size > FILE_TREE_PART_BYTES) throw new TypeError('file tree delta part bounds are invalid');
       expectedOffset += part.size;
-      return { name: part.name, offset: part.offset, size: part.size, digest: exactDigest(part.digest, 'file tree delta part digest') };
+      return { name: part.name, offset: part.offset, size: part.size, digest: partDigestValue };
     });
     if (expectedOffset !== entry.size) throw new TypeError('file tree delta parts do not cover the file size exactly');
     return { path: relative, action: 'write', size: entry.size, digest: exactDigest(entry.digest, 'file tree delta file digest'), executable: entry.executable, parts };

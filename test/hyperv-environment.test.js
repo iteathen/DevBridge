@@ -59,8 +59,26 @@ test('interrupted network setup retains one local plan and reconciles the same o
     await adapter.ensureNetwork();
     const first = JSON.parse(calls[0].input);
     const second = JSON.parse(calls[1].input);
+    const script = Buffer.from(calls[0].arguments.at(-1), 'base64').toString('utf16le');
     assert.deepEqual(second, first);
     assert.match(first.name, /^db-network-[a-f0-9]{16}$/u);
     assert.equal(JSON.stringify(first).includes('owner/project'), false);
+    assert.match(script, /^\$ProgressPreference = 'SilentlyContinue'/u);
+    assert.match(script, /\[uint64\]4294967295 -shr \(32 - \$bits\)/u);
+    assert.doesNotMatch(script, /0xffffffff/iu);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('bounded provider failures retain the actionable end of noisy PowerShell errors', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage2-hv-error-'));
+  try {
+    const adapter = new HyperVEnvironment({
+      directory: path.join(root, 'control'), assetRoot: path.join(root, 'images'),
+      identity: '0123456789abcdef0123456789abcdef',
+      invoke: async () => ({ ...success({}), exitCode: 1, stderr: `${'progress '.repeat(400)}provider-tail` }),
+    });
+    const status = await adapter.inspect();
+    assert.match(status.capabilities.management.reason, /provider-tail/u);
+    assert.ok(status.capabilities.management.reason.length < 2_200);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

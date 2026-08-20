@@ -77,7 +77,7 @@ test('default candidate validation fails closed when no local validation route e
     await writeFile(path.join(runtimeDir, 'candidate.mjs'), 'process.exitCode = 99;\n');
     await writeFile(configFile, `${JSON.stringify({
       version: 1,
-      github: { queueRepository: 'owner/queue', trustedActorIds: ['1'] },
+      github: { queueRepositories: ['owner/queue'], trustedActorIds: ['1'] },
       workspace: { root: path.join(root, 'workspace'), allowedOwners: ['owner'], allowCreate: true },
       state: { directory: path.join(root, 'state') },
       execution: { enabled: false, controllerPlansEnabled: true, modelAdaptersEnabled: false },

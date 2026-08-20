@@ -39,6 +39,13 @@ function daemonLockPath(config) {
   return path.join(config.state.directory, 'daemon.lock');
 }
 
+function selectedRepository(config, args) {
+  const explicit = optionValue(args, '--repository');
+  if (explicit) return explicit;
+  if (config.github.queueRepositories.length === 1) return config.github.queueRepositories[0];
+  throw new PolicyError('--repository is required when multiple queue repositories are configured');
+}
+
 async function runDaemonCommand(config) {
   const controller = new AbortController();
   const stop = () => controller.abort();
@@ -65,12 +72,13 @@ async function main() {
   }
 
   const config = await loadConfig(file);
-  const repository = optionValue(args, '--repository') ?? config.github.queueRepository;
   if (command === 'handoff-status') {
+    const repository = selectedRepository(config, args);
     console.log(JSON.stringify(await chatHandoffStatus(config, repository), null, 2));
     return;
   }
   if (command === 'handoff-seed') {
+    const repository = selectedRepository(config, args);
     const seed = await chatHandoffSeed(config, repository);
     if (!seed) {
       console.log(JSON.stringify({ ready: false, repository }));
@@ -81,7 +89,8 @@ async function main() {
     return;
   }
   if (command === 'handoff-project') {
-    const runtime = await createRuntime(config);
+    const repository = selectedRepository(config, args);
+    const runtime = await createRuntime(config, { queueRepository: repository });
     const latest = await runtime.chatHandoffStore.loadLatest(repository);
     if (!latest) {
       console.log(JSON.stringify({ projected: false, reason: 'no-ready-handoff', repository }));

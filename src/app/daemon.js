@@ -9,9 +9,9 @@ import {
   waitForDaemonControlRequest,
   waitForDaemonResumeOrStop,
 } from '../runtime/daemon-lock.js';
-import { createRuntime } from './runtime.js';
+import { createRuntimeSet } from './runtime-set.js';
 import { reportActiveRunRuntimeError } from './runtime-error-report.js';
-import { runCycle } from './run-once.js';
+import { runRuntimeSetCycle } from './run-once.js';
 
 async function honorPauseAtBoundary(lockPath, lockRecord, signal, onEvent) {
   if (!(await hasDaemonPauseRequest(lockPath, lockRecord))) return null;
@@ -33,13 +33,13 @@ export async function runDaemon(config, {
   fetchImpl = globalThis.fetch,
   signal = null,
   onEvent = () => {},
-  runtimeFactory = createRuntime,
+  runtimeSetFactory = createRuntimeSet,
 } = {}) {
   const lockPath = path.join(config.state.directory, 'daemon.lock');
   const release = await acquireDaemonLock(lockPath);
   const lockRecord = release.record;
   try {
-    const runtime = await runtimeFactory(config, { env, fetchImpl, coordinationExclusive: true });
+    const runtimeSet = await runtimeSetFactory(config, { env, fetchImpl, coordinationExclusive: true });
     onEvent({ type: 'daemon-started', at: new Date().toISOString(), pid: lockRecord.pid });
     while (!signal?.aborted) {
       if (await consumeDaemonStopRequest(lockPath, lockRecord)) {
@@ -53,7 +53,9 @@ export async function runDaemon(config, {
 
       let delay = config.github.pollIntervalMs;
       try {
-        const result = await runCycle(runtime);
+        const result = await runRuntimeSetCycle(runtimeSet, {
+          onRuntimeError: (runtime, error) => reportActiveRunRuntimeError(runtime, error),
+        });
         delay = result.recommendedPollIntervalMs ?? delay;
         onEvent({ type: 'cycle', at: new Date().toISOString(), result });
       } catch (error) {
@@ -63,7 +65,14 @@ export async function runDaemon(config, {
         let remoteReport = null;
         if (!(error instanceof RateLimitError)) {
           try {
-            remoteReport = await reportActiveRunRuntimeError(runtime, error);
+            const reports = [];
+            for (const runtime of runtimeSet.runtimes) {
+              const report = await reportActiveRunRuntimeError(runtime, error);
+              if (report.reported === true) reports.push({ queueRepository: runtime.queueRepository, ...report });
+            }
+            remoteReport = reports.length > 0
+              ? { reported: true, reports }
+              : { reported: false, reason: 'no-active-run' };
           } catch (reportError) {
             remoteReport = {
               reported: false,

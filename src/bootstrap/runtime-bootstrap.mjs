@@ -18,7 +18,7 @@ const SOURCE_REPOSITORY = 'https://github.com/iteathen/DevBridge.git';
 const MINIMUM_NODE = Object.freeze([22, 16, 0]);
 const COMMANDS = new Set(['doctor', 'poll-once', 'run-once', 'daemon', 'status', 'stop', 'restart']);
 const CHANNELS = Object.freeze({
-  testing: Object.freeze(['main']),
+  testing: Object.freeze(['codex/temp-fast-functional']),
   stable: Object.freeze(['main']),
 });
 const CAPTURE_LIMIT = 4 * 1024 * 1024;

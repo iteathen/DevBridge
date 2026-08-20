@@ -3,13 +3,25 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { assertSupportedNode, managedGitEnvironment } from '../devbridge.mjs';
+import { assertSupportedNode, managedGitEnvironment, SOURCE_BRANCH } from '../devbridge.mjs';
 import { parseBootstrapArgs } from '../src/bootstrap/secure-bootstrap.mjs';
 import {
   prepareLocalConfig,
+  resolveChannelRef,
   resolveBootstrapPaths,
   runDevBridgeCli,
 } from '../src/bootstrap/transactional-bootstrap.mjs';
+
+test('disposable launcher and testing updater select the same isolated branch', () => {
+  const observed = [];
+  const runner = (_executable, args) => {
+    observed.push(args);
+    return { status: 0, stdout: `${'a'.repeat(40)}\t${args.at(-1)}\n`, stderr: '' };
+  };
+  assert.equal(SOURCE_BRANCH, 'codex/temp-fast-functional');
+  assert.equal(resolveChannelRef('testing', { paths: { gitHome: '/safe/home', hooks: '/safe/hooks' }, runner }), SOURCE_BRANCH);
+  assert.ok(observed.some((args) => args.includes(`refs/heads/${SOURCE_BRANCH}`)));
+});
 
 test('bootstrap defaults to alpha development testing channel and daemon', () => {
   assert.deepEqual(parseBootstrapArgs([]), {

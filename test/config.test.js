@@ -6,7 +6,7 @@ import { validateConfig } from '../src/config.js';
 function base() {
   return {
     version: 1,
-    github: { queueRepository: 'iteathen/DevBridge', trustedActorIds: ['1775584'], rateLimit: {} },
+    github: { queueRepositories: ['iteathen/DevBridge'], trustedActorIds: ['1775584'], rateLimit: {} },
     workspace: { root: path.resolve('/tmp/devbridge-workspace'), allowedOwners: ['iteathen'] },
     state: { directory: path.resolve('/tmp/devbridge-state') },
     execution: {},
@@ -18,6 +18,12 @@ function base() {
 test('uses conservative API, auth, execution, Git, publication, context-rollover, and tool-onboarding defaults', () => {
   const config = validateConfig(base());
   assert.equal(config.github.apiVersion, '2026-03-10');
+  assert.deepEqual(config.github.queueRepositories, ['iteathen/DevBridge']);
+  assert.deepEqual(config.github.repositoryDiscovery, {
+    enabled: false,
+    affiliations: ['owner', 'collaborator', 'organization_member'],
+    maxRepositories: 30,
+  });
   assert.equal(config.github.rateLimit.reserveRatio, 0.2);
   assert.equal(config.github.auth.mode, 'auto');
   assert.deepEqual(config.github.auth.environmentVariables, [
@@ -28,6 +34,8 @@ test('uses conservative API, auth, execution, Git, publication, context-rollover
   assert.equal(config.github.auth.githubCliExecutable, 'gh');
   assert.equal(config.github.auth.hostname, 'github.com');
   assert.equal(config.execution.enabled, false);
+  assert.equal(config.execution.fastHost, false);
+  assert.equal(config.execution.fastVmDefaultSwitch, false);
   assert.deepEqual(config.execution.decisionAuthorities, {});
   assert.equal(config.execution.decisionApprovalTtlMs, 86_400_000);
   assert.equal(config.execution.architectureGateFileThreshold, 20);
@@ -53,6 +61,48 @@ test('uses conservative API, auth, execution, Git, publication, context-rollover
     maxHandoffBytes: 32_768,
     maxRetained: 8,
   });
+});
+
+test('normalizes multiple queue repositories and bounded authenticated discovery without deriving actor trust', () => {
+  const raw = base();
+  raw.github.queueRepositories = ['iteathen/DevBridge', 'iteathen/UCI_Arena'];
+  raw.github.repositoryDiscovery = {
+    enabled: true,
+    affiliations: ['owner', 'collaborator'],
+    maxRepositories: 40,
+  };
+  const config = validateConfig(raw);
+  assert.deepEqual(config.github.queueRepositories, raw.github.queueRepositories);
+  assert.deepEqual(config.github.repositoryDiscovery, raw.github.repositoryDiscovery);
+  assert.deepEqual(config.github.trustedActorIds, ['1775584']);
+
+  raw.github.queueRepositories.push('ITEATHEN/devbridge');
+  assert.throws(() => validateConfig(raw), /must not contain duplicates/u);
+});
+
+test('rejects ambiguous or unbounded repository selection policy', () => {
+  const empty = base();
+  empty.github.queueRepositories = [];
+  assert.throws(() => validateConfig(empty), /must contain 1-30/u);
+
+  const affiliation = base();
+  affiliation.github.repositoryDiscovery = { enabled: true, affiliations: ['team'] };
+  assert.throws(() => validateConfig(affiliation), /supports owner, collaborator, and organization_member/u);
+
+  const broad = base();
+  broad.github.repositoryDiscovery = { enabled: true, maxRepositories: 101 };
+  assert.throws(() => validateConfig(broad), /must be <= 100/u);
+});
+
+test('disposable host and VM shortcuts require one explicit topology', () => {
+  const vm = base();
+  vm.execution.fastVmDefaultSwitch = true;
+  assert.equal(validateConfig(vm).execution.fastVmDefaultSwitch, true);
+
+  const ambiguous = base();
+  ambiguous.execution.fastHost = true;
+  ambiguous.execution.fastVmDefaultSwitch = true;
+  assert.throws(() => validateConfig(ambiguous), /mutually exclusive/u);
 });
 
 test('context rollover policy is local, explicit, and bounded', () => {

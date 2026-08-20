@@ -72,7 +72,20 @@ test('ready fake changes inventory digest and enables repository-class operation
   assert.notEqual(second.digest, first.digest);
   assert.equal(second.inventory.operations[0].usable, true);
   assert.equal(second.inventory.adapters[0].usable, true);
+  assert.equal(second.inventory.adapters[0].eligibleForAutomaticSelection, false);
   assert.deepEqual(Object.keys(second.inventory.repositoryExecution).sort(), ['identity', 'ready', 'reason', 'state']);
+});
+
+test('a usable model adapter is automatically eligible only through exact local default opt-in', async () => {
+  const common = {
+    operationRegistry: { names: () => [] }, toolchainRegistry: { inspect: async () => [] }, repositoryExecution: execution(true),
+    profiles: { model: profile() }, modelAdaptersEnabled: true, discoverPathToolsEnabled: false,
+  };
+  const explicitOnly = await new ToolInventoryService(common).refresh();
+  assert.equal(explicitOnly.inventory.adapters[0].usable, true);
+  assert.equal(explicitOnly.inventory.adapters[0].eligibleForAutomaticSelection, false);
+  const locallyDefaulted = await new ToolInventoryService({ ...common, defaultTool: 'model' }).refresh();
+  assert.equal(locallyDefaulted.inventory.adapters[0].eligibleForAutomaticSelection, true);
 });
 
 test('GitHub inventory projection coalesces by digest and never adopts a forged marker comment', async () => {

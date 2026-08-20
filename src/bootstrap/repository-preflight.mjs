@@ -11,6 +11,7 @@ const SYNTAX_FILES = [
   'src/app/runtime.js',
   'src/app/runtime-execution.js',
   'src/app/repository-execution.js',
+  'src/app/fast-host-repository-execution.js',
   'src/app/doctor.js',
   'src/app/chat-handoff.js',
   'src/context/chat-handoff.js',
@@ -47,13 +48,15 @@ const SYNTAX_FILES = [
   'src/bootstrap/transactional-bootstrap.mjs',
 ];
 
-const JSON_FILES = ['package.json', 'config/devbridge.example.json'];
+const JSON_FILES = ['package.json', 'config/devbridge.example.json', 'config/devbridge.fast.json'];
 
 const TARGETED_TESTS = [
   'test/config.test.js',
   'test/repository-execution.test.js',
   'test/repository-environment-execution.test.js',
   'test/app-repository-execution.test.js',
+  'test/fast-host-repository-execution.test.js',
+  'test/fast-codex-smoke.test.js',
   'test/runtime-execution.test.js',
   'test/file-tree-transfer.test.js',
   'test/workspace-agent.test.js',

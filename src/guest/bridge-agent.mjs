@@ -195,7 +195,29 @@ async function atomicJson(file, value) {
   await ensureRoot();
   const temporary = `${file}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-  await rename(temporary, file);
+  try {
+    for (let attempt = 0; ; attempt += 1) {
+      try { await rename(temporary, file); return; }
+      catch (error) {
+        if (!['EACCES', 'EBUSY', 'EPERM'].includes(error?.code) || attempt >= 20) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+  } finally {
+    await rm(temporary, { force: true }).catch(() => {});
+  }
+}
+
+async function exclusiveJson(file, value) {
+  await ensureRoot();
+  let handle;
+  try { handle = await open(file, 'wx', 0o600); }
+  catch (error) { if (error?.code === 'EEXIST') return false; throw error; }
+  try {
+    await handle.writeFile(`${JSON.stringify(value)}\n`, 'utf8');
+    await handle.sync();
+  } finally { await handle.close(); }
+  return true;
 }
 
 async function readJson(file, name) {
@@ -230,7 +252,10 @@ function resultState(record) {
   const monitorPid = Number(record.monitorPid);
   if (!Number.isSafeInteger(monitorPid) || monitorPid <= 0) return { state: 'indeterminate', result: null, reason: 'bridge operation monitor identity is unavailable' };
   try { process.kill(monitorPid, 0); return { state: 'running', result: null, reason: null }; }
-  catch { return { state: 'indeterminate', result: null, reason: 'bridge operation monitor is no longer observable' }; }
+  catch (error) {
+    if (error?.code === 'EPERM') return { state: 'running', result: null, reason: null };
+    return { state: 'indeterminate', result: null, reason: 'bridge operation monitor is no longer observable' };
+  }
 }
 
 async function terminateTree(pid) {
@@ -276,7 +301,7 @@ function baseEnvironment() {
 function processAlive(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; }
-  catch { return false; }
+  catch (error) { return error?.code === 'EPERM'; }
 }
 
 async function monitorClaim(request) {
@@ -451,7 +476,7 @@ async function execute(frame) {
     if (record.state === 'planned') return ensureMonitor(frame.request, record);
     return resultState(record);
   }
-  record = {
+  const candidate = {
     protocol: RECORD_PROTOCOL,
     request: frame.request,
     target: frame.target,
@@ -464,7 +489,13 @@ async function execute(frame) {
     result: null,
     reason: null,
   };
-  await atomicJson(operationFile(frame.request), record);
+  if (!(await exclusiveJson(operationFile(frame.request), candidate))) {
+    record = await loadOperation(frame.request);
+    validateOperationRecord(record, frame.request, frame.target, body);
+    if (record.state === 'planned') return ensureMonitor(frame.request, record);
+    return resultState(record);
+  }
+  record = candidate;
   return ensureMonitor(frame.request, record);
 }
 
@@ -492,10 +523,16 @@ async function ensureMonitor(request, record) {
 
 async function observe(frame) {
   onlyKeys(requireObject(frame.body, 'bridge observe body'), new Set(), 'bridge observe body');
-  const record = await loadOperation(frame.request);
-  if (!record) return { state: 'absent', result: null, reason: null };
-  validateOperationRecord(record, frame.request, frame.target);
-  return resultState(record);
+  let observed = null;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const record = await loadOperation(frame.request);
+    if (!record) return { state: 'absent', result: null, reason: null };
+    validateOperationRecord(record, frame.request, frame.target);
+    observed = resultState(record);
+    if (observed.state !== 'indeterminate' || observed.reason !== 'bridge operation monitor is no longer observable') return observed;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return observed;
 }
 
 async function cancel(frame) {
@@ -656,28 +693,50 @@ async function readStdin() {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-async function exchangeMain() {
+async function exchangeValue(raw) {
   let parsed = null;
   let frame = null;
   try {
-    const raw = await readStdin();
     parsed = JSON.parse(raw);
     frame = normalizeFrame(parsed);
     const body = await dispatch(frame);
-    process.stdout.write(`${JSON.stringify(response(frame, body))}\n`);
+    return response(frame, body);
   } catch (error) {
     const candidate = frame ?? (parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       && parsed.protocol === PROTOCOL && typeof parsed.request === 'string' && REQUEST_ID.test(parsed.request)
       && typeof parsed.target === 'string' && SAFE_TOKEN.test(parsed.target)
       && typeof parsed.kind === 'string' && FEATURES.includes(parsed.kind)
       ? { protocol: PROTOCOL, request: parsed.request, target: parsed.target, kind: parsed.kind } : null);
-    if (candidate) {
-      process.stdout.write(`${JSON.stringify(errorResponse(candidate, error))}\n`);
-      return;
-    }
+    if (candidate) return errorResponse(candidate, error);
+    throw error;
+  }
+}
+
+async function exchangeMain() {
+  try {
+    process.stdout.write(`${JSON.stringify(await exchangeValue(await readStdin()))}\n`);
+  } catch (error) {
     process.stderr.write(`${String(error?.message ?? error).slice(0, 2_048)}\n`);
     process.exitCode = 1;
   }
+}
+
+async function exchangeLinesMain() {
+  let pending = Buffer.alloc(0);
+  for await (const chunk of process.stdin) {
+    pending = Buffer.concat([pending, Buffer.from(chunk)]);
+    while (true) {
+      const newline = pending.indexOf(0x0a);
+      if (newline < 0) break;
+      if (newline > MAX_FRAME_BYTES) throw new Error('bridge request exceeds the hard frame limit');
+      const line = pending.subarray(0, newline);
+      pending = pending.subarray(newline + 1);
+      if (line.length === 0) throw new Error('bridge request line is empty');
+      process.stdout.write(`${JSON.stringify(await exchangeValue(line.toString('utf8')))}\n`);
+    }
+    if (pending.length > MAX_FRAME_BYTES) throw new Error('bridge request exceeds the hard frame limit');
+  }
+  if (pending.length !== 0) throw new Error('bridge request stream ended with an incomplete frame');
 }
 
 const mode = process.argv[2];
@@ -688,10 +747,26 @@ if (mode === '--run-operation') {
     if (typeof token !== 'string' || token.length < 16 || token.length > 128 || token.includes('\0')) throw new TypeError('bridge operation monitor token is invalid');
     await runOperation(safeRequest(request), token);
   }
-  catch (error) { process.stderr.write(`${String(error?.message ?? error).slice(0, 2_048)}\n`); process.exitCode = 1; }
+  catch (error) {
+    try {
+      const record = await loadOperation(request);
+      if (record && !['completed', 'failed'].includes(record.state)) {
+        record.state = 'failed';
+        record.reason = String(error?.message ?? error).slice(0, 2_048);
+        record.finishedAt = new Date().toISOString();
+        await atomicJson(operationFile(request), record);
+      }
+      await rm(monitorFile(request), { force: true });
+    } catch {}
+    process.stderr.write(`${String(error?.message ?? error).slice(0, 2_048)}\n`);
+    process.exitCode = 1;
+  }
 } else if (mode === '--exchange-stdin') {
   await exchangeMain();
+} else if (mode === '--exchange-lines') {
+  try { await exchangeLinesMain(); }
+  catch (error) { process.stderr.write(`${String(error?.message ?? error).slice(0, 2_048)}\n`); process.exitCode = 1; }
 } else {
-  process.stderr.write('bridge agent requires --exchange-stdin or --run-operation\n');
+  process.stderr.write('bridge agent requires --exchange-stdin, --exchange-lines, or --run-operation\n');
   process.exitCode = 2;
 }

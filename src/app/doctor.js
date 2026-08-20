@@ -15,6 +15,8 @@ import { resolveGitHubCredential, publicGitHubCredentialStatus } from '../github
 import { normalizeEnvironmentFoundationStatus } from '../runtime/environment-foundation.js';
 import { createEnvironmentFoundation } from './environment-foundation.js';
 import { createRepositoryExecution } from './repository-execution.js';
+import { createFastHostRepositoryExecution } from './fast-host-repository-execution.js';
+import { createFastVmRepositoryExecution } from './fast-vm-repository-execution.js';
 
 async function describeProfile(name, raw, { source, allowUncontainedTools, repositoryExecutionStatus }) {
   const profile = validateToolProfile(name, raw, { allowUncontainedTools });
@@ -39,14 +41,30 @@ export async function doctor(config, {
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
   const execution = repositoryExecution == null
-    ? await createRepositoryExecution({
-        stateDirectory: config.state.directory,
-        env,
-        rootFor: async () => { throw new Error('doctor inspection does not open an execution source'); },
-        listPaths: async () => { throw new Error('doctor inspection does not enumerate execution source'); },
-        resolveSubject: async () => { throw new Error('doctor inspection does not resolve an execution subject'); },
-        resolveTool: async () => { throw new Error('doctor inspection does not resolve an execution tool'); },
-      })
+    ? config.execution.fastVmDefaultSwitch
+      ? await createFastVmRepositoryExecution({
+          stateDirectory: config.state.directory,
+          env,
+          rootFor: async () => { throw new Error('doctor inspection does not open an execution source'); },
+          listPaths: async () => { throw new Error('doctor inspection does not enumerate execution source'); },
+          resolveSubject: async () => { throw new Error('doctor inspection does not resolve an execution subject'); },
+          resolveTool: async () => { throw new Error('doctor inspection does not resolve an execution tool'); },
+        })
+      : config.execution.fastHost
+        ? createFastHostRepositoryExecution({
+            stateDirectory: config.state.directory,
+            sourceEnv: env,
+            rootFor: async () => { throw new Error('doctor inspection does not open an execution source'); },
+            resolveTool: async () => { throw new Error('doctor inspection does not resolve an execution tool'); },
+          })
+        : await createRepositoryExecution({
+            stateDirectory: config.state.directory,
+            env,
+            rootFor: async () => { throw new Error('doctor inspection does not open an execution source'); },
+            listPaths: async () => { throw new Error('doctor inspection does not enumerate execution source'); },
+            resolveSubject: async () => { throw new Error('doctor inspection does not resolve an execution subject'); },
+            resolveTool: async () => { throw new Error('doctor inspection does not resolve an execution tool'); },
+          })
     : assertRepositoryExecutionContract(repositoryExecution);
   const repositoryExecutionStatus = execution.inspect();
   const shouldProbeEnvironmentFoundation = probeEnvironmentFoundation ?? probeCoreCapabilities;
@@ -83,8 +101,8 @@ export async function doctor(config, {
   if (probeCoreCapabilities) {
     toolInventory = await new ToolInventoryService({
       operationRegistry, toolchainRegistry, repositoryExecution: execution,
-      profiles: { ...config.tools, ...builtIns }, deterministicProfileNames: Object.keys(builtIns),
-      modelAdaptersEnabled: config.execution.modelAdaptersEnabled, allowUncontainedTools: config.execution.allowUncontainedTools,
+       profiles: { ...config.tools, ...builtIns }, deterministicProfileNames: Object.keys(builtIns),
+       modelAdaptersEnabled: config.execution.modelAdaptersEnabled, defaultTool: config.execution.defaultTool, allowUncontainedTools: config.execution.allowUncontainedTools,
       env, runtimeIdentity: { version: '0.1.0' },
     }).refresh();
   }
@@ -106,7 +124,8 @@ export async function doctor(config, {
 
   return {
     ok: true,
-    queueRepository: config.github.queueRepository,
+    queueRepositories: [...config.github.queueRepositories],
+    repositoryDiscovery: structuredClone(config.github.repositoryDiscovery),
     apiVersion: config.github.apiVersion,
     githubAuth,
     workspaceRoot,
