@@ -13,6 +13,7 @@ import {
   windowsProcessContainerProbeTimeouts,
   windowsProcessContainerUiPolicy,
 } from '../src/runtime/windows-processcontainer-sandbox.js';
+import { windowsNativeReadRootCandidates } from '../src/runtime/windows-processcontainer-compat-provider.js';
 
 function comparable(candidate) {
   const normalized = path.normalize(path.resolve(candidate));
@@ -185,6 +186,25 @@ test('MXC executions receive unique locally generated AppContainer identities', 
   assert.match(first, /^devbridge-[0-9a-f]{32}$/u);
   assert.match(second, /^devbridge-[0-9a-f]{32}$/u);
   assert.notEqual(first, second);
+});
+
+test('Windows native sandbox read authority comes only from executable and explicit policy roots', () => {
+  const executable = path.resolve(os.tmpdir(), 'devbridge-tool-runtime', 'node.exe');
+  const external = path.resolve(os.tmpdir(), 'devbridge-reference-root');
+  const trusted = path.resolve(os.tmpdir(), 'devbridge-trusted-tool-root');
+
+  assert.deepEqual(windowsNativeReadRootCandidates({
+    targetExecutable: executable,
+    externalReadRoots: [external],
+    trustedReadRoots: [trusted],
+  }), [path.dirname(executable), external, trusted]);
+
+  assert.deepEqual(windowsNativeReadRootCandidates({
+    targetExecutable: executable,
+    externalReadRoots: [external],
+    trustedReadRoots: [trusted],
+    exposeConfiguredReadRoots: false,
+  }), [path.dirname(executable), trusted]);
 });
 
 test('MXC verification wrappers outlive the upstream DACL mutex wait bound', () => {

@@ -133,8 +133,14 @@ async function canonicalExisting(candidate, name, { directory = false } = {}) {
 
 function probeProcessDetail(outcome, observation = null) {
   const state = `exit=${outcome.code ?? 'spawn-error'} signal=${outcome.signal ?? 'none'} timeout=${outcome.timedOut} truncated=${outcome.truncated}`;
-  const diagnostic = outcome.stderr.trim() || (observation == null ? outcome.stdout.trim() : JSON.stringify(observation));
-  return diagnostic ? `${state}; ${diagnostic}` : state;
+  const diagnostics = [];
+  if (outcome.stderr.trim()) diagnostics.push(outcome.stderr.trim());
+  if (observation == null) {
+    if (outcome.stdout.trim()) diagnostics.push(outcome.stdout.trim());
+  } else {
+    diagnostics.push(JSON.stringify(observation));
+  }
+  return diagnostics.length > 0 ? `${state}; ${diagnostics.join('; ')}` : state;
 }
 
 function managedHelperCandidates(stateDirectory, env) {
@@ -166,17 +172,22 @@ function launcherEnvironment(source = process.env) {
   const env = {};
   for (const name of [
     'PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'SystemDrive',
-    'TEMP', 'TMP', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA',
+    'TEMP', 'TMP', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'DEVBRIDGE_WINDOWS_SANDBOX_TRACE',
   ]) {
     if (source[name] != null) env[name] = String(source[name]);
   }
   return env;
 }
 
-function localToolRoots(env) {
-  const roots = [];
-  const pathValue = env.Path ?? env.PATH ?? env.path ?? '';
-  for (const entry of String(pathValue).split(path.delimiter).filter(Boolean)) roots.push(entry);
+export function windowsNativeReadRootCandidates({
+  targetExecutable,
+  externalReadRoots = [],
+  trustedReadRoots = [],
+  exposeConfiguredReadRoots = true,
+}) {
+  const roots = [path.dirname(targetExecutable)];
+  if (exposeConfiguredReadRoots) roots.push(...externalReadRoots);
+  roots.push(...trustedReadRoots);
   return roots;
 }
 
@@ -316,9 +327,15 @@ export class WindowsNativeAppContainerSandboxProvider {
     }
 
     const targetExecutable = await canonicalExisting(executable, 'sandbox target executable');
-    const requestedReadRoots = [path.dirname(targetExecutable), ...localToolRoots(env)];
-    if (sandbox.exposeConfiguredReadRoots !== false) requestedReadRoots.push(...this.#externalReadRoots);
-    requestedReadRoots.push(...(sandbox.trustedReadRoots ?? []));
+    // PATH is process lookup/configuration data, not filesystem authority.
+    // The native boundary grants only the resolved executable location plus
+    // roots explicitly authorized by local sandbox policy.
+    const requestedReadRoots = windowsNativeReadRootCandidates({
+      targetExecutable,
+      externalReadRoots: this.#externalReadRoots,
+      trustedReadRoots: sandbox.trustedReadRoots ?? [],
+      exposeConfiguredReadRoots: sandbox.exposeConfiguredReadRoots !== false,
+    });
     const readonlyPaths = await canonicalReadRoots(
       requestedReadRoots,
       [this.#stateDirectory, hiddenProjectRoot],
@@ -428,6 +445,7 @@ export class WindowsNativeAppContainerSandboxProvider {
     let stateProbe = null;
     let projectView = null;
     let launch = null;
+    let cleanupCompleted = false;
     try {
       await mkdir(this.#stateDirectory, { recursive: true });
       await mkdir(this.#workspaceRoot, { recursive: true });
@@ -486,7 +504,15 @@ export class WindowsNativeAppContainerSandboxProvider {
       let observation = null;
       try { observation = JSON.parse(outcome.stdout.trim()); } catch { observation = null; }
 
-      await this.#cleanupContainer(launch);
+      const boundaryDetail = probeProcessDetail(outcome, observation);
+      try {
+        await this.#cleanupContainer(launch);
+        cleanupCompleted = true;
+      } catch (error) {
+        throw new PolicyError(
+          `Windows native AppContainer boundary outcome before cleanup failure: ${boundedSandboxReason(boundaryDetail)}; cleanup=${boundedSandboxReason(error?.message)}`,
+        );
+      }
       await sleep(1_600);
       const descendantContained = !(await exists(descendantMarker));
       await projectView.importChanges();
@@ -553,7 +579,7 @@ export class WindowsNativeAppContainerSandboxProvider {
       };
       return this.inspect();
     } finally {
-      if (launch) await this.#cleanupContainer(launch).catch(() => {});
+      if (launch && !cleanupCompleted) await this.#cleanupContainer(launch).catch(() => {});
       if (projectView) await projectView.cleanup().catch(() => {});
       if (stateProbe) await rm(stateProbe, { force: true }).catch(() => {});
       if (probeRoot) await rm(probeRoot, { recursive: true, force: true }).catch(() => {});
