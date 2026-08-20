@@ -259,6 +259,7 @@ Observed performance:
 - A later positional-cache resync took `611.253` seconds after newly added files shifted most `part-<entry>-<chunk>` names, even though most bytes were unchanged.
 - An unchanged warm two-operation smoke took `60.539` seconds; the tests themselves took about 61 ms.
 - After reindexing 322 already-verified guest blobs and switching to content-addressed part names, a changed-source smoke took `91.079` seconds and passed. Only newly changed content hashes needed transfer.
+- After persistent bridge transport was enabled, a changed-source two-operation smoke took `22.355` seconds and the immediate unchanged run took `21.077` seconds. Both passed the same 12 VM-hosted tests.
 
 Cause:
 
@@ -286,11 +287,13 @@ Observed state:
 - The production Hyper-V Linux attachment verifies VM ownership/state with a fresh PowerShell process, creates a fresh SSH connection, and starts a fresh guest Node process for every bridge frame.
 - Repository preparation, put/get, execute, observe, and collect generate many small frames, so handshake/process startup dominates actual test time.
 
-Fast-track work in validation:
+Validated fast-track solution:
 
 - The guest agent now has a bounded newline-delimited exchange mode that dispatches the same validated frames sequentially.
 - A fast-only, provider-neutral channel opens one pinned, non-interactive SSH process per exact target and carries ordered frames over it. The topology performs the exact owned-VM check before the session is created; guest target binding, host-key pinning, frame validation, durable request IDs, and response validation remain active.
 - The channel never opens a console, uses no agent/X11/port forwarding, and does not retry ambiguous frames automatically.
+- Because the immutable image contains the earlier one-shot helper, each fast runtime first stages the current trusted helper through that existing bridge into the bounded guest `input/control` area. The persistent session then executes that exact staged file; it does not overwrite the image or retain a compatibility parser.
+- Local ordered-stream/concurrent-first-connect tests pass, and two real headless VM smokes passed in `22.355` and `21.077` seconds respectively, compared with the earlier unchanged `60.539`-second path.
 
 Main-branch requirement exposed:
 
@@ -313,13 +316,12 @@ Completed:
 
 Next:
 
-1. Finish local and real-VM qualification of the persistent headless bridge session and record the improved warm timing.
-2. Boot a clean probe VM from the derived ISO to prove the entire install path is unattended without using the desktop.
-3. Save and resume the exact owned repository environment, then re-run bridge health and repository execution.
-4. Re-audit tool selection so Codex remains explicit opt-in despite being locally usable.
-5. Run the full Node suite, repository preflight, fast doctor, queue cycle, and daemon lifecycle smoke.
-6. Reconcile or leave clearly planned the incomplete owned NAT network; do not hide its degraded production readiness behind the Default Switch workaround.
-7. Remove unreachable positional guest cache blobs only through exact disposable-cache cleanup; retain no compatibility code.
+1. Boot a clean probe VM from the derived ISO to prove the entire install path is unattended without using the desktop.
+2. Save and resume the exact owned repository environment, then re-run bridge health and repository execution.
+3. Re-audit tool selection so Codex remains explicit opt-in despite being locally usable.
+4. Run the full Node suite, repository preflight, fast doctor, queue cycle, and daemon lifecycle smoke.
+5. Reconcile or leave clearly planned the incomplete owned NAT network; do not hide its degraded production readiness behind the Default Switch workaround.
+6. Remove unreachable positional guest cache blobs only through exact disposable-cache cleanup; retain no compatibility code.
 
 ## Evidence already obtained
 
@@ -333,3 +335,4 @@ Next:
 - Real Stage 6 smoke: Linux/x64, Node `v24.19.0`, 12/12 targeted tests passed, VM-bound evidence recorded.
 - Source-cache tests cover changed-only transfer and forged unknown-part rejection; targeted file-tree/workspace/repository tests pass under protocol `1.1.0`.
 - Fast topology tests prove windowless saved/paused resume commands and bounded endpoint reuse.
+- Persistent line-channel tests prove ordered multi-frame exchange and one shared first connection; real VM timing improved to `22.355` seconds changed and `21.077` seconds unchanged for two repository operations.
