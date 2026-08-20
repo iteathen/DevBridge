@@ -1,13 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import process from 'node:process';
 import { createGitlessProjectProjection } from '../src/runtime/project-projection.js';
 
 async function exists(candidate) {
   try { await access(candidate); return true; }
   catch (error) { if (error?.code === 'ENOENT') return false; throw error; }
+}
+
+async function directoryLink(target, linkPath) {
+  await symlink(target, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
 }
 
 test('Gitless project projection imports proposal bytes without exposing Git administrative state', async () => {
@@ -34,6 +39,44 @@ test('Gitless project projection imports proposal bytes without exposing Git adm
     assert.equal(await exists(path.join(project, 'obsolete.txt')), false);
     assert.equal(await readFile(path.join(project, '.git', 'config'), 'utf8'), 'git-sentinel\n');
     await view.cleanup();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Gitless project projection accepts a host-managed workspace ancestor alias', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-project-projection-alias-'));
+  try {
+    const realParent = path.join(root, 'real-parent');
+    const realWorkspace = path.join(realParent, 'workspace');
+    const realProject = path.join(realWorkspace, 'project');
+    const aliasParent = path.join(root, 'alias-parent');
+    await mkdir(path.join(realProject, '.git'), { recursive: true });
+    await writeFile(path.join(realProject, '.git', 'config'), 'git-sentinel\n');
+    await writeFile(path.join(realProject, 'README.md'), 'before\n');
+    try {
+      await directoryLink(realParent, aliasParent);
+    } catch (error) {
+      if (error?.code === 'EPERM' || error?.code === 'EACCES') {
+        t.skip(`directory-link fixture unavailable on this host: ${error.code}`);
+        return;
+      }
+      throw error;
+    }
+
+    const workspace = path.join(aliasParent, 'workspace');
+    const project = path.join(workspace, 'project');
+    const view = await createGitlessProjectProjection({ workspaceRoot: workspace, projectDir: project });
+    try {
+      assert.equal(view.projected, true);
+      assert.equal(await exists(path.join(view.projectDir, '.git')), false);
+      await writeFile(path.join(view.projectDir, 'README.md'), 'after\n');
+      await view.importChanges();
+      assert.equal(await readFile(path.join(realProject, 'README.md'), 'utf8'), 'after\n');
+      assert.equal(await readFile(path.join(realProject, '.git', 'config'), 'utf8'), 'git-sentinel\n');
+    } finally {
+      await view.cleanup();
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
