@@ -2,7 +2,7 @@
 
 Status: active architecture contract; implementation is staged by issues #107 through #117.
 
-Implementation status: not yet cut over. Current main still contains the legacy Linux/Bubblewrap repository-code path, and draft PR #106 contains experimental Windows ProcessContainer/AppContainer work. Those mechanisms are temporary migration scaffolding, not the target architecture defined here.
+Implementation status: not yet cut over. Current main still contains the legacy Linux/Bubblewrap repository-code path, and draft PR #106 contains experimental Windows ProcessContainer/AppContainer work. The approved migration sequence removes active host-sandbox repository execution first, leaves repository-controlled execution intentionally unavailable/fail-closed while VM capability is built, and restores it only through persistent VM providers.
 
 ## Goal
 
@@ -23,13 +23,13 @@ Additional hypervisors may be added later only behind the same contracts; they a
 
 For repository-controlled execution, this specification supersedes earlier active documentation that treats Bubblewrap, AppContainer, ProcessContainer, host path allowlists, Gitless host projections, or another host-process sandbox as the target security boundary.
 
-Earlier DB-003, DB-008, DB-011, DB-013, DB-015, setup/bootstrap, tool-profile, and roadmap descriptions remain useful where they describe current transitional behavior or provider-independent invariants. Where they conflict with this contract's target repository-execution architecture, DB-020 governs.
+Earlier DB-003, DB-008, DB-011, DB-013, DB-015, setup/bootstrap, tool-profile, and roadmap descriptions remain useful where they describe current transitional behavior or provider-independent invariants. Where they conflict with this contract's target repository-execution architecture or sandbox-first migration sequence, DB-020 governs.
 
-Historical handoffs, audits, and PR #106 remain historical engineering evidence. They do not regain normative authority merely because their mechanisms still exist during migration.
+Historical handoffs, audits, and PR #106 remain historical engineering evidence. They do not regain normative authority merely because their mechanisms existed before removal.
 
 ## Core rule
 
-**Repository-controlled code executes in an untrusted VM. The host controller assumes that VM may be fully compromised and therefore gives it no host authority worth protecting.**
+**Repository-controlled code executes in an untrusted VM. If no qualified/admitted VM execution provider is available, repository-controlled execution does not occur. It never falls back to direct or uncontained host execution.**
 
 A guest administrator/root compromise must not grant access to:
 
@@ -45,6 +45,21 @@ A guest administrator/root compromise must not grant access to:
 Repository content, dependencies, package scripts, build systems, tests, coding-worker subprocesses, browser tooling, generated tools, and guest-local Git are all inside the same untrusted guest trust domain unless a later specification deliberately narrows a sub-boundary.
 
 No required Bubblewrap, AppContainer, ProcessContainer, or equivalent second sandbox exists inside the guest. Defense-in-depth guest hardening is allowed only if it does not become a hidden prerequisite for the host/guest security claim.
+
+## Intentional no-provider migration state
+
+Stage 1 removes the active legacy host-sandbox execution implementation before production VM implementation begins.
+
+From that removal until Stage 6 restores repository execution through VMs:
+
+- no production repository execution provider is registered/admitted;
+- repository-controlled operations fail closed before spawning repository code on the host;
+- `allowUncontainedTools`, compatibility modes, candidate validators, shells, or direct process runners must not create an alternate host execution path;
+- trusted static/control-plane operations may continue only where they are independently classified as not executing repository-controlled code;
+- `doctor`, CLI, status, recovery, and setup surfaces must report repository execution unavailable rather than inventing sandbox readiness;
+- durable in-flight effects that depended on the removed provider must reconcile safely and cannot be retried through an unsafe fallback.
+
+This temporary capability gap is deliberate. It is also a LEGO replaceability test: DevBridge's generic controller/Git/recovery/verification architecture must remain coherent without any production repository execution provider installed.
 
 ## Terminology
 
@@ -104,7 +119,7 @@ Hypervisor escape, host kernel compromise, firmware compromise, or a defect in t
 
 ## Persistent repository/OS identity
 
-A repository environment is persistent per stable repository identity and enabled guest OS/profile. Human-readable `owner/name` remains useful routing metadata but must not be the sole durable environment identity because repositories can be renamed or transferred. Stage 1 defines the exact repository identity contract and should prefer the immutable GitHub numeric repository ID when available and verified.
+A repository environment is persistent per stable repository identity and enabled guest OS/profile. Human-readable `owner/name` remains useful routing metadata but must not be the sole durable environment identity because repositories can be renamed or transferred. Stage 1 defines the exact repository identity/attachment contract needed by later providers and should prefer the immutable GitHub numeric repository ID when available and verified.
 
 The durable environment identity must also bind at least:
 
@@ -198,7 +213,7 @@ The bridge itself is not publication authority. Guest output is untrusted until 
 
 Authoritative Git remains host-owned.
 
-A normal repository workflow is conceptually:
+A normal repository workflow after Stage 6 is conceptually:
 
 1. the host resolves trusted task/repository/baseline identity;
 2. the host prepares authoritative source state without giving the guest GitHub credentials;
@@ -215,7 +230,9 @@ The exact incremental synchronization and conflict/drift protocol belongs to Sta
 
 ## Execution routing
 
-After Stage 6 cutover, repository-controlled execution classes must use the repository VM boundary. This includes, as applicable:
+Stage 1 removes the host-sandbox repository-execution route. Stages 2–5 do not restore repository task execution through an interim host mechanism.
+
+After Stage 6 restoration, repository-controlled execution classes must use the repository VM boundary. This includes, as applicable:
 
 - deterministic build/test/tool operations that execute repository-controlled code/config/plugins;
 - proposal/coding-worker command execution;
@@ -227,7 +244,7 @@ After Stage 6 cutover, repository-controlled execution classes must use the repo
 
 Pure control-plane parsing, cryptographic verification, GitHub API operations, authoritative Git operations, VM management, deterministic transformations that provably do not execute repository-controlled code, and other trusted static adapters may remain on the host.
 
-The classification decision remains DevBridge-owned. A repository cannot label its own executable operation `safe host`.
+The classification decision remains DevBridge-owned. A repository cannot label its own executable operation `safe host`, and provider unavailability cannot silently change an operation from repository-controlled to host-safe.
 
 ## Tooling and development environment behavior
 
@@ -235,11 +252,13 @@ Persistent VMs replace the target use of `workspace.externalReadRoots`, host PAT
 
 Host-side tool inventory remains useful for control-plane tools and provider/bootstrap prerequisites. On Windows that includes Hyper-V management prerequisites; on Linux it includes KVM/QEMU/libvirt/provider prerequisites. Guest tool inventory is untrusted observation used for planning and verification, not authority to run arbitrary host commands.
 
-DB-015 automatic onboarding must ultimately probe and execute repository-class tools in the guest. Its safe schema/manifest/projection rules remain reusable.
+DB-015 automatic onboarding must ultimately probe and execute repository-class tools in the guest. Its safe schema/manifest/projection rules remain reusable. During the Stage-1-to-Stage-5 no-provider interval, repository-class probes that require execution are unavailable rather than redirected to the host.
 
 ## Runtime candidate validation
 
-DevBridge self-update candidates are untrusted until accepted. The legacy candidate validator currently relies on the host OS sandbox. The target architecture routes candidate-controlled execution through a VM boundary while retaining DB-011's exact release-subject, artifact-digest, last-known-good, activation, and rollback rules.
+DevBridge self-update candidates are untrusted until accepted. The legacy candidate validator currently relies on the host OS sandbox. Stage 1 disables/removes candidate-controlled host execution with the rest of the sandbox path.
+
+Until Stage 6 provides VM candidate execution, candidate-controlled validation that would execute untrusted code is unavailable/fail-closed. DB-011's exact release-subject, artifact-digest, last-known-good, activation, and rollback rules remain authoritative throughout the gap.
 
 A runtime candidate environment does not need the same long-lived per-repository persistence semantics as ordinary project environments; Stage 6 may use a dedicated/reseedable VM workflow as long as candidate code receives no host control authority and the exact accepted artifact is still the exact activated artifact.
 
@@ -249,7 +268,9 @@ The validation environment should use the provider native to the host: Hyper-V o
 
 Configuration declarations do not prove VM isolation.
 
-Before DevBridge reports repository-code execution usable, Stage 7 must establish observed evidence for at least:
+During the no-provider interval, `doctor` must explicitly report repository-code execution unavailable. It must not infer host execution readiness from legacy config fields or silently reactivate a removed sandbox.
+
+Before DevBridge reports repository-code execution usable after Stage 6, Stage 7 must establish observed evidence for at least:
 
 - selected provider/hypervisor availability and supported host configuration;
 - exact base-image identity and parent/backing-chain integrity;
@@ -262,7 +283,8 @@ Before DevBridge reports repository-code execution usable, Stage 7 must establis
 - timeout/cancellation/process cleanup without deleting persistent disk state;
 - recovery after daemon/host/guest interruption;
 - candidate import/sealing under host authority;
-- DB-019 evidence identity including host platform, provider, image, environment, bridge, and guest toolchain where material.
+- DB-019 evidence identity including host platform, provider, image, environment, bridge, and guest toolchain where material;
+- absence of any direct-host repository-execution fallback or resurrected sandbox dependency.
 
 `doctor` must distinguish requested configuration from observed provider/image/environment readiness.
 
@@ -276,7 +298,7 @@ Examples of insufficient evidence include:
 
 ## Resource governance
 
-VM CPU, memory, disk, and lifecycle policy are local host authority. DB-018's current process-priority behavior remains a transitional host-process QoS mechanism and is not the VM security boundary.
+VM CPU, memory, disk, and lifecycle policy are local host authority. DB-018's process-priority behavior is not a repository-execution containment boundary and must not become a substitute during the no-provider interval.
 
 Stage 7 must define truthful resource observations/limits for both Hyper-V and KVM/libvirt without pretending that unsupported quota semantics are enforced. Persistent environments also require bounded disk-growth/cleanup policy that never deletes unowned disks.
 
@@ -296,7 +318,7 @@ A complete first implementation supports both host families.
 
 ### Windows host provider
 
-- Hyper-V is locally available/manageable by the trusted DevBridge service/account.
+- Hyper-V is locally available/manageable by the trusted DevBridge service/account;
 - immutable/versioned base VHD/VHDX images;
 - persistent per-repository differencing disks where supported;
 - persistent Windows and Linux guest profiles as locally provisioned/qualified;
@@ -315,18 +337,29 @@ The provider-neutral ports represent common lifecycle, image, environment, bridg
 
 ## Legacy migration rule
 
-Until Stage 7 proves replacement acceptance on the relevant supported provider(s) and Stage 8 makes setup usable, existing host sandbox code may remain enabled only as transitional compatibility/scaffolding for already-supported paths. It must not be extended as the architectural answer to the VM program unless a security fix is required to keep the interim path from becoming less safe.
+The host sandbox is not retained until VM qualification. Stage 1 deliberately removes active Bubblewrap/AppContainer/ProcessContainer-style repository execution before production VM implementation.
 
-Stage 9 owns deletion/retirement after replacement evidence exists. `docs/vm-migration.md` is the concrete removal inventory and blocker map.
+The removal order is:
+
+1. locate and classify the existing execution connection studs;
+2. disable/remove legacy production provider registration;
+3. establish explicit no-provider/fail-closed behavior;
+4. repair abstraction leaks exposed by the unplug;
+5. prove a test fake can attach through the resulting studs;
+6. delete active legacy host-sandbox implementation/wiring while preserving generic behavior and historical evidence;
+7. build Hyper-V/KVM-libvirt providers against the exposed sandbox-free boundary;
+8. restore repository execution only through VMs in Stage 6.
+
+`docs/vm-lego-studs.md` defines the replaceability proof. `docs/vm-migration.md` is the concrete removal/retention inventory.
 
 ## Relationship to existing contracts
 
 - DB-001: the control plane remains authoritative; VM provider/bridge adapters sit at the edge.
-- DB-003: security/capability authority remains local; repository execution containment is now this VM boundary.
-- DB-008: authoritative Git/publication stays host-owned; dependency/build execution moves into the networked guest trust domain.
-- DB-009: VM/bridge effects use durable observe/reconcile-before-repeat semantics.
-- DB-011: candidate release identity/rollback remains; candidate-controlled execution migrates to VM isolation.
-- DB-013: controller plans remain data; repository-code operations execute through VM-backed adapters rather than host sandbox providers.
+- DB-003: security/capability authority remains local; repository execution containment is this VM boundary, and provider absence fails closed.
+- DB-008: authoritative Git/publication stays host-owned; dependency/build execution moves into the networked guest trust domain after restoration.
+- DB-009: VM/bridge effects use durable observe/reconcile-before-repeat semantics; removed-provider effects reconcile rather than retrying unsafely.
+- DB-011: candidate release identity/rollback remains; candidate-controlled execution is unavailable after sandbox removal until VM isolation is restored.
+- DB-013: controller plans remain data; repository-code operations execute through VM-backed adapters once available and do not fall back to host processes.
 - DB-015: inventory never creates authority; guest tool discovery/onboarding remains untrusted observation.
 - DB-016: coordination keys/lease authority remain host-only.
 - DB-017: baseline/candidate identity remains host-authoritative across guest synchronization.
@@ -335,20 +368,20 @@ Stage 9 owns deletion/retirement after replacement evidence exists. `docs/vm-mig
 
 ## Required implementation stages
 
-Issue #107 defines the dependency order. This contract is intentionally broad enough that later stages do not need to reconstruct the architectural pivot:
+Issue #107 defines the dependency order:
 
-1. Stage 1 — provider-neutral VM contracts and stable repository/OS/environment identity.
-2. Stage 2 — Windows Hyper-V + Linux KVM/QEMU/libvirt host backends and immutable/versioned base-image lifecycle.
+1. Stage 1 — locate/prove execution studs, establish fail-closed no-provider behavior, and remove active legacy host-sandbox repository execution.
+2. Stage 2 — Windows Hyper-V + Linux KVM/QEMU/libvirt host backends and immutable/versioned base-image lifecycle, attached to the sandbox-free Stage-1 boundary.
 3. Stage 3 — persistent per-repository/per-OS writable-disk and VM lifecycle on both providers.
-4. Stage 4 — narrow host↔guest command/file bridge, with provider-specific transport adapters behind one contract.
+4. Stage 4 — narrow host↔guest command/file bridge, with provider-specific transport adapters behind the Stage-1 studs.
 5. Stage 5 — guest bootstrap, networking, toolchain/development behavior.
-6. Stage 6 — route repository operations/workers/candidate execution through VMs.
-7. Stage 7 — verification, doctor, recovery, CI, resource, and security qualification across the supported provider/guest matrix.
-8. Stage 8 — installer/setup/reconfiguration UX for Windows and Linux hosts.
-9. Stage 9 — remove superseded host sandbox machinery and retire draft PR #106 after applicable replacement evidence exists.
+6. Stage 6 — restore repository operations/workers/candidate execution through VMs only; no host-sandbox fallback.
+7. Stage 7 — verification, doctor, recovery, CI, resource, security, and LEGO replaceability qualification across the supported provider/guest matrix.
+8. Stage 8 — installer/setup/reconfiguration UX for Windows and Linux hosts, including deliberate migration of obsolete sandbox-era config.
+9. Stage 9 — finalize one VM-only architecture and remove remaining migration/config/documentation scaffolding; the active sandbox runtime should already be gone.
 
 ## Non-goals
 
 DB-020 does not require a second sandbox inside the guest, default-deny guest networking, host credential passthrough, arbitrary shared host directories, a full duplicated base OS disk for every repository, hypervisors beyond the required Hyper-V and KVM/QEMU/libvirt providers in the first implementation, or implementation cleanup in Stage 0.
 
-It also does not claim that the current main branch already satisfies this target. Until the later stages land, capability reporting must remain honest about the transitional implementation.
+It also does not preserve temporary repository-code availability at the cost of maintaining the superseded sandbox architecture. During the intentional no-provider interval, capability reporting must remain honest and repository execution must fail closed.
