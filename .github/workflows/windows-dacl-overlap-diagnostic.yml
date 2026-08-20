@@ -58,13 +58,15 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $root = Join-Path $env:RUNNER_TEMP ("devbridge-dacl-overlap-" + [guid]::NewGuid().ToString('N'))
-          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $workdir = Join-Path $root 'workdir'
+          New-Item -ItemType Directory -Force -Path $workdir | Out-Null
+          $failures = [System.Collections.Generic.List[string]]::new()
 
           function Invoke-Case {
             param(
               [Parameter(Mandatory=$true)][string]$Name,
               [Parameter(Mandatory=$true)][string[]]$ReadWrite,
-              [Parameter(Mandatory=$true)][string[]]$Denied,
+              [AllowEmptyCollection()][string[]]$Denied = @(),
               [Parameter(Mandatory=$true)][string]$Target,
               [Parameter(Mandatory=$true)][bool]$ExpectWrite
             )
@@ -74,15 +76,15 @@ jobs:
             Set-Content -LiteralPath $Target -NoNewline -Value 'sentinel'
 
             $containerId = "devbridge-dacl-$Name-$([guid]::NewGuid().ToString('N'))"
-            $escapedTarget = $Target.Replace('"', '\"')
+            $command = 'cmd.exe /d /s /c "echo altered>""' + $Target + '"""'
             $config = [ordered]@{
               version = '0.7.0-alpha'
               containerId = $containerId
               containment = 'processcontainer'
               lifecycle = [ordered]@{ destroyOnExit = $true; preservePolicy = $false }
               process = [ordered]@{
-                commandLine = "cmd.exe /d /s /c `"echo altered>`\`"$escapedTarget`\`"`""
-                cwd = $ReadWrite[0]
+                commandLine = $command
+                cwd = $workdir
                 timeout = 10000
               }
               filesystem = [ordered]@{
@@ -90,8 +92,21 @@ jobs:
                 deniedPaths = @($Denied)
               }
               fallback = [ordered]@{ allowDaclMutation = $true }
-              processContainer = [ordered]@{ leastPrivilege = $false; capabilities = @() }
-              network = [ordered]@{ defaultPolicy = 'block'; enforcementMode = 'capabilities'; allowLocalNetwork = $false }
+              processContainer = [ordered]@{
+                leastPrivilege = $true
+                capabilities = @('internetClient', 'registryRead')
+                ui = [ordered]@{
+                  isolation = 'container'
+                  desktopSystemControl = $false
+                  systemSettings = 'none'
+                  ime = $false
+                }
+              }
+              network = [ordered]@{
+                defaultPolicy = 'block'
+                enforcementMode = 'both'
+                allowLocalNetwork = $false
+              }
               ui = [ordered]@{ disable = $false; clipboard = 'none'; injection = $false }
             }
             $configPath = Join-Path $root "$Name.json"
@@ -107,23 +122,27 @@ jobs:
             Write-Host "CASE=$Name EXIT=$exitCode WRITE_OBSERVED=$writeObserved CONTENT=$content"
 
             if ($writeObserved -ne $ExpectWrite) {
-              throw "DACL overlap case '$Name' expected write=$ExpectWrite but observed write=$writeObserved"
+              $failures.Add("DACL overlap case '$Name' expected write=$ExpectWrite but observed write=$writeObserved (exit=$exitCode)")
             }
           }
 
           try {
             $baseline = Join-Path $root 'baseline'
             New-Item -ItemType Directory -Force -Path $baseline | Out-Null
-            Invoke-Case -Name 'baseline-rw' -ReadWrite @($baseline) -Denied @() -Target (Join-Path $baseline 'target.txt') -ExpectWrite $true
+            Invoke-Case -Name 'baseline-rw' -ReadWrite @($workdir, $baseline) -Denied @() -Target (Join-Path $baseline 'target.txt') -ExpectWrite $true
 
             $exact = Join-Path $root 'exact'
             New-Item -ItemType Directory -Force -Path $exact | Out-Null
-            Invoke-Case -Name 'exact-rw-deny' -ReadWrite @($exact) -Denied @($exact) -Target (Join-Path $exact 'target.txt') -ExpectWrite $false
+            Invoke-Case -Name 'exact-rw-deny' -ReadWrite @($workdir, $exact) -Denied @($exact) -Target (Join-Path $exact 'target.txt') -ExpectWrite $false
 
             $nestedRoot = Join-Path $root 'nested-root'
             $nestedDenied = Join-Path $nestedRoot 'denied'
             New-Item -ItemType Directory -Force -Path $nestedDenied | Out-Null
-            Invoke-Case -Name 'nested-rw-deny' -ReadWrite @($nestedRoot) -Denied @($nestedDenied) -Target (Join-Path $nestedDenied 'target.txt') -ExpectWrite $false
+            Invoke-Case -Name 'nested-rw-deny' -ReadWrite @($workdir, $nestedRoot) -Denied @($nestedDenied) -Target (Join-Path $nestedDenied 'target.txt') -ExpectWrite $false
+
+            if ($failures.Count -gt 0) {
+              throw ($failures -join '; ')
+            }
           } finally {
             Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
           }
