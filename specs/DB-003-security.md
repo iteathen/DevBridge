@@ -2,7 +2,7 @@
 
 Status: active
 
-Implementation status: current main still enforces the legacy Linux/Bubblewrap host sandbox for proposal workers and repository-code execution. DB-020 is now normative for the target repository-execution boundary: persistent untrusted VMs, with the trusted DevBridge controller and all host authority outside the guest. Unsupported enforcement claims continue to fail closed during migration.
+Implementation status: Stage 1 has removed active host-sandbox repository execution. Production composition intentionally has no repository execution provider; repository-controlled operations, proposal workers, repository-class onboarding probes, and candidate-controlled execution fail closed before host execution. `src/runtime/repository-execution.js` is the provider-neutral attachment surface for later VM providers. DB-020 is normative for persistent untrusted VMs, with the trusted DevBridge controller and all host authority outside the guest.
 
 ## Fundamental rule
 
@@ -32,9 +32,9 @@ DB-020 makes the security partition explicit:
 - the guest receives no host credential broker, arbitrary writable host mount, host control-state path, authoritative Git administration, or hypervisor-management authority;
 - a guest process escaping only to guest root has not crossed the DevBridge trust boundary.
 
-The target security claim therefore does not depend on a second Bubblewrap/AppContainer/ProcessContainer layer inside the VM.
+The security claim does not depend on a second Bubblewrap/AppContainer/ProcessContainer layer inside the VM.
 
-During migration, the current host sandbox remains transitional scaffolding for already-supported execution. Its existence is not permission to keep extending host-process isolation as the target design.
+During the Stage-1-to-Stage-5 migration interval there is no production repository execution provider. This intentional capability gap is safer than retaining or recreating host-process isolation as a fallback.
 
 ## Filesystem authority
 
@@ -54,7 +54,7 @@ Repository guests must not receive arbitrary host filesystem visibility. In the 
 - operator home, DevBridge state, credential stores, release keys, coordination keys, and VM-management state are not guest-visible;
 - ordinary toolchains/SDKs/package caches needed by repository work belong in the guest environment rather than being exposed from arbitrary host read roots.
 
-`workspace.externalReadRoots` and similar host-read allowances are legacy migration concepts for repository execution. Stage 8/9 decide their config migration/removal; they are not part of the target VM authority model.
+`workspace.externalReadRoots` and similar host-read allowances are legacy migration concepts for repository execution. Stage 8/9 decide their config migration/removal; they do not authorize repository-code host execution during the no-provider interval.
 
 ### Guest filesystem
 
@@ -66,18 +66,20 @@ Persistence is not authority: build outputs, package caches, installed tools, gu
 
 Host control-plane child processes use `shell: false` unless an explicitly separate local adapter owns shell semantics. Free-form task text is never interpolated into host argv.
 
-Executable identity and authority-bearing/static argv fragments come only from built-in DevBridge code, local configuration, or a control-owned validated local-operation manifest. Environment inheritance is allowlist-based and control credentials are not passed to untrusted execution.
+Executable identity and authority-bearing/static argv fragments for host control/static work come only from built-in DevBridge code or local control configuration. Environment inheritance is allowlist-based and control credentials are not passed to untrusted execution.
 
 Repository-controlled executable work is classified separately from trusted/static host work:
 
 - **host control/static operations** may remain on the host only when their implementation cannot be redirected into repository-controlled code through plugins, hooks, config, filesystem indirection, shell expansion, or equivalent mechanisms;
-- **repository-controlled operations** execute inside the DB-020 repository VM after VM cutover;
+- **repository-controlled operations** require the DB-020 repository execution boundary;
 - **unknown future operations** default to the repository-controlled class until deliberately classified;
 - repository/controller/model content cannot reclassify an operation as trusted host execution.
 
 `cwd` is not containment. A declaration that an operation is isolated is not evidence. Admission must verify the actual environment/provider required by its execution class.
 
-The legacy current-main `sandbox` provider check remains an implementation fact during migration. It must be replaced by observed VM/provider/image/environment readiness before host sandbox removal.
+Stage 1 makes the separation structural: host control/static work may use the host deterministic process runner, while repository-code work delegates through the provider-neutral repository-execution contract. If that contract reports unavailable, repository code is not spawned on the host.
+
+The Stage-1 execution contract owns logical repository/run/operation/tool identities, environment-relative locations, bounded transfer capabilities, timeout/cancellation/activity, and normalized result evidence. It does not accept host executable paths, host process-runner objects, sandbox/VM implementation names, mailbox paths, mounts, or provider transports.
 
 ## Dynamic local-operation onboarding
 
@@ -91,7 +93,7 @@ DB-015 permits a narrow local extension mechanism without changing the authority
 - Generated `tool.*` operations remain repository-controlled execution by default.
 - Generated manifests are persisted in a control-owned manifest root before activation and are reconciled on restart.
 
-Target execution behavior: unfamiliar-tool probes and generated repository-class operations run inside the appropriate repository VM, not in a host process sandbox. The guest may use normal networking under DB-020; confidentiality comes from withholding host secrets, not from assuming the help probe has no egress.
+Repository-class unfamiliar-tool probes and generated operations ultimately run inside the appropriate repository VM, not in a host process. During the Stage-1-to-Stage-5 no-provider interval, probes requiring repository execution are reported unavailable rather than resolved/executed through host PATH. Existing control-owned manifests may still be parsed/registered, but registration creates no execution readiness.
 
 Host-side discovery remains appropriate for DevBridge control-plane prerequisites such as Node, Git, Hyper-V management, and bridge/bootstrap tools.
 
@@ -148,9 +150,9 @@ The exact transport is intentionally deferred to VM Stage 4. Transport selection
 
 The semantic worker protocol remains control-owned even when its transport changes.
 
-Current main uses a private host worker-exchange root and filesystem-identity/hard-link checks, then projects exact context/result files into Bubblewrap. Draft PR #106 contains additional Windows staging/ACL work. Those host-filesystem projection mechanisms are migration-specific.
+Stage 1 retains a private control-owned worker-exchange root with filesystem-identity/hard-link checks for durable run/turn context and result recovery. The repository-execution LEGO receives only input/output transfer capabilities backed by that exchange; it does not receive the host paths, mailbox object, or filesystem transport. Later VM bridge stages may implement those transfer capabilities differently without changing worker/result meaning.
 
-The durable invariants to retain are:
+The durable invariants are:
 
 - exact run/turn/environment identity;
 - control-generated context digest;
@@ -159,13 +161,13 @@ The durable invariants to retain are:
 - ambiguous/interrupted result recovery revalidates exact identities before consumption;
 - guest output cannot overwrite host control state directly.
 
-VM Stage 4/6 will move these semantics onto the narrow bridge.
+VM Stage 4/6 reconnects these semantics to real guest transport through the same execution/transfer studs.
 
 ## Network
 
 Repository guests have normal network connectivity by default under DB-020.
 
-This changes the repository-execution confidentiality model from the legacy host sandbox. DevBridge no longer relies on a default network-denied repository process to protect host secrets; it protects them by keeping them out of the guest trust domain entirely.
+This changes the repository-execution confidentiality model from the removed host sandbox. DevBridge does not rely on default network denial to protect host secrets; it protects them by keeping them out of the guest trust domain entirely.
 
 Consequences:
 
@@ -191,7 +193,7 @@ Guests do not receive GitHub publication credentials or a writable mount of auth
 
 DB-007 defines checkpoints, decision boundaries, and hard gates. These mechanisms do not weaken this security policy.
 
-A trusted human decision may authorize only effects whose decision class is already enabled by local policy. A remote approval cannot add a host filesystem root, executable, environment secret, credential, guest secret injection, VM-management capability, trusted task actor, trusted coordination peer, or isolation exception.
+A trusted human decision may authorize only effects whose decision class is already enabled by local policy. A remote approval cannot add a host filesystem root, executable, environment secret, credential, guest secret injection, VM-management capability, trusted task actor, trusted coordination peer, or execution-boundary exception.
 
 Approval cannot convert an unverified VM/provider/environment claim into verified enforcement. Payload-sensitive approval remains artifact-exact and expires/stales under DB-007.
 
@@ -223,7 +225,7 @@ Raw local evidence may be retained under bounded control-owned policy, but crede
 
 Timeouts, output limits, effective task concurrency, context size, lease timing, and resource policy are bounded local authority.
 
-DB-018 currently provides serialized task admission, below-normal priority for legacy host child processes, and cooperative token-bound pause/resume. Process priority is QoS, not containment.
+DB-018 currently provides serialized task admission, below-normal priority for trusted host child processes, and cooperative token-bound pause/resume. Process priority is QoS, not containment and is not applied to repository execution through the provider-neutral boundary.
 
 In the VM architecture, CPU/memory/disk/lifecycle constraints belong to the VM/provider/resource layer where the platform can actually enforce and report them. Stage 7 must avoid claiming quotas or cleanup guarantees the provider does not prove.
 
@@ -245,7 +247,9 @@ Recovery code must not become a privileged bypass.
 
 Security enforcement claims require observed evidence.
 
-During migration, legacy Bubblewrap capability reporting must remain truthful for the current live path. After VM cutover, repository-code readiness must instead bind to observed VM/provider/base-image/repository-environment/bridge evidence defined by DB-020 and Stage 7.
+During the Stage-1-to-Stage-5 no-provider interval, capability reporting must explicitly show repository execution unavailable. The absence of a repository executor is not an enforcement claim and never authorizes host fallback.
+
+After VM restoration, repository-code readiness must bind to observed VM/provider/base-image/repository-environment/bridge evidence defined by DB-020 and Stage 7.
 
 At minimum later VM qualification must prove a hostile/administrator guest cannot obtain host credentials, authoritative Git/publication state, DevBridge control state, coordination/release keys, arbitrary host mounts/paths, or VM-management authority; normal guest network access must remain compatible with those confidentiality claims.
 

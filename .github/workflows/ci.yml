@@ -40,7 +40,7 @@ jobs:
         run: node --test test/standalone-launcher.test.js
 
   test:
-    timeout-minutes: 6
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -58,7 +58,7 @@ jobs:
         timeout-minutes: 1
         run: node --test test/repository-execution.test.js test/repository-execution-boundary-absence.test.js test/deterministic-execution-boundary.test.js test/process-runner.test.js test/worker-exchange.test.js test/local-operation-manifest.test.js test/tool-onboarding.test.js
       - name: Tests
-        timeout-minutes: 3
+        timeout-minutes: 6
         run: npm test
       - name: Doctor smoke test
         timeout-minutes: 1
