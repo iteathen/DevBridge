@@ -49,11 +49,13 @@ DB-020 defines the target repository-code boundary: persistent untrusted VMs wit
 
 That target is not yet implemented in current main.
 
-- Current Linux repository-code/candidate-controlled execution uses the transitional verified Bubblewrap provider when available.
+- Current pre-migration Linux repository-code/candidate-controlled execution uses Bubblewrap when available/verified.
 - Current Windows repository-code/candidate-controlled execution remains fail-closed on main.
 - Draft PR #106's ProcessContainer/AppContainer work is superseded by the VM program.
 
-The stage-0 launcher must not grow provider provisioning logic merely because execution architecture changed. VM Stage 8 owns supported Windows/Linux provider setup/reconfiguration after lower provider/image/environment/bridge stages exist.
+The approved sequence removes active host-sandbox repository execution in Stage 1 before production VM implementation. From Stage 1 through Stage 5, repository-controlled and candidate-controlled execution that requires untrusted code execution is intentionally unavailable/fail-closed. Stage 6 restores it through VM providers only.
+
+The stage-0 launcher must not grow direct-host execution or provider provisioning logic merely because the migration temporarily has no repository execution provider. VM Stage 8 owns supported Windows/Linux provider setup/reconfiguration after lower provider/image/environment/bridge stages exist.
 
 ## Managed secure bootstrap
 
@@ -89,18 +91,20 @@ A mutable branch is transport, not production release authority.
 
 Before acceptance, candidate code is untrusted executable input.
 
-Current main verifies a host Bubblewrap sandbox and executes candidate preflight/tests there. That is transitional behavior.
+Current pre-migration main verifies a host Bubblewrap sandbox and executes candidate preflight/tests there. Stage 1 removes/disables that host execution path with the rest of the sandbox architecture.
 
-The DB-020 target is provider-native VM validation:
+From Stage 1 until Stage 6, candidate-controlled validation that would execute untrusted candidate code is unavailable/fail-closed. This does **not** weaken DB-011 release integrity: exact candidate identity, signature/digest checks, last-known-good, activation gates, and rollback remain authoritative. It means a candidate requiring executable validation cannot be accepted through an unsafe host fallback.
+
+Stage 6 restores candidate execution through provider-native VM validation:
 
 - Hyper-V validation environment on Windows hosts;
 - KVM/QEMU/libvirt validation environment on Linux hosts.
 
-Target sequence:
+VM validation sequence:
 
 1. host/supervisor resolves and hashes exact candidate artifact;
 2. production signature/repository/head/version/digest checks occur on the trusted host before candidate code executes;
-3. supervisor verifies the host's provider + validation environment;
+3. supervisor verifies the host provider + validation environment;
 4. exact candidate subject is transferred into the untrusted VM without arbitrary host mounts or control credentials;
 5. candidate-controlled preflight/tests execute there;
 6. bounded evidence returns through the host-controlled bridge;
@@ -110,6 +114,8 @@ Target sequence:
 10. rollback keeps previous exact runtime available until candidate is healthy.
 
 The candidate validation VM may be dedicated/reseedable instead of a persistent project VM as long as DB-020's trust partition is preserved.
+
+Provider absence never authorizes direct/uncontained candidate execution on the host.
 
 ## Provider setup ownership
 
@@ -129,6 +135,8 @@ Production requires an independently signed immutable release subject binding fi
 
 VM execution does not change those release-integrity rules. A guest test pass does not sign or approve a candidate.
 
+During the no-provider interval, an executable candidate that cannot satisfy required validation remains unaccepted rather than being tested directly on the host.
+
 ## Daemon control
 
 `status`, `pause`, `resume`, `stop`, and `restart` remain host control operations.
@@ -143,15 +151,17 @@ A provider/environment may persist while the daemon is paused/stopped; persisten
 - Remote content cannot select release mode, update channel, signing material, runtime root, host provider, base image path, VM/domain name, libvirt XML, QEMU argv, PowerShell management snippet, operator config, executable, environment authority, or credential source.
 - Bootstrap Git suppresses inherited Git/SSH authority, hooks, interactive prompting, and dangerous transports.
 - Operator config/activation/provider-management state remains outside untrusted candidate visibility.
-- Last-known-good is not drained until candidate passes pre-activation integrity + verified execution-environment checks.
+- No production execution provider means untrusted executable candidate/repository work is unavailable; it does not authorize direct host execution.
+- Last-known-good is not drained until candidate passes pre-activation integrity + required verified execution-environment checks.
 - Development mutable-channel following remains explicitly alpha.
-- Production unattended deployment requires an independently signed immutable release subject plus verified candidate VM isolation.
+- Production unattended deployment requires an independently signed immutable release subject plus verified candidate VM isolation where executable candidate validation is required.
 
 ## Related docs/specs
 
 - `docs/setup.md`: installation/current-vs-target behavior.
 - `docs/architecture.md`: provider/VM/bridge/control-plane model.
-- `docs/vm-migration.md`: legacy-removal inventory and hard gates.
+- `docs/vm-migration.md`: sandbox-first removal/retention inventory.
+- `docs/vm-lego-studs.md`: connection-stud/replaceability plan.
 - DB-003: local capability/security authority.
 - DB-008: Git/supply-chain boundary.
 - DB-009: durable effects/recovery.
