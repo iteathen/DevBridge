@@ -453,6 +453,7 @@ Next:
 
 ## Evidence already obtained
 
+- Published bootstrap distribution smoke at executable commit `8bd9aad0c924d33e0a492932ee863a0b31b62a35`: downloaded the raw testing-channel launcher from GitHub into a fresh temporary home, cloned that exact runtime head, completed noninteractive polling-only setup, kept state/workspace roots inside the custom home, wrote a complete setup record and 12-entry install manifest, ran `doctor` without reopening setup, then completed exact-`REMOVE` manifest purge and verified the installation root was gone.
 - Full Node test suite after the full bootstrap work: 529 total, 523 passed, 6 Windows-capability skips, 0 failed.
 - Repository preflight after the full bootstrap work: passed with 41 syntax files, 3 JSON files, and 34 targeted tests.
 - Bootstrap/setup/update/uninstall targeted tests: 30 passed, covering the protocol transition, isolated custom-home defaults, update observation, setup lockout/corruption, persisted-channel re-entry, discovery/selection, explicit environment provisioning, launcher refresh, manifest boundaries, and both uninstall scopes.
