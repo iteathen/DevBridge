@@ -12,7 +12,7 @@ Current mainline includes:
 - managed authoritative Git repositories/worktrees;
 - deterministic controller plans and locally registered operations;
 - optional coding-model adapters, disabled by default;
-- verified Linux/Bubblewrap containment for the current supported untrusted-execution path;
+- Linux/Bubblewrap containment in the current pre-migration implementation;
 - durable run state, bounded handoffs, restart recovery, and reconciliation;
 - checkpoint-and-proceed human gates;
 - candidate sealing and exact-head task-branch publication;
@@ -22,7 +22,7 @@ Current mainline includes:
 - cooperative pause/resume and below-normal child-process priority;
 - effective serialized task admission.
 
-Repository execution is now moving to DB-020's VM architecture.
+Repository execution is moving to DB-020's VM architecture.
 
 **Target host providers:**
 
@@ -36,9 +36,17 @@ Base images are immutable/versioned. Repository state uses provider-native copy-
 - Hyper-V differencing VHD/VHDX;
 - QEMU qcow2 backing/overlay chains.
 
-The legacy Bubblewrap/AppContainer/ProcessContainer direction is transitional only. Full removal is blocked until Hyper-V and KVM/libvirt replacement paths are implemented, qualified, and installable, so Linux support is not lost during migration.
+### Approved migration sequence
 
-See DB-020, `docs/architecture.md`, `docs/roadmap.md`, and `docs/vm-migration.md`.
+The old host-sandbox execution path is **removed first**, before production VM providers are implemented.
+
+Stage 1 locates/proves the existing LEGO connection studs, removes active Bubblewrap/AppContainer/ProcessContainer-style repository execution, and leaves DevBridge in an intentional **no production execution provider** state. Repository-controlled execution then fails closed until Stage 6 restores it through persistent VMs.
+
+There is no temporary direct/uncontained host fallback. Provider absence must never make repository-controlled work host-safe.
+
+Stages 2–5 build Hyper-V/KVM-libvirt provider, persistent environment, bridge, and guest tooling capability against the sandbox-free boundary. Stage 6 restores repository execution VM-only; Stages 7–8 qualify and make it installable/reconfigurable; Stage 9 removes remaining migration/configuration/documentation scaffolding.
+
+See DB-020, `docs/architecture.md`, `docs/roadmap.md`, `docs/vm-migration.md`, and `docs/vm-lego-studs.md`.
 
 ## Security model
 
@@ -58,14 +66,18 @@ Remote task text, repository content, dependencies, model output, tool documenta
 
 Under DB-020, repository guests have normal network access by default. Confidentiality therefore comes from **keeping host secrets out of the guest**, not from assuming guest network denial will protect them.
 
+No production repository execution provider means repository-controlled execution is unavailable; it never means "run directly on the host".
+
 ## Install
 
-Requirements today:
+Current pre-migration main requirements include:
 
 - Node.js 22.16.0 or newer;
 - Git;
 - GitHub account/access needed by the configured queue/repositories;
-- Bubblewrap only for the current transitional Linux untrusted-execution path.
+- Bubblewrap for the current Linux host-sandbox path until Stage 1 removes that path.
+
+After Stage 1, Bubblewrap is no longer an execution requirement; repository-controlled execution remains unavailable until VM setup/restoration is implemented.
 
 ### Linux
 
@@ -79,7 +91,7 @@ mkdir -p "$HOME/.devbridge/bin" && curl -fsSL https://raw.githubusercontent.com/
 New-Item -ItemType Directory -Force "$HOME\.devbridge\bin" | Out-Null; Invoke-WebRequest "https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs" -OutFile "$HOME\.devbridge\bin\devbridge.mjs"; node "$HOME\.devbridge\bin\devbridge.mjs"
 ```
 
-`devbridge.mjs` is a standalone stage-0 launcher. It establishes/validates the fixed managed DevBridge runtime and transfers control to secure bootstrap. It does not silently enable execution or provision a VM provider.
+`devbridge.mjs` is a standalone stage-0 launcher. It establishes/validates the fixed managed DevBridge runtime and transfers control to secure bootstrap. It does not silently enable repository execution or provision a VM provider.
 
 On a fresh install, the managed bootstrap creates `~/.devbridge/config.json` from the safe example and exits. Review local authority first, then run:
 
@@ -94,21 +106,25 @@ See `docs/setup.md` for current-vs-target setup details.
 
 ## Future VM setup
 
-VM Stage 8 will add discover-first provider setup/reconfiguration.
+VM Stage 8 adds discover-first provider setup/reconfiguration.
 
-Windows setup will inspect Hyper-V readiness before prompting.
+Windows setup inspects Hyper-V readiness before prompting.
 
-Linux setup will inspect KVM acceleration, QEMU/libvirt service/provider access, image/storage/network state, and normally the locally authorized libvirt system provider before prompting.
+Linux setup inspects KVM acceleration, QEMU/libvirt service/provider access, image/storage/network state, and normally the locally authorized libvirt system provider before prompting.
 
 Neither `Hyper-V installed` nor `/dev/kvm exists` is enough to claim repository execution ready.
 
-Setup will propose repositories/guest profiles/image generations/resource/storage policy and require explicit operator consent before authority-bearing changes.
+Setup proposes repositories/guest profiles/image generations/resource/storage policy and requires explicit operator consent before authority-bearing changes.
+
+VM unavailability remains fail-closed; setup never reactivates host repository execution.
 
 ## Self-update
 
 Stage 0 establishes only the managed checkout needed to reach secure bootstrap. DB-011 owns update/release policy, exact artifact identity, candidate validation, daemon drain, activation, health, and rollback.
 
-Current main validates candidate-controlled code through the transitional host sandbox. DB-020 targets provider-native VM validation:
+Current pre-migration main validates candidate-controlled code through the host sandbox. Stage 1 disables/removes candidate-controlled host execution with the sandbox path. Until Stage 6 provides provider-native VM validation, candidate-controlled execution is unavailable/fail-closed while DB-011 identity/rollback behavior remains authoritative.
+
+Stage 6 targets VM validation:
 
 - Hyper-V on Windows;
 - KVM/QEMU/libvirt on Linux.
@@ -163,7 +179,7 @@ config/devbridge.example.json
 
 Fresh configuration keeps execution, model adapters, coordination, dynamic tool onboarding, and automatic task-branch publication conservative/off by default.
 
-Current host-sandbox-era fields such as `workspace.externalReadRoots`, `execution.allowUncontainedTools`, and profile `sandbox.*` remain transitional. VM Stage 8/9 owns deliberate migration/deprecation; they must not be silently reinterpreted as VM authority.
+Current host-sandbox-era fields such as `workspace.externalReadRoots`, `execution.allowUncontainedTools`, and profile `sandbox.*` are transitional. Stage 1 removes their ability to authorize repository-code host execution; Stage 8/9 owns deliberate operator-facing migration/deprecation. They must never be silently reinterpreted as VM authority or direct-host fallback authority.
 
 DevBridge never silently rewrites existing operator configuration during self-update.
 
@@ -183,10 +199,11 @@ Remote decisions cannot expand filesystem, executable, credential, network, prov
 
 Important explicit boundaries include:
 
-- VM program #107 is not yet implemented; Hyper-V and KVM/libvirt target providers are architecture/roadmap, not current execution capability;
+- VM program #107 is not yet implemented; Hyper-V and KVM/libvirt are target providers, not current main capability;
+- after Stage 1, normal repository-controlled execution is intentionally unavailable until Stage 6 restores it through VMs;
 - per-installation task destination/dispatch authorization for shared team queues;
 - complete generic effect journaling for every possible remote mutation;
-- numeric GitHub repository-ID pinning and complete tool/profile identity evidence outside the VM Stage-1 work;
+- numeric GitHub repository-ID pinning and complete tool/profile identity evidence outside VM Stage-1 work;
 - GitHub App installation authentication;
 - general parallel task scheduling;
 - automatic default-branch merge/release/deployment as ordinary task effects.
@@ -195,7 +212,8 @@ Important explicit boundaries include:
 
 - `docs/setup.md` — installation and current-vs-target provider setup.
 - `docs/architecture.md` — control-plane/provider/VM/bridge architecture.
-- `docs/vm-migration.md` — legacy sandbox removal inventory/hard gates.
+- `docs/vm-migration.md` — sandbox-first removal/retention/migration inventory.
+- `docs/vm-lego-studs.md` — connection-stud and replaceability plan.
 - `docs/bootstrap.md` — stage-0/self-update behavior.
 - `docs/design-principles.md` — engineering principles.
 - `docs/tool-profiles.md` — current profile surface and VM migration.
@@ -212,7 +230,7 @@ npm test
 node src/cli.js doctor --config config/devbridge.example.json
 ```
 
-Current CI runs Ubuntu/Windows control-plane regressions and real Bubblewrap coverage on Linux. Future Stage-7 provider qualification may require dedicated/self-hosted virtualization-capable Windows and Linux runners for real Hyper-V and KVM/libvirt evidence.
+Current pre-migration CI includes Bubblewrap coverage. Stage 1 replaces active sandbox qualification with no-provider/fake-provider/direct-host-denial/dependency-removal evidence. Stage 7 later requires real Hyper-V and KVM/libvirt qualification, potentially on dedicated/self-hosted virtualization-capable Windows and Linux runners.
 
 ## License
 
