@@ -5,7 +5,7 @@ import { normalizeCoordinationConfig } from './config/coordination-config.js';
 import { ConfigurationError } from './errors.js';
 import { DEFAULT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES } from './github/auth-provider.js';
 import { validateFaultInjectionConfig } from './runtime/fault-injector.js';
-import { validateToolOnboardingPolicy } from './runtime/tool-onboarding.js';
+import { validateToolOnboardingPolicy } from './runtime/tool-onboarding-policy.js';
 import { DECISION_CLASSES } from './run/hard-gate-policy.js';
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;

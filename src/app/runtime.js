@@ -1,4 +1,3 @@
-import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { JsonStateStore } from '../state/json-state-store.js';
 import { stateFileName } from '../state/state-file.js';
@@ -20,11 +19,15 @@ import { GitTaskLeaseStore } from '../git/task-lease-store.js';
 import { GitWorkspaceManager } from '../git/workspace-manager.js';
 import { ProcessRunner } from '../runtime/process-runner.js';
 import { DeterministicProcessRunner } from '../runtime/deterministic-process-runner.js';
-import { UnavailableRepositoryExecution } from '../runtime/repository-execution.js';
 import { WorkerExchange } from '../runtime/worker-exchange.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
 import { loadLocalOperationManifests } from '../runtime/local-operation-manifest.js';
-import { ToolOnboardingService } from '../runtime/tool-onboarding.js';
+import { ToolOnboarding } from '../runtime/tool-onboarding.js';
+import { canonicalExternalDirectory } from '../runtime/external-directory.js';
+import {
+  REPOSITORY_EXECUTION_REQUEST_PROTOCOL,
+  normalizeRepositoryExecutionResult,
+} from '../runtime/repository-execution.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { ToolInventoryService } from '../runtime/tool-inventory.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
@@ -36,41 +39,31 @@ import { RunCoordinator } from '../run/run-coordinator.js';
 import { TaskLeaseManager } from '../run/task-lease-manager.js';
 import { HardGateController } from '../run/hard-gate-controller.js';
 import { DecisionGatedRunCoordinator, DecisionGatedWorkspaceManager } from '../run/decision-gated-coordinator.js';
+import { createRuntimeExecutionContext } from './runtime-execution.js';
 
 export { stateFileName } from '../state/state-file.js';
 
-const REPOSITORY_EXECUTION_UNAVAILABLE_REASON = 'repository execution is intentionally unavailable until VM Stage 6';
-
-function isWithin(root, candidate) {
-  const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-}
-
-async function canonicalLocalManifestDirectory(directory, workspaceRoot) {
-  if (!directory) return null;
-  const resolved = path.resolve(directory);
-  const info = await lstat(resolved);
-  if (!info.isDirectory() || info.isSymbolicLink()) {
-    throw new Error('execution.toolOnboarding.manifestDirectory must be a real non-symlink directory');
-  }
-  let current = path.dirname(resolved);
-  while (true) {
-    const parentInfo = await lstat(current);
-    if (parentInfo.isSymbolicLink()) {
-      throw new Error('execution.toolOnboarding.manifestDirectory must not use filesystem indirection');
-    }
-    const parent = path.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  const [canonical, canonicalWorkspaceRoot] = await Promise.all([
-    realpath(resolved),
-    realpath(path.resolve(workspaceRoot)),
-  ]);
-  if (isWithin(canonicalWorkspaceRoot, canonical)) {
-    throw new Error('execution.toolOnboarding.manifestDirectory must be outside the controller-writable workspace root');
-  }
-  return canonical;
+function createToolProbe(execution) {
+  return Object.freeze({
+    inspect() {
+      const availability = execution.inspect();
+      return { ready: availability.ready === true, reason: availability.reason ?? null };
+    },
+    async run(request) {
+      return normalizeRepositoryExecutionResult(await execution.execute({
+        protocol: REPOSITORY_EXECUTION_REQUEST_PROTOCOL,
+        operation: `tool.probe:${request.name}`,
+        scope: request.context,
+        invocation: { tool: request.command, arguments: request.arguments, workingDirectory: '.' },
+        environment: request.environment,
+        transfers: [],
+        limits: request.limits,
+        stdin: null,
+        signal: null,
+        onActivity: null,
+      }));
+    },
+  });
 }
 
 function coordinationDefaults(config) {
@@ -204,8 +197,24 @@ export async function createRuntime(config, {
     ? leaseExecutionContext.wrapWorkspaceManager(workspaceManager)
     : workspaceManager;
 
+  const builtIns = builtInToolProfiles();
+  for (const name of Object.keys(builtIns)) {
+    if (Object.hasOwn(config.tools, name)) throw new Error(`local tool profile name ${name} is reserved by DevBridge`);
+  }
+  const deterministicProfileNames = Object.keys(builtIns);
+  const tools = { ...config.tools, ...builtIns };
+
   const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
-  const repositoryExecution = new UnavailableRepositoryExecution({ reason: REPOSITORY_EXECUTION_UNAVAILABLE_REASON });
+  const runtimeExecution = await createRuntimeExecutionContext({
+    config,
+    workspaceManager,
+    gitClient,
+    client,
+    toolProfiles: tools,
+    protectedValues: secretValues,
+    env,
+  });
+  const repositoryExecution = runtimeExecution.repositoryExecution;
   const workerExchange = new WorkerExchange({ stateDirectory: config.state.directory });
   const processRunner = new ProcessRunner({ workerExchange, repositoryExecution });
   const leaseProcessRunner = leaseExecutionContext
@@ -216,9 +225,10 @@ export async function createRuntime(config, {
     faultInjector,
     repositoryExecution,
   });
+  const scopedDeterministicProcessRunner = runtimeExecution.scope(deterministicProcessRunner);
   const leaseDeterministicProcessRunner = leaseExecutionContext
-    ? leaseExecutionContext.wrapProcessRunner(deterministicProcessRunner)
-    : deterministicProcessRunner;
+    ? leaseExecutionContext.wrapProcessRunner(scopedDeterministicProcessRunner)
+    : scopedDeterministicProcessRunner;
 
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
@@ -229,17 +239,18 @@ export async function createRuntime(config, {
     maxHelpBytes: 262_144,
     probeTimeoutMs: 15_000,
   };
-  const manifestDirectory = await canonicalLocalManifestDirectory(onboardingConfig.manifestDirectory, config.workspace.root);
+  const manifestDirectory = await canonicalExternalDirectory(onboardingConfig.manifestDirectory, config.workspace.root);
   const localOperationManifests = manifestDirectory
     ? await loadLocalOperationManifests({ directory: manifestDirectory, registry: operationRegistry })
     : [];
   const toolOnboarding = onboardingConfig.enabled
-    ? new ToolOnboardingService({
+    ? new ToolOnboarding({
         operationRegistry,
-        repositoryExecution,
-        workspaceRoot: config.workspace.root,
+        probe: createToolProbe(repositoryExecution),
         manifestDirectory,
-        autoIntegrate: onboardingConfig.autoIntegrate,
+        entries: onboardingConfig.autoIntegrate,
+        probeTimeoutMs: onboardingConfig.probeTimeoutMs,
+        maxHelpBytes: onboardingConfig.maxHelpBytes,
       })
     : null;
   const deterministicControllerPlanExecutor = new ControllerPlanExecutor({
@@ -253,12 +264,6 @@ export async function createRuntime(config, {
     statusReporter,
   });
 
-  const builtIns = builtInToolProfiles();
-  for (const name of Object.keys(builtIns)) {
-    if (Object.hasOwn(config.tools, name)) throw new Error(`local tool profile name ${name} is reserved by DevBridge`);
-  }
-  const deterministicProfileNames = Object.keys(builtIns);
-  const tools = { ...config.tools, ...builtIns };
   toolInventory = new ToolInventoryService({
     operationRegistry,
     toolchainRegistry,

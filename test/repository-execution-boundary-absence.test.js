@@ -21,6 +21,8 @@ const NEUTRAL_FILES = [
   'src/runtime/worker-exchange.js',
   'src/runtime/local-operation-manifest.js',
   'src/runtime/tool-onboarding.js',
+  'src/runtime/tool-onboarding-policy.js',
+  'src/runtime/cli-help-parser.js',
 ];
 
 async function exists(candidate) {
@@ -40,12 +42,12 @@ test('neutral execution/control files contain no active legacy provider imports 
   }
 });
 
-test('repository-operation compatibility adapters cannot resolve or inject host execution mechanics', async () => {
+test('operation adapters and onboarding cannot resolve or inject host execution mechanics', async () => {
   const localManifest = await readFile(path.resolve('src/runtime/local-operation-manifest.js'), 'utf8');
   assert.doesNotMatch(localManifest, /resolveExecutable|sandbox\s*:/u);
   assert.match(localManifest, /repositoryTool/u);
 
   const onboarding = await readFile(path.resolve('src/runtime/tool-onboarding.js'), 'utf8');
-  assert.doesNotMatch(onboarding, /resolveExecutable|processRunner|sandbox\s*:/u);
-  assert.match(onboarding, /repository-execution-unavailable/u);
+  assert.doesNotMatch(onboarding, /resolveExecutable|processRunner|repositoryExecution|REPOSITORY_EXECUTION|sandbox\s*:/u);
+  assert.match(onboarding, /probe-unavailable/u);
 });

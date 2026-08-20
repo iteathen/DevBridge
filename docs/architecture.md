@@ -11,13 +11,13 @@ The initial host-provider set is first-class on both supported host families:
 - Windows host -> Hyper-V;
 - Linux host -> KVM/QEMU managed through libvirt.
 
-Current main has not completed that transition. It still contains the Linux/Bubblewrap host-sandbox implementation, while draft PR #106 contains superseded Windows ProcessContainer/AppContainer experimentation.
+Stages 0–6 are implemented on the VM migration stack. The Linux/Bubblewrap host-sandbox implementation is absent, while draft PR #106 remains superseded Windows ProcessContainer/AppContainer evidence.
 
 The approved migration does **not** keep the legacy sandbox live until VM replacement is complete. Stage 1 removes active host-sandbox repository execution first, establishes an explicit fail-closed no-provider state, and uses that removal to expose/prove the LEGO connection studs. Stages 2–5 build the VM system while normal repository-controlled execution remains unavailable. Stage 6 restores repository execution through VMs only.
 
 No direct/uncontained host fallback is allowed during the no-provider interval.
 
-`docs/vm-migration.md` records the removal/retention inventory. `docs/vm-lego-studs.md` defines the unplug/delete/fake-provider/VM-attachment proof.
+`docs/vm-migration.md` records the removal/retention inventory. `docs/vm-lego-studs.md` defines the unplug/delete/fake-provider/VM-attachment proof. `docs/vm-stage6-repository-execution.md` defines the restored route/source/candidate contract.
 
 ## Authority hierarchy
 
@@ -210,8 +210,7 @@ DB-013 plans remain data, not command authority.
 DevBridge classifies execution:
 
 - static/control operations may run on host only when they provably cannot execute repository-controlled code;
-- repository-controlled operations are unavailable after Stage 1 until Stage 6 restores VM-backed routing;
-- after Stage 6, repository-controlled operations execute inside the bound repository VM;
+- repository-controlled operations execute only inside the bound repository VM after Stage 6;
 - unknown operations default to repository-controlled.
 
 Controllers supply only bounded schema parameters, never raw shell/host argv/host paths/provider targets.
@@ -229,7 +228,7 @@ Host inventory covers control-plane/provider prerequisites:
 
 Repository toolchains are discovered/used inside the guest environment after VM restoration. Guest tool observations are bound to exact environment generation and remain untrusted planning evidence. Dynamic `tool.*` manifests/schema validation stays host-controlled, while actual repository-class probing/execution moves into the guest.
 
-During the no-provider interval, repository-class probes requiring execution are unavailable rather than redirected to host tools.
+Without a ready routed environment, repository-class probes requiring execution are unavailable rather than redirected to host tools.
 
 ## Verification and evidence
 
@@ -256,9 +255,7 @@ Stage 1 additionally requires cheap no-provider, fake-provider, dependency/remov
 
 DB-011 keeps release integrity, runtime artifact identity, activation, health checking, and last-known-good rollback on the trusted host.
 
-Candidate-controlled preflight/tests are untrusted executable code. Stage 1 disables/removes the legacy host-sandbox candidate execution path. Until Stage 6 provides a VM validation environment, candidate-controlled execution is unavailable/fail-closed while DB-011 identity/rollback rules remain intact.
-
-Stage 6 restores candidate execution through a provider-native VM validation environment: Hyper-V on Windows, KVM/QEMU/libvirt on Linux.
+Candidate-controlled preflight/tests are untrusted executable code. Stage 1 removed the legacy host-sandbox candidate path. Stage 6 routes those checks through one local provider-native VM validation environment while DB-011 identity/rollback rules remain intact; absence fails closed.
 
 Candidate networking may be available; host secrets/control state are not.
 

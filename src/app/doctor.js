@@ -8,10 +8,13 @@ import { operationSecurityDescription } from '../runtime/deterministic-operation
 import { ToolInventoryService } from '../runtime/tool-inventory.js';
 import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
 import { profileSecurityDescription } from '../runtime/profile-security.js';
-import { UnavailableRepositoryExecution, assertRepositoryExecutionContract } from '../runtime/repository-execution.js';
+import { assertRepositoryExecutionContract } from '../runtime/repository-execution.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { GitClient } from '../git/git-client.js';
 import { resolveGitHubCredential, publicGitHubCredentialStatus } from '../github/auth-provider.js';
+import { normalizeEnvironmentFoundationStatus } from '../runtime/environment-foundation.js';
+import { createEnvironmentFoundation } from './environment-foundation.js';
+import { createRepositoryExecution } from './repository-execution.js';
 
 async function describeProfile(name, raw, { source, allowUncontainedTools, repositoryExecutionStatus }) {
   const profile = validateToolProfile(name, raw, { allowUncontainedTools });
@@ -25,7 +28,10 @@ export async function doctor(config, {
   probeCoreCapabilities = true,
   env = process.env,
   repositoryExecution = null,
+  environmentFoundation = null,
+  probeEnvironmentFoundation = null,
 } = {}) {
+  if (probeEnvironmentFoundation != null && typeof probeEnvironmentFoundation !== 'boolean') throw new TypeError('probeEnvironmentFoundation must be boolean or null');
   const workspace = new WorkspacePolicy(config.workspace);
   const workspaceRoot = await workspace.ensureRoot();
   await mkdir(config.state.directory, { recursive: true, mode: 0o700 });
@@ -33,9 +39,23 @@ export async function doctor(config, {
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
   const execution = repositoryExecution == null
-    ? new UnavailableRepositoryExecution({ reason: 'repository execution is intentionally unavailable until VM Stage 6' })
+    ? await createRepositoryExecution({
+        stateDirectory: config.state.directory,
+        env,
+        rootFor: async () => { throw new Error('doctor inspection does not open an execution source'); },
+        listPaths: async () => { throw new Error('doctor inspection does not enumerate execution source'); },
+        resolveSubject: async () => { throw new Error('doctor inspection does not resolve an execution subject'); },
+        resolveTool: async () => { throw new Error('doctor inspection does not resolve an execution tool'); },
+      })
     : assertRepositoryExecutionContract(repositoryExecution);
   const repositoryExecutionStatus = execution.inspect();
+  const shouldProbeEnvironmentFoundation = probeEnvironmentFoundation ?? probeCoreCapabilities;
+  let environmentFoundationStatus = null;
+  if (environmentFoundation != null) environmentFoundationStatus = normalizeEnvironmentFoundationStatus(await environmentFoundation.inspect());
+  else if (shouldProbeEnvironmentFoundation) {
+    const foundation = await createEnvironmentFoundation({ stateDirectory: config.state.directory });
+    environmentFoundationStatus = normalizeEnvironmentFoundationStatus(await foundation.inspect());
+  }
 
   const builtIns = builtInToolProfiles();
   for (const name of Object.keys(builtIns)) if (Object.hasOwn(config.tools, name)) throw new Error(`local tool profile name ${name} is reserved by DevBridge`);
@@ -97,6 +117,7 @@ export async function doctor(config, {
     toolInventory,
     capabilities: {
       repositoryExecution: repositoryExecutionStatus,
+      environmentFoundation: environmentFoundationStatus,
       core: {
         controllerPlans: { enabled: config.execution.controllerPlansEnabled, repositoryExecution: repositoryExecutionStatus, operations },
         toolchains,

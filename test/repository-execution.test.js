@@ -71,6 +71,15 @@ test('transfer argument references are checked against execution-owned transfer 
   assert.throws(() => normalizeRepositoryExecutionRequest(malformed), /direction does not match output/u);
 });
 
+test('the execution contract rejects credential-shaped environment inputs', () => {
+  for (const name of ['GITHUB_TOKEN', 'API_KEY', 'AWS_ACCESS_KEY_ID', 'SERVICE_PASSWORD', 'SSH_AUTH_SOCK', 'GIT_ASKPASS']) {
+    assert.throws(() => normalizeRepositoryExecutionRequest(request({ environment: { [name]: 'not-admitted' } })), /reserved by the execution boundary/u);
+  }
+  assert.deepEqual(normalizeRepositoryExecutionRequest(request({ environment: { CI: '1', DEVBRIDGE_RUN_ID: 'run-1' } })).environment, {
+    CI: '1', DEVBRIDGE_RUN_ID: 'run-1',
+  });
+});
+
 test('transfers depend on read/write ports rather than a filesystem transport', () => {
   const badInput = request();
   badInput.transfers[0] = { name: 'context', direction: 'input', port: { path: '/tmp/context.json' } };

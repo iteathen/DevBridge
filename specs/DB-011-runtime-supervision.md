@@ -2,7 +2,7 @@
 
 Status: active
 
-Implementation status: v0.1 separates alpha mutable-channel development updates from signed immutable production release subjects and preserves exact runtime artifact identity/rollback state. Stage 1 removed candidate-controlled host execution. During the Stage-1-to-Stage-5 no-provider interval, static release/signature/artifact checks still run on the trusted host, but any candidate validation step that would execute candidate code fails closed before daemon drain or activation. Stage 6 restores candidate-controlled validation through the DB-020 repository/VM execution boundary.
+Implementation status: v0.1 separates alpha mutable-channel development updates from signed immutable production release subjects and preserves exact runtime artifact identity/rollback state. Stage 1 removed candidate-controlled host execution. Stage 6 restores candidate preflight/tests through the DB-020 repository/VM execution boundary, rechecks the exact artifact afterward, and still fails closed before drain/activation when no validation route is ready.
 
 ## Goal
 
