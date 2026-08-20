@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { LibvirtPersistentEnvironment } from '../src/runtime/providers/libvirt-persistent-environment.js';
@@ -83,7 +83,7 @@ test('libvirt persistent adapter creates explicit qcow2 lineage and a provider-o
     assert.equal(created.compatible, true);
     assert.equal(created.storage.sourceIdentity, source.identity);
     const create = fake.calls.find((call) => call.executable === 'qemu-img' && call.arguments[0] === 'create');
-    assert.deepEqual(create.arguments.slice(0, 7), ['create', '-f', 'qcow2', '-F', 'qcow2', '-b', sourcePath]);
+    assert.deepEqual(create.arguments.slice(0, 7), ['create', '-f', 'qcow2', '-F', 'qcow2', '-b', await realpath(sourcePath)]);
     const domain = [...fake.domains.values()][0];
     assert.match(domain.xml, /<backingStore type="file"><format type="qcow2"\/><source file=/u);
     assert.match(domain.xml, /<owner xmlns="urn:devbridge:ownership">devbridge-owned:/u);
