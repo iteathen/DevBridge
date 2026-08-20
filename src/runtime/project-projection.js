@@ -79,7 +79,7 @@ async function scanTree(root, { proposal = false } = {}) {
     entries.sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
       const relative = parentRelative ? path.join(parentRelative, entry.name) : entry.name;
-      if (OMITTED_ROOT_NAMES.has(entry.name)) {
+      if (OMITTED_ROOT_NAMES.has(entry.name.toLowerCase())) {
         if (!proposal && parentRelative === '') continue;
         throw new PolicyError(`project proposal contains protected path ${relative}`);
       }
