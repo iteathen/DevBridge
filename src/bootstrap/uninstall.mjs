@@ -96,17 +96,18 @@ async function removeProviderArtifacts(entries, foundationFactory) {
   return { removed, preserved };
 }
 
-function schedulePathRemoval(targets, { output }) {
+function schedulePathRemoval(targets, { output, prune = [] }) {
   const unique = [...new Set(targets.map((target) => path.resolve(target)))].sort((left, right) => right.length - left.length);
-  const script = "const fs=require('node:fs');const paths=JSON.parse(process.argv[1]);setTimeout(()=>{for(const p of paths){try{fs.rmSync(p,{recursive:true,force:true,maxRetries:5,retryDelay:200});}catch{}}},500);";
-  const child = spawn(process.execPath, ['-e', script, JSON.stringify(unique)], {
+  const emptyDirectories = [...new Set(prune.map((target) => path.resolve(target)))].sort((left, right) => right.length - left.length);
+  const script = "const fs=require('node:fs');const paths=JSON.parse(process.argv[1]);const prune=JSON.parse(process.argv[2]);setTimeout(()=>{for(const p of paths){try{fs.rmSync(p,{recursive:true,force:true,maxRetries:5,retryDelay:200});}catch{}}for(const p of prune){try{fs.rmdirSync(p);}catch{}}},500);";
+  const child = spawn(process.execPath, ['-e', script, JSON.stringify(unique), JSON.stringify(emptyDirectories)], {
     detached: true,
     stdio: 'ignore',
     shell: false,
     windowsHide: true,
   });
   child.unref();
-  output.write(`${JSON.stringify({ scheduledRemoval: unique }, null, 2)}\n`);
+  output.write(`${JSON.stringify({ scheduledRemoval: unique, emptyDirectoryPrune: emptyDirectories }, null, 2)}\n`);
 }
 
 export async function uninstall(paths, argv, {
@@ -140,7 +141,7 @@ export async function uninstall(paths, argv, {
     if (existsSync(target)) targets.push(target);
   }
   if (purge) targets.push(paths.installManifest ?? path.join(paths.home, 'install-manifest.json'));
-  scheduleFn(targets, { output });
+  scheduleFn(targets, { output, prune: [path.join(paths.home, 'bin'), paths.home] });
   if (preservedPaths.length > 0) output.write(`${JSON.stringify({ preservedPaths }, null, 2)}\n`);
   return { mode, provider, preservedPaths, scheduledPaths: targets };
 }

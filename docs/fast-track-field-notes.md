@@ -345,6 +345,7 @@ Observed problems:
 - A custom DevBridge home initially copied literal default-home state/workspace paths from the example, which could make an isolated test installation share mutable roots with the default installation.
 - Foreground supervision exposed a console by default even though ordinary work is unattended.
 - Removal had no durable ownership inventory, so a convenient purge would have risked deleting operator/foreign VMs, images, state roots, or shared provider infrastructure.
+- The first published purge smoke removed every manifest target but left empty launcher/home directories, showing that complete uninstall needs safe parent pruning without treating a parent as recursive deletion authority.
 
 Disposable solution and rationale:
 
@@ -356,6 +357,7 @@ Disposable solution and rationale:
 - Fresh config materialization replaces only the canonical example's default state/workspace values with roots under the selected DevBridge home; existing operator config is not retargeted.
 - No-command launch defaults to headless `start`; `daemon` is the explicit foreground mode, `logs` returns a bounded file tail, and VM console display remains a separate exact operator action.
 - `devbridge/install-manifest-v1` records exact managed paths, environment identity + repository subject + state root, and referenced image identities. App-only uninstall preserves policy/state/VMs. Purge requires exact `REMOVE`, re-observes environment subject/ownership/compatibility, protects images referenced by retained environments, never treats an adopted base as installer-created, and reports external state/workspace roots for separate cleanup.
+- The deferred removal helper attempts non-recursive pruning of the canonical launcher/home parents only after exact targets are removed. Any unknown remaining entry preserves the parent.
 - The former singular repository config is migrated once to the plural key with an exact backup. This compatibility transition is bounded bootstrap behavior, not a retained alternate runtime/config surface.
 
 Main-branch requirements exposed:

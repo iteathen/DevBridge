@@ -165,15 +165,17 @@ test('install manifest is the uninstall path allowlist and app-only preserves co
   ]);
   assert.equal((await readInstallManifest(paths)).entries.length, 3);
   let scheduled = null;
+  let pruned = null;
   const result = await uninstall(paths, ['uninstall', '--app-only', '--confirm', 'REMOVE'], {
     input: { isTTY: false },
     output: outputPort(),
-    scheduleFn: (targets) => { scheduled = targets; },
+    scheduleFn: (targets, options) => { scheduled = targets; pruned = options.prune; },
   });
   assert.equal(result.mode, 'app-only');
   assert.deepEqual(scheduled, [runtime]);
   assert.equal(scheduled.includes(config), false);
   assert.equal(scheduled.includes(state), false);
+  assert.deepEqual(pruned, [path.join(home, 'bin'), home]);
 });
 
 test('purge removes only reverified environments and preserves referenced images and external roots', async () => {

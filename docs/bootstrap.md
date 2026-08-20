@@ -110,7 +110,7 @@ node ~/.devbridge/bin/devbridge.mjs uninstall --app-only --confirm REMOVE
 node ~/.devbridge/bin/devbridge.mjs uninstall --purge --confirm REMOVE
 ```
 
-App-only removal preserves configuration, state, setup policy, and VMs. Purge re-observes exact provider ownership/compatibility before deleting a VM. Referenced base images are retained unless the manifest proves the installer created them, images still referenced by retained environments are protected, and external state/workspace roots are reported for separate cleanup rather than recursively deleted.
+App-only removal preserves configuration, state, setup policy, and VMs. Purge re-observes exact provider ownership/compatibility before deleting a VM. Referenced base images are retained unless the manifest proves the installer created them, images still referenced by retained environments are protected, and external state/workspace roots are reported for separate cleanup rather than recursively deleted. After exact targets are gone, canonical parent directories are pruned only when empty; unknown contents prevent pruning.
 
 ## Runtime update authority
 
