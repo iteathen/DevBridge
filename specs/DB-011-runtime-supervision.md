@@ -2,35 +2,33 @@
 
 Status: active
 
-Implementation status: v0.1 separates alpha mutable-channel development updates from signed immutable production release subjects. Current main executes candidate-controlled validation through the transitional verified Linux/Bubblewrap host sandbox. DB-020 is normative for the target boundary: candidate-controlled code executes through VM isolation while release, artifact, activation, rollback, and daemon authority remain on the trusted host.
+Implementation status: v0.1 separates alpha mutable-channel development updates from signed immutable production release subjects. Candidate-controlled preflight/tests run only behind the verified untrusted-code sandbox; the exact tested artifact digest is journaled and rechecked before activation.
 
 ## Goal
 
-A locally started DevBridge instance must remain useful as a durable bridge without requiring the operator to restart it after ordinary runtime fixes or test-build updates, while never confusing convenient self-hosting with production release integrity or allowing an untrusted candidate to inherit supervisor authority.
+A locally started DevBridge instance must remain useful as a durable bridge without requiring the operator to restart it after ordinary DevBridge runtime fixes or test-build updates, while never confusing convenient self-hosting with production release integrity.
 
 ## Ownership split
 
-The bootstrap is a deliberately small trusted boundary around a mutable daemon runtime.
+The bootstrap is a deliberately small supervisor boundary around the mutable daemon runtime.
 
 - Stage 0 owns only fixed DevBridge source bootstrap, managed-checkout shape verification, and transfer to the managed secure bootstrap.
-- The secure supervisor owns local release policy, trusted update discovery, static release-integrity verification, candidate execution-environment admission, daemon lifecycle, runtime activation evidence, rollback, and unexpected-child restart.
-- The daemon owns task polling, durable run coordination, feedback/decisions, managed repositories/environments, candidate sealing, and GitHub status reporting.
-- Runtime candidates remain untrusted executable inputs before acceptance and cannot update DevBridge supervisor/control state merely because they are the next version.
-- Remote task/feedback/decision text cannot select the runtime repository, update ref, release mode, signing key/manifest, executable, local runtime path, VM-management target, or update policy.
+- The secure supervisor owns local release policy, trusted update discovery, static release-integrity verification, candidate sandbox verification, daemon lifecycle, runtime activation evidence, rollback, and unexpected-child restart.
+- The daemon owns task polling, durable run coordination, feedback/decisions, managed workspaces, coding-tool invocation, candidate sealing, and GitHub status reporting.
+- Coding tools and runtime candidates remain untrusted proposal/code inputs before activation acceptance and cannot update DevBridge supervisor/control state.
+- Remote task/feedback/decision text cannot select a runtime repository, update ref, release mode, signing key/manifest, executable, local runtime path, or update policy.
 
 ## Release-integrity modes
 
 ### Development / testing
 
-The default development mode follows the locally compiled-in mutable testing channel. This is explicit alpha/self-hosting convenience, not production release integrity.
+The default development mode follows the locally compiled-in mutable testing channel. This is an explicit alpha/self-hosting convenience, not production release integrity.
 
-Even in development, a **new candidate's own code** must not execute directly with supervisor authority. Candidate-controlled preflight/tests require the verified untrusted-code execution boundary.
-
-Current implementation uses the legacy host sandbox where supported. The DB-020 target uses a VM validation environment. Until either the currently supported transitional provider or the future VM provider is actually verified for the running implementation, automatic candidate activation fails closed and the current runtime remains available.
+Even in development, a **new update candidate's** own preflight/tests MUST NOT execute directly with supervisor authority. Candidate-controlled validation uses the verified repository-code sandbox. If that sandbox is unavailable, automatic candidate activation fails closed and the current runtime remains running.
 
 ### Production
 
-Production mode must be explicit local operator policy. v0.1 requires:
+Production mode MUST be explicit local operator policy. v0.1 requires:
 
 - the stable channel only;
 - a local bounded `devbridge/release-manifest-v1`;
@@ -41,86 +39,79 @@ Production mode must be explicit local operator policy. v0.1 requires:
 - exact package version;
 - exact platform-neutral runtime artifact SHA-256.
 
-The mutable stable branch is transport, not production authority. It may yield a candidate only while its observed head equals the independently signed release head. Branch movement without a matching valid signed subject must not activate new code.
+The mutable stable branch is transport, not production authority. It may yield a candidate only while its observed head equals the independently signed release head. Branch movement without a matching valid signed subject MUST NOT activate new code.
 
-Missing/inaccessible signing material, invalid signature, wrong repository/head/version, runtime digest mismatch, or unavailable/unverified candidate execution isolation fails closed. Production never silently degrades to development mode.
+Missing/inaccessible signing material, invalid signature, wrong repository/head/version, runtime digest mismatch, or unverified candidate sandbox MUST fail closed. Production mode MUST NOT silently degrade to development mode.
 
 ## Runtime artifact identity
 
 DevBridge computes a control-owned SHA-256 over the exact runtime artifact using deterministic sorted relative paths and object types/content. The root `.git` administration directory is excluded; runtime directories, file paths+bytes, and symlink path+target participate. Host timestamps and platform-specific permission bits do not.
 
-The candidate artifact identity is host authority. A validation VM receives an exact candidate subject/copy bound to that digest; guest output does not redefine it.
+The artifact digest is computed before candidate-controlled validation and again afterward. Any mutation caused by candidate preflight/tests invalidates the candidate even if those commands report success.
 
-Immediately before activation, the host recomputes the candidate artifact digest and requires equality with the accepted subject. If validation architecture ever permits candidate code to mutate host candidate bytes, the digest must also be recomputed after validation and any mutation rejects the candidate. The simpler VM design should avoid giving the guest a writable host candidate mount at all.
-
-Activation evidence records the exact candidate head, artifact SHA-256, release-integrity mode/status, manifest digest/key identifier when applicable, and execution-environment verification identity. The exact artifact accepted is the exact artifact activated.
+Activation evidence records the candidate head, artifact SHA-256, release-integrity mode/status, manifest digest/key identifier when applicable, and sandbox evidence. The exact artifact accepted after validation is the exact artifact activated.
 
 ## Candidate validation boundary
 
 Release-integrity verification is separate from candidate execution.
 
-Supervisor-authority work before candidate execution is limited to fixed/control-owned parsing, signature verification, Git/origin/head checks, expected runtime-shape checks, artifact digest computation, and provisioning/admission of the locally owned execution environment. Candidate modules are not imported on the trusted host to prove their own trustworthiness.
+Supervisor-authority work before candidate execution is limited to fixed/control-owned parsing, signature verification, Git/origin/head checks, expected runtime-shape checks, and artifact digest computation. Candidate modules are not imported to prove their own trustworthiness.
 
-The target DB-020 candidate-validation flow executes candidate-controlled preflight/tests in a VM trust domain. That VM may be dedicated/reseedable rather than the long-lived per-project environment, but it must preserve the same security partition:
+Candidate-controlled preflight/tests MUST run behind the same verified outer OS isolation architecture used for repository code. The validation sandbox MUST provide at most:
 
-- candidate bytes and bounded validation inputs may enter the guest;
-- GitHub/SSH/coordination/release/signing/daemon/hypervisor-management credentials and control state stay host-only;
-- current/last-known-good runtime siblings are not arbitrary guest mounts;
-- the guest cannot name arbitrary host paths or mutate activation state through the bridge;
-- guest networking may be available by default under DB-020, so confidentiality depends on secret absence rather than an assumed network-denied namespace;
-- result/test evidence returns as untrusted data bound to the exact candidate/environment subject.
+- candidate runtime project bytes;
+- bounded scratch/TMP;
+- locally approved system/toolchain reads;
+- a minimal fixed environment.
 
-The current Bubblewrap candidate path remains transitional implementation until VM Stages 6-8 replace and qualify it. Presence of Hyper-V, a VM name, or a configured image is not sufficient evidence.
+It MUST deny/unexpose:
 
-Candidate `doctor` remains a **post-acceptance health check**, not pre-acceptance release-integrity evidence.
+- DevBridge operator config and activation/control state;
+- current/last-known-good runtime siblings except the candidate itself;
+- daemon lock/stop authority;
+- GitHub CLI/SSH/control credentials and token variables;
+- Git administrative writes;
+- network egress in the v0.1 validation profile.
+
+Provider verification is mandatory. Unsupported hosts fail closed for candidate-controlled validation. The current v0.1 provider is Bubblewrap on Linux.
+
+Candidate `doctor` is a **post-acceptance health check**, not pre-acceptance release-integrity evidence. The supervisor may execute accepted candidate control-plane code only after the exact release subject has passed static integrity and sandboxed validation.
 
 ## Safe update sequence
 
-The supervisor must keep last-known-good available while a candidate is untrusted. The target sequence is:
+The supervisor MUST keep the last-known-good runtime available while a candidate is untrusted. The sequence is:
 
-1. observe local update/release policy and current exact runtime identity;
-2. resolve the candidate subject: mutable testing head in development, or signed immutable subject plus matching stable transport in production;
-3. materialize candidate bytes separately without draining the current daemon;
-4. verify origin/ref/head and clean runtime shape with supervisor-owned logic;
-5. compute exact candidate artifact SHA-256;
-6. in production verify the local manifest signature and require signed repository/head/version/digest equality before candidate code executes;
-7. verify/admit the required candidate execution environment (legacy sandbox during migration; DB-020 VM after cutover);
-8. transfer/execute the exact candidate validation subject inside that untrusted environment without host control credentials/state;
-9. collect bounded validation evidence and require success for the exact candidate/environment identity;
-10. recompute/reconfirm host candidate artifact identity and reject unexplained mutation/drift;
-11. persist bounded candidate-validation evidence while the current daemon remains available;
-12. only then send the current daemon's token-bound cooperative stop request;
-13. wait for the active cycle to reach its normal safe boundary and exit;
-14. immediately before spawn, recheck the runtime artifact digest still equals the accepted digest;
-15. activate and launch the exact accepted candidate;
-16. require the health window plus post-acceptance `doctor`;
-17. mark healthy only after those checks pass;
-18. on activation/health failure restore or retain the previous exact runtime and preserve evidence;
-19. if both candidate and rollback/runtime recovery are uncertain, stop rather than widening authority.
+1. observe the local update policy and current exact runtime identity;
+2. resolve a candidate subject (mutable testing head in development; signed immutable subject in production);
+3. materialize candidate bytes in a separate runtime-candidate location without draining the current daemon;
+4. verify managed origin/ref/head and clean runtime shape using supervisor-owned logic;
+5. compute candidate artifact SHA-256;
+6. in production verify the local manifest signature and require signed head/version/digest equality before candidate code executes;
+7. verify the OS candidate-validation provider;
+8. run candidate preflight/tests inside the sandbox with network denied and control state/credentials absent;
+9. recompute artifact SHA-256 and reject any changed artifact;
+10. persist bounded candidate-validation evidence while the current daemon remains available;
+11. only then send the current daemon's token-bound cooperative stop request;
+12. wait for the active cycle to reach its normal safe boundary and child to exit;
+13. activate the exact tested candidate artifact;
+14. launch candidate daemon and require the health window plus `doctor`;
+15. record healthy only after health checks pass;
+16. on activation/health failure restore or retain the previous exact runtime and preserve evidence;
+17. if both candidate and rollback/runtime recovery are uncertain, stop rather than widening authority.
 
-The supervisor must not overwrite files beneath a live daemon.
+The supervisor MUST NOT overwrite files beneath a live daemon.
 
-If an existing daemon does not stop through the verified token-bound cooperative path after the bounded grace window, the supervisor fails closed. It must not force-kill an unverified process or delete ownership state as a shortcut.
-
-## Candidate networking
-
-The earlier v0.1 host-sandbox design used a network-denied validation profile. DB-020 changes the target repository/candidate isolation model: an untrusted VM may have ordinary network access.
-
-This is safe only because candidate validation receives no host secrets or host publication/control authority. A malicious candidate may contact the network and exfiltrate anything placed in its guest environment, so validation inputs must be chosen accordingly.
-
-If production policy requires offline/restricted validation for a particular release class, that may be an additional local policy, not the foundational containment claim and not permission to inject credentials when networking is disabled.
+If an existing daemon does not stop through the verified token-bound cooperative control path after the bounded grace window, the supervisor MUST fail closed. It MUST NOT force-kill an unverified process or delete ownership state as a shortcut.
 
 ## Crash behavior
 
-A clean daemon exit without a pending supervisor-driven update is treated as intentional stop and the supervisor exits.
+A clean daemon exit without a pending supervisor-driven update is treated as an intentional stop and the supervisor exits.
 
-An unexpected nonzero child exit is infrastructure failure. The supervisor may restart the same exact accepted runtime after bounded local backoff. It must not interpret a crash as permission to switch channels, accept an unsigned release, broaden capabilities, delete VM/runtime state, or discard worktrees.
-
-Interrupted VM validation is reconciled under DB-009 using exact candidate, validation-environment, and operation identities before repeating expensive work. DB-019 exact valid evidence should be reused when its identity remains applicable.
+An unexpected nonzero child exit is infrastructure failure. The supervisor may restart the same exact accepted runtime after bounded local backoff. It MUST NOT interpret a crash as permission to switch channels, accept an unsigned release, broaden capabilities, delete state, or discard worktrees.
 
 ## Control commands
 
-`status` and `stop` are inspection/control operations and must not update the managed runtime underneath an active daemon.
+`status` and `stop` are inspection/control operations and MUST NOT update the managed runtime underneath an active daemon.
 
 `stop` uses the daemon's token-bound stop contract. `restart` remains an explicit operator maintenance command.
 
@@ -128,29 +119,27 @@ Production invocations still require the installed runtime to satisfy the local 
 
 ## Operator experience invariant
 
-Development/testing should retain a start-once workflow once the required local execution provider is installed and verified. Production trades release-pipeline ceremony for independently signed immutable subjects; ordinary remote tasks do not participate in release authority.
+Development/testing should retain the start-once workflow when the local sandbox provider is available. Production trades some release-pipeline ceremony for an independently signed immutable subject; ordinary remote tasks do not participate in that release authority.
 
-VM Stage 8 owns Hyper-V/setup/reconfiguration UX. Until that lands, documentation must distinguish the DB-020 target from current Bubblewrap-only candidate execution rather than implying Windows VM validation already works.
+The live bootstrap and runtime identity are DevBridge-only. Product-rename compatibility, old launcher/config namespaces, and pre-supervisor rename takeover behavior are outside the active contract.
 
 ## Required tests
 
-Tests/qualification must cover at least:
+Tests MUST cover at least:
 
-- development mode is explicit/observable mutable-channel alpha behavior;
+- development mode is explicit/observable as mutable-channel alpha behavior;
 - production requires stable channel plus local manifest/public key;
 - valid Ed25519 manifest binds exact repository/head/version/artifact SHA-256;
 - manifest/signature/head/version/artifact tampering fails closed before candidate execution;
-- unsigned mutable stable movement does not become a production candidate;
-- candidate validation is denied when no verified execution provider/environment exists;
-- a malicious candidate cannot obtain host control secrets, activation/current-runtime authority, GitHub/SSH/coordination/release credentials, authoritative Git state, or VM-management authority;
-- VM validation binds exact candidate digest plus provider/image/environment/operation identity;
-- guest networking does not imply host credential or publication authority;
-- exact accepted/tested artifact SHA-256 is recorded and is the exact artifact activated;
-- trusted head change drains the daemon only after candidate validation succeeds;
+- unsigned mutable stable-branch movement does not become a production candidate;
+- candidate validation is denied when no verified sandbox provider exists;
+- malicious candidate validation cannot read a control secret, mutate activation/current-runtime state, inherit GitHub credentials, write Git administration, or reach forbidden network targets;
+- candidate validation mutation changes the artifact digest and prevents activation;
+- exact tested artifact SHA-256 is recorded with candidate validation and healthy activation evidence;
+- trusted head change requests daemon drain only after candidate validation succeeds;
 - failed candidate validation never drains the healthy current daemon;
 - successful activation runs post-acceptance health/doctor;
 - failed activation/health restores last-known-good exact runtime;
-- interrupted validation can recover/reconcile without rerunning expensive tests when exact DB-019 evidence remains valid;
 - unexpected daemon crash restarts the same runtime with backoff;
 - clean daemon stop exits the supervisor;
 - operator stop outranks pending update/restart behavior;
