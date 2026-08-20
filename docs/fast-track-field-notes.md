@@ -305,6 +305,56 @@ Main-branch requirement exposed:
 - Stage 7 should qualify a persistent authenticated bridge transport as a first-class provider connection stud, including reconnect/reconcile, liveness, bounded buffering, cancellation, hostile response, target mismatch, lease loss, VM save/resume, and daemon restart behavior.
 - Ownership/provider observation should be cached only against exact identity and a short validity window, with forced re-observation at security-sensitive boundaries. Avoid a PowerShell/import/SSH handshake tax per 16 KiB frame.
 
+## Production-work coverage audit
+
+The fast track has now exposed and recorded the following production work. The temporary solution column describes what made this disposable branch usable; it is not permission to move the shortcut to `main`.
+
+| Problem exposed | Disposable solution/evidence | Production owner and acceptance direction |
+| --- | --- | --- |
+| Hyper-V installed but unavailable to the runner account | Operator group membership plus reboot, followed by `Get-VMHost` proof | [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): discover feature, service, account authorization, elevation, reboot, and re-entry separately |
+| No compatible prepared Hyper-V base image | Build from checksum-verified Ubuntu media, install a checksum-pinned Node runtime and guest helpers, then publish through the Stage 2 image library | [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): source-specific, restartable acquisition/build/generalization with provenance and free-space checks |
+| Ubuntu seed alone still required interactive confirmation | Derive fixed-layout media with `autoinstall` on both GRUB entries and zero menu delay; prove it with a clean headless install | [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): supported no-prompt media construction and qualification, not an opaque local patch |
+| Installer and first-boot phases have different account availability | Defer user-owned directories/services to first-boot cloud-init | [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): explicit, restartable phase contracts and repair behavior |
+| Ordinary Hyper-V management authority cannot configure host IP/NAT | Keep the incomplete owned plan and explicitly use the foreign Default Switch for the fast topology | [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): bounded elevated owned-network setup, conflict checks, DHCP/static-seed behavior, and post-change connectivity proof |
+| Fresh guests need a trusted SSH host-key enrollment return path | Retain one key for the disposable repository clone; use exact-IP trust-on-first-use only for the clearly owned probe | [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): unique per-environment identity with authenticated enrollment bound to provider/environment identity |
+| VM startup/console behavior could consume time or the operator desktop | Keep the active environment hot; headlessly resume Saved/Paused state; make VMConnect an explicit `Show` action | [Stage 7 #115](https://github.com/iteathen/DevBridge/issues/115) and [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): fenced idle/save/resume policy and operator-only console display |
+| Position-named file parts invalidated most of the guest cache | File-tree protocol `1.1.0` uses digest-named parts and a bounded guest missing-part inventory | [Stage 7 #115](https://github.com/iteathen/DevBridge/issues/115): adversarial cache/digest/restart qualification plus bounded garbage collection |
+| One SSH/guest-process startup per bridge frame dominated work | Use one bounded ordered line exchange over a pinned SSH process and stage the exact current helper through the existing trusted bridge | [Stage 7 #115](https://github.com/iteathen/DevBridge/issues/115): provider-neutral persistent transport with reconnect, cancellation, hostile-response, save/resume, fence-loss, and daemon-restart evidence |
+| Concurrent operation creation and Windows atomic replacement were racy | Exclusive initial journal creation, bounded transient rename retry, stronger liveness classification, and terminal failure persistence | [Stage 7 #115](https://github.com/iteathen/DevBridge/issues/115): generic failure/recovery qualification independent of provider or host OS |
+| A usable local Codex adapter could be mistaken for automatic authority | `defaultTool: null`, strict unknown-tool rejection, and inventory eligibility only for the exact operator-configured default | [Stage 7 #115](https://github.com/iteathen/DevBridge/issues/115): prove remote direct request and local opt-in are the only selection paths |
+| PowerShell progress and prefix arithmetic hid/broke the real provider failure | Suppress progress, retain the actionable tail of bounded errors, and use unsigned-safe IPv4 mask arithmetic | [Stage 7 #115](https://github.com/iteathen/DevBridge/issues/115): real provider/error-path tests rather than mock-only confidence |
+| Initial fast recovery used a direct-host path before VM readiness | Keep that implementation disabled and mutually exclusive with the VM topology | [Stage 9 #117](https://github.com/iteathen/DevBridge/issues/117): delete it with the disposable branch and prove repository-wide absence of host fallback |
+| Windows/OneDrive can retain locked stale worktree metadata directories | Preserve the failure as evidence and avoid broad/destructive cleanup | [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): exact owned cleanup with Windows lock diagnostics and recoverable re-entry |
+
+### Evidence boundaries and unresolved work
+
+The current evidence must not be overstated:
+
+- Real-provider evidence exists only for Windows/Hyper-V with one Ubuntu profile. Linux KVM/QEMU/libvirt remains unqualified and is a first-class [Stage 7 #115](https://github.com/iteathen/DevBridge/issues/115) requirement.
+- The live GitHub queue poll was empty. Direct Stage 6 execution, deterministic tests, an explicit Codex smoke, and daemon lifecycle all passed, but a real trusted remote task moving through controller intent, exact VM, candidate return, host verification, and isolated-branch publication still needs an end-to-end canary.
+- Save/resume recovery was proven by starting a new runtime after resume. An already-open persistent transport interrupted by save, provider restart, network change, or daemon restart still needs explicit reconcile tests; automatic replay of an ambiguous frame must remain forbidden.
+- The owned NAT setup remains incomplete because host TCP/IP/NAT mutation required elevation. The Default Switch route is usable fast-track evidence, not production network readiness.
+- The published base intentionally retained one SSH host identity. The clean probe proved unique-key generation, but authenticated enrollment is still absent.
+- The immutable image contains the earlier one-shot bridge helper. Runtime staging of the current helper avoids a compatibility parser, but production needs versioned image/helper compatibility and deliberate image migration.
+- Cloud-init reports disabled after the installed image's first boot. It cannot currently be claimed as a supported repair/reconfiguration mechanism.
+- The content-addressed cache still contains now-unreachable positional blobs from the earlier protocol. They require exact cache-owned garbage collection, not legacy parsing.
+- The unattended probe and incomplete owned-network plan remain preserved host artifacts. Cleanup must validate their exact ownership and must not touch the three foreign VMs or shared Default Switch.
+- The fast scripts assume this Windows workstation's available PowerShell, Hyper-V, OpenSSH, IMAPI, and media-extractor surface. Stage 8 must discover/supply prerequisites and keep provider-specific commands behind the owning adapter.
+- Current VM scripts download installer packages/security updates and the checksum-pinned Node archive during image construction. Production qualification must record exact inputs and distinguish cryptographic identity from mutable network availability.
+- At this documentation checkpoint, the fast implementation remains an uncommitted local working-tree candidate; the remote branch contains the durable notes, not yet the executable changes. The passing tests therefore describe that local candidate and are not commit-bound DB-019 publication evidence. Code publication requires an exact scoped commit and validation/evidence bound to that identity.
+
+### Required disposal conditions
+
+Before the disposable branch is thrown away or any result is promoted:
+
+1. preserve the final field notes and exact test/artifact identities on the remote repository;
+2. move only reviewed generic corrections through isolated production branches—never copy the direct-host topology or fast configuration wholesale;
+3. qualify the generic transfer, bridge durability, provider error handling, and opt-in tool-selection changes at their owning boundaries;
+4. complete Stage 7 evidence for both Hyper-V and KVM/libvirt before claiming the VM boundary production-ready;
+5. complete Stage 8 install, enrollment, networking, repair, lifecycle, and cleanup flows before presenting the fast scripts as supported setup;
+6. use Stage 9 to remove transitional/direct-host/cache/configuration scaffolding after the production path is proved;
+7. delete saved probe/network/cache artifacts only through exact ownership-checked operations.
+
 ## Current VM bring-up frontier
 
 Completed:
@@ -325,9 +375,11 @@ Completed:
 Next:
 
 1. Reconcile or leave clearly planned the incomplete owned NAT network; do not hide its degraded production readiness behind the Default Switch workaround.
-2. Remove unreachable positional guest cache blobs only through exact disposable-cache cleanup; retain no compatibility code.
-3. Decide whether the disposable unattended probe remains as restartable evidence or is removed through an exact owned-resource cleanup action.
-4. Convert the fast-track findings into scoped Stage 7/8 qualification and install/re-entry work on isolated production branches.
+2. Run one real trusted-task end-to-end canary through controller intent, the exact VM route, candidate return, host verification, and isolated-branch publication.
+3. Add the required Linux/KVM-QEMU-libvirt qualification path; do not treat Windows/Hyper-V success as provider-family completion.
+4. Remove unreachable positional guest cache blobs only through exact disposable-cache cleanup; retain no compatibility code.
+5. Decide whether the disposable unattended probe remains as restartable evidence or is removed through an exact owned-resource cleanup action.
+6. Convert the fast-track findings into scoped Stage 7/8 qualification and install/re-entry work on isolated production branches.
 
 ## Evidence already obtained
 
