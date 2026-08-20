@@ -1,9 +1,7 @@
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import process from 'node:process';
 import { PolicyError } from '../errors.js';
 import { normalizePlanPath } from '../run/controller-plan.js';
-import { resolveExecutable } from './executable-resolver.js';
 
 export const LOCAL_OPERATION_MANIFEST_PROTOCOL = 'devbridge/local-operation-manifest-v1';
 export const OPERATION_PARAMETER_SCHEMA_PROTOCOL = 'devbridge/operation-parameters-v1';
@@ -60,6 +58,17 @@ function validateExecutable(value) {
   return value;
 }
 
+function logicalToolIdentity(normalized) {
+  if (normalized.source.kind === 'help-synthesized') return normalized.source.command;
+  const candidate = path.isAbsolute(normalized.executable)
+    ? path.basename(normalized.executable)
+    : normalized.executable;
+  if (!SAFE_COMMAND.test(candidate)) {
+    throw new PolicyError('local operation manifest executable cannot produce a safe repository tool identity');
+  }
+  return candidate;
+}
+
 function validateValueDescriptor(raw, name) {
   const valueType = raw.valueType ?? 'string';
   if (!VALUE_TYPES.has(valueType)) throw new PolicyError(`${name}.valueType is unsupported`);
@@ -89,13 +98,11 @@ function validateArgument(raw, index) {
   const value = requireObject(raw, name);
   const kind = value.kind;
   if (!['literal', 'flag', 'option', 'positional'].includes(kind)) throw new PolicyError(`${name}.kind is unsupported`);
-
   if (kind === 'literal') {
     onlyKeys(value, new Set(['kind', 'value']), name);
     if (typeof value.value !== 'string' || !SAFE_LITERAL.test(value.value)) throw new PolicyError(`${name}.value is invalid`);
     return { kind, value: value.value };
   }
-
   if (kind === 'flag') {
     onlyKeys(value, new Set(['kind', 'param', 'flag']), name);
     return {
@@ -104,7 +111,6 @@ function validateArgument(raw, index) {
       flag: safeIdentifier(value.flag, `${name}.flag`, SAFE_FLAG),
     };
   }
-
   const allowed = new Set(['kind', 'param', 'required', 'repeat', 'maxItems', 'valueType', 'values']);
   if (kind === 'option') allowed.add('flag');
   onlyKeys(value, allowed, name);
@@ -141,7 +147,6 @@ export function validateLocalOperationManifest(raw) {
     if (params.has(arg.param)) throw new PolicyError(`local operation manifest duplicates parameter ${arg.param}`);
     params.add(arg.param);
   }
-
   const source = manifest.source == null ? { kind: 'operator' } : requireObject(manifest.source, 'local operation manifest source');
   onlyKeys(source, new Set(['kind', 'command', 'helpSha256']), 'local operation manifest source');
   if (!['operator', 'help-synthesized'].includes(source.kind)) throw new PolicyError('local operation manifest source.kind is invalid');
@@ -155,7 +160,6 @@ export function validateLocalOperationManifest(raw) {
   } else if (source.command != null || source.helpSha256 != null) {
     throw new PolicyError('operator local operation manifests must not claim synthesized source evidence');
   }
-
   return {
     protocol: LOCAL_OPERATION_MANIFEST_PROTOCOL,
     operation,
@@ -232,15 +236,9 @@ function materializeArgument(descriptor, raw, name) {
   return raw.map((value, index) => encodeValue(descriptor, value, `${name}[${index}]`));
 }
 
-function localEnvironment() {
-  const pass = process.platform === 'win32'
-    ? ['PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'SystemDrive']
-    : ['PATH'];
-  return { pass, set: { CI: '1' } };
-}
-
-export function createManifestOperationAdapter(manifest, { env = process.env } = {}) {
+export function createManifestOperationAdapter(manifest, _options = {}) {
   const normalized = validateLocalOperationManifest(manifest);
+  const repositoryTool = logicalToolIdentity(normalized);
   const descriptors = new Map(normalized.arguments.filter((entry) => entry.param).map((entry) => [entry.param, entry]));
   return {
     layer: 'local-manifest',
@@ -271,7 +269,6 @@ export function createManifestOperationAdapter(manifest, { env = process.env } =
       return result;
     },
     async execute(params, { projectDir, processRunner, onActivity }) {
-      const executable = await resolveExecutable(normalized.executable, env);
       const args = [];
       for (const descriptor of normalized.arguments) {
         if (descriptor.kind === 'literal') {
@@ -290,20 +287,15 @@ export function createManifestOperationAdapter(manifest, { env = process.env } =
         }
       }
       return processRunner.run({
-        executable,
         args,
         cwd: projectDir,
         timeoutMs: normalized.timeoutMs,
         maxOutputBytes: normalized.maxOutputBytes,
-        environment: localEnvironment(),
+        environment: { pass: [], set: { CI: '1' } },
         onActivity,
         operation: normalized.operation,
-        sandbox: {
-          required: true,
-          projectDir,
-          network: 'deny',
-          exposeConfiguredReadRoots: false,
-        },
+        repositoryTool,
+        repositoryWorkingDirectory: '.',
       });
     },
   };
@@ -324,7 +316,7 @@ async function canonicalManifestDirectory(directory) {
   return realpath(resolved);
 }
 
-export async function loadLocalOperationManifests({ directory, registry, env = process.env }) {
+export async function loadLocalOperationManifests({ directory, registry, env = undefined }) {
   if (!directory) return [];
   if (!registry || typeof registry.register !== 'function') throw new TypeError('loadLocalOperationManifests requires an operation registry');
   const root = await canonicalManifestDirectory(directory);
@@ -343,9 +335,9 @@ export async function loadLocalOperationManifests({ directory, registry, env = p
     let raw;
     try { raw = JSON.parse(await readFile(canonical, 'utf8')); }
     catch (error) { throw new PolicyError(`local operation manifest ${entry.name} is invalid JSON`, { cause: error }); }
-    const manifest = validateLocalOperationManifest(raw);
-    registry.register(manifest.operation, createManifestOperationAdapter(manifest, { env }));
-    loaded.push({ operation: manifest.operation, source: manifest.source.kind, file: entry.name });
+    const normalized = validateLocalOperationManifest(raw);
+    registry.register(normalized.operation, createManifestOperationAdapter(normalized, { env }));
+    loaded.push({ operation: normalized.operation, source: normalized.source.kind, file: entry.name });
   }
   return loaded;
 }

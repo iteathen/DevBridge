@@ -21,7 +21,10 @@ const SYNTAX_FILES = [
   'src/runtime/worker-exchange.js',
   'src/runtime/deterministic-operation-security.js',
   'src/runtime/deterministic-process-runner.js',
+  'src/runtime/local-operation-manifest.js',
+  'src/runtime/tool-onboarding.js',
   'src/bootstrap/candidate-validator.mjs',
+  'src/bootstrap/secure-bootstrap.mjs',
   'src/bootstrap/transactional-bootstrap.mjs',
 ];
 
@@ -30,9 +33,12 @@ const JSON_FILES = ['package.json', 'config/devbridge.example.json'];
 const TARGETED_TESTS = [
   'test/config.test.js',
   'test/repository-execution.test.js',
+  'test/repository-execution-boundary-absence.test.js',
   'test/deterministic-execution-boundary.test.js',
   'test/process-runner.test.js',
   'test/worker-exchange.test.js',
+  'test/local-operation-manifest.test.js',
+  'test/tool-onboarding.test.js',
   'test/doctor-capabilities.test.js',
   'test/chat-handoff.test.js',
   'test/chat-handoff-large.test.js',
@@ -78,6 +84,11 @@ export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync)
 const thisFile = path.resolve(fileURLToPath(import.meta.url));
 const entryFile = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (entryFile === thisFile) {
-  try { const result = runRepositoryPreflight(); process.stdout.write(`${JSON.stringify({ status: 'passed', ...result })}\n`); }
-  catch (error) { process.stderr.write(`[devbridge-preflight] ${error.name}: ${error.message}\n`); process.exitCode = 1; }
+  try {
+    const result = runRepositoryPreflight();
+    process.stdout.write(`${JSON.stringify({ status: 'passed', ...result })}\n`);
+  } catch (error) {
+    process.stderr.write(`[devbridge-preflight] ${error.name}: ${error.message}\n`);
+    process.exitCode = 1;
+  }
 }

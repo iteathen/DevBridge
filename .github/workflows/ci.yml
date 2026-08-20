@@ -56,7 +56,7 @@ jobs:
           node-version: 22.16.0
       - name: Repository-execution architecture gates
         timeout-minutes: 1
-        run: node --test test/repository-execution.test.js test/deterministic-execution-boundary.test.js test/process-runner.test.js test/worker-exchange.test.js
+        run: node --test test/repository-execution.test.js test/repository-execution-boundary-absence.test.js test/deterministic-execution-boundary.test.js test/process-runner.test.js test/worker-exchange.test.js test/local-operation-manifest.test.js test/tool-onboarding.test.js
       - name: Tests
         timeout-minutes: 3
         run: npm test

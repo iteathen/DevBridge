@@ -231,19 +231,15 @@ export async function createRuntime(config, {
   };
   const manifestDirectory = await canonicalLocalManifestDirectory(onboardingConfig.manifestDirectory, config.workspace.root);
   const localOperationManifests = manifestDirectory
-    ? await loadLocalOperationManifests({ directory: manifestDirectory, registry: operationRegistry, env })
+    ? await loadLocalOperationManifests({ directory: manifestDirectory, registry: operationRegistry })
     : [];
   const toolOnboarding = onboardingConfig.enabled
     ? new ToolOnboardingService({
         operationRegistry,
-        processRunner: deterministicProcessRunner,
         repositoryExecution,
         workspaceRoot: config.workspace.root,
         manifestDirectory,
         autoIntegrate: onboardingConfig.autoIntegrate,
-        env,
-        maxHelpBytes: onboardingConfig.maxHelpBytes,
-        timeoutMs: onboardingConfig.probeTimeoutMs,
       })
     : null;
   const deterministicControllerPlanExecutor = new ControllerPlanExecutor({

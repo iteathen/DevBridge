@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import * as transactional from './transactional-bootstrap.mjs';
-import { validateRuntimeCandidate as sandboxValidateRuntimeCandidate } from './candidate-validator.mjs';
+import { validateRuntimeCandidate as validateCandidateExecution } from './candidate-validator.mjs';
 import {
   readSignedReleaseManifest,
   runtimeArtifactSha256,
@@ -67,14 +67,14 @@ export function parseBootstrapArgs(argv) {
   };
 }
 
-export const validateRuntimeCandidate = sandboxValidateRuntimeCandidate;
+export const validateRuntimeCandidate = validateCandidateExecution;
 
 export async function prepareRuntimeCandidate(args, paths, {
   desiredRef,
   desiredHead,
   runner,
   ensureRuntimeFn = transactional.ensureRuntime,
-  validateCandidateFn = sandboxValidateRuntimeCandidate,
+  validateCandidateFn = validateCandidateExecution,
   releaseManifest = null,
   env = process.env,
 } = {}) {
@@ -104,7 +104,7 @@ export async function prepareRuntimeCandidate(args, paths, {
   // check immediately before spawning that runtime after the drain window.
   const afterIntegrity = await verifyRuntimeReleaseIntegrity({ args, runtime, manifest: releaseManifest });
   if (afterIntegrity.artifactSha256 !== validation.artifactSha256) {
-    fail('candidate artifact changed after sandbox validation');
+    fail('candidate artifact changed after execution validation');
   }
   return {
     ...runtime,
@@ -128,7 +128,7 @@ function augmentRuntimeRecord(record, integrityByHead) {
       manifestSha256: known.releaseIntegrity.manifestSha256,
       keyId: known.releaseIntegrity.keyId,
     } : null,
-    validationSandbox: known.validation?.sandbox ?? null,
+    validationExecution: known.validation?.execution ?? null,
   };
 }
 
@@ -183,7 +183,7 @@ export async function superviseDaemon(args, paths, initialRuntime, options = {})
       // Production never permits this seam. In development it exists only for
       // local programmatic supervisor test fixtures that inject their own
       // candidatePrepareFn; the real/default preparation path above always
-      // returns an exact digest after verified sandbox validation.
+      // returns an exact digest after execution validation.
       if (args.releaseMode === 'production' || !candidatePrepareInjected) {
         fail('candidate preparation did not return an exact tested runtime artifact digest');
       }
@@ -256,12 +256,12 @@ async function validateProductionRuntime(args, paths, runtime, { env = process.e
 
   const manifest = await readSignedReleaseManifest(args.releaseManifest, args.releasePublicKey);
   const integrity = await verifyRuntimeReleaseIntegrity({ args, runtime, manifest });
-  const validation = await sandboxValidateRuntimeCandidate(paths, runtime, null, {
+  const validation = await validateCandidateExecution(paths, runtime, null, {
     expectedArtifactSha256: integrity.artifactSha256,
     env,
   });
   if (validation.artifactSha256 !== integrity.artifactSha256) {
-    fail('production runtime sandbox validation did not preserve the signed artifact');
+    fail('production runtime execution validation did not preserve the signed artifact');
   }
   return { ...runtime, artifactSha256: integrity.artifactSha256, releaseIntegrity: integrity, validation };
 }

@@ -33,48 +33,66 @@ function fixtureManifest(overrides = {}) {
   };
 }
 
-test('local manifest materializes only closed structural argv and forces the repository-code sandbox envelope', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'pp-local-op-'));
+test('local manifest materializes closed structural argv behind a logical repository-tool identity', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-local-op-'));
   const projectDir = path.join(root, 'project');
   await mkdir(projectDir);
   try {
     const registry = new DeterministicOperationRegistry();
     registry.register('tool.fixture', createManifestOperationAdapter(fixtureManifest()));
     const calls = [];
-    const processRunner = {
-      run: async (request) => {
-        calls.push(request);
-        return { exitCode: 0, timedOut: false, stdout: 'ok', stderr: '' };
-      },
-    };
     const result = await registry.execute('tool.fixture', {
       verbose: true,
       count: 3,
       mode: 'fast',
       input: 'src/file.js',
       tag: ['alpha', 'beta'],
-    }, { projectDir, processRunner });
+    }, {
+      projectDir,
+      repository: 'owner/project',
+      runId: 'run-1',
+      processRunner: {
+        run: async (request) => {
+          calls.push(request);
+          return { exitCode: 0, timedOut: false, stdout: 'ok', stderr: '' };
+        },
+      },
+    });
 
     assert.equal(result.exitCode, 0);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].executable, process.execPath);
+    assert.equal(calls[0].repositoryTool, path.basename(process.execPath));
     assert.deepEqual(calls[0].args, [
       'fixed-subcommand', '--verbose', '--count', '3', '--mode', 'fast',
       'src/file.js', 'alpha', 'beta',
     ]);
     assert.equal(calls[0].cwd, projectDir);
     assert.equal(calls[0].executionClass, 'repository-code');
-    assert.deepEqual(calls[0].sandbox, {
-      required: true,
-      projectDir,
-      network: 'deny',
-      exposeConfiguredReadRoots: false,
-    });
-    assert.deepEqual(calls[0].environment.set, { CI: '1' });
-    assert.equal(Object.hasOwn(calls[0], 'shell'), false);
+    assert.equal(calls[0].repository, 'owner/project');
+    assert.equal(calls[0].runId, 'run-1');
+    assert.equal(Object.hasOwn(calls[0], 'executable'), false);
+    assert.equal(Object.hasOwn(calls[0], 'sandbox'), false);
+    assert.deepEqual(calls[0].environment, { pass: [], set: { CI: '1' } });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('help-synthesized manifest uses its command as the repository tool identity', async () => {
+  const calls = [];
+  const manifest = fixtureManifest({
+    executable: '/operator/local/path/magic-tool',
+    source: { kind: 'help-synthesized', command: 'magic-tool', helpSha256: 'a'.repeat(64) },
+  });
+  const registry = new DeterministicOperationRegistry().register('tool.fixture', createManifestOperationAdapter(manifest));
+  await registry.execute('tool.fixture', { input: 'src/file.js' }, {
+    projectDir: '/project',
+    repository: 'owner/project',
+    runId: 'run-1',
+    processRunner: { run: async (request) => { calls.push(request); return { exitCode: 0 }; } },
+  });
+  assert.equal(calls[0].repositoryTool, 'magic-tool');
+  assert.doesNotMatch(JSON.stringify(calls[0]), /operator\/local\/path/u);
 });
 
 test('dynamic manifest parameters reject authority-shaped names and argv/path smuggling', () => {
@@ -102,7 +120,7 @@ test('requireAnyParameter prevents a generated wrapper from invoking an empty de
 });
 
 test('local manifest directory loading is deterministic and collisions fail closed', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'pp-local-manifests-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-local-manifests-'));
   try {
     const first = fixtureManifest({ operation: 'tool.alpha' });
     const second = fixtureManifest({ operation: 'tool.beta' });
@@ -135,7 +153,7 @@ test('local manifest directory loading is deterministic and collisions fail clos
 });
 
 test('local manifest directory rejects filesystem indirection in its parent chain', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'pp-local-manifest-indirection-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-local-manifest-indirection-'));
   const actualParent = path.join(root, 'actual');
   const manifestRoot = path.join(actualParent, 'manifests');
   const aliasParent = path.join(root, 'alias');
