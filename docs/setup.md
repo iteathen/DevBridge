@@ -6,6 +6,8 @@ The `codex/temp-fast-functional` branch uses one persistent Ubuntu Hyper-V envir
 
 Normal build, test, and repository work is headless. DevBridge keeps the VM running during active use and can resume a saved or paused environment without VMConnect. `scripts/fast-vm/manage-environment.ps1` provides exact-owned-target `Status`, `Save`, and `Resume` actions; `Show` is the explicit diagnostic action that opens a console.
 
+The disposable unattended Ubuntu installer has also been proven end to end without VMConnect: a fresh owned VM installed, powered itself off, booted from disk, and exposed the expected development toolchain and guest services. This is fast-track evidence, not yet the supported Stage 8 install/re-entry interface. Fresh guests generate unique SSH host keys; the production installer still needs an authenticated, environment-bound enrollment channel instead of the probe-only trust-on-first-use shortcut.
+
 Controller-submitted file changes and locally registered deterministic build/test operations are the normal path. The `codex-fast` adapter is available but has no default fallback: it runs only when a remote task explicitly requests it, or after an operator deliberately sets `execution.defaultTool` as a local opt-in.
 
 This branch still contains an intentionally temporary direct-host implementation, but `execution.fastHost` is disabled and configuration rejects enabling it with the VM topology. That implementation and the Default Switch/network/host-key shortcuts are not intended for `main`. See `docs/fast-track-field-notes.md` for exact evidence and the production problems each shortcut exposes.

@@ -72,6 +72,7 @@ What happened:
 - A `codex-fast` profile is present for explicit use.
 - `execution.defaultTool` remains `null`.
 - An unknown explicit preferred tool fails instead of silently selecting another adapter.
+- Tool inventory now reports a usable adapter as eligible for automatic selection only when its exact name is the operator-configured `execution.defaultTool`. With the fast configuration's `null` default, `codex-fast` is available and usable but reports `eligibleForAutomaticSelection: false`.
 - The installed Codex CLI required `--ignore-user-config --model gpt-5.5` because the user's newer default model configuration was incompatible with that CLI build.
 
 Why:
@@ -166,11 +167,12 @@ Exact artifacts:
 - NoCloud seed: `cidata.iso`, volume label `CIDATA`, SHA-256 `8a3e96c80db4d757dbbf0de8c06288922bc83419273ec8c0fe1ad6971e07536c`.
 - Derived unattended ISO: `ubuntu-24.04.4-live-server-amd64-autoinstall.iso`, SHA-256 `4e763f3a946c6cc55a91d5a557627d24d3c8d68eeb0459c12b53876ce3ad5594`.
 - `new-ubuntu-builder.ps1` starts the VM without VMConnect. A console is not part of normal installation; the only interactive prompt encountered came from booting the original ISO before the derived media existed.
+- A fresh owned probe VM, `devbridge-fast-unattended-probe-ubuntu-2404`, booted from the derived installer plus seed, installed without VMConnect or desktop control, and powered itself off after approximately five minutes. Its first disk boot then passed headless checks for Node.js `v24.19.0`, npm `11.17.0`, Git `2.43.0`, CMake `3.28.3`, GCC `13.3.0`, all three guest helpers, the enabled network-seed service, and active Hyper-V file-copy integration.
 
 Main-branch requirement exposed:
 
 - Stage 8 needs an owned, checksumable seed-media builder with schema validation, explicit installer-versus-first-boot phases, and a no-prompt boot contract. Setup must detect or supply this prerequisite instead of assuming external ISO authoring tools exist or asking the operator to babysit a VM console.
-- The derived ISO content has been structurally verified, but a clean second-VM boot is still required as end-to-end proof that no firmware/menu/installer prompt remains.
+- The disposable probe supplies end-to-end evidence that the current derived media boots and installs without a firmware, menu, or installer prompt. Production still needs repeatable artifact construction and qualification rather than treating one local probe as release evidence.
 
 ### Hyper-V networking
 
@@ -205,10 +207,12 @@ Observed state:
 - A Linux execution route requires a pinned `knownHostsFile` before the bootstrap bridge will connect.
 - A newly cloned environment normally generates a unique SSH host key only after its first boot.
 - Stage 5 can allocate and copy the static network seed before SSH is healthy, but it has no trusted return channel that enrolls the newly generated public host key into host-owned route policy.
+- The clean unattended probe generated a unique ED25519 host key, fingerprint `SHA256:1uaThAa90R79VYzdJ2TWER/WNT1w18fnreW4JSDFExA`, proving that the installer is not forced to reuse the retained disposable base identity.
 
 Fast-track workaround:
 
 - Use one disposable base/environment, retain its installer-generated host identity, observe its DHCP address through the exact owned Hyper-V adapter, and use a wildcard hostname with that pinned key so a DHCP renewal does not break the fast route. This is expedient evidence only; it must not become a multi-environment production pattern.
+- For the clearly owned disposable probe only, observe its exact Hyper-V-reported DHCP address, perform non-interactive SSH trust-on-first-use into a probe-only known-hosts file, and immediately require strict checking against that pinned record. This proves unattended operation, not authenticated enrollment.
 
 Main-branch requirement exposed:
 
@@ -239,6 +243,7 @@ What happened:
 - The active repository VM is intentionally left `Running` during a work session because that is faster than any resume path.
 - The fast topology now resumes `Saved` VMs with `Start-VM` and `Paused` VMs with `Resume-VM` without opening a console.
 - `scripts/fast-vm/manage-environment.ps1` validates the exact provider record, VM UUID, and ownership marker before `Status`, `Save`, `Resume`, or explicit `Show`. Only `Show` launches VMConnect.
+- The exact repository environment successfully transitioned `Running -> Saved -> Running` through `Save` and `Resume`. A subsequent headless Stage 6 smoke completed in `23.145` seconds and passed 12/12 VM-hosted tests, proving bridge and repository execution recover after saved-state resume.
 
 Why:
 
@@ -313,26 +318,29 @@ Completed:
 - Linux/x64 Node execution and 12 targeted tests through the exact VM route.
 - Content-addressed incremental source synchronization with guest inventory validation.
 - Headless running/saved/paused lifecycle support and an explicit console diagnostic utility.
+- Clean unattended installer boot, automatic poweroff, disk boot, and installed-tool/service verification without desktop control.
+- Exact repository-environment save/resume followed by a passing VM repository-execution smoke.
+- Opt-in-only coding-adapter inventory projection, full local qualification, live queue poll, and hidden daemon lifecycle proof.
 
 Next:
 
-1. Boot a clean probe VM from the derived ISO to prove the entire install path is unattended without using the desktop.
-2. Save and resume the exact owned repository environment, then re-run bridge health and repository execution.
-3. Re-audit tool selection so Codex remains explicit opt-in despite being locally usable.
-4. Run the full Node suite, repository preflight, fast doctor, queue cycle, and daemon lifecycle smoke.
-5. Reconcile or leave clearly planned the incomplete owned NAT network; do not hide its degraded production readiness behind the Default Switch workaround.
-6. Remove unreachable positional guest cache blobs only through exact disposable-cache cleanup; retain no compatibility code.
+1. Reconcile or leave clearly planned the incomplete owned NAT network; do not hide its degraded production readiness behind the Default Switch workaround.
+2. Remove unreachable positional guest cache blobs only through exact disposable-cache cleanup; retain no compatibility code.
+3. Decide whether the disposable unattended probe remains as restartable evidence or is removed through an exact owned-resource cleanup action.
+4. Convert the fast-track findings into scoped Stage 7/8 qualification and install/re-entry work on isolated production branches.
 
 ## Evidence already obtained
 
-- `npm run fast:doctor`: VM repository execution ready; the owned NAT foundation remains honestly degraded while the explicit Default Switch fast topology is usable.
+- `npm run fast:doctor`: passed; VM repository execution is ready, `codex-fast` is usable but not eligible for automatic selection, and the owned NAT foundation remains honestly degraded while the explicit Default Switch fast topology is usable.
 - Real opt-in Codex smoke: passed using the explicitly selected adapter.
-- `npm run fast:run`: safe queue cycle completed.
-- Fast daemon start/status/stop smoke: passed.
-- Earlier full Node test suite: passed after the bridge durability corrections; it must be rerun after the newest VM transport/cache work.
-- Repository preflight: passed with 41 syntax files, 3 JSON files, and 34 targeted tests.
+- `npm run fast:run`: safe live queue cycle completed with an empty eligible queue, no selected coding adapter, no rejected task, and no inventory/onboarding error.
+- Hidden fast daemon start/status/pause/resume/stop smoke: passed; the final status had no active lock or pending control record.
+- Full Node test suite after the newest VM transport/cache/tool-inventory work: 504 total, 498 passed, 6 Windows-capability skips, 0 failed.
+- Repository preflight after the newest work: passed with 41 syntax files, 3 JSON files, and 34 targeted tests.
 - Live Hyper-V management: `Get-VMHost` succeeds after group membership/reboot.
 - Real Stage 6 smoke: Linux/x64, Node `v24.19.0`, 12/12 targeted tests passed, VM-bound evidence recorded.
+- Exact saved-state recovery smoke: `23.145` seconds, Linux/x64, Node `v24.19.0`, and 12/12 targeted tests passed after `Running -> Saved -> Running`.
+- Fresh unattended-install probe: automatically powered off after install and passed headless disk-boot verification for the toolchain, guest helpers, network service, and Hyper-V integration service.
 - Source-cache tests cover changed-only transfer and forged unknown-part rejection; targeted file-tree/workspace/repository tests pass under protocol `1.1.0`.
 - Fast topology tests prove windowless saved/paused resume commands and bounded endpoint reuse.
 - Persistent line-channel tests prove ordered multi-frame exchange and one shared first connection; real VM timing improved to `22.355` seconds changed and `21.077` seconds unchanged for two repository operations.
