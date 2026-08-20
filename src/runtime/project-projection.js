@@ -7,6 +7,11 @@ import { PolicyError } from '../errors.js';
 const OMITTED_ROOT_NAMES = new Set(['.git', '.devbridge']);
 const PROJECTION_PARENT = '.devbridge-windows-projections';
 
+function comparable(candidate) {
+  const normalized = path.normalize(path.resolve(candidate));
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
 function isWithin(root, candidate) {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
@@ -21,14 +26,38 @@ async function exists(candidate) {
   catch (error) { if (error?.code === 'ENOENT') return false; throw error; }
 }
 
-async function canonicalDirectory(candidate, name) {
+async function canonicalWorkspaceRoot(candidate) {
   const resolved = path.resolve(candidate);
   const info = await lstat(resolved);
-  if (info.isSymbolicLink() || !info.isDirectory()) throw new PolicyError(`${name} must be a real non-symlink directory`);
+  if (info.isSymbolicLink() || !info.isDirectory()) {
+    throw new PolicyError('sandbox workspace root must be a real non-symlink directory');
+  }
+  // The host may expose the workspace through a stable ancestor junction or
+  // drive alias (GitHub Actions does this on Windows). Treat the real path of
+  // the workspace itself as the trust anchor, then reject any new indirection
+  // introduced below that anchor.
+  return realpath(resolved);
+}
+
+function workspaceRelativePath(workspaceRoot, workspaceCanonical, candidate, name) {
+  const resolved = path.resolve(candidate);
+  if (isWithin(workspaceRoot, resolved)) return path.relative(path.resolve(workspaceRoot), resolved);
+  if (isWithin(workspaceCanonical, resolved)) return path.relative(path.resolve(workspaceCanonical), resolved);
+  throw new PolicyError(`${name} must stay inside the managed workspace root`);
+}
+
+async function canonicalWorkspaceDescendant(workspaceRoot, workspaceCanonical, candidate, name) {
+  const resolved = path.resolve(candidate);
+  const relative = workspaceRelativePath(workspaceRoot, workspaceCanonical, resolved, name);
+  const info = await lstat(resolved);
+  if (info.isSymbolicLink() || !info.isDirectory()) {
+    throw new PolicyError(`${name} must be a real non-symlink directory`);
+  }
   const canonical = await realpath(resolved);
-  const normalizedResolved = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-  const normalizedCanonical = process.platform === 'win32' ? canonical.toLowerCase() : canonical;
-  if (normalizedResolved !== normalizedCanonical) throw new PolicyError(`${name} resolves through filesystem indirection`);
+  const expectedCanonical = path.resolve(workspaceCanonical, relative);
+  if (comparable(canonical) !== comparable(expectedCanonical)) {
+    throw new PolicyError(`${name} resolves through filesystem indirection inside managed workspace`);
+  }
   return canonical;
 }
 
@@ -121,9 +150,14 @@ async function applyManifest(sourceRoot, proposalRoot, baseline, proposal) {
 }
 
 export async function createGitlessProjectProjection({ workspaceRoot, projectDir }) {
-  const workspace = await canonicalDirectory(workspaceRoot, 'sandbox workspace root');
-  const source = await canonicalDirectory(projectDir, 'sandbox project root');
-  if (!isWithin(workspace, source)) throw new PolicyError('sandbox project root must stay inside the managed workspace root');
+  const workspaceResolved = path.resolve(workspaceRoot);
+  const workspace = await canonicalWorkspaceRoot(workspaceResolved);
+  const source = await canonicalWorkspaceDescendant(
+    workspaceResolved,
+    workspace,
+    projectDir,
+    'sandbox project root',
+  );
 
   const gitAdmin = path.join(source, '.git');
   if (!(await exists(gitAdmin))) {
@@ -137,7 +171,7 @@ export async function createGitlessProjectProjection({ workspaceRoot, projectDir
   }
   const gitInfo = await lstat(gitAdmin);
   if (gitInfo.isSymbolicLink()) throw new PolicyError('sandbox Git administrative path must not be filesystem indirection');
-  if (path.resolve(source) === path.resolve(workspace)) {
+  if (comparable(source) === comparable(workspace)) {
     throw new PolicyError('Git-bearing sandbox project root must be a descendant of the managed workspace root so its proposal projection stays outside the project');
   }
 
