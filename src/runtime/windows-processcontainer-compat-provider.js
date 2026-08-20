@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { access, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -17,14 +16,11 @@ import {
   canonicalizeWindowsWorkspacePath,
   createWindowsProcessContainerId,
   windowsCreateProcessCommandLine,
-  windowsProcessContainerNetworkPolicy,
-  windowsProcessContainerUiPolicy,
 } from './windows-processcontainer-sandbox.js';
 
-const MXC_SCHEMA_VERSION = '0.7.0-alpha';
-const MXC_PREREQUISITE_PROBE_TIMEOUT_MS = 35_000;
-const MXC_BOUNDARY_PROBE_TIMEOUT_MS = 40_000;
-const REAPER_TIMEOUT_MS = 15_000;
+const NATIVE_PREREQUISITE_PROBE_TIMEOUT_MS = 15_000;
+const NATIVE_BOUNDARY_PROBE_TIMEOUT_MS = 35_000;
+const NATIVE_CLEANUP_TIMEOUT_MS = 15_000;
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const CREDENTIAL_ENVIRONMENT = new Set([
   'DEVBRIDGE_GITHUB_TOKEN',
@@ -37,7 +33,7 @@ const CREDENTIAL_ENVIRONMENT = new Set([
   'SSH_AUTH_SOCK',
 ]);
 
-const WINDOWS_COMPAT_PROBE_SCRIPT = String.raw`
+const WINDOWS_NATIVE_PROBE_SCRIPT = String.raw`
 const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
@@ -103,12 +99,21 @@ function dedupePaths(values) {
   const seen = new Set();
   const result = [];
   for (const value of values) {
-    const key = comparable(value);
+    const resolved = path.resolve(value);
+    const key = comparable(resolved);
     if (seen.has(key)) continue;
     seen.add(key);
-    result.push(path.resolve(value));
+    result.push(resolved);
   }
   return result;
+}
+
+function encodeUtf8(value) {
+  return Buffer.from(value, 'utf8').toString('base64');
+}
+
+function encodeList(values) {
+  return Buffer.from(`${values.join('\0')}\0`, 'utf8').toString('base64');
 }
 
 async function exists(candidate) {
@@ -132,20 +137,28 @@ function probeProcessDetail(outcome, observation = null) {
   return diagnostic ? `${state}; ${diagnostic}` : state;
 }
 
-function managedExecutableCandidates(stateDirectory, env) {
+function managedHelperCandidates(stateDirectory, env) {
   const candidates = [];
-  if (env.DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE) candidates.push(env.DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE);
+  const override = env.DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE;
+  if (override) {
+    const resolved = path.resolve(override);
+    if (path.basename(resolved).toLowerCase() === 'wxc-exec.exe') {
+      candidates.push(path.join(path.dirname(resolved), 'devbridge-job-launcher.exe'));
+    }
+    candidates.push(resolved);
+  }
   const inferredHome = path.dirname(path.resolve(stateDirectory));
-  candidates.push(path.join(inferredHome, 'sandbox', 'mxc', '0.7.0', 'wxc-exec.exe'));
+  candidates.push(path.join(inferredHome, 'sandbox', 'windows-appcontainer', '1', 'devbridge-windows-sandbox.exe'));
+  candidates.push(path.join(inferredHome, 'sandbox', 'mxc', '0.7.0', 'devbridge-job-launcher.exe'));
   return candidates;
 }
 
-async function resolveWindowsSandboxExecutable(stateDirectory, env) {
-  for (const candidate of managedExecutableCandidates(stateDirectory, env)) {
+async function resolveWindowsSandboxHelper(stateDirectory, env) {
+  for (const candidate of managedHelperCandidates(stateDirectory, env)) {
     if (!(await exists(candidate))) continue;
-    return canonicalExisting(candidate, 'Windows sandbox executable');
+    return canonicalExisting(candidate, 'Windows native AppContainer helper');
   }
-  try { return await resolveExecutable('wxc-exec.exe', env); }
+  try { return await resolveExecutable('devbridge-windows-sandbox.exe', env); }
   catch { return null; }
 }
 
@@ -164,9 +177,6 @@ function localToolRoots(env) {
   const roots = [];
   const pathValue = env.Path ?? env.PATH ?? env.path ?? '';
   for (const entry of String(pathValue).split(path.delimiter).filter(Boolean)) roots.push(entry);
-  for (const name of ['SYSTEMROOT', 'WINDIR', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432']) {
-    if (env[name]) roots.push(env[name]);
-  }
   return roots;
 }
 
@@ -237,22 +247,21 @@ async function canonicalReadRoots(values, protectedRoots, workspaceRoot, project
   return dedupePaths(result);
 }
 
-function compatPendingStatus(requestedProvider) {
+function nativePendingStatus(requestedProvider) {
   return {
     ...pendingWindowsProcessContainerStatus({ requestedProvider }),
     filesystem: 'gitless-proposal-projection-unverified',
-    processTree: 'appcontainer-identity-reaper-unverified',
+    processTree: 'native-appcontainer-job-unverified',
   };
 }
 
-export class WindowsMxcCompatibilitySandboxProvider {
+export class WindowsNativeAppContainerSandboxProvider {
   #requestedProvider;
   #externalReadRoots;
   #workspaceRoot;
   #stateDirectory;
   #env;
-  #resolvedExecutable = null;
-  #jobLauncher = null;
+  #helper = null;
   #status;
   #verifyPromise = null;
 
@@ -262,7 +271,7 @@ export class WindowsMxcCompatibilitySandboxProvider {
     this.#workspaceRoot = path.resolve(workspaceRoot);
     this.#stateDirectory = path.resolve(stateDirectory);
     this.#env = env;
-    this.#status = compatPendingStatus(requestedProvider);
+    this.#status = nativePendingStatus(requestedProvider);
   }
 
   inspect() { return structuredClone(this.#status); }
@@ -270,12 +279,8 @@ export class WindowsMxcCompatibilitySandboxProvider {
   verify() { this.#verifyPromise ??= this.#verifyOnce(); return this.#verifyPromise; }
 
   async #resolveRuntime() {
-    this.#resolvedExecutable = await resolveWindowsSandboxExecutable(this.#stateDirectory, this.#env);
-    if (!this.#resolvedExecutable) return false;
-    const launcher = path.join(path.dirname(this.#resolvedExecutable), 'devbridge-job-launcher.exe');
-    if (!(await exists(launcher))) return false;
-    this.#jobLauncher = await canonicalExisting(launcher, 'DevBridge Windows containment helper');
-    return true;
+    this.#helper = await resolveWindowsSandboxHelper(this.#stateDirectory, this.#env);
+    return this.#helper != null;
   }
 
   async #createScratchRoot(prefix = 'run-') {
@@ -292,6 +297,11 @@ export class WindowsMxcCompatibilitySandboxProvider {
   }
 
   async #buildLaunch({ executable, args, cwd, env, sandbox, scratchRoot, hiddenProjectRoot = null }) {
+    if (!this.#helper) throw new PolicyError('Windows native AppContainer helper is unavailable');
+    if (sandbox.network === 'unrestricted') {
+      throw new PolicyError('native Windows AppContainer provider currently supports deny-network execution only');
+    }
+
     const project = await canonicalizeWindowsWorkspacePath(this.#workspaceRoot, sandbox.projectDir, {
       name: 'sandbox project root', directory: true,
     });
@@ -328,65 +338,52 @@ export class WindowsMxcCompatibilitySandboxProvider {
         throw new PolicyError('Windows worker IPC files must stay inside the control-owned worker-exchange root');
       }
       if (comparable(context) !== comparable(contextTarget)) {
-        throw new PolicyError('Windows process-container context IPC requires an exact host-file projection');
+        throw new PolicyError('Windows AppContainer context IPC requires an exact host-file projection');
       }
       if (comparable(controlResult) === comparable(stagingResult)) {
-        throw new PolicyError('Windows process-container worker result must use a non-authoritative staging file');
+        throw new PolicyError('Windows AppContainer worker result must use a non-authoritative staging file');
       }
       readonlyPaths.push(context);
       readwritePaths.push(stagingResult);
     }
 
-    const network = sandbox.network === 'unrestricted' ? 'unrestricted' : 'deny';
-    const networkPolicy = windowsProcessContainerNetworkPolicy(network);
-    const uiPolicy = windowsProcessContainerUiPolicy();
+    const readOnly = dedupePaths(readonlyPaths);
+    const readWrite = dedupePaths(readwritePaths);
     const containerId = createWindowsProcessContainerId();
-    const config = {
-      version: MXC_SCHEMA_VERSION,
-      containerId,
-      containment: 'processcontainer',
-      lifecycle: { destroyOnExit: true, preservePolicy: false },
-      process: {
-        commandLine: windowsCreateProcessCommandLine([targetExecutable, ...args]),
-        cwd: cwdResolved,
-        env: safeEnvironment(env, scratch),
-        timeout: 0,
-      },
-      filesystem: {
-        readwritePaths: dedupePaths(readwritePaths),
-        readonlyPaths: dedupePaths(readonlyPaths),
-        deniedPaths: [],
-      },
-      fallback: { allowDaclMutation: true },
-      network: networkPolicy.network,
-      ui: uiPolicy.ui,
-      processContainer: {
-        leastPrivilege: true,
-        capabilities: networkPolicy.capabilities,
-        ui: uiPolicy.processContainerUi,
-      },
-    };
+    const environment = safeEnvironment(env, scratch);
+    const commandLine = windowsCreateProcessCommandLine([targetExecutable, ...args]);
+    const readOnlyEncoded = encodeList(readOnly);
+    const readWriteEncoded = encodeList(readWrite);
 
-    const mxcArgs = ['--config-base64', Buffer.from(JSON.stringify(config), 'utf8').toString('base64')];
     return {
-      executable: this.#resolvedExecutable,
-      args: mxcArgs,
+      executable: this.#helper,
+      args: [
+        '--run-appcontainer',
+        containerId,
+        encodeUtf8(targetExecutable),
+        encodeUtf8(commandLine),
+        encodeUtf8(cwdResolved),
+        encodeList(environment),
+        readOnlyEncoded,
+        readWriteEncoded,
+      ],
+      cleanupArgs: ['--cleanup-appcontainer', containerId, readOnlyEncoded, readWriteEncoded],
       cwd: project,
       env: launcherEnvironment(this.#env),
       containerId,
-      network,
+      network: 'deny',
     };
   }
 
-  async #reapContainer(containerId) {
-    if (!this.#jobLauncher) throw new PolicyError('DevBridge Windows containment helper is unavailable');
-    const outcome = await captureSandboxProbeProcess(this.#jobLauncher, ['--terminate-appcontainer', containerId], {
-      cwd: path.dirname(this.#jobLauncher),
+  async #cleanupContainer(launch) {
+    if (!this.#helper) throw new PolicyError('Windows native AppContainer helper is unavailable');
+    const outcome = await captureSandboxProbeProcess(this.#helper, launch.cleanupArgs, {
+      cwd: path.dirname(this.#helper),
       env: launcherEnvironment(this.#env),
-      timeoutMs: REAPER_TIMEOUT_MS,
+      timeoutMs: NATIVE_CLEANUP_TIMEOUT_MS,
     }).catch((error) => ({ code: null, timedOut: false, truncated: false, stdout: '', stderr: error?.message ?? String(error), signal: null }));
     if (outcome.code !== 0 || outcome.timedOut || outcome.truncated) {
-      throw new PolicyError(`Windows AppContainer identity cleanup failed: ${boundedSandboxReason(probeProcessDetail(outcome))}`);
+      throw new PolicyError(`Windows native AppContainer cleanup failed: ${boundedSandboxReason(probeProcessDetail(outcome))}`);
     }
   }
 
@@ -395,7 +392,7 @@ export class WindowsMxcCompatibilitySandboxProvider {
       this.#status = unavailableSandboxStatus({
         requestedProvider: this.#requestedProvider,
         provider: 'windows-processcontainer',
-        reason: `Windows process-container sandbox is supported only on Windows, not ${process.platform}`,
+        reason: `Windows AppContainer sandbox is supported only on Windows, not ${process.platform}`,
       });
       return this.inspect();
     }
@@ -403,22 +400,22 @@ export class WindowsMxcCompatibilitySandboxProvider {
       this.#status = unavailableSandboxStatus({
         requestedProvider: this.#requestedProvider,
         provider: 'windows-processcontainer',
-        reason: 'pinned Microsoft MXC runtime or DevBridge containment helper is not provisioned',
+        reason: 'DevBridge native Windows AppContainer helper is not provisioned',
       });
       return this.inspect();
     }
 
-    const nativeProbe = await captureSandboxProbeProcess(this.#resolvedExecutable, ['--probe'], {
-      cwd: path.dirname(this.#resolvedExecutable),
+    const nativeProbe = await captureSandboxProbeProcess(this.#helper, ['--probe'], {
+      cwd: path.dirname(this.#helper),
       env: launcherEnvironment(this.#env),
-      timeoutMs: MXC_PREREQUISITE_PROBE_TIMEOUT_MS,
+      timeoutMs: NATIVE_PREREQUISITE_PROBE_TIMEOUT_MS,
     }).catch((error) => ({ code: null, timedOut: false, truncated: false, stdout: '', stderr: error?.message ?? String(error), signal: null }));
     if (nativeProbe.code !== 0 || nativeProbe.timedOut || nativeProbe.truncated) {
       this.#status = {
         ...unavailableSandboxStatus({
           requestedProvider: this.#requestedProvider,
           provider: 'windows-processcontainer',
-          reason: `Windows process-container prerequisite probe failed: ${boundedSandboxReason(probeProcessDetail(nativeProbe))}`,
+          reason: `Windows native AppContainer prerequisite probe failed: ${boundedSandboxReason(probeProcessDetail(nativeProbe))}`,
           probeAttempted: true,
         }),
         available: true,
@@ -430,10 +427,11 @@ export class WindowsMxcCompatibilitySandboxProvider {
     let probeRoot = null;
     let stateProbe = null;
     let projectView = null;
+    let launch = null;
     try {
       await mkdir(this.#stateDirectory, { recursive: true });
       await mkdir(this.#workspaceRoot, { recursive: true });
-      probeRoot = await mkdtemp(path.join(this.#workspaceRoot, '.devbridge-windows-compat-boundary-'));
+      probeRoot = await mkdtemp(path.join(this.#workspaceRoot, '.devbridge-windows-native-boundary-'));
       const projectDir = path.join(probeRoot, 'project');
       const scratchDir = path.join(probeRoot, 'scratch');
       const outsideDir = path.join(probeRoot, 'outside');
@@ -443,7 +441,7 @@ export class WindowsMxcCompatibilitySandboxProvider {
       const gitConfig = path.join(projectDir, '.git', 'config');
       const outsideRead = path.join(outsideDir, 'read-sentinel.txt');
       const outsideWrite = path.join(outsideDir, 'write-sentinel.txt');
-      stateProbe = path.join(this.#stateDirectory, `.sandbox-probe-${randomUUID()}`);
+      stateProbe = path.join(this.#stateDirectory, `.sandbox-probe-${createWindowsProcessContainerId()}`);
       await writeFile(gitConfig, 'git-control-sentinel\n');
       await writeFile(outsideRead, 'outside-sentinel\n');
       await writeFile(stateProbe, 'state-control-sentinel\n', { flag: 'wx' });
@@ -454,10 +452,10 @@ export class WindowsMxcCompatibilitySandboxProvider {
         name: 'sandbox probe scratch', directory: true,
       });
       const descendantMarker = path.join(projectView.projectDir, 'descendant-escaped.txt');
-      const launch = await this.#buildLaunch({
+      launch = await this.#buildLaunch({
         executable: process.execPath,
         args: [
-          '-e', WINDOWS_COMPAT_PROBE_SCRIPT,
+          '-e', WINDOWS_NATIVE_PROBE_SCRIPT,
           projectView.projectDir,
           scratchCanonical,
           outsideRead,
@@ -472,6 +470,8 @@ export class WindowsMxcCompatibilitySandboxProvider {
           Path: this.#env.Path ?? this.#env.PATH ?? '',
           PATHEXT: this.#env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD',
           SYSTEMROOT: this.#env.SYSTEMROOT ?? this.#env.SystemRoot ?? 'C:\\Windows',
+          SystemRoot: this.#env.SystemRoot ?? this.#env.SYSTEMROOT ?? 'C:\\Windows',
+          WINDIR: this.#env.WINDIR ?? this.#env.SystemRoot ?? this.#env.SYSTEMROOT ?? 'C:\\Windows',
           CI: '1',
         },
         sandbox: { projectDir: projectView.projectDir, network: 'deny' },
@@ -481,12 +481,12 @@ export class WindowsMxcCompatibilitySandboxProvider {
       const outcome = await captureSandboxProbeProcess(launch.executable, launch.args, {
         cwd: launch.cwd,
         env: launch.env,
-        timeoutMs: MXC_BOUNDARY_PROBE_TIMEOUT_MS,
+        timeoutMs: NATIVE_BOUNDARY_PROBE_TIMEOUT_MS,
       });
       let observation = null;
       try { observation = JSON.parse(outcome.stdout.trim()); } catch { observation = null; }
 
-      await this.#reapContainer(launch.containerId);
+      await this.#cleanupContainer(launch);
       await sleep(1_600);
       const descendantContained = !(await exists(descendantMarker));
       await projectView.importChanges();
@@ -507,13 +507,13 @@ export class WindowsMxcCompatibilitySandboxProvider {
           ...unavailableSandboxStatus({
             requestedProvider: this.#requestedProvider,
             provider: 'windows-processcontainer',
-            reason: `Windows MXC compatibility boundary probe failed: ${boundedSandboxReason(detail)}`,
+            reason: `Windows native AppContainer boundary probe failed: ${boundedSandboxReason(detail)}`,
             probeAttempted: true,
           }),
           available: true,
           verification: 'boundary-probe-failed',
           filesystem: 'gitless-proposal-projection-unverified',
-          processTree: 'appcontainer-identity-reaper-unverified',
+          processTree: 'native-appcontainer-job-unverified',
         };
         return this.inspect();
       }
@@ -533,9 +533,9 @@ export class WindowsMxcCompatibilitySandboxProvider {
             descendantProcessContained: true,
           },
         }),
-        filesystem: 'gitless-proposal-projection-and-run-scratch-write-only',
+        filesystem: 'gitless-proposal-projection-and-run-scratch-explicit-appcontainer-acls',
         gitAdministrativeState: 'unreachable-from-worker-project-view',
-        processTree: 'appcontainer-identity-reaper-plus-parent-runner',
+        processTree: 'sandbox-root-owned-job-kill-on-close-and-wait-empty',
       };
       return this.inspect();
     } catch (error) {
@@ -543,16 +543,17 @@ export class WindowsMxcCompatibilitySandboxProvider {
         ...unavailableSandboxStatus({
           requestedProvider: this.#requestedProvider,
           provider: 'windows-processcontainer',
-          reason: `Windows MXC compatibility verification failed: ${boundedSandboxReason(error?.message)}`,
+          reason: `Windows native AppContainer verification failed: ${boundedSandboxReason(error?.message)}`,
           probeAttempted: true,
         }),
         available: true,
         verification: 'boundary-probe-failed',
         filesystem: 'gitless-proposal-projection-unverified',
-        processTree: 'appcontainer-identity-reaper-unverified',
+        processTree: 'native-appcontainer-job-unverified',
       };
       return this.inspect();
     } finally {
+      if (launch) await this.#cleanupContainer(launch).catch(() => {});
       if (projectView) await projectView.cleanup().catch(() => {});
       if (stateProbe) await rm(stateProbe, { force: true }).catch(() => {});
       if (probeRoot) await rm(probeRoot, { recursive: true, force: true }).catch(() => {});
@@ -561,7 +562,7 @@ export class WindowsMxcCompatibilitySandboxProvider {
 
   async prepareExecution({ executable, args, cwd, env, sandbox }) {
     const status = await this.verify();
-    if (!status.verified || !this.#resolvedExecutable || !this.#jobLauncher) {
+    if (!status.verified || !this.#helper) {
       throw new PolicyError(`sandboxed execution requires a verified sandbox provider; ${status.reason ?? 'provider is not verified'}`);
     }
 
@@ -572,6 +573,7 @@ export class WindowsMxcCompatibilitySandboxProvider {
       : await this.#createScratchRoot();
     const ownedScratch = sandbox.scratchRoot == null;
     let projectView = null;
+    let launch = null;
     try {
       projectView = await createGitlessProjectProjection({
         workspaceRoot: this.#workspaceRoot,
@@ -581,7 +583,7 @@ export class WindowsMxcCompatibilitySandboxProvider {
       const mappedExecutable = mapProjectPath(projectView, executable);
       const mappedArgs = args.map((value) => mapProjectPath(projectView, value));
       const mappedCwd = mapProjectPath(projectView, cwd);
-      const launch = await this.#buildLaunch({
+      launch = await this.#buildLaunch({
         executable: mappedExecutable,
         args: mappedArgs,
         cwd: mappedCwd,
@@ -595,7 +597,7 @@ export class WindowsMxcCompatibilitySandboxProvider {
       const cleanup = () => {
         cleanupPromise ??= (async () => {
           let firstError = null;
-          try { await this.#reapContainer(launch.containerId); }
+          try { await this.#cleanupContainer(launch); }
           catch (error) { firstError = error; }
           if (!firstError) {
             try { await projectView.importChanges(); }
@@ -620,11 +622,11 @@ export class WindowsMxcCompatibilitySandboxProvider {
         cleanup,
         evidence: {
           provider: status.provider,
-          engine: 'microsoft-mxc-0.7-processcontainer-compat',
+          engine: 'devbridge-native-appcontainer-job-v1',
           verified: true,
           verification: status.verification,
           filesystem: status.filesystem,
-          network: sandbox.network === 'unrestricted' ? 'unrestricted' : status.network,
+          network: status.network,
           gitAdministrativeState: status.gitAdministrativeState,
           processTree: status.processTree,
           projectView: projectView.projected ? 'gitless-proposal-projection' : 'direct-non-git-project',
@@ -632,9 +634,12 @@ export class WindowsMxcCompatibilitySandboxProvider {
         },
       };
     } catch (error) {
+      if (launch) await this.#cleanupContainer(launch).catch(() => {});
       if (projectView) await projectView.cleanup().catch(() => {});
       if (ownedScratch) await rm(scratchRoot, { recursive: true, force: true }).catch(() => {});
       throw error;
     }
   }
 }
+
+export const WindowsMxcCompatibilitySandboxProvider = WindowsNativeAppContainerSandboxProvider;
