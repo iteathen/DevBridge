@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const PROTOCOL = 'devbridge/persistent-environments-v1';
@@ -177,6 +177,7 @@ function assertOperations(value) {
 export class PersistentEnvironments {
   #directory;
   #catalogFile;
+  #guardFile;
   #source;
   #operations;
   #tail = Promise.resolve();
@@ -185,12 +186,46 @@ export class PersistentEnvironments {
     if (typeof directory !== 'string' || directory.length === 0) throw new TypeError('environment directory is required');
     this.#directory = path.resolve(directory);
     this.#catalogFile = path.join(this.#directory, 'catalog.json');
+    this.#guardFile = path.join(this.#directory, 'lifecycle.lock');
     this.#source = assertSource(source);
     this.#operations = assertOperations(operations);
   }
 
+  async #acquire() {
+    await this.#ensureDirectory();
+    const token = randomUUID();
+    let handle;
+    try {
+      handle = await open(this.#guardFile, 'wx', 0o600);
+    } catch (error) {
+      if (error?.code === 'EEXIST') {
+        throw new Error('environment lifecycle mutation is already active; remove lifecycle.lock only after confirming no operation is running');
+      }
+      throw error;
+    }
+    try {
+      await handle.writeFile(`${token}\n`, 'utf8');
+      await handle.sync();
+    } catch (error) {
+      await handle.close().catch(() => {});
+      await rm(this.#guardFile, { force: true }).catch(() => {});
+      throw error;
+    }
+    await handle.close();
+    return async () => {
+      const observed = (await readFile(this.#guardFile, 'utf8')).trim();
+      if (observed !== token) throw new Error('environment lifecycle guard ownership changed');
+      await rm(this.#guardFile);
+    };
+  }
+
   #serial(work) {
-    const next = this.#tail.then(work, work);
+    const guarded = async () => {
+      const release = await this.#acquire();
+      try { return await work(); }
+      finally { await release(); }
+    };
+    const next = this.#tail.then(guarded, guarded);
     this.#tail = next.catch(() => {});
     return next;
   }

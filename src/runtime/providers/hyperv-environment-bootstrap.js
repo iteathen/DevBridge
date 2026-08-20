@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import dns from 'node:dns';
-import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const PROTOCOL = 'devbridge/hyperv-environment-bootstrap-state-v1';
@@ -123,6 +123,7 @@ Copy-VMFile -VMName ([string]$data.reference) -SourcePath ([string]$data.source)
 export class HyperVEnvironmentBootstrap {
   #directory;
   #stateFile;
+  #guardFile;
   #invoke;
   #locate;
   #connection;
@@ -137,14 +138,48 @@ export class HyperVEnvironmentBootstrap {
     if (typeof dnsServers !== 'function') throw new TypeError('bootstrap dnsServers must be a function');
     this.#directory = path.resolve(directory);
     this.#stateFile = path.join(this.#directory, 'state.json');
+    this.#guardFile = path.join(this.#directory, 'allocation.lock');
     this.#invoke = invoke;
     this.#locate = locate;
     this.#connection = connection;
     this.#dnsServers = dnsServers;
   }
 
+  async #acquire() {
+    await this.#ensure();
+    const token = randomUUID();
+    let handle;
+    try {
+      handle = await open(this.#guardFile, 'wx', 0o600);
+    } catch (error) {
+      if (error?.code === 'EEXIST') {
+        throw new Error('bootstrap allocation mutation is already active; remove allocation.lock only after confirming no operation is running');
+      }
+      throw error;
+    }
+    try {
+      await handle.writeFile(`${token}\n`, 'utf8');
+      await handle.sync();
+    } catch (error) {
+      await handle.close().catch(() => {});
+      await rm(this.#guardFile, { force: true }).catch(() => {});
+      throw error;
+    }
+    await handle.close();
+    return async () => {
+      const observed = (await readFile(this.#guardFile, 'utf8')).trim();
+      if (observed !== token) throw new Error('bootstrap allocation guard ownership changed');
+      await rm(this.#guardFile);
+    };
+  }
+
   #serial(work) {
-    const next = this.#tail.then(work, work);
+    const guarded = async () => {
+      const release = await this.#acquire();
+      try { return await work(); }
+      finally { await release(); }
+    };
+    const next = this.#tail.then(guarded, guarded);
     this.#tail = next.catch(() => {});
     return next;
   }

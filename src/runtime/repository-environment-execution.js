@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { PolicyError } from '../errors.js';
 import {
   REPOSITORY_EXECUTION_RESULT_PROTOCOL,
@@ -31,6 +32,31 @@ function preparedIdentity(raw) {
   return raw.identity;
 }
 
+function abortError(signal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  return new PolicyError('repository execution aborted by the control plane');
+}
+
+function ensureActive(signal) {
+  if (signal?.aborted) throw abortError(signal);
+}
+
+function evidenceIdentity(identity, request) {
+  const input = {
+    identity,
+    operation: request.operation,
+    scope: request.scope,
+    invocation: request.invocation,
+    environment: request.environment,
+    transfers: request.transfers.map(({ name, direction }) => ({ name, direction })),
+    limits: request.limits,
+    stdinSha256: request.stdin == null
+      ? null
+      : createHash('sha256').update(String(request.stdin), 'utf8').digest('hex'),
+  };
+  return `execution-${createHash('sha256').update(JSON.stringify(input), 'utf8').digest('hex')}`;
+}
+
 export class RepositoryEnvironmentExecution {
   #status;
   #open;
@@ -48,51 +74,62 @@ export class RepositoryEnvironmentExecution {
     if (this.#status.ready !== true) {
       throw new PolicyError(`repository execution is unavailable: ${this.#status.reason ?? 'execution boundary is not ready'}`);
     }
-    if (request.signal?.aborted) throw request.signal.reason instanceof Error ? request.signal.reason : new PolicyError('repository execution aborted before admission');
+    ensureActive(request.signal);
 
     const session = assertSession(await this.#open(structuredClone(request.scope)));
-    const prepared = await session.prepare({ signal: request.signal, onActivity: request.onActivity });
-    const identity = preparedIdentity(prepared);
+    try {
+      ensureActive(request.signal);
+      const prepared = await session.prepare({ signal: request.signal, onActivity: request.onActivity });
+      const preparedEvidence = preparedIdentity(prepared);
+      const identity = evidenceIdentity(preparedEvidence, request);
 
-    for (const transfer of request.transfers) {
-      if (transfer.direction === 'input') {
-        await session.input(transfer.name, transfer.port, { signal: request.signal });
-      }
-    }
-
-    const outcome = await session.run({
-      operation: request.operation,
-      invocation: structuredClone(request.invocation),
-      environment: structuredClone(request.environment),
-      limits: structuredClone(request.limits),
-      stdin: request.stdin,
-      signal: request.signal,
-      onActivity: request.onActivity,
-    });
-    const result = observedOutcome(outcome);
-
-    if (result.timedOut !== true && result.aborted !== true) {
       for (const transfer of request.transfers) {
-        if (transfer.direction === 'output') {
-          await session.output(transfer.name, transfer.port, { signal: request.signal });
+        ensureActive(request.signal);
+        if (transfer.direction === 'input') {
+          await session.input(transfer.name, transfer.port, { signal: request.signal });
         }
       }
-      await session.collect({ identity, operation: request.operation, signal: request.signal });
-    }
 
-    return normalizeRepositoryExecutionResult({
-      protocol: REPOSITORY_EXECUTION_RESULT_PROTOCOL,
-      exitCode: result.exitCode ?? null,
-      signal: result.signal ?? null,
-      timedOut: result.timedOut === true,
-      aborted: result.aborted === true,
-      outputTruncated: result.outputTruncated === true,
-      stdout: String(result.stdout ?? ''),
-      stderr: String(result.stderr ?? ''),
-      startedAt: result.startedAt ?? null,
-      finishedAt: result.finishedAt ?? null,
-      lastOutputAt: result.lastOutputAt ?? null,
-      evidence: { identity, scope: request.scope },
-    });
+      ensureActive(request.signal);
+      const outcome = await session.run({
+        operation: request.operation,
+        invocation: structuredClone(request.invocation),
+        environment: structuredClone(request.environment),
+        limits: structuredClone(request.limits),
+        stdin: request.stdin,
+        signal: request.signal,
+        onActivity: request.onActivity,
+      });
+      const result = observedOutcome(outcome);
+
+      if (result.timedOut !== true && result.aborted !== true) {
+        ensureActive(request.signal);
+        for (const transfer of request.transfers) {
+          ensureActive(request.signal);
+          if (transfer.direction === 'output') {
+            await session.output(transfer.name, transfer.port, { signal: request.signal });
+          }
+        }
+        ensureActive(request.signal);
+        await session.collect({ identity: preparedEvidence, operation: request.operation, signal: request.signal });
+      }
+
+      return normalizeRepositoryExecutionResult({
+        protocol: REPOSITORY_EXECUTION_RESULT_PROTOCOL,
+        exitCode: result.exitCode ?? null,
+        signal: result.signal ?? null,
+        timedOut: result.timedOut === true,
+        aborted: result.aborted === true,
+        outputTruncated: result.outputTruncated === true,
+        stdout: String(result.stdout ?? ''),
+        stderr: String(result.stderr ?? ''),
+        startedAt: result.startedAt ?? null,
+        finishedAt: result.finishedAt ?? null,
+        lastOutputAt: result.lastOutputAt ?? null,
+        evidence: { identity, scope: request.scope },
+      });
+    } finally {
+      if (typeof session.close === 'function') await session.close();
+    }
   }
 }

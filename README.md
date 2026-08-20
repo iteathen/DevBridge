@@ -12,7 +12,7 @@ Current mainline includes:
 - managed authoritative Git repositories/worktrees;
 - deterministic controller plans and locally registered operations;
 - optional coding-model adapters, disabled by default;
-- Linux/Bubblewrap containment in the current pre-migration implementation;
+- persistent Hyper-V and KVM/libvirt repository environments attached through provider-neutral execution studs;
 - durable run state, bounded handoffs, restart recovery, and reconciliation;
 - checkpoint-and-proceed human gates;
 - candidate sealing and exact-head task-branch publication;
@@ -22,7 +22,7 @@ Current mainline includes:
 - cooperative pause/resume and below-normal child-process priority;
 - effective serialized task admission.
 
-Repository execution is moving to DB-020's VM architecture.
+Repository execution uses DB-020's VM-only architecture on the migration stack. Stage 7 remains the real-provider security and host/guest qualification gate.
 
 **Target host providers:**
 
@@ -44,7 +44,7 @@ Stage 1 locates/proves the existing LEGO connection studs, removes active Bubble
 
 There is no temporary direct/uncontained host fallback. Provider absence must never make repository-controlled work host-safe.
 
-Stages 2–5 build Hyper-V/KVM-libvirt provider, persistent environment, bridge, and guest tooling capability against the sandbox-free boundary. Stage 6 restores repository execution VM-only; Stages 7–8 qualify and make it installable/reconfigurable; Stage 9 removes remaining migration/configuration/documentation scaffolding.
+Stages 2–5 build Hyper-V/KVM-libvirt provider, persistent environment, bridge, and guest tooling capability against the sandbox-free boundary. Stage 6 now restores repository execution VM-only through locally admitted stable repository routes and bounded source/candidate transfers; Stages 7–8 qualify and make it installable/reconfigurable; Stage 9 removes remaining migration/configuration/documentation scaffolding. See `docs/vm-stage6-repository-execution.md`.
 
 See DB-020, `docs/architecture.md`, `docs/roadmap.md`, `docs/vm-migration.md`, and `docs/vm-lego-studs.md`.
 
@@ -70,14 +70,14 @@ No production repository execution provider means repository-controlled executio
 
 ## Install
 
-Current pre-migration main requirements include:
+Current migration-stack requirements include:
 
 - Node.js 22.16.0 or newer;
 - Git;
 - GitHub account/access needed by the configured queue/repositories;
-- Bubblewrap for the current Linux host-sandbox path until Stage 1 removes that path.
+- an observed Stage-2-to-Stage-5 provider/environment/bridge/tooling stack and a local stable-identity execution route for repository-controlled work.
 
-After Stage 1, Bubblewrap is no longer an execution requirement; repository-controlled execution remains unavailable until VM setup/restoration is implemented.
+Bubblewrap is not an execution requirement. Without an admitted, ready persistent VM route, repository-controlled execution remains unavailable/fail-closed.
 
 ### Linux
 
@@ -122,9 +122,9 @@ VM unavailability remains fail-closed; setup never reactivates host repository e
 
 Stage 0 establishes only the managed checkout needed to reach secure bootstrap. DB-011 owns update/release policy, exact artifact identity, candidate validation, daemon drain, activation, health, and rollback.
 
-Current pre-migration main validates candidate-controlled code through the host sandbox. Stage 1 disables/removes candidate-controlled host execution with the sandbox path. Until Stage 6 provides provider-native VM validation, candidate-controlled execution is unavailable/fail-closed while DB-011 identity/rollback behavior remains authoritative.
+Stage 1 removed candidate-controlled host execution with the sandbox path. Stage 6 now performs candidate preflight/tests through the single locally admitted VM validation route while DB-011 identity/rollback behavior remains authoritative. Missing validation readiness fails closed before daemon drain.
 
-Stage 6 targets VM validation:
+The VM validation attachment is provider-native:
 
 - Hyper-V on Windows;
 - KVM/QEMU/libvirt on Linux.
@@ -199,8 +199,8 @@ Remote decisions cannot expand filesystem, executable, credential, network, prov
 
 Important explicit boundaries include:
 
-- VM program #107 is not yet implemented; Hyper-V and KVM/libvirt are target providers, not current main capability;
-- after Stage 1, normal repository-controlled execution is intentionally unavailable until Stage 6 restores it through VMs;
+- Stage 7 real-provider security, recovery, resource, and host/guest matrix qualification is not yet complete;
+- normal repository-controlled execution is available only through a ready Stage-6 persistent VM route;
 - per-installation task destination/dispatch authorization for shared team queues;
 - complete generic effect journaling for every possible remote mutation;
 - numeric GitHub repository-ID pinning and complete tool/profile identity evidence outside VM Stage-1 work;

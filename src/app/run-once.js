@@ -24,10 +24,15 @@ async function refreshInventory(runtime) {
   }
 }
 
-async function reconcileOnboarding(runtime) {
+async function reconcileOnboarding(runtime, task = null) {
   if (!runtime.toolOnboarding) return { changed: false, events: [], error: null };
   try {
-    return { ...(await runtime.toolOnboarding.reconcile()), error: null };
+    const context = task == null ? null : {
+      repository: task.envelope.target.repository,
+      repositoryId: null,
+      runId: runIdForTask(task),
+    };
+    return { ...(await runtime.toolOnboarding.reconcile(context)), error: null };
   } catch (error) {
     return {
       changed: false,
@@ -155,6 +160,7 @@ export async function runCycle(runtime) {
   }
   const results = [];
   const pendingTask = await oldestPendingTask(runtime);
+  let onboardingTask = pendingTask;
   let resumedRunId = null;
   if (pendingTask) {
     resumedRunId = runIdForTask(pendingTask);
@@ -166,6 +172,7 @@ export async function runCycle(runtime) {
   }
   const poll = await runtime.taskSource.poll();
   for (const task of poll.tasks) {
+    onboardingTask ??= task;
     if (resumedRunId === runIdForTask(task)) continue;
     startInventoryProjection(runtime, task.issueNumber, inventory.record, projections, projectedIssues);
     const result = await executeTask(runtime, task);
@@ -173,10 +180,10 @@ export async function runCycle(runtime) {
   }
 
   // Dynamic onboarding is deliberately outside the dispatch critical path.
-  // A locally pre-authorized unfamiliar CLI may take time to sandbox/probe;
+  // A locally pre-authorized unfamiliar CLI may take time to probe;
   // current tasks use the inventory they were actually given and any newly
   // registered operation becomes visible only after this reconciliation.
-  const toolOnboarding = await reconcileOnboarding(runtime);
+  const toolOnboarding = await reconcileOnboarding(runtime, onboardingTask);
   if (toolOnboarding.changed) inventory = await refreshInventory(runtime);
 
   const inventoryProjections = await Promise.all(projections);

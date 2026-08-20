@@ -41,12 +41,21 @@ function repositoryEndpoint(repository) {
   return `/repos/${encodeURIComponent(parts[0])}/${encodeURIComponent(parts[1])}`;
 }
 
-export async function createRuntimeExecutionContext({ config, workspaceManager, gitClient, client, env = process.env } = {}) {
+export async function createRuntimeExecutionContext({
+  config,
+  workspaceManager,
+  gitClient,
+  client,
+  toolProfiles = config?.tools ?? {},
+  protectedValues = [],
+  env = process.env,
+} = {}) {
   if (!config || !workspaceManager || !gitClient || !client) throw new TypeError('runtime execution composition is incomplete');
   const repositoryIds = new Map();
   const repositoryExecution = await createRepositoryExecution({
     stateDirectory: config.state.directory,
     env,
+    protectedValues,
     rootFor: async (scope) => workspaceManager.worktreePath(scope.repository, scope.runId),
     listPaths: async (root) => gitVisiblePathsFromResult(await gitClient.run(['ls-files', '-co', '--exclude-standard', '-z'], { cwd: root })),
     resolveSubject: async (scope) => {
@@ -62,7 +71,7 @@ export async function createRuntimeExecutionContext({ config, workspaceManager, 
     },
     resolveTool: async (tool) => {
       if (DIRECT_TOOLS.has(tool)) return { program: tool, arguments: [] };
-      const profile = config.tools?.[tool];
+      const profile = toolProfiles?.[tool];
       if (profile?.executable) return { program: programName(profile.executable), arguments: [] };
       if (!SAFE_PROGRAM.test(tool)) throw new Error('logical tool identity cannot be used as a guest program');
       return { program: tool, arguments: [] };

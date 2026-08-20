@@ -118,6 +118,8 @@ Repository-controlled execution is still not restored to normal controller/task 
 
 ### Stage 6 — restore repository-controlled execution through persistent VMs only — #114
 
+Implementation status: complete on the VM migration stack. See `docs/vm-stage6-repository-execution.md`. Stage 7 retains real-provider security, recovery, resource, and host/guest matrix qualification.
+
 This is the functional restoration stage, not merely a live cutover from one simultaneously-running provider to another.
 
 Implement:

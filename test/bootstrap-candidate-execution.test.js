@@ -5,8 +5,29 @@ import os from 'node:os';
 import path from 'node:path';
 import { validateRuntimeCandidate, candidateValidationAvailability } from '../src/bootstrap/candidate-validator.mjs';
 import { runtimeArtifactSha256 } from '../src/bootstrap/release-integrity.mjs';
+import { REPOSITORY_EXECUTION_RESULT_PROTOCOL, REPOSITORY_EXECUTION_STATUS_PROTOCOL } from '../src/runtime/repository-execution.js';
 
-test('Stage 1 candidate-controlled execution is explicitly unavailable and never runs candidate code on the host', async () => {
+function context(seen, execute = null) {
+  const scope = { repository: 'owner/runtime', repositoryId: '123', runId: 'runtime-a' };
+  return {
+    scope,
+    execution: {
+      inspect: () => ({ protocol: REPOSITORY_EXECUTION_STATUS_PROTOCOL, state: 'ready', ready: true, identity: 'validation-fixture', reason: null }),
+      async execute(request) {
+        seen.push(request);
+        if (execute) await execute(request, seen.length);
+        return {
+          protocol: REPOSITORY_EXECUTION_RESULT_PROTOCOL,
+          exitCode: 0, signal: null, timedOut: false, aborted: false, outputTruncated: false,
+          stdout: 'passed\n', stderr: '', startedAt: null, finishedAt: null, lastOutputAt: null,
+          evidence: { identity: `check-${seen.length}`, scope },
+        };
+      },
+    },
+  };
+}
+
+test('candidate checks use only the isolated execution stud and never run candidate code on the host', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-candidate-no-provider-'));
   const candidateDir = path.join(root, 'candidate');
   const outside = path.join(root, 'escaped.txt');
@@ -14,21 +35,57 @@ test('Stage 1 candidate-controlled execution is explicitly unavailable and never
     await mkdir(candidateDir, { recursive: true });
     await writeFile(path.join(candidateDir, 'candidate.mjs'), `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(outside)}, 'escaped');\n`);
     const runtime = { runtimeDir: candidateDir, head: 'a'.repeat(40), version: '0.1.0' };
-    await assert.rejects(() => validateRuntimeCandidate({ home: root }, runtime), /unavailable until VM Stage 6/u);
+    const seen = [];
+    const result = await validateRuntimeCandidate({ home: root }, runtime, null, { executionContext: context(seen) });
+    assert.equal(result.preflight, 'passed');
+    assert.equal(result.tests, 'passed');
+    assert.deepEqual(seen.map((request) => request.operation), ['runtime.validate:preflight', 'runtime.validate:tests']);
+    assert.ok(seen.every((request) => request.invocation.tool === 'node'));
     await assert.rejects(readFile(outside), { code: 'ENOENT' });
-    assert.deepEqual(candidateValidationAvailability(), {
-      state: 'unavailable', ready: false, reason: 'candidate-controlled execution is unavailable until VM Stage 6 restores repository execution',
-    });
+    assert.deepEqual(candidateValidationAvailability(), { state: 'ready', ready: true, reason: null });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('static candidate artifact identity is still checked before the unavailable execution boundary', async () => {
+test('static candidate artifact identity is checked before and after isolated execution', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-candidate-digest-'));
   try {
     await writeFile(path.join(root, 'file.txt'), 'candidate\n');
     const runtime = { runtimeDir: root, head: 'b'.repeat(40), version: '0.1.0' };
     const digest = await runtimeArtifactSha256(root);
-    await assert.rejects(() => validateRuntimeCandidate({ home: root }, runtime, null, { expectedArtifactSha256: '0'.repeat(64) }), /candidate artifact changed before validation/u);
-    await assert.rejects(() => validateRuntimeCandidate({ home: root }, runtime, null, { expectedArtifactSha256: digest.sha256 }), /unavailable until VM Stage 6/u);
+    const seen = [];
+    await assert.rejects(() => validateRuntimeCandidate({ home: root }, runtime, null, { expectedArtifactSha256: '0'.repeat(64), executionContext: context(seen) }), /candidate artifact changed before validation/u);
+    assert.equal(seen.length, 0);
+    const result = await validateRuntimeCandidate({ home: root }, runtime, null, { expectedArtifactSha256: digest.sha256, executionContext: context(seen) });
+    assert.equal(result.artifactSha256, digest.sha256);
+
+    const changed = [];
+    await assert.rejects(() => validateRuntimeCandidate({ home: root }, runtime, null, {
+      expectedArtifactSha256: digest.sha256,
+      executionContext: context(changed, async (_request, index) => {
+        if (index === 2) await writeFile(path.join(root, 'file.txt'), 'changed\n');
+      }),
+    }), /changed during execution validation/u);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('default candidate validation fails closed when no local validation route exists', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-candidate-route-'));
+  const runtimeDir = path.join(root, 'runtime');
+  const configFile = path.join(root, 'config.json');
+  try {
+    await mkdir(runtimeDir);
+    await writeFile(path.join(runtimeDir, 'candidate.mjs'), 'process.exitCode = 99;\n');
+    await writeFile(configFile, `${JSON.stringify({
+      version: 1,
+      github: { queueRepository: 'owner/queue', trustedActorIds: ['1'] },
+      workspace: { root: path.join(root, 'workspace'), allowedOwners: ['owner'], allowCreate: true },
+      state: { directory: path.join(root, 'state') },
+      execution: { enabled: false, controllerPlansEnabled: true, modelAdaptersEnabled: false },
+      status: {}, tools: {},
+    })}\n`);
+    await assert.rejects(
+      () => validateRuntimeCandidate({ home: root, config: configFile }, { runtimeDir, head: 'c'.repeat(40), version: '0.1.0' }, null, { env: {} }),
+      /no local execution routes/u,
+    );
   } finally { await rm(root, { recursive: true, force: true }); }
 });

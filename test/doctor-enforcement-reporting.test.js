@@ -25,7 +25,7 @@ test('doctor no-provider reporting is provider-neutral and contains no legacy en
     assert.deepEqual(Object.keys(execution).sort(), ['identity', 'protocol', 'ready', 'reason', 'state']);
     assert.equal(execution.state, 'unavailable');
     assert.equal(execution.ready, false);
-    assert.match(execution.reason, /Stage 6/u);
+    assert.match(execution.reason, /execution routes/u);
     const text = JSON.stringify(report.capabilities);
     assert.doesNotMatch(text, /bubblewrap|processcontainer|appcontainer/iu);
     assert.doesNotMatch(text, /sandboxRequired|verified-os-sandbox/u);

@@ -309,6 +309,25 @@ export class EnvironmentBridge {
     if (signal != null && typeof signal !== 'object') throw new TypeError('bridge execution signal is invalid');
     if (onActivity != null && typeof onActivity !== 'function') throw new TypeError('bridge execution onActivity is invalid');
     integer(pollIntervalMs, 'bridge execution pollIntervalMs', 100, 30_000);
+    if (signal?.aborted) {
+      return {
+        completion: 'observed',
+        request,
+        target,
+        result: {
+          exitCode: null,
+          signal: null,
+          timedOut: false,
+          aborted: true,
+          outputTruncated: false,
+          stdout: '',
+          stderr: '',
+          startedAt: null,
+          finishedAt: null,
+          lastOutputAt: null,
+        },
+      };
+    }
 
     let state;
     try {

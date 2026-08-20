@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createEnvironmentBootstrap } from './environment-bootstrap.js';
@@ -26,16 +26,45 @@ const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
 const MAX_ROUTE_BYTES = 1024 * 1024;
 const MAX_ROUTES = 256;
 const BRIDGE_OUTPUT_LIMIT = 3 * 1024 * 1024;
+const TRANSFER_LIMIT = 16 * 1024 * 1024;
 const MANIFEST_LIMIT = 24 * 1024 * 1024;
 const AGENT_FILE = fileURLToPath(new URL('../guest/workspace-agent.mjs', import.meta.url));
 
 function requireObject(value, name) { if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`); return value; }
 function onlyKeys(value, allowed, name) { for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`${name}.${key} is not allowed`); }
 function safeId(value, name) { if (typeof value !== 'string' || !SAFE_ID.test(value)) throw new TypeError(`${name} is invalid`); return value; }
+function stableSubject(value, name) { if (typeof value !== 'string' || !/^\d+$/u.test(value)) throw new TypeError(`${name} must be a numeric stable identity`); return value; }
 function bounded(value, name, maxBytes = 4096) { if (typeof value !== 'string' || value.length === 0 || value.includes('\0') || Buffer.byteLength(value, 'utf8') > maxBytes) throw new TypeError(`${name} is invalid`); return value; }
 function hashIdentity(value) { return `execution-${createHash('sha256').update(JSON.stringify(value), 'utf8').digest('hex')}`; }
 function repositoryPathAllowed(relative) { const first = String(relative).replace(/\\/gu, '/').split('/')[0]; return first !== '.git' && first !== '.devbridge'; }
 function splitNul(text) { return String(text).split('\0').filter(Boolean); }
+function ensureActive(signal) {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error ? signal.reason : new Error('execution control signal was raised');
+}
+
+async function acquireExclusiveSession(directory, identity) {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const key = createHash('sha256').update(String(identity), 'utf8').digest('hex');
+  const file = path.join(directory, `${key}.lock`);
+  const token = randomUUID();
+  let handle;
+  try { handle = await open(file, 'wx', 0o600); }
+  catch (error) {
+    if (error?.code === 'EEXIST') throw new Error('the selected execution environment already has an active session');
+    throw error;
+  }
+  try { await handle.writeFile(`${token}\n`, 'utf8'); }
+  finally { await handle.close(); }
+  let released = false;
+  return async () => {
+    if (released) return;
+    const observed = (await readFile(file, 'utf8')).trim();
+    if (observed !== token) throw new Error('execution session ownership changed before release');
+    await rm(file, { force: false });
+    released = true;
+  };
+}
 
 export function repositoryExecutionRoutesPath(stateDirectory) {
   return path.join(path.resolve(stateDirectory), 'environment-foundation', 'execution-routes.json');
@@ -67,7 +96,7 @@ export function normalizeEnvironmentExecutionRoutes(raw) {
     const route = requireObject(rawRoute, `execution route[${index}]`);
     onlyKeys(route, new Set(['subject', 'profile', 'preferred', 'validation', 'access']), `execution route[${index}]`);
     const normalized = {
-      subject: safeId(route.subject, `execution route[${index}].subject`),
+      subject: stableSubject(route.subject, `execution route[${index}].subject`),
       profile: safeId(route.profile, `execution route[${index}].profile`),
       preferred: route.preferred === true,
       validation: route.validation === true,
@@ -86,7 +115,6 @@ export function normalizeEnvironmentExecutionRoutes(raw) {
   }
   const validation = routes.filter((route) => route.validation);
   if (validation.length > 1) throw new TypeError('environment execution routes contain multiple validation routes');
-  if (validation.length === 1 && !/^\d+$/u.test(validation[0].subject)) throw new TypeError('environment execution validation route subject must be a numeric stable identity');
   return Object.freeze({ protocol: ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL, routes: Object.freeze(routes.map((route) => Object.freeze({ ...route, access: Object.freeze({ ...route.access }) }))) });
 }
 
@@ -100,6 +128,14 @@ export async function loadEnvironmentExecutionRoutes(stateDirectory) {
     if (error?.code === 'ENOENT') return null;
     throw error;
   }
+}
+
+export function validationEnvironmentExecutionRoute(policy) {
+  if (policy == null) throw new Error('no local execution routes are configured');
+  const normalized = normalizeEnvironmentExecutionRoutes(policy);
+  const matches = normalized.routes.filter((route) => route.validation);
+  if (matches.length !== 1) throw new Error('exactly one local validation execution route is required');
+  return matches[0];
 }
 
 function routeForSubject(policy, subject) {
@@ -135,6 +171,30 @@ function memorySink(limit) {
     value() { if (value == null) throw new Error('buffer sink did not receive data'); return value; },
   };
 }
+function executionInput(port) {
+  let bytes = null;
+  return {
+    async read({ offset, limit }) {
+      if (bytes == null) bytes = Buffer.from(await port.read());
+      const end = Math.min(bytes.length, offset + limit);
+      return { data: bytes.subarray(offset, end), eof: end === bytes.length };
+    },
+  };
+}
+function executionOutput(port) {
+  const chunks = [];
+  let offset = 0;
+  return {
+    async write(frame) {
+      const data = Buffer.from(frame?.data ?? frame);
+      if (frame?.offset != null && frame.offset !== offset) throw new Error('execution output transfer offset is not contiguous');
+      offset += data.length;
+      if (offset > TRANSFER_LIMIT) throw new Error('execution output transfer exceeded its limit');
+      chunks.push(data);
+      if (frame?.eof !== false) await port.write(Buffer.concat(chunks));
+    },
+  };
+}
 async function sendBytes(channel, target, bytes, destination) {
   const buffer = Buffer.from(bytes);
   return channel.put(target, bufferPort(buffer), destination, { maxBytes: Math.max(1, buffer.length) });
@@ -153,7 +213,7 @@ function parseAgentResult(outcome, action) {
   try { return JSON.parse(result.stdout); } catch { throw new Error(`${action} returned invalid structured output`); }
 }
 
-function descriptorFor(invocation, resolved, environment, stdin, transfers) {
+function descriptorFor(invocation, resolved, environment, stdin, transfers, protectedValues) {
   if (!resolved || typeof resolved.program !== 'string' || !SAFE_NAME.test(resolved.program)) throw new Error('logical tool did not resolve to a safe guest program');
   const fixed = resolved.arguments ?? [];
   if (!Array.isArray(fixed) || fixed.some((entry) => typeof entry !== 'string')) throw new Error('logical tool fixed arguments are invalid');
@@ -171,6 +231,11 @@ function descriptorFor(invocation, resolved, environment, stdin, transfers) {
   }
   const known = new Set(transfers.map((entry) => `${entry.direction}:${entry.name}`));
   for (const argument of invocation.arguments) if (argument.kind !== 'literal' && !known.has(`${argument.kind}:${argument.name}`)) throw new Error('operation argument transfer is not registered');
+  for (const value of Object.values(environment)) {
+    if (protectedValues.some((protectedValue) => value.includes(protectedValue))) {
+      throw new Error('operation environment contains a protected control-plane value');
+    }
+  }
   return {
     descriptor: { protocol: 'devbridge/work-operation-v1', program: resolved.program, arguments: argumentsList, environment, stdin },
     locations,
@@ -187,6 +252,7 @@ export async function createRepositoryExecution({
   listPaths,
   resolveSubject,
   resolveTool,
+  protectedValues = [],
   createState = createEnvironmentFoundation,
   createPreparation = createEnvironmentBootstrap,
   createChannel = createEnvironmentBridge,
@@ -195,6 +261,8 @@ export async function createRepositoryExecution({
   if (typeof rootFor !== 'function' || typeof listPaths !== 'function' || typeof resolveSubject !== 'function' || typeof resolveTool !== 'function') {
     throw new TypeError('repository execution composition contracts are incomplete');
   }
+  if (!Array.isArray(protectedValues) || protectedValues.some((value) => typeof value !== 'string')) throw new TypeError('repository execution protectedValues must be strings');
+  const protectedEnvironmentValues = protectedValues.filter((value) => value.length >= 8);
   const policy = routes == null ? await loadEnvironmentExecutionRoutes(stateDirectory) : normalizeEnvironmentExecutionRoutes(routes);
   if (!policy || policy.routes.length === 0) return new UnavailableRepositoryExecution({ reason: 'no local persistent-environment execution routes are configured' });
   if (!['win32', 'linux'].includes(platform)) return new UnavailableRepositoryExecution({ reason: 'no persistent-environment execution attachment is available for this host platform' });
@@ -227,7 +295,7 @@ export async function createRepositoryExecution({
   return new RepositoryEnvironmentExecution({
     status,
     open: async (scope) => {
-      const subject = safeId(await resolveSubject(structuredClone(scope)), 'repository execution subject');
+      const subject = stableSubject(await resolveSubject(structuredClone(scope)), 'repository execution subject');
       const route = routeForSubject(policy, subject);
       const matches = (await state.listEnvironments()).filter((entry) => entry.record?.subject === subject && entry.record?.profile === route.profile);
       if (matches.length !== 1) throw new Error(matches.length === 0 ? 'routed persistent environment is absent' : 'routed persistent environment is ambiguous');
@@ -237,6 +305,7 @@ export async function createRepositoryExecution({
       const root = await realpath(path.resolve(await rootFor(structuredClone(scope))));
       const rootInfo = await lstat(root);
       if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error('repository source root must be a real directory');
+      const releaseSession = await acquireExclusiveSession(path.join(path.resolve(stateDirectory), 'repository-execution', 'locks'), target);
       let source = null;
       let evidenceIdentity = null;
       const agentLocation = { class: 'input', path: 'control/workspace-agent.mjs' };
@@ -262,16 +331,20 @@ export async function createRepositoryExecution({
 
       return {
         async prepare({ signal = null, onActivity = null } = {}) {
+          ensureActive(signal);
           const ready = await preparation.ensure(target);
+          ensureActive(signal);
           const health = await channel.health(target);
           if (!health.ready) throw new Error(health.reason ?? 'environment exchange is not ready');
           source = await snapshot();
+          ensureActive(signal);
           await sendBytes(channel, target, agentBytes, agentLocation);
           const prepared = await runAgent('prepare', [stateLocation, source.manifest.digest], { timeoutMs: 60_000, signal, onActivity });
           if (prepared.parsed.appliedDigest !== source.manifest.digest) {
             for (const entry of source.manifest.entries) {
               if (entry.type !== 'file') continue;
               for (const part of entry.parts) {
+                ensureActive(signal);
                 const destination = { class: 'input', path: `source/${part.name}` };
                 await channel.put(target, { read: (request) => source.readPart(part.name, request) }, destination, { maxBytes: Math.max(1, part.size) });
               }
@@ -286,15 +359,17 @@ export async function createRepositoryExecution({
           return { identity: evidenceIdentity };
         },
 
-        async input(name, port) {
-          await channel.put(target, port, { class: 'input', path: `ports/${name}` });
+        async input(name, port, { signal = null } = {}) {
+          ensureActive(signal);
+          await channel.put(target, executionInput(port), { class: 'input', path: `ports/${name}` }, { maxBytes: TRANSFER_LIMIT });
+          ensureActive(signal);
         },
 
         async run({ invocation, environment, limits, stdin, signal = null, onActivity = null }) {
           if (!source || !evidenceIdentity) throw new Error('repository execution session was not prepared');
           const resolved = await resolveTool(invocation.tool, { subject, profile: route.profile, scope: structuredClone(scope) });
           const transferList = invocation.arguments.filter((entry) => entry.kind !== 'literal').map((entry) => ({ name: entry.name, direction: entry.kind }));
-          const materialized = descriptorFor(invocation, resolved, environment, stdin, transferList);
+          const materialized = descriptorFor(invocation, resolved, environment, stdin, transferList, protectedEnvironmentValues);
           const descriptorBytes = Buffer.from(`${JSON.stringify(materialized.descriptor)}\n`, 'utf8');
           if (descriptorBytes.length > 8 * 1024 * 1024) throw new Error('repository operation descriptor exceeds the bounded staging limit');
           const descriptorDigest = createHash('sha256').update(descriptorBytes).digest('hex').slice(0, 32);
@@ -310,11 +385,14 @@ export async function createRepositoryExecution({
           }, { signal, onActivity });
         },
 
-        async output(name, port) {
-          await channel.get(target, { class: 'output', path: `ports/${name}` }, port);
+        async output(name, port, { signal = null } = {}) {
+          ensureActive(signal);
+          await channel.get(target, { class: 'output', path: `ports/${name}` }, executionOutput(port), { maxBytes: TRANSFER_LIMIT });
+          ensureActive(signal);
         },
 
         async collect({ identity, operation = null, signal = null } = {}) {
+          ensureActive(signal);
           if (identity !== evidenceIdentity || !source) throw new Error('repository execution evidence identity changed before candidate collection');
           const before = await snapshot();
           if (before.manifest.digest !== source.manifest.digest) throw new Error('authoritative source changed during repository execution; guest result is stale');
@@ -329,13 +407,16 @@ export async function createRepositoryExecution({
           try {
             const staged = await stageFileTreeDelta({
               manifest, root, stagingRoot: stage, acceptPath: repositoryPathAllowed,
-              readPart: async (name) => receiveBytes(channel, target, { class: 'output', path: `candidate/${name}` }, FILE_TREE_PART_BYTES),
+              readPart: async (name) => { ensureActive(signal); return receiveBytes(channel, target, { class: 'output', path: `candidate/${name}` }, FILE_TREE_PART_BYTES); },
             });
+            ensureActive(signal);
             const current = await snapshot();
             if (current.manifest.digest !== source.manifest.digest) throw new Error('authoritative source drifted before candidate import');
-            await applyStagedFileTreeDelta({ root, stagingRoot: stage, manifest: staged, acceptPath: repositoryPathAllowed });
+            ensureActive(signal);
+            await applyStagedFileTreeDelta({ root, stagingRoot: stage, manifest: staged, acceptPath: repositoryPathAllowed, signal });
           } finally { await rm(stage, { recursive: true, force: true }); }
         },
+        close: releaseSession,
       };
     },
   });

@@ -6,7 +6,7 @@ A profile is **local requested behavior**, not proof that containment or a usabl
 
 DB-020 changes the target execution model: repository-controlled tools execute inside persistent repository VMs. The required initial host providers are Windows/Hyper-V and Linux/KVM-QEMU-libvirt.
 
-Current pre-migration main still uses the legacy Linux/Bubblewrap host sandbox for supported proposal-worker/repository-code execution. Stage 1 removes that active host execution path before production VM implementation. From Stage 1 through Stage 5, repository-class tool execution is intentionally unavailable/fail-closed; Stage 6 restores it through VMs only.
+Stage 1 removed the legacy Linux/Bubblewrap and Windows host-sandbox paths before production VM implementation. The completed Stages 1–5 interval kept repository tools unavailable/fail-closed. Stage 6 now restores locally admitted profiles through persistent VMs only; profiles requiring a host secret remain unsupported.
 
 Deterministic DB-013 operations remain preferred where model inference is unnecessary. DB-015 dynamic `tool.*` onboarding remains a separate validated local-operation mechanism.
 

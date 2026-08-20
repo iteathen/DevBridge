@@ -2,7 +2,7 @@
 
 Status: active architecture contract; implementation is staged by issues #107 through #117.
 
-Implementation status: Stages 0 and 1 are implemented by the VM migration candidate. Active Bubblewrap/AppContainer/ProcessContainer-style host repository execution has been removed. Production composition intentionally has no repository execution provider and reports repository execution unavailable/fail-closed. `src/runtime/repository-execution.js` is the provider-neutral Stage-2 attachment surface. Stages 2–5 build VM capability without restoring normal repository execution; Stage 6 restores it only through persistent VM providers.
+Implementation status: Stages 0–6 are implemented on the VM migration stack. Active Bubblewrap/AppContainer/ProcessContainer-style host repository execution remains removed. `src/runtime/repository-execution.js` is the provider-neutral execution stud; Stage 6 production composition routes it only through admitted persistent VM environments, with bounded credential-free source/candidate transfer and fail-closed absence. See `docs/vm-stage6-repository-execution.md`. Stage 7 retains real-provider security and matrix qualification.
 
 ## Goal
 

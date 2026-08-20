@@ -4,8 +4,9 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-const agent = new URL('../src/guest/environment-bootstrap-agent.mjs', import.meta.url);
+const agent = fileURLToPath(new URL('../src/guest/environment-bootstrap-agent.mjs', import.meta.url));
 const target = 'env-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 function request(action, overrides = {}) {
@@ -28,7 +29,7 @@ function request(action, overrides = {}) {
 
 async function exchange(root, frame, extraEnv = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [agent.pathname, '--exchange-stdin'], {
+    const child = spawn(process.execPath, [agent, '--exchange-stdin'], {
       stdio: ['pipe', 'pipe', 'pipe'], shell: false,
       env: { ...process.env, DEVBRIDGE_BOOTSTRAP_ROOT: root, DEVBRIDGE_GUEST_TARGET: target, ...extraEnv },
     });
@@ -100,6 +101,10 @@ test('guest baseline observes real Node Git CMake CTest compiler and project-pac
     assert.equal(result.response.ok, true);
     const byId = new Map(result.response.body.capabilities.map((entry) => [entry.id, entry]));
     for (const id of required) {
+      if (process.platform === 'win32' && ['compiler-c', 'compiler-cxx'].includes(id) && byId.get(id)?.present === false) {
+        assert.match(byId.get(id).reason, /not found/u);
+        continue;
+      }
       assert.equal(byId.get(id)?.present, true, `${id} should be present`);
       assert.equal(byId.get(id)?.usable, true, `${id} should pass its bounded real probe`);
       assert.ok(byId.get(id)?.version, `${id} should expose bounded version evidence`);

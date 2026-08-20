@@ -5,6 +5,7 @@ import {
   copyFile,
   lstat,
   mkdir,
+  open,
   readdir,
   readFile,
   realpath,
@@ -115,6 +116,7 @@ export class BaseImageLibrary {
   #objects;
   #staging;
   #catalogFile;
+  #guardFile;
   #tail = Promise.resolve();
 
   constructor({ directory }) {
@@ -122,6 +124,7 @@ export class BaseImageLibrary {
     this.#objects = path.join(this.#root, 'objects');
     this.#staging = path.join(this.#root, 'staging');
     this.#catalogFile = path.join(this.#root, 'catalog.json');
+    this.#guardFile = path.join(this.#root, 'mutation.lock');
   }
 
   async #ensure() {
@@ -156,8 +159,41 @@ export class BaseImageLibrary {
     await rename(temporary, this.#catalogFile);
   }
 
+  async #acquire() {
+    await this.#ensure();
+    const token = randomUUID();
+    let handle;
+    try {
+      handle = await open(this.#guardFile, 'wx', 0o600);
+    } catch (error) {
+      if (error?.code === 'EEXIST') {
+        throw new Error('image library mutation is already active; remove mutation.lock only after confirming no operation is running');
+      }
+      throw error;
+    }
+    try {
+      await handle.writeFile(`${token}\n`, 'utf8');
+      await handle.sync();
+    } catch (error) {
+      await handle.close().catch(() => {});
+      await rm(this.#guardFile, { force: true }).catch(() => {});
+      throw error;
+    }
+    await handle.close();
+    return async () => {
+      const observed = (await readFile(this.#guardFile, 'utf8')).trim();
+      if (observed !== token) throw new Error('image library mutation guard ownership changed');
+      await rm(this.#guardFile);
+    };
+  }
+
   #serial(work) {
-    const next = this.#tail.then(work, work);
+    const guarded = async () => {
+      const release = await this.#acquire();
+      try { return await work(); }
+      finally { await release(); }
+    };
+    const next = this.#tail.then(guarded, guarded);
     this.#tail = next.catch(() => {});
     return next;
   }

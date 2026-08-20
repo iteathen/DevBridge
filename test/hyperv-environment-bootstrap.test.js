@@ -96,3 +96,29 @@ test('Hyper-V address allocation is durable, collision-free within retained targ
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('separate bootstrap instances cannot overlap allocation mutation', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-hv-address-exclusive-'));
+  const options = {
+    directory: root,
+    invoke: async () => success(JSON.stringify({ ready: true })),
+    locate: async (value) => location(value),
+    connection: async () => baseConnection,
+    dnsServers: () => ['1.1.1.1'],
+  };
+  try {
+    const first = new HyperVEnvironmentBootstrap(options);
+    const second = new HyperVEnvironmentBootstrap(options);
+    const results = await Promise.allSettled([first.connection(target), second.connection(other)]);
+    assert.equal(results.filter((entry) => entry.status === 'fulfilled').length, 1);
+    assert.equal(results.filter((entry) => entry.status === 'rejected').length, 1);
+    assert.match(results.find((entry) => entry.status === 'rejected').reason.message, /allocation mutation is already active/u);
+    const state = JSON.parse(await readFile(path.join(root, 'state.json'), 'utf8'));
+    assert.equal(Object.keys(state.allocations).length, 1);
+    const firstAddress = (await first.connection(target)).address;
+    const secondAddress = (await second.connection(other)).address;
+    assert.notEqual(firstAddress, secondAddress);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

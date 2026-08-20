@@ -197,3 +197,33 @@ test('attachment identity drift never silently adopts an environment created by 
     await assert.rejects(() => second.ensure(request()), /attachment identity changed/u);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('separate registry instances cannot overlap one directory lifecycle', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-exclusive-'));
+  const fake = fixture();
+  let enter;
+  let release;
+  const entered = new Promise((resolve) => { enter = resolve; });
+  const blocked = new Promise((resolve) => { release = resolve; });
+  const delayedSource = {
+    async resolve(identity) {
+      enter();
+      await blocked;
+      return fake.source.resolve(identity);
+    },
+  };
+  try {
+    const first = new PersistentEnvironments({ directory: root, source: delayedSource, operations: fake.operations });
+    const second = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const ensuring = first.ensure(request());
+    await entered;
+    await assert.rejects(() => second.ensure(request()), /lifecycle mutation is already active/u);
+    assert.equal(fake.provisionCalls(), 0);
+    release();
+    await ensuring;
+    assert.equal(fake.provisionCalls(), 1);
+  } finally {
+    release?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});

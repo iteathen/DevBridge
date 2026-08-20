@@ -47,14 +47,14 @@ DB-020 defines the target repository-code boundary: persistent untrusted VMs wit
 - Windows -> Hyper-V;
 - Linux -> KVM/QEMU managed through libvirt.
 
-Stages 0–2 of that target are implemented in current main.
+Stages 0–6 are implemented on the VM migration stack.
 
 - Stage 1 removed active host-sandbox repository execution on every host.
 - Stage 2 implements the host management, immutable base-image, owned network, and owned storage foundation for both required provider families.
-- Repository-code/candidate-controlled execution remains fail-closed on both Windows and Linux.
+- Repository-code/candidate-controlled execution routes only through an admitted ready persistent environment; absence remains fail-closed on both Windows and Linux.
 - Draft PR #106's ProcessContainer/AppContainer work is superseded by the VM program.
 
-From Stage 1 through Stage 5, repository-controlled and candidate-controlled execution that requires untrusted code execution is intentionally unavailable/fail-closed. Stage 6 restores it through VM providers only.
+The completed Stage-1-through-Stage-5 interval kept untrusted execution unavailable/fail-closed. Stage 6 restores it through VM providers only; `docs/vm-stage6-repository-execution.md` defines the route and transfer contract.
 
 The stage-0 launcher must not grow direct-host execution or provider provisioning logic merely because Stage 2 can observe/manage provider-local primitives. VM Stage 8 owns supported Windows/Linux provider setup/reconfiguration after lower provider/image/environment/bridge stages exist.
 
@@ -94,9 +94,7 @@ Before acceptance, candidate code is untrusted executable input.
 
 The former host Bubblewrap candidate-validation path was removed in Stage 1 with the rest of the sandbox architecture.
 
-Until Stage 6, candidate-controlled validation that would execute untrusted candidate code is unavailable/fail-closed. Stage-2 provider readiness does not change that. This does **not** weaken DB-011 release integrity: exact candidate identity, signature/digest checks, last-known-good, activation gates, and rollback remain authoritative. It means a candidate requiring executable validation cannot be accepted through an unsafe host fallback.
-
-Stage 6 restores candidate execution through provider-native VM validation:
+Stage 6 restores candidate execution through the single locally admitted provider-native VM validation route. Missing route/provider/environment readiness remains unavailable/fail-closed. This does **not** weaken DB-011 release integrity: exact candidate identity, signature/digest checks, last-known-good, activation gates, and rollback remain authoritative.
 
 - Hyper-V validation environment on Windows hosts;
 - KVM/QEMU/libvirt validation environment on Linux hosts.

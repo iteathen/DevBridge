@@ -242,10 +242,11 @@ export async function stageFileTreeDelta({ manifest, root, stagingRoot, readPart
   return normalized;
 }
 
-export async function applyStagedFileTreeDelta({ root, stagingRoot, manifest, acceptPath = () => true } = {}) {
+export async function applyStagedFileTreeDelta({ root, stagingRoot, manifest, acceptPath = () => true, signal = null } = {}) {
   const canonicalRoot = await realpath(path.resolve(root));
   const normalized = normalizeFileTreeDelta(manifest, { root: canonicalRoot, acceptPath });
   for (const entry of normalized.entries) {
+    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('file tree apply was aborted');
     const destination = await ensureSafeParent(canonicalRoot, entry.path);
     let existing = null;
     try { existing = await lstat(destination); } catch (error) { if (error?.code !== 'ENOENT') throw error; }

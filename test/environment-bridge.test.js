@@ -123,6 +123,20 @@ test('abort cancels the exact request and returns observed completion when avail
   assert.equal(outcome.result.aborted, true);
 });
 
+test('pre-existing cancellation returns an aborted result without crossing the exchange port', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let calls = 0;
+  const bridge = new EnvironmentBridge({ exchange: async () => { calls += 1; throw new Error('must not exchange'); } });
+  const outcome = await bridge.execute(target, {
+    program: 'node', arguments: [], directory: { class: 'work', path: '.' }, environment: {}, timeoutMs: 2_000, maxOutputBytes: 4096,
+  }, { request: 'e'.repeat(32), signal: controller.signal });
+  assert.equal(calls, 0);
+  assert.equal(outcome.completion, 'observed');
+  assert.equal(outcome.result.exitCode, null);
+  assert.equal(outcome.result.aborted, true);
+});
+
 test('logical path and executable validation rejects path authority before exchange', async () => {
   let calls = 0;
   const bridge = new EnvironmentBridge({ exchange: async () => { calls += 1; } });

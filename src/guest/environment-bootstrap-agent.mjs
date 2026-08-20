@@ -21,7 +21,7 @@ const MAX_PATH_DIRECTORIES = 64;
 
 const CAPABILITIES = Object.freeze({
   'source-control': [
-    { names: ['git'], args: ['--version'] },
+    { names: process.platform === 'win32' ? ['git.exe', 'git'] : ['git'], args: ['--version'] },
   ],
   'runtime-js': [
     { names: ['node', 'node.exe'], args: ['--version'] },
@@ -164,7 +164,9 @@ async function candidatePath(names) {
 function execute(executable, args, { commandScript = false } = {}) {
   return new Promise((resolve) => {
     const actualExecutable = process.platform === 'win32' && commandScript ? (process.env.ComSpec || 'cmd.exe') : executable;
-    const actualArgs = process.platform === 'win32' && commandScript ? ['/d', '/s', '/c', `"${executable}"`, ...args] : args;
+    const tokens = [`"${executable.replaceAll('"', '""')}"`, ...args.map((value) => `"${value.replaceAll('"', '""')}"`)];
+    const command = `"${tokens.join(' ')}"`;
+    const actualArgs = process.platform === 'win32' && commandScript ? ['/d', '/s', '/c', command] : args;
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
     let settled = false;
@@ -174,6 +176,7 @@ function execute(executable, args, { commandScript = false } = {}) {
         stdio: ['ignore', 'pipe', 'pipe'],
         shell: false,
         windowsHide: true,
+        windowsVerbatimArguments: process.platform === 'win32' && commandScript,
         env: process.env,
       });
     } catch (error) {

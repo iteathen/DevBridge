@@ -110,3 +110,31 @@ test('reconcile completes a durable planned publication after interruption witho
     assert.equal((await library.verify(identity)).verified, true);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('separate library instances cannot overlap catalog mutation', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage2-images-exclusive-'));
+  const input = path.join(root, 'source.qcow2');
+  const directory = path.join(root, 'library');
+  await writeFile(input, Buffer.from('exclusive image fixture\n'));
+  let enter;
+  let release;
+  const entered = new Promise((resolve) => { enter = resolve; });
+  const blocked = new Promise((resolve) => { release = resolve; });
+  try {
+    const first = new BaseImageLibrary({ directory });
+    const second = new BaseImageLibrary({ directory });
+    const publishing = first.publish({
+      profile: 'guest-a', generation: 'g1', source: input, provenance: { origin: 'fixture' },
+    }, { validate: async ({ size }) => { enter(); await blocked; return media(size); } });
+    await entered;
+    await assert.rejects(() => second.publish({
+      profile: 'guest-a', generation: 'g2', source: input, provenance: { origin: 'fixture' },
+    }), /mutation is already active/u);
+    release();
+    await publishing;
+    assert.equal((await second.list()).length, 1);
+  } finally {
+    release?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});

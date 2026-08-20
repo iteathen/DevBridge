@@ -34,11 +34,14 @@ async function exchange(root, frame, env = {}) {
 
 function frame(request, kind, body = {}) { return { protocol, request, target, kind, body }; }
 
-async function observeUntil(root, request, predicate, timeoutMs = 5_000) {
+async function observeUntil(root, request, predicate, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const value = await exchange(root, frame(request, 'observe'));
     if (predicate(value.body)) return value.body;
+    if (['failed', 'indeterminate'].includes(value.body.state)) {
+      throw new Error(`observation became ${value.body.state}: ${value.body.reason ?? 'no reason was reported'}`);
+    }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error('observation timeout');

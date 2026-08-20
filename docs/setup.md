@@ -11,19 +11,17 @@ The required initial host providers are:
 - **Windows:** Hyper-V;
 - **Linux:** KVM/QEMU managed through libvirt.
 
-Stages 0–2 of that VM path are implemented. Stage 1 removed the old host-sandbox execution path; Stage 2 provides the provider/image/network/storage foundation without restoring repository execution.
+Stages 0–6 of that VM path are implemented on the migration stack. Stage 1 removed the old host-sandbox path; Stages 2–5 provide foundation, persistent environments, bridge, and guest preparation; Stage 6 restores routed repository execution.
 
-Current main still behaves as follows:
+The migration stack behaves as follows:
 
-- repository-controlled and candidate-controlled execution that would run untrusted code remains fail-closed on both Windows and Linux;
+- repository-controlled and candidate-controlled execution uses only locally admitted ready persistent VM routes and otherwise remains fail-closed on both Windows and Linux;
 - Windows `doctor` can observe the Stage-2 Hyper-V management/image/network/storage foundation;
 - Linux `doctor` can observe the Stage-2 KVM/QEMU/libvirt management/image/network/storage foundation;
 - provider/image readiness is reported separately from repository-execution readiness;
 - Draft PR #106's Windows ProcessContainer/AppContainer work is superseded migration evidence and is not the supported target.
 
-Repository-controlled execution is intentionally unavailable/fail-closed through Stages 3–5. Stage 6 restores it through persistent VMs only.
-
-Do not preserve functionality by introducing direct/uncontained host execution during that interval.
+The completed Stages 3–5 interval kept execution unavailable. Stage 6 restores it through persistent VMs only. Do not introduce direct/uncontained host execution as compatibility behavior.
 
 Stage 2 does not add installer mutation UX. Do not manually configure provider objects and assume DevBridge owns them merely because `doctor` can observe the host. VM Stage 8 (#116), coordinated with setup/reconfiguration issue #103, owns supported discovery/provisioning/re-entry after the lower VM stages are implemented and qualified.
 
@@ -109,9 +107,7 @@ Setting `execution.enabled` is local machine authority. Task text cannot enable 
 
 Current pre-migration main fails closed if a requested repository-code execution class lacks the provider it actually implements/verifies.
 
-After Stage 1, **all** repository-controlled execution fails unavailable while no production provider exists, even if `execution.enabled` remains configured.
-
-After Stage 6, VM-backed execution additionally requires observed provider + image + repository environment + bridge readiness. If any are missing, execution remains unavailable; it never redirects to direct host execution.
+Stage 6 VM-backed execution requires observed provider + image + repository environment + bridge readiness plus a local stable-identity route, even if `execution.enabled` is configured. If any are missing, execution remains unavailable; it never redirects to direct host execution.
 
 ## GitHub authentication
 
@@ -173,9 +169,9 @@ Stage 0 establishes only the fixed managed checkout needed to reach the secure s
 
 DB-011 owns update policy, signed production release subjects, exact runtime artifact identity, candidate validation, daemon drain, activation health, and rollback.
 
-Current pre-migration main runs candidate-controlled validation behind the host sandbox. Stage 1 disables/removes that execution path. Until Stage 6 provides provider-native VM validation, candidate-controlled execution is unavailable/fail-closed while release identity/last-known-good/rollback remain intact.
+Stage 1 removed the former host candidate execution path. Stage 6 restores candidate preflight/tests through one locally admitted VM validation route while release identity/last-known-good/rollback remain intact. Route or environment absence fails closed before activation.
 
-Stage 6 restores VM validation through:
+VM validation attaches through:
 
 - Hyper-V on Windows;
 - KVM/QEMU/libvirt on Linux.

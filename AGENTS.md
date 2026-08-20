@@ -68,20 +68,20 @@ Do not infer parent/backing identity from filenames. Do not silently reparent/re
 
 ### Current migration state and required sequence
 
-Current main still contains Linux/Bubblewrap repository-code execution. Draft PR #106 contains superseded Windows host-sandbox experiments.
+Stages 0–6 are implemented on the VM migration stack. Active Linux/Bubblewrap and Windows host-sandbox repository execution are absent; draft PR #106 remains superseded historical evidence.
 
-The approved migration deliberately **removes active host-sandbox repository execution before production VM implementation**.
+The approved migration **removed active host-sandbox repository execution before production VM implementation**.
 
 Stage 1 must locate/prove the existing execution connection studs, unplug provider registration, establish explicit fail-closed no-provider behavior, repair abstraction leaks revealed by removal, prove a test fake attaches through the studs, and delete active Bubblewrap/AppContainer/ProcessContainer-style repository-execution runtime/wiring while preserving generic behavior and historical evidence.
 
-After Stage 1 and through Stages 2–5:
+During the completed Stage-1-through-Stage-5 interval:
 
 - normal repository-controlled execution is intentionally unavailable;
 - provider absence fails before repository code is spawned on the host;
 - `allowUncontainedTools`, direct-process compatibility, candidate-validation shortcuts, shell fallbacks, or setup modes must not create direct/uncontained host repository execution;
 - trusted static/control-plane work may continue only where independently classified as not executing repository-controlled code.
 
-Stage 6 restores repository-controlled execution **through persistent VMs only**. If the required VM provider/environment is unavailable, execution remains unavailable/fail-closed.
+Stage 6 restores repository-controlled execution **through persistent VMs only**, using the route/source/candidate contract in `docs/vm-stage6-repository-execution.md`. If the required VM provider/environment is unavailable, execution remains unavailable/fail-closed.
 
 Stage 7 proves security, real provider behavior, absence of host fallbacks, and LEGO replaceability. Stage 8 makes the VM-only path installable/reconfigurable. Stage 9 removes remaining migration/configuration/documentation scaffolding; it is not the primary sandbox-deletion stage.
 

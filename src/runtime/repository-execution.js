@@ -16,6 +16,10 @@ const MAX_OUTPUT_BYTES = 16_777_216;
 const MAX_REASON_BYTES = 1_024;
 const ARGUMENT_KINDS = new Set(['literal', 'input', 'output']);
 const TRANSFER_DIRECTIONS = new Set(['input', 'output']);
+const RESERVED_ENVIRONMENT_NAMES = new Set([
+  'GIT_ASKPASS', 'GIT_SSH', 'GIT_SSH_COMMAND', 'SSH_ASKPASS', 'SSH_AUTH_SOCK',
+]);
+const SENSITIVE_ENVIRONMENT_NAME = /(?:^|_)(?:API_?KEY|AUTHORIZATION|CREDENTIALS?|KEYS?|PASSWORD|PASSWD|PRIVATE_?KEY|SECRETS?|TOKENS?)(?:_|$)/iu;
 const REQUEST_KEYS = new Set([
   'protocol', 'operation', 'scope', 'invocation', 'environment', 'transfers', 'limits',
   'stdin', 'signal', 'onActivity',
@@ -121,6 +125,9 @@ function normalizeEnvironment(raw = {}) {
   const normalized = {};
   for (const [name, value] of Object.entries(environment)) {
     if (!ENV_NAME.test(name)) throw new PolicyError(`repository execution environment.${name} name is invalid`);
+    if (RESERVED_ENVIRONMENT_NAMES.has(name.toUpperCase()) || SENSITIVE_ENVIRONMENT_NAME.test(name)) {
+      throw new PolicyError(`repository execution environment.${name} is reserved by the execution boundary`);
+    }
     normalized[name] = boundedString(value, `repository execution environment.${name}`, { maxBytes: 16_384, allowEmpty: true });
   }
   return normalized;

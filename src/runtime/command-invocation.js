@@ -51,6 +51,17 @@ export async function invokeCommand(raw) {
   const maxOutputBytes = integer(raw.maxOutputBytes ?? 1024 * 1024, 'command maxOutputBytes', 1024, MAX_OUTPUT_BYTES);
   const signal = raw.signal ?? null;
   if (signal != null && typeof signal !== 'object') throw new TypeError('command signal is invalid');
+  if (signal?.aborted) {
+    return {
+      exitCode: null,
+      signal: null,
+      timedOut: false,
+      aborted: true,
+      outputTruncated: false,
+      stdout: '',
+      stderr: '',
+    };
+  }
 
   return new Promise((resolve, reject) => {
     let child;
