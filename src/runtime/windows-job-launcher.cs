@@ -1,8 +1,10 @@
 using System;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 internal static class Program
 {
@@ -16,6 +18,11 @@ internal static class Program
     private const int STD_INPUT_HANDLE = -10;
     private const int STD_OUTPUT_HANDLE = -11;
     private const int STD_ERROR_HANDLE = -12;
+    private const uint PROCESS_TERMINATE = 0x0001;
+    private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    private const uint TOKEN_QUERY = 0x0008;
+    private const int TokenAppContainerSid = 31;
+    private const int ERROR_INSUFFICIENT_BUFFER = 122;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct JOBOBJECT_BASIC_LIMIT_INFORMATION
@@ -65,7 +72,6 @@ internal static class Program
         public uint dwXSize;
         public uint dwYSize;
         public uint dwXCountChars;
-        public uint dwYCountChars;
         public uint dwFillAttribute;
         public uint dwFlags;
         public short wShowWindow;
@@ -83,6 +89,12 @@ internal static class Program
         public IntPtr hThread;
         public uint dwProcessId;
         public uint dwThreadId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TOKEN_APPCONTAINER_INFORMATION
+    {
+        public IntPtr TokenAppContainer;
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -124,6 +136,9 @@ internal static class Program
     private static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
 
     [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr hObject);
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -132,9 +147,32 @@ internal static class Program
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetHandleInformation(IntPtr hObject, uint dwMask, uint dwFlags);
 
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(
+        IntPtr TokenHandle,
+        int TokenInformationClass,
+        IntPtr TokenInformation,
+        int TokenInformationLength,
+        out int ReturnLength);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool EqualSid(IntPtr pSid1, IntPtr pSid2);
+
+    [DllImport("advapi32.dll")]
+    private static extern IntPtr FreeSid(IntPtr pSid);
+
+    [DllImport("userenv.dll", CharSet = CharSet.Unicode)]
+    private static extern int DeriveAppContainerSidFromAppContainerName(
+        string pszAppContainerName,
+        out IntPtr ppsidAppContainerSid);
+
     private static void Usage()
     {
         Console.Error.WriteLine("usage: devbridge-job-launcher.exe --executable <path> --command-line-base64 <base64>");
+        Console.Error.WriteLine("   or: devbridge-job-launcher.exe --terminate-appcontainer <container-id>");
     }
 
     private static void ThrowLastError(string label)
@@ -167,6 +205,127 @@ internal static class Program
         if (!SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT))
             ThrowLastError("SetHandleInformation failed for " + label);
         return handle;
+    }
+
+    private static bool ProcessMatchesAppContainer(IntPtr processHandle, IntPtr expectedSid)
+    {
+        IntPtr token = IntPtr.Zero;
+        IntPtr buffer = IntPtr.Zero;
+        try
+        {
+            if (!OpenProcessToken(processHandle, TOKEN_QUERY, out token)) return false;
+            int required;
+            bool first = GetTokenInformation(token, TokenAppContainerSid, IntPtr.Zero, 0, out required);
+            if (!first && Marshal.GetLastWin32Error() != ERROR_INSUFFICIENT_BUFFER) return false;
+            if (required <= 0) return false;
+            buffer = Marshal.AllocHGlobal(required);
+            if (!GetTokenInformation(token, TokenAppContainerSid, buffer, required, out required)) return false;
+            TOKEN_APPCONTAINER_INFORMATION info = (TOKEN_APPCONTAINER_INFORMATION)Marshal.PtrToStructure(
+                buffer,
+                typeof(TOKEN_APPCONTAINER_INFORMATION));
+            if (info.TokenAppContainer == IntPtr.Zero) return false;
+            return EqualSid(info.TokenAppContainer, expectedSid);
+        }
+        finally
+        {
+            if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            if (token != IntPtr.Zero) CloseHandle(token);
+        }
+    }
+
+    private static int SweepAppContainer(IntPtr expectedSid, bool terminate, out int terminated)
+    {
+        int matches = 0;
+        terminated = 0;
+        Process[] processes;
+        try { processes = Process.GetProcesses(); }
+        catch { return 0; }
+
+        foreach (Process candidate in processes)
+        {
+            try
+            {
+                uint pid = unchecked((uint)candidate.Id);
+                IntPtr processHandle = OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION | (terminate ? PROCESS_TERMINATE : 0),
+                    false,
+                    pid);
+                if (processHandle == IntPtr.Zero) continue;
+                try
+                {
+                    if (!ProcessMatchesAppContainer(processHandle, expectedSid)) continue;
+                    matches += 1;
+                    if (terminate && TerminateProcess(processHandle, 0xDB)) terminated += 1;
+                }
+                finally
+                {
+                    CloseHandle(processHandle);
+                }
+            }
+            catch
+            {
+                // Processes can exit or become inaccessible while enumerating.
+                // Only a process whose token positively matches the unique
+                // AppContainer SID is a cleanup target.
+            }
+            finally
+            {
+                candidate.Dispose();
+            }
+        }
+        return matches;
+    }
+
+    private static int TerminateAppContainer(string containerId)
+    {
+        if (string.IsNullOrWhiteSpace(containerId) || containerId.Length > 120 || containerId.IndexOf('\0') >= 0)
+            throw new InvalidOperationException("AppContainer cleanup identity is invalid");
+
+        IntPtr sid = IntPtr.Zero;
+        int hr = DeriveAppContainerSidFromAppContainerName(containerId, out sid);
+        if (hr != 0 || sid == IntPtr.Zero)
+            throw new InvalidOperationException("DeriveAppContainerSidFromAppContainerName failed for cleanup identity (HRESULT 0x" + hr.ToString("X8") + ")");
+
+        try
+        {
+            DateTime deadline = DateTime.UtcNow.AddSeconds(5);
+            int totalTerminated = 0;
+            int emptyPasses = 0;
+            while (DateTime.UtcNow < deadline)
+            {
+                int terminated;
+                int matches = SweepAppContainer(sid, true, out terminated);
+                totalTerminated += terminated;
+                if (matches == 0)
+                {
+                    emptyPasses += 1;
+                    if (emptyPasses >= 2)
+                    {
+                        Console.Out.WriteLine("appcontainer-cleanup container=" + containerId + " terminated=" + totalTerminated + " survivors=0");
+                        return 0;
+                    }
+                }
+                else
+                {
+                    emptyPasses = 0;
+                }
+                Thread.Sleep(100);
+            }
+
+            int ignored;
+            int survivors = SweepAppContainer(sid, false, out ignored);
+            if (survivors != 0)
+            {
+                Console.Error.WriteLine("AppContainer cleanup left " + survivors + " matching process(es) for " + containerId);
+                return 71;
+            }
+            Console.Out.WriteLine("appcontainer-cleanup container=" + containerId + " terminated=" + totalTerminated + " survivors=0");
+            return 0;
+        }
+        finally
+        {
+            FreeSid(sid);
+        }
     }
 
     private static int Run(string executable, string commandLine)
@@ -218,16 +377,15 @@ internal static class Program
             }
 
             uint waited = WaitForSingleObject(process.hProcess, INFINITE);
-            if (waited != 0)
-                ThrowLastError("WaitForSingleObject failed");
+            if (waited != 0) ThrowLastError("WaitForSingleObject failed");
 
             uint exitCode;
-            if (!GetExitCodeProcess(process.hProcess, out exitCode))
-                ThrowLastError("GetExitCodeProcess failed");
+            if (!GetExitCodeProcess(process.hProcess, out exitCode)) ThrowLastError("GetExitCodeProcess failed");
 
-            // This close is the authoritative lifetime boundary. Because the
-            // executor was assigned while still suspended, every descendant is
-            // born inside this kill-on-close job and cannot win a spawn race.
+            // This job is defense in depth for the launcher/wxc-exec tree. MXC
+            // 0.7 assigns the sandboxed AppContainer child to its own UI job,
+            // so DevBridge separately reaps the unique AppContainer identity
+            // after the executor exits.
             if (!CloseHandle(job)) ThrowLastError("CloseHandle(job) failed");
             job = IntPtr.Zero;
             return unchecked((int)exitCode);
@@ -247,6 +405,9 @@ internal static class Program
     {
         try
         {
+            if (args.Length == 2 && args[0] == "--terminate-appcontainer")
+                return TerminateAppContainer(args[1]);
+
             if (args.Length != 4 || args[0] != "--executable" || args[2] != "--command-line-base64")
             {
                 Usage();

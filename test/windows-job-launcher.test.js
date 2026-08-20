@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { access, mkdtemp, rm } from 'node:fs/promises';
@@ -49,6 +50,28 @@ test('compiled Windows job launcher preassigns a detached descendant to kill-on-
 
     await new Promise((resolve) => setTimeout(resolve, 1_700));
     assert.equal(await exists(marker), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('compiled Windows containment helper can reap a unique AppContainer identity with no live processes', { timeout: 30_000 }, async (t) => {
+  if (process.platform !== 'win32') {
+    t.skip('Windows AppContainer cleanup regression is Windows-only');
+    return;
+  }
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-appcontainer-reaper-'));
+  try {
+    const helper = ensureWindowsJobLauncher({ home: root, env: process.env });
+    const containerId = `devbridge-test-${randomUUID().replaceAll('-', '')}`;
+    const result = await exec(helper, ['--terminate-appcontainer', containerId], {
+      cwd: root,
+      windowsHide: true,
+      timeout: 15_000,
+    });
+    assert.equal(result.stderr, '');
+    assert.match(result.stdout, /survivors=0/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

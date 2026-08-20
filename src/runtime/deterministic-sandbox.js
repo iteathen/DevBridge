@@ -2,7 +2,7 @@ import process from 'node:process';
 import { PolicyError } from '../errors.js';
 import { BubblewrapSandboxProvider } from './bubblewrap-sandbox.js';
 import { unavailableSandboxStatus } from './sandbox-status.js';
-import { WindowsProcessContainerSandboxProvider } from './windows-processcontainer-sandbox.js';
+import { WindowsMxcCompatibilitySandboxProvider } from './windows-processcontainer-compat-provider.js';
 
 const PROVIDERS = new Set(['auto', 'bubblewrap', 'windows-processcontainer', 'none']);
 
@@ -75,7 +75,12 @@ export function createDeterministicSandboxProvider({
         reason: 'Bubblewrap sandbox was requested on a non-Linux host',
       }));
     }
-    return new WindowsProcessContainerSandboxProvider({
+    // Shipping MXC 0.7 cannot safely subtract denied/read-only descendants
+    // from a DACL read-write grant, and its AppContainer UI job does not provide
+    // a sufficient whole-tree lifetime boundary for DevBridge. Keep those
+    // preview-specific compensations isolated behind this compatibility
+    // provider so a future qualified MXC release can replace it cleanly.
+    return new WindowsMxcCompatibilitySandboxProvider({
       requestedProvider: normalized.provider,
       externalReadRoots,
       workspaceRoot,

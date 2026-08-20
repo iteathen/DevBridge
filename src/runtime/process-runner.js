@@ -232,6 +232,7 @@ export class ProcessRunner {
       throw abortedError(signal);
     }
 
+    let preparedCleaned = false;
     try {
       const child = spawn(
         prepared.executable,
@@ -268,6 +269,13 @@ export class ProcessRunner {
           if (termination) await termination;
         });
 
+      // Provider cleanup is a security boundary, not just temp-file cleanup.
+      // On Windows it reaps the unique AppContainer identity and imports the
+      // Gitless proposal projection. Do that before trusting worker IPC so a
+      // detached descendant cannot mutate the staging mailbox after its parent
+      // executor has exited.
+      preparedCleaned = true;
+      await cleanupPrepared(prepared);
       const consumed = await consumeMailboxResult(mailbox);
       return {
         executable,
@@ -289,7 +297,7 @@ export class ProcessRunner {
         processPriority,
       };
     } finally {
-      await cleanupPrepared(prepared);
+      if (!preparedCleaned) await cleanupPrepared(prepared);
     }
   }
 }
