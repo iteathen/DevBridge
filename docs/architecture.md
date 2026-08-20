@@ -11,9 +11,13 @@ The initial host-provider set is first-class on both supported host families:
 - Windows host -> Hyper-V;
 - Linux host -> KVM/QEMU managed through libvirt.
 
-Current main has not completed that cutover. It still uses the verified Linux/Bubblewrap host sandbox for supported repository-code execution, while draft PR #106 contains superseded Windows ProcessContainer/AppContainer experimentation. Those implementations are migration scaffolding, not competing target architectures.
+Current main has not completed that transition. It still contains the Linux/Bubblewrap host-sandbox implementation, while draft PR #106 contains superseded Windows ProcessContainer/AppContainer experimentation.
 
-`docs/vm-migration.md` records what will be removed, retained, and blocked until replacement acceptance.
+The approved migration does **not** keep the legacy sandbox live until VM replacement is complete. Stage 1 removes active host-sandbox repository execution first, establishes an explicit fail-closed no-provider state, and uses that removal to expose/prove the LEGO connection studs. Stages 2–5 build the VM system while normal repository-controlled execution remains unavailable. Stage 6 restores repository execution through VMs only.
+
+No direct/uncontained host fallback is allowed during the no-provider interval.
+
+`docs/vm-migration.md` records the removal/retention inventory. `docs/vm-lego-studs.md` defines the unplug/delete/fake-provider/VM-attachment proof.
 
 ## Authority hierarchy
 
@@ -52,6 +56,8 @@ The trusted host contains the DevBridge controller and host-only authority:
 
 Host code may run fixed/static control operations only when their implementation cannot be redirected into repository-controlled code.
 
+During the intentional Stage-1-to-Stage-5 no-provider interval, absence of a repository execution provider means repository-controlled work is unavailable. It never broadens the set of operations considered safe to run on the host.
+
 ### Untrusted repository environment
 
 A repository environment is one persistent VM bound to stable repository identity + host provider + enabled guest OS/profile + image/environment generation.
@@ -65,6 +71,8 @@ No required Bubblewrap/AppContainer/ProcessContainer layer exists inside the gue
 ## Provider model
 
 Controller logic depends on provider-neutral lifecycle/image/environment/bridge contracts. Provider adapters own platform details.
+
+The Stage-1 sandbox-free state must remain structurally coherent with no production provider registered. A test fake may attach for architecture tests, but it is not a production security fallback.
 
 ### Windows / Hyper-V
 
@@ -96,7 +104,7 @@ The expected management direction is the locally authorized libvirt system provi
 
 ## Control-plane flow
 
-The target primary path is conceptually:
+The target primary path after Stage 6 is conceptually:
 
 `TaskSource -> ProvenanceGate -> RunCoordinator -> LeaseGate -> Host Repository/Baseline -> Repository VM -> Host Bridge -> Verification/Import -> DecisionGate -> Host Seal/Publish -> Reconciler`
 
@@ -117,6 +125,8 @@ Detailed flow:
 13. Before publication, lease, gate, verification, baseline, and remote predecessor state are rechecked.
 14. Host Git/GitHub adapters perform the permitted effect with explicit expected state.
 15. DB-009 observes/reconciles ambiguous external effects before retry.
+
+Before Stage 6, repository-controlled paths stop at provider availability/admission and fail closed; they do not continue as host execution.
 
 ## Persistent environment and storage model
 
@@ -200,10 +210,13 @@ DB-013 plans remain data, not command authority.
 DevBridge classifies execution:
 
 - static/control operations may run on host only when they provably cannot execute repository-controlled code;
-- repository-controlled operations execute inside the bound repository VM after Stage 6;
+- repository-controlled operations are unavailable after Stage 1 until Stage 6 restores VM-backed routing;
+- after Stage 6, repository-controlled operations execute inside the bound repository VM;
 - unknown operations default to repository-controlled.
 
 Controllers supply only bounded schema parameters, never raw shell/host argv/host paths/provider targets.
+
+Provider absence never reclassifies repository-controlled work as host-safe.
 
 ## Tool inventory and onboarding
 
@@ -214,7 +227,9 @@ Host inventory covers control-plane/provider prerequisites:
 - Windows: Node, Git, Hyper-V management/bootstrap tools;
 - Linux: Node, Git, KVM/QEMU/libvirt management/bootstrap tools.
 
-Repository toolchains are discovered/used inside the guest environment. Guest tool observations are bound to exact environment generation and remain untrusted planning evidence. Dynamic `tool.*` manifests/schema validation stays host-controlled, while actual repository-class probing/execution moves into the guest.
+Repository toolchains are discovered/used inside the guest environment after VM restoration. Guest tool observations are bound to exact environment generation and remain untrusted planning evidence. Dynamic `tool.*` manifests/schema validation stays host-controlled, while actual repository-class probing/execution moves into the guest.
+
+During the no-provider interval, repository-class probes requiring execution are unavailable rather than redirected to host tools.
 
 ## Verification and evidence
 
@@ -235,11 +250,15 @@ Passing evidence should bind, as relevant, to:
 
 Restart/context rollover does not justify rerunning expensive tests when exact evidence remains valid. Environment reset/reseed/provider/image/candidate drift invalidates dependent evidence conservatively.
 
+Stage 1 additionally requires cheap no-provider, fake-provider, dependency/removal, and direct-host-fallback-denial evidence.
+
 ## Runtime supervision
 
 DB-011 keeps release integrity, runtime artifact identity, activation, health checking, and last-known-good rollback on the trusted host.
 
-Candidate-controlled preflight/tests are untrusted executable code. Current main uses the transitional Bubblewrap boundary; DB-020 targets a VM validation environment using the provider native to the host: Hyper-V on Windows, KVM/QEMU/libvirt on Linux.
+Candidate-controlled preflight/tests are untrusted executable code. Stage 1 disables/removes the legacy host-sandbox candidate execution path. Until Stage 6 provides a VM validation environment, candidate-controlled execution is unavailable/fail-closed while DB-011 identity/rollback rules remain intact.
+
+Stage 6 restores candidate execution through a provider-native VM validation environment: Hyper-V on Windows, KVM/QEMU/libvirt on Linux.
 
 Candidate networking may be available; host secrets/control state are not.
 
@@ -260,6 +279,8 @@ VM operations add durable objects that participate in that rule:
 
 A missing in-memory handle is not evidence that a VM/disk disappeared. A failed guest command is not permission to delete persistent environment state. Deletion/reset/reseed requires exact ownership proof.
 
+Provider removal in Stage 1 is also a recovery concern: durable work that depended on the deleted sandbox must reconcile to unavailable/failed state rather than being replayed through a direct-host fallback.
+
 ## Human checkpoints
 
 DB-007 remains checkpoint-and-proceed.
@@ -268,7 +289,9 @@ Consequential decisions can gate a specific boundary while reversible work conti
 
 ## Workstation/resource governance
 
-DB-018 currently provides serialized task admission, below-normal legacy host child priority, and cooperative pause/resume.
+DB-018 currently provides serialized task admission, host child priority for trusted/provider processes, and cooperative pause/resume.
+
+Host process priority is QoS, not containment and cannot justify repository execution on the host during the no-provider interval.
 
 VM resource limits/observations belong to the provider layer. Stage 7 reports only CPU/memory/disk/lifecycle constraints Hyper-V or libvirt/QEMU can actually enforce/observe. Persistent disk growth/cleanup is bounded without deleting unowned storage.
 
@@ -278,23 +301,23 @@ DB-020 does not create general parallel task scheduling.
 
 Issue #107 is the active program:
 
-1. Stage 0 — architecture/spec ratification and migration inventory (#108).
-2. Stage 1 — VM contracts and provider/repository/OS identity (#109).
+1. Stage 0 — architecture/spec ratification and sandbox-first migration inventory (#108).
+2. Stage 1 — remove host sandbox execution, expose/prove LEGO studs, establish fail-closed no-provider state (#109).
 3. Stage 2 — Hyper-V + KVM/QEMU/libvirt host backends and base-image lifecycle (#110).
 4. Stage 3 — persistent repository/OS writable-layer and VM lifecycle on both providers (#111).
 5. Stage 4 — provider-adapted host↔guest command/file bridge (#112).
 6. Stage 5 — guest bootstrap/network/toolchain behavior (#113).
-7. Stage 6 — route deterministic operations/workers/candidate execution (#114).
-8. Stage 7 — provider/guest matrix verification/doctor/recovery/CI/resource/security acceptance (#115).
+7. Stage 6 — restore deterministic operations/workers/candidate execution through persistent VMs only (#114).
+8. Stage 7 — provider/guest matrix verification/doctor/recovery/CI/resource/security/LEGO acceptance (#115).
 9. Stage 8 — Windows/Linux installer/setup/reconfiguration integration (#116).
-10. Stage 9 — remove legacy host sandbox stack and retire PR #106 (#117).
+10. Stage 9 — finalize VM-only architecture and remove remaining migration scaffolding (#117).
 
-Current Bubblewrap coverage stays in place until replacement evidence exists. Full legacy retirement must not drop Linux-host support before KVM/libvirt is qualified/installable.
+Stages 2–5 deliberately operate while normal repository-controlled execution is unavailable. Do not reintroduce Bubblewrap/AppContainer/ProcessContainer or direct-host execution to bridge the gap.
 
 ## Documentation authority
 
-`specs/DB-001` through `specs/DB-020` are the live normative contracts. DB-020 governs the target repository-execution security boundary.
+`specs/DB-001` through `specs/DB-020` are the live normative contracts. DB-020 governs the target repository-execution security boundary and migration sequence.
 
-`AGENTS.md`, this architecture document, `docs/vm-migration.md`, `docs/bootstrap.md`, `docs/tool-profiles.md`, `docs/testing/verification-governance.md`, and `docs/roadmap.md` describe the current engineering/operating view.
+`AGENTS.md`, this architecture document, `docs/vm-migration.md`, `docs/vm-lego-studs.md`, `docs/bootstrap.md`, `docs/tool-profiles.md`, `docs/testing/verification-governance.md`, and `docs/roadmap.md` describe the current engineering/operating view.
 
 Checksum-bound handoffs and point-in-time testing audits are historical evidence. They remain valuable but do not override newer active specifications.
