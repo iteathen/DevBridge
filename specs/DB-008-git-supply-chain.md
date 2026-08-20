@@ -1,122 +1,159 @@
-# DB-008 — Git and Supply-Chain Execution Boundary
+# DB-008 — Git and Supply-Chain Safety
 
 Status: active
 
-Implementation status: partially implemented in v0.1; the managed Git boundary is implemented, while package-manager phase isolation remains a hardening requirement.
+Implementation status: current main already keeps authoritative Git/publication under DevBridge control and suppresses inherited Git/SSH authority. Repository-controlled execution is still routed through the transitional Linux/Bubblewrap host sandbox. DB-020 is normative for the target execution boundary: persistent untrusted repository VMs with normal guest networking and no host credentials.
 
 ## Goal
 
-Treat Git, package managers, build systems, repository configuration, dependency hooks, and caches as executable trust boundaries rather than harmless plumbing.
+Prevent repository content, dependencies, guest tooling, model output, or remote task text from turning Git, package management, build/test execution, or publication into host authority.
 
-A coding model is not the only thing capable of executing code. A repository can cause execution through hooks, filters, dependency lifecycle scripts, compiler/build plugins, test configuration, browser tooling, submodules, credential helpers, or other tool integrations.
+Read this specification with DB-003 and DB-020. Where earlier host-sandbox phase/network assumptions conflict with DB-020's persistent-VM model, DB-020 governs.
 
-## Governing rule
+## Authoritative Git is host-owned
 
-**No tool becomes trusted merely because it is conventional development infrastructure.**
+DevBridge owns the Git state used for provenance, baseline resolution, candidate sealing, recovery, and publication.
 
-Remote repository content may describe desired development behavior, but only locally configured DevBridge policy grants filesystem, credential, network, or execution authority.
+Repository guests may have ordinary Git installed and may create or mutate any guest-local Git state. Guest Git is untrusted development state only. It cannot grant or satisfy:
 
-## Managed Git boundary
+- task/baseline authority;
+- authoritative index/worktree/ref state;
+- candidate identity;
+- publication CAS/predecessor state;
+- merge/release authority;
+- GitHub authentication.
 
-DevBridge-owned Git operations must use a dedicated Git adapter rather than inheriting the operator's interactive Git environment.
+A guest commit or push is not a DevBridge publication effect.
 
-The adapter must, where supported:
+The host never exposes authoritative `.git` or linked-worktree administrative state as an arbitrary writable guest mount.
 
-- use a synthetic DevBridge home/config root;
-- disable system/global Git configuration inheritance;
-- disable Git hooks for control-plane Git operations;
-- disable inherited credential helpers;
-- disable interactive credential prompting;
-- avoid inheriting SSH agents, signing keys, or interactive terminal state unless a local policy explicitly requires them;
-- deny `ext` and other arbitrary-command transport mechanisms;
-- keep `file` transport disabled in production and enable it only for deliberate local fixtures or a locally trusted use case;
-- prefer explicitly configured HTTPS remotes for the reference GitHub adapter;
-- pass credentials through a narrow Git adapter boundary rather than model-visible argv or environment inheritance;
-- verify the managed repository's expected remote identity before reuse;
-- serialize Git operations for a managed repository/worktree.
+## Repository and baseline identity
 
-The v0.1 `GitClient` implements the synthetic home, system-config suppression, hook suppression, credential-helper suppression, non-interactive behavior, protocol restrictions, bounded execution, and token-scoped HTTP header path.
+Remote tasks identify a repository through the trusted task protocol. Local/control-owned policy decides whether that repository is allowed and which semantic baseline channel/ref is valid.
 
-## Repository-controlled Git features
+`owner/name` remains useful routing/display metadata. DB-020 Stage 1 owns the durable VM-environment identity and should prefer a verified immutable GitHub numeric repository ID when available so rename/transfer does not silently create or reuse the wrong persistent environment.
 
-The following are disabled or unsupported by default until an explicit capability is implemented and tested:
+For each run, DevBridge resolves an exact host-side baseline commit and records it as authoritative evidence. DB-017 remains normative for later publication-baseline movement, drift, reverification, and explicit expected-head publication CAS.
 
-- recursive submodule initialization/update;
-- Git LFS downloads/uploads;
-- arbitrary custom Git transports;
-- repository-specific credential helpers;
-- custom hooks;
-- locally configured clean/smudge/process filters that execute commands;
-- automatic signing with host/user keys.
+Repository/controller/guest content cannot choose an arbitrary host local repository path, raw Git ref, remote URL, predecessor SHA, or publication destination as authority.
 
-A repository may contain `.gitmodules`, `.gitattributes`, or other metadata. Their presence is data, not a capability grant.
+## Host Git execution rules
 
-## Checkout and candidate integrity
+Control-plane Git uses locally resolved executables and fixed structured argv with `shell: false`.
 
-DevBridge runtime exchange data is not project source. The reserved `.devbridge/` runtime directory must be excluded from ordinary candidate changes, and a candidate that force-adds reserved runtime files must be rejected.
+Host Git operations must suppress or explicitly control inherited behavior that can execute or redirect through untrusted configuration, including as applicable:
 
-Before publication, candidate changes must be sealed into a deterministic task-branch commit owned by DevBridge. Publication must not rely on uncommitted working-tree state.
+- interactive credential prompting;
+- `GIT_ASKPASS` / `SSH_ASKPASS` and inherited SSH-agent authority when not explicitly needed by the control adapter;
+- repository/global hooks for control-owned bootstrap/publication operations;
+- external diff/textconv/filter/merge helpers where repository configuration could cause execution;
+- unsafe protocol/ext transports;
+- arbitrary repository-provided aliases or shell commands;
+- credential helpers/config selected by repository content rather than local authority.
 
-The persisted run baseline SHA is immutable for the run. A later fetch may update remote-tracking refs but must not redefine what commit the active task started from.
+DevBridge should prefer fixed repository identities/remotes and HTTPS/API flows whose credentials are supplied only to the trusted host adapter that needs them.
 
-## Dependency and build phases
+A host Git command must never run repository-controlled hooks merely because the repository contains them.
 
-Future package-manager integration must distinguish at least these capability phases:
+## Source transfer into persistent guests
 
-1. dependency discovery/fetch;
-2. dependency installation/materialization;
-3. build/compile;
-4. test/verification;
-5. browser/loopback integration testing;
-6. publication.
+The target DB-020 workflow separates authoritative host Git from guest development bytes.
 
-Each phase may have a different network, filesystem, credential, cache, and process policy. `npm install`, `npm ci`, package lifecycle scripts, compiler plugins, test runners, Playwright configuration, and analogous tools are arbitrary-code execution from the control plane's perspective.
+Conceptually:
 
-## Network policy
+1. the host resolves the trusted repository/baseline/run identity;
+2. the host prepares the exact source subject to expose to the repository environment;
+3. source/file data crosses the narrow bridge without exposing authoritative host Git administration or host credentials;
+4. repository-controlled build/test/tool/model work occurs in the guest;
+5. the guest returns candidate files/results/evidence as untrusted data;
+6. the host validates the returned subject against the expected run/baseline/source identity;
+7. accepted bytes are applied/imported to host-authoritative project state;
+8. the host independently verifies/seals the exact candidate and performs any permitted publication.
 
-Dependency download and model access may require network access; ordinary build/test code should not receive unrestricted egress merely because provisioning did.
+The exact incremental synchronization, deletion, rename, conflict, and source-drift protocol is owned by VM Stage 6. It must preserve DB-017 identity and fail closed on unexplained divergence rather than allowing a guest to overwrite host Git state through a shared mount.
 
-Where platform containment supports it, DevBridge should use phase-scoped network profiles such as:
+## Guest Git and remotes
 
-- model/control traffic: only endpoints needed by the configured coding tool;
-- dependency fetch: configured registries and source hosts;
-- build/test: denied by default;
-- browser integration: loopback plus explicitly required test endpoints;
-- publication: GitHub only.
+Guest Git is allowed because the entire guest is already untrusted. It may support ordinary developer tooling, local history, diffing, or source workflows.
 
-A declaration in configuration is not enforcement. DB-003 remains authoritative about honest sandbox claims.
+However:
 
-## Cache policy
+- guest refs/remotes/config/hooks are never host publication authority;
+- the guest does not receive DevBridge's GitHub publication token, host SSH agent, coordination key, or release credential;
+- a guest remote URL cannot redirect host Git;
+- host sealing never trusts a guest commit SHA without reconstructing/validating the candidate in authoritative host state;
+- reset/reseed may discard all guest Git state without losing authoritative repository evidence.
 
-Writable caches can become persistence and cross-project contamination channels.
+## Dependencies, package managers, builds, and tests
 
-When caches are introduced they must be:
+Repository dependency and build/test execution belongs inside the repository VM.
 
-- scoped by trust domain and tool/package-manager identity;
-- writable only where local policy permits;
-- disposable/rebuildable where practical;
-- excluded from candidate commits;
-- never treated as an authority source;
-- invalidated when a compatibility/security boundary changes.
+DB-020 intentionally enables normal guest networking by default. Package managers, SDK installers, source fetches, documentation tools, browser/integration tests, coding clients, and build systems may therefore access the network as ordinary guest software when local workload policy allows it.
 
-High-risk caches may need per-run isolation rather than sharing.
+The security consequence is explicit: anything present in the guest can be exfiltrated by compromised repository code. DevBridge therefore protects host authority by not injecting host secrets into the guest rather than by depending on a default network-denied process sandbox.
 
-## Lockfiles and reproducibility
+Fetched packages, install scripts, compilers, build plugins, generated code, tests, and package lifecycle hooks are all part of the untrusted guest trust domain. A malicious dependency may compromise the persistent repository environment; it must still not gain host Git/publication/control authority.
 
-Where the target ecosystem provides lockfiles, DevBridge should prefer locked/reproducible installation modes for verification. An agent may propose a lockfile change, but that change is project code and is reviewed/validated like any other candidate modification.
+Persistent dependency/tool/build caches are allowed guest state. They are not trusted merely because they survived earlier successful runs. A host-owned reset/reseed must be able to discard contaminated state and rebuild from a trusted base image plus authoritative source input.
 
-## Required tests
+## Private dependencies and authenticated external services
 
-Before a feature is claimed as enforced, tests must cover relevant bypasses, including:
+Private-source or authenticated-service support must not be implemented by copying broad host GitHub/SSH/release credentials into a persistent guest.
 
-- inherited Git config/credential helper does not execute;
-- hooks do not execute during control-plane Git operations;
-- forbidden Git transport is rejected;
-- runtime exchange files cannot enter a sealed candidate;
-- immutable run baseline survives a later upstream fetch;
-- uncommitted candidate edits are sealed before publication;
-- package/build phases cannot silently inherit broader network or credential authority than configured.
+VM Stage 6 owns the exact mechanism for private repositories, coding/model services, package registries, or other authenticated guest workflows. Any credential relay/scoped token design must be explicit, narrowly bound, revocable where practical, and must not convert guest compromise into host publication/coordination/VM-management authority.
 
-## v0.1 boundary
+Until such a mechanism exists, a workflow that requires unavailable guest credentials fails closed or reports the missing capability rather than borrowing host control-plane credentials.
 
-v0.1 implements the managed Git portion of this contract and validates it with local Git fixtures. It does **not** yet provide a first-class package-manager phase controller. A coding CLI may invoke package/build/test tools inside its declared sandbox; that does not mean DevBridge has independently verified those commands or isolated dependency phases yet.
+## Publication
+
+Publication is a trusted host effect.
+
+Before any task-branch push or later promotion effect, DevBridge rechecks as applicable:
+
+- exact run/task/revision identity;
+- host-authoritative repository and baseline identity;
+- exact candidate/sealed/verified commit identity;
+- DB-017 publication baseline and remote predecessor state;
+- DB-016 lease/fence validity;
+- DB-007 hard-gate subject/approval when required;
+- DB-019 verification evidence validity;
+- local publication policy.
+
+Pushes use explicit expected remote state and effect-specific reconciliation under DB-009. Symbolic `HEAD`, blind force, guest remote state, or a model's statement that publication succeeded is not authority.
+
+Remote task text cannot turn ordinary completion into default-branch merge, release, deployment, package publication, tag creation, or another privileged promotion effect unless a separate local policy/contract already grants that class and its hard gates are satisfied.
+
+## DevBridge bootstrap and runtime source
+
+DevBridge's own bootstrap/update Git path is distinct from repository guest execution.
+
+Stage 0/secure bootstrap fixes the DevBridge source repository identity and suppresses inherited Git/SSH authority. DB-011 owns candidate release identity, signed production subjects, artifact digests, activation, and rollback.
+
+Candidate-controlled code must not execute with supervisor authority. The current implementation uses the transitional host sandbox; the DB-020 target routes candidate-controlled validation through a VM isolation boundary while retaining exact host-side release/artifact/activation authority.
+
+## Recovery and ambiguous Git effects
+
+DB-009's observe-and-reconcile-before-repeat rule applies to Git/publication effects.
+
+- Do not delete Git locks or reset worktrees merely because an operation was interrupted.
+- Do not adopt guest Git state as the recovery source of truth.
+- Re-observe exact host local/remote predecessor state before retrying a publication.
+- Preserve failed/uncertain candidate state needed for repair/reconciliation.
+- If a guest/source-transfer operation is interrupted, reconcile exact environment/run/source identities before retransmitting or importing candidate bytes.
+
+## Required verification
+
+The VM migration must retain or add evidence for at least:
+
+- repository/controller/guest content cannot select arbitrary host Git executable/config/remote/ref authority;
+- authoritative `.git` state is not writable through the guest boundary;
+- guest Git commits/remotes are ignored as publication authority;
+- source transfer is bound to exact repository/baseline/run identity;
+- candidate import detects source/baseline drift and cannot overwrite unrelated host paths;
+- host GitHub/SSH/control credentials are absent from the guest even with normal guest network access;
+- malicious dependencies/install scripts remain confined to the guest trust domain;
+- reset/reseed can discard contaminated guest dependency/Git/build state without losing authoritative host evidence;
+- publication still uses exact verified host candidate plus explicit expected remote state and reconciliation;
+- runtime candidate validation preserves DB-011 artifact/release authority after it moves to VM execution.
+
+DB-019 governs cost and evidence reuse. VM/security/Git/supply-chain boundary changes remain legitimate qualification triggers even when the required acceptance suite is expensive.
