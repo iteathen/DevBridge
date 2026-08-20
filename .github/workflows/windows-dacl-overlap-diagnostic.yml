@@ -1,0 +1,129 @@
+name: Windows DACL overlap diagnostic
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-dacl-overlap-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dacl-overlap:
+    if: github.event.pull_request.number == 106
+    timeout-minutes: 20
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+          architecture: arm64
+      - name: Prepare Windows process-container runtime
+        id: sandbox
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sandboxHome = Join-Path $env:RUNNER_TEMP 'devbridge-dacl-diagnostic-home'
+          $sandboxExecutable = node src/bootstrap/windows-sandbox-runtime.mjs --home $sandboxHome
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath $sandboxExecutable -PathType Leaf)) {
+            throw "Windows sandbox bootstrap did not produce an executable: $sandboxExecutable"
+          }
+          $hostPrepExecutable = Join-Path (Split-Path -Parent $sandboxExecutable) 'wxc-host-prep.exe'
+          & $hostPrepExecutable prepare-system-drive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $hostPrepExecutable prepare-null-device --no-sacl --json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $hostPrepExecutable verify-null-device --json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $probeText = (& $sandboxExecutable --probe | Out-String).Trim()
+          Write-Host $probeText
+          $probe = $probeText | ConvertFrom-Json
+          if ($probe.tier -ne 'appcontainer-dacl') {
+            throw "Diagnostic requires appcontainer-dacl; observed tier=$($probe.tier)"
+          }
+          "executable=$sandboxExecutable" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Compare RW baseline, exact deny, and nested deny
+        timeout-minutes: 4
+        shell: pwsh
+        env:
+          SANDBOX_EXECUTABLE: ${{ steps.sandbox.outputs.executable }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP ("devbridge-dacl-overlap-" + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+
+          function Invoke-Case {
+            param(
+              [Parameter(Mandatory=$true)][string]$Name,
+              [Parameter(Mandatory=$true)][string[]]$ReadWrite,
+              [Parameter(Mandatory=$true)][string[]]$Denied,
+              [Parameter(Mandatory=$true)][string]$Target,
+              [Parameter(Mandatory=$true)][bool]$ExpectWrite
+            )
+
+            $targetDir = Split-Path -Parent $Target
+            New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+            Set-Content -LiteralPath $Target -NoNewline -Value 'sentinel'
+
+            $containerId = "devbridge-dacl-$Name-$([guid]::NewGuid().ToString('N'))"
+            $escapedTarget = $Target.Replace('"', '\"')
+            $config = [ordered]@{
+              version = '0.7.0-alpha'
+              containerId = $containerId
+              containment = 'processcontainer'
+              lifecycle = [ordered]@{ destroyOnExit = $true; preservePolicy = $false }
+              process = [ordered]@{
+                commandLine = "cmd.exe /d /s /c `"echo altered>`\`"$escapedTarget`\`"`""
+                cwd = $ReadWrite[0]
+                timeout = 10000
+              }
+              filesystem = [ordered]@{
+                readwritePaths = @($ReadWrite)
+                deniedPaths = @($Denied)
+              }
+              fallback = [ordered]@{ allowDaclMutation = $true }
+              processContainer = [ordered]@{ leastPrivilege = $false; capabilities = @() }
+              network = [ordered]@{ defaultPolicy = 'block'; enforcementMode = 'capabilities'; allowLocalNetwork = $false }
+              ui = [ordered]@{ disable = $false; clipboard = 'none'; injection = $false }
+            }
+            $configPath = Join-Path $root "$Name.json"
+            $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $configPath -Encoding utf8
+
+            Write-Host "=== $Name config ==="
+            Get-Content -LiteralPath $configPath | Write-Host
+            $nativeOutput = (& $env:SANDBOX_EXECUTABLE --debug --config $configPath 2>&1 | Out-String)
+            $exitCode = $LASTEXITCODE
+            Write-Host $nativeOutput
+            $content = Get-Content -LiteralPath $Target -Raw
+            $writeObserved = ($content -match '^altered')
+            Write-Host "CASE=$Name EXIT=$exitCode WRITE_OBSERVED=$writeObserved CONTENT=$content"
+
+            if ($writeObserved -ne $ExpectWrite) {
+              throw "DACL overlap case '$Name' expected write=$ExpectWrite but observed write=$writeObserved"
+            }
+          }
+
+          try {
+            $baseline = Join-Path $root 'baseline'
+            New-Item -ItemType Directory -Force -Path $baseline | Out-Null
+            Invoke-Case -Name 'baseline-rw' -ReadWrite @($baseline) -Denied @() -Target (Join-Path $baseline 'target.txt') -ExpectWrite $true
+
+            $exact = Join-Path $root 'exact'
+            New-Item -ItemType Directory -Force -Path $exact | Out-Null
+            Invoke-Case -Name 'exact-rw-deny' -ReadWrite @($exact) -Denied @($exact) -Target (Join-Path $exact 'target.txt') -ExpectWrite $false
+
+            $nestedRoot = Join-Path $root 'nested-root'
+            $nestedDenied = Join-Path $nestedRoot 'denied'
+            New-Item -ItemType Directory -Force -Path $nestedDenied | Out-Null
+            Invoke-Case -Name 'nested-rw-deny' -ReadWrite @($nestedRoot) -Denied @($nestedDenied) -Target (Join-Path $nestedDenied 'target.txt') -ExpectWrite $false
+          } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+          }
