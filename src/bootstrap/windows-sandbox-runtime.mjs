@@ -1,29 +1,22 @@
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
-export const WINDOWS_SANDBOX_PACKAGE = '@microsoft/mxc-sdk';
-export const WINDOWS_SANDBOX_PACKAGE_VERSION = '0.7.0';
+export const WINDOWS_SANDBOX_ENGINE = 'windows-appcontainer';
+export const WINDOWS_SANDBOX_ENGINE_VERSION = '1';
 const CAPTURE_LIMIT = 4 * 1024 * 1024;
-const INSTALL_TIMEOUT_MS = 5 * 60_000;
-const PROBE_TIMEOUT_MS = 35_000;
-const JOB_LAUNCHER_COMPILE_TIMEOUT_MS = 60_000;
-const JOB_LAUNCHER_SOURCE = fileURLToPath(new URL('../runtime/windows-job-launcher.cs', import.meta.url));
-const JOB_LAUNCHER_FILENAME = 'devbridge-job-launcher.exe';
-const JOB_LAUNCHER_MARKER_FILENAME = 'devbridge-job-launcher.sha256';
+const PROBE_TIMEOUT_MS = 15_000;
+const HELPER_COMPILE_TIMEOUT_MS = 60_000;
+const HELPER_SOURCE = fileURLToPath(new URL('../runtime/windows-job-launcher.cs', import.meta.url));
+const HELPER_FILENAME = 'devbridge-windows-sandbox.exe';
+const HELPER_MARKER_FILENAME = 'devbridge-windows-sandbox.sha256';
 
 function fail(message) {
   throw new Error(message);
-}
-
-function sdkArch(arch = process.arch) {
-  if (arch === 'arm64') return 'arm64';
-  if (arch === 'x64') return 'x64';
-  fail(`Windows sandbox runtime does not support Node architecture ${arch}`);
 }
 
 function defaultRunner(executable, args, options) {
@@ -54,22 +47,6 @@ function fileExists(candidate) {
   }
 }
 
-function npmCliCandidates(env = process.env) {
-  return [
-    env.npm_execpath,
-    path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-    path.resolve(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-  ].filter(Boolean);
-}
-
-export function resolveNpmCli(env = process.env) {
-  for (const candidate of npmCliCandidates(env)) {
-    const resolved = path.resolve(candidate);
-    if (fileExists(resolved)) return resolved;
-  }
-  return null;
-}
-
 function launcherEnvironment(source = process.env) {
   const result = {};
   for (const name of ['PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'SystemDrive', 'TEMP', 'TMP']) {
@@ -79,30 +56,27 @@ function launcherEnvironment(source = process.env) {
 }
 
 function windowsSandboxRuntimeDirectory(home) {
-  return path.join(path.resolve(home), 'sandbox', 'mxc', WINDOWS_SANDBOX_PACKAGE_VERSION);
+  return path.join(
+    path.resolve(home),
+    'sandbox',
+    WINDOWS_SANDBOX_ENGINE,
+    WINDOWS_SANDBOX_ENGINE_VERSION,
+  );
 }
 
 export function windowsSandboxExecutablePath(home) {
-  return path.join(windowsSandboxRuntimeDirectory(home), 'wxc-exec.exe');
+  return path.join(windowsSandboxRuntimeDirectory(home), HELPER_FILENAME);
 }
 
-export function windowsSandboxHostPrepExecutablePath(home) {
-  return path.join(windowsSandboxRuntimeDirectory(home), 'wxc-host-prep.exe');
-}
-
+// Retained as a source-level alias for tests and callers created during the
+// Windows sandbox branch. There is now one native helper, not a separate outer
+// job launcher and MXC executor.
 export function windowsSandboxJobLauncherExecutablePath(home) {
-  return path.join(windowsSandboxRuntimeDirectory(home), JOB_LAUNCHER_FILENAME);
+  return windowsSandboxExecutablePath(home);
 }
 
-function windowsSandboxJobLauncherMarkerPath(home) {
-  return path.join(windowsSandboxRuntimeDirectory(home), JOB_LAUNCHER_MARKER_FILENAME);
-}
-
-function installManagedFile(source, destination) {
-  const temporary = `${destination}.${process.pid}.${Date.now()}.tmp`;
-  copyFileSync(source, temporary);
-  if (fileExists(destination)) rmSync(temporary, { force: true });
-  else renameSync(temporary, destination);
+function windowsSandboxHelperMarkerPath(home) {
+  return path.join(windowsSandboxRuntimeDirectory(home), HELPER_MARKER_FILENAME);
 }
 
 function sourceSha256(source) {
@@ -128,12 +102,12 @@ export function ensureWindowsJobLauncher({
   runner = defaultRunner,
 } = {}) {
   if (process.platform !== 'win32') return null;
-  if (typeof home !== 'string' || home.trim() === '') fail('Windows job launcher bootstrap requires a DevBridge home directory');
-  if (!fileExists(JOB_LAUNCHER_SOURCE)) fail(`Windows job launcher source is missing: ${JOB_LAUNCHER_SOURCE}`);
+  if (typeof home !== 'string' || home.trim() === '') fail('Windows sandbox bootstrap requires a DevBridge home directory');
+  if (!fileExists(HELPER_SOURCE)) fail(`Windows native sandbox helper source is missing: ${HELPER_SOURCE}`);
 
-  const destination = windowsSandboxJobLauncherExecutablePath(home);
-  const marker = windowsSandboxJobLauncherMarkerPath(home);
-  const expectedHash = sourceSha256(JOB_LAUNCHER_SOURCE);
+  const destination = windowsSandboxExecutablePath(home);
+  const marker = windowsSandboxHelperMarkerPath(home);
+  const expectedHash = sourceSha256(HELPER_SOURCE);
   let installedHash = null;
   try {
     installedHash = readFileSync(marker, 'utf8').trim();
@@ -142,14 +116,14 @@ export function ensureWindowsJobLauncher({
 
   const compiler = resolveWindowsCSharpCompiler(env);
   if (!compiler) {
-    fail('Could not locate the standard Windows .NET Framework C# compiler required to build the DevBridge kill-on-close job launcher');
+    fail('Could not locate the standard Windows .NET Framework C# compiler required to build the DevBridge native AppContainer sandbox helper');
   }
 
   const destinationDir = path.dirname(destination);
   mkdirSync(destinationDir, { recursive: true });
   const nonce = `${process.pid}.${Date.now()}`;
-  const temporaryExecutable = path.join(destinationDir, `${JOB_LAUNCHER_FILENAME}.${nonce}.tmp.exe`);
-  const temporaryMarker = path.join(destinationDir, `${JOB_LAUNCHER_MARKER_FILENAME}.${nonce}.tmp`);
+  const temporaryExecutable = path.join(destinationDir, `${HELPER_FILENAME}.${nonce}.tmp.exe`);
+  const temporaryMarker = path.join(destinationDir, `${HELPER_MARKER_FILENAME}.${nonce}.tmp`);
   try {
     checkedCommand(compiler, [
       '/nologo',
@@ -157,15 +131,15 @@ export function ensureWindowsJobLauncher({
       '/platform:anycpu',
       '/optimize+',
       `/out:${temporaryExecutable}`,
-      JOB_LAUNCHER_SOURCE,
+      HELPER_SOURCE,
     ], {
       cwd: destinationDir,
       env: launcherEnvironment(env),
-      timeout: JOB_LAUNCHER_COMPILE_TIMEOUT_MS,
+      timeout: HELPER_COMPILE_TIMEOUT_MS,
       windowsHide: true,
       stdio: 'pipe',
     }, runner);
-    if (!fileExists(temporaryExecutable)) fail('Windows C# compiler did not produce the DevBridge job launcher');
+    if (!fileExists(temporaryExecutable)) fail('Windows C# compiler did not produce the DevBridge native sandbox helper');
 
     rmSync(destination, { force: true });
     renameSync(temporaryExecutable, destination);
@@ -183,97 +157,32 @@ export function ensureWindowsSandboxRuntime({
   home,
   env = process.env,
   runner = defaultRunner,
-  arch = process.arch,
 } = {}) {
   if (process.platform !== 'win32') return null;
   if (typeof home !== 'string' || home.trim() === '') fail('Windows sandbox bootstrap requires a DevBridge home directory');
 
   const override = env.DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE;
+  let executable;
   if (override) {
-    const resolved = path.resolve(override);
-    if (!fileExists(resolved)) fail(`DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE does not name a file: ${resolved}`);
-    const managedLauncher = ensureWindowsJobLauncher({ home, env, runner });
-    const colocatedLauncher = path.join(path.dirname(resolved), JOB_LAUNCHER_FILENAME);
-    if (path.resolve(managedLauncher) !== path.resolve(colocatedLauncher) && !fileExists(colocatedLauncher)) {
-      fail('DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE requires a co-located devbridge-job-launcher.exe; use the managed DevBridge Windows sandbox runtime or provide the helper beside the override');
+    executable = path.resolve(override);
+    if (!fileExists(executable)) fail(`DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE does not name a file: ${executable}`);
+    if (path.basename(executable).toLowerCase() === 'wxc-exec.exe') {
+      fail('Microsoft MXC is no longer a supported DevBridge Windows execution boundary; unset DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE and rerun DevBridge to provision the native AppContainer helper');
     }
-    env.DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE = resolved;
-    return resolved;
+  } else {
+    executable = ensureWindowsJobLauncher({ home, env, runner });
   }
 
-  const destination = windowsSandboxExecutablePath(home);
-  const hostPrepDestination = windowsSandboxHostPrepExecutablePath(home);
-  if (fileExists(destination) && fileExists(hostPrepDestination)) {
-    ensureWindowsJobLauncher({ home, env, runner });
-    env.DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE = destination;
-    return destination;
-  }
+  checkedCommand(executable, ['--probe'], {
+    cwd: path.dirname(executable),
+    env: launcherEnvironment(env),
+    timeout: PROBE_TIMEOUT_MS,
+    windowsHide: true,
+    stdio: 'pipe',
+  }, runner);
 
-  const npmCli = resolveNpmCli(env);
-  if (!npmCli) {
-    fail('Could not locate npm-cli.js beside the active Node.js runtime; a standard Node.js/npm installation is required to provision the Windows sandbox prerequisite');
-  }
-
-  const sandboxRoot = path.join(path.resolve(home), 'sandbox');
-  const stage = path.join(sandboxRoot, `.mxc-stage-${process.pid}-${Date.now()}`);
-  const destinationDir = path.dirname(destination);
-  mkdirSync(stage, { recursive: true });
-
-  try {
-    checkedCommand(process.execPath, [
-      npmCli,
-      'install',
-      '--prefix', stage,
-      '--ignore-scripts',
-      '--no-audit',
-      '--no-fund',
-      '--package-lock=false',
-      '--omit=optional',
-      `${WINDOWS_SANDBOX_PACKAGE}@${WINDOWS_SANDBOX_PACKAGE_VERSION}`,
-    ], {
-      cwd: stage,
-      env,
-      timeout: INSTALL_TIMEOUT_MS,
-      windowsHide: true,
-      stdio: 'pipe',
-    }, runner);
-
-    const sourceDirectory = path.join(
-      stage,
-      'node_modules',
-      '@microsoft',
-      'mxc-sdk',
-      'bin',
-      sdkArch(arch),
-    );
-    const source = path.join(sourceDirectory, 'wxc-exec.exe');
-    const hostPrepSource = path.join(sourceDirectory, 'wxc-host-prep.exe');
-    if (!fileExists(source)) fail(`pinned MXC package did not contain expected runtime: ${source}`);
-    if (!fileExists(hostPrepSource)) fail(`pinned MXC package did not contain expected host-prep helper: ${hostPrepSource}`);
-
-    mkdirSync(destinationDir, { recursive: true });
-    installManagedFile(source, destination);
-    installManagedFile(hostPrepSource, hostPrepDestination);
-    ensureWindowsJobLauncher({ home, env, runner });
-
-    checkedCommand(destination, ['--probe'], {
-      cwd: destinationDir,
-      env: launcherEnvironment(env),
-      timeout: PROBE_TIMEOUT_MS,
-      windowsHide: true,
-      stdio: 'pipe',
-    }, runner);
-
-    env.DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE = destination;
-    return destination;
-  } catch (error) {
-    fail(
-      `Could not provision the pinned Windows sandbox runtime ${WINDOWS_SANDBOX_PACKAGE}@${WINDOWS_SANDBOX_PACKAGE_VERSION}: ${error?.message ?? error}. ` +
-      'Install/repair Node.js npm access and the standard Windows .NET Framework compiler, then rerun DevBridge; repository-code execution remains disabled until provisioning and the live boundary probe both succeed.',
-    );
-  } finally {
-    rmSync(stage, { recursive: true, force: true });
-  }
+  env.DEVBRIDGE_WINDOWS_SANDBOX_EXECUTABLE = executable;
+  return executable;
 }
 
 function parseCli(argv) {
