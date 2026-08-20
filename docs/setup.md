@@ -66,18 +66,37 @@ mkdir -p "$HOME/.devbridge/bin" && curl -fsSL https://raw.githubusercontent.com/
 New-Item -ItemType Directory -Force "$HOME\.devbridge\bin" | Out-Null; Invoke-WebRequest "https://raw.githubusercontent.com/iteathen/DevBridge/codex/temp-fast-functional/devbridge.mjs" -OutFile "$HOME\.devbridge\bin\devbridge.mjs"; node "$HOME\.devbridge\bin\devbridge.mjs"
 ```
 
-The launcher uses only Node.js built-ins and local Git to establish/verify the fixed managed DevBridge runtime. It does not silently enable repository execution or VM management.
+The launcher uses only Node.js built-ins and local Git to establish/verify the fixed managed DevBridge runtime. The managed bootstrap then enters CLI setup. It discovers authenticated repositories before presenting repository choices, presents collaborator identities only as untrusted task-author candidates, and separately asks which ready/provisionable repository environments and execution policy to use.
 
-On a fresh home, the managed secure bootstrap creates the safe example configuration and exits. Review local authority before enabling anything.
+The no-command default is a windowless/headless start. On a fresh home it performs setup first. After a successful setup, ordinary launches are locked out of setup; re-enter it only with `setup` or `--setup`.
 
-Then use:
+Useful commands:
 
 ```text
+node ~/.devbridge/bin/devbridge.mjs setup
 node ~/.devbridge/bin/devbridge.mjs doctor
+node ~/.devbridge/bin/devbridge.mjs update
 node ~/.devbridge/bin/devbridge.mjs
+node ~/.devbridge/bin/devbridge.mjs daemon
+node ~/.devbridge/bin/devbridge.mjs status
+node ~/.devbridge/bin/devbridge.mjs logs
+node ~/.devbridge/bin/devbridge.mjs stop
 ```
 
 PowerShell users can use `$HOME\.devbridge\bin\devbridge.mjs` in the same commands.
+
+For a noninteractive/prescribed setup, supply local choices explicitly:
+
+```text
+node ~/.devbridge/bin/devbridge.mjs setup \
+  --channel testing \
+  --repository owner/control --repository owner/project \
+  --trusted-author 12345 \
+  --no-repository-discovery \
+  --all-environments --enable-execution
+```
+
+Use `--no-environments --disable-execution` for a polling-only installation. Repository execution never falls back to the host when an environment cannot be prepared or verified.
 
 ## Removed host-sandbox prerequisite
 
@@ -112,7 +131,7 @@ Review at least:
 
 `execution.allowUncontainedTools` or equivalent must never bypass the no-provider state.
 
-Existing operator configuration is never silently rewritten during self-update.
+Ordinary self-update does not rewrite operator policy. This disposable branch contains one bounded bootstrap migration from the former singular `github.queueRepository` key to plural `github.queueRepositories`, with an exact pre-migration backup. All later policy changes require first-run setup or an explicit `setup` invocation.
 
 ## Execution remains opt-in and provider-bound
 
@@ -153,9 +172,30 @@ When explicitly enabled, discovery uses GitHub's authenticated-user repository e
 
 Token access is observation, not execution authority. Discovery never adds trusted task actors, enables execution, creates a VM, adopts a provider object, grants publication, or supplies guest credentials. Each newly selected repository still needs a host-observed immutable repository ID and an independently admitted persistent-environment route; otherwise repository execution fails closed for that queue while other queues can continue polling. Shared GitHub rate-limit exhaustion stops the whole repository set so one installation cannot evade its account-wide budget by adding queues.
 
-## Persistent VM setup target
+## Disposable bootstrap environment setup
 
-When Stage 8 lands, setup/reconfiguration follows discover-before-prompt.
+On `codex/temp-fast-functional`, the managed setup inspects the environment foundation, published `linux-development` images, existing persistent environments, and stable-identity execution routes before asking what to create/use.
+
+- An existing compatible owned environment plus matching route is offered as ready.
+- On Windows/Hyper-V, a discovered repository with an immutable GitHub repository ID may be offered as provisionable when the published base and validation route already exist.
+- Missing/unsupported prerequisites are shown as poll-only blockers.
+- Linux remains a first-class production requirement, but this disposable automatic provisioning shortcut does not pretend that its KVM/QEMU/libvirt installer path is complete.
+- Repository execution is enabled only by explicit setup choice and only when at least one selected environment becomes ready.
+
+`doctor` never forces setup and reports update availability plus an explicit setup-required notice. `update` enters the candidate-validation/activation supervisor path. The canonical installed loader is refreshed only from the accepted runtime.
+
+Setup maintains `~/.devbridge/install-manifest.json`. It records exact application/config/state/workspace paths, environment identity + repository subject, and referenced image identity. Removal requires one mode and the exact confirmation token:
+
+```text
+node ~/.devbridge/bin/devbridge.mjs uninstall --app-only --confirm REMOVE
+node ~/.devbridge/bin/devbridge.mjs uninstall --purge --confirm REMOVE
+```
+
+App-only preserves local policy/state/VMs. Purge removes only manifest-listed paths and reverified provider-owned environments. It preserves referenced base images and refuses broad/unproven cleanup; external state/workspace roots are reported for separate operator action.
+
+## Persistent VM setup target for main
+
+The production Stage 8 setup/reconfiguration follows the same discover-before-prompt requirement, with qualified provider-complete implementations rather than the disposable shortcut.
 
 ### Windows host discovery
 

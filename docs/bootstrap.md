@@ -2,7 +2,7 @@
 
 `devbridge.mjs` is the canonical stage-0 launcher for DevBridge on a machine with Node.js 22.16.0+ and Git.
 
-Stage 0 is intentionally small. It establishes the fixed managed DevBridge checkout needed to reach the secure bootstrap; it does not replace the supervisor's candidate-validation, activation, rollback, or VM-provider authority.
+Stage 0 is intentionally small. It establishes the fixed managed DevBridge checkout needed to reach the secure bootstrap; the managed bootstrap provides the full operator CLI. Stage 0 does not replace the supervisor's candidate-validation, activation, rollback, or VM-provider authority.
 
 For the shortest installation path, see `docs/setup.md`.
 
@@ -11,28 +11,29 @@ For the shortest installation path, see `docs/setup.md`.
 The downloaded launcher uses only Node.js built-ins plus the local `git` executable. It:
 
 1. enforces the supported Node.js version;
-2. parses only local bootstrap arguments needed to resolve the DevBridge home;
+2. parses the bounded local command/channel/home/config switches needed to reach the managed bootstrap;
 3. defaults the home to `~/.devbridge`;
 4. creates private bootstrap Git HOME/hooks directories;
 5. suppresses inherited Git/SSH authority and interactive credential prompting;
 6. on this disposable fast branch, shallow-clones fixed `https://github.com/iteathen/DevBridge.git` branch `codex/temp-fast-functional` into the managed runtime;
 7. verifies origin and clean checkout shape;
-8. verifies `package.json` identifies `devbridge` and the managed secure-bootstrap module exists; and
-9. transfers control to managed secure bootstrap.
+8. verifies `package.json` identifies `devbridge`, verifies the declared stage-0 protocol, and verifies the managed secure-bootstrap module exists;
+9. performs a one-time, clean, exact fast-forward compatibility transition for an older pre-protocol managed checkout, with a lock, durable intent, and rollback ref; and
+10. transfers control to managed secure bootstrap.
 
-If a managed runtime already exists, stage 0 verifies it and transfers control without replacing it. Ordinary runtime updates remain behind DB-011's candidate-validation boundary.
+The compatibility transition exists because older disposable installs cannot reach the current secure updater. It accepts only the fixed repository/branch, exact remote head, clean checkout, required stage-0 protocol, and fast-forward ancestry. Ordinary runtime updates remain behind DB-011's candidate-validation boundary. The accepted managed runtime refreshes only the canonical installed launcher at `~/.devbridge/bin/devbridge.mjs`, so the loader follows a validated activation instead of remaining stale.
 
 `--no-update` requires an existing managed runtime; it cannot bootstrap an empty home.
 
 ## What stage 0 does not authorize
 
-The standalone launcher does not:
+The standalone stage-0 layer does not:
 
 - enable repository execution;
-- choose trusted task actors;
+- infer trusted task actors from collaborators;
 - enable model adapters;
-- choose repository VM environments;
-- install/configure Hyper-V, KVM, QEMU, or libvirt;
+- provision repository environments by itself;
+- silently install/configure Hyper-V, KVM, QEMU, or libvirt;
 - create provider-managed VMs/domains/images/networks;
 - expose host credentials to repository code;
 - create publication authority;
@@ -56,7 +57,7 @@ Stages 0–6 are implemented on the VM migration stack.
 
 The completed Stage-1-through-Stage-5 interval kept untrusted execution unavailable/fail-closed. Stage 6 restores it through VM providers only; `docs/vm-stage6-repository-execution.md` defines the route and transfer contract.
 
-The stage-0 launcher must not grow direct-host execution or provider provisioning logic merely because Stage 2 can observe/manage provider-local primitives. VM Stage 8 owns supported Windows/Linux provider setup/reconfiguration after lower provider/image/environment/bridge stages exist.
+The stage-0 launcher does not contain direct-host execution or provider provisioning logic. The disposable managed setup currently exposes the already-proved Windows/Hyper-V fast path; VM Stage 8 still owns the supported, provider-complete Windows/Linux setup/reconfiguration design for `main`.
 
 ## Managed secure bootstrap
 
@@ -64,19 +65,58 @@ Managed bootstrap owns local initialization/update preparation, including:
 
 - private DevBridge home/runtime/state/config locations;
 - canonical config-example materialization on first install;
+- home-relative state/workspace defaults so a custom `--home` cannot accidentally share the default installation's mutable roots;
+- discover-before-select repository and candidate task-author setup;
+- explicit channel selection (`testing` or `stable`);
+- explicit persistent-environment selection and execution opt-in;
+- a completion record that prevents normal launches from re-entering setup;
+- headless background start plus explicit foreground daemon mode and bounded logs;
+- `doctor` update availability and an explicit `update` path;
+- an install manifest covering created/adopted local and provider artifacts;
+- manifest-driven app-only and purge uninstall modes protected by exact `REMOVE` confirmation;
 - repository/origin/runtime-shape verification;
 - update-policy selection from local configuration;
 - handoff to supervisor/CLI after local prerequisites are checked.
 
-Existing operator configuration is not silently rewritten during self-update.
+Self-update does not rewrite ordinary operator policy. The disposable bootstrap performs one explicit, bounded configuration migration from the former singular queue key to `github.queueRepositories`, preserving an exact backup. Setup changes local policy only when explicitly invoked or when no completed setup record exists.
 
-When VM support lands, bootstrap/setup may invoke separately owned provider setup/provisioning adapters, but repository/controller text never becomes Hyper-V/libvirt/QEMU/image/host-path authority.
+Managed setup invokes separately owned provider setup/provisioning adapters. Repository/controller text never becomes Hyper-V/libvirt/QEMU/image/host-path authority.
+
+## CLI workflow
+
+Running the launcher with no command defaults to CLI-driven, windowless `start`. A fresh install enters setup first; after setup completes, normal commands cannot re-enter it unless `setup` or `--setup` is supplied.
+
+```text
+node ~/.devbridge/bin/devbridge.mjs setup
+node ~/.devbridge/bin/devbridge.mjs doctor
+node ~/.devbridge/bin/devbridge.mjs update
+node ~/.devbridge/bin/devbridge.mjs                 # headless start
+node ~/.devbridge/bin/devbridge.mjs daemon          # foreground supervisor
+node ~/.devbridge/bin/devbridge.mjs status
+node ~/.devbridge/bin/devbridge.mjs logs
+node ~/.devbridge/bin/devbridge.mjs stop
+```
+
+Noninteractive setup uses repeated `--repository`, repeated `--trusted-author`, repository-discovery selection, and explicit environment/execution switches. Repository discovery happens before choices are displayed. GitHub collaborator results are candidates only; choosing a numeric actor ID is the local trust grant.
+
+The current automatic VM provisioning shortcut is Windows/Hyper-V-only and requires an already published `linux-development` base plus validation route. Unsupported or unready providers remain poll-only/fail-closed; setup does not redirect work to the host. `daemon` is the explicit foreground/show-output mode. VM consoles remain hidden unless an operator separately invokes the diagnostic `Show` action.
+
+## Uninstall and manifest
+
+Setup records exact paths, repository-environment identities/subjects, state roots, and referenced image identities in `install-manifest.json`. Uninstall refuses to act without that manifest.
+
+```text
+node ~/.devbridge/bin/devbridge.mjs uninstall --app-only --confirm REMOVE
+node ~/.devbridge/bin/devbridge.mjs uninstall --purge --confirm REMOVE
+```
+
+App-only removal preserves configuration, state, setup policy, and VMs. Purge re-observes exact provider ownership/compatibility before deleting a VM. Referenced base images are retained unless the manifest proves the installer created them, images still referenced by retained environments are protected, and external state/workspace roots are reported for separate cleanup rather than recursively deleted.
 
 ## Runtime update authority
 
 DB-011 remains normative.
 
-The supervisor, not the standalone launcher, owns:
+The supervisor, not stage 0, owns:
 
 - development/testing versus production release policy;
 - signed production release manifests/public keys;

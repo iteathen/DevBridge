@@ -91,22 +91,37 @@ mkdir -p "$HOME/.devbridge/bin" && curl -fsSL https://raw.githubusercontent.com/
 New-Item -ItemType Directory -Force "$HOME\.devbridge\bin" | Out-Null; Invoke-WebRequest "https://raw.githubusercontent.com/iteathen/DevBridge/codex/temp-fast-functional/devbridge.mjs" -OutFile "$HOME\.devbridge\bin\devbridge.mjs"; node "$HOME\.devbridge\bin\devbridge.mjs"
 ```
 
-`devbridge.mjs` is a standalone stage-0 launcher. It establishes/validates the fixed managed DevBridge runtime and transfers control to secure bootstrap. It does not silently enable repository execution or provision a VM provider.
+`devbridge.mjs` is a standalone stage-0 launcher. It establishes/validates the fixed managed DevBridge runtime and transfers control to the full managed CLI bootstrap. It does not silently enable repository execution or provision a VM provider.
 
-On a fresh install, the managed bootstrap creates `~/.devbridge/config.json` from the safe example and exits. Review local authority first, then run:
+On a fresh install, the managed bootstrap creates `~/.devbridge/config.json`, discovers repositories before offering local polling/trust/environment choices, and completes setup before starting. The no-command default is windowless/headless. Once setup completes, it is not entered again unless explicitly requested:
 
 ```text
+node ~/.devbridge/bin/devbridge.mjs setup
 node ~/.devbridge/bin/devbridge.mjs doctor
+node ~/.devbridge/bin/devbridge.mjs update
 node ~/.devbridge/bin/devbridge.mjs
+node ~/.devbridge/bin/devbridge.mjs daemon
+node ~/.devbridge/bin/devbridge.mjs logs
 ```
 
 PowerShell users can use `$HOME\.devbridge\bin\devbridge.mjs`.
 
+The bootstrap records the exact application/config/state/environment artifacts it creates or adopts in `~/.devbridge/install-manifest.json`. Uninstall is manifest-driven and requires an exact confirmation:
+
+```text
+node ~/.devbridge/bin/devbridge.mjs uninstall --app-only --confirm REMOVE
+node ~/.devbridge/bin/devbridge.mjs uninstall --purge --confirm REMOVE
+```
+
+App-only preserves configuration, state, and VMs. Purge re-verifies provider ownership before removing repository environments and preserves referenced/unproven artifacts.
+
 See `docs/setup.md` for current-vs-target setup details.
 
-## Future VM setup
+## Bootstrap VM setup and production target
 
-VM Stage 8 adds discover-first provider setup/reconfiguration.
+The disposable testing bootstrap already provides discovery-first selection of channels, repositories, trusted numeric task-author IDs, and persistent repository environments. Its automatic provisioning shortcut currently supports the proved Windows/Hyper-V fast path when a published base image and validation route already exist. Missing provider readiness remains poll-only/fail-closed.
+
+VM Stage 8 owns the provider-complete supported setup/reconfiguration that belongs on `main`.
 
 Windows setup inspects Hyper-V readiness before prompting.
 
@@ -114,13 +129,13 @@ Linux setup inspects KVM acceleration, QEMU/libvirt service/provider access, ima
 
 Neither `Hyper-V installed` nor `/dev/kvm exists` is enough to claim repository execution ready.
 
-Setup proposes repositories/guest profiles/image generations/resource/storage policy and requires explicit operator consent before authority-bearing changes.
+Setup proposes repositories/guest profiles/image generations/resource/storage policy and requires explicit operator consent before authority-bearing changes. Authenticated repository/collaborator discovery is observation only; it does not auto-trust an actor or create execution authority.
 
 VM unavailability remains fail-closed; setup never reactivates host repository execution.
 
 ## Self-update
 
-Stage 0 establishes only the managed checkout needed to reach secure bootstrap. DB-011 owns update/release policy, exact artifact identity, candidate validation, daemon drain, activation, health, and rollback.
+Stage 0 establishes the managed checkout needed to reach secure bootstrap and performs only the bounded fast-forward protocol transition needed by older disposable installs. DB-011 owns ordinary update/release policy, exact artifact identity, candidate validation, daemon drain, activation, health, and rollback. `doctor` reports update availability and `update` enters that validation/activation path.
 
 Stage 1 removed candidate-controlled host execution with the sandbox path. Stage 6 now performs candidate preflight/tests through the single locally admitted VM validation route while DB-011 identity/rollback behavior remains authoritative. Missing validation readiness fails closed before daemon drain.
 

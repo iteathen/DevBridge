@@ -335,6 +335,37 @@ Main-branch requirements exposed:
 - Queue scheduling must eventually account for VM memory/CPU/idle policy without weakening the current one-effective-task rule or pretending all provider families expose identical resource semantics.
 - The initial UCI source transfer confirms that source shape is repository-specific. Qualification should cover large/mixed repositories, neutral source markers, content-cache bounds/garbage collection, and tool-profile readiness without importing project names into generic execution components.
 
+### Bootstrap/update/setup deadlock and full operator CLI
+
+Observed problems:
+
+- The originally installed managed checkout predated the current runtime-update/bootstrap contract. The downloaded loader verified that clean old checkout and handed control back to old code, so `doctor` could diagnose the obsolete runtime but could neither reach nor offer the update that fixed it.
+- The initial launcher assumed one configured repository and required hand editing. It did not discover choices first, distinguish repository visibility from task-author trust, offer persistent environments, remember a channel, or provide a bounded first-run completion state.
+- Normal launch and setup were the same path. An incomplete or corrupt local marker could repeatedly reopen authority-bearing prompts.
+- A custom DevBridge home initially copied literal default-home state/workspace paths from the example, which could make an isolated test installation share mutable roots with the default installation.
+- Foreground supervision exposed a console by default even though ordinary work is unattended.
+- Removal had no durable ownership inventory, so a convenient purge would have risked deleting operator/foreign VMs, images, state roots, or shared provider infrastructure.
+
+Disposable solution and rationale:
+
+- `package.json` declares a stage-0 protocol. The current downloaded loader can perform one narrow compatibility transition from an older pre-protocol checkout: fixed repository and testing branch, clean worktree, exact remote head observed around fetch, required candidate protocol/shape, fast-forward ancestry only, cooperative daemon stop, durable planned/activated journal, exclusive dead-process-aware lock, and `refs/devbridge/stage0-previous` rollback evidence. It is not an ordinary self-update bypass.
+- After the transition, DB-011-style candidate validation and activation remain supervisor-owned. `doctor` reports current/available/unknown update state even when first-run setup is incomplete, `update` enters candidate validation/activation, and an accepted runtime refreshes only the canonical installed CLI loader.
+- Managed setup discovers authenticated repositories before presenting selections. It then discovers the authenticated user and bounded collaborator candidates for selected repositories. GitHub's authenticated-repository endpoint supports the bounded account-visible inventory; the collaborators response can reflect organization/team access, so collaborator visibility is displayed only as a candidate and never becomes trust until the operator selects an immutable numeric actor ID. See GitHub's [authenticated repositories](https://docs.github.com/en/rest/repos/repos#list-repositories-for-the-authenticated-user) and [repository collaborators](https://docs.github.com/en/rest/collaborators/collaborators#list-repository-collaborators) documentation.
+- Interactive and scripted setup support named channels, multiple explicit repositories, repository discovery policy, repeated trusted actor IDs, existing/provisionable/poll-only environment choices, and explicit execution enable/disable. The disposable auto-provision action is limited to the proved Windows/Hyper-V path with an existing published base and validation route; Linux remains honestly blocked rather than redirected to the host.
+- A successful setup writes `devbridge/setup-state-v1`. Normal commands cannot re-enter setup; only `setup`/`--setup` may replace it. Invalid setup state fails closed during normal launch, while explicit setup can repair it.
+- Fresh config materialization replaces only the canonical example's default state/workspace values with roots under the selected DevBridge home; existing operator config is not retargeted.
+- No-command launch defaults to headless `start`; `daemon` is the explicit foreground mode, `logs` returns a bounded file tail, and VM console display remains a separate exact operator action.
+- `devbridge/install-manifest-v1` records exact managed paths, environment identity + repository subject + state root, and referenced image identities. App-only uninstall preserves policy/state/VMs. Purge requires exact `REMOVE`, re-observes environment subject/ownership/compatibility, protects images referenced by retained environments, never treats an adopted base as installer-created, and reports external state/workspace roots for separate cleanup.
+- The former singular repository config is migrated once to the plural key with an exact backup. This compatibility transition is bounded bootstrap behavior, not a retained alternate runtime/config surface.
+
+Main-branch requirements exposed:
+
+- Stage 8 needs a versioned bootstrap/setup protocol that can transition old installations without letting stage 0 become a second update authority. Recovery tests must cover crash points before/after fetch, intent, daemon drain, checkout/activation, loader refresh, and reboot/PID reuse.
+- Setup needs a durable transaction/re-entry model for discovery, local selection, elevated provider preparation, reboot/session-group changes, image build/publication, environment creation, route enrollment, and execution enablement. A single completion file is sufficient for this disposable path but not the final multi-phase installer journal.
+- Supported setup must implement equivalent first-class Windows/Hyper-V and Linux/KVM-QEMU-libvirt flows, including prerequisite installation/authorization choices without opaque elevation or surprise machine-wide changes.
+- Production uninstall needs manifest evolution, per-artifact creation/adoption provenance, exact provider-resource ownership, interruption reconciliation, and an operator-readable preserved/removed report. It must never infer deletion authority from names or configured directories alone.
+- CLI/headless service installation, autostart, log retention, repair, launcher replacement, and uninstall helper completion need platform qualification. GUI/console display remains optional diagnostic behavior, not the default execution topology.
+
 ## Production-work coverage audit
 
 The fast track has now exposed and recorded the following production work. The temporary solution column describes what made this disposable branch usable; it is not permission to move the shortcut to `main`.
@@ -355,6 +386,11 @@ The fast track has now exposed and recorded the following production work. The t
 | PowerShell progress and prefix arithmetic hid/broke the real provider failure | Suppress progress, retain the actionable tail of bounded errors, and use unsigned-safe IPv4 mask arithmetic | [Stage 7 #115](https://github.com/iteathen/DevBridge/issues/115): real provider/error-path tests rather than mock-only confidence |
 | Initial fast recovery used a direct-host path before VM readiness | Keep that implementation disabled and mutually exclusive with the VM topology | [Stage 9 #117](https://github.com/iteathen/DevBridge/issues/117): delete it with the disposable branch and prove repository-wide absence of host fallback |
 | Windows/OneDrive can retain locked stale worktree metadata directories | Preserve the failure as evidence and avoid broad/destructive cleanup | [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): exact owned cleanup with Windows lock diagnostics and recoverable re-entry |
+| An old managed checkout could not reach the updater that replaced it | One narrow stage-0 protocol fast-forward with durable intent, lock, exact remote subject, and rollback ref | [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116) plus DB-011: versioned bootstrap transition and crash/reboot recovery without creating a second general update authority |
+| Hand-edited single-repository setup hid discoverable choices and conflated visibility with trust | Discover repositories first; present collaborators as candidates; require explicit repositories, numeric actor trust, VM selections, and execution choice | [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): transactional provider-complete discover/select/provision/re-entry UX for both host families |
+| Reopening setup on every launch could accidentally revisit authority-bearing choices | Durable completion marker; normal launches locked out; explicit `setup` repairs/reconfigures | [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): versioned multi-phase setup journal with exact recovery semantics |
+| Uninstall without ownership evidence could delete foreign/shared infrastructure | Exact install manifest, two confirmation-protected scopes, provider re-observation, referenced-image protection, external-root preservation | [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): versioned artifact provenance and interruption-safe cleanup reports |
+| Foreground windows/VM consoles interfered with ordinary unattended work | Headless CLI start by default, bounded logs, explicit foreground daemon and explicit VM `Show` action | [Stage 7 #115](https://github.com/iteathen/DevBridge/issues/115) and [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): qualified service/autostart/log/console lifecycle |
 
 ### Evidence boundaries and unresolved work
 
@@ -372,7 +408,7 @@ The current evidence must not be overstated:
 - The unattended probe and incomplete owned-network plan remain preserved host artifacts. Cleanup must validate their exact ownership and must not touch the three foreign VMs or shared Default Switch.
 - The fast scripts assume this Windows workstation's available PowerShell, Hyper-V, OpenSSH, IMAPI, and media-extractor surface. Stage 8 must discover/supply prerequisites and keep provider-specific commands behind the owning adapter.
 - Current VM scripts download installer packages/security updates and the checksum-pinned Node archive during image construction. Production qualification must record exact inputs and distinguish cryptographic identity from mutable network availability.
-- At this documentation checkpoint, the fast implementation remains an uncommitted local working-tree candidate; the remote branch contains the durable notes, not yet the executable changes. The passing tests therefore describe that local candidate and are not commit-bound DB-019 publication evidence. Code publication requires an exact scoped commit and validation/evidence bound to that identity.
+- Fast-track code and documentation are useful only when published together on `codex/temp-fast-functional`. Passing local tests are pre-publication evidence; each pushed checkpoint still requires an exact scoped commit and validation/evidence bound to that identity.
 
 ### Required disposal conditions
 
@@ -415,6 +451,9 @@ Next:
 
 ## Evidence already obtained
 
+- Full Node test suite after the full bootstrap work: 529 total, 523 passed, 6 Windows-capability skips, 0 failed.
+- Repository preflight after the full bootstrap work: passed with 41 syntax files, 3 JSON files, and 34 targeted tests.
+- Bootstrap/setup/update/uninstall targeted tests: 30 passed, covering the protocol transition, isolated custom-home defaults, update observation, setup lockout/corruption, persisted-channel re-entry, discovery/selection, explicit environment provisioning, launcher refresh, manifest boundaries, and both uninstall scopes.
 - `npm run fast:doctor`: passed; VM repository execution is ready, `codex-fast` is usable but not eligible for automatic selection, and the owned NAT foundation remains honestly degraded while the explicit Default Switch fast topology is usable.
 - Real opt-in Codex smoke: passed using the explicitly selected adapter.
 - `npm run fast:run`: safe live queue cycle completed with an empty eligible queue, no selected coding adapter, no rejected task, and no inventory/onboarding error.

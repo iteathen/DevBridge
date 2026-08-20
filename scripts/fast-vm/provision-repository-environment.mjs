@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createEnvironmentBridge } from '../../src/app/environment-bridge.js';
 import { createEnvironmentFoundation } from '../../src/app/environment-foundation.js';
 import { createFastVmTopology } from '../../src/app/fast-vm-repository-execution.js';
@@ -100,50 +101,48 @@ async function upsertRoutePolicy(file, route) {
   }
 }
 
-const stateDirectory = path.resolve(argument('--state-directory'));
-const identityFile = path.resolve(argument('--identity-file'));
-const sourceKnownHostsFile = path.resolve(argument('--source-known-hosts-file'));
-const knownHostsFile = path.resolve(argument('--known-hosts-file'));
-const sourceIdentity = argument('--source-identity');
-const subject = argument('--subject');
-const profile = 'linux-development';
-
-if (!/^\d+$/u.test(subject)) throw new Error('repository subject must be a numeric immutable identity');
-if (!/^img-[a-f0-9]{32}$/u.test(sourceIdentity)) throw new Error('source identity is invalid');
-
-const foundation = await createEnvironmentFoundation({ stateDirectory });
-const storage = await foundation.ensureStorage();
-if (storage.ready !== true) throw new Error('owned environment storage did not become ready');
-
-const environment = await foundation.ensureEnvironment({
-  subject,
-  profile,
-  sourceIdentity,
-  settings: {
-    memoryBytes: 4 * 1024 * 1024 * 1024,
-    processorCount: 4,
-    firmware: 'efi',
-  },
-});
-
-const baseAccess = async () => ({
-  family: 'linux',
-  user: 'devbridge',
+export async function provisionRepositoryEnvironment({
+  stateDirectory,
   identityFile,
+  sourceKnownHostsFile,
   knownHostsFile,
-});
-const topology = createFastVmTopology({ stateDirectory, access: baseAccess });
-const connection = await topology.connection(environment.record.identity);
+  sourceIdentity,
+  subject,
+  profile = 'linux-development',
+  memoryBytes = 4 * 1024 * 1024 * 1024,
+  processorCount = 4,
+} = {}) {
+  const localStateDirectory = path.resolve(stateDirectory);
+  const localIdentityFile = path.resolve(identityFile);
+  const localSourceKnownHostsFile = path.resolve(sourceKnownHostsFile);
+  const localKnownHostsFile = path.resolve(knownHostsFile);
+  if (!/^\d+$/u.test(subject)) throw new Error('repository subject must be a numeric immutable identity');
+  if (!/^img-[a-f0-9]{32}$/u.test(sourceIdentity)) throw new Error('source identity is invalid');
 
-const sourceHostLine = (await readFile(sourceKnownHostsFile, 'utf8')).trim();
-const hostParts = sourceHostLine.split(/\s+/u);
-if (hostParts.length < 3 || !hostParts[1].startsWith('ssh-')) throw new Error('source guest host-key record is invalid');
-hostParts[0] = '*';
-const knownHostsState = await writeOrMatch(knownHostsFile, `${hostParts.join(' ')}\n`);
+  const foundation = await createEnvironmentFoundation({ stateDirectory: localStateDirectory });
+  const storage = await foundation.ensureStorage();
+  if (storage.ready !== true) throw new Error('owned environment storage did not become ready');
+  const environment = await foundation.ensureEnvironment({
+    subject,
+    profile,
+    sourceIdentity,
+    settings: { memoryBytes, processorCount, firmware: 'efi' },
+  });
+  const baseAccess = async () => ({
+    family: 'linux',
+    user: 'devbridge',
+    identityFile: localIdentityFile,
+    knownHostsFile: localKnownHostsFile,
+  });
+  const topology = createFastVmTopology({ stateDirectory: localStateDirectory, access: baseAccess });
+  const connection = await topology.connection(environment.record.identity);
 
-const route = {
-  protocol: ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL,
-  routes: [{
+  const sourceHostLine = (await readFile(localSourceKnownHostsFile, 'utf8')).trim();
+  const hostParts = sourceHostLine.split(/\s+/u);
+  if (hostParts.length < 3 || !hostParts[1].startsWith('ssh-')) throw new Error('source guest host-key record is invalid');
+  hostParts[0] = '*';
+  const knownHostsState = await writeOrMatch(localKnownHostsFile, `${hostParts.join(' ')}\n`);
+  const route = {
     subject,
     profile,
     preferred: true,
@@ -151,26 +150,40 @@ const route = {
     access: {
       family: 'linux',
       user: 'devbridge',
-      identityFile,
-      knownHostsFile,
+      identityFile: localIdentityFile,
+      knownHostsFile: localKnownHostsFile,
     },
-  }],
-};
-const routesFile = repositoryExecutionRoutesPath(stateDirectory);
-const routesState = await upsertRoutePolicy(routesFile, route.routes[0]);
-const readiness = await topology.ensure(environment.record.identity);
-const bridge = await createEnvironmentBridge({ stateDirectory, access: (target) => topology.connection(target) });
-const health = await bridge.health(environment.record.identity);
-if (health.ready !== true) throw new Error(health.reason ?? 'fast VM bridge did not become ready');
-const observed = await foundation.observeEnvironment(environment.record.identity);
+  };
+  const routesFile = repositoryExecutionRoutesPath(localStateDirectory);
+  const routesState = await upsertRoutePolicy(routesFile, route);
+  const readiness = await topology.ensure(environment.record.identity);
+  const bridge = await createEnvironmentBridge({ stateDirectory: localStateDirectory, access: (target) => topology.connection(target) });
+  const health = await bridge.health(environment.record.identity);
+  if (health.ready !== true) throw new Error(health.reason ?? 'fast VM bridge did not become ready');
+  const observed = await foundation.observeEnvironment(environment.record.identity);
+  return {
+    networking: { ready: true, mode: 'fast-default-switch' },
+    storage,
+    environment: observed,
+    connection,
+    knownHosts: { file: localKnownHostsFile, state: knownHostsState },
+    routes: { file: routesFile, state: routesState },
+    readiness,
+    health,
+  };
+}
 
-process.stdout.write(`${JSON.stringify({
-  networking: { ready: true, mode: 'fast-default-switch' },
-  storage,
-  environment: observed,
-  connection,
-  knownHosts: { file: knownHostsFile, state: knownHostsState },
-  routes: { file: routesFile, state: routesState },
-  readiness,
-  health,
-})}\n`);
+const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
+if (invokedPath === import.meta.url) {
+  provisionRepositoryEnvironment({
+    stateDirectory: argument('--state-directory'),
+    identityFile: argument('--identity-file'),
+    sourceKnownHostsFile: argument('--source-known-hosts-file'),
+    knownHostsFile: argument('--known-hosts-file'),
+    sourceIdentity: argument('--source-identity'),
+    subject: argument('--subject'),
+  }).then((result) => process.stdout.write(`${JSON.stringify(result)}\n`)).catch((error) => {
+    process.stderr.write(`${error.name}: ${error.message}\n`);
+    process.exitCode = 1;
+  });
+}

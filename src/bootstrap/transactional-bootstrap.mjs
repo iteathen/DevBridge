@@ -13,6 +13,7 @@ import * as runtimeCore from './runtime-bootstrap.mjs';
 export * from './runtime-bootstrap.mjs';
 
 const ACTIVATION_PROTOCOL = 'devbridge/runtime-activation-v1';
+const SETUP_PROTOCOL = 'devbridge/setup-state-v1';
 const CAPTURE_LIMIT = 4 * 1024 * 1024;
 const DEFAULT_HEALTH_WINDOW_MS = 2_000;
 const CHILD_RESTART_BACKOFF_MS = 5_000;
@@ -78,7 +79,30 @@ export function resolveBootstrapPaths(args, environment = process.env) {
     ...base,
     runtimeCandidates: path.join(base.home, 'runtime-candidates'),
     activationStateFile: path.join(base.home, 'runtime-activation.json'),
+    setupStateFile: path.join(base.home, 'setup-state.json'),
+    installManifest: path.join(base.home, 'install-manifest.json'),
   };
+}
+
+export function readSetupState(paths) {
+  if (!existsSync(paths.setupStateFile)) return null;
+  try {
+    const value = JSON.parse(readFileSync(paths.setupStateFile, 'utf8'));
+    if (value?.protocol !== SETUP_PROTOCOL || value.state !== 'complete') {
+      throw new Error('setup state has an unsupported protocol or incomplete state');
+    }
+    return value;
+  } catch (error) {
+    throw new Error(`DevBridge setup state is invalid; explicitly run setup to replace it: ${error.message}`);
+  }
+}
+
+export function writeSetupState(paths, value) {
+  const record = { protocol: SETUP_PROTOCOL, state: 'complete', ...value, updatedAt: new Date().toISOString() };
+  const temp = `${paths.setupStateFile}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(temp, `${JSON.stringify(record, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  renameSync(temp, paths.setupStateFile);
+  return record;
 }
 
 export function writeRuntimeActivationState(paths, value) {
@@ -113,8 +137,36 @@ export function prepareLocalConfig(paths, runtime = null) {
   return runtimeCore.prepareLocalConfig(runtime ? runtimePaths(paths, runtime) : paths);
 }
 
+export async function selectBootstrapChannel(paths, current, argv, options) {
+  return runtimeCore.selectBootstrapChannel(paths, current, argv, options);
+}
+
+export function persistBootstrapChannel(paths, channel) {
+  return runtimeCore.persistBootstrapChannel(paths, channel);
+}
+
+export function migrateLocalConfig(paths) {
+  return runtimeCore.migrateLocalConfig(paths);
+}
+
+export async function configureLocalConfig(paths, argv, options) {
+  return runtimeCore.configureLocalConfig(paths, argv, options);
+}
+
 export function spawnDevBridgeDaemon(paths, runtime, spawnImpl = spawn) {
   return runtimeCore.spawnDevBridgeDaemon(runtimePaths(paths, runtime), runtime, spawnImpl);
+}
+
+export function spawnBackgroundBootstrap(argv, paths, spawnImpl = spawn) {
+  return runtimeCore.spawnBackgroundBootstrap(argv, paths, spawnImpl);
+}
+
+export function readBackgroundLog(paths, options) {
+  return runtimeCore.readBackgroundLog(paths, options);
+}
+
+export function syncInstalledLauncher(paths, runtime, options) {
+  return runtimeCore.syncInstalledLauncher(paths, runtime, options);
 }
 
 export async function stopExistingDaemon(paths, runtime, runner = defaultRunner, options = {}) {
@@ -200,6 +252,7 @@ export function loadPersistedHealthyRuntime(paths, runner = defaultRunner, { ens
   if (!isWithin(home, runtimeDir)) return null;
   try {
     const observed = ensureRuntimeFn({ channel: 'testing', update: false }, { ...paths, runtime: runtimeDir }, runner);
+    if (observed.stage0Protocol !== runtimeCore.STAGE0_PROTOCOL) return null;
     if (observed.head.toLowerCase() !== String(current.head).toLowerCase()) return null;
     return { ...observed, ref: current.ref, runtimeDir };
   } catch {

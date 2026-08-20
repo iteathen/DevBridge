@@ -9,6 +9,7 @@ import {
   prepareRuntimeCandidate,
   readRuntimeActivationState,
   runDevBridgeCli,
+  STAGE0_PROTOCOL,
   writeRuntimeActivationState,
 } from '../src/bootstrap/secure-bootstrap.mjs';
 
@@ -47,6 +48,7 @@ test('candidate preparation rejects a ref/head race before activation validation
         head: 'c'.repeat(40),
         cliPath: path.join(paths.runtimeCandidates, expected, 'src', 'cli.js'),
         version: '0.1.0',
+        stage0Protocol: STAGE0_PROTOCOL,
       }),
       validateCandidateFn: () => { validations += 1; },
     },
@@ -68,7 +70,7 @@ test('candidate preparation validates and returns the exact tested separate runt
       desiredHead: head,
       ensureRuntimeFn: () => {
         events.push('materialized');
-        return { ref: 'main', head, cliPath: path.join(runtimeDir, 'src', 'cli.js'), version: '0.1.0' };
+        return { ref: 'main', head, cliPath: path.join(runtimeDir, 'src', 'cli.js'), version: '0.1.0', stage0Protocol: STAGE0_PROTOCOL };
       },
       validateCandidateFn: (_paths, runtime, _runner, options) => {
         events.push(`validated:${runtime.head}`);
@@ -89,6 +91,27 @@ test('candidate preparation validates and returns the exact tested separate runt
   assert.equal(candidate.releaseIntegrity.mode, 'development');
 });
 
+test('candidate preparation rejects a runtime that would strand the installed launcher protocol', async () => {
+  const paths = fixturePaths();
+  const head = '9'.repeat(40);
+  await assert.rejects(() => prepareRuntimeCandidate(
+    { channel: 'stable', update: true, releaseMode: 'development' },
+    paths,
+    {
+      desiredRef: 'main',
+      desiredHead: head,
+      ensureRuntimeFn: () => ({
+        ref: 'main',
+        head,
+        cliPath: path.join(candidateRuntimePath(paths, head), 'src', 'cli.js'),
+        version: '0.1.0',
+        stage0Protocol: 0,
+      }),
+      validateCandidateFn: () => { throw new Error('must not execute incompatible candidate'); },
+    },
+  ), /incompatible stage-0 protocol/u);
+});
+
 test('activation journal is atomic JSON and only a contained exact healthy runtime is rehydrated', () => {
   const paths = fixturePaths();
   const head = 'e'.repeat(40);
@@ -106,6 +129,7 @@ test('activation journal is atomic JSON and only a contained exact healthy runti
       head,
       cliPath: path.join(localPaths.runtime, 'src', 'cli.js'),
       version: '0.1.0',
+      stage0Protocol: STAGE0_PROTOCOL,
     }),
   });
   assert.equal(loaded.head, head);
