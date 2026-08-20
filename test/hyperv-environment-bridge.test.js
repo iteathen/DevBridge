@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { HyperVEnvironmentBridge } from '../src/runtime/providers/hyperv-environment-bridge.js';
@@ -44,6 +44,7 @@ test('Linux attachment verifies located ownership then uses pinned noninteractiv
   const known = path.join(root, 'known');
   await writeFile(key, 'private-key-placeholder');
   await writeFile(known, 'host key placeholder');
+  const [canonicalKey, canonicalKnown] = await Promise.all([realpath(key), realpath(known)]);
   const calls = [];
   try {
     const invoke = async (request) => {
@@ -60,12 +61,15 @@ test('Linux attachment verifies located ownership then uses pinned noninteractiv
       assert.deepEqual(request.arguments.slice(0, 3), ['-F', 'NUL', '-T']);
       assert.ok(request.arguments.includes('BatchMode=yes'));
       assert.ok(request.arguments.includes('StrictHostKeyChecking=yes'));
-      assert.ok(request.arguments.includes(`UserKnownHostsFile=${known}`));
+      assert.ok(request.arguments.includes(`UserKnownHostsFile=${canonicalKnown}`));
       assert.ok(request.arguments.includes('GlobalKnownHostsFile=NUL'));
       assert.ok(request.arguments.includes('IdentitiesOnly=yes'));
       assert.ok(request.arguments.includes('ForwardAgent=no'));
       assert.ok(request.arguments.includes('ClearAllForwardings=yes'));
       assert.ok(request.arguments.includes('PasswordAuthentication=no'));
+      const identityIndex = request.arguments.indexOf('-i');
+      assert.ok(identityIndex >= 0);
+      assert.equal(request.arguments[identityIndex + 1], canonicalKey);
       assert.deepEqual(request.arguments.slice(-4), ['guest@127.0.0.1', 'node', '/usr/local/libexec/devbridge/bridge-agent.mjs', '--exchange-stdin']);
       return success(JSON.stringify(reply));
     };
