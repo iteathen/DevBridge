@@ -4,23 +4,22 @@
 
 DevBridge already has a substantial host control plane: exact GitHub provenance, managed authoritative Git/workspaces, durable runs/recovery, controller plans, tool inventory/onboarding, checkpoint-and-proceed decisions, multi-agent leases/fencing, baseline-drift reverification, supervised self-update, cooperative pause/resource priority, and the DB-019 verification-governance contract.
 
-Repository-controlled execution is in an architectural transition and is currently not a capability worth preserving through a complicated live migration. The VM program therefore deliberately chooses a **sandbox-removal-first** sequence.
+The VM program has completed its sandbox-removal and host-foundation phases while keeping repository execution deliberately fail-closed.
 
-- Current main contains the Linux/Bubblewrap host-sandbox implementation.
-- Draft PR #106 contains experimental Windows ProcessContainer/AppContainer work.
-- DB-020 supersedes both as the target architecture: persistent networked repository VMs, with trusted DevBridge controller/authority on the host.
-- The required initial host providers are Windows/Hyper-V and Linux/KVM-QEMU-libvirt.
-- The old sandbox path will be removed before production VM implementation.
-- After removal, repository-controlled execution is intentionally unavailable and fail-closed until the persistent VM path is ready.
-- No temporary direct-host/uncontained fallback is permitted during that gap.
+- Stage 0 ratified DB-020 and the Windows/Hyper-V plus Linux/KVM-QEMU-libvirt target architecture.
+- Stage 1 removed the active host-sandbox repository-execution implementation, preserved the neutral execution studs, and established the explicit no-production-provider state.
+- Stage 2 implements provider-local Hyper-V and KVM/QEMU/libvirt management foundations, owned networking/storage lifecycle, and immutable/versioned base-image publication and reconciliation behind a neutral environment-foundation boundary.
+- `doctor` reports the Stage-2 environment foundation separately from `RepositoryExecution`.
+- Repository-controlled execution remains intentionally unavailable/fail-closed through Stages 3–5 and is restored through persistent VMs only in Stage 6.
+- No direct-host/uncontained fallback is permitted during that gap.
 
-This sequencing is an architectural test: DevBridge should remain coherent when the old execution brick is removed. If unrelated control-plane behavior collapses, the exposed coupling is repaired before VM implementation begins.
+Provider/image readiness in Stage 2 does not imply repository-execution readiness. Per-repository VM state, the host↔guest bridge, and guest bootstrap remain later-stage responsibilities.
 
 ## Active VM program — issue #107
 
 The dependency order is authoritative. Each stage performs the project's planning/research gate before implementation and must not depend on a lower stage that has not landed.
 
-### Stage 0 — architecture/spec ratification and migration inventory — #108
+### Stage 0 — architecture/spec ratification and migration inventory — #108 — complete
 
 Goal: make the VM pivot and sandbox-first migration normative before implementation begins.
 
@@ -39,7 +38,7 @@ Deliverables:
 
 No runtime/config/CI cleanup belongs in this stage.
 
-### Stage 1 — remove host sandbox execution, expose/prove studs, establish fail-closed no-provider state — #109
+### Stage 1 — remove host sandbox execution, expose/prove studs, establish fail-closed no-provider state — #109 — complete
 
 This is the architectural falsification stage and happens **before production VM implementation**.
 
@@ -56,9 +55,11 @@ Sequence:
 
 After Stage 1, trusted static/control-plane work may continue where independently classified safe, but repository-controlled execution is intentionally unavailable.
 
-### Stage 2 — Windows Hyper-V + Linux KVM/QEMU/libvirt backends and immutable base-image lifecycle — #110
+### Stage 2 — Windows Hyper-V + Linux KVM/QEMU/libvirt backends and immutable base-image lifecycle — #110 — complete
 
 Implement both required host providers against the Stage-1 studs while repository execution remains disabled.
+
+Implementation evidence and boundary decisions are recorded in `docs/vm-stage2-provider-foundation.md`.
 
 Windows:
 
