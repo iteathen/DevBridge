@@ -128,6 +128,32 @@ async function materialize(sourceRoot, targetRoot, manifest) {
   }
 }
 
+async function validateProposalTargets(sourceRoot, proposal) {
+  const sourceCanonical = await realpath(sourceRoot);
+  for (const relative of proposal.keys()) {
+    let prefix = '';
+    for (const segment of relative.split(path.sep).filter(Boolean)) {
+      prefix = prefix ? path.join(prefix, segment) : segment;
+      const target = path.join(sourceRoot, prefix);
+      let info;
+      try {
+        info = await lstat(target);
+      } catch (error) {
+        if (error?.code === 'ENOENT') break;
+        throw error;
+      }
+      if (info.isSymbolicLink()) {
+        throw new PolicyError(`project proposal target crosses filesystem indirection at ${prefix}`);
+      }
+      const canonical = await realpath(target);
+      const expected = path.join(sourceCanonical, prefix);
+      if (comparable(canonical) !== comparable(expected)) {
+        throw new PolicyError(`project proposal target resolves through an alternate filesystem name at ${prefix}`);
+      }
+    }
+  }
+}
+
 async function applyManifest(sourceRoot, proposalRoot, baseline, proposal) {
   const removals = [...baseline.entries()]
     .filter(([relative, value]) => !proposal.has(relative) || proposal.get(relative).kind !== value.kind)
@@ -202,6 +228,7 @@ export async function createGitlessProjectProjection({ workspaceRoot, projectDir
         throw new PolicyError('sandbox project changed outside the contained proposal while it was running; refusing to import stale proposal bytes');
       }
       const proposal = await scanTree(projection, { proposal: true });
+      await validateProposalTargets(source, proposal);
       await applyManifest(source, projection, baseline, proposal);
       const imported = await scanTree(source);
       if (!manifestsEqual(proposal, imported)) {
