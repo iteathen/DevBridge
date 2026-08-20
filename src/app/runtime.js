@@ -20,7 +20,7 @@ import { GitTaskLeaseStore } from '../git/task-lease-store.js';
 import { GitWorkspaceManager } from '../git/workspace-manager.js';
 import { ProcessRunner } from '../runtime/process-runner.js';
 import { DeterministicProcessRunner } from '../runtime/deterministic-process-runner.js';
-import { createDeterministicSandboxProvider } from '../runtime/deterministic-sandbox.js';
+import { UnavailableRepositoryExecution } from '../runtime/repository-execution.js';
 import { WorkerExchange } from '../runtime/worker-exchange.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
 import { loadLocalOperationManifests } from '../runtime/local-operation-manifest.js';
@@ -28,7 +28,7 @@ import { ToolOnboardingService } from '../runtime/tool-onboarding.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { ToolInventoryService } from '../runtime/tool-inventory.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
-import { builtInToolProfiles, builtInToolReadRoots } from '../runtime/builtin-tool-profiles.js';
+import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
 import { LeaseExecutionContext } from '../run/lease-execution-context.js';
 import { LivenessProjectingPlanExecutor } from '../run/liveness-projecting-plan-executor.js';
@@ -38,6 +38,8 @@ import { HardGateController } from '../run/hard-gate-controller.js';
 import { DecisionGatedRunCoordinator, DecisionGatedWorkspaceManager } from '../run/decision-gated-coordinator.js';
 
 export { stateFileName } from '../state/state-file.js';
+
+const REPOSITORY_EXECUTION_UNAVAILABLE_REASON = 'repository execution is intentionally unavailable until VM Stage 6';
 
 function isWithin(root, candidate) {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
@@ -201,31 +203,23 @@ export async function createRuntime(config, {
   const planWorkspaceManager = leaseExecutionContext
     ? leaseExecutionContext.wrapWorkspaceManager(workspaceManager)
     : workspaceManager;
+
   const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
-  const deterministicSandboxProvider = createDeterministicSandboxProvider({
-    externalReadRoots: config.workspace.externalReadRoots,
-    workspaceRoot: config.workspace.root,
-    stateDirectory: config.state.directory,
-    env,
-  });
+  const repositoryExecution = new UnavailableRepositoryExecution({ reason: REPOSITORY_EXECUTION_UNAVAILABLE_REASON });
   const workerExchange = new WorkerExchange({ stateDirectory: config.state.directory });
-  const processRunner = new ProcessRunner({
-    sourceEnv: env,
-    workerExchange,
-    sandboxProvider: deterministicSandboxProvider,
-    trustedReadRootsByProfile: builtInToolReadRoots(),
-  });
+  const processRunner = new ProcessRunner({ workerExchange, repositoryExecution });
   const leaseProcessRunner = leaseExecutionContext
     ? leaseExecutionContext.wrapProcessRunner(processRunner)
     : processRunner;
   const deterministicProcessRunner = new DeterministicProcessRunner({
     sourceEnv: env,
     faultInjector,
-    sandboxProvider: deterministicSandboxProvider,
+    repositoryExecution,
   });
   const leaseDeterministicProcessRunner = leaseExecutionContext
     ? leaseExecutionContext.wrapProcessRunner(deterministicProcessRunner)
     : deterministicProcessRunner;
+
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
   const onboardingConfig = config.execution.toolOnboarding ?? {
@@ -243,6 +237,7 @@ export async function createRuntime(config, {
     ? new ToolOnboardingService({
         operationRegistry,
         processRunner: deterministicProcessRunner,
+        repositoryExecution,
         workspaceRoot: config.workspace.root,
         manifestDirectory,
         autoIntegrate: onboardingConfig.autoIntegrate,
@@ -264,16 +259,14 @@ export async function createRuntime(config, {
 
   const builtIns = builtInToolProfiles();
   for (const name of Object.keys(builtIns)) {
-    if (Object.hasOwn(config.tools, name)) {
-      throw new Error(`local tool profile name ${name} is reserved by DevBridge`);
-    }
+    if (Object.hasOwn(config.tools, name)) throw new Error(`local tool profile name ${name} is reserved by DevBridge`);
   }
   const deterministicProfileNames = Object.keys(builtIns);
   const tools = { ...config.tools, ...builtIns };
   toolInventory = new ToolInventoryService({
     operationRegistry,
     toolchainRegistry,
-    sandboxProvider: deterministicSandboxProvider,
+    repositoryExecution,
     profiles: tools,
     deterministicProfileNames,
     modelAdaptersEnabled: config.execution.modelAdaptersEnabled,
@@ -309,6 +302,7 @@ export async function createRuntime(config, {
     queueRepository: config.github.queueRepository,
     maxTurns: config.execution.maxTurns,
   });
+
   return {
     config,
     stateStore,
@@ -336,7 +330,7 @@ export async function createRuntime(config, {
     processRunner,
     workerExchange,
     deterministicProcessRunner,
-    deterministicSandboxProvider,
+    repositoryExecution,
     faultInjector,
     toolchainRegistry,
     operationRegistry,

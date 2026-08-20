@@ -54,31 +54,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.16.0
-      - name: Prepare Bubblewrap sandbox provider
-        if: runner.os == 'Linux'
-        timeout-minutes: 2
-        shell: bash
-        run: |
-          set -euxo pipefail
-          profile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
-          if ! command -v bwrap >/dev/null 2>&1 || ! command -v apparmor_parser >/dev/null 2>&1 || [ ! -f "$profile" ]; then
-            sudo apt-get \
-              -o Acquire::Retries=2 \
-              -o Acquire::http::Timeout=15 \
-              -o Acquire::https::Timeout=15 \
-              update
-            sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-              bubblewrap apparmor apparmor-profiles
-          fi
-          test -x "$(command -v bwrap)"
-          test -f "$profile"
-          sudo install -m 0644 "$profile" /etc/apparmor.d/bwrap-userns-restrict
-          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
-          bwrap --version
+      - name: Repository-execution architecture gates
+        timeout-minutes: 1
+        run: node --test test/repository-execution.test.js test/deterministic-execution-boundary.test.js test/process-runner.test.js test/worker-exchange.test.js
       - name: Tests
         timeout-minutes: 3
-        env:
-          DEVBRIDGE_REQUIRE_SANDBOX_TEST: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: npm test
       - name: Doctor smoke test
         timeout-minutes: 1

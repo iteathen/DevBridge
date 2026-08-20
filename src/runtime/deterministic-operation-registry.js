@@ -15,16 +15,13 @@ function objectParams(value, operation) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new PolicyError(`${operation} params must be an object`);
   return value;
 }
-
 function onlyKeys(value, allowed, operation) {
   for (const key of Object.keys(value)) if (!allowed.has(key)) throw new PolicyError(`${operation} parameter ${key} is not allowed`);
 }
-
 function isWithin(root, candidate) {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
-
 function projectPath(projectDir, relative, name) {
   const safe = normalizePlanPath(relative, name);
   const resolved = path.resolve(projectDir, safe);
@@ -32,7 +29,6 @@ function projectPath(projectDir, relative, name) {
   if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new PolicyError(`${name} escaped project root`);
   return { safe, resolved };
 }
-
 async function assertStaticProjectPathNoFollow(projectDir, relative, name) {
   const target = projectPath(projectDir, relative, name);
   const root = path.resolve(projectDir);
@@ -50,25 +46,21 @@ async function assertStaticProjectPathNoFollow(projectDir, relative, name) {
   }
   return target;
 }
-
 function localEnvironment() {
   const pass = process.platform === 'win32'
     ? ['PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'SystemDrive', 'TEMP', 'TMP', 'TMPDIR', 'USERPROFILE']
     : ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP'];
   return { pass, set: { CI: '1' } };
 }
-
 function safeId(value, name) {
   if (typeof value !== 'string' || !SAFE_ID.test(value)) throw new PolicyError(`${name} must be a safe identifier`);
   return value;
 }
-
 function safeBuildType(value, name) {
   if (value == null) return null;
   if (!BUILD_TYPES.has(value)) throw new PolicyError(`${name} is unsupported`);
   return value;
 }
-
 function safeGenerator(value) {
   if (value == null) return null;
   if (typeof value !== 'string' || value.length === 0 || value.length > 120 || value.startsWith('-') || !/^[A-Za-z0-9 ._+()/-]+$/u.test(value)) {
@@ -76,41 +68,32 @@ function safeGenerator(value) {
   }
   return value;
 }
-
 function safeArchitecture(value) {
   if (value == null) return null;
   if (!ARCHITECTURES.has(value)) throw new PolicyError('cmake.configure architecture is unsupported');
   return value;
 }
-
 function safeTarget(value) {
   if (value == null) return null;
   if (typeof value !== 'string' || !SAFE_TARGET.test(value)) throw new PolicyError('cmake.build target is invalid');
   return value;
 }
-
 function observedResult(stdout, stderr = '', exitCode = 0) {
   const now = new Date().toISOString();
-  return {
-    exitCode,
-    signal: null,
-    timedOut: false,
-    outputTruncated: false,
-    stdout,
-    stderr,
-    startedAt: now,
-    finishedAt: now,
-    lastOutputAt: stdout || stderr ? now : null,
-  };
+  return { exitCode, signal: null, timedOut: false, outputTruncated: false, stdout, stderr, startedAt: now, finishedAt: now, lastOutputAt: stdout || stderr ? now : null };
 }
+function executionScratch(buildId) { return `scratch/cmake-${buildId}`; }
 
-function scopedProcessRunner(processRunner, security) {
+function scopedProcessRunner(processRunner, security, context) {
   if (!processRunner || typeof processRunner.run !== 'function') return processRunner;
   return {
     run(request) {
       return processRunner.run({
         ...request,
         executionClass: security.executionClass,
+        repository: context.repository ?? null,
+        repositoryId: context.repositoryId ?? null,
+        runId: context.runId ?? null,
       });
     },
   };
@@ -118,7 +101,6 @@ function scopedProcessRunner(processRunner, security) {
 
 export class DeterministicOperationRegistry {
   #operations = new Map();
-
   register(name, adapter) {
     if (!SAFE_ID.test(name)) throw new PolicyError('registered operation name is invalid');
     if (this.#operations.has(name)) throw new PolicyError(`registered operation ${name} already exists`);
@@ -128,7 +110,6 @@ export class DeterministicOperationRegistry {
     this.#operations.set(name, adapter);
     return this;
   }
-
   has(name) { return this.#operations.has(name); }
   names() { return [...this.#operations.keys()].sort(); }
   describe() {
@@ -139,20 +120,18 @@ export class DeterministicOperationRegistry {
       return description;
     });
   }
-
   validate(name, params) {
     const adapter = this.#operations.get(name);
     if (!adapter) throw new PolicyError(`controller plan references unregistered operation ${name}`);
     return adapter.validate(params);
   }
-
   async execute(name, params, context) {
     const adapter = this.#operations.get(name);
     if (!adapter) throw new PolicyError(`controller plan references unregistered operation ${name}`);
     const validated = adapter.validate(params);
     const security = deterministicOperationSecurity(name);
     const securedContext = context && context.processRunner
-      ? { ...context, processRunner: scopedProcessRunner(context.processRunner, security) }
+      ? { ...context, processRunner: scopedProcessRunner(context.processRunner, security, context) }
       : context;
     return adapter.execute(validated, securedContext);
   }
@@ -175,14 +154,15 @@ function nodeScriptAdapter({ mode }) {
       if (mode === 'node.test') {
         for (const relative of params.paths) await access(projectPath(projectDir, relative, 'node.test path').resolved);
         return processRunner.run({
-          executable: process.execPath,
           args: ['--test', ...params.paths],
           cwd: projectDir,
           timeoutMs: 180_000,
           maxOutputBytes: 1024 * 1024,
-          environment: localEnvironment(),
+          environment: { pass: [], set: { CI: '1' } },
           onActivity,
           operation: mode,
+          repositoryTool: 'node',
+          repositoryWorkingDirectory: '.',
         });
       }
       const checked = await assertStaticProjectPathNoFollow(projectDir, params.path, `${mode} path`);
@@ -213,13 +193,7 @@ function toolchainProbeAdapter(toolchains) {
     async execute(params) {
       try {
         const descriptor = await toolchains.resolve(params.name, { refresh: true });
-        return observedResult(`${JSON.stringify({
-          name: descriptor.name,
-          family: descriptor.family ?? null,
-          version: descriptor.version ?? null,
-          source: descriptor.source ?? null,
-          available: true,
-        })}\n`);
+        return observedResult(`${JSON.stringify({ name: descriptor.name, family: descriptor.family ?? null, version: descriptor.version ?? null, source: descriptor.source ?? null, available: true })}\n`);
       } catch (error) {
         return observedResult('', `${error.name}: ${error.message}\n`, 127);
       }
@@ -227,7 +201,7 @@ function toolchainProbeAdapter(toolchains) {
   };
 }
 
-function cmakeConfigureAdapter(toolchains) {
+function cmakeConfigureAdapter() {
   return {
     layer: 'core',
     validate(raw) {
@@ -241,86 +215,76 @@ function cmakeConfigureAdapter(toolchains) {
         architecture: safeArchitecture(params.architecture),
       };
     },
-    async execute(params, { projectDir, processRunner, scratch, onActivity }) {
+    async execute(params, { projectDir, processRunner, onActivity }) {
       const source = projectPath(projectDir, params.sourcePath, 'cmake.configure sourcePath');
       const sourceInfo = path.basename(source.safe).toLowerCase() === 'cmakelists.txt' ? path.dirname(source.safe) || '.' : source.safe;
-      const buildDir = await scratch.directory(`cmake-${params.buildId}`);
-      const tool = await toolchains.resolve('cmake');
-      const args = ['-S', sourceInfo, '-B', buildDir];
+      const args = ['-S', sourceInfo, '-B', executionScratch(params.buildId)];
       if (params.generator) args.push('-G', params.generator);
       if (params.architecture) args.push('-A', params.architecture);
       if (params.buildType) args.push(`-DCMAKE_BUILD_TYPE=${params.buildType}`);
       return processRunner.run({
-        executable: tool.executable,
         args,
         cwd: projectDir,
         timeoutMs: 5 * 60_000,
         maxOutputBytes: 2 * 1024 * 1024,
-        environment: localEnvironment(),
+        environment: { pass: [], set: { CI: '1' } },
         onActivity,
         operation: 'cmake.configure',
+        repositoryTool: 'cmake',
+        repositoryWorkingDirectory: '.',
       });
     },
   };
 }
 
-function cmakeBuildAdapter(toolchains) {
+function cmakeBuildAdapter() {
   return {
     layer: 'core',
     validate(raw) {
       const params = objectParams(raw, 'cmake.build');
       onlyKeys(params, new Set(['buildId', 'config', 'target']), 'cmake.build');
-      return {
-        buildId: safeId(params.buildId, 'cmake.build buildId'),
-        config: safeBuildType(params.config, 'cmake.build config'),
-        target: safeTarget(params.target),
-      };
+      return { buildId: safeId(params.buildId, 'cmake.build buildId'), config: safeBuildType(params.config, 'cmake.build config'), target: safeTarget(params.target) };
     },
-    async execute(params, { projectDir, processRunner, scratch, onActivity }) {
-      const buildDir = await scratch.directory(`cmake-${params.buildId}`);
-      const tool = await toolchains.resolve('cmake');
-      const args = ['--build', buildDir];
+    async execute(params, { projectDir, processRunner, onActivity }) {
+      const args = ['--build', executionScratch(params.buildId)];
       if (params.config) args.push('--config', params.config);
       if (params.target) args.push('--target', params.target);
       return processRunner.run({
-        executable: tool.executable,
         args,
         cwd: projectDir,
         timeoutMs: 10 * 60_000,
         maxOutputBytes: 2 * 1024 * 1024,
-        environment: localEnvironment(),
+        environment: { pass: [], set: { CI: '1' } },
         onActivity,
         operation: 'cmake.build',
+        repositoryTool: 'cmake',
+        repositoryWorkingDirectory: '.',
       });
     },
   };
 }
 
-function ctestAdapter(toolchains) {
+function ctestAdapter() {
   return {
     layer: 'core',
     validate(raw) {
       const params = objectParams(raw, 'ctest.run');
       onlyKeys(params, new Set(['buildId', 'config']), 'ctest.run');
-      return {
-        buildId: safeId(params.buildId, 'ctest.run buildId'),
-        config: safeBuildType(params.config, 'ctest.run config'),
-      };
+      return { buildId: safeId(params.buildId, 'ctest.run buildId'), config: safeBuildType(params.config, 'ctest.run config') };
     },
-    async execute(params, { projectDir, processRunner, scratch, onActivity }) {
-      const buildDir = await scratch.directory(`cmake-${params.buildId}`);
-      const tool = await toolchains.resolve('ctest');
-      const args = ['--test-dir', buildDir, '--output-on-failure'];
+    async execute(params, { projectDir, processRunner, onActivity }) {
+      const args = ['--test-dir', executionScratch(params.buildId), '--output-on-failure'];
       if (params.config) args.push('-C', params.config);
       return processRunner.run({
-        executable: tool.executable,
         args,
         cwd: projectDir,
         timeoutMs: 10 * 60_000,
         maxOutputBytes: 2 * 1024 * 1024,
-        environment: localEnvironment(),
+        environment: { pass: [], set: { CI: '1' } },
         onActivity,
         operation: 'ctest.run',
+        repositoryTool: 'ctest',
+        repositoryWorkingDirectory: '.',
       });
     },
   };
@@ -332,7 +296,7 @@ export function createCoreOperationRegistry({ toolchainRegistry = null } = {}) {
     .register('node.syntax-check', nodeScriptAdapter({ mode: 'node.syntax-check' }))
     .register('node.test', nodeScriptAdapter({ mode: 'node.test' }))
     .register('toolchain.probe', toolchainProbeAdapter(toolchains))
-    .register('cmake.configure', cmakeConfigureAdapter(toolchains))
-    .register('cmake.build', cmakeBuildAdapter(toolchains))
-    .register('ctest.run', ctestAdapter(toolchains));
+    .register('cmake.configure', cmakeConfigureAdapter())
+    .register('cmake.build', cmakeBuildAdapter())
+    .register('ctest.run', ctestAdapter());
 }
