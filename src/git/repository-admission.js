@@ -2,6 +2,8 @@ import { redactText } from '../security/redaction.js';
 
 const SHA = /^[a-f0-9]{40,64}$/u;
 const MAX_REPOSITORIES = 64;
+const WINDOWS_DRIVE_PATH = /^[A-Za-z]:[\\/]/u;
+const WINDOWS_UNC_PATH = /^\\\\/u;
 
 function textOf(result) {
   return `${result?.stderr ?? ''}\n${result?.stdout ?? ''}`.slice(-64 * 1024);
@@ -70,6 +72,7 @@ export function classifyRepositoryAdmissionFailure(result) {
   else if (/\b403\b|permission denied|access denied|not authorized|authorization failed|insufficient permission|write access .* not granted/iu.test(text)) kind = 'authorization';
   else if (/repository not found|repository .* does not exist|does not appear to be a git repository|\b404\b/iu.test(text)) kind = 'repository-not-visible';
   else if (/corrupt|bad object|invalid object|object file .* is empty|loose object .* is corrupt|index file corrupt|bad pack header/iu.test(text)) kind = 'local-corruption';
+  else if (phase === 'origin') kind = 'origin-mismatch';
   else if (phase === 'worktree' || /already checked out at|is already checked out|worktree .* already exists|branch .* already exists/iu.test(text)) kind = 'worktree-collision';
   else if (['clone', 'fetch', 'default-ref', 'ref-resolution', 'remote-access'].includes(phase)) kind = 'fetch-or-ref';
 
@@ -84,8 +87,13 @@ export function classifyRepositoryAdmissionFailure(result) {
   });
 }
 
+function isLocalPath(value) {
+  return WINDOWS_DRIVE_PATH.test(value) || WINDOWS_UNC_PATH.test(value) || value.startsWith('/') || value.startsWith('./') || value.startsWith('../');
+}
+
 export function sanitizeGitRemote(value) {
   let text = String(value ?? '').trim();
+  if (isLocalPath(text)) return redactText(text).replace(/[\\/]$/u, '').slice(0, 2048);
   try {
     const parsed = new URL(text);
     parsed.username = '';
