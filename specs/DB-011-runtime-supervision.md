@@ -69,6 +69,8 @@ Candidate-controlled preflight/tests MUST execute only through the DB-020 reposi
 
 Normal DB-020 guest networking may be available after VM restoration. Confidentiality therefore comes from keeping host secrets and authority out of the guest, not from relying on a network-denied host process.
 
+Candidate-validation timing follows DB-019's locally controlled per-operation policy. Cheap preflight may retain a short bounded hard timeout, while full-regression validation MUST have its own bounded hard ceiling appropriate to its observed cost and liveness expectations. Exceeding an expected duration, including a legitimate run longer than 30 minutes, is not by itself candidate failure; only the locally defined hard timeout or another authoritative execution failure may reject it on timing grounds. Remote/controller content cannot extend these ceilings.
+
 During Stages 1–5 the production repository executor reports unavailable. `src/bootstrap/candidate-validator.mjs` still checks the exact artifact digest before the execution boundary, then fails closed without executing candidate code. A failed/unavailable candidate validation MUST NOT drain the healthy current daemon.
 
 Candidate `doctor` is a **post-acceptance health check**, not pre-acceptance release-integrity evidence. The supervisor may execute accepted candidate control-plane code only after the exact release subject has passed static integrity and candidate-controlled validation through the admitted execution boundary.
@@ -134,6 +136,7 @@ Tests MUST cover at least:
 - failed/unavailable candidate validation never drains the healthy current daemon;
 - after Stage 6, malicious candidate validation cannot read host control secrets, mutate activation/current-runtime state, inherit GitHub credentials, write authoritative Git administration, or gain provider-management authority;
 - candidate validation mutation/subject mismatch changes the accepted identity and prevents activation;
+- candidate validation uses distinct locally controlled timing policy for cheap preflight and full regression, with a full-regression hard ceiling that permits legitimate runs longer than 30 minutes;
 - exact tested artifact/candidate identity is recorded with validation and healthy activation evidence;
 - trusted head change requests daemon drain only after candidate validation succeeds;
 - successful activation runs post-acceptance health/doctor;
