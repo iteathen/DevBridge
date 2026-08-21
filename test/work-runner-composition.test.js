@@ -70,15 +70,17 @@ test('composition temporarily maps mailbox and execution topology without leakin
   }
 });
 
-test('composition maps the neutral emitted-result action onto the temporary output port', async () => {
+test('composition maps the neutral emitted-result action without requiring a guest output artifact', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-work-emission-'));
   const projectDir = path.join(root, 'project');
   await mkdir(projectDir);
   try {
+    let observedRequest = null;
     const activeExecution = {
       inspect: () => ({ protocol: REPOSITORY_EXECUTION_STATUS_PROTOCOL, state: 'ready', ready: true, identity: 'fake', reason: null }),
       async execute(raw) {
         const request = normalizeRepositoryExecutionRequest(raw);
+        observedRequest = request;
         let stdout = 'diagnostic\n';
         emitResult({ protocol: 'devbridge/result-v1', status: 'complete', summary: 'emitted' }, (value) => { stdout += value; });
         return {
@@ -96,6 +98,38 @@ test('composition maps the neutral emitted-result action onto the temporary outp
     });
     assert.equal(result.result.summary, 'emitted');
     assert.equal(result.stdout, 'diagnostic\n');
+    assert.equal(observedRequest.transfers.some((entry) => entry.direction === 'output'), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('composition rejects simultaneous explicit-output and stdout result channels', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-work-result-conflict-'));
+  const projectDir = path.join(root, 'project');
+  await mkdir(projectDir);
+  try {
+    const activeExecution = {
+      inspect: () => ({ protocol: REPOSITORY_EXECUTION_STATUS_PROTOCOL, state: 'ready', ready: true, identity: 'fake', reason: null }),
+      async execute(raw) {
+        const request = normalizeRepositoryExecutionRequest(raw);
+        const output = request.transfers.find((entry) => entry.direction === 'output');
+        await output.port.write(`${JSON.stringify({ protocol: 'devbridge/result-v1', status: 'complete', summary: 'file-result' })}\n`);
+        let stdout = '';
+        emitResult({ protocol: 'devbridge/result-v1', status: 'complete', summary: 'stdout-result' }, (value) => { stdout += value; });
+        return {
+          protocol: REPOSITORY_EXECUTION_RESULT_PROTOCOL,
+          exitCode: 0, signal: null, timedOut: false, aborted: false, outputTruncated: false,
+          stdout, stderr: '', startedAt: null, finishedAt: null, lastOutputAt: null,
+          evidence: { identity: 'fake', scope: request.scope },
+        };
+      },
+    };
+    const runner = composeWorkRunner({ mailboxStore: new WorkerExchange({ stateDirectory: path.join(root, 'state') }), activeExecution });
+    await assert.rejects(runner.run({
+      profile, projectDir, runDir: path.join(projectDir, '.devbridge', 'r1', 'turn-1'),
+      runId: 'r1', repository: 'owner/project', context: {},
+    }), /both the explicit output action and stdout emission/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
