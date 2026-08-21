@@ -74,6 +74,8 @@ Production runtime wiring routes registered repository-code operations and propo
 
 Shipped diagnostic helpers are also selected only by logical identity. Composition reads their trusted runtime resources, binds a digest, stages the bounded bundle through input capabilities, and invokes its environment-local entry location. Neither profile data nor the runner contains a host checkout path.
 
+A helper's bounded result emission is already host-observed process output. The repository adapter holds it until the exact declared output port is presented, then writes that control-owned capability directly. It never reverses bridge direction by using host-to-guest `put` against the guest `output` class; ordinary guest-created output objects continue to return only through bridge `get`.
+
 Dynamic tool documentation probes require an exact task scope and execute through the same stud. Existing control-owned manifests can still be registered without probing.
 
 Static operations independently classified as trusted control-plane/static inspection remain host-side. Provider absence never changes an operation from repository-code to host execution.

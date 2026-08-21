@@ -382,6 +382,7 @@ export async function createRepositoryExecution({
       const releaseSession = await acquireExclusiveSession(path.join(path.resolve(stateDirectory), 'repository-execution', 'locks'), target);
       let source = null;
       let evidenceIdentity = null;
+      const emittedOutputs = new Map();
       const agentLocation = { class: 'input', path: 'control/workspace-agent.mjs' };
       const stateLocation = { class: 'cache', path: 'source-state.json' };
       const sourceManifestLocation = { class: 'input', path: 'source/manifest.json' };
@@ -466,13 +467,22 @@ export async function createRepositoryExecution({
           if (emitted.text == null) return outcome;
           const outputs = transferList.filter((entry) => entry.direction === 'output');
           if (outputs.length !== 1) throw new Error('emitted result requires exactly one output action');
-          await sendBytes(channel, target, Buffer.from(`${emitted.text}\n`, 'utf8'), { class: 'output', path: `ports/${outputs[0].name}` });
+          const outputBytes = Buffer.from(`${emitted.text}\n`, 'utf8');
+          if (outputBytes.length > TRANSFER_LIMIT) throw new Error('emitted result exceeds the output transfer limit');
+          if (emittedOutputs.has(outputs[0].name)) throw new Error('emitted result duplicated an output action');
+          emittedOutputs.set(outputs[0].name, outputBytes);
           return { ...outcome, result: { ...outcome.result, stdout: emitted.output } };
         },
 
         async output(name, port, { signal = null } = {}) {
           ensureActive(signal);
-          await channel.get(target, { class: 'output', path: `ports/${name}` }, executionOutput(port), { maxBytes: TRANSFER_LIMIT });
+          const emitted = emittedOutputs.get(name);
+          if (emitted) {
+            await port.write(emitted);
+            emittedOutputs.delete(name);
+          } else {
+            await channel.get(target, { class: 'output', path: `ports/${name}` }, executionOutput(port), { maxBytes: TRANSFER_LIMIT });
+          }
           ensureActive(signal);
         },
 
