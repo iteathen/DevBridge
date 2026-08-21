@@ -123,7 +123,7 @@ async function missing(candidate) {
   catch (error) { if (error?.code === 'ENOENT') return true; throw error; }
 }
 
-test('environment scratch persists across operations, stays out of candidate transfer, and cleans exact run ownership', async () => {
+test('environment scratch persists across operations, stays out of candidate transfer, and cleans exact run ownership', { skip: process.platform === 'win32' }, async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'db-environment-scratch-'));
   const host = path.join(temp, 'host');
   const guest = path.join(temp, 'guest');
