@@ -10,7 +10,7 @@ import {
   normalizeRepositoryExecutionStatus,
 } from './repository-execution.js';
 
-const REQUIRED_SESSION_METHODS = Object.freeze(['prepare', 'input', 'run', 'output', 'collect', 'cleanup']);
+const REQUIRED_SESSION_METHODS = Object.freeze(['prepare', 'input', 'run', 'output', 'collect']);
 
 function assertSession(value) {
   if (!value || typeof value !== 'object' || REQUIRED_SESSION_METHODS.some((name) => typeof value[name] !== 'function')) {
@@ -155,6 +155,7 @@ export class RepositoryEnvironmentExecution {
     ensureActive(request.signal);
     const session = assertSession(await this.#open(structuredClone(request.scope)));
     try {
+      if (typeof session.cleanup !== 'function') throw new PolicyError('repository execution session does not provide cleanup');
       const observed = cleanupEvidence(await session.cleanup({ resource: request.resource, signal: request.signal }));
       ensureActive(request.signal);
       return normalizeRepositoryExecutionCleanupResult({
