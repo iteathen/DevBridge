@@ -135,6 +135,76 @@ test('workspace channel scopes every repository-controlled bridge location', asy
   ]);
 });
 
+test('workspace reset targets every class for exactly one workspace and leaves sibling identity untouched', async () => {
+  const target = executionWorkspaceTarget('101', PROFILE);
+  const workspace = executionWorkspaceIdentity('101', PROFILE);
+  const sibling = executionWorkspaceIdentity('202', PROFILE);
+  const removals = [];
+  const channel = {
+    async health() { return { ready: true }; },
+    async execute(selected, operation) {
+      assert.equal(selected, PHYSICAL);
+      const location = operation.arguments.at(-1);
+      removals.push(location);
+      return {
+        completion: 'observed',
+        result: {
+          exitCode: 0,
+          timedOut: false,
+          aborted: false,
+          outputTruncated: false,
+          stdout: '{"verifiedAbsent":true}',
+          stderr: '',
+        },
+      };
+    },
+    async put() { return { bytes: 1 }; },
+    async get() { return { bytes: 1 }; },
+  };
+  const routing = {
+    async physicalTarget(selected) { assert.equal(selected, target); return PHYSICAL; },
+    workspaceIdentity(selected) { assert.equal(selected, target); return workspace; },
+  };
+  const scoped = createWorkspaceScopedChannel({ channel, routing });
+  const result = await scoped.resetWorkspace(target);
+  assert.equal(result.verifiedAbsent, true);
+  assert.equal(result.workspace, workspace);
+  assert.deepEqual(result.classes, ['input', 'work', 'output', 'scratch', 'cache']);
+  assert.deepEqual(removals.map((entry) => entry.class), ['input', 'work', 'output', 'scratch', 'cache']);
+  for (const entry of removals) {
+    assert.equal(entry.path, `workspaces/${workspace}`);
+    assert.equal(entry.path.includes(sibling), false);
+  }
+});
+
+test('workspace cleanup removes only transient workspace classes', async () => {
+  const target = executionWorkspaceTarget('101', PROFILE);
+  const workspace = executionWorkspaceIdentity('101', PROFILE);
+  const classes = [];
+  const channel = {
+    async health() { return { ready: true }; },
+    async execute(_selected, operation) {
+      classes.push(operation.arguments.at(-1).class);
+      return {
+        completion: 'observed',
+        result: { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"verifiedAbsent":true}', stderr: '' },
+      };
+    },
+    async put() { return { bytes: 1 }; },
+    async get() { return { bytes: 1 }; },
+  };
+  const scoped = createWorkspaceScopedChannel({
+    channel,
+    routing: {
+      async physicalTarget() { return PHYSICAL; },
+      workspaceIdentity() { return workspace; },
+    },
+  });
+  const result = await scoped.cleanupWorkspace(target);
+  assert.equal(result.verifiedAbsent, true);
+  assert.deepEqual(classes, ['input', 'output', 'scratch']);
+});
+
 test('profile routing refuses legacy repository-owned VM state as the physical target', async () => {
   const legacy = physicalState();
   legacy.listEnvironments = async () => [{
