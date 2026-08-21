@@ -44,6 +44,10 @@ test('CMake and CTest adapters pass only logical scratch references', async () =
     assert.equal(call.args.some((entry) => typeof entry === 'string' && /(?:^|[\\/])scratch[\\/]/u.test(entry)), false);
   }
   assert.equal(registry.executionClass('cmake.configure'), 'repository-code');
+  assert.equal(registry.usesEnvironmentScratch('cmake.configure'), true);
+  assert.equal(registry.usesEnvironmentScratch('cmake.build'), true);
+  assert.equal(registry.usesEnvironmentScratch('ctest.run'), true);
+  assert.equal(registry.usesEnvironmentScratch('node.test'), false);
 });
 
 test('repository execution admits bounded scratch identities without transfer authority', () => {
