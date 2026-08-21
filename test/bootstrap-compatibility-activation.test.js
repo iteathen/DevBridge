@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { activateMigratedRuntime } from '../src/bootstrap/compatibility-activation.mjs';
@@ -21,19 +21,9 @@ function fakeGitRunner(_executable, args, options = {}) {
     return { status: 0, stdout: '', stderr: '' };
   }
   if (args.includes('rev-parse') && args.includes('HEAD')) {
-    const head = String(requireHead(options.cwd));
-    return { status: 0, stdout: `${head}\n`, stderr: '' };
+    return { status: 0, stdout: readFileSync(path.join(options.cwd, '.fake-head'), 'utf8'), stderr: '' };
   }
   throw new Error(`unexpected fake git invocation: ${args.join(' ')}`);
-}
-
-function requireHead(directory) {
-  const marker = path.join(directory, '.fake-head');
-  return String(new TextDecoder().decode(requireBytes(marker))).trim();
-}
-
-function requireBytes(file) {
-  return Buffer.from(require('node:fs').readFileSync(file));
 }
 
 test('compatibility activation clears migration ownership only after durable healthy activation', async () => {
