@@ -41,17 +41,17 @@ function updateCheckDelay(ms) {
 }
 
 function daemonControlResult(command, result) {
-  if (!result || !Number.isInteger(result.status)) throw new Error(`candidate ${command} control returned no exit status`);
+  if (!result || !Number.isInteger(result.status)) throw new Error(`daemon ${command} control returned no exit status`);
   let control;
   try { control = JSON.parse(String(result.stdout ?? '')); }
-  catch { throw new Error(`candidate ${command} control returned invalid JSON`); }
+  catch { throw new Error(`daemon ${command} control returned invalid JSON`); }
   if (!control || typeof control !== 'object' || Array.isArray(control)) {
-    throw new Error(`candidate ${command} control returned an invalid record`);
+    throw new Error(`daemon ${command} control returned an invalid record`);
   }
   return { status: result.status, control };
 }
 
-async function pauseCandidateAtSafeBoundary(paths, runtime, runner, {
+async function pauseDaemonAtSafeBoundary(paths, runtime, runner, {
   runCaptured,
   delayFn,
   exitState,
@@ -65,13 +65,21 @@ async function pauseCandidateAtSafeBoundary(paths, runtime, runner, {
     if (exitState.exit) return { state: 'exit', exit: exitState.exit };
     if (observed.control.activeLock === true) {
       if (observed.status === 0 && observed.control.paused === true) return { state: 'paused' };
-      throw new Error(`candidate daemon did not acknowledge its cooperative health pause (exit ${observed.status})`);
+      throw new Error(`daemon did not acknowledge its cooperative pause (exit ${observed.status})`);
     }
-    if (observed.status !== 0) throw new Error(`candidate pause control failed before daemon admission (exit ${observed.status})`);
+    if (observed.status !== 0) throw new Error(`daemon pause control failed before admission (exit ${observed.status})`);
     await delayFn(Math.min(pollMs, Math.max(1, deadline - Date.now())));
   }
   if (exitState.exit) return { state: 'exit', exit: exitState.exit };
-  throw new Error('candidate daemon did not establish its token-bound control lock before the health deadline');
+  throw new Error('daemon did not establish its token-bound control lock before the pause deadline');
+}
+
+function resumeDaemonFromSafeBoundary(paths, runtime, runner, runCaptured) {
+  const resumed = daemonControlResult('resume', runCaptured('resume', paths, runtime, runner));
+  if (resumed.status !== 0 || resumed.control.activeLock !== true || resumed.control.resumed !== true || resumed.control.paused === true) {
+    throw new Error(`daemon did not resume after its cooperative pause (exit ${resumed.status})`);
+  }
+  return resumed;
 }
 
 function runtimeDirectory(paths, runtime) {
@@ -394,7 +402,7 @@ export async function superviseDaemon(args, paths, initialRuntime, {
 
       let pauseOutcome;
       try {
-        pauseOutcome = await pauseCandidateAtSafeBoundary(paths, runtime, runner, {
+        pauseOutcome = await pauseDaemonAtSafeBoundary(paths, runtime, runner, {
           runCaptured: runDevBridgeCliCapturedFn,
           delayFn,
           exitState,
@@ -420,7 +428,7 @@ export async function superviseDaemon(args, paths, initialRuntime, {
       }
 
       let resumed;
-      try { resumed = daemonControlResult('resume', runDevBridgeCliCapturedFn('resume', paths, runtime, runner)); }
+      try { resumed = resumeDaemonFromSafeBoundary(paths, runtime, runner, runDevBridgeCliCapturedFn); }
       catch (error) {
         await rollbackCandidate(error);
         continue;
@@ -494,16 +502,40 @@ export async function superviseDaemon(args, paths, initialRuntime, {
         const planned = { ref: desiredRef, head: remoteHead, version: runtime.version, runtimeDir: candidateRuntimePath(paths, remoteHead), cliPath: path.join(candidateRuntimePath(paths, remoteHead), 'src', 'cli.js') };
         await recordActivation(recordActivationFn, paths, activationRecord('candidate-planned', paths, runtime, planned, { current: runtime }));
         let candidate;
+        let currentPaused = false;
         try {
+          const pauseOutcome = await pauseDaemonAtSafeBoundary(paths, runtime, runner, {
+            runCaptured: runDevBridgeCliCapturedFn,
+            delayFn,
+            exitState,
+            timeoutMs: candidateControlTimeoutMs,
+            pollMs: candidateControlPollMs,
+          });
+          if (pauseOutcome.state === 'exit') {
+            throw new Error(
+              `current daemon exited before the candidate-validation pause (code=${pauseOutcome.exit.code ?? 'null'}, signal=${pauseOutcome.exit.signal ?? 'none'})`,
+            );
+          }
+          currentPaused = true;
           candidate = await candidatePrepareFn(args, paths, { desiredRef, desiredHead: remoteHead, previousRuntime: runtime, runner });
         } catch (error) {
+          let failure = error;
+          if (currentPaused) {
+            try { resumeDaemonFromSafeBoundary(paths, runtime, runner, runDevBridgeCliCapturedFn); }
+            catch (resumeError) {
+              failure = new Error(
+                `candidate validation failed (${String(error?.message ?? error)}); current daemon resume also failed: ${String(resumeError?.message ?? resumeError)}`,
+              );
+            }
+          }
           failedCandidateHead = remoteHead;
           await recordActivation(recordActivationFn, paths, activationRecord('candidate-failed', paths, runtime, planned, {
             current: runtime,
             failedCandidate: planned,
-            error,
+            error: failure,
           }));
-          process.stderr.write(`[devbridge-supervisor] candidate-validation-failed ${error.message}; current runtime remains ${runtime.head}\n`);
+          process.stderr.write(`[devbridge-supervisor] candidate-validation-failed ${failure.message}; current runtime remains ${runtime.head}\n`);
+          if (failure !== error) throw failure;
           continue;
         }
 

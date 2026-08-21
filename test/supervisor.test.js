@@ -103,12 +103,14 @@ test('supervisor validates an exact candidate before draining current daemon, th
   );
 
   assert.equal(result, 0);
-  assert.deepEqual(events.slice(0, 4), [
+  assert.deepEqual(events.slice(0, 5), [
     'start:current',
+    `pause:${runtimeA.head}`,
     `validate:${runtimeB.head}`,
     `stop:${runtimeA.head}`,
     'start:candidate',
   ]);
+  assert.ok(events.indexOf(`pause:${runtimeA.head}`) < events.indexOf(`validate:${runtimeB.head}`));
   assert.ok(events.includes(`doctor:${runtimeB.head}`));
   assert.ok(events.indexOf(`pause:${runtimeB.head}`) < events.indexOf(`doctor:${runtimeB.head}`));
   assert.ok(events.indexOf(`doctor:${runtimeB.head}`) < events.indexOf(`resume:${runtimeB.head}`));
@@ -139,6 +141,12 @@ test('failed candidate validation never drains the healthy current daemon', asyn
       remoteHeadFn: () => runtimeB.head,
       candidatePrepareFn: async () => { events.push('validate'); throw new Error('test failure'); },
       runDevBridgeCliFn: (command) => { events.push(command); return 0; },
+      runDevBridgeCliCapturedFn: (command) => {
+        events.push(command);
+        if (command === 'pause') return { status: 0, stdout: JSON.stringify({ activeLock: true, paused: true }) };
+        if (command === 'resume') return { status: 0, stdout: JSON.stringify({ activeLock: true, resumed: true, paused: false }) };
+        throw new Error(`unexpected captured command: ${command}`);
+      },
       recordActivationFn: (_paths, record) => { records.push(record); },
       resolveChannelRefFn: () => runtimeA.ref,
       updateCheckDelayFn: timer,
@@ -147,7 +155,7 @@ test('failed candidate validation never drains the healthy current daemon', asyn
   );
   const result = await resultPromise;
   assert.equal(result, 0);
-  assert.deepEqual(events, ['validate']);
+  assert.deepEqual(events, ['pause', 'validate', 'resume']);
   assert.ok(records.some((record) => record.state === 'candidate-failed'));
   assert.equal(records.at(-1).current.head, runtimeA.head);
 });

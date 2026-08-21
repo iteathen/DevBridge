@@ -143,14 +143,15 @@ VM validation sequence:
 
 1. host/supervisor resolves and hashes exact candidate artifact;
 2. production signature/repository/head/version/digest checks occur on the trusted host before candidate code executes;
-3. supervisor verifies the host provider + validation environment;
-4. exact candidate subject is transferred into the untrusted VM without arbitrary host mounts or control credentials;
-5. candidate-controlled preflight/tests execute there;
-6. bounded evidence returns through the host-controlled bridge;
-7. host rechecks exact candidate artifact identity;
-8. only then may the supervisor drain/activate the candidate;
-9. post-activation health/`doctor` remains separate acceptance evidence;
-10. rollback keeps previous exact runtime available until candidate is healthy.
+3. the accepted daemon enters its token-bound cooperative safe-boundary pause, releasing active VM lifecycle/session ownership while remaining the last-known-good process;
+4. supervisor verifies the host provider + validation environment;
+5. exact candidate subject is transferred into the untrusted VM without arbitrary host mounts or control credentials;
+6. candidate-controlled preflight/tests execute there;
+7. bounded evidence returns through the host-controlled bridge;
+8. host rechecks exact candidate artifact identity;
+9. rejection resumes the accepted daemon; success alone requests its cooperative stop and activates the candidate;
+10. post-activation health/`doctor` remains separate acceptance evidence;
+11. rollback keeps previous exact runtime available until candidate is healthy.
 
 The candidate validation VM may be dedicated/reseedable instead of a persistent project VM as long as DB-020's trust partition is preserved.
 
