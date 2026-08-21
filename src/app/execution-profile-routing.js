@@ -10,6 +10,9 @@ import {
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
 const MAX_SUBJECT_BYTES = 512;
+const WORKSPACE_CLASSES = Object.freeze(['input', 'work', 'output', 'scratch', 'cache']);
+const TRANSIENT_WORKSPACE_CLASSES = Object.freeze(['input', 'output', 'scratch']);
+const REMOVE_TREE_SCRIPT = String.raw`const fs=require('node:fs');const target=process.argv[1];let info=null;try{info=fs.lstatSync(target);}catch(error){if(error&&error.code==='ENOENT'){process.stdout.write(JSON.stringify({verifiedAbsent:true}));process.exit(0);}throw error;}if(info.isSymbolicLink())throw new Error('workspace lifecycle target must not be a symbolic link');fs.rmSync(target,{recursive:true,force:false});if(fs.existsSync(target))throw new Error('workspace lifecycle target is still present');process.stdout.write(JSON.stringify({verifiedAbsent:true}));`;
 
 function safeId(value, name) {
   if (typeof value !== 'string' || !SAFE_ID.test(value)) throw new TypeError(`${name} is invalid`);
@@ -61,14 +64,26 @@ function validateProfileAccess(policy) {
 function routeIndex(policy) {
   const byTarget = new Map();
   const byProfile = new Map();
+  const bySubject = new Map();
   for (const route of policy.routes) {
     const target = executionWorkspaceTarget(route.subject, route.profile);
     if (byTarget.has(target)) throw new Error('execution workspace target identity collided');
     byTarget.set(target, route);
     if (!byProfile.has(route.profile)) byProfile.set(route.profile, []);
     byProfile.get(route.profile).push({ route, target });
+    if (!bySubject.has(route.subject)) bySubject.set(route.subject, []);
+    bySubject.get(route.subject).push({ route, target });
   }
-  return { byTarget, byProfile };
+  return { byTarget, byProfile, bySubject };
+}
+
+function preferredSubjectRoute(index, subject) {
+  const matches = index.bySubject.get(opaqueSubject(subject)) ?? [];
+  if (matches.length === 0) throw new Error('no local workspace route exists for the repository subject');
+  if (matches.length === 1) return matches[0];
+  const preferred = matches.filter((entry) => entry.route.preferred);
+  if (preferred.length !== 1) throw new Error('repository subject has multiple workspace profiles and no unique preferred route');
+  return preferred[0];
 }
 
 function syntheticEntry(route, target, physical) {
@@ -149,6 +164,9 @@ export function createExecutionProfileRouting({ state, policy }) {
     },
     physicalTarget,
     representativeTarget,
+    targetForSubject(subject) {
+      return preferredSubjectRoute(index, subject).target;
+    },
     workspaceIdentity(target) {
       const route = routeForTarget(target);
       return executionWorkspaceIdentity(route.subject, route.profile);
@@ -176,6 +194,17 @@ function scopedOperation(operation, workspace) {
   };
 }
 
+function parseLifecycleResult(outcome, action) {
+  if (!outcome || outcome.completion !== 'observed') throw new Error(`${action} completion is not observed`);
+  const result = outcome.result;
+  if (!result || result.timedOut || result.aborted || result.outputTruncated || result.exitCode !== 0) {
+    throw new Error(String(result?.stderr || result?.stdout || `${action} failed`).trim().slice(0, 2048));
+  }
+  let parsed;
+  try { parsed = JSON.parse(result.stdout); } catch { throw new Error(`${action} returned invalid structured output`); }
+  if (parsed?.verifiedAbsent !== true) throw new Error(`${action} did not verify the target absent`);
+}
+
 export function createWorkspaceScopedChannel({ channel, routing }) {
   if (!channel || typeof channel.health !== 'function' || typeof channel.execute !== 'function' || typeof channel.put !== 'function' || typeof channel.get !== 'function') {
     throw new TypeError('workspace channel contract is incomplete');
@@ -187,6 +216,23 @@ export function createWorkspaceScopedChannel({ channel, routing }) {
     physical: await routing.physicalTarget(target),
     workspace: routing.workspaceIdentity(target),
   });
+  const removeClasses = async (target, classes, { signal = null } = {}) => {
+    const selected = await resolve(target);
+    for (const className of classes) {
+      if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('workspace lifecycle was aborted');
+      const outcome = await channel.execute(selected.physical, {
+        program: 'node',
+        arguments: ['-e', REMOVE_TREE_SCRIPT, { class: className, path: `workspaces/${selected.workspace}` }],
+        directory: { class: 'work', path: '.' },
+        environment: {},
+        input: null,
+        timeoutMs: 5 * 60_000,
+        maxOutputBytes: 256 * 1024,
+      }, { signal, pollIntervalMs: 500 });
+      parseLifecycleResult(outcome, `workspace ${className} cleanup`);
+    }
+    return Object.freeze({ verifiedAbsent: true, workspace: selected.workspace, classes: Object.freeze([...classes]) });
+  };
   return Object.freeze({
     async health(target) {
       const selected = await resolve(target);
@@ -203,6 +249,16 @@ export function createWorkspaceScopedChannel({ channel, routing }) {
     async get(target, source, sink, options) {
       const selected = await resolve(target);
       return channel.get(selected.physical, scopedLocation(source, selected.workspace), sink, options);
+    },
+    cleanupWorkspace(target, options) {
+      return removeClasses(target, TRANSIENT_WORKSPACE_CLASSES, options);
+    },
+    resetWorkspace(target, options) {
+      return removeClasses(target, WORKSPACE_CLASSES, options);
+    },
+    async reseedWorkspace(target, options) {
+      const result = await removeClasses(target, WORKSPACE_CLASSES, options);
+      return Object.freeze({ ...result, requiresPrepare: true });
     },
   });
 }
@@ -222,6 +278,12 @@ function createMappedPreparation(preparation, routing) {
   });
 }
 
+function lifecycleScopeTarget(routing, resolveSubject, scope) {
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) throw new TypeError('workspace lifecycle scope is invalid');
+  if (typeof resolveSubject !== 'function') throw new TypeError('workspace lifecycle subject resolver is unavailable');
+  return Promise.resolve(resolveSubject(structuredClone(scope))).then((subject) => routing.targetForSubject(String(subject)));
+}
+
 export async function createExecutionProfileRepositoryExecution({
   stateDirectory,
   routes = null,
@@ -232,6 +294,7 @@ export async function createExecutionProfileRepositoryExecution({
 } = {}) {
   const policy = routes == null ? await loadEnvironmentExecutionRoutes(stateDirectory) : normalizeEnvironmentExecutionRoutes(routes);
   let routing = null;
+  let workspaceChannel = null;
 
   const routedStateFactory = async (input) => {
     const state = await createState(input);
@@ -255,10 +318,11 @@ export async function createExecutionProfileRepositoryExecution({
       ...input,
       access: async (physical) => input.access(await routing.representativeTarget(physical)),
     });
-    return createWorkspaceScopedChannel({ channel, routing });
+    workspaceChannel = createWorkspaceScopedChannel({ channel, routing });
+    return workspaceChannel;
   };
 
-  return createRepositoryExecution({
+  const execution = await createRepositoryExecution({
     stateDirectory,
     routes: policy,
     ...options,
@@ -266,4 +330,22 @@ export async function createExecutionProfileRepositoryExecution({
     createPreparation: routedPreparationFactory,
     createChannel: routedChannelFactory,
   });
+  if (!policy || !routing || !workspaceChannel) return execution;
+
+  const resolveTarget = (scope) => lifecycleScopeTarget(routing, options.resolveSubject, scope);
+  Object.defineProperties(execution, {
+    cleanupWorkspace: {
+      enumerable: false,
+      value: async ({ scope, signal = null }) => workspaceChannel.cleanupWorkspace(await resolveTarget(scope), { signal }),
+    },
+    resetWorkspace: {
+      enumerable: false,
+      value: async ({ scope, signal = null }) => workspaceChannel.resetWorkspace(await resolveTarget(scope), { signal }),
+    },
+    reseedWorkspace: {
+      enumerable: false,
+      value: async ({ scope, signal = null }) => workspaceChannel.reseedWorkspace(await resolveTarget(scope), { signal }),
+    },
+  });
+  return execution;
 }
