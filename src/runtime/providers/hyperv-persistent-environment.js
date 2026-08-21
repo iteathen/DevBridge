@@ -1,6 +1,9 @@
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { preflightExecutionProfileMemory } from '../profile-resource-preflight.js';
+import {
+  preflightExecutionProfileMemory,
+  preflightExecutionProfileStoragePaths,
+} from '../profile-resource-preflight.js';
 import { HyperVPersistentEnvironment as PersistentEnvironmentCore } from './hyperv-persistent-environment-core.js';
 
 async function canonicalRoot(value) {
@@ -40,6 +43,10 @@ export class HyperVPersistentEnvironment {
 
   async provision(input) {
     preflightExecutionProfileMemory(input?.settings);
+    await preflightExecutionProfileStoragePaths({
+      directory: this.#options.directory,
+      sourceLocation: input?.source?.handle?.location,
+    });
     return (await this.#core()).provision(input);
   }
   async observe(identity) { return (await this.#core()).observe(identity); }
