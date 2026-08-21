@@ -207,6 +207,7 @@ function validateRuntimeRepository(paths, runner, runtimeDir = paths.runtime) {
 function validateRuntimeShape(runtime) {
   const packagePath = path.join(runtime, 'package.json');
   const secureBootstrapPath = path.join(runtime, 'src', 'bootstrap', 'secure-bootstrap.mjs');
+  const compatibilityActivationPath = path.join(runtime, 'src', 'bootstrap', 'compatibility-activation.mjs');
   if (!existsSync(packagePath) || !statSync(packagePath).isFile() || !existsSync(secureBootstrapPath) || !statSync(secureBootstrapPath).isFile()) {
     fail('Fetched DevBridge runtime does not contain the expected package/bootstrap shape.');
   }
@@ -218,7 +219,15 @@ function validateRuntimeShape(runtime) {
   if (minimumStage0Protocol > STAGE0_PROTOCOL) {
     fail(`Managed runtime requires Stage 0 protocol ${minimumStage0Protocol}, but this launcher supports ${STAGE0_PROTOCOL}; refresh the local Stage 0 launcher before starting it.`);
   }
-  return { secureBootstrapPath, version: manifest.version, minimumStage0Protocol };
+  if (minimumStage0Protocol > 0 && (!existsSync(compatibilityActivationPath) || !statSync(compatibilityActivationPath).isFile())) {
+    fail('Managed runtime declares Stage 0 compatibility but is missing its compatibility activation adapter.');
+  }
+  return {
+    secureBootstrapPath,
+    compatibilityActivationPath: minimumStage0Protocol > 0 ? compatibilityActivationPath : null,
+    version: manifest.version,
+    minimumStage0Protocol,
+  };
 }
 
 export function readStage0ActivationState(paths) {
@@ -365,6 +374,13 @@ async function importBootstrap(runtime, importModuleFn) {
   return module;
 }
 
+async function importCompatibilityActivation(runtime, importModuleFn) {
+  if (!runtime.compatibilityActivationPath) fail('Managed runtime does not provide the required compatibility activation adapter.');
+  const module = await importModuleFn(pathToFileURL(runtime.compatibilityActivationPath).href);
+  if (typeof module.activateMigratedRuntime !== 'function') fail('Managed runtime compatibility activation adapter is incomplete.');
+  return module;
+}
+
 function beginMigration(paths, previousHead, nextHead) {
   const record = {
     protocol: MIGRATION_PROTOCOL,
@@ -439,13 +455,19 @@ async function migrateLegacyRuntime(argv, args, paths, selection, runner, import
     renameSync(stagedPath, paths.runtime);
 
     const migrated = runtimeFromDirectory(paths, paths.runtime, runner, desiredHead);
-    const nextModule = await importBootstrap(migrated, importModuleFn);
-    const doctorStatus = await nextModule.bootstrap(forwardedRuntimeArgs(argv, 'doctor', true), undefined, { stage0Protocol: STAGE0_PROTOCOL });
-    if (doctorStatus !== 0) fail(`Migrated runtime doctor failed with exit ${doctorStatus}.`);
-    rmSync(paths.migrationStateFile, { force: true });
-    process.stdout.write(`[devbridge-stage0 ${installationTag}] legacy-migration previous=${current.head} current=${migrated.head} protocol=${STAGE0_PROTOCOL}\n`);
-    const status = await nextModule.bootstrap(forwardedRuntimeArgs(argv, 'daemon', true), undefined, { stage0Protocol: STAGE0_PROTOCOL });
-    if (status !== 0) restoreLegacyRuntime(paths, backup);
+    const activationModule = await importCompatibilityActivation(migrated, importModuleFn);
+    process.stdout.write(`[devbridge-stage0 ${installationTag}] legacy-migration-staged previous=${current.head} current=${migrated.head} protocol=${STAGE0_PROTOCOL}\n`);
+    const status = await activationModule.activateMigratedRuntime({
+      argv: forwardedRuntimeArgs(argv, 'daemon', true),
+      previous: { head: current.head, runtimeDir: backup.runtime },
+      candidate: { head: migrated.head, runtimeDir: paths.runtime },
+      runner,
+      stage0Protocol: STAGE0_PROTOCOL,
+    });
+    if (existsSync(paths.migrationStateFile)) {
+      restoreLegacyRuntime(paths, backup);
+      rmSync(paths.migrationStateFile, { force: true });
+    }
     return status;
   } catch (error) {
     if (legacyMoved) restoreLegacyRuntime(paths, backup);
