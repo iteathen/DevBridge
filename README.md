@@ -4,49 +4,103 @@
 
 DevBridge is a local Node.js control plane. Remote content may request development work, but DevBridge retains machine authority: provenance, capability policy, repository/environment state, execution admission, verification, leases/fencing, publication, runtime activation, and recovery remain locally controlled.
 
-## Current implementation and VM direction
+## What DevBridge does
 
-Current mainline includes:
+DevBridge coordinates development work without giving remote task text, repository code, or coding models direct authority over the workstation.
+
+The preferred flow is:
+
+```text
+remote request / controller
+        |
+        v
+trusted DevBridge host control plane
+        |
+        +-- provenance / policy / authoritative Git / leases / verification / publication
+        |
+        v
+execution-profile router
+        |
+        v
+persistent untrusted VM
+        |
+        v
+repository workspace
+```
+
+Current main includes:
 
 - exact trusted GitHub task/feedback/decision provenance;
 - managed authoritative Git repositories/worktrees;
 - deterministic controller plans and locally registered operations;
-- optional coding-model adapters, disabled by default;
-- persistent Hyper-V and KVM/libvirt repository environments attached through provider-neutral execution studs;
+- optional coding-model adapters, disabled by default in reference configuration;
+- persistent Hyper-V and KVM/libvirt repository-execution environments behind provider-neutral contracts;
+- execution-profile-owned physical VMs with repository-owned workspaces inside compatible profiles;
 - durable run state, bounded handoffs, restart recovery, and reconciliation;
 - checkpoint-and-proceed human gates;
 - candidate sealing and exact-head task-branch publication;
-- persistent installation identity, signed multi-agent leases, TTL recovery, and fencing;
+- persistent installation identity and signed multi-agent leases/fencing;
 - baseline-drift reconciliation/reverification;
 - supervised self-update with candidate isolation and rollback;
-- cooperative pause/resume and below-normal child-process priority;
-- effective serialized task admission.
+- Stage-0/runtime compatibility detection and bounded legacy recovery;
+- cooperative pause/resume and process-priority governance;
+- cost-aware verification policy and long-running liveness evidence.
 
-Repository execution uses DB-020's VM-only architecture on the migration stack. Stage 7 remains the real-provider security and host/guest qualification gate.
+## Current execution architecture
 
-**Target host providers:**
+Repository-controlled execution is **VM-only**.
 
-- Windows -> Hyper-V;
-- Linux -> KVM/QEMU managed through libvirt.
+Initial required host provider families are:
 
-Each approved repository receives a persistent VM environment for each enabled guest OS/profile. The guest is untrusted even at administrator/root, normally has network access, and receives no host control secrets, authoritative Git state, arbitrary writable host mounts, or provider-management authority.
+- **Windows:** Hyper-V;
+- **Linux:** KVM/QEMU managed through libvirt.
 
-Base images are immutable/versioned. Repository state uses provider-native copy-on-write storage where supported:
+The active ownership rule is:
 
-- Hyper-V differencing VHD/VHDX;
-- QEMU qcow2 backing/overlay chains.
+> **Execution profiles own persistent VMs. Repositories own isolated workspaces inside compatible execution-profile VMs.**
 
-### Approved migration sequence
+Therefore repository count does not determine physical VM count. Several repositories can use separate workspaces inside one compatible profile VM.
 
-The old host-sandbox execution path is **removed first**, before production VM providers are implemented.
+A profile represents a materially different execution platform such as OS, driver/device, architecture, or other real compatibility/isolation requirement. Do not create profiles merely because repositories differ.
 
-Stage 1 locates/proves the existing LEGO connection studs, removes active Bubblewrap/AppContainer/ProcessContainer-style repository execution, and leaves DevBridge in an intentional **no production execution provider** state. Repository-controlled execution then fails closed until Stage 6 restores it through persistent VMs.
+The guest is untrusted even at administrator/root and normally has network access. Host GitHub credentials, publication authority, coordination private keys, runtime-control state, provider management, signing authority, and authoritative Git remain outside the guest.
 
-There is no temporary direct/uncontained host fallback. Provider absence must never make repository-controlled work host-safe.
+If the required profile/environment/bridge/workspace route is unavailable, repository execution fails closed. There is no direct-host or legacy host-sandbox fallback.
 
-Stages 2–5 build Hyper-V/KVM-libvirt provider, persistent environment, bridge, and guest tooling capability against the sandbox-free boundary. Stage 6 now restores repository execution VM-only through locally admitted stable repository routes and bounded source/candidate transfers; Stages 7–8 qualify and make it installable/reconfigurable; Stage 9 removes remaining migration/configuration/documentation scaffolding. See `docs/vm-stage6-repository-execution.md`.
+See [`docs/architecture.md`](docs/architecture.md), [`docs/execution-profile-environments.md`](docs/execution-profile-environments.md), and DB-020.
 
-See DB-020, `docs/architecture.md`, `docs/roadmap.md`, `docs/vm-migration.md`, and `docs/vm-lego-studs.md`.
+## Installation identity versus runtime version
+
+A workstation may run more than one DevBridge installation—for example:
+
+- one persistent project bridge;
+- one or more disposable test/qualification installations.
+
+Protocol-1 Stage 0 exposes a stable path-free installation tag:
+
+```text
+DB-<12 uppercase hex digits>
+```
+
+The installation tag answers **which local installation is this?** It is not a version number.
+
+- one persistent installation keeps the same tag across runtime updates;
+- another installation home receives another tag;
+- two processes with the same tag belong to the same installation ownership domain;
+- the exact accepted runtime Git head is separate evidence.
+
+For runtime/update diagnosis, keep these identities separate:
+
+- installation tag;
+- Stage-0 protocol;
+- accepted runtime exact head/version;
+- activation state;
+- supervisor/daemon generation;
+- execution-profile/environment identity;
+- repository workspace identity;
+- task/run identity.
+
+See [`docs/operations.md`](docs/operations.md) and [`docs/bootstrap-compatibility.md`](docs/bootstrap-compatibility.md).
 
 ## Security model
 
@@ -60,78 +114,104 @@ Remote task text, repository content, dependencies, model output, tool documenta
 - VM/provider-management authority;
 - trusted task/peer identities;
 - Git publication/ref authority;
-- human decision authority.
+- human decision authority;
+- runtime-update/recovery authority.
 
-`github.trustedActorIds` is a runner-local remote development-job submission allowlist, not a generic collaborator list. Task-author trust, decision authority, coordination-peer trust, repository authorization, VM-management authority, and publication authority remain distinct local policies.
+`github.trustedActorIds` is a runner-local development-job submission allowlist, not a generic collaborator list.
 
-Under DB-020, repository guests have normal network access by default. Confidentiality therefore comes from **keeping host secrets out of the guest**, not from assuming guest network denial will protect them.
+Guest networking is not the primary confidentiality boundary. Confidentiality comes from keeping host secrets and control authority out of the guest.
 
-No production repository execution provider means repository-controlled execution is unavailable; it never means "run directly on the host".
+No production repository-execution provider means repository-controlled execution is unavailable; it never means “run it directly on the host.”
 
 ## Install
 
-Current migration-stack requirements include:
+Current requirements:
 
 - Node.js 22.16.0 or newer;
 - Git;
-- GitHub account/access needed by the configured queue/repositories;
-- an observed Stage-2-to-Stage-5 provider/environment/bridge/tooling stack and a local stable-identity execution route for repository-controlled work.
-
-Bubblewrap is not an execution requirement. Without an admitted, ready persistent VM route, repository-controlled execution remains unavailable/fail-closed.
+- GitHub account/access required by the configured task queue/repositories;
+- an admitted/ready VM execution route for repository-controlled work.
 
 ### Linux
 
 ```sh
-mkdir -p "$HOME/.devbridge/bin" && curl -fsSL https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs -o "$HOME/.devbridge/bin/devbridge.mjs" && node "$HOME/.devbridge/bin/devbridge.mjs"
+mkdir -p "$HOME/.devbridge/bin" \
+  && curl -fsSL https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs \
+     -o "$HOME/.devbridge/bin/devbridge.mjs" \
+  && node "$HOME/.devbridge/bin/devbridge.mjs"
 ```
 
 ### Windows PowerShell
 
 ```powershell
-New-Item -ItemType Directory -Force "$HOME\.devbridge\bin" | Out-Null; Invoke-WebRequest "https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs" -OutFile "$HOME\.devbridge\bin\devbridge.mjs"; node "$HOME\.devbridge\bin\devbridge.mjs"
+New-Item -ItemType Directory -Force "$HOME\.devbridge\bin" | Out-Null
+Invoke-WebRequest "https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs" -OutFile "$HOME\.devbridge\bin\devbridge.mjs"
+node "$HOME\.devbridge\bin\devbridge.mjs"
 ```
 
-`devbridge.mjs` is a standalone stage-0 launcher. It establishes/validates the fixed managed DevBridge runtime and transfers control to secure bootstrap. It does not silently enable repository execution or provision a VM provider.
+`devbridge.mjs` is the standalone Stage-0 launcher. It establishes/verifies the fixed managed DevBridge runtime and transfers control to secure bootstrap. It does not silently enable repository execution or provision VM authority.
 
-On a fresh install, the managed bootstrap creates `~/.devbridge/config.json` from the safe example and exits. Review local authority first, then run:
+On a fresh installation, secure bootstrap creates the conservative example configuration and exits. Review local authority before enabling it.
+
+Then run:
 
 ```text
-node ~/.devbridge/bin/devbridge.mjs doctor
-node ~/.devbridge/bin/devbridge.mjs
+node <stage0-launcher> doctor
+node <stage0-launcher>
 ```
 
-PowerShell users can use `$HOME\.devbridge\bin\devbridge.mjs`.
+See [`docs/setup.md`](docs/setup.md) for setup and reconfiguration behavior.
 
-See `docs/setup.md` for current-vs-target setup details.
+## Inspect an installation
 
-## Future VM setup
+For a protocol-1 launcher:
 
-VM Stage 8 adds discover-first provider setup/reconfiguration.
+```text
+node <stage0-launcher> bootstrap-status
+```
 
-Windows setup inspects Hyper-V readiness before prompting.
+The bounded final JSON line reports:
 
-Linux setup inspects KVM acceleration, QEMU/libvirt service/provider access, image/storage/network state, and normally the locally authorized libvirt system provider before prompting.
+- installation tag;
+- Stage-0 protocol;
+- migration recovery result, if any;
+- activation state;
+- exact accepted runtime head/version;
+- runtime minimum Stage-0 protocol;
+- whether the runtime is a pre-protocol legacy runtime.
 
-Neither `Hyper-V installed` nor `/dev/kvm exists` is enough to claim repository execution ready.
+It intentionally does not expose credentials, installation paths, owner tokens, provider internals, or guest topology.
 
-Setup proposes repositories/guest profiles/image generations/resource/storage policy and requires explicit operator consent before authority-bearing changes.
+Use `doctor` for observed capability/readiness state:
 
-VM unavailability remains fail-closed; setup never reactivates host repository execution.
+```text
+node <stage0-launcher> doctor
+```
 
-## Self-update
+`doctor` reports evidence; it does not grant capabilities.
 
-Stage 0 establishes only the managed checkout needed to reach secure bootstrap. DB-011 owns update/release policy, exact artifact identity, candidate validation, daemon drain, activation, health, and rollback.
+## Runtime updates and recovery
 
-Stage 1 removed candidate-controlled host execution with the sandbox path. Stage 6 now performs candidate preflight/tests through the single locally admitted VM validation route while DB-011 identity/rollback behavior remains authoritative. Missing validation readiness fails closed before daemon drain.
+Stage 0 is intentionally small. DB-011 secure supervision owns ordinary update/release policy, candidate validation, daemon drain, activation health, and rollback.
 
-The VM validation attachment is provider-native:
+Ordinary update conceptually keeps the accepted runtime live while it:
 
-- Hyper-V on Windows;
-- KVM/QEMU/libvirt on Linux.
+1. resolves/materializes an exact candidate separately;
+2. performs static/integrity/compatibility checks;
+3. validates candidate-controlled code inside the admitted VM execution boundary;
+4. drains the accepted daemon only after validation;
+5. activates the exact validated candidate;
+6. performs health-window and `doctor` checks;
+7. records `healthy` only after those checks;
+8. preserves/restores last-known-good on failure.
 
-Production mode requires a locally trusted Ed25519-signed immutable release subject binding repository, exact Git head, package version, and runtime artifact SHA-256.
+A runtime may declare a minimum Stage-0 compatibility protocol. If the installed launcher is too old, it fails closed and requires a launcher refresh rather than executing incompatible candidate code.
 
-## CLI
+Pre-protocol development/testing installations may require one explicit local compatibility migration after the replacement exact head has already been independently validated. Production recovery remains on the signed immutable release path.
+
+See [`docs/bootstrap.md`](docs/bootstrap.md) and [`docs/bootstrap-compatibility.md`](docs/bootstrap-compatibility.md).
+
+## Operator controls
 
 Canonical commands include:
 
@@ -150,7 +230,11 @@ devbridge handoff-seed
 devbridge handoff-project
 ```
 
-`pause` is cooperative admission control. It does not suspend an active child/VM or bypass lease heartbeat/fencing. `stop` takes precedence.
+`pause` is cooperative admission control at a safe cycle boundary. It is not process/thread/VM suspension. `stop` takes precedence.
+
+Do not work around singleton-owner failures by starting another supervisor for the same installation home/tag.
+
+See [`docs/operations.md`](docs/operations.md) for the operator runbook.
 
 ## Task protocol
 
@@ -167,7 +251,9 @@ DevBridge task envelopes use the DevBridge namespace:
 ```
 ````
 
-A task names repository intent, not a local path, VM/domain name, image path, hypervisor command, executable, environment secret, or publication ref.
+A task names repository intent. It does not grant a local path, VM/domain name, image path, hypervisor command, executable, environment secret, publication ref, or recovery policy.
+
+Deterministic controller plans are data, not a remote shell language. They may reference locally registered operations and bounded repository-relative proposals; executable identity and machine authority stay local.
 
 ## Configuration
 
@@ -179,50 +265,101 @@ config/devbridge.example.json
 
 Fresh configuration keeps execution, model adapters, coordination, dynamic tool onboarding, and automatic task-branch publication conservative/off by default.
 
-Current host-sandbox-era fields such as `workspace.externalReadRoots`, `execution.allowUncontainedTools`, and profile `sandbox.*` are transitional. Stage 1 removes their ability to authorize repository-code host execution; Stage 8/9 owns deliberate operator-facing migration/deprecation. They must never be silently reinterpreted as VM authority or direct-host fallback authority.
+Existing operator configuration is never silently rewritten during self-update.
 
-DevBridge never silently rewrites existing operator configuration during self-update.
+Important authority areas include:
+
+- `github.queueRepository` and `github.trustedActorIds`;
+- `workspace.allowedOwners` and baseline channels;
+- `execution.*` and decision authorities;
+- coordination/peer trust;
+- publication policy;
+- local VM/profile/tool configuration.
+
+Historical host-sandbox fields must never be reinterpreted as direct-host repository-execution authority.
 
 ## Multi-agent coordination
 
-Coordination is disabled by default. When enabled, each installation owns a persistent local Ed25519 identity. Signed task leases use exact expected-value Git-ref CAS.
+Coordination is disabled by default. When enabled, each installation owns a persistent local Ed25519 identity. Signed task leases use exact expected-value Git-ref CAS and fencing.
 
 Lease ownership is not task authority, machine capability, human approval, provider-management authority, or publication authority.
 
 ## Human checkpoints
 
-DevBridge uses **checkpoint and proceed**, not blanket stop-and-wait. Safe reversible work may continue while a consequential decision is pending. Hard-gated effects remain blocked until an exact still-valid subject is authorized by an actor locally delegated for that class.
+DevBridge uses **checkpoint and proceed**, not blanket stop-and-wait.
+
+Safe reversible work may continue while a consequential decision is pending. Hard-gated effects remain blocked until an exact still-valid subject is authorized by an actor locally delegated for that decision class.
 
 Remote decisions cannot expand filesystem, executable, credential, network, provider-management, peer-trust, or other machine capability.
 
-## Current limitations
+## Verification
 
-Important explicit boundaries include:
+Verification is cost-aware and evidence-bound.
 
-- Stage 7 real-provider security, recovery, resource, and host/guest matrix qualification is not yet complete;
-- normal repository-controlled execution is available only through a ready Stage-6 persistent VM route;
-- per-installation task destination/dispatch authorization for shared team queues;
-- complete generic effect journaling for every possible remote mutation;
-- numeric GitHub repository-ID pinning and complete tool/profile identity evidence outside VM Stage-1 work;
-- GitHub App installation authentication;
-- general parallel task scheduling;
-- automatic default-branch merge/release/deployment as ordinary task effects.
+- cheap high-signal checks run before expensive suites where dependency order permits;
+- long-running tests are allowed when their operation-specific bounded policy permits them;
+- exact still-valid expensive evidence should be reused rather than rerun after every restart/context change;
+- VM/security/provider claims require the appropriate real-provider evidence and are not replaced by mocks merely because hosted CI lacks a hypervisor.
+
+See DB-019.
+
+## Current project checkpoint
+
+The VM-only execution pivot is implemented through Stage 6. Current roadmap work focuses on:
+
+- Stage 7 real-provider/security/recovery/resource qualification;
+- Stage 8 discover-first setup/reconfiguration;
+- final cleanup of superseded migration/topology documentation and compatibility after qualification.
+
+The active persistent-VM topology is execution-profile-owned, not repository-owned.
+
+See [`docs/roadmap.md`](docs/roadmap.md).
+
+## Troubleshooting
+
+Start with:
+
+```text
+node <stage0-launcher> bootstrap-status
+node <stage0-launcher> doctor
+```
+
+Then classify the failure by owning boundary rather than repeatedly restarting or changing unrelated settings.
+
+[`docs/troubleshooting.md`](docs/troubleshooting.md) covers common cases including:
+
+- stale installed runtime versus current task baseline;
+- Stage-0 protocol mismatch;
+- incomplete activation/migration recovery;
+- missing model result artifacts;
+- VM-route absence;
+- Hyper-V/KVM resource failures;
+- slow candidate validation;
+- competing supervisor/restart failures;
+- guest network/security interpretation;
+- publication/reconciliation failures.
 
 ## Documentation
 
-- `docs/setup.md` — installation and current-vs-target provider setup.
-- `docs/architecture.md` — control-plane/provider/VM/bridge architecture.
-- `docs/vm-migration.md` — sandbox-first removal/retention/migration inventory.
-- `docs/vm-lego-studs.md` — connection-stud and replaceability plan.
-- `docs/bootstrap.md` — stage-0/self-update behavior.
-- `docs/design-principles.md` — engineering principles.
-- `docs/tool-profiles.md` — current profile surface and VM migration.
-- `docs/roadmap.md` — staged implementation plan.
+Start at [`docs/README.md`](docs/README.md).
+
+Core guides:
+
+- [`docs/setup.md`](docs/setup.md) — install/configuration and discover-first setup.
+- [`docs/operations.md`](docs/operations.md) — installed-runtime/operator runbook.
+- [`docs/troubleshooting.md`](docs/troubleshooting.md) — symptom-to-boundary diagnosis.
+- [`docs/architecture.md`](docs/architecture.md) — control-plane/provider/VM/bridge architecture.
+- [`docs/execution-profile-environments.md`](docs/execution-profile-environments.md) — profile VM/workspace ownership.
+- [`docs/bootstrap.md`](docs/bootstrap.md) — Stage-0/self-update behavior.
+- [`docs/bootstrap-compatibility.md`](docs/bootstrap-compatibility.md) — installation tags and compatibility recovery.
+- [`docs/design-principles.md`](docs/design-principles.md) — engineering principles.
+- [`docs/tool-profiles.md`](docs/tool-profiles.md) — profile/tool surface.
+- [`docs/roadmap.md`](docs/roadmap.md) — implementation/qualification checkpoint.
 - `specs/DB-001` through `DB-020` — live normative contracts.
 
-Checksum-bound handoffs and point-in-time audits remain historical evidence. Their historical bytes are not live compatibility behavior.
+Migration-stage files, handoffs, audits, and point-in-time test records remain valuable evidence but are not automatically current product authority. The docs index explains how to interpret them.
 
-## Tests
+## Development checks
 
 ```text
 npm run preflight
@@ -230,7 +367,7 @@ npm test
 node src/cli.js doctor --config config/devbridge.example.json
 ```
 
-Current pre-migration CI includes Bubblewrap coverage. Stage 1 replaces active sandbox qualification with no-provider/fake-provider/direct-host-denial/dependency-removal evidence. Stage 7 later requires real Hyper-V and KVM/libvirt qualification, potentially on dedicated/self-hosted virtualization-capable Windows and Linux runners.
+Hosted Windows/Linux CI provides broad architecture/regression evidence. Real Hyper-V/KVM claims require appropriate virtualization-capable qualification under the roadmap/specs.
 
 ## License
 
