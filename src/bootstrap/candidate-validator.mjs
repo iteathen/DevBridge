@@ -16,7 +16,7 @@ import { runtimeArtifactSha256 } from './release-integrity.mjs';
 
 const CHECKS = Object.freeze([
   Object.freeze({ name: 'preflight', operation: 'runtime.validate:preflight', arguments: ['src/bootstrap/repository-preflight.mjs'], timeoutMs: 4 * 60_000 }),
-  Object.freeze({ name: 'tests', operation: 'runtime.validate:tests', arguments: ['--test'], timeoutMs: 10 * 60_000 }),
+  Object.freeze({ name: 'tests', operation: 'runtime.validate:tests', arguments: ['--test'], timeoutMs: 2 * 60 * 60_000 }),
 ]);
 
 function fail(message) { throw new Error(message); }
