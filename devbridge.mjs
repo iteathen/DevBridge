@@ -275,7 +275,7 @@ function restoreLegacyRuntime(paths, backup) {
 export function reconcileStage0Migration(paths, { processAliveFn = processIsAlive } = {}) {
   const record = readStage0MigrationState(paths);
   if (!record) return null;
-  if (record.pid !== process.pid && processAliveFn(record.pid)) {
+  if (processAliveFn(record.pid)) {
     fail(`Stage 0 migration is already in progress for ${record.previousHead.slice(0, 12)} -> ${record.nextHead.slice(0, 12)}.`);
   }
   const backup = migrationBackup(paths, record.previousHead);
