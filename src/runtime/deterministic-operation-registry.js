@@ -90,7 +90,11 @@ function observedResult(stdout, stderr = '', exitCode = 0) {
   const now = new Date().toISOString();
   return { exitCode, signal: null, timedOut: false, outputTruncated: false, stdout, stderr, startedAt: now, finishedAt: now, lastOutputAt: stdout || stderr ? now : null };
 }
-function executionScratch(buildId) { return `scratch/cmake-${buildId}`; }
+async function executionScratch(buildId, scratch) {
+  const id = `cmake-${buildId}`;
+  if (scratch && typeof scratch.argument === 'function') return scratch.argument(id);
+  return `scratch/${id}`;
+}
 
 function scopedProcessRunner(processRunner, security, context) {
   if (!processRunner || typeof processRunner.run !== 'function') return processRunner;
@@ -223,10 +227,10 @@ function cmakeConfigureAdapter() {
         architecture: safeArchitecture(params.architecture),
       };
     },
-    async execute(params, { projectDir, processRunner, onActivity }) {
+    async execute(params, { projectDir, processRunner, scratch, onActivity }) {
       const source = projectPath(projectDir, params.sourcePath, 'cmake.configure sourcePath');
       const sourceInfo = path.basename(source.safe).toLowerCase() === 'cmakelists.txt' ? path.dirname(source.safe) || '.' : source.safe;
-      const args = ['-S', sourceInfo, '-B', executionScratch(params.buildId)];
+      const args = ['-S', sourceInfo, '-B', await executionScratch(params.buildId, scratch)];
       if (params.generator) args.push('-G', params.generator);
       if (params.architecture) args.push('-A', params.architecture);
       if (params.buildType) args.push(`-DCMAKE_BUILD_TYPE=${params.buildType}`);
@@ -253,8 +257,8 @@ function cmakeBuildAdapter() {
       onlyKeys(params, new Set(['buildId', 'config', 'target']), 'cmake.build');
       return { buildId: safeId(params.buildId, 'cmake.build buildId'), config: safeBuildType(params.config, 'cmake.build config'), target: safeTarget(params.target) };
     },
-    async execute(params, { projectDir, processRunner, onActivity }) {
-      const args = ['--build', executionScratch(params.buildId)];
+    async execute(params, { projectDir, processRunner, scratch, onActivity }) {
+      const args = ['--build', await executionScratch(params.buildId, scratch)];
       if (params.config) args.push('--config', params.config);
       if (params.target) args.push('--target', params.target);
       return processRunner.run({
@@ -280,8 +284,8 @@ function ctestAdapter() {
       onlyKeys(params, new Set(['buildId', 'config']), 'ctest.run');
       return { buildId: safeId(params.buildId, 'ctest.run buildId'), config: safeBuildType(params.config, 'ctest.run config') };
     },
-    async execute(params, { projectDir, processRunner, onActivity }) {
-      const args = ['--test-dir', executionScratch(params.buildId), '--output-on-failure'];
+    async execute(params, { projectDir, processRunner, scratch, onActivity }) {
+      const args = ['--test-dir', await executionScratch(params.buildId, scratch), '--output-on-failure'];
       if (params.config) args.push('-C', params.config);
       return processRunner.run({
         args,

@@ -5,6 +5,7 @@ import {
   REPOSITORY_EXECUTION_RESULT_PROTOCOL,
   REPOSITORY_EXECUTION_STATUS_PROTOCOL,
   normalizeRepositoryExecutionRequest,
+  normalizeRepositoryScratchCleanup,
 } from '../runtime/repository-execution.js';
 import { DeterministicProcessRunner } from '../runtime/deterministic-process-runner.js';
 
@@ -68,6 +69,7 @@ export function createFastHostRepositoryExecution({
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('fast execution stateDirectory is required');
   if (typeof rootFor !== 'function' || typeof resolveTool !== 'function') throw new TypeError('fast execution composition is incomplete');
   const sessionsRoot = path.join(path.resolve(stateDirectory), 'fast-host-execution');
+  const scratchRoot = path.join(sessionsRoot, 'scratch');
   const runner = new DeterministicProcessRunner({ sourceEnv, processPriority: 'below-normal' });
   const status = Object.freeze({
     protocol: REPOSITORY_EXECUTION_STATUS_PROTOCOL,
@@ -79,6 +81,28 @@ export function createFastHostRepositoryExecution({
 
   return Object.freeze({
     inspect() { return status; },
+    async cleanupScratch(rawRequest) {
+      const request = normalizeRepositoryScratchCleanup(rawRequest);
+      await mkdir(scratchRoot, { recursive: true });
+      const scratchRootInfo = await lstat(scratchRoot);
+      if (!scratchRootInfo.isDirectory() || scratchRootInfo.isSymbolicLink()) throw new Error('fast execution scratch root is unsafe');
+      const runRoot = path.resolve(scratchRoot, request.scope.runId);
+      if (!isWithin(scratchRoot, runRoot)) throw new Error('fast execution scratch run escapes its root');
+      for (const name of request.names) {
+        const target = path.resolve(runRoot, name);
+        if (!isWithin(runRoot, target)) throw new Error('fast execution scratch target escapes its run');
+        try {
+          const info = await lstat(target);
+          if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('fast execution scratch target is unsafe');
+          await rm(target, { recursive: true, force: false });
+        } catch (error) {
+          if (error?.code !== 'ENOENT') throw error;
+        }
+        try { await lstat(target); throw new Error('fast execution scratch cleanup was not verified'); }
+        catch (error) { if (error?.code !== 'ENOENT') throw error; }
+      }
+      return { verifiedAbsent: true, names: structuredClone(request.names) };
+    },
     async execute(rawRequest) {
       const request = normalizeRepositoryExecutionRequest(rawRequest);
       const root = await realpath(path.resolve(await rootFor(structuredClone(request.scope))));
@@ -106,10 +130,24 @@ export function createFastHostRepositoryExecution({
         if (!resolved || typeof resolved.program !== 'string' || resolved.program.length === 0) throw new Error('fast execution tool did not resolve to a program');
         if (!Array.isArray(resolved.arguments) || resolved.arguments.some((value) => typeof value !== 'string')) throw new Error('fast execution tool arguments are invalid');
         const entry = await stageResources(session, resolved);
+        const invocationArgs = [];
+        for (const argument of request.invocation.arguments) {
+          if (argument.kind === 'literal') { invocationArgs.push(argument.value); continue; }
+          if (argument.kind === 'scratch') {
+            const location = path.resolve(scratchRoot, request.scope.runId, argument.name);
+            if (!isWithin(scratchRoot, location)) throw new Error('fast execution scratch argument escapes its root');
+            await mkdir(location, { recursive: true });
+            const info = await lstat(location);
+            if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('fast execution scratch argument is unsafe');
+            invocationArgs.push(location);
+            continue;
+          }
+          invocationArgs.push(transferFiles.get(argument.name));
+        }
         const args = [
           ...(entry ? [entry] : []),
           ...resolved.arguments,
-          ...request.invocation.arguments.map((argument) => argument.kind === 'literal' ? argument.value : transferFiles.get(argument.name)),
+          ...invocationArgs,
         ];
 
         const observed = await runner.run({

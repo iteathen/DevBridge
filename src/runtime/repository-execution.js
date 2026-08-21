@@ -3,6 +3,7 @@ import { PolicyError } from '../errors.js';
 export const REPOSITORY_EXECUTION_REQUEST_PROTOCOL = 'devbridge/repository-execution-request-v1';
 export const REPOSITORY_EXECUTION_STATUS_PROTOCOL = 'devbridge/repository-execution-status-v1';
 export const REPOSITORY_EXECUTION_RESULT_PROTOCOL = 'devbridge/repository-execution-result-v1';
+export const REPOSITORY_SCRATCH_CLEANUP_PROTOCOL = 'devbridge/repository-scratch-cleanup-v1';
 
 const SAFE_OPERATION = /^[A-Za-z0-9_.:-]{1,160}$/u;
 const SAFE_NAME = /^[A-Za-z][A-Za-z0-9_.-]{0,127}$/u;
@@ -14,7 +15,7 @@ const MAX_STDIN_BYTES = 4 * 1024 * 1024;
 const MAX_TIMEOUT_MS = 28_800_000;
 const MAX_OUTPUT_BYTES = 16_777_216;
 const MAX_REASON_BYTES = 1_024;
-const ARGUMENT_KINDS = new Set(['literal', 'input', 'output']);
+const ARGUMENT_KINDS = new Set(['literal', 'input', 'output', 'scratch']);
 const TRANSFER_DIRECTIONS = new Set(['input', 'output']);
 const RESERVED_ENVIRONMENT_NAMES = new Set([
   'GIT_ASKPASS', 'GIT_SSH', 'GIT_SSH_COMMAND', 'SSH_ASKPASS', 'SSH_AUTH_SOCK',
@@ -168,13 +169,30 @@ function normalizeLimits(raw = {}) {
 function assertTransferArguments(invocation, transfers) {
   const byName = new Map(transfers.map((transfer) => [transfer.name, transfer]));
   for (const argument of invocation.arguments) {
-    if (argument.kind === 'literal') continue;
+    if (argument.kind === 'literal' || argument.kind === 'scratch') continue;
     const transfer = byName.get(argument.name);
     if (!transfer) throw new PolicyError(`repository execution argument references unknown transfer ${argument.name}`);
     if (transfer.direction !== argument.kind) {
       throw new PolicyError(`repository execution argument ${argument.name} direction does not match ${argument.kind}`);
     }
   }
+}
+
+export function normalizeRepositoryScratchCleanup(raw) {
+  const request = requireObject(raw, 'repository scratch cleanup');
+  onlyKeys(request, new Set(['protocol', 'scope', 'names', 'signal']), 'repository scratch cleanup');
+  if (request.protocol !== REPOSITORY_SCRATCH_CLEANUP_PROTOCOL) throw new PolicyError('repository scratch cleanup protocol is unsupported');
+  const scope = normalizeScope(request.scope);
+  if (!Array.isArray(request.names) || request.names.length < 1 || request.names.length > MAX_TRANSFERS) {
+    throw new PolicyError(`repository scratch cleanup names must contain 1-${MAX_TRANSFERS} entries`);
+  }
+  const names = request.names.map((name, index) => {
+    if (typeof name !== 'string' || !SAFE_NAME.test(name)) throw new PolicyError(`repository scratch cleanup names[${index}] is invalid`);
+    return name;
+  });
+  if (new Set(names).size !== names.length) throw new PolicyError('repository scratch cleanup names contain duplicates');
+  if (request.signal != null && typeof request.signal !== 'object') throw new PolicyError('repository scratch cleanup signal is invalid');
+  return { protocol: REPOSITORY_SCRATCH_CLEANUP_PROTOCOL, scope, names, signal: request.signal ?? null };
 }
 
 export function normalizeRepositoryExecutionRequest(raw) {
@@ -279,6 +297,10 @@ export class UnavailableRepositoryExecution {
   inspect() { return this.#status; }
   async execute(rawRequest) {
     normalizeRepositoryExecutionRequest(rawRequest);
+    throw new PolicyError(`repository execution is unavailable: ${this.#status.reason}`);
+  }
+  async cleanupScratch(rawRequest) {
+    normalizeRepositoryScratchCleanup(rawRequest);
     throw new PolicyError(`repository execution is unavailable: ${this.#status.reason}`);
   }
 }

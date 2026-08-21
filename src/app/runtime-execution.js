@@ -35,6 +35,13 @@ function scopedRunner(delegate, workspaceRoot) {
       const scope = scopeForExecutionDirectory(workspaceRoot, request.cwd);
       return delegate.run({ ...request, ...scope });
     },
+    cleanupScratch: typeof delegate.cleanupScratch === 'function'
+      ? async (request) => {
+          if (request?.repository && request.runId) return delegate.cleanupScratch(request);
+          const scope = scopeForExecutionDirectory(workspaceRoot, request.cwd);
+          return delegate.cleanupScratch({ ...request, ...scope });
+        }
+      : undefined,
   };
 }
 

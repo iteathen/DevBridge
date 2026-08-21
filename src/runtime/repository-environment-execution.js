@@ -4,6 +4,7 @@ import {
   REPOSITORY_EXECUTION_RESULT_PROTOCOL,
   normalizeRepositoryExecutionRequest,
   normalizeRepositoryExecutionResult,
+  normalizeRepositoryScratchCleanup,
   normalizeRepositoryExecutionStatus,
 } from './repository-execution.js';
 
@@ -68,6 +69,28 @@ export class RepositoryEnvironmentExecution {
   }
 
   inspect() { return this.#status; }
+
+  async cleanupScratch(rawRequest) {
+    const request = normalizeRepositoryScratchCleanup(rawRequest);
+    if (this.#status.ready !== true) {
+      throw new PolicyError(`repository execution is unavailable: ${this.#status.reason ?? 'execution boundary is not ready'}`);
+    }
+    ensureActive(request.signal);
+
+    const session = await this.#open(structuredClone(request.scope));
+    if (!session || typeof session !== 'object' || typeof session.cleanupScratch !== 'function') {
+      if (typeof session?.close === 'function') await session.close();
+      throw new TypeError('repository execution session does not expose scratch cleanup authority');
+    }
+    try {
+      const observed = await session.cleanupScratch(structuredClone(request.names), { signal: request.signal });
+      ensureActive(request.signal);
+      if (observed?.verifiedAbsent !== true) throw new PolicyError('repository scratch cleanup was not verified absent');
+      return { verifiedAbsent: true, names: structuredClone(request.names) };
+    } finally {
+      if (typeof session.close === 'function') await session.close();
+    }
+  }
 
   async execute(rawRequest) {
     const request = normalizeRepositoryExecutionRequest(rawRequest);

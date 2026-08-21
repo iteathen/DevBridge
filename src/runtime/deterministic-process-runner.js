@@ -2,9 +2,11 @@ import { spawn } from 'node:child_process';
 import { PolicyError } from '../errors.js';
 import {
   REPOSITORY_EXECUTION_REQUEST_PROTOCOL,
+  REPOSITORY_SCRATCH_CLEANUP_PROTOCOL,
   assertRepositoryExecutionContract,
   normalizeRepositoryExecutionResult,
 } from './repository-execution.js';
+import { isManagedScratchArgument } from './managed-scratch.js';
 import { applyChildProcessPriority } from './process-priority.js';
 import { containedSpawnOptions, terminateProcessTree } from './process-tree.js';
 
@@ -59,6 +61,18 @@ export class DeterministicProcessRunner {
     this.#setPriority = setPriority;
   }
 
+  async cleanupScratch({ repository, repositoryId = null, runId, names, signal = null }) {
+    if (!this.#repositoryExecution || typeof this.#repositoryExecution.cleanupScratch !== 'function') {
+      throw new PolicyError('repository scratch cleanup is unavailable because the repository execution implementation does not expose cleanup authority');
+    }
+    return this.#repositoryExecution.cleanupScratch({
+      protocol: REPOSITORY_SCRATCH_CLEANUP_PROTOCOL,
+      scope: { repository, repositoryId, runId },
+      names,
+      signal,
+    });
+  }
+
   async run({
     executable,
     args = [],
@@ -79,7 +93,9 @@ export class DeterministicProcessRunner {
     signal = null,
   }) {
     if (signal?.aborted) throw abortedError(signal);
-    if (!Array.isArray(args) || args.some((value) => typeof value !== 'string')) throw new PolicyError('deterministic operation args must be structural strings');
+    if (!Array.isArray(args) || args.some((value) => typeof value !== 'string' && !isManagedScratchArgument(value))) {
+      throw new PolicyError('deterministic operation args must be structural strings or managed scratch references');
+    }
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 28_800_000) throw new PolicyError('deterministic operation timeout is out of range');
     if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1024 || maxOutputBytes > 16_777_216) throw new PolicyError('deterministic operation output limit is out of range');
     if (!Number.isInteger(activityIntervalMs) || activityIntervalMs < 10 || activityIntervalMs > 300_000) throw new PolicyError('deterministic activity interval is out of range');
@@ -98,7 +114,7 @@ export class DeterministicProcessRunner {
         scope: { repository, repositoryId, runId },
         invocation: {
           tool: repositoryTool,
-          arguments: args,
+          arguments: args.map((argument) => typeof argument === 'string' ? argument : { kind: 'scratch', name: argument.name }),
           workingDirectory: repositoryWorkingDirectory,
         },
         environment: { ...(environment.set ?? {}) },
@@ -123,7 +139,8 @@ export class DeterministicProcessRunner {
     if (typeof executable !== 'string' || executable.length === 0) throw new PolicyError('deterministic host operation executable is missing');
 
     const env = boundedEnvironment(this.#sourceEnv, environment.pass ?? [], environment.set ?? {});
-    const child = spawn(executable, args, containedSpawnOptions({ cwd, env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
+    const localArgs = args.map((argument) => typeof argument === 'string' ? argument : argument.localPath);
+    const child = spawn(executable, localArgs, containedSpawnOptions({ cwd, env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] }));
     let processPriority;
     try {
       processPriority = await applyChildProcessPriority(child, this.#processPriority, { setPriority: this.#setPriority });

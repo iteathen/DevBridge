@@ -279,6 +279,9 @@ export class ControllerPlanExecutor {
       persist,
       faultInjector: this.#faults,
       effectGuard: guardActiveTaskLease,
+      environmentCleanup: typeof this.#processRunner?.cleanupScratch === 'function'
+        ? ({ id }) => this.#processRunner.cleanupScratch({ cwd: workspace.worktreeDir, names: [id] })
+        : null,
     });
 
     try {

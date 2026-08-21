@@ -6,15 +6,21 @@ import path from 'node:path';
 import { createCoreOperationRegistry } from '../src/runtime/deterministic-operation-registry.js';
 import { deterministicOperationSecurity } from '../src/runtime/deterministic-operation-security.js';
 import { DeterministicProcessRunner } from '../src/runtime/deterministic-process-runner.js';
-import { REPOSITORY_EXECUTION_RESULT_PROTOCOL, REPOSITORY_EXECUTION_STATUS_PROTOCOL, normalizeRepositoryExecutionRequest } from '../src/runtime/repository-execution.js';
+import { ManagedScratchTransaction } from '../src/runtime/managed-scratch.js';
+import { REPOSITORY_EXECUTION_RESULT_PROTOCOL, REPOSITORY_EXECUTION_STATUS_PROTOCOL, normalizeRepositoryExecutionRequest, normalizeRepositoryScratchCleanup } from '../src/runtime/repository-execution.js';
 
-function fakeExecution(seen) {
+function fakeExecution(seen, cleaned = []) {
   return {
     inspect() { return { protocol: REPOSITORY_EXECUTION_STATUS_PROTOCOL, state: 'ready', ready: true, identity: 'fake', reason: null }; },
     async execute(raw) {
       const req = normalizeRepositoryExecutionRequest(raw);
       seen.push(req);
       return { protocol: REPOSITORY_EXECUTION_RESULT_PROTOCOL, exitCode: 0, signal: null, timedOut: false, aborted: false, outputTruncated: false, stdout: 'repository-ok\n', stderr: '', startedAt: null, finishedAt: null, lastOutputAt: null, evidence: { identity: 'fake', scope: req.scope } };
+    },
+    async cleanupScratch(raw) {
+      const req = normalizeRepositoryScratchCleanup(raw);
+      cleaned.push(req);
+      return { verifiedAbsent: true, names: req.names };
     },
   };
 }
@@ -46,8 +52,14 @@ test('fake repository executor attaches to deterministic flow through the same s
     await writeFile(path.join(root, 'fixture.test.mjs'), "import test from 'node:test';test('x',()=>{});\n");
     await writeFile(path.join(root, 'CMakeLists.txt'), 'cmake_minimum_required(VERSION 3.20)\n');
     const seen = [];
-    const runner = new DeterministicProcessRunner({ repositoryExecution: fakeExecution(seen) });
-    const context = { projectDir: root, processRunner: runner, repository: 'owner/project', repositoryId: '7', runId: 'run-1' };
+    const cleaned = [];
+    const runner = new DeterministicProcessRunner({ repositoryExecution: fakeExecution(seen, cleaned) });
+    const scratch = new ManagedScratchTransaction({
+      workspace: { worktreeDir: root, runId: 'run-1' },
+      state: { controllerPlan: { scratchLedger: [] } },
+      persist: async () => {},
+    });
+    const context = { projectDir: root, processRunner: runner, scratch, repository: 'owner/project', repositoryId: '7', runId: 'run-1' };
     const nodeResult = await createCoreOperationRegistry().execute('node.test', { paths: ['fixture.test.mjs'] }, context);
     assert.equal(nodeResult.execution.identity, 'fake');
     assert.equal(seen[0].invocation.tool, 'node');
@@ -56,8 +68,14 @@ test('fake repository executor attaches to deterministic flow through the same s
 
     await createCoreOperationRegistry().execute('cmake.configure', { sourcePath: 'CMakeLists.txt', buildId: 'b1' }, context);
     assert.equal(seen[1].invocation.tool, 'cmake');
-    const cmakeArgs = seen[1].invocation.arguments.map((a) => a.value);
-    assert.deepEqual(cmakeArgs.slice(0, 4), ['-S', '.', '-B', 'scratch/cmake-b1']);
-    assert.equal(cmakeArgs.some((arg) => path.isAbsolute(arg)), false);
+    assert.deepEqual(seen[1].invocation.arguments.slice(0, 4), [
+      { kind: 'literal', value: '-S' },
+      { kind: 'literal', value: '.' },
+      { kind: 'literal', value: '-B' },
+      { kind: 'scratch', name: 'cmake-b1' },
+    ]);
+    assert.equal(JSON.stringify(seen[1]).includes(scratch.root), false);
+    await runner.cleanupScratch({ repository: 'owner/project', repositoryId: '7', runId: 'run-1', names: ['cmake-b1'] });
+    assert.deepEqual(cleaned[0].names, ['cmake-b1']);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

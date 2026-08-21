@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { RepositoryEnvironmentExecution } from '../src/runtime/repository-environment-execution.js';
-import { REPOSITORY_EXECUTION_REQUEST_PROTOCOL, REPOSITORY_EXECUTION_STATUS_PROTOCOL } from '../src/runtime/repository-execution.js';
+import { REPOSITORY_EXECUTION_REQUEST_PROTOCOL, REPOSITORY_EXECUTION_STATUS_PROTOCOL, REPOSITORY_SCRATCH_CLEANUP_PROTOCOL } from '../src/runtime/repository-execution.js';
 
 function request(extra={}) { return {
  protocol:REPOSITORY_EXECUTION_REQUEST_PROTOCOL, operation:'node.test', scope:{repository:'owner/repo',repositoryId:'123',runId:'run-1'},
@@ -32,4 +32,12 @@ test('a control signal raised after execution prevents output and candidate impo
  const controller=new AbortController(); let output=false,collect=false,closed=false;
  const execution=new RepositoryEnvironmentExecution({status,open:async()=>({prepare:async()=>({identity:'evidence-123'}),input:async()=>{},run:async()=>{controller.abort(new Error('lease lost'));return {completion:'observed',result:{exitCode:0,signal:null,timedOut:false,aborted:false,outputTruncated:false,stdout:'',stderr:'',startedAt:null,finishedAt:null,lastOutputAt:null}};},output:async()=>{output=true;},collect:async()=>{collect=true;},close:async()=>{closed=true;}})});
  await assert.rejects(()=>execution.execute(request({signal:controller.signal})),/lease lost/u); assert.equal(output,false); assert.equal(collect,false); assert.equal(closed,true);
+});
+
+test('scratch cleanup uses the same exact environment scope and requires verified absence', async()=>{
+ const calls=[];const execution=new RepositoryEnvironmentExecution({status,open:async(scope)=>({cleanupScratch:async(names)=>{calls.push([scope,names]);return{verifiedAbsent:true};},close:async()=>calls.push(['closed'])})});
+ const result=await execution.cleanupScratch({protocol:REPOSITORY_SCRATCH_CLEANUP_PROTOCOL,scope:{repository:'owner/repo',repositoryId:'123',runId:'run-1'},names:['cmake-debug'],signal:null});
+ assert.equal(result.verifiedAbsent,true);assert.deepEqual(calls[0],[{repository:'owner/repo',repositoryId:'123',runId:'run-1'},['cmake-debug']]);assert.deepEqual(calls[1],['closed']);
+ const unverified=new RepositoryEnvironmentExecution({status,open:async()=>({cleanupScratch:async()=>({verifiedAbsent:false})})});
+ await assert.rejects(()=>unverified.cleanupScratch({protocol:REPOSITORY_SCRATCH_CLEANUP_PROTOCOL,scope:{repository:'owner/repo',repositoryId:'123',runId:'run-1'},names:['cmake-debug']}),/not verified absent/u);
 });

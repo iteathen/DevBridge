@@ -231,7 +231,11 @@ function missingSourceParts(raw, manifest) {
   return { appliedDigest: value.appliedDigest, missingParts: seen };
 }
 
-function descriptorFor(invocation, resolved, environment, stdin, transfers, protectedValues, entryLocation = null) {
+function scratchLocation(scope, name) {
+  return { class: 'scratch', path: `runs/${scope.runId}/${name}` };
+}
+
+function descriptorFor(invocation, resolved, environment, stdin, transfers, protectedValues, scope, entryLocation = null) {
   if (!resolved || typeof resolved.program !== 'string' || !SAFE_NAME.test(resolved.program)) throw new Error('logical tool did not resolve to a safe guest program');
   const fixed = resolved.arguments ?? [];
   if (!Array.isArray(fixed) || fixed.some((entry) => typeof entry !== 'string')) throw new Error('logical tool fixed arguments are invalid');
@@ -239,7 +243,10 @@ function descriptorFor(invocation, resolved, environment, stdin, transfers, prot
   const locationIndex = new Map();
   const locate = (kind, name) => {
     const key = `${kind}:${name}`;
-    if (!locationIndex.has(key)) { locationIndex.set(key, locations.length); locations.push({ class: kind, path: `ports/${name}` }); }
+    if (!locationIndex.has(key)) {
+      locationIndex.set(key, locations.length);
+      locations.push(kind === 'scratch' ? scratchLocation(scope, name) : { class: kind, path: `ports/${name}` });
+    }
     return locationIndex.get(key);
   };
   const argumentsList = [];
@@ -253,7 +260,11 @@ function descriptorFor(invocation, resolved, environment, stdin, transfers, prot
     else argumentsList.push({ kind: 'location', index: locate(argument.kind, argument.name) });
   }
   const known = new Set(transfers.map((entry) => `${entry.direction}:${entry.name}`));
-  for (const argument of invocation.arguments) if (argument.kind !== 'literal' && !known.has(`${argument.kind}:${argument.name}`)) throw new Error('operation argument transfer is not registered');
+  for (const argument of invocation.arguments) {
+    if (argument.kind !== 'literal' && argument.kind !== 'scratch' && !known.has(`${argument.kind}:${argument.name}`)) {
+      throw new Error('operation argument transfer is not registered');
+    }
+  }
   for (const value of Object.values(environment)) {
     if (protectedValues.some((protectedValue) => value.includes(protectedValue))) {
       throw new Error('operation environment contains a protected control-plane value');
@@ -436,7 +447,7 @@ export async function createRepositoryExecution({
           const resolved = await resolveTool(invocation.tool, { subject, profile: route.profile, scope: structuredClone(scope) });
           const entryLocation = await stageToolResources(channel, target, resolved);
           const transferList = transfers;
-          const materialized = descriptorFor(invocation, resolved, environment, stdin, transferList, protectedEnvironmentValues, entryLocation);
+          const materialized = descriptorFor(invocation, resolved, environment, stdin, transferList, protectedEnvironmentValues, scope, entryLocation);
           const descriptorBytes = Buffer.from(`${JSON.stringify(materialized.descriptor)}\n`, 'utf8');
           if (descriptorBytes.length > 8 * 1024 * 1024) throw new Error('repository operation descriptor exceeds the bounded staging limit');
           const descriptorDigest = createHash('sha256').update(descriptorBytes).digest('hex').slice(0, 32);
@@ -489,6 +500,21 @@ export async function createRepositoryExecution({
             ensureActive(signal);
             await applyStagedFileTreeDelta({ root, stagingRoot: stage, manifest: staged, acceptPath: repositoryPathAllowed, signal });
           } finally { await rm(stage, { recursive: true, force: true }); }
+        },
+
+        async cleanupScratch(names, { signal = null } = {}) {
+          ensureActive(signal);
+          await preparation.ensure(target);
+          ensureActive(signal);
+          const health = await channel.health(target);
+          if (!health.ready) throw new Error(health.reason ?? 'environment exchange is not ready');
+          await sendBytes(channel, target, agentBytes, agentLocation);
+          for (const name of names) {
+            ensureActive(signal);
+            const cleaned = await runAgent('cleanup-scratch', [scratchLocation(scope, name)], { timeoutMs: 5 * 60_000, signal });
+            if (cleaned.parsed?.verifiedAbsent !== true) throw new Error(`guest scratch cleanup was not verified for ${name}`);
+          }
+          return { verifiedAbsent: true, names: structuredClone(names) };
         },
         close: releaseSession,
       };

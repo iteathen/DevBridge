@@ -35,15 +35,18 @@ export class ManagedScratchTransaction {
   #persist;
   #faults;
   #effectGuard;
+  #environmentCleanup;
   #root;
 
-  constructor({ workspace, state, persist, faultInjector = null, effectGuard = null }) {
+  constructor({ workspace, state, persist, faultInjector = null, effectGuard = null, environmentCleanup = null }) {
     this.#workspace = workspace;
     this.#state = state;
     this.#persist = persist;
     this.#faults = faultInjector;
     if (effectGuard != null && typeof effectGuard !== 'function') throw new TypeError('ManagedScratchTransaction effectGuard must be a function');
+    if (environmentCleanup != null && typeof environmentCleanup !== 'function') throw new TypeError('ManagedScratchTransaction environmentCleanup must be a function');
     this.#effectGuard = effectGuard;
+    this.#environmentCleanup = environmentCleanup;
     const runId = safeId(String(workspace.runId ?? path.basename(workspace.worktreeDir)), 'scratch runId');
     this.#root = path.join(path.dirname(path.resolve(workspace.worktreeDir)), `.devbridge-scratch-${runId}`);
     this.#state.controllerPlan ??= {};
@@ -81,6 +84,7 @@ export class ManagedScratchTransaction {
       await this.#persist();
     } else if (entry.state === 'removed' || entry.state === 'verified-absent') {
       entry.state = 'planned';
+      delete entry.environmentState;
       entry.updatedAt = new Date().toISOString();
       await this.#persist();
     }
@@ -101,6 +105,12 @@ export class ManagedScratchTransaction {
     return target;
   }
 
+  async argument(id) {
+    const safe = safeId(id, 'scratch id');
+    const localPath = await this.directory(safe);
+    return Object.freeze({ kind: 'managed-scratch', name: safe, localPath });
+  }
+
   async cleanup() {
     const ledger = this.#state.controllerPlan.scratchLedger ?? [];
     for (const entry of ledger) {
@@ -111,6 +121,15 @@ export class ManagedScratchTransaction {
       entry.updatedAt = new Date().toISOString();
       await this.#persist();
       this.#faults?.throwIfTriggered('scratch.cleanup.before-remove', { operation: safe });
+      if (this.#environmentCleanup && entry.environmentState !== 'verified-absent') {
+        await this.#guard();
+        const observed = await this.#environmentCleanup({ id: safe });
+        if (observed?.verifiedAbsent !== true) throw new PolicyError(`managed environment scratch cleanup was not verified for ${safe}`);
+        await this.#guard();
+        entry.environmentState = 'verified-absent';
+        entry.updatedAt = new Date().toISOString();
+        await this.#persist();
+      }
       if (await exists(target)) {
         const info = await lstat(target);
         if (info.isSymbolicLink()) throw new PolicyError(`managed scratch ${safe} became a symbolic link before cleanup`);
@@ -136,7 +155,16 @@ export class ManagedScratchTransaction {
     return {
       entries: ledger.length,
       verifiedAbsent: ledger.filter((entry) => entry.state === 'verified-absent').length,
+      environmentVerifiedAbsent: ledger.filter((entry) => entry.environmentState === 'verified-absent').length,
       leftovers: ledger.filter((entry) => entry.state !== 'verified-absent').map((entry) => entry.id),
     };
   }
+}
+
+export function isManagedScratchArgument(value) {
+  return value?.kind === 'managed-scratch'
+    && typeof value.name === 'string'
+    && ID_RE.test(value.name)
+    && typeof value.localPath === 'string'
+    && path.isAbsolute(value.localPath);
 }

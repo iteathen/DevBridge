@@ -17,12 +17,16 @@ test('managed scratch is a durable sibling transaction outside the Git worktree'
   await mkdir(worktreeDir);
   const state = { controllerPlan: { scratchLedger: [] } };
   let persists = 0;
+  const environmentCleanup = [];
   const scratch = new ManagedScratchTransaction({
     workspace: { worktreeDir, runId: 'run-1' },
     state,
     persist: async () => { persists += 1; },
+    environmentCleanup: async ({ id }) => { environmentCleanup.push(id); return { verifiedAbsent: true }; },
   });
-  const directory = await scratch.directory('cmake-release');
+  const argument = await scratch.argument('cmake-release');
+  const directory = argument.localPath;
+  assert.deepEqual(argument, { kind: 'managed-scratch', name: 'cmake-release', localPath: directory });
   assert.equal(path.dirname(scratch.root), path.dirname(worktreeDir));
   assert.equal(path.dirname(directory), scratch.root);
   assert.equal(directory.startsWith(`${worktreeDir}${path.sep}`), false);
@@ -30,8 +34,14 @@ test('managed scratch is a durable sibling transaction outside the Git worktree'
   const cleanup = await scratch.cleanup();
   assert.equal(cleanup.verifiedAbsent, 1);
   assert.deepEqual(cleanup.leftovers, []);
+  assert.equal(cleanup.environmentVerifiedAbsent, 1);
+  assert.deepEqual(environmentCleanup, ['cmake-release']);
   assert.equal(await exists(directory), false);
   assert.ok(persists >= 5);
+  const recreated = await scratch.directory('cmake-release');
+  await writeFile(path.join(recreated, 'artifact.bin'), 'new fixture');
+  await scratch.cleanup();
+  assert.deepEqual(environmentCleanup, ['cmake-release', 'cmake-release']);
 });
 
 test('interrupted scratch cleanup leaves durable intent and safely reconciles on retry', async () => {
@@ -51,5 +61,32 @@ test('interrupted scratch cleanup leaves durable intent and safely reconciles on
   assert.equal(await exists(directory), true);
   const cleanup = await scratch.cleanup();
   assert.equal(cleanup.verifiedAbsent, 1);
+  assert.equal(await exists(directory), false);
+});
+
+test('failed environment cleanup preserves durable intent and reconciles before local removal', async () => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), 'pp-scratch-environment-'));
+  const worktreeDir = path.join(parent, 'run-3');
+  await mkdir(worktreeDir);
+  const state = { controllerPlan: { scratchLedger: [] } };
+  let attempts = 0;
+  const scratch = new ManagedScratchTransaction({
+    workspace: { worktreeDir, runId: 'run-3' },
+    state,
+    persist: async () => {},
+    environmentCleanup: async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('environment unavailable');
+      return { verifiedAbsent: true };
+    },
+  });
+  const directory = await scratch.directory('cmake-debug');
+  await writeFile(path.join(directory, 'artifact.bin'), 'fixture');
+  await assert.rejects(() => scratch.cleanup(), /environment unavailable/u);
+  assert.equal(state.controllerPlan.scratchLedger[0].state, 'cleanup-planned');
+  assert.equal(state.controllerPlan.scratchLedger[0].environmentState, undefined);
+  assert.equal(await exists(directory), true);
+  const cleanup = await scratch.cleanup();
+  assert.equal(cleanup.environmentVerifiedAbsent, 1);
   assert.equal(await exists(directory), false);
 });
