@@ -244,6 +244,22 @@ test('UAC launcher requests runas for a hidden fixed helper and strips credentia
   assert.equal(captured.environment.SSH_AUTH_SOCK, undefined);
 });
 
+test('UAC launcher rejects relative Windows launch paths before invoking PowerShell', async () => {
+  let invoked = false;
+  await assert.rejects(
+    launchElevatedProviderHelper({
+      requestFile: 'requests\\request.json',
+      requestSha256: 'c'.repeat(64),
+      nodeExecutable: 'C:\\Program Files\\nodejs\\node.exe',
+      helperFile: 'C:\\DevBridge\\elevated-provider-setup.mjs',
+      platform: 'win32',
+      invoke: async () => { invoked = true; },
+    }),
+    /absolute Windows path/u,
+  );
+  assert.equal(invoked, false);
+});
+
 test('elevated helper rejects a changed request before composing provider authority', async () => {
   const stateDirectory = prepareState();
   const root = providerElevationRoot(stateDirectory);

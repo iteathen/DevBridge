@@ -220,7 +220,9 @@ export async function launchElevatedProviderHelper({
   platform = process.platform,
 } = {}) {
   if (platform !== 'win32') throw new Error('UAC provider setup is available only on Windows');
-  if (typeof requestFile !== 'string' || !path.isAbsolute(requestFile)) throw new TypeError('elevation request file must be absolute');
+  if (typeof requestFile !== 'string' || !path.win32.isAbsolute(requestFile)) throw new TypeError('elevation request file must be an absolute Windows path');
+  if (typeof nodeExecutable !== 'string' || !path.win32.isAbsolute(nodeExecutable)) throw new TypeError('elevated Node executable must be an absolute Windows path');
+  if (typeof helperFile !== 'string' || !path.win32.isAbsolute(helperFile)) throw new TypeError('elevated helper file must be an absolute Windows path');
   if (typeof requestSha256 !== 'string' || !SHA256.test(requestSha256)) throw new TypeError('elevation request digest is invalid');
   const argumentsText = [helperFile, ELEVATED_SWITCH, requestFile, requestSha256].map(windowsQuoteArgument).join(' ');
   const result = await invoke({
