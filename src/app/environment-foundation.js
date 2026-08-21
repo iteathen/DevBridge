@@ -5,6 +5,7 @@ import { invokeCommand } from '../runtime/command-invocation.js';
 import { EnvironmentFoundation, UnavailableEnvironmentControl } from '../runtime/environment-foundation.js';
 import { loadOrCreateLocalIdentity } from '../runtime/local-identity.js';
 import { PersistentEnvironments, UnavailablePersistentOperations } from '../runtime/persistent-environments.js';
+import { preflightExecutionProfileMemory } from '../runtime/profile-resource-preflight.js';
 import { HyperVEnvironment } from '../runtime/providers/hyperv-environment.js';
 import { HyperVPersistentEnvironment } from '../runtime/providers/hyperv-persistent-environment.js';
 import { LibvirtEnvironment } from '../runtime/providers/libvirt-environment.js';
@@ -12,6 +13,33 @@ import { LibvirtPersistentEnvironment } from '../runtime/providers/libvirt-persi
 
 function unavailableIdentity(identity, platform) {
   return createHash('sha256').update(`${identity}:persistent-environment:unavailable:${platform}`).digest('hex').slice(0, 32);
+}
+
+export function createExecutionProfileResourceGuard(foundation, {
+  admitMemory = preflightExecutionProfileMemory,
+} = {}) {
+  if (!foundation || typeof foundation.observeEnvironment !== 'function' || typeof foundation.startEnvironment !== 'function') {
+    throw new TypeError('environment lifecycle contract is incomplete');
+  }
+  if (typeof admitMemory !== 'function') throw new TypeError('execution profile memory admission must be a function');
+
+  return new Proxy(foundation, {
+    get(target, property) {
+      if (property === 'startEnvironment') {
+        return async (identity) => {
+          const current = await target.observeEnvironment(identity);
+          const observation = current?.observation;
+          const running = ['running', 'blocked'].includes(observation?.state);
+          if (observation?.exists === true && observation.owned === true && observation.compatible === true && !running) {
+            admitMemory(current?.record?.settings);
+          }
+          return target.startEnvironment(identity);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
 }
 
 export async function createEnvironmentFoundation({
@@ -66,5 +94,5 @@ export async function createEnvironmentFoundation({
     operations,
   });
 
-  return new EnvironmentFoundation({ identity, control, images, lifecycle });
+  return createExecutionProfileResourceGuard(new EnvironmentFoundation({ identity, control, images, lifecycle }));
 }

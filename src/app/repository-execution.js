@@ -6,7 +6,6 @@ import { createEnvironmentBootstrap } from './environment-bootstrap.js';
 import { createEnvironmentBridge } from './environment-bridge.js';
 import { createEnvironmentFoundation } from './environment-foundation.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
-import { extractResultEmission } from '../runtime/result-emission.js';
 import { RepositoryEnvironmentExecution } from '../runtime/repository-environment-execution.js';
 import {
   REPOSITORY_EXECUTION_STATUS_PROTOCOL,
@@ -417,14 +416,13 @@ export async function createRepositoryExecution({
           if (!source || !evidenceIdentity) throw new Error('repository execution session was not prepared');
           const resolved = await resolveTool(invocation.tool, { subject, profile: route.profile, scope: structuredClone(scope) });
           const entryLocation = await stageToolResources(channel, target, resolved);
-          const transferList = transfers;
-          const materialized = descriptorFor(invocation, resolved, environment, stdin, transferList, protectedEnvironmentValues, entryLocation);
+          const materialized = descriptorFor(invocation, resolved, environment, stdin, transfers, protectedEnvironmentValues, entryLocation);
           const descriptorBytes = Buffer.from(`${JSON.stringify(materialized.descriptor)}\n`, 'utf8');
           if (descriptorBytes.length > 8 * 1024 * 1024) throw new Error('repository operation descriptor exceeds the bounded staging limit');
           const descriptorDigest = createHash('sha256').update(descriptorBytes).digest('hex').slice(0, 32);
           const descriptorLocation = { class: 'input', path: `control/operation-${descriptorDigest}.json` };
           await sendBytes(channel, target, descriptorBytes, descriptorLocation);
-          const outcome = await channel.execute(target, {
+          return channel.execute(target, {
             program: 'node',
             arguments: [agentLocation, 'run', descriptorLocation, ...materialized.locations],
             directory: { class: 'work', path: invocation.workingDirectory },
@@ -432,13 +430,6 @@ export async function createRepositoryExecution({
             timeoutMs: limits.timeoutMs,
             maxOutputBytes: Math.min(limits.maxOutputBytes, BRIDGE_OUTPUT_LIMIT),
           }, { signal, onActivity });
-          if (outcome?.completion !== 'observed' || !outcome.result) return outcome;
-          const emitted = extractResultEmission(outcome.result.stdout);
-          if (emitted.text == null) return outcome;
-          const outputs = transferList.filter((entry) => entry.direction === 'output');
-          if (outputs.length !== 1) throw new Error('emitted result requires exactly one output action');
-          await sendBytes(channel, target, Buffer.from(`${emitted.text}\n`, 'utf8'), { class: 'output', path: `ports/${outputs[0].name}` });
-          return { ...outcome, result: { ...outcome.result, stdout: emitted.output } };
         },
 
         async output(name, port, { signal = null } = {}) {

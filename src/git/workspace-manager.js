@@ -5,6 +5,7 @@ import {
   BaselineReverificationRequiredError,
   CandidateValidationError,
   PolicyError,
+  RepositoryAdmissionError,
 } from '../errors.js';
 import { splitRepository } from '../security/workspace-policy.js';
 
@@ -25,6 +26,15 @@ async function exists(candidate) {
 
 function normalizeRemote(value) {
   return String(value).replace(/\\/g, '/').replace(/\/$/, '');
+}
+
+function repositoryAdmissionError(phase, kind, repair, details = {}) {
+  return new RepositoryAdmissionError(`repository admission failed during ${phase}: ${kind}; ${repair}`, {
+    phase,
+    kind,
+    repair,
+    ...details,
+  });
 }
 
 function safeRunId(runId) {
@@ -151,7 +161,14 @@ export class GitWorkspaceManager {
 
     const actualRemote = (await this.#git.run(['remote', 'get-url', 'origin'], { cwd: repoDir })).stdout.trim();
     if (normalizeRemote(actualRemote) !== normalizeRemote(remoteUrl)) {
-      throw new PolicyError(`managed repository origin mismatch: expected ${remoteUrl}, found ${actualRemote}`);
+      const repair = 'review the managed repository origin before allowing DevBridge to reuse local state';
+      throw repositoryAdmissionError('origin', 'origin-mismatch', repair, {
+        args: ['remote', 'get-url', 'origin'],
+        cwd: repoDir,
+        exitCode: 0,
+        stdout: '',
+        stderr: `expected remote: ${remoteUrl}\nobserved remote: ${actualRemote}`,
+      });
     }
 
     await this.#ensureRuntimeExclude(repoDir);
@@ -174,7 +191,17 @@ export class GitWorkspaceManager {
       });
     }
     const baseRef = head.stdout.trim();
-    if (!baseRef.startsWith('origin/')) throw new PolicyError('unable to resolve remote default branch');
+    if (!baseRef.startsWith('origin/')) {
+      const repair = 'verify the requested/default ref exists and refresh the managed repository fetch state';
+      throw repositoryAdmissionError('default-ref', 'fetch-or-ref', repair, {
+        args: ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'],
+        cwd: repoDir,
+        exitCode: head.exitCode,
+        signal: head.signal,
+        stdout: head.stdout,
+        stderr: head.stderr,
+      });
+    }
     const baseSha = normalizeSha((await this.#git.run(['rev-parse', baseRef], { cwd: repoDir })).stdout.trim(), 'repository baseline');
 
     return {

@@ -61,6 +61,21 @@ function exactFakeDigest(runtimeDir) {
   throw new Error(`unexpected fake runtime digest path ${runtimeDir}`);
 }
 
+function transitionControls(events = null) {
+  const owner = Object.freeze({ pid: 9001, createdAt: '2026-08-21T18:00:00.000Z' });
+  return {
+    pauseRuntimeOwnerFn: async () => {
+      events?.push('pause');
+      return owner;
+    },
+    resumeRuntimeOwnerFn: async (_control, expected) => {
+      assert.deepEqual(expected, owner);
+      events?.push('resume');
+      return { ...owner, resumed: true };
+    },
+  };
+}
+
 async function signedReleaseFiles(head = runtimeB.head) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-secure-supervisor-'));
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
@@ -121,12 +136,14 @@ test('production supervisor ignores mutable stable movement that is not the sign
   assert.equal(stops, 0);
 });
 
-test('production supervisor validates only the signed head and journals exact artifact/execution evidence', async () => {
+test('production supervisor pauses accepted owner before validation and launches supervised children headlessly', async () => {
   const files = await signedReleaseFiles();
   const records = [];
+  const transitionEvents = [];
   let starts = 0;
   let current = null;
-  const spawnImpl = () => {
+  const spawnImpl = (_executable, _argv, spawnOptions) => {
+    assert.equal(spawnOptions.windowsHide, true);
     starts += 1;
     const child = new EventEmitter();
     child.pid = 950 + starts;
@@ -147,6 +164,7 @@ test('production supervisor validates only the signed head and journals exact ar
     remoteHeadFn: () => runtimeB.head,
     resolveChannelRefFn: () => 'main',
     candidatePrepareFn: async (_args, _paths, { desiredHead }) => {
+      transitionEvents.push('validate');
       assert.equal(desiredHead, runtimeB.head);
       return runtimeB;
     },
@@ -156,8 +174,10 @@ test('production supervisor validates only the signed head and journals exact ar
       return 0;
     },
     recordActivationFn: (_paths, record) => { records.push(record); },
+    ...transitionControls(transitionEvents),
   });
   assert.equal(result, 0);
+  assert.deepEqual(transitionEvents.slice(0, 2), ['pause', 'validate']);
   const validated = records.find((record) => record.state === 'candidate-validated');
   assert.equal(validated.candidate.head, runtimeB.head);
   assert.equal(validated.candidate.artifactSha256, artifactB);
@@ -168,6 +188,77 @@ test('production supervisor validates only the signed head and journals exact ar
   const healthy = records.find((record) => record.state === 'healthy');
   assert.equal(healthy.current.head, runtimeB.head);
   assert.equal(healthy.current.artifactSha256, artifactB);
+});
+
+test('rejected candidate validation proves the accepted runtime owner resumed and never requests replacement', async () => {
+  const files = await signedReleaseFiles();
+  const events = [];
+  const child = new EventEmitter();
+  child.pid = 990;
+  const result = await superviseDaemon(productionArgs(files), paths, runtimeA, {
+    spawnImpl: () => {
+      setTimeout(() => child.emit('exit', 0, null), 20);
+      return child;
+    },
+    artifactDigestSyncFn: exactFakeDigest,
+    maxIterations: 1,
+    stopExisting: false,
+    updateIntervalMs: 1,
+    updateCheckDelayFn: timer,
+    remoteHeadFn: () => runtimeB.head,
+    resolveChannelRefFn: () => 'main',
+    candidatePrepareFn: async () => {
+      events.push('validate');
+      throw new Error('candidate rejected');
+    },
+    runDevBridgeCliFn: (command) => { events.push(command); return 0; },
+    recordActivationFn: () => {},
+    delayFn: timer,
+    ...transitionControls(events),
+  });
+  assert.equal(result, 0);
+  assert.deepEqual(events.slice(0, 3), ['pause', 'validate', 'resume']);
+  assert.equal(events.includes('stop'), false);
+});
+
+test('unprovable resume stops the uncertain accepted owner and exits supervisor recovery after journaling failure', async () => {
+  const files = await signedReleaseFiles();
+  const events = [];
+  const records = [];
+  const child = new EventEmitter();
+  child.pid = 995;
+  const result = superviseDaemon(productionArgs(files), paths, runtimeA, {
+    spawnImpl: () => child,
+    artifactDigestSyncFn: exactFakeDigest,
+    maxIterations: 1,
+    stopExisting: false,
+    updateIntervalMs: 1,
+    updateCheckDelayFn: timer,
+    remoteHeadFn: () => runtimeB.head,
+    resolveChannelRefFn: () => 'main',
+    candidatePrepareFn: async () => {
+      events.push('validate');
+      throw new Error('candidate rejected');
+    },
+    pauseRuntimeOwnerFn: async () => {
+      events.push('pause');
+      return { pid: 9001, createdAt: '2026-08-21T18:00:00.000Z' };
+    },
+    resumeRuntimeOwnerFn: async () => {
+      events.push('resume');
+      throw new Error('resume ownership changed');
+    },
+    stopRuntimeOwnerFn: async () => {
+      events.push('recover-stop');
+      return { stopped: true };
+    },
+    recordActivationFn: (_paths, record) => { records.push(record); },
+    delayFn: timer,
+  });
+  await assert.rejects(result, /supervisor recovery is required/u);
+  assert.deepEqual(events, ['pause', 'validate', 'resume', 'recover-stop']);
+  assert.ok(records.some((record) => record.state === 'candidate-failed'));
+  assert.equal(records.some((record) => record.state === 'candidate-validated'), false);
 });
 
 test('production supervisor refuses a candidate whose bytes change after validation and before daemon spawn', async () => {
@@ -205,6 +296,7 @@ test('production supervisor refuses a candidate whose bytes change after validat
     },
     recordActivationFn: () => {},
     delayFn: timer,
+    ...transitionControls(),
   });
   await assert.rejects(result, /runtime artifact changed after validation before activation/u);
   assert.equal(starts, 1, 'mutated candidate daemon must never start');

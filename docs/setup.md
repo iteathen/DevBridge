@@ -4,14 +4,16 @@ DevBridge is installed from one standalone stage-0 launcher and then keeps its m
 
 ## Current implementation versus VM target
 
-DB-020 defines the target repository-execution architecture: a trusted DevBridge controller on the host plus persistent, networked repository VMs.
+DB-020 and `docs/execution-profile-environments.md` define the active repository-execution architecture: a trusted DevBridge controller on the host plus persistent, networked execution-profile VMs. **Execution profiles own persistent VMs; repositories own isolated workspaces inside compatible execution-profile VMs.**
+
+Repository discovery/selection and VM provisioning are separate concerns. Selecting many repositories must not imply creating or starting one VM per repository. Repositories that use the same compatible profile share that physical profile VM through separate workspace identities.
 
 The required initial host providers are:
 
 - **Windows:** Hyper-V;
 - **Linux:** KVM/QEMU managed through libvirt.
 
-Stages 0–6 of that VM path are implemented on the migration stack. Stage 1 removed the old host-sandbox path; Stages 2–5 provide foundation, persistent environments, bridge, and guest preparation; Stage 6 restores routed repository execution.
+Stages 0–6 of that VM path are implemented on the migration stack. Stage 1 removed the old host-sandbox path; Stages 2–5 provide foundation, persistent environments, bridge, and guest preparation; Stage 6 restores routed repository execution. Stage 3's original repository-owned persistent-VM topology is historical implementation evidence and is superseded by the execution-profile ownership correction in issue #138.
 
 The migration stack behaves as follows:
 
@@ -23,7 +25,7 @@ The migration stack behaves as follows:
 
 The completed Stages 3–5 interval kept execution unavailable. Stage 6 restores it through persistent VMs only. Do not introduce direct/uncontained host execution as compatibility behavior.
 
-Stage 2 does not add installer mutation UX. Do not manually configure provider objects and assume DevBridge owns them merely because `doctor` can observe the host. VM Stage 8 (#116), coordinated with setup/reconfiguration issue #103, owns supported discovery/provisioning/re-entry after the lower VM stages are implemented and qualified.
+Stage 2 does not add installer mutation UX. Do not manually configure provider objects and assume DevBridge owns them merely because `doctor` can observe the host. VM Stage 8 (#116), coordinated with setup/reconfiguration issue #103, owns supported discovery/provisioning/re-entry after the lower VM stages are implemented and qualified. Stage 8 must provision/reuse physical environments by execution profile and create/repair repository workspaces separately.
 
 ## Current requirements
 
@@ -107,7 +109,7 @@ Setting `execution.enabled` is local machine authority. Task text cannot enable 
 
 Current pre-migration main fails closed if a requested repository-code execution class lacks the provider it actually implements/verifies.
 
-Stage 6 VM-backed execution requires observed provider + image + repository environment + bridge readiness plus a local stable-identity route, even if `execution.enabled` is configured. If any are missing, execution remains unavailable; it never redirects to direct host execution.
+Stage 6 VM-backed execution requires observed provider + image + compatible execution-profile environment + bridge + repository workspace-route readiness, even if `execution.enabled` is configured. If any are missing, execution remains unavailable; it never redirects to direct host execution. A legacy repository-owned VM record is not silently adopted as the physical profile environment.
 
 ## GitHub authentication
 
@@ -119,7 +121,7 @@ Under DB-020 repository guests normally have network access, so host GitHub/SSH/
 
 ## Persistent VM setup target
 
-When Stage 8 lands, setup/reconfiguration follows discover-before-prompt.
+When Stage 8 lands, setup/reconfiguration follows discover-before-prompt and treats execution profiles as the VM provisioning unit.
 
 ### Windows host discovery
 
@@ -128,7 +130,9 @@ Discover where safe:
 - Hyper-V feature/provider availability;
 - management privilege/readiness;
 - DevBridge-owned base image inventory;
-- repository VM/differencing-disk state;
+- execution-profile VM/differencing-disk state;
+- legacy repository-owned VM state as migration candidates;
+- repository workspace-route state;
 - provider networking and bridge readiness.
 
 ### Linux host discovery
@@ -139,21 +143,27 @@ Discover where safe:
 - QEMU/libvirt installation/service/provider readiness;
 - access to the selected libvirt system provider (normally `qemu:///system` when local policy uses it);
 - DevBridge-owned base image/qcow2 overlay inventory;
-- libvirt domain/storage/network and bridge readiness.
+- execution-profile domain/storage state;
+- legacy repository-owned domain/overlay state as migration candidates;
+- repository workspace-route state;
+- libvirt network and bridge readiness.
 
 ### Common guided flow
 
 1. discover provider/account/repository facts before prompting;
-2. propose approved repositories and guest OS profiles;
-3. propose image generations and provider-native storage implications;
-4. show required host changes such as elevation/reboot or Linux package/service/group/session actions;
-5. require explicit operator approval before provisioning/enabling authority-bearing changes;
-6. verify provider/image/environment/bridge readiness;
-7. allow re-entering setup later to add/remove/change repositories, guest profiles, images, resource policy, or repair/reset/reseed environments.
+2. propose approved repositories and compatible/preferred execution profiles independently;
+3. group selected repositories by compatible execution profile and show the physical profile environments actually required;
+4. propose image generations and provider-native storage/resource implications per profile, not per repository;
+5. show required host changes such as elevation/reboot or Linux package/service/group/session actions;
+6. require explicit operator approval before provisioning/enabling authority-bearing changes;
+7. verify provider/image/profile-environment/bridge/workspace-route readiness;
+8. allow re-entering setup later to add/remove/change repositories, execution profiles, images, resource policy, or repair/reset/reseed profile environments and repository workspaces.
+
+Selecting `all` repositories means approve/register all selected repository workspaces. It does **not** mean create/start one VM per repository. Setup must report repository/workspace counts separately from physical execution-profile VM counts.
 
 Do not blindly prompt for repository names, local paths, provider object names, or provider details that can be safely discovered and verified. Do not auto-enable discovered capabilities merely because they exist.
 
-VM readiness failure must degrade/fail closed; setup never recreates the removed host repository-execution path.
+VM/profile readiness failure must degrade/fail closed; setup never recreates the removed host repository-execution path. Resource admission failures must be reported as profile-level resource problems rather than as repository failures.
 
 ## Provider-owned versus operator-owned infrastructure
 
@@ -162,6 +172,8 @@ DevBridge setup must distinguish its own VM artifacts from shared operator infra
 Windows uninstall/repair must not casually disable Hyper-V or delete operator-owned virtual switches/VMs/disks.
 
 Linux uninstall/repair must not casually remove KVM/QEMU/libvirt packages, stop shared libvirt infrastructure, delete operator-owned domains/storage pools/networks/images, or rewrite system virtualization policy when a DevBridge-owned object suffices.
+
+Legacy repository-owned DevBridge VMs are retained as migration candidates until their replacement workspace is proven or the operator explicitly authorizes retirement. Multiple old writable VM disks must not be blindly merged into one shared profile disk.
 
 ## Runtime updates
 
@@ -197,15 +209,15 @@ devbridge handoff-project
 
 `pause` is cooperative task-admission pause at a safe cycle boundary, not an unsafe process/VM freeze. `stop` takes precedence.
 
-Future VM lifecycle commands/setup surfaces preserve persistent repository disk state unless an explicit reset/reseed/delete action is authorized.
+Future VM lifecycle commands/setup surfaces preserve persistent profile VM state and unrelated repository workspace state unless an exact reset/reseed/delete action is authorized for that profile or workspace.
 
 ## Troubleshooting principle
 
 `doctor` reports observed capabilities, not aspirations.
 
-- Pre-Stage-1 current main: expect Bubblewrap verification for supported Linux repository execution and fail-closed Windows repository execution.
-- Stage 1 through Stage 5: expect repository execution unavailable/no-provider while trusted control-plane functions may remain usable.
-- VM transition: do not interpret partial Hyper-V, KVM, libvirt, image, VM/domain, or bridge state as completed DB-020 support.
-- After Stage 7/8: expect exact provider/image/writable-layer/environment/bridge readiness evidence and no host fallback.
+- Pre-Stage-1 historical main: Bubblewrap verification existed for supported Linux repository execution and Windows failed closed.
+- Stage 1 through Stage 5 history: repository execution was unavailable/no-provider while trusted control-plane functions could remain usable.
+- VM transition: do not interpret partial Hyper-V, KVM, libvirt, image, VM/domain, profile, workspace-route, or bridge state as completed DB-020 support.
+- After Stage 7/8: expect exact provider/image/profile-environment/workspace/bridge readiness evidence and no host fallback.
 
-See `docs/roadmap.md` for staging, `docs/vm-lego-studs.md` for replaceability, and `docs/vm-migration.md` for removal/retention details.
+See `docs/execution-profile-environments.md` for VM/workspace ownership, `docs/roadmap.md` for staging, `docs/vm-lego-studs.md` for replaceability, and `docs/vm-migration.md` for removal/retention details.

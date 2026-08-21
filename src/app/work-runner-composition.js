@@ -9,6 +9,8 @@ import { extractResultEmission } from '../runtime/result-emission.js';
 import { WorkRunner } from '../runtime/work-runner.js';
 import { WORKER_CONTEXT_TRANSFER, WORKER_RESULT_TRANSFER } from '../runtime/worker-exchange.js';
 
+const RESULT_LIMIT = 1_048_576;
+
 function isWithin(root, candidate) {
   const relative = path.relative(root, candidate);
   return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
@@ -28,6 +30,10 @@ function executionArguments(args, identity) {
     if (argument.includes('{contextFile}') || argument.includes('{resultFile}')) throw new PolicyError('transfer placeholders must occupy an entire argument');
     return argument.replaceAll('{projectDir}', '.').replaceAll('{runId}', String(identity));
   });
+}
+
+function usesTransfer(argumentsList, kind, name) {
+  return argumentsList.some((argument) => argument && typeof argument === 'object' && argument.kind === kind && argument.name === name);
 }
 
 function outputPort(mailbox) {
@@ -64,25 +70,34 @@ export function composeWorkRunner({ mailboxStore, activeExecution }) {
       });
       const execute = async (request) => {
         if (!mailbox) throw new PolicyError('execution is unavailable before input publication');
-        const resultTransfer = mailbox.outputTransfer({ maxBytes: 1_048_576 });
+        const invocationArguments = executionArguments(request.arguments, runId);
+        const resultTransfer = mailbox.outputTransfer({ maxBytes: RESULT_LIMIT });
+        const transfers = [mailbox.inputTransfer()];
+        if (usesTransfer(invocationArguments, 'output', WORKER_RESULT_TRANSFER)) transfers.push(resultTransfer);
         const observed = normalizeRepositoryExecutionResult(await execution.execute({
           protocol: REPOSITORY_EXECUTION_REQUEST_PROTOCOL,
           operation: `work:${request.name}`,
           scope: { repository: target, repositoryId, runId },
           invocation: {
             tool: request.name,
-            arguments: executionArguments(request.arguments, runId),
+            arguments: invocationArguments,
             workingDirectory: '.',
           },
           environment: request.environment,
-          transfers: [mailbox.inputTransfer(), resultTransfer],
+          transfers,
           limits: request.limits,
           stdin: request.payload,
           signal: request.signal,
           onActivity: request.onActivity,
         }));
         const emitted = extractResultEmission(observed.stdout);
-        if (emitted.text != null) await resultTransfer.port.write(`${emitted.text}\n`);
+        if (emitted.text != null) {
+          const existing = await mailbox.consumeResult({ maxBytes: RESULT_LIMIT });
+          if (existing.resultParseError != null || existing.text != null) {
+            throw new PolicyError('work produced results through both the explicit output action and stdout emission');
+          }
+          await resultTransfer.port.write(`${emitted.text}\n`);
+        }
         return { ...observed, stdout: emitted.output };
       };
       return runner.run({ profile, identity: runId, context, input, output, execute, signal, onActivity });

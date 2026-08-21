@@ -39,6 +39,17 @@ export class GitCommandError extends DevBridgeError {
   }
 }
 
+export class RepositoryAdmissionError extends GitCommandError {
+  constructor(message, { code = 'REPOSITORY_ADMISSION_FAILED', phase = 'unknown', kind = 'git-failure', repair = null, retryable = false, ...details } = {}) {
+    super(message, details);
+    this.code = code;
+    this.phase = phase;
+    this.kind = kind;
+    this.repair = repair == null ? null : String(repair);
+    this.retryable = retryable === true;
+  }
+}
+
 export class RateLimitError extends DevBridgeError {
   constructor(message, { retryAt = null, cause } = {}) {
     super(message, cause ? { cause } : undefined);

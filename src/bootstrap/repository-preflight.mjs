@@ -43,6 +43,8 @@ const SYNTAX_FILES = [
   'src/app/tool-onboarding-composition.js',
   'src/values/project-relative-path.js',
   'src/bootstrap/candidate-validator.mjs',
+  'src/bootstrap/local-supervisor-adapter.mjs',
+  'src/bootstrap/runtime-transition.mjs',
   'src/bootstrap/secure-bootstrap.mjs',
   'src/bootstrap/transactional-bootstrap.mjs',
 ];
@@ -81,6 +83,9 @@ const TARGETED_TESTS = [
   'test/context-budget.test.js',
   'test/controller-plan.test.js',
   'test/runtime-activation.test.js',
+  'test/secure-supervisor-release.test.js',
+  'test/local-supervisor-adapter.test.js',
+  'test/runtime-transition.test.js',
   'test/rate-budget.test.js',
 ];
 

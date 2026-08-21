@@ -11,6 +11,10 @@ import { profileSecurityDescription } from '../runtime/profile-security.js';
 import { assertRepositoryExecutionContract } from '../runtime/repository-execution.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { GitClient } from '../git/git-client.js';
+import {
+  inspectRepositoryAdmission,
+  normalizeRepositoryAdmissionSet,
+} from '../git/repository-admission.js';
 import { resolveGitHubCredential, publicGitHubCredentialStatus } from '../github/auth-provider.js';
 import { normalizeEnvironmentFoundationStatus } from '../runtime/environment-foundation.js';
 import { createEnvironmentFoundation } from './environment-foundation.js';
@@ -21,10 +25,16 @@ async function describeProfile(name, raw, { source, allowUncontainedTools, repos
   return { name, inputMode: profile.inputMode, layer: 'adapter', source, ...profileSecurityDescription(profile, repositoryExecutionStatus) };
 }
 
+function cloneRemote(config, repository) {
+  return `${String(config.git.cloneBaseUrl).replace(/\/$/u, '')}/${repository}.git`;
+}
+
 export async function doctor(config, {
   resolveTools = true,
   checkGit = true,
   checkGitHubAuth = true,
+  checkRepositoryAdmission = false,
+  repositoryAdmissionTargets = null,
   probeCoreCapabilities = true,
   env = process.env,
   repositoryExecution = null,
@@ -32,6 +42,7 @@ export async function doctor(config, {
   probeEnvironmentFoundation = null,
 } = {}) {
   if (probeEnvironmentFoundation != null && typeof probeEnvironmentFoundation !== 'boolean') throw new TypeError('probeEnvironmentFoundation must be boolean or null');
+  if (typeof checkRepositoryAdmission !== 'boolean') throw new TypeError('checkRepositoryAdmission must be boolean');
   const workspace = new WorkspacePolicy(config.workspace);
   const workspaceRoot = await workspace.ensureRoot();
   await mkdir(config.state.directory, { recursive: true, mode: 0o700 });
@@ -89,19 +100,36 @@ export async function doctor(config, {
     }).refresh();
   }
 
+  const needsGitClient = checkGit || checkRepositoryAdmission;
+  const gitClient = needsGitClient
+    ? new GitClient({ executable: config.git.executable, syntheticHome: path.join(config.state.directory, 'git-home') })
+    : null;
   let gitVersion = null;
-  if (checkGit) gitVersion = await new GitClient({ executable: config.git.executable, syntheticHome: path.join(config.state.directory, 'git-home') }).version();
+  if (checkGit) gitVersion = await gitClient.version();
 
   let githubAuth = publicGitHubCredentialStatus(config.github.auth, null);
-  if (checkGitHubAuth) {
-    const credential = await resolveGitHubCredential(config.github.auth, { env });
+  let credential = null;
+  if (checkGitHubAuth || checkRepositoryAdmission) {
+    credential = await resolveGitHubCredential(config.github.auth, { env });
     githubAuth = publicGitHubCredentialStatus(config.github.auth, credential);
-    if (config.execution.enabled && !githubAuth.available) {
+    if (checkGitHubAuth && config.execution.enabled && !githubAuth.available) {
       throw new Error('GitHub authentication is required when execution is enabled. ' +
         `Checked environment variables: ${githubAuth.environmentVariables.join(', ')}; ` +
         `GitHub CLI fallback: ${githubAuth.githubCliExecutable} auth token --hostname ${githubAuth.hostname}. ` +
         'Set one of the environment variables or authenticate GitHub CLI locally.');
     }
+  }
+
+  let repositoryAdmission = [];
+  if (checkRepositoryAdmission) {
+    const targets = normalizeRepositoryAdmissionSet(repositoryAdmissionTargets ?? [config.github.queueRepository]);
+    repositoryAdmission = await Promise.all(targets.map((repository) => inspectRepositoryAdmission({
+      repository,
+      remoteUrl: cloneRemote(config, repository),
+      token: credential?.token ?? null,
+      timeoutMs: config.git.fetchTimeoutMs,
+      run: (args, options) => gitClient.run(args, options),
+    })));
   }
 
   return {
@@ -118,6 +146,7 @@ export async function doctor(config, {
     capabilities: {
       repositoryExecution: repositoryExecutionStatus,
       environmentFoundation: environmentFoundationStatus,
+      repositoryAdmission,
       core: {
         controllerPlans: { enabled: config.execution.controllerPlansEnabled, repositoryExecution: repositoryExecutionStatus, operations },
         toolchains,

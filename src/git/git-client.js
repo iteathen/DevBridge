@@ -1,8 +1,12 @@
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { GitCommandError } from '../errors.js';
+import { GitCommandError, RepositoryAdmissionError } from '../errors.js';
 import { containedSpawnOptions, terminateProcessTree } from '../runtime/process-tree.js';
+import {
+  classifyRepositoryAdmissionFailure,
+  sanitizeGitCommandOutput,
+} from './repository-admission.js';
 
 const SAFE_HOST_ENV = new Set(['PATH', 'SYSTEMROOT', 'COMSPEC', 'TEMP', 'TMP', 'TMPDIR', 'WINDIR']);
 const CONTROL_PLANE_WHITESPACE = 'blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol';
@@ -101,9 +105,11 @@ export class GitClient {
 
     const result = { args: [...args], cwd: cwd ?? null, exitCode: exit.exitCode, signal: exit.signal, timedOut, stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8') };
     if (!allowFailure && (timedOut || exit.exitCode !== 0)) {
+      const admission = classifyRepositoryAdmissionFailure(result);
+      if (admission) throw new RepositoryAdmissionError(admission.message, { ...result, ...admission });
       throw new GitCommandError(timedOut ? 'git command timed out' : `git command failed with exit code ${exit.exitCode}`, result);
     }
-    return result;
+    return { ...result, stdout: sanitizeGitCommandOutput(args, result.stdout) };
   }
 
   async version() {
