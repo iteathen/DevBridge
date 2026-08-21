@@ -16,6 +16,8 @@ const ACTIVATION_PROTOCOL = 'devbridge/runtime-activation-v1';
 const SETUP_PROTOCOL = 'devbridge/setup-state-v1';
 const CAPTURE_LIMIT = 4 * 1024 * 1024;
 const DEFAULT_HEALTH_WINDOW_MS = 2_000;
+const CANDIDATE_CONTROL_TIMEOUT_MS = 20_000;
+const CANDIDATE_CONTROL_POLL_MS = 100;
 const CHILD_RESTART_BACKOFF_MS = 5_000;
 const UPDATE_CHECK_INTERVAL_MS = 60_000;
 
@@ -34,6 +36,40 @@ function updateCheckDelay(ms) {
     const timer = setTimeout(resolve, ms);
     timer.unref?.();
   });
+}
+
+function daemonControlResult(command, result) {
+  if (!result || !Number.isInteger(result.status)) throw new Error(`candidate ${command} control returned no exit status`);
+  let control;
+  try { control = JSON.parse(String(result.stdout ?? '')); }
+  catch { throw new Error(`candidate ${command} control returned invalid JSON`); }
+  if (!control || typeof control !== 'object' || Array.isArray(control)) {
+    throw new Error(`candidate ${command} control returned an invalid record`);
+  }
+  return { status: result.status, control };
+}
+
+async function pauseCandidateAtSafeBoundary(paths, runtime, runner, {
+  runCaptured,
+  delayFn,
+  exitState,
+  timeoutMs,
+  pollMs,
+}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (exitState.exit) return { state: 'exit', exit: exitState.exit };
+    const observed = daemonControlResult('pause', runCaptured('pause', paths, runtime, runner));
+    if (exitState.exit) return { state: 'exit', exit: exitState.exit };
+    if (observed.control.activeLock === true) {
+      if (observed.status === 0 && observed.control.paused === true) return { state: 'paused' };
+      throw new Error(`candidate daemon did not acknowledge its cooperative health pause (exit ${observed.status})`);
+    }
+    if (observed.status !== 0) throw new Error(`candidate pause control failed before daemon admission (exit ${observed.status})`);
+    await delayFn(Math.min(pollMs, Math.max(1, deadline - Date.now())));
+  }
+  if (exitState.exit) return { state: 'exit', exit: exitState.exit };
+  throw new Error('candidate daemon did not establish its token-bound control lock before the health deadline');
 }
 
 function runtimeDirectory(paths, runtime) {
@@ -282,10 +318,13 @@ export async function superviseDaemon(args, paths, initialRuntime, {
   remoteHeadFn = runtimeCore.remoteBranchHead,
   candidatePrepareFn = prepareRuntimeCandidate,
   runDevBridgeCliFn = runDevBridgeCli,
+  runDevBridgeCliCapturedFn = runDevBridgeCliCaptured,
   stopExistingFn = stopExistingDaemon,
   updateCheckDelayFn = updateCheckDelay,
   healthCheckDelayFn = delay,
   delayFn = delay,
+  candidateControlTimeoutMs = CANDIDATE_CONTROL_TIMEOUT_MS,
+  candidateControlPollMs = CANDIDATE_CONTROL_POLL_MS,
   signal = null,
   resolveChannelRefFn = runtimeCore.resolveChannelRef,
   recordActivationFn = writeRuntimeActivationState,
@@ -304,43 +343,90 @@ export async function superviseDaemon(args, paths, initialRuntime, {
     iterations += 1;
     const child = spawnDevBridgeDaemon(paths, runtime, spawnImpl);
     process.stdout.write(`[devbridge-supervisor] daemon-started runtime=${runtime.head}\n`);
+    const exitState = { exit: null };
     const exitPromise = childExit(child);
+    void exitPromise.then((exit) => { exitState.exit = exit; }, () => {});
 
     if (activation && runtime.head === activation.candidate.head) {
-      const outcome = await Promise.race([
-        exitPromise.then((exit) => ({ type: 'exit', exit })),
-        healthCheckDelayFn(healthWindowMs).then(() => ({ type: 'health-window' })),
-      ]);
-      if (outcome.type === 'exit') {
+      const rollbackCandidate = async (error, { alreadyExited = false } = {}) => {
+        await recordActivation(recordActivationFn, paths, activationRecord('health-failed', paths, activation.previous, activation.candidate, {
+          current: activation.previous,
+          failedCandidate: activation.candidate,
+          error,
+        }));
+        if (!alreadyExited) {
+          const stopped = daemonControlResult('stop', runDevBridgeCliCapturedFn('stop', paths, runtime, runner));
+          if (stopped.control.activeLock === true) {
+            if (stopped.status !== 0 || stopped.control.stopped !== true) {
+              throw new Error(`could not cooperatively stop unhealthy candidate daemon (exit ${stopped.status})`);
+            }
+            await exitPromise;
+          } else {
+            await delayFn(0);
+            if (!exitState.exit) {
+              throw new Error('candidate health failed before token-bound daemon control was available; refusing an uncertain rollback');
+            }
+          }
+        }
         await recordActivation(recordActivationFn, paths, activationRecord('rolled-back', paths, activation.previous, activation.candidate, {
           current: activation.previous,
           failedCandidate: activation.candidate,
-          error: new Error(`candidate daemon exited before health window (code=${outcome.exit.code ?? 'null'}, signal=${outcome.exit.signal ?? 'none'})`),
+          error,
         }));
         process.stderr.write(`[devbridge-supervisor] candidate-health-failed head=${activation.candidate.head}; rolling back to ${activation.previous.head}\n`);
         runtime = activation.previous;
         ref = runtime.ref;
         failedCandidateHead = activation.candidate.head;
         activation = null;
+      };
+
+      let pauseOutcome;
+      try {
+        pauseOutcome = await pauseCandidateAtSafeBoundary(paths, runtime, runner, {
+          runCaptured: runDevBridgeCliCapturedFn,
+          delayFn,
+          exitState,
+          timeoutMs: candidateControlTimeoutMs,
+          pollMs: candidateControlPollMs,
+        });
+      } catch (error) {
+        await rollbackCandidate(error);
+        continue;
+      }
+      if (pauseOutcome.state === 'exit') {
+        await rollbackCandidate(new Error(
+          `candidate daemon exited before its cooperative health boundary (code=${pauseOutcome.exit.code ?? 'null'}, signal=${pauseOutcome.exit.signal ?? 'none'})`,
+        ), { alreadyExited: true });
         await delayFn(restartBackoffMs);
         continue;
       }
 
       const doctorStatus = runDevBridgeCliFn('doctor', paths, runtime, runner);
       if (doctorStatus !== 0) {
-        await recordActivation(recordActivationFn, paths, activationRecord('health-failed', paths, activation.previous, activation.candidate, {
-          current: activation.previous,
-          failedCandidate: activation.candidate,
-          error: new Error(`candidate health doctor failed with exit ${doctorStatus}`),
-        }));
-        const stopStatus = runDevBridgeCliFn('stop', paths, runtime, runner);
-        if (stopStatus !== 0 && stopStatus !== 3) throw new Error(`could not stop unhealthy candidate daemon (exit ${stopStatus})`);
-        await exitPromise;
-        runtime = activation.previous;
-        ref = runtime.ref;
-        failedCandidateHead = activation.candidate.head;
-        activation = null;
-        await recordActivation(recordActivationFn, paths, activationRecord('rolled-back', paths, runtime, null, { current: runtime }));
+        await rollbackCandidate(new Error(`candidate health doctor failed with exit ${doctorStatus}`));
+        continue;
+      }
+
+      let resumed;
+      try { resumed = daemonControlResult('resume', runDevBridgeCliCapturedFn('resume', paths, runtime, runner)); }
+      catch (error) {
+        await rollbackCandidate(error);
+        continue;
+      }
+      if (resumed.status !== 0 || resumed.control.activeLock !== true || resumed.control.resumed !== true || resumed.control.paused === true) {
+        await rollbackCandidate(new Error(`candidate daemon did not resume after its health doctor (exit ${resumed.status})`));
+        continue;
+      }
+
+      const outcome = await Promise.race([
+        exitPromise.then((exit) => ({ type: 'exit', exit })),
+        healthCheckDelayFn(healthWindowMs).then(() => ({ type: 'health-window' })),
+      ]);
+      if (outcome.type === 'exit') {
+        await rollbackCandidate(new Error(
+          `candidate daemon exited before health window (code=${outcome.exit.code ?? 'null'}, signal=${outcome.exit.signal ?? 'none'})`,
+        ), { alreadyExited: true });
+        await delayFn(restartBackoffMs);
         continue;
       }
 

@@ -213,7 +213,7 @@ test('node version gate rejects older runtimes', () => {
   assert.throws(() => assertSupportedNode('22.15.9'), /22\.16\.0 or newer/u);
 });
 
-test('runtime CLI launch never uses a shell', () => {
+test('runtime CLI launch never uses a shell or opens a Windows console', () => {
   let observed;
   const runner = (executable, args, options) => { observed = { executable, args, options }; return { status: 0 }; };
   const status = runDevBridgeCli('poll-once', { runtime: '/managed/runtime', config: '/operator/config.json' }, { cliPath: '/managed/runtime/src/cli.js' }, runner);
@@ -221,6 +221,7 @@ test('runtime CLI launch never uses a shell', () => {
   assert.equal(observed.executable, process.execPath);
   assert.deepEqual(observed.args, ['/managed/runtime/src/cli.js', 'poll-once', '--config', '/operator/config.json']);
   assert.equal(observed.options.shell, false);
+  assert.equal(observed.options.windowsHide, true);
 });
 
 test('supervised daemon launch stays headless on Windows', () => {

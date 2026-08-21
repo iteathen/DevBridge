@@ -511,7 +511,7 @@ export async function configureLocalConfig(paths, argv, {
 
 export function runDevBridgeCli(command, paths, runtime, runner = defaultRunner) {
   const result = runner(process.execPath, [runtime.cliPath, command, '--config', paths.config], {
-    cwd: paths.runtime, env: process.env, stdio: 'inherit', shell: false, windowsHide: false,
+    cwd: paths.runtime, env: process.env, stdio: 'inherit', shell: false, windowsHide: true,
   });
   if (result.error) fail(`Could not start DevBridge ${command}: ${result.error.message}`);
   return result.status ?? 1;

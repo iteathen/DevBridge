@@ -155,6 +155,12 @@ test('production supervisor validates only the signed head and journals exact ar
       if (command === 'doctor') assert.equal(runtime.head, runtimeB.head);
       return 0;
     },
+    runDevBridgeCliCapturedFn: (command, _paths, runtime) => {
+      assert.equal(runtime.head, runtimeB.head);
+      if (command === 'pause') return { status: 0, stdout: JSON.stringify({ activeLock: true, paused: true }) };
+      if (command === 'resume') return { status: 0, stdout: JSON.stringify({ activeLock: true, resumed: true, paused: false }) };
+      throw new Error(`unexpected captured command: ${command}`);
+    },
     recordActivationFn: (_paths, record) => { records.push(record); },
   });
   assert.equal(result, 0);

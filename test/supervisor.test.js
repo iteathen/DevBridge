@@ -67,6 +67,12 @@ test('supervisor validates an exact candidate before draining current daemon, th
     if (command === 'stop') setTimeout(() => current.emit('exit', 0, null), 0);
     return 0;
   };
+  const runDevBridgeCliCapturedFn = (command, _paths, runtime) => {
+    events.push(`${command}:${runtime.head}`);
+    if (command === 'pause') return { status: 0, stdout: JSON.stringify({ activeLock: true, paused: true }) };
+    if (command === 'resume') return { status: 0, stdout: JSON.stringify({ activeLock: true, resumed: true, paused: false }) };
+    throw new Error(`unexpected captured command: ${command}`);
+  };
   const candidatePrepareFn = async (_args, _paths, { desiredHead }) => {
     events.push(`validate:${desiredHead}`);
     return runtimeB;
@@ -86,6 +92,7 @@ test('supervisor validates an exact candidate before draining current daemon, th
       remoteHeadFn: () => runtimeB.head,
       candidatePrepareFn,
       runDevBridgeCliFn,
+      runDevBridgeCliCapturedFn,
       recordActivationFn: (_paths, record) => { records.push(record); },
       resolveChannelRefFn: () => runtimeA.ref,
       updateCheckDelayFn: timer,
@@ -102,6 +109,8 @@ test('supervisor validates an exact candidate before draining current daemon, th
     'start:candidate',
   ]);
   assert.ok(events.includes(`doctor:${runtimeB.head}`));
+  assert.ok(events.indexOf(`pause:${runtimeB.head}`) < events.indexOf(`doctor:${runtimeB.head}`));
+  assert.ok(events.indexOf(`doctor:${runtimeB.head}`) < events.indexOf(`resume:${runtimeB.head}`));
   assert.ok(records.some((record) => record.state === 'candidate-validated'));
   assert.ok(records.some((record) => record.state === 'drain-requested'));
   assert.ok(records.some((record) => record.state === 'activating'));
@@ -172,6 +181,11 @@ test('candidate daemon crash inside health window rolls back to last-known-good 
       remoteHeadFn: () => runtimeB.head,
       candidatePrepareFn: async () => runtimeB,
       runDevBridgeCliFn,
+      runDevBridgeCliCapturedFn: (command) => {
+        if (command === 'pause') return { status: 0, stdout: JSON.stringify({ activeLock: true, paused: true }) };
+        if (command === 'resume') return { status: 0, stdout: JSON.stringify({ activeLock: true, resumed: true, paused: false }) };
+        throw new Error(`unexpected captured command: ${command}`);
+      },
       recordActivationFn: (_paths, record) => { records.push(record); },
       resolveChannelRefFn: () => runtimeA.ref,
       updateCheckDelayFn: timer,
@@ -183,6 +197,67 @@ test('candidate daemon crash inside health window rolls back to last-known-good 
   assert.equal(result, 0);
   assert.deepEqual(starts, ['current', 'candidate', 'current']);
   assert.ok(records.some((record) => record.state === 'rolled-back' && record.current.head === runtimeA.head));
+});
+
+test('candidate health doctor runs at a cooperative pause boundary and failure preserves rollback evidence', async () => {
+  const events = [];
+  const records = [];
+  const starts = [];
+  let current;
+  const spawnImpl = (_executable, args) => {
+    const child = new EventEmitter();
+    child.pid = 350 + starts.length;
+    current = child;
+    const candidate = args[0].includes('runtime-candidates');
+    starts.push(candidate ? 'candidate' : 'current');
+    if (starts.length === 3) setTimeout(() => child.emit('exit', 0, null), 5);
+    return child;
+  };
+
+  const result = await superviseDaemon(
+    { channel: 'testing', update: true },
+    paths,
+    runtimeA,
+    {
+      spawnImpl,
+      updateIntervalMs: 5,
+      restartBackoffMs: 1,
+      healthWindowMs: 1,
+      maxIterations: 3,
+      stopExisting: false,
+      remoteHeadFn: () => runtimeB.head,
+      candidatePrepareFn: async () => runtimeB,
+      runDevBridgeCliFn: (command, _paths, runtime) => {
+        events.push(`${command}:${runtime.head}`);
+        if (command === 'stop') setTimeout(() => current.emit('exit', 0, null), 0);
+        return command === 'doctor' ? 1 : 0;
+      },
+      runDevBridgeCliCapturedFn: (command, _paths, runtime) => {
+        events.push(`${command}:${runtime.head}`);
+        if (command === 'pause') return { status: 0, stdout: JSON.stringify({ activeLock: true, paused: true }) };
+        if (command === 'stop') {
+          setTimeout(() => current.emit('exit', 0, null), 0);
+          return { status: 0, stdout: JSON.stringify({ activeLock: true, stopped: true }) };
+        }
+        throw new Error(`unexpected captured command: ${command}`);
+      },
+      recordActivationFn: (_paths, record) => { records.push(record); },
+      resolveChannelRefFn: () => runtimeA.ref,
+      updateCheckDelayFn: timer,
+      healthCheckDelayFn: timer,
+      delayFn: timer,
+    },
+  );
+
+  assert.equal(result, 0);
+  assert.deepEqual(starts, ['current', 'candidate', 'current']);
+  assert.ok(events.indexOf(`pause:${runtimeB.head}`) < events.indexOf(`doctor:${runtimeB.head}`));
+  assert.ok(events.indexOf(`doctor:${runtimeB.head}`) < events.indexOf(`stop:${runtimeB.head}`));
+  assert.equal(events.includes(`resume:${runtimeB.head}`), false);
+  const rolledBack = records.findLast((record) => record.state === 'rolled-back');
+  assert.equal(rolledBack.current.head, runtimeA.head);
+  assert.equal(rolledBack.failedCandidate.head, runtimeB.head);
+  assert.match(rolledBack.error.message, /health doctor failed/u);
 });
 
 test('supervisor restarts an unexpected daemon crash without mutating runtime', async () => {
