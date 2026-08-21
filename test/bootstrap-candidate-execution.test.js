@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { validateRuntimeCandidate, candidateValidationAvailability } from '../src/bootstrap/candidate-validator.mjs';
+import { validateRuntimeCandidate, candidateValidationAvailability, candidateRepositoryExecutionFactory } from '../src/bootstrap/candidate-validator.mjs';
 import { runtimeArtifactSha256 } from '../src/bootstrap/release-integrity.mjs';
 import { REPOSITORY_EXECUTION_RESULT_PROTOCOL, REPOSITORY_EXECUTION_STATUS_PROTOCOL } from '../src/runtime/repository-execution.js';
 
@@ -88,4 +88,13 @@ test('default candidate validation fails closed when no local validation route e
       /no local execution routes/u,
     );
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('candidate validation honors only the configured VM fast route and never selects fast host execution', () => {
+  const generic = () => 'generic';
+  const fastVm = () => 'fast-vm';
+  const dependencies = { createExecution: generic, createFastVmExecution: fastVm };
+  assert.equal(candidateRepositoryExecutionFactory({ execution: { fastVmDefaultSwitch: true, fastHost: false } }, dependencies), fastVm);
+  assert.equal(candidateRepositoryExecutionFactory({ execution: { fastVmDefaultSwitch: false, fastHost: true } }, dependencies), generic);
+  assert.equal(candidateRepositoryExecutionFactory({ execution: {} }, dependencies), generic);
 });

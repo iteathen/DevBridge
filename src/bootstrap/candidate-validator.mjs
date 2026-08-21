@@ -8,6 +8,7 @@ import {
   loadEnvironmentExecutionRoutes,
   validationEnvironmentExecutionRoute,
 } from '../app/repository-execution.js';
+import { createFastVmRepositoryExecution } from '../app/fast-vm-repository-execution.js';
 import {
   REPOSITORY_EXECUTION_REQUEST_PROTOCOL,
   normalizeRepositoryExecutionResult,
@@ -39,6 +40,13 @@ function protectedValues(config, policy, env) {
     .filter((value) => typeof value === 'string' && value.length >= 8);
 }
 
+export function candidateRepositoryExecutionFactory(config, {
+  createExecution = createRepositoryExecution,
+  createFastVmExecution = createFastVmRepositoryExecution,
+} = {}) {
+  return config?.execution?.fastVmDefaultSwitch === true ? createFastVmExecution : createExecution;
+}
+
 async function createExecutionContext(paths, runtime, env) {
   const config = await loadConfig(paths.config ?? path.join(paths.home, 'config.json'));
   const policy = await loadEnvironmentExecutionRoutes(config.state.directory);
@@ -54,7 +62,8 @@ async function createExecutionContext(paths, runtime, env) {
     repositoryId: route.subject,
     runId: `runtime-${String(runtime.head).slice(0, 16).toLowerCase()}`,
   };
-  const execution = await createRepositoryExecution({
+  const createExecution = candidateRepositoryExecutionFactory(config);
+  const execution = await createExecution({
     stateDirectory: config.state.directory,
     env,
     routes: policy,
