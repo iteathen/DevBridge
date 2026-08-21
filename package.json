@@ -2,6 +2,10 @@
   "name": "devbridge",
   "version": "0.1.0",
   "private": true,
+  "devbridge": {
+    "stage0Protocol": 1,
+    "runtimeUpdateProtocol": 1
+  },
   "description": "DevBridge: safely connect remote coding controllers to a locally controlled development environment.",
   "type": "module",
   "engines": {
