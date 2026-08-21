@@ -535,7 +535,7 @@ export function spawnDevBridgeDaemon(paths, runtime, spawnImpl = spawn) {
     env: process.env,
     stdio: 'inherit',
     shell: false,
-    windowsHide: false,
+    windowsHide: true,
   });
 }
 

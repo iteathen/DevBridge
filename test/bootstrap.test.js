@@ -20,6 +20,7 @@ import {
   resolveChannelRef,
   resolveBootstrapPaths,
   runDevBridgeCli,
+  spawnDevBridgeDaemon,
   syncInstalledLauncher,
   writeSetupState,
 } from '../src/bootstrap/transactional-bootstrap.mjs';
@@ -220,4 +221,21 @@ test('runtime CLI launch never uses a shell', () => {
   assert.equal(observed.executable, process.execPath);
   assert.deepEqual(observed.args, ['/managed/runtime/src/cli.js', 'poll-once', '--config', '/operator/config.json']);
   assert.equal(observed.options.shell, false);
+});
+
+test('supervised daemon launch stays headless on Windows', () => {
+  let observed;
+  const child = { pid: 1234 };
+  const spawnImpl = (executable, args, options) => { observed = { executable, args, options }; return child; };
+  const result = spawnDevBridgeDaemon(
+    { runtime: '/managed/runtime', config: '/operator/config.json' },
+    { runtimeDir: '/managed/runtime', cliPath: '/managed/runtime/src/cli.js' },
+    spawnImpl,
+  );
+  assert.equal(result, child);
+  assert.equal(observed.executable, process.execPath);
+  assert.deepEqual(observed.args, ['/managed/runtime/src/cli.js', 'daemon', '--config', '/operator/config.json']);
+  assert.equal(observed.options.shell, false);
+  assert.equal(observed.options.windowsHide, true);
+  assert.equal(observed.options.stdio, 'inherit');
 });

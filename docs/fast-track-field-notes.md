@@ -392,14 +392,14 @@ The fast track has now exposed and recorded the following production work. The t
 | Hand-edited single-repository setup hid discoverable choices and conflated visibility with trust | Discover repositories first; present collaborators as candidates; require explicit repositories, numeric actor trust, VM selections, and execution choice | [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): transactional provider-complete discover/select/provision/re-entry UX for both host families |
 | Reopening setup on every launch could accidentally revisit authority-bearing choices | Durable completion marker; normal launches locked out; explicit `setup` repairs/reconfigures | [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): versioned multi-phase setup journal with exact recovery semantics |
 | Uninstall without ownership evidence could delete foreign/shared infrastructure | Exact install manifest, two confirmation-protected scopes, provider re-observation, referenced-image protection, external-root preservation | [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): versioned artifact provenance and interruption-safe cleanup reports |
-| Foreground windows/VM consoles interfered with ordinary unattended work | Headless CLI start by default, bounded logs, explicit foreground daemon and explicit VM `Show` action | [Stage 7 #115](https://github.com/iteathen/DevBridge/issues/115) and [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): qualified service/autostart/log/console lifecycle |
+| Foreground windows/VM consoles interfered with ordinary unattended work | Keep the background supervisor and its daemon child hidden, retain bounded logs, and reserve foreground daemon/VM `Show` for explicit actions. The installed canary exposed one missed `windowsHide` flag on the supervised daemon child; the candidate fixes and regression-tests it. | [Stage 7 #115](https://github.com/iteathen/DevBridge/issues/115) and [Stage 8 #116](https://github.com/iteathen/DevBridge/issues/116): qualified service/autostart/log/console lifecycle |
 
 ### Evidence boundaries and unresolved work
 
 The current evidence must not be overstated:
 
 - Real-provider evidence exists only for Windows/Hyper-V with one Ubuntu profile. Linux KVM/QEMU/libvirt remains unqualified and is a first-class [Stage 7 #115](https://github.com/iteathen/DevBridge/issues/115) requirement.
-- The live GitHub queue poll was empty. Direct Stage 6 execution, deterministic tests, an explicit Codex smoke, and daemon lifecycle all passed, but a real trusted remote task moving through controller intent, exact VM, candidate return, host verification, and isolated-branch publication still needs an end-to-end canary.
+- A real trusted remote task now passed through GitHub provenance, controller intent, the exact VM, host verification, status projection, and no-diff completion. An intentional bounded persistent proposal is still needed to qualify candidate return and isolated-branch publication end to end.
 - Save/resume recovery was proven by starting a new runtime after resume. An already-open persistent transport interrupted by save, provider restart, network change, or daemon restart still needs explicit reconcile tests; automatic replay of an ambiguous frame must remain forbidden.
 - The owned NAT setup remains incomplete because host TCP/IP/NAT mutation required elevation. The Default Switch route is usable fast-track evidence, not production network readiness.
 - The published base intentionally retained one SSH host identity. The clean probe proved unique-key generation, but authenticated enrollment is still absent.
@@ -424,6 +424,17 @@ Before the disposable branch is thrown away or any result is promoted:
 6. use Stage 9 to remove transitional/direct-host/cache/configuration scaffolding after the production path is proved;
 7. delete saved probe/network/cache artifacts only through exact ownership-checked operations.
 
+## 2026-08-20 bootstrap validation canary
+
+- The stage-0 bootstrap migrated the local managed runtime from `b50c49dfa953c7078b4a177560dcbcfa04f9dcb3` to `df47cb0ec00452549f98d83e2f13f4f05c84c59a` and retained the former head at `refs/devbridge/stage0-previous`. Setup/config backups remained intact and the installed polling-only daemon passed doctor.
+- Trusted GitHub task [#133](https://github.com/iteathen/DevBridge/issues/133) configured and compiled a disposable C hello-world project with GCC 13.3.0, then exposed a cross-host execution-mode bug: the CMake build tree was collected through the Windows authoritative worktree between operations, so the ELF executable returned to the guest without an executable bit and CTest received `permission denied`.
+- The generic correction gives deterministic adapters opaque managed-scratch arguments, materializes them only as run-scoped bridge `scratch` locations inside the exact repository VM, and adds host-initiated, idempotent, verified-absent guest scratch cleanup. The durable scratch ledger records environment cleanup separately so a failed/interrupted cleanup is reconciled before local scratch removal. No host path or provider identity enters the deterministic operation contract.
+- Retry [#134](https://github.com/iteathen/DevBridge/issues/134) proved that the executable now remains runnable across configure/build/test sessions. It also exposed a task-fixture mistake: an anchored CMake `PASS_REGULAR_EXPRESSION` rejected newline-terminated output even though CTest launched the binary and observed `Hello, world!`.
+- Final retry [#135](https://github.com/iteathen/DevBridge/issues/135) passed all three VM operations: CMake configure with GNU C 13.3.0, compile/link of `hello`, and CTest `1/1` with `100% tests passed`. DevBridge verified both ephemeral input files absent, verified the one VM scratch directory absent, kept the authoritative worktree clean, and skipped publication because there was no project diff.
+- Qualification after the correction: repository preflight passed (`41` syntax files, `3` JSON files, `34` targeted tests); the final full Node suite passed (`532` total, `526` passed, `6` Windows-capability skips, `0` failed). The exact legacy `scratch/` residue from failed run `pp-133-7361d897bd1634f7` was ownership-checked, removed, and verified clean.
+- The installed `start` canary opened an empty Windows Terminal at the exact daemon-child start time. The top-level background supervisor was hidden, but `spawnDevBridgeDaemon` explicitly used `windowsHide: false`; on this Windows 11 default-terminal configuration that allocated a visible terminal for the child. The candidate now requires `windowsHide: true` and has a launch-options regression test. The affected daemon was stopped cooperatively, which closed the exact terminal process, and the accepted runtime was restarted with both supervisor and daemon window handles at zero.
+- Publication boundary: this correction is currently a dirty-worktree candidate on `codex/temp-fast-functional`, and the hidden fast daemon is running that workspace candidate. The managed installation remains on the accepted `df47cb0ec00452549f98d83e2f13f4f05c84c59a` generation until this correction is reviewed/published and admitted by the bootstrap updater.
+
 ## Current VM bring-up frontier
 
 Completed:
@@ -445,7 +456,7 @@ Completed:
 Next:
 
 1. Reconcile or leave clearly planned the incomplete owned NAT network; do not hide its degraded production readiness behind the Default Switch workaround.
-2. Run one real trusted-task end-to-end canary through controller intent, the exact VM route, candidate return, host verification, and isolated-branch publication.
+2. Run one real trusted-task publication canary with an intentional bounded project diff through candidate return, host verification, and isolated-branch publication.
 3. Add the required Linux/KVM-QEMU-libvirt qualification path; do not treat Windows/Hyper-V success as provider-family completion.
 4. Remove unreachable positional guest cache blobs only through exact disposable-cache cleanup; retain no compatibility code.
 5. Decide whether the disposable unattended probe remains as restartable evidence or is removed through an exact owned-resource cleanup action.
