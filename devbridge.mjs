@@ -1,15 +1,30 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
 export const SOURCE_REPOSITORY = 'https://github.com/iteathen/DevBridge.git';
+export const STAGE0_PROTOCOL = 1;
+const ACTIVATION_PROTOCOL = 'devbridge/runtime-activation-v1';
 const MINIMUM_NODE = Object.freeze([22, 16, 0]);
 const CAPTURE_LIMIT = 4 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 5 * 60 * 1000;
+const TERMINAL_ACTIVATION_STATES = new Set(['healthy', 'rolled-back', 'candidate-failed']);
+const STAGE0_COMMANDS = new Set(['bootstrap-status', 'migrate-legacy-runtime']);
+const RUNTIME_COMMANDS = new Set(['doctor', 'poll-once', 'run-once', 'daemon', 'status', 'stop', 'restart']);
+const VALUE_FLAGS = new Set([
+  '--home', '--config', '--channel', '--release-mode', '--release-manifest', '--release-public-key',
+]);
 const SCRUBBED_GIT_ENVIRONMENT = Object.freeze([
   'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_ASKPASS', 'GIT_CONFIG', 'GIT_CONFIG_COUNT',
   'GIT_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_SSH', 'GIT_SSH_COMMAND', 'GIT_WORK_TREE',
@@ -17,6 +32,7 @@ const SCRUBBED_GIT_ENVIRONMENT = Object.freeze([
 ]);
 
 function fail(message) { throw new Error(message); }
+function exactHead(value) { return typeof value === 'string' && /^[0-9a-f]{40}$/iu.test(value) ? value.toLowerCase() : null; }
 
 export function assertSupportedNode(version = process.versions.node) {
   const parts = String(version).split('.').map((value) => Number.parseInt(value, 10));
@@ -42,17 +58,31 @@ function expandHome(value) {
 export function parseStage0Args(argv) {
   let home = null;
   let noUpdate = false;
+  let command = null;
+  let expectedRuntimeHead = null;
+  let validatedCandidateHead = null;
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
-    if (value === '--home') {
+    if (STAGE0_COMMANDS.has(value)) {
+      if (command !== null) fail('Only one Stage 0 command may be supplied.');
+      command = value;
+    } else if (value === '--home') {
       if (home !== null) fail('Only one --home value may be supplied.');
       home = takeValue(argv, index, value);
       index += 1;
     } else if (value === '--no-update') {
       noUpdate = true;
+    } else if (value === '--expected-runtime-head') {
+      expectedRuntimeHead = exactHead(takeValue(argv, index, value));
+      if (!expectedRuntimeHead) fail('--expected-runtime-head requires an exact 40-hex Git head.');
+      index += 1;
+    } else if (value === '--validated-candidate-head') {
+      validatedCandidateHead = exactHead(takeValue(argv, index, value));
+      if (!validatedCandidateHead) fail('--validated-candidate-head requires an exact 40-hex Git head.');
+      index += 1;
     }
   }
-  return { home, noUpdate };
+  return { home, noUpdate, command, expectedRuntimeHead, validatedCandidateHead };
 }
 
 export function resolveStage0Paths(args, environment = process.env) {
@@ -61,6 +91,8 @@ export function resolveStage0Paths(args, environment = process.env) {
   return {
     home,
     runtime: path.join(home, 'runtime'),
+    activationStateFile: path.join(home, 'runtime-activation.json'),
+    legacyRuntimeRoot: path.join(home, 'legacy-runtime-migrations'),
     gitHome: path.join(home, 'bootstrap-git-home'),
     hooks: path.join(home, 'bootstrap-empty-hooks'),
   };
@@ -121,12 +153,23 @@ function normalizedRemote(value) {
   return String(value || '').trim().replace(/\/$/u, '').replace(/\.git$/u, '').toLowerCase();
 }
 
-function validateRuntimeRepository(paths, runner) {
-  const gitDirectory = path.join(paths.runtime, '.git');
-  if (!existsSync(gitDirectory)) fail(`Managed runtime is not a Git checkout: ${paths.runtime}`);
-  const remote = runGit(['remote', 'get-url', 'origin'], { paths, cwd: paths.runtime, runner }).stdout;
+function isWithin(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+}
+
+function runtimeMinimumStage0Protocol(manifest) {
+  const value = manifest?.devbridge?.bootstrap?.minimumStage0Protocol ?? 0;
+  if (!Number.isSafeInteger(value) || value < 0) fail('Managed runtime declares an invalid Stage 0 compatibility requirement.');
+  return value;
+}
+
+function validateRuntimeRepository(paths, runner, runtimeDir = paths.runtime) {
+  const gitDirectory = path.join(runtimeDir, '.git');
+  if (!existsSync(gitDirectory)) fail(`Managed runtime is not a Git checkout: ${runtimeDir}`);
+  const remote = runGit(['remote', 'get-url', 'origin'], { paths, cwd: runtimeDir, runner }).stdout;
   if (normalizedRemote(remote) !== normalizedRemote(SOURCE_REPOSITORY)) fail('Managed runtime origin does not match the trusted DevBridge repository.');
-  const dirty = runGit(['status', '--porcelain'], { paths, cwd: paths.runtime, runner }).stdout.trim();
+  const dirty = runGit(['status', '--porcelain'], { paths, cwd: runtimeDir, runner }).stdout.trim();
   if (dirty) fail('Managed DevBridge runtime contains local changes; refusing to execute it.');
 }
 
@@ -140,29 +183,185 @@ function validateRuntimeShape(runtime) {
   try { manifest = JSON.parse(readFileSync(packagePath, 'utf8')); }
   catch { fail('Fetched DevBridge package.json is not valid JSON.'); }
   if (manifest?.name !== 'devbridge' || typeof manifest.version !== 'string') fail('Fetched runtime does not identify itself as DevBridge.');
-  return { secureBootstrapPath, version: manifest.version };
+  const minimumStage0Protocol = runtimeMinimumStage0Protocol(manifest);
+  if (minimumStage0Protocol > STAGE0_PROTOCOL) {
+    fail(`Managed runtime requires Stage 0 protocol ${minimumStage0Protocol}, but this launcher supports ${STAGE0_PROTOCOL}; refresh the local Stage 0 launcher before starting it.`);
+  }
+  return { secureBootstrapPath, version: manifest.version, minimumStage0Protocol };
+}
+
+export function readStage0ActivationState(paths) {
+  if (!existsSync(paths.activationStateFile)) return null;
+  let parsed;
+  try { parsed = JSON.parse(readFileSync(paths.activationStateFile, 'utf8')); }
+  catch { fail('Runtime activation state is malformed; refusing to guess the accepted runtime.'); }
+  if (parsed?.protocol !== ACTIVATION_PROTOCOL || typeof parsed.state !== 'string') {
+    fail('Runtime activation state uses an unsupported protocol; refusing to guess the accepted runtime.');
+  }
+  return parsed;
+}
+
+function runtimeFromDirectory(paths, runtimeDir, runner, expectedHead = null) {
+  const resolved = path.resolve(runtimeDir);
+  if (!isWithin(paths.home, resolved)) fail('Accepted runtime identity escapes the installation home.');
+  validateRuntimeRepository(paths, runner, resolved);
+  const shape = validateRuntimeShape(resolved);
+  const head = exactHead(String(runGit(['rev-parse', 'HEAD'], { paths, cwd: resolved, runner }).stdout || '').trim());
+  if (!head) fail('Managed runtime HEAD is not an exact Git commit.');
+  if (expectedHead && head !== expectedHead) fail('Managed runtime HEAD does not match durable activation state.');
+  return { ...shape, head, runtimeDir: resolved };
+}
+
+export function selectStage0Runtime(paths, runner = defaultRunner) {
+  const activation = readStage0ActivationState(paths);
+  if (activation) {
+    if (!TERMINAL_ACTIVATION_STATES.has(activation.state)) {
+      fail(`Runtime activation is incomplete (${activation.state}); refusing to fall back to an older checkout. Inspect bootstrap-status and reconcile the interrupted activation before starting DevBridge.`);
+    }
+    const current = activation.current;
+    const head = exactHead(current?.head);
+    if (!current?.runtimeDir || !head) fail('Runtime activation state does not identify one exact accepted runtime.');
+    return { runtime: runtimeFromDirectory(paths, current.runtimeDir, runner, head), activationState: activation.state };
+  }
+
+  if (!existsSync(paths.runtime)) fail('Managed DevBridge runtime is absent.');
+  return { runtime: runtimeFromDirectory(paths, paths.runtime, runner), activationState: 'legacy' };
 }
 
 export function ensureStage0Runtime(args, paths, runner = defaultRunner) {
   mkdirSync(paths.home, { recursive: true });
   mkdirSync(paths.gitHome, { recursive: true });
   mkdirSync(paths.hooks, { recursive: true });
-  if (!existsSync(paths.runtime)) {
+  if (!existsSync(paths.runtime) && !existsSync(paths.activationStateFile)) {
     if (args.noUpdate) fail('--no-update requires an existing managed DevBridge runtime.');
     runGit(['clone', '--no-tags', '--depth', '1', '--single-branch', '--branch', 'main', SOURCE_REPOSITORY, paths.runtime], { paths, runner });
   }
-  validateRuntimeRepository(paths, runner);
-  return validateRuntimeShape(paths.runtime);
+  return selectStage0Runtime(paths, runner);
 }
 
-export async function bootstrapStage0(argv = process.argv.slice(2), runner = defaultRunner) {
+function forwardedRuntimeArgs(argv, command = null, forceNoUpdate = false) {
+  const result = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (STAGE0_COMMANDS.has(value)) continue;
+    if (value === '--expected-runtime-head' || value === '--validated-candidate-head') { index += 1; continue; }
+    if (VALUE_FLAGS.has(value)) {
+      result.push(value, argv[index + 1]);
+      index += 1;
+      continue;
+    }
+    if (RUNTIME_COMMANDS.has(value)) {
+      if (command === null) result.push(value);
+      continue;
+    }
+    result.push(value);
+  }
+  if (command !== null) result.unshift(command);
+  if (forceNoUpdate && !result.includes('--no-update')) result.push('--no-update');
+  return result;
+}
+
+function remoteMainHead(paths, runner) {
+  const result = runGit(['ls-remote', '--exit-code', '--heads', SOURCE_REPOSITORY, 'refs/heads/main'], { paths, runner });
+  const head = exactHead(String(result.stdout || '').trim().split(/\s+/u)[0]);
+  if (!head) fail('Could not resolve one exact trusted main head for legacy migration.');
+  return head;
+}
+
+async function importBootstrap(runtime, importModuleFn) {
+  const module = await importModuleFn(pathToFileURL(runtime.secureBootstrapPath).href);
+  if (typeof module.bootstrap !== 'function') fail('Managed DevBridge runtime does not export the secure bootstrap entrypoint.');
+  return module;
+}
+
+function migrationBackup(paths, head) {
+  return {
+    root: path.join(paths.legacyRuntimeRoot, head),
+    runtime: path.join(paths.legacyRuntimeRoot, head, 'runtime'),
+    activation: path.join(paths.legacyRuntimeRoot, head, 'runtime-activation.json'),
+  };
+}
+
+function restoreLegacyRuntime(paths, backup) {
+  if (existsSync(paths.runtime)) rmSync(paths.runtime, { recursive: true, force: true });
+  if (existsSync(backup.runtime)) renameSync(backup.runtime, paths.runtime);
+  if (existsSync(paths.activationStateFile)) rmSync(paths.activationStateFile, { force: true });
+  if (existsSync(backup.activation)) renameSync(backup.activation, paths.activationStateFile);
+}
+
+async function migrateLegacyRuntime(argv, args, paths, selection, runner, importModuleFn) {
+  if (args.noUpdate) fail('migrate-legacy-runtime cannot be combined with --no-update.');
+  if (argv.includes('--release-mode') && argv[argv.indexOf('--release-mode') + 1] === 'production') {
+    fail('migrate-legacy-runtime is a development/testing compatibility transition; production recovery must use the signed release path.');
+  }
+  if (!args.expectedRuntimeHead || !args.validatedCandidateHead) {
+    fail('migrate-legacy-runtime requires --expected-runtime-head and --validated-candidate-head exact Git heads.');
+  }
+  const current = selection.runtime;
+  if (current.minimumStage0Protocol !== 0) fail('migrate-legacy-runtime is only available for pre-compatibility runtimes.');
+  if (path.resolve(current.runtimeDir) !== path.resolve(paths.runtime)) fail('Legacy migration requires the accepted runtime to be the canonical legacy checkout.');
+  if (current.head !== args.expectedRuntimeHead) fail('Accepted runtime changed since the operator authorized legacy migration.');
+  const desiredHead = remoteMainHead(paths, runner);
+  if (desiredHead !== args.validatedCandidateHead) fail('Trusted main changed after the operator validated the candidate; revalidate the exact current head before migration.');
+
+  const currentModule = await importBootstrap(current, importModuleFn);
+  const stopStatus = await currentModule.bootstrap(forwardedRuntimeArgs(argv, 'stop', true), undefined, { stage0Protocol: STAGE0_PROTOCOL });
+  if (stopStatus !== 0) fail(`Legacy runtime did not stop cooperatively (exit ${stopStatus}); refusing migration.`);
+
+  const backup = migrationBackup(paths, current.head);
+  if (existsSync(backup.root)) fail('A legacy migration backup already exists for the accepted runtime; reconcile it before retrying.');
+  mkdirSync(backup.root, { recursive: true });
+  renameSync(paths.runtime, backup.runtime);
+  if (existsSync(paths.activationStateFile)) renameSync(paths.activationStateFile, backup.activation);
+
+  try {
+    runGit(['clone', '--no-tags', '--depth', '1', '--single-branch', '--branch', 'main', SOURCE_REPOSITORY, paths.runtime], { paths, runner });
+    const migrated = runtimeFromDirectory(paths, paths.runtime, runner, desiredHead);
+    if (migrated.minimumStage0Protocol < 1) fail('Migrated runtime does not implement the Stage 0 compatibility contract.');
+    const nextModule = await importBootstrap(migrated, importModuleFn);
+    const doctorStatus = await nextModule.bootstrap(forwardedRuntimeArgs(argv, 'doctor', true), undefined, { stage0Protocol: STAGE0_PROTOCOL });
+    if (doctorStatus !== 0) fail(`Migrated runtime doctor failed with exit ${doctorStatus}.`);
+    process.stdout.write(`[devbridge-stage0] legacy-migration previous=${current.head} current=${migrated.head} protocol=${STAGE0_PROTOCOL}\n`);
+    const status = await nextModule.bootstrap(forwardedRuntimeArgs(argv, 'daemon', true), undefined, { stage0Protocol: STAGE0_PROTOCOL });
+    if (status !== 0) {
+      restoreLegacyRuntime(paths, backup);
+      return status;
+    }
+    return status;
+  } catch (error) {
+    restoreLegacyRuntime(paths, backup);
+    throw error;
+  }
+}
+
+function printBootstrapStatus(selection) {
+  process.stdout.write(`${JSON.stringify({
+    protocol: 'devbridge/stage0-status-v1',
+    stage0Protocol: STAGE0_PROTOCOL,
+    activationState: selection.activationState,
+    runtime: {
+      head: selection.runtime.head,
+      version: selection.runtime.version,
+      minimumStage0Protocol: selection.runtime.minimumStage0Protocol,
+      legacy: selection.runtime.minimumStage0Protocol === 0,
+    },
+  })}\n`);
+  return 0;
+}
+
+export async function bootstrapStage0(argv = process.argv.slice(2), runner = defaultRunner, {
+  importModuleFn = (url) => import(url),
+} = {}) {
   assertSupportedNode();
   const args = parseStage0Args(argv);
   const paths = resolveStage0Paths(args);
-  const runtime = ensureStage0Runtime(args, paths, runner);
-  const module = await import(pathToFileURL(runtime.secureBootstrapPath).href);
-  if (typeof module.bootstrap !== 'function') fail('Managed DevBridge runtime does not export the secure bootstrap entrypoint.');
-  return module.bootstrap(argv);
+  const selection = ensureStage0Runtime(args, paths, runner);
+  if (args.command === 'bootstrap-status') return printBootstrapStatus(selection);
+  if (args.command === 'migrate-legacy-runtime') {
+    return migrateLegacyRuntime(argv, args, paths, selection, runner, importModuleFn);
+  }
+  const module = await importBootstrap(selection.runtime, importModuleFn);
+  return module.bootstrap(forwardedRuntimeArgs(argv), undefined, { stage0Protocol: STAGE0_PROTOCOL });
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
