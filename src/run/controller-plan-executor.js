@@ -163,7 +163,7 @@ export class ControllerPlanExecutor {
     const entry = planState.environmentScratchCleanup;
     if (!entry || entry.state === 'verified-absent') return;
     if (!this.#processRunner || typeof this.#processRunner.cleanup !== 'function') {
-      throw new PolicyError('repository-code execution used environment scratch but no cleanup capability is available');
+      throw new PolicyError('deterministic operation used environment scratch but no cleanup capability is available');
     }
     entry.state = 'cleanup-planned';
     entry.attempts = (entry.attempts ?? 0) + 1;
@@ -348,11 +348,12 @@ export class ControllerPlanExecutor {
       await persist();
       for (const operation of plan.operations) {
         this.#registry.validate(operation.operation, operation.params);
-        if (this.#registry.executionClass(operation.operation) === 'repository-code' && !planState.environmentScratchCleanup) {
+        if (this.#registry.usesEnvironmentScratch(operation.operation)) {
+          const existing = planState.environmentScratchCleanup;
           planState.environmentScratchCleanup = {
             resource: 'scratch',
             state: 'planned',
-            attempts: 0,
+            attempts: existing?.attempts ?? 0,
             updatedAt: new Date().toISOString(),
           };
           await persist();
