@@ -92,13 +92,19 @@ async function createExecutionContext(paths, runtime, env) {
   return { execution, scope };
 }
 
-async function runCheck(execution, scope, check) {
+async function runCheck(execution, scope, check, activeProtocol) {
   const result = normalizeRepositoryExecutionResult(await execution.execute({
     protocol: REPOSITORY_EXECUTION_REQUEST_PROTOCOL,
     operation: check.operation,
     scope,
     invocation: { tool: 'node', arguments: check.arguments, workingDirectory: '.' },
-    environment: { CI: '1', NO_COLOR: '1', GIT_TERMINAL_PROMPT: '0', DEVBRIDGE_NONINTERACTIVE: '1' },
+    environment: {
+      CI: '1',
+      NO_COLOR: '1',
+      GIT_TERMINAL_PROMPT: '0',
+      DEVBRIDGE_NONINTERACTIVE: '1',
+      DEVBRIDGE_STAGE0_PROTOCOL: String(activeProtocol),
+    },
     transfers: [],
     limits: { timeoutMs: check.timeoutMs, maxOutputBytes: 4 * 1024 * 1024 },
     stdin: null,
@@ -142,7 +148,7 @@ export async function validateRuntimeCandidate(paths, runtime, _legacyRunner = n
   if (status.ready !== true) fail(`candidate validation execution is unavailable: ${status.reason ?? 'execution boundary is not ready'}`);
 
   const checks = {};
-  for (const check of CHECKS) checks[check.name] = await runCheck(context.execution, context.scope, check);
+  for (const check of CHECKS) checks[check.name] = await runCheck(context.execution, context.scope, check, activeProtocol);
 
   const after = await runtimeArtifactSha256(runtimeDir);
   if (after.sha256 !== before.sha256) fail('candidate artifact changed during execution validation');
