@@ -346,6 +346,67 @@ test('interactive environment setup retries invalid selections instead of exitin
   assert.equal(updated.execution.enabled, true);
 });
 
+test('Windows environment setup invokes only the bounded network-elevation seam with exact prescribed consent', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'devbridge-environment-elevation-'));
+  const state = path.join(root, 'state');
+  const foundationRoot = path.join(state, 'environment-foundation');
+  mkdirSync(foundationRoot, { recursive: true });
+  const access = {
+    family: 'linux', user: 'devbridge',
+    identityFile: path.join(root, 'identity'), knownHostsFile: path.join(root, 'known-hosts'),
+  };
+  writeFileSync(path.join(foundationRoot, 'execution-routes.json'), `${JSON.stringify({
+    protocol: 'devbridge/environment-execution-routes-v1',
+    routes: [
+      { subject: '99', profile: 'linux-development', preferred: true, validation: true, access },
+      { subject: '1', profile: 'linux-development', preferred: true, validation: false, access },
+    ],
+  })}\n`);
+  const configFile = path.join(root, 'config.json');
+  writeFileSync(configFile, `${JSON.stringify({ execution: { enabled: false } }, null, 2)}\n`);
+  const config = { __file: configFile, state: { directory: state }, github: { queueRepositories: ['owner/one'] } };
+  let networkingReady = false;
+  const foundation = {
+    async inspect() {
+      return {
+        identity: 'f'.repeat(32), ready: networkingReady, state: networkingReady ? 'ready' : 'degraded',
+        capabilities: {
+          management: { ready: true, state: 'ready', reason: null },
+          networking: { ready: networkingReady, state: networkingReady ? 'ready' : 'degraded', reason: networkingReady ? null : 'owned network is absent' },
+        },
+      };
+    },
+    async listImages() { return [{ identity: 'img-' + 'a'.repeat(32), profile: 'linux-development', retiredAt: null }]; },
+    async listEnvironments() {
+      return [{
+        record: { identity: 'env-' + 'b'.repeat(32), subject: '1', profile: 'linux-development' },
+        observation: { exists: true, owned: true, compatible: true, state: 'running' },
+      }];
+    },
+  };
+  let elevationRequest = null;
+  const result = await setupEnvironments(
+    config,
+    [{ name: 'owner/one', id: '1' }],
+    ['setup', '--environment', 'owner/one', '--enable-execution', '--allow-provider-elevation', '--confirm', 'APPLY'],
+    {
+      input: { isTTY: false },
+      output: outputPort(),
+      platform: 'win32',
+      foundationFactory: async () => foundation,
+      networkSetupFn: async (request) => {
+        elevationRequest = request;
+        networkingReady = true;
+        return { ready: true, changed: true };
+      },
+    },
+  );
+  assert.equal(result.completed, true);
+  assert.equal(elevationRequest.foundation, foundation);
+  assert.equal(elevationRequest.stateDirectory, state);
+  assert.equal(elevationRequest.allowElevation, true);
+});
+
 test('install manifest is the uninstall path allowlist and app-only preserves config/state', async () => {
   const home = mkdtempSync(path.join(tmpdir(), 'devbridge-uninstall-'));
   const runtime = path.join(home, 'runtime');

@@ -163,6 +163,8 @@ Real virtualization qualification may require self-hosted/dedicated virtualizati
 
 ### Stage 8 — Windows/Linux installer/setup/reconfiguration integration — #116
 
+The disposable Windows bootstrap now includes one bounded Stage-8 slice for an observed privilege split: when ordinary Hyper-V management is ready but the DevBridge-owned gateway/WinNAT needs an administrator token, setup uses an exact-request, double-consent, hidden UAC helper and re-verifies through the existing foundation stud. This does not complete Stage 8; Linux setup, prerequisite installation/authorization/reboot handling, image acquisition, guest enrollment, full repair/reconfiguration, and migration remain open.
+
 Coordinate with issue #103.
 
 Setup should discover before prompting:

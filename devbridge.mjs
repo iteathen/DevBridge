@@ -472,6 +472,7 @@ function printHelp() {
     '  --environment <id>   Set up a persistent VM for a repository (repeatable)\n' +
     '  --all-environments | --no-environments\n' +
     '  --enable-execution | --disable-execution\n' +
+    '  --allow-provider-elevation  Permit one bounded setup UAC request (setup only; requires APPLY)\n' +
     '  --app-only | --purge  Select uninstall scope (uninstall only)\n' +
     '  --confirm <token>     Exact APPLY for setup authority changes or REMOVE for uninstall\n' +
     '  --no-update         Do not discover or activate updates\n' +

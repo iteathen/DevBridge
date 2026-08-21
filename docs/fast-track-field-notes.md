@@ -200,6 +200,15 @@ Main-branch requirement exposed:
 - Provider command wrappers must suppress progress streams and preserve the useful end of bounded errors; setup cannot ask an operator to diagnose serialized progress noise.
 - Stage 8 must split ordinary Hyper-V management from elevated host-network setup, request UAC only for the bounded prerequisite mutation, preserve restart/re-entry state, and verify the resulting owned switch, gateway, and NAT after elevation.
 
+Implemented bounded setup repair on 2026-08-20:
+
+- Managed setup now detects this exact split only when ordinary Hyper-V management is already usable and a selected environment needs the owned network.
+- Interactive setup warns and requires exact `ELEVATE`; Windows then supplies the second UAC confirmation. Prescribed setup requires `--allow-provider-elevation --confirm APPLY`.
+- The hidden elevated helper accepts only a digest-bound `environment-foundation.ensure-network` request for the pre-existing local foundation identity. It derives provider objects through the existing Hyper-V adapter, strips credential-shaped environment authority from provider subprocesses, persists request/result/journal evidence, and never elevates the daemon or repository execution.
+- The unelevated parent re-observes the exact owned switch/gateway/NAT before accepting readiness. Denial, mismatch, failure, or interruption remains fail-closed; re-entry observes before any freshly consented attempt.
+- The live workstation's prior planned network was reconciled to owned switch/NAT `db-network-2c6fe2fc8696520d`, prefix `192.168.175.0/24`, gateway `192.168.175.1/24`, without changing the normal daemon token.
+- This closes the paste-an-admin-command workaround for this narrow prerequisite. It does not complete the rest of Stage 8's feature/group/reboot/image/enrollment/Linux work.
+
 ### First SSH host-key enrollment
 
 Observed state:
@@ -401,7 +410,7 @@ The current evidence must not be overstated:
 - Real-provider evidence exists only for Windows/Hyper-V with one Ubuntu profile. Linux KVM/QEMU/libvirt remains unqualified and is a first-class [Stage 7 #115](https://github.com/iteathen/DevBridge/issues/115) requirement.
 - A real trusted remote task now passed through GitHub provenance, controller intent, the exact VM, host verification, status projection, and no-diff completion. An intentional bounded persistent proposal is still needed to qualify candidate return and isolated-branch publication end to end.
 - Save/resume recovery was proven by starting a new runtime after resume. An already-open persistent transport interrupted by save, provider restart, network change, or daemon restart still needs explicit reconcile tests; automatic replay of an ambiguous frame must remain forbidden.
-- The owned NAT setup remains incomplete because host TCP/IP/NAT mutation required elevation. The Default Switch route is usable fast-track evidence, not production network readiness.
+- The owned NAT is now reconciled on this Windows workstation, and managed setup has a bounded reusable UAC repair for the same prerequisite. The disposable execution topology still uses the Default Switch and does not by itself constitute provider-complete Stage-8 production readiness.
 - The published base intentionally retained one SSH host identity. The clean probe proved unique-key generation, but authenticated enrollment is still absent.
 - The second repository environment proves multi-environment routing, but it also clones that disposable SSH host identity. This is fast-only evidence and increases the urgency of per-environment authenticated enrollment before any production multi-repository claim.
 - The immutable image contains the earlier one-shot bridge helper. Runtime staging of the current helper avoids a compatibility parser, but production needs versioned image/helper compatibility and deliberate image migration.

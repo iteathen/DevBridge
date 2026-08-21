@@ -93,11 +93,17 @@ node ~/.devbridge/bin/devbridge.mjs setup \
   --repository owner/control --repository owner/project \
   --trusted-author 12345 \
   --no-repository-discovery \
-  --all-environments --enable-execution \
+  --all-environments --enable-execution --allow-provider-elevation \
   --confirm APPLY
 ```
 
 Use `--no-environments --disable-execution` for a polling-only installation. Repository execution never falls back to the host when an environment cannot be prepared or verified.
+
+On Windows, selected VM setup may discover that ordinary Hyper-V management works while the exact DevBridge-owned internal switch gateway and WinNAT are absent. Interactive setup then warns about the exact bounded action and requires the operator to type `ELEVATE` before Windows displays its separate UAC consent prompt. Prescribed setup must supply both `--allow-provider-elevation` and exact `--confirm APPLY`. Only `environment-foundation.ensure-network` runs in the hidden elevated helper; the daemon, repository commands, GitHub authority, and normal runtime remain unelevated.
+
+The helper accepts no PowerShell, switch name, prefix, provider object, or host path from a repository/task/controller. It binds a versioned request digest to the existing local foundation identity, derives the owned switch/gateway/NAT inside the Hyper-V adapter, writes a subject-bound result, and then the unelevated setup process independently re-inspects the exact network. Planned/launched state is durable under `environment-foundation/setup-elevation`; setup re-entry observes the provider before considering a retry. UAC denial, result mismatch, or indeterminate interruption fails closed and cannot enable execution.
+
+This is a bounded Windows network-prerequisite repair, not a claim that VM Stage 8 is complete. It deliberately refuses to use elevation as a substitute when the ordinary DevBridge account cannot manage Hyper-V. Feature installation, service repair, group/session changes, reboot, image acquisition, authenticated guest enrollment, and the first-class Linux installer remain Stage-8 work.
 
 Interactive setup accepts repository option numbers, `all`, and custom `owner/name` identities separated by spaces or commas. Trusted-author selection accepts option numbers, `self`, discovered logins, custom GitHub logins, and `id:<numeric-id>`. Custom repositories/logins/IDs are queried through the authenticated GitHub API and rejected unless GitHub returns the same canonical identity. Invalid input returns to the same prompt. Before policy is written, setup displays the verified repositories and immutable actor IDs, warns about remote job-submission authority, and requires exact `APPLY`; scripted repository/task-author changes require `--confirm APPLY`.
 
@@ -184,6 +190,7 @@ On `codex/temp-fast-functional`, the managed setup inspects the environment foun
 - Missing/unsupported prerequisites are shown as poll-only blockers.
 - Linux remains a first-class production requirement, but this disposable automatic provisioning shortcut does not pretend that its KVM/QEMU/libvirt installer path is complete.
 - Repository execution is enabled only by explicit setup choice and only when at least one selected environment becomes ready.
+- If the Windows foundation network is the remaining selected-environment prerequisite, setup uses the bounded double-consent UAC flow above and verifies the owned network after elevation instead of asking the operator to paste an administrator command.
 
 `doctor` never forces setup and reports update availability plus an explicit setup-required notice. `update` enters the candidate-validation/activation supervisor path. The canonical installed loader is refreshed only from the accepted runtime.
 

@@ -27,6 +27,7 @@ const CONFIGURATION_VALUE_FLAGS = new Set(['--repository', '--trusted-author', '
 const CONFIGURATION_BOOLEAN_FLAGS = new Set([
   '--repository-discovery', '--no-repository-discovery',
   '--all-environments', '--no-environments', '--enable-execution', '--disable-execution',
+  '--allow-provider-elevation',
 ]);
 const CHANNELS = Object.freeze({
   testing: Object.freeze(['codex/temp-fast-functional']),

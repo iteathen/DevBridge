@@ -4,6 +4,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { createInterface } from 'node:readline/promises';
 import { createEnvironmentFoundation } from '../app/environment-foundation.js';
+import { ensureWindowsFoundationNetwork } from './elevated-provider-setup.mjs';
 import {
   ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL,
   normalizeEnvironmentExecutionRoutes,
@@ -109,6 +110,7 @@ export async function setupEnvironments(config, repositoryRecords, argv, {
   platform = process.platform,
   foundationFactory = createEnvironmentFoundation,
   provisionFn = provisionRepositoryEnvironment,
+  networkSetupFn = ensureWindowsFoundationNetwork,
   promptFactory = createInterface,
 } = {}) {
   let inspection = await inspectEnvironmentSetup(config, repositoryRecords, { platform, foundationFactory });
@@ -182,6 +184,18 @@ export async function setupEnvironments(config, repositoryRecords, argv, {
   const selectedSet = new Set(selected.map((value) => value.toLowerCase()));
   for (const repository of selectedSet) {
     if (!inspection.options.some((entry) => entry.repository.toLowerCase() === repository)) throw new Error(`Environment selection is not a configured repository: ${repository}`);
+  }
+  if (platform === 'win32' && selectedSet.size > 0 && inspection.status.capabilities?.networking?.ready === false) {
+    const confirmed = argv.includes('--allow-provider-elevation') && optionValues(argv, '--confirm').includes('APPLY');
+    await networkSetupFn({
+      stateDirectory: config.state.directory,
+      foundation: inspection.foundation,
+      input,
+      output,
+      allowElevation: confirmed,
+      promptFactory,
+    });
+    inspection = await inspectEnvironmentSetup(config, repositoryRecords, { platform, foundationFactory });
   }
   for (const option of inspection.options.filter((entry) => selectedSet.has(entry.repository.toLowerCase()))) {
     if (option.ready) continue;

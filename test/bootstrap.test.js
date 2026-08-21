@@ -51,6 +51,7 @@ test('bootstrap accepts one safe command and local-only switches', () => {
   for (const command of ['install', 'setup', 'uninstall', 'update', 'start', 'logs', 'status', 'pause', 'resume', 'stop', 'restart']) assert.equal(parseBootstrapArgs([command]).command, command);
   assert.equal(parseBootstrapArgs(['setup', '--channel', 'stable', '--prompt-channel']).channel, 'stable');
   assert.equal(parseBootstrapArgs(['setup', '--repository', 'owner/one', '--confirm', 'APPLY']).command, 'setup');
+  assert.equal(parseBootstrapArgs(['setup', '--allow-provider-elevation', '--confirm', 'APPLY']).command, 'setup');
   assert.throws(() => parseBootstrapArgs(['--channel', 'evil']), /Unknown DevBridge channel/u);
   assert.throws(() => parseBootstrapArgs(['daemon', 'run-once']), /Only one/u);
   assert.throws(() => parseBootstrapArgs(['--repository', 'attacker/repo']), /require the setup command/u);
