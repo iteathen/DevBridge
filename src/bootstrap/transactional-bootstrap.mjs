@@ -8,6 +8,8 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { loadConfig } from '../config.js';
+import { reconcileExitedDaemonLock } from '../runtime/daemon-lock.js';
 import * as runtimeCore from './runtime-bootstrap.mjs';
 
 export * from './runtime-bootstrap.mjs';
@@ -303,6 +305,11 @@ function childExit(child) {
   });
 }
 
+async function reconcileExitedDaemon(paths, { pid, spawnedAt }) {
+  const config = await loadConfig(paths.config);
+  return reconcileExitedDaemonLock(path.join(config.state.directory, 'daemon.lock'), { pid, spawnedAt });
+}
+
 async function recordActivation(recordActivationFn, paths, record) {
   return recordActivationFn(paths, record);
 }
@@ -325,6 +332,7 @@ export async function superviseDaemon(args, paths, initialRuntime, {
   delayFn = delay,
   candidateControlTimeoutMs = CANDIDATE_CONTROL_TIMEOUT_MS,
   candidateControlPollMs = CANDIDATE_CONTROL_POLL_MS,
+  reconcileExitedDaemonFn = reconcileExitedDaemon,
   signal = null,
   resolveChannelRefFn = runtimeCore.resolveChannelRef,
   recordActivationFn = writeRuntimeActivationState,
@@ -341,10 +349,14 @@ export async function superviseDaemon(args, paths, initialRuntime, {
 
   while (iterations < maxIterations) {
     iterations += 1;
+    const spawnedAt = Date.now();
     const child = spawnDevBridgeDaemon(paths, runtime, spawnImpl);
     process.stdout.write(`[devbridge-supervisor] daemon-started runtime=${runtime.head}\n`);
     const exitState = { exit: null };
-    const exitPromise = childExit(child);
+    const exitPromise = childExit(child).then(async (exit) => {
+      await reconcileExitedDaemonFn(paths, { pid: child.pid, spawnedAt, exit, runtime });
+      return exit;
+    });
     void exitPromise.then((exit) => { exitState.exit = exit; }, () => {});
 
     if (activation && runtime.head === activation.candidate.head) {

@@ -41,6 +41,27 @@ export async function readDaemonLock(filePath) {
   }
 }
 
+export async function reconcileExitedDaemonLock(filePath, { pid, spawnedAt }) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new TypeError('exited daemon PID must be a positive safe integer');
+  if (!Number.isFinite(spawnedAt) || spawnedAt <= 0) throw new TypeError('exited daemon spawn time must be a positive timestamp');
+  const lock = await readDaemonLock(filePath);
+  if (!lock) return { reconciled: false, reason: 'absent' };
+  if (lock.pid !== pid) throw new PolicyError('daemon lock belongs to a different process; refusing exited-child reconciliation');
+  const createdAt = Date.parse(lock.createdAt);
+  if (!Number.isFinite(createdAt) || createdAt < spawnedAt) {
+    throw new PolicyError('daemon lock predates the observed child spawn; refusing exited-child reconciliation');
+  }
+  const current = await readDaemonLock(filePath);
+  if (!current || current.pid !== lock.pid || current.token !== lock.token || current.createdAt !== lock.createdAt) {
+    throw new PolicyError('daemon lock ownership changed during exited-child reconciliation');
+  }
+  await unlink(filePath);
+  await unlinkIfExists(stopFilePath(filePath, lock.token));
+  await unlinkIfExists(pauseFilePath(filePath, lock.token));
+  await unlinkIfExists(pausedFilePath(filePath, lock.token));
+  return { reconciled: true, pid: lock.pid, token: lock.token };
+}
+
 async function readControlRecord(recordPath, { protocol, token, kind, timestampField }) {
   let text;
   try { text = await readFile(recordPath, 'utf8'); }

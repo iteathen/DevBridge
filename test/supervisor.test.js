@@ -89,6 +89,7 @@ test('supervisor validates an exact candidate before draining current daemon, th
       healthWindowMs: 1,
       maxIterations: 2,
       stopExisting: false,
+      reconcileExitedDaemonFn: async () => ({ reconciled: false, reason: 'fixture' }),
       remoteHeadFn: () => runtimeB.head,
       candidatePrepareFn,
       runDevBridgeCliFn,
@@ -134,6 +135,7 @@ test('failed candidate validation never drains the healthy current daemon', asyn
       updateIntervalMs: 5,
       maxIterations: 1,
       stopExisting: false,
+      reconcileExitedDaemonFn: async () => ({ reconciled: false, reason: 'fixture' }),
       remoteHeadFn: () => runtimeB.head,
       candidatePrepareFn: async () => { events.push('validate'); throw new Error('test failure'); },
       runDevBridgeCliFn: (command) => { events.push(command); return 0; },
@@ -178,6 +180,7 @@ test('candidate daemon crash inside health window rolls back to last-known-good 
       updateIntervalMs: 5,
       maxIterations: 3,
       stopExisting: false,
+      reconcileExitedDaemonFn: async () => ({ reconciled: false, reason: 'fixture' }),
       remoteHeadFn: () => runtimeB.head,
       candidatePrepareFn: async () => runtimeB,
       runDevBridgeCliFn,
@@ -225,6 +228,7 @@ test('candidate health doctor runs at a cooperative pause boundary and failure p
       healthWindowMs: 1,
       maxIterations: 3,
       stopExisting: false,
+      reconcileExitedDaemonFn: async () => ({ reconciled: false, reason: 'fixture' }),
       remoteHeadFn: () => runtimeB.head,
       candidatePrepareFn: async () => runtimeB,
       runDevBridgeCliFn: (command, _paths, runtime) => {
@@ -262,6 +266,7 @@ test('candidate health doctor runs at a cooperative pause boundary and failure p
 
 test('supervisor restarts an unexpected daemon crash without mutating runtime', async () => {
   let starts = 0;
+  const reconciled = [];
   const spawnImpl = () => {
     starts += 1;
     const child = new EventEmitter();
@@ -278,6 +283,7 @@ test('supervisor restarts an unexpected daemon crash without mutating runtime', 
       spawnImpl,
       maxIterations: 2,
       stopExisting: false,
+      reconcileExitedDaemonFn: async (_paths, observed) => { reconciled.push(observed.pid); return { reconciled: true }; },
       restartBackoffMs: 1,
       delayFn: timer,
     },
@@ -285,4 +291,5 @@ test('supervisor restarts an unexpected daemon crash without mutating runtime', 
 
   assert.equal(result, 0);
   assert.equal(starts, 2);
+  assert.deepEqual(reconciled, [401, 402]);
 });
