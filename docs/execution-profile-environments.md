@@ -154,7 +154,7 @@ Repository/task scheduling must not assume that every approved repository has a 
 
 Existing repository-owned environments are migration inputs, not the final architecture.
 
-The current setup implementation deliberately does **not** silently adopt them as profile VMs. It reports their count as retained migration candidates and provisions/routes the new profile-owned environment when selected repositories need execution. Existing VM disks are left intact until a later explicit retirement decision; multiple opaque writable disks are never merged into the profile disk.
+The production routing layer refuses legacy repository-owned environments as physical profile targets; it does not silently adopt or rewrite them. Stage 8 setup/reconfiguration must inventory them as retained migration candidates, provision or select the profile-owned environment when needed, and leave existing VM disks intact until an explicit retirement decision. Multiple opaque writable disks must never be merged into the profile disk implicitly.
 
 Migration remains recoverable:
 
