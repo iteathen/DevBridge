@@ -5,11 +5,18 @@ import process from 'node:process';
 import * as transactional from './transactional-bootstrap.mjs';
 import { validateRuntimeCandidate as validateCandidateExecution } from './candidate-validator.mjs';
 import {
+  acquireInstallationOwner,
+  backgroundChildOptions,
+  observeInstallationOwner,
+  requestInstallationOwnerStop,
+} from './local-supervisor-adapter.mjs';
+import {
   readSignedReleaseManifest,
   runtimeArtifactSha256,
   verifyRuntimeReleaseIntegrity,
 } from './release-integrity.mjs';
 import { runtimeArtifactSha256Sync } from './runtime-artifact-sync.mjs';
+import { pauseRuntimeOwner, resumeRuntimeOwner } from './runtime-transition.mjs';
 
 export * from './transactional-bootstrap.mjs';
 
@@ -150,6 +157,10 @@ function acceptedRuntimeForCwd(integrityByHead, cwd) {
   return null;
 }
 
+function runtimeControl(paths, runtime, runner) {
+  return async (command) => transactional.runDevBridgeCliCaptured(command, paths, runtime, runner);
+}
+
 export async function superviseDaemon(args, paths, initialRuntime, options = {}) {
   const integrityByHead = new Map();
   if (initialRuntime?.head) integrityByHead.set(initialRuntime.head.toLowerCase(), initialRuntime);
@@ -163,6 +174,11 @@ export async function superviseDaemon(args, paths, initialRuntime, options = {})
   const baseCandidatePrepareFn = options.candidatePrepareFn ?? prepareRuntimeCandidate;
   const baseSpawnImpl = options.spawnImpl ?? spawn;
   const artifactDigestSyncFn = options.artifactDigestSyncFn ?? runtimeArtifactSha256Sync;
+  const pauseRuntimeOwnerFn = options.pauseRuntimeOwnerFn ?? pauseRuntimeOwner;
+  const resumeRuntimeOwnerFn = options.resumeRuntimeOwnerFn ?? resumeRuntimeOwner;
+  const backgroundChildOptionsFn = options.backgroundChildOptionsFn ?? backgroundChildOptions;
+  const stopRuntimeOwnerFn = options.stopRuntimeOwnerFn ?? transactional.stopExistingDaemon;
+  let supervisorRecoveryError = null;
 
   const remoteHeadFn = args.releaseMode === 'production'
     ? (ref, context) => {
@@ -175,29 +191,62 @@ export async function superviseDaemon(args, paths, initialRuntime, options = {})
     : baseRemoteHeadFn;
 
   const candidatePrepareFn = async (localArgs, localPaths, input) => {
-    const candidate = await baseCandidatePrepareFn(localArgs, localPaths, {
-      ...input,
-      releaseManifest: manifest,
-    });
-    if (!exactDigest(candidate?.artifactSha256)) {
-      // Production never permits this seam. In development it exists only for
-      // local programmatic supervisor test fixtures that inject their own
-      // candidatePrepareFn; the real/default preparation path above always
-      // returns an exact digest after execution validation.
-      if (args.releaseMode === 'production' || !candidatePrepareInjected) {
-        fail('candidate preparation did not return an exact tested runtime artifact digest');
+    const acceptedRuntime = input.previousRuntime;
+    if (!acceptedRuntime) fail('candidate transition requires the currently accepted runtime');
+    const control = runtimeControl(localPaths, acceptedRuntime, input.runner);
+    const pausedOwner = await pauseRuntimeOwnerFn(control, { signal: options.signal ?? null });
+    try {
+      const candidate = await baseCandidatePrepareFn(localArgs, localPaths, {
+        ...input,
+        releaseManifest: manifest,
+      });
+      if (!exactDigest(candidate?.artifactSha256)) {
+        // Production never permits this seam. In development it exists only for
+        // local programmatic supervisor test fixtures that inject their own
+        // candidatePrepareFn; the real/default preparation path above always
+        // returns an exact digest after execution validation.
+        if (args.releaseMode === 'production' || !candidatePrepareInjected) {
+          fail('candidate preparation did not return an exact tested runtime artifact digest');
+        }
+        integrityByHead.set(candidate.head.toLowerCase(), candidate);
+        return candidate;
       }
       integrityByHead.set(candidate.head.toLowerCase(), candidate);
       return candidate;
+    } catch (error) {
+      if (!options.signal?.aborted) {
+        try {
+          await resumeRuntimeOwnerFn(control, pausedOwner);
+        } catch (resumeError) {
+          let stopError = null;
+          try {
+            await stopRuntimeOwnerFn(localPaths, acceptedRuntime, input.runner);
+          } catch (failure) {
+            stopError = failure;
+          }
+          supervisorRecoveryError = new AggregateError(
+            [error, resumeError, ...(stopError ? [stopError] : [])],
+            'candidate validation failed and the accepted runtime owner could not be proven resumed; supervisor recovery is required',
+          );
+          throw supervisorRecoveryError;
+        }
+      }
+      throw error;
     }
-    integrityByHead.set(candidate.head.toLowerCase(), candidate);
-    return candidate;
   };
 
-  const recordActivationFn = async (localPaths, record) => baseRecordActivationFn(
-    localPaths,
-    augmentActivationRecord(record, integrityByHead),
-  );
+  const recordActivationFn = async (localPaths, record) => {
+    const result = await baseRecordActivationFn(
+      localPaths,
+      augmentActivationRecord(record, integrityByHead),
+    );
+    if (record.state === 'candidate-failed' && supervisorRecoveryError) {
+      const error = supervisorRecoveryError;
+      supervisorRecoveryError = null;
+      throw error;
+    }
+    return result;
+  };
 
   const spawnImpl = (executable, argv, spawnOptions = {}) => {
     const accepted = acceptedRuntimeForCwd(integrityByHead, spawnOptions.cwd ?? '.');
@@ -209,7 +258,7 @@ export async function superviseDaemon(args, paths, initialRuntime, options = {})
     } else if (args.releaseMode === 'production') {
       fail('production supervisor refuses to spawn a runtime without accepted exact artifact evidence');
     }
-    return baseSpawnImpl(executable, argv, spawnOptions);
+    return baseSpawnImpl(executable, argv, backgroundChildOptionsFn(spawnOptions));
   };
 
   return transactional.superviseDaemon(args, paths, initialRuntime, {
@@ -266,63 +315,105 @@ async function validateProductionRuntime(args, paths, runtime, { env = process.e
   return { ...runtime, artifactSha256: integrity.artifactSha256, releaseIntegrity: integrity, validation };
 }
 
+async function stopInstallationOwner(paths) {
+  const observed = await observeInstallationOwner(paths.home);
+  if (!observed.claimed) return { requested: false, stopped: true };
+  if (!observed.live || observed.ambiguous) {
+    fail(`supervisor ownership is ambiguous for installation ${observed.installation.slice(0, 16)}; refusing stop takeover`);
+  }
+  const result = await requestInstallationOwnerStop(paths.home);
+  if (!result.stopped) fail(`supervisor did not stop cooperatively for installation ${result.installation.slice(0, 16)}`);
+  return result;
+}
+
 export async function bootstrap(argv = process.argv.slice(2), runner) {
   transactional.assertSupportedNode();
   const args = parseBootstrapArgs(argv);
   const paths = transactional.resolveBootstrapPaths(args);
-  const runtimeExists = existsSync(paths.runtime);
+  let installationOwner = null;
 
-  let runtime = transactional.loadPersistedHealthyRuntime(paths, runner);
-  if (!runtime) {
-    runtime = transactional.ensureRuntime(runtimeExists ? { ...args, update: false } : args, paths, runner);
-    runtime = { ...runtime, runtimeDir: paths.runtime };
+  if (args.command === 'stop') {
+    const owner = await observeInstallationOwner(paths.home);
+    if (owner.claimed) {
+      const result = await stopInstallationOwner(paths);
+      return result.stopped ? 0 : 3;
+    }
+  }
+  if (args.command === 'restart') await stopInstallationOwner(paths);
+  if (args.command === 'daemon' || args.command === 'restart') {
+    installationOwner = await acquireInstallationOwner(paths.home);
   }
 
-  if (args.releaseMode === 'production') {
-    runtime = await validateProductionRuntime(args, paths, runtime);
-  }
-
-  process.stdout.write(
-    `[devbridge-bootstrap] channel=${args.channel} releaseMode=${args.releaseMode} ref=${runtime.ref} version=${runtime.version} head=${runtime.head}` +
-    `${runtime.artifactSha256 ? ` artifactSha256=${runtime.artifactSha256}` : ''}\n`,
-  );
-  if (transactional.prepareLocalConfig(paths, runtime)) {
-    process.stdout.write(
-      `[devbridge-bootstrap] Created safe local config: ${paths.config}\n` +
-      '[devbridge-bootstrap] Review execution/controller-plan policy and enable execution only when ready.\n' +
-      '[devbridge-bootstrap] Then run this same command again.\n',
-    );
-    return 0;
-  }
-
-  if (args.command === 'status' || args.command === 'stop') {
-    return transactional.runDevBridgeCli(args.command, paths, runtime, runner);
-  }
-
-  // In production, reaching this point means the exact signed/persisted runtime
-  // passed the trusted release-integrity boundary. Doctor is now a
-  // post-acceptance control-plane health check, not a pre-acceptance trust test.
-  const doctorStatus = transactional.runDevBridgeCli('doctor', paths, runtime, runner);
-  if (doctorStatus !== 0 || args.command === 'doctor') return doctorStatus;
-
-  if (args.command !== 'daemon' && args.command !== 'restart') {
-    return transactional.runDevBridgeCli(args.command, paths, runtime, runner);
-  }
-
-  await transactional.stopExistingDaemon(paths, runtime, runner);
-  const controller = new AbortController();
-  const requestStop = () => controller.abort();
-  process.once('SIGINT', requestStop);
-  process.once('SIGTERM', requestStop);
   try {
-    return await superviseDaemon(
-      { ...args, command: 'daemon' },
-      paths,
-      runtime,
-      { runner, stopExisting: false, signal: controller.signal },
+    const runtimeExists = existsSync(paths.runtime);
+    let runtime = transactional.loadPersistedHealthyRuntime(paths, runner);
+    if (!runtime) {
+      runtime = transactional.ensureRuntime(runtimeExists ? { ...args, update: false } : args, paths, runner);
+      runtime = { ...runtime, runtimeDir: paths.runtime };
+    }
+
+    if (args.releaseMode === 'production') {
+      runtime = await validateProductionRuntime(args, paths, runtime);
+    }
+
+    process.stdout.write(
+      `[devbridge-bootstrap] channel=${args.channel} releaseMode=${args.releaseMode} ref=${runtime.ref} version=${runtime.version} head=${runtime.head}` +
+      `${runtime.artifactSha256 ? ` artifactSha256=${runtime.artifactSha256}` : ''}\n`,
     );
+    if (transactional.prepareLocalConfig(paths, runtime)) {
+      process.stdout.write(
+        `[devbridge-bootstrap] Created safe local config: ${paths.config}\n` +
+        '[devbridge-bootstrap] Review execution/controller-plan policy and enable execution only when ready.\n' +
+        '[devbridge-bootstrap] Then run this same command again.\n',
+      );
+      return 0;
+    }
+
+    if (args.command === 'status') {
+      const owner = await observeInstallationOwner(paths.home);
+      process.stdout.write(`[devbridge-supervisor] installation=${owner.installation.slice(0, 16)} claimed=${owner.claimed} live=${owner.live}` +
+        `${owner.generation ? ` generation=${owner.generation}` : ''}\n`);
+      return transactional.runDevBridgeCli('status', paths, runtime, runner);
+    }
+    if (args.command === 'stop') {
+      const owner = await observeInstallationOwner(paths.home);
+      if (owner.claimed) {
+        const result = await stopInstallationOwner(paths);
+        return result.stopped ? 0 : 3;
+      }
+      return transactional.runDevBridgeCli('stop', paths, runtime, runner);
+    }
+
+    // In production, reaching this point means the exact signed/persisted runtime
+    // passed the trusted release-integrity boundary. Doctor is now a
+    // post-acceptance control-plane health check, not a pre-acceptance trust test.
+    const doctorStatus = transactional.runDevBridgeCli('doctor', paths, runtime, runner);
+    if (doctorStatus !== 0 || args.command === 'doctor') return doctorStatus;
+
+    if (args.command !== 'daemon' && args.command !== 'restart') {
+      return transactional.runDevBridgeCli(args.command, paths, runtime, runner);
+    }
+
+    await transactional.stopExistingDaemon(paths, runtime, runner);
+    const controller = new AbortController();
+    const requestStop = () => controller.abort();
+    const ownerStop = () => controller.abort();
+    installationOwner.signal.addEventListener('abort', ownerStop, { once: true });
+    process.once('SIGINT', requestStop);
+    process.once('SIGTERM', requestStop);
+    try {
+      return await superviseDaemon(
+        { ...args, command: 'daemon' },
+        paths,
+        runtime,
+        { runner, stopExisting: false, signal: controller.signal },
+      );
+    } finally {
+      installationOwner.signal.removeEventListener('abort', ownerStop);
+      process.removeListener('SIGINT', requestStop);
+      process.removeListener('SIGTERM', requestStop);
+    }
   } finally {
-    process.removeListener('SIGINT', requestStop);
-    process.removeListener('SIGTERM', requestStop);
+    await installationOwner?.release();
   }
 }
