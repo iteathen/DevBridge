@@ -221,13 +221,6 @@ function validateRuntimeShape(runtime) {
   return { secureBootstrapPath, version: manifest.version, minimumStage0Protocol };
 }
 
-function writeJsonAtomic(filePath, value) {
-  mkdirSync(path.dirname(filePath), { recursive: true });
-  const temp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-  renameSync(temp, filePath);
-}
-
 export function readStage0ActivationState(paths) {
   if (!existsSync(paths.activationStateFile)) return null;
   let parsed;
@@ -373,15 +366,22 @@ async function importBootstrap(runtime, importModuleFn) {
 }
 
 function beginMigration(paths, previousHead, nextHead) {
-  if (existsSync(paths.migrationStateFile)) fail('Stage 0 migration state already exists; reconcile it before starting another migration.');
-  writeJsonAtomic(paths.migrationStateFile, {
+  const record = {
     protocol: MIGRATION_PROTOCOL,
     state: 'transitioning',
     pid: process.pid,
     previousHead,
     nextHead,
     startedAt: now(),
-  });
+  };
+  try {
+    writeFileSync(paths.migrationStateFile, `${JSON.stringify(record, null, 2)}\n`, {
+      encoding: 'utf8', mode: 0o600, flag: 'wx',
+    });
+  } catch (error) {
+    if (error?.code === 'EEXIST') fail('Stage 0 migration state already exists; reconcile it before starting another migration.');
+    throw error;
+  }
 }
 
 async function migrateLegacyRuntime(argv, args, paths, selection, runner, importModuleFn, installationTag) {
@@ -430,9 +430,11 @@ async function migrateLegacyRuntime(argv, args, paths, selection, runner, import
     fail(`Legacy runtime did not stop cooperatively (exit ${stopStatus}); refusing migration.`);
   }
 
+  let legacyMoved = false;
   try {
     mkdirSync(backup.root, { recursive: true });
     renameSync(paths.runtime, backup.runtime);
+    legacyMoved = true;
     if (existsSync(paths.activationStateFile)) renameSync(paths.activationStateFile, backup.activation);
     renameSync(stagedPath, paths.runtime);
 
@@ -446,7 +448,7 @@ async function migrateLegacyRuntime(argv, args, paths, selection, runner, import
     if (status !== 0) restoreLegacyRuntime(paths, backup);
     return status;
   } catch (error) {
-    if (existsSync(backup.runtime)) restoreLegacyRuntime(paths, backup);
+    if (legacyMoved) restoreLegacyRuntime(paths, backup);
     else if (existsSync(backup.root)) rmSync(backup.root, { recursive: true, force: true });
     removeMigrationCandidate(paths, desiredHead);
     rmSync(paths.migrationStateFile, { force: true });
