@@ -32,6 +32,10 @@ export function installationIdentity(home, { platform = process.platform } = {})
   return sha256(`devbridge/installation-v1\0${canonicalInstallationHome(home, platform)}`);
 }
 
+export function installationTag(home, options = {}) {
+  return `DB-${installationIdentity(home, options).slice(0, 12).toUpperCase()}`;
+}
+
 function controlEndpoint(identity, { platform = process.platform, tempDirectory = os.tmpdir() } = {}) {
   if (platform === 'win32') return `\\\\.\\pipe\\devbridge-supervisor-${identity}`;
   return path.join(tempDirectory, `devbridge-supervisor-${identity}.sock`);

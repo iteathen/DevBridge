@@ -43,6 +43,7 @@ const SYNTAX_FILES = [
   'src/app/tool-onboarding-composition.js',
   'src/values/project-relative-path.js',
   'src/bootstrap/candidate-validator.mjs',
+  'src/bootstrap/compatibility-activation.mjs',
   'src/bootstrap/local-supervisor-adapter.mjs',
   'src/bootstrap/runtime-transition.mjs',
   'src/bootstrap/secure-bootstrap.mjs',
@@ -60,6 +61,7 @@ const TARGETED_TESTS = [
   'test/file-tree-transfer.test.js',
   'test/workspace-agent.test.js',
   'test/bootstrap-candidate-execution.test.js',
+  'test/bootstrap-compatibility-activation.test.js',
   'test/environment-bootstrap-agent.test.js',
   'test/stage6-lego-boundary.test.js',
   'test/repository-execution-boundary-absence.test.js',
@@ -97,8 +99,33 @@ function checked(runner, args, { cwd, label, timeoutMs }) {
   }
 }
 
-export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync) {
+function protocolNumber(value, name) {
+  if (value == null || value === '') return 0;
+  if (!/^\d+$/u.test(String(value))) throw new Error(`${name} is invalid`);
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`${name} is invalid`);
+  return parsed;
+}
+
+export function assertCandidateStage0Compatibility(root = process.cwd(), environment = process.env) {
+  const candidateValidation = environment.CI === '1' && environment.DEVBRIDGE_NONINTERACTIVE === '1';
+  if (!candidateValidation) return Object.freeze({ checked: false, activeStage0Protocol: null, requiredStage0Protocol: null });
+
+  const packagePath = path.join(path.resolve(root), 'package.json');
+  let manifest;
+  try { manifest = JSON.parse(readFileSync(packagePath, 'utf8')); }
+  catch (error) { throw new Error(`candidate package compatibility metadata is unavailable: ${error.message}`, { cause: error }); }
+  const required = protocolNumber(manifest?.devbridge?.bootstrap?.minimumStage0Protocol ?? 0, 'candidate minimum Stage 0 protocol');
+  const active = protocolNumber(environment.DEVBRIDGE_STAGE0_PROTOCOL, 'active Stage 0 protocol');
+  if (required > active) {
+    throw new Error(`candidate requires Stage 0 protocol ${required}, but the validating launcher provides ${active}; refresh Stage 0 before candidate activation`);
+  }
+  return Object.freeze({ checked: true, activeStage0Protocol: active, requiredStage0Protocol: required });
+}
+
+export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync, environment = process.env) {
   const cwd = path.resolve(root);
+  const compatibility = assertCandidateStage0Compatibility(cwd, environment);
   for (const relative of SYNTAX_FILES) {
     const file = path.join(cwd, relative);
     if (!existsSync(file)) throw new Error(`preflight required file is missing: ${relative}`);
@@ -116,7 +143,7 @@ export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync)
     throw new Error(`preflight targeted tests are missing: ${missing.join(', ')}`);
   }
   checked(runner, ['--test', ...targeted], { cwd, label: 'targeted preflight tests', timeoutMs: 180_000 });
-  return { syntaxFiles: SYNTAX_FILES.length, jsonFiles: JSON_FILES.length, targetedTests: targeted.length };
+  return { syntaxFiles: SYNTAX_FILES.length, jsonFiles: JSON_FILES.length, targetedTests: targeted.length, compatibility };
 }
 
 const thisFile = path.resolve(fileURLToPath(import.meta.url));

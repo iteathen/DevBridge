@@ -39,14 +39,47 @@ test('candidate checks use only the isolated execution stud and suite-specific b
     const result = await validateRuntimeCandidate({ home: root }, runtime, null, { executionContext: context(seen) });
     assert.equal(result.preflight, 'passed');
     assert.equal(result.tests, 'passed');
+    assert.deepEqual(result.compatibility, { activeStage0Protocol: 0, requiredStage0Protocol: 0 });
     assert.deepEqual(seen.map((request) => request.operation), ['runtime.validate:preflight', 'runtime.validate:tests']);
     assert.ok(seen.every((request) => request.invocation.tool === 'node'));
+    assert.ok(seen.every((request) => request.environment.DEVBRIDGE_STAGE0_PROTOCOL === '0'));
     assert.equal(seen[0].limits.timeoutMs, 4 * 60_000);
     assert.equal(seen[1].limits.timeoutMs, 2 * 60 * 60_000);
     assert.ok(seen[1].limits.timeoutMs > 30 * 60_000);
     assert.ok(seen[0].limits.timeoutMs < seen[1].limits.timeoutMs);
     await assert.rejects(readFile(outside), { code: 'ENOENT' });
     assert.deepEqual(candidateValidationAvailability(), { state: 'ready', ready: true, reason: null });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('candidate Stage 0 compatibility is checked before candidate execution', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-candidate-stage0-'));
+  try {
+    await writeFile(path.join(root, 'package.json'), `${JSON.stringify({
+      name: 'devbridge', version: '0.1.0', devbridge: { bootstrap: { minimumStage0Protocol: 2 } },
+    })}\n`);
+    const runtime = { runtimeDir: root, head: 'd'.repeat(40), version: '0.1.0' };
+    const blocked = [];
+    await assert.rejects(
+      () => validateRuntimeCandidate({ home: root }, runtime, null, {
+        env: { DEVBRIDGE_STAGE0_PROTOCOL: '1' },
+        executionContext: context(blocked),
+      }),
+      /requires Stage 0 protocol 2.*provides 1/u,
+    );
+    assert.equal(blocked.length, 0);
+
+    await writeFile(path.join(root, 'package.json'), `${JSON.stringify({
+      name: 'devbridge', version: '0.1.0', devbridge: { bootstrap: { minimumStage0Protocol: 1 } },
+    })}\n`);
+    const admitted = [];
+    const result = await validateRuntimeCandidate({ home: root }, runtime, null, {
+      env: { DEVBRIDGE_STAGE0_PROTOCOL: '1' },
+      executionContext: context(admitted),
+    });
+    assert.deepEqual(result.compatibility, { activeStage0Protocol: 1, requiredStage0Protocol: 1 });
+    assert.equal(admitted.length, 2);
+    assert.ok(admitted.every((request) => request.environment.DEVBRIDGE_STAGE0_PROTOCOL === '1'));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

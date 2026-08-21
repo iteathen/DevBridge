@@ -5,10 +5,12 @@ import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
+import { stage0InstallationTag } from '../devbridge.mjs';
 import {
   acquireInstallationOwner,
   backgroundChildOptions,
   installationIdentity,
+  installationTag,
   observeInstallationOwner,
   requestInstallationOwnerStop,
 } from '../src/bootstrap/local-supervisor-adapter.mjs';
@@ -17,13 +19,19 @@ async function tempHome(label) {
   return mkdtemp(path.join(os.tmpdir(), label));
 }
 
-test('installation identity is stable for one canonical home and independent of config/state paths', async () => {
+test('installation identity and visible tag are stable for one canonical home', async () => {
   const home = await tempHome('db-supervisor-id-');
   const first = installationIdentity(home);
   const second = installationIdentity(path.join(home, '.'));
   assert.equal(first, second);
   assert.match(first, /^[0-9a-f]{64}$/u);
   assert.equal(first.includes(home), false);
+  assert.equal(installationTag(home), installationTag(path.join(home, '.')));
+  assert.equal(installationTag(home), stage0InstallationTag(home));
+  assert.match(installationTag(home), /^DB-[0-9A-F]{12}$/u);
+  assert.equal(installationTag(home).includes(home), false);
+  const other = await tempHome('db-supervisor-id-other-');
+  assert.notEqual(installationTag(home), installationTag(other));
 });
 
 test('one live installation owner excludes a second owner and exposes path-free status', async () => {
