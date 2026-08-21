@@ -1,9 +1,11 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -33,6 +35,7 @@ const SCRUBBED_GIT_ENVIRONMENT = Object.freeze([
 
 function fail(message) { throw new Error(message); }
 function exactHead(value) { return typeof value === 'string' && /^[0-9a-f]{40}$/iu.test(value) ? value.toLowerCase() : null; }
+function sha256(value) { return createHash('sha256').update(String(value), 'utf8').digest('hex'); }
 
 export function assertSupportedNode(version = process.versions.node) {
   const parts = String(version).split('.').map((value) => Number.parseInt(value, 10));
@@ -96,6 +99,15 @@ export function resolveStage0Paths(args, environment = process.env) {
     gitHome: path.join(home, 'bootstrap-git-home'),
     hooks: path.join(home, 'bootstrap-empty-hooks'),
   };
+}
+
+export function stage0InstallationTag(home, platform = process.platform) {
+  const resolved = path.resolve(String(home));
+  mkdirSync(resolved, { recursive: true, mode: 0o700 });
+  let canonical = realpathSync.native(resolved);
+  if (platform === 'win32') canonical = canonical.toLowerCase();
+  const identity = sha256(`devbridge/installation-v1\0${canonical}`);
+  return `DB-${identity.slice(0, 12).toUpperCase()}`;
 }
 
 export function managedGitEnvironment(paths, base = process.env, platform = process.platform) {
@@ -225,7 +237,7 @@ export function selectStage0Runtime(paths, runner = defaultRunner) {
   }
 
   if (!existsSync(paths.runtime)) fail('Managed DevBridge runtime is absent.');
-  return { runtime: runtimeFromDirectory(paths, paths.runtime, runner), activationState: 'legacy' };
+  return { runtime: runtimeFromDirectory(paths, paths.runtime, runner), activationState: 'untracked' };
 }
 
 export function ensureStage0Runtime(args, paths, runner = defaultRunner) {
@@ -289,7 +301,7 @@ function restoreLegacyRuntime(paths, backup) {
   if (existsSync(backup.activation)) renameSync(backup.activation, paths.activationStateFile);
 }
 
-async function migrateLegacyRuntime(argv, args, paths, selection, runner, importModuleFn) {
+async function migrateLegacyRuntime(argv, args, paths, selection, runner, importModuleFn, installationTag) {
   if (args.noUpdate) fail('migrate-legacy-runtime cannot be combined with --no-update.');
   if (argv.includes('--release-mode') && argv[argv.indexOf('--release-mode') + 1] === 'production') {
     fail('migrate-legacy-runtime is a development/testing compatibility transition; production recovery must use the signed release path.');
@@ -321,22 +333,18 @@ async function migrateLegacyRuntime(argv, args, paths, selection, runner, import
     const nextModule = await importBootstrap(migrated, importModuleFn);
     const doctorStatus = await nextModule.bootstrap(forwardedRuntimeArgs(argv, 'doctor', true), undefined, { stage0Protocol: STAGE0_PROTOCOL });
     if (doctorStatus !== 0) fail(`Migrated runtime doctor failed with exit ${doctorStatus}.`);
-    process.stdout.write(`[devbridge-stage0] legacy-migration previous=${current.head} current=${migrated.head} protocol=${STAGE0_PROTOCOL}\n`);
-    const status = await nextModule.bootstrap(forwardedRuntimeArgs(argv, 'daemon', true), undefined, { stage0Protocol: STAGE0_PROTOCOL });
-    if (status !== 0) {
-      restoreLegacyRuntime(paths, backup);
-      return status;
-    }
-    return status;
+    process.stdout.write(`[devbridge-stage0 ${installationTag}] legacy-migration previous=${current.head} current=${migrated.head} protocol=${STAGE0_PROTOCOL}\n`);
+    return await nextModule.bootstrap(forwardedRuntimeArgs(argv, 'daemon', true), undefined, { stage0Protocol: STAGE0_PROTOCOL });
   } catch (error) {
     restoreLegacyRuntime(paths, backup);
     throw error;
   }
 }
 
-function printBootstrapStatus(selection) {
+function printBootstrapStatus(selection, installationTag) {
   process.stdout.write(`${JSON.stringify({
     protocol: 'devbridge/stage0-status-v1',
+    installationTag,
     stage0Protocol: STAGE0_PROTOCOL,
     activationState: selection.activationState,
     runtime: {
@@ -355,10 +363,15 @@ export async function bootstrapStage0(argv = process.argv.slice(2), runner = def
   assertSupportedNode();
   const args = parseStage0Args(argv);
   const paths = resolveStage0Paths(args);
+  const installationTag = stage0InstallationTag(paths.home);
+  process.env.DEVBRIDGE_INSTALLATION_TAG = installationTag;
+  process.env.DEVBRIDGE_STAGE0_PROTOCOL = String(STAGE0_PROTOCOL);
+  process.title = `DevBridge[${installationTag}]`;
   const selection = ensureStage0Runtime(args, paths, runner);
-  if (args.command === 'bootstrap-status') return printBootstrapStatus(selection);
+  process.stdout.write(`[devbridge-stage0 ${installationTag}] activation=${selection.activationState} runtime=${selection.runtime.head}\n`);
+  if (args.command === 'bootstrap-status') return printBootstrapStatus(selection, installationTag);
   if (args.command === 'migrate-legacy-runtime') {
-    return migrateLegacyRuntime(argv, args, paths, selection, runner, importModuleFn);
+    return migrateLegacyRuntime(argv, args, paths, selection, runner, importModuleFn, installationTag);
   }
   const module = await importBootstrap(selection.runtime, importModuleFn);
   return module.bootstrap(forwardedRuntimeArgs(argv), undefined, { stage0Protocol: STAGE0_PROTOCOL });
