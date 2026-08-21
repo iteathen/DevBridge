@@ -1,8 +1,10 @@
 # VM Stage 3 — persistent environment lifecycle
 
-Status: Stage 3 implementation contract.
+Status: historical Stage 3 implementation contract; repository-owned VM identity is superseded by the execution-profile correction in `docs/execution-profile-environments.md`, DB-020, and issue #138.
 
-This stage adds persistent, resettable guest-machine state on top of the Stage 2 provider/image foundation while repository-controlled task execution remains intentionally unavailable until Stage 6.
+Stage 3 remains implementation evidence for provider-native persistent lifecycle, lineage, reset/reseed, and recovery mechanics. Its original use of repository identity as the persistent VM owner is no longer the target architecture. Production composition now assigns VM ownership to execution profiles and repository persistence to isolated workspaces inside compatible profile VMs.
+
+This stage added persistent, resettable guest-machine state on top of the Stage 2 provider/image foundation while repository-controlled task execution remained intentionally unavailable until Stage 6.
 
 ## Boundary
 
