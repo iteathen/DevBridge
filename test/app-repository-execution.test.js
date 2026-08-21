@@ -155,10 +155,41 @@ test('built-in helper bundle executes through the same neutral VM work contract'
       observeEnvironment: async () => entry,
     };
     const execution = await createRepositoryExecution({
-      stateDirectory: path.join(temp,'state'),platform:'linux',routes:{protocol:ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL,routes:[{subject:'789',profile:'built-in',access:{family:'linux'}}]},rootFor:async()=>host,listPaths:async(root)=>visible(root),resolveSubject:async()=> '789',resolveTool:resolveBuiltInHelper,createState:async()=>state,createPreparation:async()=>({ensure:async()=>({generation:'a'.repeat(64)}),connection:async()=>({family:'linux'})}),createChannel:async()=>localChannel(guest)});
-    const runner=composeWorkRunner({mailboxStore:new WorkerExchange({stateDirectory:path.join(temp,'control')}),activeExecution:execution});
-    const runDir=path.join(host,'.devbridge','runs','turn-1');await mkdir(runDir,{recursive:true});
-    const result=await runner.run({profile:lifecycleRoundtripDiagnosticProfile(),projectDir:host,runDir,runId:'builtin-run',repository:'owner/repo',repositoryId:'789',context:{protocol:'devbridge/context-v1',sequence:1,objective:`Execute ${LIFECYCLE_ROUNDTRIP_NONCE}.`,priorSummary:`Carry ${LIFECYCLE_ROUNDTRIP_NONCE}.`}});
-    assert.equal(result.exitCode,0,result.stderr);assert.equal(result.result.status,'complete');assert.match(result.result.summary,/Lifecycle roundtrip passed/u);assert.equal(Object.hasOwn(result,'execution'),false);
-  }finally{await rm(temp,{recursive:true,force:true});}
+      stateDirectory: path.join(temp, 'state'), platform: 'linux',
+      routes: { protocol: ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL, routes: [{ subject: '789', profile: 'built-in', access: { family: 'linux' } }] },
+      rootFor: async () => host,
+      listPaths: async (root) => visible(root),
+      resolveSubject: async () => '789',
+      resolveTool: resolveBuiltInHelper,
+      createState: async () => state,
+      createPreparation: async () => ({ ensure: async () => ({ generation: 'a'.repeat(64) }), connection: async () => ({ family: 'linux' }) }),
+      createChannel: async () => localChannel(guest),
+    });
+    const runner = composeWorkRunner({
+      mailboxStore: new WorkerExchange({ stateDirectory: path.join(temp, 'control') }),
+      activeExecution: execution,
+    });
+    const runDir = path.join(host, '.devbridge', 'runs', 'turn-1');
+    await mkdir(runDir, { recursive: true });
+    const result = await runner.run({
+      profile: lifecycleRoundtripDiagnosticProfile(),
+      projectDir: host,
+      runDir,
+      runId: 'builtin-run',
+      repository: 'owner/repo',
+      repositoryId: '789',
+      context: {
+        protocol: 'devbridge/context-v1',
+        sequence: 1,
+        objective: `Execute ${LIFECYCLE_ROUNDTRIP_NONCE}.`,
+        priorSummary: `Carry ${LIFECYCLE_ROUNDTRIP_NONCE}.`,
+      },
+    });
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.equal(result.result.status, 'complete');
+    assert.match(result.result.summary, /Lifecycle roundtrip passed/u);
+    assert.equal(Object.hasOwn(result, 'execution'), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
 });
