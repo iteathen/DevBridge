@@ -1,15 +1,85 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { assertSupportedNode, managedGitEnvironment } from '../devbridge.mjs';
+import {
+  STAGE0_PROTOCOL,
+  assertSupportedNode,
+  bootstrapStage0,
+  managedGitEnvironment,
+  parseStage0Args,
+  reconcileStage0Migration,
+  resolveStage0Paths,
+  selectStage0Runtime,
+  stage0InstallationTag,
+} from '../devbridge.mjs';
 import { parseBootstrapArgs } from '../src/bootstrap/secure-bootstrap.mjs';
 import {
   prepareLocalConfig,
-  resolveBootstrapPaths,
+  resolveBootstrapPaths as resolveManagedBootstrapPaths,
   runDevBridgeCli,
 } from '../src/bootstrap/transactional-bootstrap.mjs';
+
+function writeRuntime(directory, head, minimumStage0Protocol = 0) {
+  mkdirSync(path.join(directory, '.git'), { recursive: true });
+  mkdirSync(path.join(directory, 'src', 'bootstrap'), { recursive: true });
+  writeFileSync(path.join(directory, 'package.json'), `${JSON.stringify({
+    name: 'devbridge',
+    version: '0.1.0',
+    ...(minimumStage0Protocol > 0 ? { devbridge: { bootstrap: { minimumStage0Protocol } } } : {}),
+  })}\n`);
+  writeFileSync(path.join(directory, 'src', 'bootstrap', 'secure-bootstrap.mjs'), 'export async function bootstrap() { return 0; }\n');
+  writeFileSync(path.join(directory, '.fake-head'), `${head}\n`);
+}
+
+function fakeGitRunner({ remoteHead = null, onClone = null } = {}) {
+  return (_executable, args, options = {}) => {
+    if (args.includes('remote') && args.includes('get-url')) {
+      return { status: 0, stdout: 'https://github.com/iteathen/DevBridge.git\n', stderr: '' };
+    }
+    if (args.includes('status') && args.includes('--porcelain')) {
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    if (args.includes('rev-parse') && args.includes('HEAD')) {
+      return { status: 0, stdout: readFileSync(path.join(options.cwd, '.fake-head'), 'utf8'), stderr: '' };
+    }
+    if (args.includes('ls-remote')) {
+      if (!remoteHead) return { status: 2, stdout: '', stderr: 'missing remote head' };
+      return { status: 0, stdout: `${remoteHead}\trefs/heads/main\n`, stderr: '' };
+    }
+    if (args.includes('clone')) {
+      const destination = args.at(-1);
+      if (!onClone) return { status: 2, stdout: '', stderr: 'unexpected clone' };
+      onClone(destination);
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    throw new Error(`unexpected fake git invocation: ${args.join(' ')}`);
+  };
+}
+
+function stage0Paths(home) {
+  return resolveStage0Paths({ home }, {});
+}
+
+function activationRecord(state, runtimeDir, head) {
+  return {
+    protocol: 'devbridge/runtime-activation-v1',
+    state,
+    current: { runtimeDir, head },
+  };
+}
+
+function migrationRecord(previousHead, nextHead, pid = 999999) {
+  return {
+    protocol: 'devbridge/stage0-migration-v1',
+    state: 'transitioning',
+    pid,
+    previousHead,
+    nextHead,
+    startedAt: new Date().toISOString(),
+  };
+}
 
 test('bootstrap defaults to alpha development testing channel and daemon', () => {
   assert.deepEqual(parseBootstrapArgs([]), {
@@ -29,6 +99,20 @@ test('bootstrap accepts one safe command and local-only switches', () => {
   assert.throws(() => parseBootstrapArgs(['--repository', 'attacker/repo']), /Unknown bootstrap argument/u);
 });
 
+test('stage0 parses only its local migration authority and skips runtime flag values', () => {
+  const oldHead = '1'.repeat(40);
+  const nextHead = '2'.repeat(40);
+  assert.deepEqual(parseStage0Args([
+    'migrate-legacy-runtime', '--home', '/tmp/db', '--config', '/tmp/config.json',
+    '--expected-runtime-head', oldHead, '--validated-candidate-head', nextHead,
+  ]), {
+    home: '/tmp/db', noUpdate: false, command: 'migrate-legacy-runtime',
+    expectedRuntimeHead: oldHead, validatedCandidateHead: nextHead,
+  });
+  assert.equal(parseStage0Args(['--config', 'migrate-legacy-runtime']).command, null);
+  assert.throws(() => parseStage0Args(['--expected-runtime-head', 'bad']), /exact 40-hex/u);
+});
+
 test('production mode is explicit, stable-only, and requires local signed-release inputs', () => {
   const parsed = parseBootstrapArgs(['--channel', 'stable', '--release-mode', 'production', '--release-manifest', './release.json', '--release-public-key', './release.pub.pem']);
   assert.equal(parsed.releaseMode, 'production');
@@ -38,6 +122,134 @@ test('production mode is explicit, stable-only, and requires local signed-releas
   assert.throws(() => parseBootstrapArgs(['--release-mode', 'production']), /requires --channel stable/u);
   assert.throws(() => parseBootstrapArgs(['--channel', 'stable', '--release-mode', 'production']), /requires --release-manifest/u);
   assert.throws(() => parseBootstrapArgs(['--release-mode', 'development', '--release-manifest', './release.json']), /valid only with --release-mode production/u);
+});
+
+test('stage0 installation tags are stable per canonical installation and differ across installations', () => {
+  const first = mkdtempSync(path.join(tmpdir(), 'db-stage0-tag-a-'));
+  const second = mkdtempSync(path.join(tmpdir(), 'db-stage0-tag-b-'));
+  assert.equal(stage0InstallationTag(first), stage0InstallationTag(path.join(first, '.')));
+  assert.match(stage0InstallationTag(first), /^DB-[0-9A-F]{12}$/u);
+  assert.notEqual(stage0InstallationTag(first), stage0InstallationTag(second));
+  assert.equal(stage0InstallationTag(first).includes(first), false);
+});
+
+test('stage0 follows durable accepted runtime identity instead of falling back to original checkout', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'db-stage0-accepted-'));
+  const paths = stage0Paths(home);
+  const oldHead = '3'.repeat(40);
+  const nextHead = '4'.repeat(40);
+  writeRuntime(paths.runtime, oldHead, 1);
+  const accepted = path.join(home, 'runtime-candidates', nextHead);
+  writeRuntime(accepted, nextHead, 1);
+  writeFileSync(paths.activationStateFile, `${JSON.stringify(activationRecord('healthy', accepted, nextHead))}\n`);
+  const selected = selectStage0Runtime(paths, fakeGitRunner());
+  assert.equal(selected.activationState, 'healthy');
+  assert.equal(selected.runtime.head, nextHead);
+  assert.equal(selected.runtime.runtimeDir, path.resolve(accepted));
+
+  writeFileSync(paths.activationStateFile, `${JSON.stringify(activationRecord('activating', accepted, nextHead))}\n`);
+  assert.throws(() => selectStage0Runtime(paths, fakeGitRunner()), /activation is incomplete \(activating\)/u);
+});
+
+test('stage0 refuses a runtime requiring a newer compatibility protocol', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'db-stage0-version-'));
+  const paths = stage0Paths(home);
+  writeRuntime(paths.runtime, '5'.repeat(40), STAGE0_PROTOCOL + 1);
+  assert.throws(
+    () => selectStage0Runtime(paths, fakeGitRunner()),
+    new RegExp(`requires Stage 0 protocol ${STAGE0_PROTOCOL + 1}.*supports ${STAGE0_PROTOCOL}`, 'u'),
+  );
+});
+
+test('dead interrupted stage0 migration rolls back exact saved runtime and live migration is not stolen', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'db-stage0-recovery-'));
+  const paths = stage0Paths(home);
+  const oldHead = '6'.repeat(40);
+  const nextHead = '7'.repeat(40);
+  const backupRuntime = path.join(paths.legacyRuntimeRoot, oldHead, 'runtime');
+  writeRuntime(backupRuntime, oldHead, 0);
+  writeRuntime(paths.runtime, nextHead, 1);
+  writeFileSync(paths.migrationStateFile, `${JSON.stringify(migrationRecord(oldHead, nextHead))}\n`);
+  assert.throws(
+    () => reconcileStage0Migration(paths, { processAliveFn: () => true }),
+    /migration is already in progress/u,
+  );
+  assert.equal(readFileSync(path.join(paths.runtime, '.fake-head'), 'utf8').trim(), nextHead);
+
+  const recovered = reconcileStage0Migration(paths, { processAliveFn: () => false });
+  assert.deepEqual(recovered, { state: 'rolled-back', previousHead: oldHead, abandonedHead: nextHead });
+  assert.equal(readFileSync(path.join(paths.runtime, '.fake-head'), 'utf8').trim(), oldHead);
+  assert.equal(existsSync(paths.migrationStateFile), false);
+});
+
+test('explicit legacy migration is exact-head guarded, preserves rollback runtime, and starts protocol-compatible runtime', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'db-stage0-migrate-'));
+  const paths = stage0Paths(home);
+  const oldHead = '8'.repeat(40);
+  const nextHead = '9'.repeat(40);
+  writeRuntime(paths.runtime, oldHead, 0);
+  const runner = fakeGitRunner({
+    remoteHead: nextHead,
+    onClone: (destination) => writeRuntime(destination, nextHead, 1),
+  });
+  const calls = [];
+  let imports = 0;
+  const importModuleFn = async () => {
+    imports += 1;
+    const generation = imports;
+    return {
+      async bootstrap(argv, _runner, options) {
+        calls.push({ generation, command: argv[0], argv: [...argv], options });
+        if (generation === 1) return argv[0] === 'stop' ? 0 : 9;
+        if (argv[0] === 'doctor' || argv[0] === 'daemon') return 0;
+        return 9;
+      },
+    };
+  };
+
+  const status = await bootstrapStage0([
+    'migrate-legacy-runtime', '--home', home,
+    '--expected-runtime-head', oldHead, '--validated-candidate-head', nextHead,
+  ], runner, { importModuleFn, processAliveFn: () => false });
+  assert.equal(status, 0);
+  assert.deepEqual(calls.map((entry) => entry.command), ['stop', 'doctor', 'daemon']);
+  assert.ok(calls.every((entry) => entry.options.stage0Protocol === STAGE0_PROTOCOL));
+  assert.ok(calls.every((entry) => entry.argv.includes('--no-update')));
+  assert.equal(readFileSync(path.join(paths.runtime, '.fake-head'), 'utf8').trim(), nextHead);
+  assert.equal(readFileSync(path.join(paths.legacyRuntimeRoot, oldHead, 'runtime', '.fake-head'), 'utf8').trim(), oldHead);
+  assert.equal(existsSync(paths.migrationStateFile), false);
+});
+
+test('failed migrated runtime doctor restores exact legacy runtime', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'db-stage0-migrate-fail-'));
+  const paths = stage0Paths(home);
+  const oldHead = 'a'.repeat(40);
+  const nextHead = 'b'.repeat(40);
+  writeRuntime(paths.runtime, oldHead, 0);
+  const runner = fakeGitRunner({
+    remoteHead: nextHead,
+    onClone: (destination) => writeRuntime(destination, nextHead, 1),
+  });
+  let imports = 0;
+  const importModuleFn = async () => {
+    imports += 1;
+    const generation = imports;
+    return {
+      async bootstrap(argv) {
+        if (generation === 1) return argv[0] === 'stop' ? 0 : 9;
+        return argv[0] === 'doctor' ? 1 : 9;
+      },
+    };
+  };
+  await assert.rejects(
+    () => bootstrapStage0([
+      'migrate-legacy-runtime', '--home', home,
+      '--expected-runtime-head', oldHead, '--validated-candidate-head', nextHead,
+    ], runner, { importModuleFn, processAliveFn: () => false }),
+    /Migrated runtime doctor failed/u,
+  );
+  assert.equal(readFileSync(path.join(paths.runtime, '.fake-head'), 'utf8').trim(), oldHead);
+  assert.equal(existsSync(paths.migrationStateFile), false);
 });
 
 test('managed Git environment removes inherited Git and SSH authority and normalizes Windows PATH', () => {
@@ -61,7 +273,7 @@ test('managed Git environment removes inherited Git and SSH authority and normal
 test('first run creates canonical DevBridge config outside the managed runtime without overwriting it', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'devbridge-bootstrap-'));
   const args = parseBootstrapArgs(['--home', root]);
-  const paths = resolveBootstrapPaths(args, {});
+  const paths = resolveManagedBootstrapPaths(args, {});
   mkdirSync(path.join(paths.runtime, 'config'), { recursive: true });
   const example = path.join(paths.runtime, 'config', 'devbridge.example.json');
   writeFileSync(example, '{"safe":true}\n');
