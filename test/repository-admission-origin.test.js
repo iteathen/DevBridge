@@ -8,11 +8,11 @@ import path from 'node:path';
 import { GitClient } from '../src/git/git-client.js';
 import { GitWorkspaceManager } from '../src/git/workspace-manager.js';
 import { WorkspacePolicy } from '../src/security/workspace-policy.js';
-import { PolicyError } from '../src/errors.js';
+import { RepositoryAdmissionError } from '../src/errors.js';
 
 const exec = promisify(execFile);
 
-test('managed origin mismatch stays explicit while credential-bearing actual origin is sanitized', async () => {
+test('managed origin mismatch keeps remote details local and exposes only typed repair guidance', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-admission-origin-mismatch-'));
   const workspacePolicy = new WorkspacePolicy({
     root: path.join(root, 'managed'),
@@ -35,11 +35,19 @@ test('managed origin mismatch stays explicit while credential-bearing actual ori
   await assert.rejects(
     manager.ensureRepository('owner/repo'),
     (error) => {
-      assert.ok(error instanceof PolicyError);
-      assert.match(error.message, /managed repository origin mismatch/u);
-      assert.match(error.message, /https:\/\/github\.com\/wrong\/repo\.git/u);
+      assert.ok(error instanceof RepositoryAdmissionError);
+      assert.equal(error.phase, 'origin');
+      assert.equal(error.kind, 'origin-mismatch');
+      assert.match(error.message, /repository admission failed during origin: origin-mismatch/u);
+      assert.match(error.repair, /review the managed repository origin/u);
+      assert.doesNotMatch(error.message, /github\.com\/wrong\/repo/u);
+      assert.doesNotMatch(error.message, /github\.com\/owner\/repo/u);
       assert.doesNotMatch(error.message, new RegExp(secret, 'u'));
       assert.doesNotMatch(error.message, /x-access-token/u);
+      assert.doesNotMatch(error.message, new RegExp(root.replaceAll('\\', '\\\\').replaceAll('/', '\\/'), 'u'));
+      assert.match(error.stderr, /expected remote:/u);
+      assert.match(error.stderr, /observed remote:/u);
+      assert.doesNotMatch(error.stderr, new RegExp(secret, 'u'));
       return true;
     },
   );
