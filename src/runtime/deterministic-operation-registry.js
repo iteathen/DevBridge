@@ -90,7 +90,7 @@ function observedResult(stdout, stderr = '', exitCode = 0) {
   const now = new Date().toISOString();
   return { exitCode, signal: null, timedOut: false, outputTruncated: false, stdout, stderr, startedAt: now, finishedAt: now, lastOutputAt: stdout || stderr ? now : null };
 }
-function executionScratch(buildId) { return `scratch/cmake-${buildId}`; }
+function executionScratch(buildId) { return { kind: 'scratch', name: `cmake-${buildId}` }; }
 
 function scopedProcessRunner(processRunner, security, context) {
   if (!processRunner || typeof processRunner.run !== 'function') return processRunner;
@@ -120,6 +120,10 @@ export class DeterministicOperationRegistry {
   }
   has(name) { return this.#operations.has(name); }
   names() { return [...this.#operations.keys()].sort(); }
+  executionClass(name) {
+    if (!this.#operations.has(name)) throw new PolicyError(`controller plan references unregistered operation ${name}`);
+    return deterministicOperationSecurity(name).executionClass;
+  }
   describe() {
     return this.names().map((name) => {
       const adapter = this.#operations.get(name);
