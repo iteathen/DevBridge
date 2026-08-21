@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -30,6 +30,9 @@ function writeRuntime(directory, head, minimumStage0Protocol = 0) {
     ...(minimumStage0Protocol > 0 ? { devbridge: { bootstrap: { minimumStage0Protocol } } } : {}),
   })}\n`);
   writeFileSync(path.join(directory, 'src', 'bootstrap', 'secure-bootstrap.mjs'), 'export async function bootstrap() { return 0; }\n');
+  if (minimumStage0Protocol > 0) {
+    writeFileSync(path.join(directory, 'src', 'bootstrap', 'compatibility-activation.mjs'), 'export async function activateMigratedRuntime() { return 0; }\n');
+  }
   writeFileSync(path.join(directory, '.fake-head'), `${head}\n`);
 }
 
@@ -182,7 +185,7 @@ test('dead interrupted stage0 migration rolls back exact saved runtime and live 
   assert.equal(existsSync(paths.migrationStateFile), false);
 });
 
-test('explicit legacy migration stages the replacement before stop and keeps exact rollback runtime', async () => {
+test('explicit legacy migration stages before stop and delegates healthy activation to the managed adapter', async () => {
   const home = mkdtempSync(path.join(tmpdir(), 'db-stage0-migrate-'));
   const paths = stage0Paths(home);
   const oldHead = '8'.repeat(40);
@@ -197,14 +200,20 @@ test('explicit legacy migration stages the replacement before stop and keeps exa
   let imports = 0;
   const importModuleFn = async () => {
     imports += 1;
-    const generation = imports;
+    if (imports === 1) {
+      return {
+        async bootstrap(argv, _runner, options) {
+          calls.push({ kind: 'legacy', command: argv[0], argv: [...argv], options });
+          if (argv[0] === 'stop') { order.push('stop'); return 0; }
+          return 9;
+        },
+      };
+    }
     return {
-      async bootstrap(argv, _runner, options) {
-        calls.push({ generation, command: argv[0], argv: [...argv], options });
-        if (generation === 1 && argv[0] === 'stop') { order.push('stop'); return 0; }
-        if (generation === 1) return 9;
-        if (argv[0] === 'doctor' || argv[0] === 'daemon') return 0;
-        return 9;
+      async activateMigratedRuntime(input) {
+        calls.push({ kind: 'activation', input });
+        rmSync(paths.migrationStateFile, { force: true });
+        return 0;
       },
     };
   };
@@ -215,15 +224,21 @@ test('explicit legacy migration stages the replacement before stop and keeps exa
   ], runner, { importModuleFn, processAliveFn: () => false });
   assert.equal(status, 0);
   assert.deepEqual(order, ['clone', 'stop']);
-  assert.deepEqual(calls.map((entry) => entry.command), ['stop', 'doctor', 'daemon']);
-  assert.ok(calls.every((entry) => entry.options.stage0Protocol === STAGE0_PROTOCOL));
-  assert.ok(calls.every((entry) => entry.argv.includes('--no-update')));
+  assert.equal(calls[0].command, 'stop');
+  assert.equal(calls[0].options.stage0Protocol, STAGE0_PROTOCOL);
+  assert.ok(calls[0].argv.includes('--no-update'));
+  assert.equal(calls[1].kind, 'activation');
+  assert.equal(calls[1].input.stage0Protocol, STAGE0_PROTOCOL);
+  assert.equal(calls[1].input.argv[0], 'daemon');
+  assert.ok(calls[1].input.argv.includes('--no-update'));
+  assert.deepEqual(calls[1].input.previous, { head: oldHead, runtimeDir: path.join(paths.legacyRuntimeRoot, oldHead, 'runtime') });
+  assert.deepEqual(calls[1].input.candidate, { head: nextHead, runtimeDir: paths.runtime });
   assert.equal(readFileSync(path.join(paths.runtime, '.fake-head'), 'utf8').trim(), nextHead);
   assert.equal(readFileSync(path.join(paths.legacyRuntimeRoot, oldHead, 'runtime', '.fake-head'), 'utf8').trim(), oldHead);
   assert.equal(existsSync(paths.migrationStateFile), false);
 });
 
-test('failed migrated runtime doctor restores exact legacy runtime', async () => {
+test('failed managed compatibility activation restores exact legacy runtime', async () => {
   const home = mkdtempSync(path.join(tmpdir(), 'db-stage0-migrate-fail-'));
   const paths = stage0Paths(home);
   const oldHead = 'a'.repeat(40);
@@ -236,20 +251,15 @@ test('failed migrated runtime doctor restores exact legacy runtime', async () =>
   let imports = 0;
   const importModuleFn = async () => {
     imports += 1;
-    const generation = imports;
-    return {
-      async bootstrap(argv) {
-        if (generation === 1) return argv[0] === 'stop' ? 0 : 9;
-        return argv[0] === 'doctor' ? 1 : 9;
-      },
-    };
+    if (imports === 1) return { async bootstrap(argv) { return argv[0] === 'stop' ? 0 : 9; } };
+    return { async activateMigratedRuntime() { throw new Error('migrated runtime health failed'); } };
   };
   await assert.rejects(
     () => bootstrapStage0([
       'migrate-legacy-runtime', '--home', home,
       '--expected-runtime-head', oldHead, '--validated-candidate-head', nextHead,
     ], runner, { importModuleFn, processAliveFn: () => false }),
-    /Migrated runtime doctor failed/u,
+    /migrated runtime health failed/u,
   );
   assert.equal(readFileSync(path.join(paths.runtime, '.fake-head'), 'utf8').trim(), oldHead);
   assert.equal(existsSync(paths.migrationStateFile), false);
