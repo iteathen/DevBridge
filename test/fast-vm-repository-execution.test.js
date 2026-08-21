@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createFastVmTopology } from '../src/app/fast-vm-repository-execution.js';
+import { createFastVmTopology, selectFastVmAddress } from '../src/app/fast-vm-repository-execution.js';
 
 const target = 'env-0123456789abcdef0123456789abcdef';
 
@@ -32,7 +32,7 @@ test('fast VM topology resumes without a console and caches the observed endpoin
       stateDirectory: root,
       invoke: async (request) => {
         calls.push(request);
-        return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"state":"running","addresses":["172.18.1.2"]}', stderr: '' };
+        return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"state":"running","addresses":["172.18.1.2"],"hostNetworks":[{"address":"172.18.0.1","prefixLength":20}]}', stderr: '' };
       },
       access: async () => ({ family: 'linux', user: 'operator' }),
       cacheMs: 30_000,
@@ -44,8 +44,18 @@ test('fast VM topology resumes without a console and caches the observed endpoin
     const script = Buffer.from(calls[0].arguments.at(-1), 'base64').toString('utf16le');
     assert.match(script, /\$state -eq 'Saved'/u);
     assert.match(script, /Resume-VM/u);
+    assert.match(script, /Get-NetIPAddress/u);
     assert.doesNotMatch(script, /vmconnect/iu);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('fast VM address selection ignores stale guest addresses from a different switch', () => {
+  assert.equal(selectFastVmAddress(
+    ['192.168.175.179', '172.18.75.118', 'fe80::215:5dff:fe01:e06'],
+    [{ address: '172.18.64.1', prefixLength: 20 }],
+  ), '172.18.75.118');
+  assert.equal(selectFastVmAddress(['192.168.175.179'], [{ address: '172.18.64.1', prefixLength: 20 }]), null);
+  assert.equal(selectFastVmAddress(['300.1.1.1'], [{ address: '172.18.64.1', prefixLength: 20 }]), null);
 });

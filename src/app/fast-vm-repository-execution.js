@@ -62,8 +62,45 @@ if ($state -eq 'Off' -or $state -eq 'Saved') {
 }
 $current = Get-VM -Name ([string]$data.name) -ErrorAction Stop
 $adapter = Get-VMNetworkAdapter -VMName ([string]$data.name) -ErrorAction Stop | Select-Object -First 1
-@{ state = ([string]$current.State).ToLowerInvariant(); addresses = if ([string]$current.State -eq 'Running') { @($adapter.IPAddresses) } else { @() } } | ConvertTo-Json -Compress
+$hostNetworks = @(
+  Get-NetIPAddress -InterfaceAlias ("vEthernet ({0})" -f ([string]$data.switchName)) -AddressFamily IPv4 -ErrorAction Stop |
+    Where-Object { ([string]$_.AddressState) -notin @('Invalid', 'Duplicate', 'Tentative') } |
+    ForEach-Object { @{ address = [string]$_.IPAddress; prefixLength = [int]$_.PrefixLength } }
+)
+@{
+  state = ([string]$current.State).ToLowerInvariant()
+  addresses = if ([string]$current.State -eq 'Running') { @($adapter.IPAddresses) } else { @() }
+  hostNetworks = $hostNetworks
+} | ConvertTo-Json -Compress -Depth 4
 `;
+
+function ipv4Number(value) {
+  const match = String(value).match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u);
+  if (!match) return null;
+  const octets = match.slice(1).map(Number);
+  if (octets.some((entry) => entry < 0 || entry > 255)) return null;
+  return (((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0);
+}
+
+function onHostNetwork(address, rawNetwork) {
+  const candidate = ipv4Number(address);
+  const host = ipv4Number(rawNetwork?.address);
+  const prefixLength = rawNetwork?.prefixLength;
+  if (candidate == null || host == null || !Number.isSafeInteger(prefixLength) || prefixLength < 1 || prefixLength > 32) return false;
+  const mask = prefixLength === 32 ? 0xffffffff : (0xffffffff << (32 - prefixLength)) >>> 0;
+  return ((candidate & mask) >>> 0) === ((host & mask) >>> 0);
+}
+
+export function selectFastVmAddress(addresses, hostNetworks) {
+  if (!Array.isArray(addresses) || !Array.isArray(hostNetworks)) return null;
+  return addresses
+    .map(String)
+    .find((entry) => {
+      const value = ipv4Number(entry);
+      if (value == null || entry.startsWith('127.') || entry.startsWith('169.254.')) return false;
+      return hostNetworks.some((network) => onHostNetwork(entry, network));
+    }) ?? null;
+}
 
 async function providerRecord(stateDirectory, target) {
   if (typeof target !== 'string' || !TARGET.test(target)) throw new TypeError('fast VM target is invalid');
@@ -120,9 +157,7 @@ export function createFastVmTopology({
     do {
       try {
         const result = await observe(target);
-        const address = Array.isArray(result.addresses)
-          ? result.addresses.find((entry) => /^\d+\.\d+\.\d+\.\d+$/u.test(String(entry)) && !String(entry).startsWith('169.254.'))
-          : null;
+        const address = selectFastVmAddress(result.addresses, result.hostNetworks);
         if (address) {
           const base = await access(target);
           if (!base || base.family !== 'linux') throw new Error('fast VM route must use Linux guest access');
@@ -130,7 +165,7 @@ export function createFastVmTopology({
           cachedConnections.set(target, { address: resolved, expiresAt: Date.now() + cacheMs });
           return { ...base, address: resolved };
         }
-        last = new Error('fast VM has no usable DHCP address');
+        last = new Error('fast VM has no address on the selected host switch network');
       } catch (error) {
         last = error;
       }
