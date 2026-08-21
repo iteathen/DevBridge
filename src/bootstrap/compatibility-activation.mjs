@@ -10,7 +10,6 @@ import {
 } from './secure-bootstrap.mjs';
 import * as transactional from './transactional-bootstrap.mjs';
 
-const MIGRATION_PROTOCOL = 'devbridge/stage0-migration-v1';
 const EXACT_HEAD = /^[0-9a-f]{40}$/u;
 
 function fail(message) { throw new Error(message); }
@@ -46,10 +45,16 @@ export async function activateMigratedRuntime({
   candidate,
   runner,
   stage0Protocol,
+  acquireInstallationOwnerFn = acquireInstallationOwner,
+  superviseDaemonFn = superviseDaemon,
+  writeActivationStateFn = transactional.writeRuntimeActivationState,
 } = {}) {
   if (!Array.isArray(argv)) throw new TypeError('compatibility activation argv must be an array');
   if (!previous || !candidate) throw new TypeError('compatibility activation requires previous and candidate runtime subjects');
   if (!Number.isSafeInteger(stage0Protocol) || stage0Protocol < 1) fail('compatibility activation requires an active Stage 0 protocol');
+  if (typeof acquireInstallationOwnerFn !== 'function' || typeof superviseDaemonFn !== 'function' || typeof writeActivationStateFn !== 'function') {
+    throw new TypeError('compatibility activation adapters are incomplete');
+  }
 
   const args = parseBootstrapArgs(argv);
   if (args.releaseMode !== 'development') fail('compatibility activation is limited to development/testing legacy migration');
@@ -65,7 +70,7 @@ export async function activateMigratedRuntime({
     fail('compatibility activation candidate is not the canonical migrated runtime');
   }
 
-  const owner = await acquireInstallationOwner(paths.home);
+  const owner = await acquireInstallationOwnerFn(paths.home);
   const controller = new AbortController();
   const requestStop = () => controller.abort();
   const ownerStop = () => controller.abort();
@@ -75,7 +80,7 @@ export async function activateMigratedRuntime({
 
   let healthyRecorded = false;
   const recordActivationFn = async (localPaths, record) => {
-    const written = transactional.writeRuntimeActivationState(localPaths, record);
+    const written = await writeActivationStateFn(localPaths, record);
     if (
       !healthyRecorded &&
       record?.protocol === 'devbridge/runtime-activation-v1' &&
@@ -93,7 +98,7 @@ export async function activateMigratedRuntime({
   };
 
   try {
-    return await superviseDaemon(
+    return await superviseDaemonFn(
       { ...args, command: 'daemon' },
       paths,
       candidateRuntime,
