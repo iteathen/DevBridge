@@ -27,7 +27,7 @@ function context(seen, execute = null) {
   };
 }
 
-test('candidate checks use only the isolated execution stud and never run candidate code on the host', async () => {
+test('candidate checks use only the isolated execution stud and suite-specific bounded timing', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-candidate-no-provider-'));
   const candidateDir = path.join(root, 'candidate');
   const outside = path.join(root, 'escaped.txt');
@@ -41,6 +41,10 @@ test('candidate checks use only the isolated execution stud and never run candid
     assert.equal(result.tests, 'passed');
     assert.deepEqual(seen.map((request) => request.operation), ['runtime.validate:preflight', 'runtime.validate:tests']);
     assert.ok(seen.every((request) => request.invocation.tool === 'node'));
+    assert.equal(seen[0].limits.timeoutMs, 4 * 60_000);
+    assert.equal(seen[1].limits.timeoutMs, 2 * 60 * 60_000);
+    assert.ok(seen[1].limits.timeoutMs > 30 * 60_000);
+    assert.ok(seen[0].limits.timeoutMs < seen[1].limits.timeoutMs);
     await assert.rejects(readFile(outside), { code: 'ENOENT' });
     assert.deepEqual(candidateValidationAvailability(), { state: 'ready', ready: true, reason: null });
   } finally { await rm(root, { recursive: true, force: true }); }
