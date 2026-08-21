@@ -348,7 +348,9 @@ export class ControllerPlanExecutor {
       await persist();
       for (const operation of plan.operations) {
         this.#registry.validate(operation.operation, operation.params);
-        if (this.#registry.usesEnvironmentScratch(operation.operation)) {
+        const usesEnvironmentScratch = typeof this.#registry.usesEnvironmentScratch === 'function'
+          && this.#registry.usesEnvironmentScratch(operation.operation);
+        if (usesEnvironmentScratch) {
           const existing = planState.environmentScratchCleanup;
           planState.environmentScratchCleanup = {
             resource: 'scratch',
