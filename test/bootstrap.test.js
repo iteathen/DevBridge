@@ -182,15 +182,16 @@ test('dead interrupted stage0 migration rolls back exact saved runtime and live 
   assert.equal(existsSync(paths.migrationStateFile), false);
 });
 
-test('explicit legacy migration is exact-head guarded, preserves rollback runtime, and starts protocol-compatible runtime', async () => {
+test('explicit legacy migration stages the replacement before stop and keeps exact rollback runtime', async () => {
   const home = mkdtempSync(path.join(tmpdir(), 'db-stage0-migrate-'));
   const paths = stage0Paths(home);
   const oldHead = '8'.repeat(40);
   const nextHead = '9'.repeat(40);
+  const order = [];
   writeRuntime(paths.runtime, oldHead, 0);
   const runner = fakeGitRunner({
     remoteHead: nextHead,
-    onClone: (destination) => writeRuntime(destination, nextHead, 1),
+    onClone: (destination) => { order.push('clone'); writeRuntime(destination, nextHead, 1); },
   });
   const calls = [];
   let imports = 0;
@@ -200,7 +201,8 @@ test('explicit legacy migration is exact-head guarded, preserves rollback runtim
     return {
       async bootstrap(argv, _runner, options) {
         calls.push({ generation, command: argv[0], argv: [...argv], options });
-        if (generation === 1) return argv[0] === 'stop' ? 0 : 9;
+        if (generation === 1 && argv[0] === 'stop') { order.push('stop'); return 0; }
+        if (generation === 1) return 9;
         if (argv[0] === 'doctor' || argv[0] === 'daemon') return 0;
         return 9;
       },
@@ -212,6 +214,7 @@ test('explicit legacy migration is exact-head guarded, preserves rollback runtim
     '--expected-runtime-head', oldHead, '--validated-candidate-head', nextHead,
   ], runner, { importModuleFn, processAliveFn: () => false });
   assert.equal(status, 0);
+  assert.deepEqual(order, ['clone', 'stop']);
   assert.deepEqual(calls.map((entry) => entry.command), ['stop', 'doctor', 'daemon']);
   assert.ok(calls.every((entry) => entry.options.stage0Protocol === STAGE0_PROTOCOL));
   assert.ok(calls.every((entry) => entry.argv.includes('--no-update')));
@@ -250,6 +253,37 @@ test('failed migrated runtime doctor restores exact legacy runtime', async () =>
   );
   assert.equal(readFileSync(path.join(paths.runtime, '.fake-head'), 'utf8').trim(), oldHead);
   assert.equal(existsSync(paths.migrationStateFile), false);
+});
+
+test('legacy runtime rename collision leaves the accepted runtime intact and retry state clean', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'db-stage0-migrate-rename-'));
+  const paths = stage0Paths(home);
+  const oldHead = 'c'.repeat(40);
+  const nextHead = 'd'.repeat(40);
+  writeRuntime(paths.runtime, oldHead, 0);
+  const runner = fakeGitRunner({
+    remoteHead: nextHead,
+    onClone: (destination) => writeRuntime(destination, nextHead, 1),
+  });
+  const importModuleFn = async () => ({
+    async bootstrap(argv) {
+      if (argv[0] !== 'stop') return 9;
+      const blocker = path.join(paths.legacyRuntimeRoot, oldHead, 'runtime');
+      mkdirSync(blocker, { recursive: true });
+      writeFileSync(path.join(blocker, 'blocker.txt'), 'occupied\n');
+      return 0;
+    },
+  });
+
+  await assert.rejects(() => bootstrapStage0([
+    'migrate-legacy-runtime', '--home', home,
+    '--expected-runtime-head', oldHead, '--validated-candidate-head', nextHead,
+  ], runner, { importModuleFn, processAliveFn: () => false }));
+
+  assert.equal(readFileSync(path.join(paths.runtime, '.fake-head'), 'utf8').trim(), oldHead);
+  assert.equal(existsSync(path.join(paths.legacyRuntimeRoot, oldHead)), false);
+  assert.equal(existsSync(paths.migrationStateFile), false);
+  assert.equal(existsSync(path.join(paths.migrationCandidateRoot, nextHead)), false);
 });
 
 test('managed Git environment removes inherited Git and SSH authority and normalizes Windows PATH', () => {
