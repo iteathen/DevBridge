@@ -102,6 +102,7 @@ export function resolveStage0Paths(args, environment = process.env) {
     runtime: path.join(home, 'runtime'),
     activationStateFile: path.join(home, 'runtime-activation.json'),
     migrationStateFile: path.join(home, 'stage0-migration.json'),
+    migrationCandidateRoot: path.join(home, 'stage0-candidates'),
     legacyRuntimeRoot: path.join(home, 'legacy-runtime-migrations'),
     gitHome: path.join(home, 'bootstrap-git-home'),
     hooks: path.join(home, 'bootstrap-empty-hooks'),
@@ -261,6 +262,15 @@ function migrationBackup(paths, head) {
   };
 }
 
+function migrationCandidate(paths, head) {
+  return path.join(paths.migrationCandidateRoot, head);
+}
+
+function removeMigrationCandidate(paths, head) {
+  const candidate = migrationCandidate(paths, head);
+  if (existsSync(candidate)) rmSync(candidate, { recursive: true, force: true });
+}
+
 function restoreLegacyRuntime(paths, backup) {
   if (existsSync(paths.runtime)) rmSync(paths.runtime, { recursive: true, force: true });
   if (existsSync(backup.runtime)) renameSync(backup.runtime, paths.runtime);
@@ -276,11 +286,15 @@ export function reconcileStage0Migration(paths, { processAliveFn = processIsAliv
     fail(`Stage 0 migration is already in progress for ${record.previousHead.slice(0, 12)} -> ${record.nextHead.slice(0, 12)}.`);
   }
   const backup = migrationBackup(paths, record.previousHead);
-  if (existsSync(backup.root) && !existsSync(backup.runtime)) {
+  if (existsSync(backup.activation) && !existsSync(backup.runtime)) {
     fail('Stage 0 migration backup is incomplete; refusing automatic recovery.');
   }
   if (existsSync(backup.runtime)) restoreLegacyRuntime(paths, backup);
-  else if (!existsSync(paths.runtime)) fail('Interrupted Stage 0 migration has neither an accepted runtime nor a recoverable backup.');
+  else {
+    if (!existsSync(paths.runtime)) fail('Interrupted Stage 0 migration has neither an accepted runtime nor a recoverable backup.');
+    if (existsSync(backup.root)) rmSync(backup.root, { recursive: true, force: true });
+  }
+  removeMigrationCandidate(paths, record.nextHead);
   rmSync(paths.migrationStateFile, { force: true });
   return Object.freeze({ state: 'rolled-back', previousHead: record.previousHead, abandonedHead: record.nextHead });
 }
@@ -385,27 +399,44 @@ async function migrateLegacyRuntime(argv, args, paths, selection, runner, import
   const desiredHead = remoteMainHead(paths, runner);
   if (desiredHead !== args.validatedCandidateHead) fail('Trusted main changed after the operator validated the candidate; revalidate the exact current head before migration.');
 
+  const backup = migrationBackup(paths, current.head);
+  const stagedPath = migrationCandidate(paths, desiredHead);
+  if (existsSync(backup.root)) fail('A legacy migration backup already exists for the accepted runtime; reconcile it before retrying.');
+  if (existsSync(stagedPath)) fail('A legacy migration candidate staging directory already exists; reconcile it before retrying.');
   beginMigration(paths, current.head, desiredHead);
+
+  try {
+    runGit(['clone', '--no-tags', '--depth', '1', '--single-branch', '--branch', 'main', SOURCE_REPOSITORY, stagedPath], { paths, runner });
+    const staged = runtimeFromDirectory(paths, stagedPath, runner, desiredHead);
+    if (staged.minimumStage0Protocol < 1) fail('Migrated runtime does not implement the Stage 0 compatibility contract.');
+  } catch (error) {
+    removeMigrationCandidate(paths, desiredHead);
+    rmSync(paths.migrationStateFile, { force: true });
+    throw error;
+  }
+
   const currentModule = await importBootstrap(current, importModuleFn);
-  const stopStatus = await currentModule.bootstrap(forwardedRuntimeArgs(argv, 'stop', true), undefined, { stage0Protocol: STAGE0_PROTOCOL });
+  let stopStatus;
+  try {
+    stopStatus = await currentModule.bootstrap(forwardedRuntimeArgs(argv, 'stop', true), undefined, { stage0Protocol: STAGE0_PROTOCOL });
+  } catch (error) {
+    removeMigrationCandidate(paths, desiredHead);
+    rmSync(paths.migrationStateFile, { force: true });
+    throw error;
+  }
   if (stopStatus !== 0) {
+    removeMigrationCandidate(paths, desiredHead);
     rmSync(paths.migrationStateFile, { force: true });
     fail(`Legacy runtime did not stop cooperatively (exit ${stopStatus}); refusing migration.`);
   }
 
-  const backup = migrationBackup(paths, current.head);
-  if (existsSync(backup.root)) {
-    rmSync(paths.migrationStateFile, { force: true });
-    fail('A legacy migration backup already exists for the accepted runtime; reconcile it before retrying.');
-  }
-  mkdirSync(backup.root, { recursive: true });
-  renameSync(paths.runtime, backup.runtime);
-  if (existsSync(paths.activationStateFile)) renameSync(paths.activationStateFile, backup.activation);
-
   try {
-    runGit(['clone', '--no-tags', '--depth', '1', '--single-branch', '--branch', 'main', SOURCE_REPOSITORY, paths.runtime], { paths, runner });
+    mkdirSync(backup.root, { recursive: true });
+    renameSync(paths.runtime, backup.runtime);
+    if (existsSync(paths.activationStateFile)) renameSync(paths.activationStateFile, backup.activation);
+    renameSync(stagedPath, paths.runtime);
+
     const migrated = runtimeFromDirectory(paths, paths.runtime, runner, desiredHead);
-    if (migrated.minimumStage0Protocol < 1) fail('Migrated runtime does not implement the Stage 0 compatibility contract.');
     const nextModule = await importBootstrap(migrated, importModuleFn);
     const doctorStatus = await nextModule.bootstrap(forwardedRuntimeArgs(argv, 'doctor', true), undefined, { stage0Protocol: STAGE0_PROTOCOL });
     if (doctorStatus !== 0) fail(`Migrated runtime doctor failed with exit ${doctorStatus}.`);
@@ -415,7 +446,8 @@ async function migrateLegacyRuntime(argv, args, paths, selection, runner, import
     if (status !== 0) restoreLegacyRuntime(paths, backup);
     return status;
   } catch (error) {
-    restoreLegacyRuntime(paths, backup);
+    if (existsSync(backup.runtime)) restoreLegacyRuntime(paths, backup);
+    removeMigrationCandidate(paths, desiredHead);
     rmSync(paths.migrationStateFile, { force: true });
     throw error;
   }
