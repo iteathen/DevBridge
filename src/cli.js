@@ -11,6 +11,9 @@ import { chatHandoffSeed, chatHandoffStatus } from './app/chat-handoff.js';
 import { PolicyError } from './errors.js';
 import { daemonStatus, pauseDaemon, resumeDaemon, stopDaemon } from './runtime/daemon-lock.js';
 
+const installationTag = process.env.DEVBRIDGE_INSTALLATION_TAG;
+if (/^DB-[0-9A-F]{12}$/u.test(installationTag ?? '')) process.title = `DevBridge[${installationTag}]`;
+
 function usage() {
   console.error('Usage: devbridge <doctor|poll-once|run-once|daemon|status|pause|resume|stop|restart|handoff-status|handoff-seed|handoff-project> --config <path> [--repository owner/name] [--issue number]');
 }
