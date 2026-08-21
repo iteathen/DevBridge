@@ -266,6 +266,7 @@ function restoreLegacyRuntime(paths, backup) {
   if (existsSync(backup.runtime)) renameSync(backup.runtime, paths.runtime);
   if (existsSync(paths.activationStateFile)) rmSync(paths.activationStateFile, { force: true });
   if (existsSync(backup.activation)) renameSync(backup.activation, paths.activationStateFile);
+  if (existsSync(backup.root)) rmSync(backup.root, { recursive: true, force: true });
 }
 
 export function reconcileStage0Migration(paths, { processAliveFn = processIsAlive } = {}) {
