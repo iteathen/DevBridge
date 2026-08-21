@@ -9,6 +9,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -18,6 +19,7 @@ import { pathToFileURL } from 'node:url';
 export const SOURCE_REPOSITORY = 'https://github.com/iteathen/DevBridge.git';
 export const STAGE0_PROTOCOL = 1;
 const ACTIVATION_PROTOCOL = 'devbridge/runtime-activation-v1';
+const MIGRATION_PROTOCOL = 'devbridge/stage0-migration-v1';
 const MINIMUM_NODE = Object.freeze([22, 16, 0]);
 const CAPTURE_LIMIT = 4 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -36,6 +38,7 @@ const SCRUBBED_GIT_ENVIRONMENT = Object.freeze([
 function fail(message) { throw new Error(message); }
 function exactHead(value) { return typeof value === 'string' && /^[0-9a-f]{40}$/iu.test(value) ? value.toLowerCase() : null; }
 function sha256(value) { return createHash('sha256').update(String(value), 'utf8').digest('hex'); }
+function now() { return new Date().toISOString(); }
 
 export function assertSupportedNode(version = process.versions.node) {
   const parts = String(version).split('.').map((value) => Number.parseInt(value, 10));
@@ -83,6 +86,9 @@ export function parseStage0Args(argv) {
       validatedCandidateHead = exactHead(takeValue(argv, index, value));
       if (!validatedCandidateHead) fail('--validated-candidate-head requires an exact 40-hex Git head.');
       index += 1;
+    } else if (VALUE_FLAGS.has(value)) {
+      takeValue(argv, index, value);
+      index += 1;
     }
   }
   return { home, noUpdate, command, expectedRuntimeHead, validatedCandidateHead };
@@ -95,6 +101,7 @@ export function resolveStage0Paths(args, environment = process.env) {
     home,
     runtime: path.join(home, 'runtime'),
     activationStateFile: path.join(home, 'runtime-activation.json'),
+    migrationStateFile: path.join(home, 'stage0-migration.json'),
     legacyRuntimeRoot: path.join(home, 'legacy-runtime-migrations'),
     gitHome: path.join(home, 'bootstrap-git-home'),
     hooks: path.join(home, 'bootstrap-empty-hooks'),
@@ -170,6 +177,17 @@ function isWithin(root, candidate) {
   return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
 }
 
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false;
+    if (error?.code === 'EPERM') return true;
+    throw error;
+  }
+}
+
 function runtimeMinimumStage0Protocol(manifest) {
   const value = manifest?.devbridge?.bootstrap?.minimumStage0Protocol ?? 0;
   if (!Number.isSafeInteger(value) || value < 0) fail('Managed runtime declares an invalid Stage 0 compatibility requirement.');
@@ -202,6 +220,13 @@ function validateRuntimeShape(runtime) {
   return { secureBootstrapPath, version: manifest.version, minimumStage0Protocol };
 }
 
+function writeJsonAtomic(filePath, value) {
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  const temp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  renameSync(temp, filePath);
+}
+
 export function readStage0ActivationState(paths) {
   if (!existsSync(paths.activationStateFile)) return null;
   let parsed;
@@ -211,6 +236,52 @@ export function readStage0ActivationState(paths) {
     fail('Runtime activation state uses an unsupported protocol; refusing to guess the accepted runtime.');
   }
   return parsed;
+}
+
+function readStage0MigrationState(paths) {
+  if (!existsSync(paths.migrationStateFile)) return null;
+  let parsed;
+  try { parsed = JSON.parse(readFileSync(paths.migrationStateFile, 'utf8')); }
+  catch { fail('Stage 0 migration state is malformed; refusing to guess recovery state.'); }
+  const previousHead = exactHead(parsed?.previousHead);
+  const nextHead = exactHead(parsed?.nextHead);
+  if (parsed?.protocol !== MIGRATION_PROTOCOL || parsed.state !== 'transitioning' ||
+      !Number.isSafeInteger(parsed.pid) || parsed.pid <= 0 || !previousHead || !nextHead ||
+      typeof parsed.startedAt !== 'string') {
+    fail('Stage 0 migration state is invalid; refusing to guess recovery state.');
+  }
+  return { ...parsed, previousHead, nextHead };
+}
+
+function migrationBackup(paths, head) {
+  return {
+    root: path.join(paths.legacyRuntimeRoot, head),
+    runtime: path.join(paths.legacyRuntimeRoot, head, 'runtime'),
+    activation: path.join(paths.legacyRuntimeRoot, head, 'runtime-activation.json'),
+  };
+}
+
+function restoreLegacyRuntime(paths, backup) {
+  if (existsSync(paths.runtime)) rmSync(paths.runtime, { recursive: true, force: true });
+  if (existsSync(backup.runtime)) renameSync(backup.runtime, paths.runtime);
+  if (existsSync(paths.activationStateFile)) rmSync(paths.activationStateFile, { force: true });
+  if (existsSync(backup.activation)) renameSync(backup.activation, paths.activationStateFile);
+}
+
+export function reconcileStage0Migration(paths, { processAliveFn = processIsAlive } = {}) {
+  const record = readStage0MigrationState(paths);
+  if (!record) return null;
+  if (record.pid !== process.pid && processAliveFn(record.pid)) {
+    fail(`Stage 0 migration is already in progress for ${record.previousHead.slice(0, 12)} -> ${record.nextHead.slice(0, 12)}.`);
+  }
+  const backup = migrationBackup(paths, record.previousHead);
+  if (existsSync(backup.root) && !existsSync(backup.runtime)) {
+    fail('Stage 0 migration backup is incomplete; refusing automatic recovery.');
+  }
+  if (existsSync(backup.runtime)) restoreLegacyRuntime(paths, backup);
+  else if (!existsSync(paths.runtime)) fail('Interrupted Stage 0 migration has neither an accepted runtime nor a recoverable backup.');
+  rmSync(paths.migrationStateFile, { force: true });
+  return Object.freeze({ state: 'rolled-back', previousHead: record.previousHead, abandonedHead: record.nextHead });
 }
 
 function runtimeFromDirectory(paths, runtimeDir, runner, expectedHead = null) {
@@ -286,19 +357,16 @@ async function importBootstrap(runtime, importModuleFn) {
   return module;
 }
 
-function migrationBackup(paths, head) {
-  return {
-    root: path.join(paths.legacyRuntimeRoot, head),
-    runtime: path.join(paths.legacyRuntimeRoot, head, 'runtime'),
-    activation: path.join(paths.legacyRuntimeRoot, head, 'runtime-activation.json'),
-  };
-}
-
-function restoreLegacyRuntime(paths, backup) {
-  if (existsSync(paths.runtime)) rmSync(paths.runtime, { recursive: true, force: true });
-  if (existsSync(backup.runtime)) renameSync(backup.runtime, paths.runtime);
-  if (existsSync(paths.activationStateFile)) rmSync(paths.activationStateFile, { force: true });
-  if (existsSync(backup.activation)) renameSync(backup.activation, paths.activationStateFile);
+function beginMigration(paths, previousHead, nextHead) {
+  if (existsSync(paths.migrationStateFile)) fail('Stage 0 migration state already exists; reconcile it before starting another migration.');
+  writeJsonAtomic(paths.migrationStateFile, {
+    protocol: MIGRATION_PROTOCOL,
+    state: 'transitioning',
+    pid: process.pid,
+    previousHead,
+    nextHead,
+    startedAt: now(),
+  });
 }
 
 async function migrateLegacyRuntime(argv, args, paths, selection, runner, importModuleFn, installationTag) {
@@ -316,12 +384,19 @@ async function migrateLegacyRuntime(argv, args, paths, selection, runner, import
   const desiredHead = remoteMainHead(paths, runner);
   if (desiredHead !== args.validatedCandidateHead) fail('Trusted main changed after the operator validated the candidate; revalidate the exact current head before migration.');
 
+  beginMigration(paths, current.head, desiredHead);
   const currentModule = await importBootstrap(current, importModuleFn);
   const stopStatus = await currentModule.bootstrap(forwardedRuntimeArgs(argv, 'stop', true), undefined, { stage0Protocol: STAGE0_PROTOCOL });
-  if (stopStatus !== 0) fail(`Legacy runtime did not stop cooperatively (exit ${stopStatus}); refusing migration.`);
+  if (stopStatus !== 0) {
+    rmSync(paths.migrationStateFile, { force: true });
+    fail(`Legacy runtime did not stop cooperatively (exit ${stopStatus}); refusing migration.`);
+  }
 
   const backup = migrationBackup(paths, current.head);
-  if (existsSync(backup.root)) fail('A legacy migration backup already exists for the accepted runtime; reconcile it before retrying.');
+  if (existsSync(backup.root)) {
+    rmSync(paths.migrationStateFile, { force: true });
+    fail('A legacy migration backup already exists for the accepted runtime; reconcile it before retrying.');
+  }
   mkdirSync(backup.root, { recursive: true });
   renameSync(paths.runtime, backup.runtime);
   if (existsSync(paths.activationStateFile)) renameSync(paths.activationStateFile, backup.activation);
@@ -333,19 +408,24 @@ async function migrateLegacyRuntime(argv, args, paths, selection, runner, import
     const nextModule = await importBootstrap(migrated, importModuleFn);
     const doctorStatus = await nextModule.bootstrap(forwardedRuntimeArgs(argv, 'doctor', true), undefined, { stage0Protocol: STAGE0_PROTOCOL });
     if (doctorStatus !== 0) fail(`Migrated runtime doctor failed with exit ${doctorStatus}.`);
+    rmSync(paths.migrationStateFile, { force: true });
     process.stdout.write(`[devbridge-stage0 ${installationTag}] legacy-migration previous=${current.head} current=${migrated.head} protocol=${STAGE0_PROTOCOL}\n`);
-    return await nextModule.bootstrap(forwardedRuntimeArgs(argv, 'daemon', true), undefined, { stage0Protocol: STAGE0_PROTOCOL });
+    const status = await nextModule.bootstrap(forwardedRuntimeArgs(argv, 'daemon', true), undefined, { stage0Protocol: STAGE0_PROTOCOL });
+    if (status !== 0) restoreLegacyRuntime(paths, backup);
+    return status;
   } catch (error) {
     restoreLegacyRuntime(paths, backup);
+    rmSync(paths.migrationStateFile, { force: true });
     throw error;
   }
 }
 
-function printBootstrapStatus(selection, installationTag) {
+function printBootstrapStatus(selection, installationTag, migrationRecovery) {
   process.stdout.write(`${JSON.stringify({
     protocol: 'devbridge/stage0-status-v1',
     installationTag,
     stage0Protocol: STAGE0_PROTOCOL,
+    migrationRecovery,
     activationState: selection.activationState,
     runtime: {
       head: selection.runtime.head,
@@ -359,6 +439,7 @@ function printBootstrapStatus(selection, installationTag) {
 
 export async function bootstrapStage0(argv = process.argv.slice(2), runner = defaultRunner, {
   importModuleFn = (url) => import(url),
+  processAliveFn = processIsAlive,
 } = {}) {
   assertSupportedNode();
   const args = parseStage0Args(argv);
@@ -367,9 +448,10 @@ export async function bootstrapStage0(argv = process.argv.slice(2), runner = def
   process.env.DEVBRIDGE_INSTALLATION_TAG = installationTag;
   process.env.DEVBRIDGE_STAGE0_PROTOCOL = String(STAGE0_PROTOCOL);
   process.title = `DevBridge[${installationTag}]`;
+  const migrationRecovery = reconcileStage0Migration(paths, { processAliveFn });
   const selection = ensureStage0Runtime(args, paths, runner);
   process.stdout.write(`[devbridge-stage0 ${installationTag}] activation=${selection.activationState} runtime=${selection.runtime.head}\n`);
-  if (args.command === 'bootstrap-status') return printBootstrapStatus(selection, installationTag);
+  if (args.command === 'bootstrap-status') return printBootstrapStatus(selection, installationTag, migrationRecovery);
   if (args.command === 'migrate-legacy-runtime') {
     return migrateLegacyRuntime(argv, args, paths, selection, runner, importModuleFn, installationTag);
   }
