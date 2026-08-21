@@ -1,5 +1,6 @@
 import path from 'node:path';
-import { createRepositoryExecution, gitVisiblePathsFromResult } from './repository-execution.js';
+import { createExecutionProfileRepositoryExecution } from './execution-profile-routing.js';
+import { gitVisiblePathsFromResult } from './repository-execution.js';
 import { resolveBuiltInHelper } from './builtin-helper-resolver.js';
 
 const SAFE_SEGMENT = /^[A-Za-z0-9_.-]+$/u;
@@ -53,7 +54,7 @@ export async function createRuntimeExecutionContext({
 } = {}) {
   if (!config || !workspaceManager || !gitClient || !client) throw new TypeError('runtime execution composition is incomplete');
   const repositoryIds = new Map();
-  const repositoryExecution = await createRepositoryExecution({
+  const repositoryExecution = await createExecutionProfileRepositoryExecution({
     stateDirectory: config.state.directory,
     env,
     protectedValues,
