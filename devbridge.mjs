@@ -447,6 +447,7 @@ async function migrateLegacyRuntime(argv, args, paths, selection, runner, import
     return status;
   } catch (error) {
     if (existsSync(backup.runtime)) restoreLegacyRuntime(paths, backup);
+    else if (existsSync(backup.root)) rmSync(backup.root, { recursive: true, force: true });
     removeMigrationCandidate(paths, desiredHead);
     rmSync(paths.migrationStateFile, { force: true });
     throw error;
