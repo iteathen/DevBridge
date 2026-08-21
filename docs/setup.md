@@ -93,10 +93,13 @@ node ~/.devbridge/bin/devbridge.mjs setup \
   --repository owner/control --repository owner/project \
   --trusted-author 12345 \
   --no-repository-discovery \
-  --all-environments --enable-execution
+  --all-environments --enable-execution \
+  --confirm APPLY
 ```
 
 Use `--no-environments --disable-execution` for a polling-only installation. Repository execution never falls back to the host when an environment cannot be prepared or verified.
+
+Interactive setup accepts repository option numbers, `all`, and custom `owner/name` identities separated by spaces or commas. Trusted-author selection accepts option numbers, `self`, discovered logins, custom GitHub logins, and `id:<numeric-id>`. Custom repositories/logins/IDs are queried through the authenticated GitHub API and rejected unless GitHub returns the same canonical identity. Invalid input returns to the same prompt. Before policy is written, setup displays the verified repositories and immutable actor IDs, warns about remote job-submission authority, and requires exact `APPLY`; scripted repository/task-author changes require `--confirm APPLY`.
 
 ## Removed host-sandbox prerequisite
 

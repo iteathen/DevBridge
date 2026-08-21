@@ -32,7 +32,7 @@ async function readRoutes(stateDirectory) {
 }
 
 function selectNames(value, options) {
-  const raw = String(value || '').split(',').map((entry) => entry.trim()).filter(Boolean);
+  const raw = String(value || '').split(/[\s,]+/u).map((entry) => entry.trim()).filter(Boolean);
   if (raw.length === 0 || (raw.length === 1 && raw[0].toLowerCase() === 'none')) return [];
   if (raw.length === 1 && raw[0].toLowerCase() === 'all') return options.filter((entry) => entry.ready || entry.provisionable).map((entry) => entry.repository);
   return raw.map((entry) => {
@@ -109,6 +109,7 @@ export async function setupEnvironments(config, repositoryRecords, argv, {
   platform = process.platform,
   foundationFactory = createEnvironmentFoundation,
   provisionFn = provisionRepositoryEnvironment,
+  promptFactory = createInterface,
 } = {}) {
   let inspection = await inspectEnvironmentSetup(config, repositoryRecords, { platform, foundationFactory });
   const explicit = optionValues(argv, '--environment');
@@ -127,10 +128,36 @@ export async function setupEnvironments(config, repositoryRecords, argv, {
       const state = entry.ready ? `ready (${entry.environment}, ${entry.state})` : entry.provisionable ? 'can create persistent VM' : `poll-only: ${entry.blocker}`;
       output.write(`  ${index + 1}. ${entry.repository}: ${state}\n`);
     });
-    const prompt = createInterface({ input, output });
+    const prompt = promptFactory({ input, output });
     try {
-      selected = selectNames(await prompt.question('Persistent VM selections (numbers, all, or none) [none]: '), inspection.options);
-      executionEnabled = yesNo(await prompt.question(`Enable repository execution for ready selected environments (${selected.length > 0 ? 'yes' : 'no'}) [${selected.length > 0 ? 'yes' : 'no'}]: `), selected.length > 0);
+      while (true) {
+        const answer = await prompt.question('Persistent VM selections (numbers, all, none, or configured owner/name; separate with spaces or commas) [none]: ');
+        try {
+          selected = selectNames(
+            answer,
+            inspection.options,
+          );
+          const selectedSet = new Set(selected.map((value) => value.toLowerCase()));
+          for (const repository of selectedSet) {
+            const option = inspection.options.find((entry) => entry.repository.toLowerCase() === repository);
+            if (!option) throw new Error(`Environment selection is not a configured repository: ${repository}`);
+            if (!option.ready && !option.provisionable) throw new Error(`Cannot use ${option.repository}: ${option.blocker}`);
+          }
+          break;
+        } catch (error) {
+          output.write(`  Invalid environment selection: ${String(error?.message ?? error)} Try again.\n`);
+        }
+      }
+      while (true) {
+        const answer = await prompt.question(`Enable repository execution for ready selected environments (${selected.length > 0 ? 'yes' : 'no'}) [${selected.length > 0 ? 'yes' : 'no'}]: `);
+        try {
+          executionEnabled = yesNo(answer, selected.length > 0);
+          if (executionEnabled && selected.length === 0) throw new Error('Repository execution requires at least one selected environment.');
+          break;
+        } catch (error) {
+          output.write(`  Invalid execution selection: ${String(error?.message ?? error)} Try again.\n`);
+        }
+      }
     } finally {
       prompt.close();
     }

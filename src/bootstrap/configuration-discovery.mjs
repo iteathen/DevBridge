@@ -1,6 +1,7 @@
 import { createGitHubSession } from '../app/github-session.js';
 
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
+const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u;
 const MAX_REPOSITORIES = 100;
 const MAX_AUTHORS = 100;
 
@@ -65,6 +66,39 @@ export async function createConfigurationDiscovery(config, {
       }
       return Object.freeze({ records, truncated: linkHasNext(response.headers) });
     },
+    async resolveRepository(repository) {
+      const requested = String(repository ?? '').trim();
+      if (!REPOSITORY.test(requested)) throw new TypeError('Custom repository must be an owner/name identity.');
+      const [owner, name] = requested.split('/');
+      const response = await client.request(
+        'GET',
+        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
+        { conditional: false },
+      );
+      const record = repositoryRecord(response.data);
+      if (!record || record.name.toLowerCase() !== requested.toLowerCase()) {
+        throw new Error(`GitHub did not verify the exact repository identity ${requested}.`);
+      }
+      return record;
+    },
+    async resolveAuthor(login) {
+      const requested = String(login ?? '').trim();
+      if (!LOGIN.test(requested)) throw new TypeError('Custom GitHub login is invalid.');
+      const response = await client.request('GET', `/users/${encodeURIComponent(requested)}`, { conditional: false });
+      const record = authorRecord(response.data);
+      if (!record || record.login.toLowerCase() !== requested.toLowerCase()) {
+        throw new Error(`GitHub did not verify the exact actor login ${requested}.`);
+      }
+      return Object.freeze(record);
+    },
+    async resolveAuthorId(id) {
+      const requested = String(id ?? '').trim();
+      if (!/^\d+$/u.test(requested)) throw new TypeError('Custom GitHub actor ID must be numeric.');
+      const response = await client.request('GET', `/user/${encodeURIComponent(requested)}`, { conditional: false });
+      const record = authorRecord(response.data);
+      if (!record || record.id !== requested) throw new Error(`GitHub did not verify the exact actor ID ${requested}.`);
+      return Object.freeze(record);
+    },
     async listAuthors(repositories) {
       const selected = [...new Set(repositories.map((value) => String(value)))];
       if (selected.length < 1 || selected.length > 30 || selected.some((value) => !REPOSITORY.test(value))) {
@@ -97,6 +131,7 @@ export async function createConfigurationDiscovery(config, {
       }
       return Object.freeze({
         records: [...records.values()].sort((left, right) => left.login.localeCompare(right.login, 'en', { sensitivity: 'base' })),
+        authenticatedUser: self ? Object.freeze({ id: self.id, login: self.login }) : null,
         warnings,
         truncated,
       });

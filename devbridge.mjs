@@ -473,7 +473,7 @@ function printHelp() {
     '  --all-environments | --no-environments\n' +
     '  --enable-execution | --disable-execution\n' +
     '  --app-only | --purge  Select uninstall scope (uninstall only)\n' +
-    '  --confirm REMOVE      Exact noninteractive uninstall confirmation\n' +
+    '  --confirm <token>     Exact APPLY for setup authority changes or REMOVE for uninstall\n' +
     '  --no-update         Do not discover or activate updates\n' +
     '  --setup             Explicitly re-enter setup (same as the setup command)\n' +
     '  --help              Show this help without installing\n',

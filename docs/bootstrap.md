@@ -97,7 +97,7 @@ node ~/.devbridge/bin/devbridge.mjs logs
 node ~/.devbridge/bin/devbridge.mjs stop
 ```
 
-Noninteractive setup uses repeated `--repository`, repeated `--trusted-author`, repository-discovery selection, and explicit environment/execution switches. Repository discovery happens before choices are displayed. GitHub collaborator results are candidates only; choosing a numeric actor ID is the local trust grant.
+Noninteractive setup uses repeated `--repository`, repeated `--trusted-author`, repository-discovery selection, explicit environment/execution switches, and exact `--confirm APPLY` for repository/task-author authority changes. Repository discovery happens before choices are displayed. Interactive selection supports whitespace/comma multi-select, `all` repositories, `self`, discovered or custom GitHub logins, and custom `owner/name` repositories. Custom entries are accepted only after authenticated GitHub lookup returns the same canonical identity; invalid input returns to the prompt. GitHub collaborator results are candidates only, and the warning/confirmation screen binds the final grant to canonical repository identities and immutable numeric actor IDs.
 
 The current automatic VM provisioning shortcut is Windows/Hyper-V-only and requires an already published `linux-development` base plus validation route. Unsupported or unready providers remain poll-only/fail-closed; setup does not redirect work to the host. `daemon` is the explicit foreground/show-output mode. VM consoles remain hidden unless an operator separately invokes the diagnostic `Show` action.
 

@@ -60,6 +60,7 @@ export function parseBootstrapArgs(argv) {
   let commandSeen = false;
   let configurationSeen = false;
   let uninstallSeen = false;
+  let confirmSeen = false;
   let appOnly = false;
   let purge = false;
   for (let index = 0; index < argv.length; index += 1) {
@@ -83,7 +84,7 @@ export function parseBootstrapArgs(argv) {
     if (value === '--prompt-channel') { continue; }
     if (value === '--app-only') { uninstallSeen = true; appOnly = true; continue; }
     if (value === '--purge') { uninstallSeen = true; purge = true; continue; }
-    if (value === '--confirm') { takeValue(argv, index, value); uninstallSeen = true; index += 1; continue; }
+    if (value === '--confirm') { takeValue(argv, index, value); confirmSeen = true; index += 1; continue; }
     if (CONFIGURATION_VALUE_FLAGS.has(value)) {
       takeValue(argv, index, value);
       configurationSeen = true;
@@ -100,6 +101,7 @@ export function parseBootstrapArgs(argv) {
   if (result.command === 'update' && !result.update) fail('update cannot be combined with --no-update');
   if (configurationSeen && result.command !== 'setup') fail('repository/task-author selection flags require the setup command');
   if (uninstallSeen && result.command !== 'uninstall') fail('removal flags require the uninstall command');
+  if (confirmSeen && !['setup', 'uninstall'].includes(result.command)) fail('--confirm requires the setup or uninstall command');
   if (appOnly && purge) fail('Choose only one uninstall mode: --app-only or --purge');
   return result;
 }
@@ -296,46 +298,135 @@ function configurationSelections(argv) {
   const repositories = [];
   const trustedAuthors = [];
   let discovery = null;
+  let confirm = null;
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === '--repository') { repositories.push(takeValue(argv, index, value)); index += 1; continue; }
     if (value === '--trusted-author') { trustedAuthors.push(takeValue(argv, index, value)); index += 1; continue; }
+    if (value === '--confirm') { confirm = takeValue(argv, index, value); index += 1; continue; }
     if (value === '--repository-discovery') discovery = true;
     if (value === '--no-repository-discovery') discovery = false;
   }
   const environmentIntent = argv.some((value) => ['--environment', '--all-environments', '--no-environments', '--enable-execution', '--disable-execution'].includes(value));
-  return { repositories, trustedAuthors, discovery, supplied: repositories.length > 0 || trustedAuthors.length > 0 || discovery != null || environmentIntent };
+  return { repositories, trustedAuthors, discovery, confirm, supplied: repositories.length > 0 || trustedAuthors.length > 0 || discovery != null || environmentIntent };
 }
 
-function commaValues(value) {
-  return String(value || '').split(',').map((entry) => entry.trim()).filter(Boolean);
+function selectionValues(value) {
+  return String(value || '').split(/[\s,]+/u).map((entry) => entry.trim()).filter(Boolean);
 }
 
-function selectRepositories(value, options, fallback) {
-  const selected = commaValues(value);
-  if (selected.length === 0) return fallback;
-  return selected.map((entry) => {
+function uniqueValues(values, key = (value) => String(value).toLowerCase()) {
+  const observed = new Set();
+  return values.filter((value) => {
+    const identity = key(value);
+    if (observed.has(identity)) return false;
+    observed.add(identity);
+    return true;
+  });
+}
+
+function mergeRepositoryOptions(options, additions) {
+  const merged = new Map(options.map((entry) => [entry.name.toLowerCase(), entry]));
+  for (const entry of additions) merged.set(entry.name.toLowerCase(), entry);
+  return [...merged.values()];
+}
+
+async function selectRepositories(value, options, fallback, {
+  discovery = null,
+  numericOptions = true,
+} = {}) {
+  const selected = selectionValues(value);
+  if (selected.length === 0) return { values: fallback, verified: [] };
+  const values = [];
+  const verified = [];
+  for (const entry of selected) {
+    if (entry.toLowerCase() === 'all') {
+      if (options.length < 1) fail('No verified discovered repositories are available for "all".');
+      values.push(...options.map((option) => option.name));
+      continue;
+    }
     if (/^\d+$/u.test(entry)) {
+      if (!numericOptions) fail('Repository command-line selections must use owner/name or all.');
       const option = options[Number.parseInt(entry, 10) - 1];
       if (!option) fail(`Repository option ${entry} is out of range.`);
-      return option.name;
+      values.push(option.name);
+      continue;
     }
-    return entry;
-  });
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(entry)) fail(`Custom repository ${entry} must be owner/name.`);
+    const known = options.find((option) => option.name.toLowerCase() === entry.toLowerCase());
+    if (known) {
+      values.push(known.name);
+      continue;
+    }
+    if (!discovery || typeof discovery.resolveRepository !== 'function') {
+      fail(`Custom repository ${entry} cannot be accepted because GitHub verification is unavailable.`);
+    }
+    let resolved;
+    try { resolved = await discovery.resolveRepository(entry); }
+    catch (error) { fail(`GitHub could not verify custom repository ${entry}: ${String(error?.message ?? error)}`); }
+    values.push(resolved.name);
+    verified.push(resolved);
+  }
+  return { values: uniqueValues(values), verified };
 }
 
-function selectAuthors(value, options, fallback) {
-  const selected = commaValues(value);
-  if (selected.length === 0) return fallback;
-  return selected.map((entry) => {
-    if (entry.startsWith('id:')) return entry.slice(3);
-    if (/^\d+$/u.test(entry)) {
-      const option = options[Number.parseInt(entry, 10) - 1];
-      if (!option) fail(`Task-author option ${entry} is out of range; use id:<numeric-id> for manual entry.`);
-      return option.id;
+async function selectAuthors(value, options, fallback, {
+  discovery = null,
+  authenticatedUser = null,
+  numericOptions = true,
+} = {}) {
+  const selected = selectionValues(value);
+  if (selected.length === 0) return { values: fallback, verified: [] };
+  const values = [];
+  const verified = [];
+  for (const entry of selected) {
+    if (entry.toLowerCase() === 'self') {
+      if (!authenticatedUser?.id) fail('The authenticated GitHub user could not be verified for the self selection.');
+      values.push(authenticatedUser.id);
+      continue;
     }
-    fail('Task-author selections must be option numbers or id:<numeric-id>.');
-  });
+    if (entry.startsWith('id:')) {
+      const id = entry.slice(3);
+      if (!/^\d+$/u.test(id)) fail('Manual task-author IDs must use id:<numeric-id>.');
+      if (!discovery || typeof discovery.resolveAuthorId !== 'function') fail(`GitHub verification is unavailable for actor ID ${id}.`);
+      let resolved;
+      try { resolved = await discovery.resolveAuthorId(id); }
+      catch (error) { fail(`GitHub could not verify actor ID ${id}: ${String(error?.message ?? error)}`); }
+      values.push(resolved.id);
+      verified.push(resolved);
+      continue;
+    }
+    if (/^\d+$/u.test(entry)) {
+      if (numericOptions) {
+        const option = options[Number.parseInt(entry, 10) - 1];
+        if (!option) fail(`Task-author option ${entry} is out of range; use id:<numeric-id> for manual entry.`);
+        values.push(option.id);
+        continue;
+      }
+      if (!discovery || typeof discovery.resolveAuthorId !== 'function') fail(`GitHub verification is unavailable for actor ID ${entry}.`);
+      let resolved;
+      try { resolved = await discovery.resolveAuthorId(entry); }
+      catch (error) { fail(`GitHub could not verify actor ID ${entry}: ${String(error?.message ?? error)}`); }
+      values.push(resolved.id);
+      verified.push(resolved);
+      continue;
+    }
+    const known = options.find((option) => option.login.toLowerCase() === entry.toLowerCase());
+    if (known) {
+      values.push(known.id);
+      continue;
+    }
+    if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u.test(entry)) {
+      fail('Task-author selections must be option numbers, self, a GitHub login, or id:<numeric-id>.');
+    }
+    if (!discovery || typeof discovery.resolveAuthor !== 'function') fail(`GitHub verification is unavailable for actor login ${entry}.`);
+    let resolved;
+    try { resolved = await discovery.resolveAuthor(entry); }
+    catch (error) { fail(`GitHub could not verify actor login ${entry}: ${String(error?.message ?? error)}`); }
+    values.push(resolved.id);
+    verified.push(resolved);
+  }
+  return { values: uniqueValues(values, (value) => String(value)), verified };
 }
 
 function validateRepositorySelections(values) {
@@ -377,6 +468,7 @@ export async function configureLocalConfig(paths, argv, {
   output = process.stdout,
   discovery = null,
   discoveryError = null,
+  promptFactory = createInterface,
 } = {}) {
   const original = readFileSync(paths.config, 'utf8');
   let config;
@@ -391,6 +483,7 @@ export async function configureLocalConfig(paths, argv, {
   let authorOptions = [];
   let authorWarnings = [];
   let authorOptionsTruncated = false;
+  let authenticatedUser = null;
   let observedDiscoveryError = discoveryError ? String(discoveryError?.message ?? discoveryError) : null;
 
   if (discovery) {
@@ -404,7 +497,7 @@ export async function configureLocalConfig(paths, argv, {
   }
 
   if (!selections.supplied && input.isTTY === true && output.isTTY === true) {
-    const prompt = createInterface({ input, output });
+    const prompt = promptFactory({ input, output });
     try {
       if (repositoryOptions.length > 0) {
         output.write('\nAuthenticated repositories with issues enabled:\n');
@@ -413,42 +506,172 @@ export async function configureLocalConfig(paths, argv, {
       } else if (observedDiscoveryError) {
         output.write(`\nRepository discovery unavailable: ${observedDiscoveryError.slice(0, 500)}\n`);
       }
-      const repositories = selectRepositories(
-        await prompt.question(`Repositories to poll (option numbers or owner/name) [${currentRepositories.join(', ')}]: `),
-        repositoryOptions,
-        currentRepositories,
-      );
-      const discoveryAnswer = await prompt.question(`Discover additional authorized repositories (${currentDiscovery ? 'yes' : 'no'}) [${currentDiscovery ? 'yes' : 'no'}]: `);
-      if (discovery && repositories.length > 0) {
-        try {
-          const observed = await discovery.listAuthors(repositories);
-          authorOptions = observed.records;
-          authorWarnings = observed.warnings;
-          authorOptionsTruncated = observed.truncated === true;
-        } catch (error) {
-          authorWarnings = [{ repository: null, reason: String(error?.message ?? error).slice(0, 500) }];
+
+      while (true) {
+        let repositories;
+        while (true) {
+          const answer = await prompt.question(`Repositories to poll (numbers, all, or verified owner/name; separate with spaces or commas) [${currentRepositories.join(', ')}]: `);
+          try {
+            const selected = await selectRepositories(
+              answer,
+              repositoryOptions,
+              currentRepositories,
+              { discovery, numericOptions: true },
+            );
+            repositories = validateRepositorySelections(selected.values);
+            repositoryOptions = mergeRepositoryOptions(repositoryOptions, selected.verified);
+            break;
+          } catch (error) {
+            output.write(`  Invalid repository selection: ${String(error?.message ?? error)} Try again.\n`);
+          }
         }
+
+        let repositoryDiscovery;
+        while (true) {
+          const answer = await prompt.question(`Discover additional authorized repositories (${currentDiscovery ? 'yes' : 'no'}) [${currentDiscovery ? 'yes' : 'no'}]: `);
+          try {
+            repositoryDiscovery = parseYesNo(answer, currentDiscovery);
+            break;
+          } catch (error) {
+            output.write(`  Invalid repository discovery selection: ${String(error?.message ?? error)} Try again.\n`);
+          }
+        }
+
+        authorOptions = [];
+        authorWarnings = [];
+        authorOptionsTruncated = false;
+        authenticatedUser = null;
+        if (discovery && repositories.length > 0) {
+          try {
+            const observed = await discovery.listAuthors(repositories);
+            authorOptions = observed.records;
+            authorWarnings = observed.warnings;
+            authorOptionsTruncated = observed.truncated === true;
+            authenticatedUser = observed.authenticatedUser ?? null;
+          } catch (error) {
+            authorWarnings = [{ repository: null, reason: String(error?.message ?? error).slice(0, 500) }];
+          }
+        }
+        if (authorOptions.length > 0) {
+          output.write('\nCandidate remote task authors (listing is not trust):\n');
+          authorOptions.forEach((entry, index) => {
+            const self = authenticatedUser?.id === entry.id ? ' (authenticated user)' : '';
+            const via = entry.repositories.length ? ` via ${entry.repositories.join(', ')}` : '';
+            output.write(`  ${index + 1}. ${entry.login} [id ${entry.id}]${self}${via}\n`);
+          });
+          if (authorOptionsTruncated) output.write('  Results are truncated; verified login and id:<numeric-id> entry remain available.\n');
+        }
+        for (const warning of authorWarnings) output.write(`  Author discovery warning${warning.repository ? ` for ${warning.repository}` : ''}: ${warning.reason}\n`);
+
+        let trustedAuthors;
+        let verifiedAuthors = [];
+        while (true) {
+          const answer = await prompt.question(`Trusted remote task authors (numbers, self, verified login, or id:<numeric-id>; separate with spaces or commas) [${currentAuthors.join(', ')}]: `);
+          try {
+            const selected = await selectAuthors(
+              answer,
+              authorOptions,
+              currentAuthors,
+              { discovery, authenticatedUser, numericOptions: true },
+            );
+            trustedAuthors = validateTrustedAuthors(selected.values);
+            verifiedAuthors = selected.verified;
+            break;
+          } catch (error) {
+            output.write(`  Invalid trusted-author selection: ${String(error?.message ?? error)} Try again.\n`);
+          }
+        }
+
+        const repositoryRecords = new Map(repositoryOptions.map((entry) => [entry.name.toLowerCase(), entry]));
+        const authorRecords = new Map(authorOptions.map((entry) => [entry.id, entry]));
+        if (authenticatedUser) authorRecords.set(authenticatedUser.id, authenticatedUser);
+        for (const entry of verifiedAuthors) authorRecords.set(entry.id, entry);
+        output.write('\nWARNING: These repositories will be polled for remote tasks. Each trusted actor can submit development work to this installation within its local capability policy.\n');
+        output.write('Verified repository selection:\n');
+        for (const repository of repositories) {
+          const record = repositoryRecords.get(repository.toLowerCase());
+          output.write(`  - ${repository}${record?.id ? ` [GitHub id ${record.id}]` : ' [existing local policy]'}\n`);
+        }
+        output.write('Verified trusted actor selection:\n');
+        for (const id of trustedAuthors) {
+          const record = authorRecords.get(id);
+          output.write(`  - ${record?.login ? `${record.login} ` : ''}[GitHub actor id ${id}]\n`);
+        }
+        const confirmation = await prompt.question('Type APPLY to confirm these exact repository and task-author authority selections, or anything else to go back: ');
+        if (String(confirmation).trim() === 'APPLY') {
+          selections = {
+            repositories,
+            trustedAuthors,
+            discovery: repositoryDiscovery,
+            confirm: 'APPLY',
+            supplied: true,
+            verified: true,
+          };
+          break;
+        }
+        output.write('  Selections were not applied; returning to repository selection.\n');
       }
-      if (authorOptions.length > 0) {
-        output.write('\nCandidate remote task authors (listing is not trust):\n');
-        authorOptions.forEach((entry, index) => output.write(`  ${index + 1}. ${entry.login} [id ${entry.id}]${entry.repositories.length ? ` via ${entry.repositories.join(', ')}` : ' (authenticated user)'}\n`));
-        if (authorOptionsTruncated) output.write('  Results are truncated; manual id:<numeric-id> entry remains available.\n');
-      }
-      for (const warning of authorWarnings) output.write(`  Author discovery warning${warning.repository ? ` for ${warning.repository}` : ''}: ${warning.reason}\n`);
-      const trustedAuthors = selectAuthors(
-        await prompt.question(`Trusted remote task authors (option numbers or id:<numeric-id>) [${currentAuthors.join(', ')}]: `),
-        authorOptions,
-        currentAuthors,
-      );
-      selections = {
-        repositories,
-        trustedAuthors,
-        discovery: parseYesNo(discoveryAnswer, currentDiscovery),
-        supplied: true,
-      };
     } finally {
       prompt.close();
     }
+  }
+
+  if (selections.supplied && selections.verified !== true) {
+    const repositoryRequested = selections.repositories.length > 0;
+    const authorRequested = selections.trustedAuthors.length > 0;
+    let verifiedAuthors = [];
+    if (repositoryRequested) {
+      const selected = await selectRepositories(selections.repositories.join(','), repositoryOptions, currentRepositories, {
+        discovery,
+        numericOptions: false,
+      });
+      selections.repositories = validateRepositorySelections(selected.values);
+      repositoryOptions = mergeRepositoryOptions(repositoryOptions, selected.verified);
+    }
+    const authorRepositories = repositoryRequested ? selections.repositories : currentRepositories;
+    if (authorRequested && discovery) {
+      try {
+        const observed = await discovery.listAuthors(authorRepositories);
+        authorOptions = observed.records;
+        authorWarnings = observed.warnings;
+        authorOptionsTruncated = observed.truncated === true;
+        authenticatedUser = observed.authenticatedUser ?? null;
+      } catch (error) {
+        authorWarnings = [{ repository: null, reason: String(error?.message ?? error).slice(0, 500) }];
+      }
+    }
+    if (authorRequested) {
+      const selected = await selectAuthors(selections.trustedAuthors.join(','), authorOptions, currentAuthors, {
+        discovery,
+        authenticatedUser,
+        numericOptions: false,
+      });
+      selections.trustedAuthors = validateTrustedAuthors(selected.values);
+      verifiedAuthors = selected.verified;
+    }
+    if (repositoryRequested || authorRequested) {
+      const repositoryRecords = new Map(repositoryOptions.map((entry) => [entry.name.toLowerCase(), entry]));
+      const authorRecords = new Map(authorOptions.map((entry) => [entry.id, entry]));
+      if (authenticatedUser) authorRecords.set(authenticatedUser.id, authenticatedUser);
+      for (const entry of verifiedAuthors) authorRecords.set(entry.id, entry);
+      output.write('[devbridge-bootstrap] WARNING: repository selections grant polling scope and trusted actors can submit development work within local capability policy.\n');
+      if (repositoryRequested) {
+        for (const repository of selections.repositories) {
+          const record = repositoryRecords.get(repository.toLowerCase());
+          output.write(`[devbridge-bootstrap] verified-repository=${repository}${record?.id ? ` github-id=${record.id}` : ''}\n`);
+        }
+      }
+      if (authorRequested) {
+        for (const id of selections.trustedAuthors) {
+          const record = authorRecords.get(id);
+          output.write(`[devbridge-bootstrap] verified-trusted-actor=${id}${record?.login ? ` login=${record.login}` : ''}\n`);
+        }
+      }
+      if (selections.confirm !== 'APPLY') {
+        fail('Repository/task-author authority changes require exact --confirm APPLY after reviewing the warning and verified identities.');
+      }
+    }
+    selections.verified = true;
   }
 
   if (!selections.supplied) {
