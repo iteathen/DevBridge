@@ -42,6 +42,7 @@ test('candidate checks use only the isolated execution stud and suite-specific b
     assert.deepEqual(result.compatibility, { activeStage0Protocol: 0, requiredStage0Protocol: 0 });
     assert.deepEqual(seen.map((request) => request.operation), ['runtime.validate:preflight', 'runtime.validate:tests']);
     assert.ok(seen.every((request) => request.invocation.tool === 'node'));
+    assert.ok(seen.every((request) => request.environment.DEVBRIDGE_STAGE0_PROTOCOL === '0'));
     assert.equal(seen[0].limits.timeoutMs, 4 * 60_000);
     assert.equal(seen[1].limits.timeoutMs, 2 * 60 * 60_000);
     assert.ok(seen[1].limits.timeoutMs > 30 * 60_000);
@@ -78,6 +79,7 @@ test('candidate Stage 0 compatibility is checked before candidate execution', as
     });
     assert.deepEqual(result.compatibility, { activeStage0Protocol: 1, requiredStage0Protocol: 1 });
     assert.equal(admitted.length, 2);
+    assert.ok(admitted.every((request) => request.environment.DEVBRIDGE_STAGE0_PROTOCOL === '1'));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
