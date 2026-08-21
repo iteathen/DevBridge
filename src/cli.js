@@ -124,7 +124,10 @@ async function main() {
     return;
   }
   if (command === 'doctor') {
-    console.log(JSON.stringify(await doctor(config), null, 2));
+    console.log(JSON.stringify(await doctor(config, {
+      checkRepositoryAdmission: true,
+      repositoryAdmissionTargets: [repository],
+    }), null, 2));
     return;
   }
   if (command === 'poll-once') {
