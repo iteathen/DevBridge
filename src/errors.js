@@ -11,6 +11,13 @@ export class PolicyError extends DevBridgeError {}
 export class CandidateValidationError extends DevBridgeError {}
 export class TaskLeaseLostError extends DevBridgeError {}
 
+export class EnvironmentLifecycleBusyError extends DevBridgeError {
+  constructor(message = 'environment lifecycle mutation is already active') {
+    super(message);
+    this.code = 'DEVBRIDGE_ENVIRONMENT_LIFECYCLE_BUSY';
+  }
+}
+
 export class BaselineReverificationRequiredError extends CandidateValidationError {
   constructor(message, reconciliation = {}, options = {}) {
     super(message, options);

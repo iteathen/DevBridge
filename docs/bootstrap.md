@@ -130,6 +130,8 @@ One supervisor lease covers the entire installation home, regardless of which co
 
 After it owns that lease, the supervisor may also reconcile an exact daemon lock whose recorded process is proven dead. This recovery is unavailable to uncoordinated callers and rereads the unchanged PID/token/time generation before removing its lock and token-bound controls.
 
+Candidate content/test failures quarantine that exact head until another head is published. Exact environment-lifecycle contention is different: it resumes the accepted daemon, records the failed attempt, and retries the same candidate on the normal bounded update interval after the competing lifecycle mutation clears.
+
 A mutable branch is transport, not production release authority.
 
 ## Candidate-controlled validation

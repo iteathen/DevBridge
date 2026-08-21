@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import {
   decideSupervisorAction,
+  isRetryableCandidateValidationError,
   remoteBranchHead,
   superviseDaemon,
 } from '../src/bootstrap/transactional-bootstrap.mjs';
+import { EnvironmentLifecycleBusyError } from '../src/errors.js';
 
 const paths = {
   home: '/managed',
@@ -47,6 +49,11 @@ test('supervisor action compatibility still prioritizes operator stop, then upda
   assert.equal(decideSupervisorAction({ childExitCode: 0, updatePending: true }), 'update');
   assert.equal(decideSupervisorAction({ childExitCode: 0, updatePending: false }), 'stop');
   assert.equal(decideSupervisorAction({ childExitCode: 1, updatePending: false }), 'restart');
+});
+
+test('only exact environment lifecycle contention is a retryable candidate admission failure', () => {
+  assert.equal(isRetryableCandidateValidationError(new EnvironmentLifecycleBusyError()), true);
+  assert.equal(isRetryableCandidateValidationError(new Error('environment lifecycle mutation is already active')), false);
 });
 
 test('supervisor owns the installation home before stopping a daemon and releases it on failure', async () => {
@@ -232,6 +239,58 @@ test('candidate daemon crash inside health window rolls back to last-known-good 
   assert.equal(result, 0);
   assert.deepEqual(starts, ['current', 'candidate', 'current']);
   assert.ok(records.some((record) => record.state === 'rolled-back' && record.current.head === runtimeA.head));
+});
+
+test('transient environment contention retries the same candidate after resuming the accepted daemon', async () => {
+  const records = [];
+  let attempts = 0;
+  let starts = 0;
+  let current;
+  const spawnImpl = () => {
+    starts += 1;
+    current = new EventEmitter();
+    current.pid = 250 + starts;
+    if (starts === 2) setTimeout(() => current.emit('exit', 0, null), 15);
+    return current;
+  };
+  const result = await superviseDaemon(
+    { channel: 'testing', update: true },
+    paths,
+    runtimeA,
+    {
+      acquireSupervisorLockFn: acquireFixtureSupervisorLock,
+      spawnImpl,
+      updateIntervalMs: 1,
+      healthWindowMs: 1,
+      maxIterations: 2,
+      stopExisting: false,
+      reconcileExitedDaemonFn: async () => ({ reconciled: false, reason: 'fixture' }),
+      remoteHeadFn: () => runtimeB.head,
+      candidatePrepareFn: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new EnvironmentLifecycleBusyError();
+        return runtimeB;
+      },
+      runDevBridgeCliFn: (command) => {
+        if (command === 'stop') setTimeout(() => current.emit('exit', 0, null), 0);
+        return 0;
+      },
+      runDevBridgeCliCapturedFn: (command) => {
+        if (command === 'pause') return { status: 0, stdout: JSON.stringify({ activeLock: true, paused: true }) };
+        if (command === 'resume') return { status: 0, stdout: JSON.stringify({ activeLock: true, resumed: true, paused: false }) };
+        throw new Error(`unexpected captured command: ${command}`);
+      },
+      recordActivationFn: (_paths, record) => { records.push(record); },
+      resolveChannelRefFn: () => runtimeA.ref,
+      updateCheckDelayFn: timer,
+      healthCheckDelayFn: timer,
+      delayFn: timer,
+    },
+  );
+  assert.equal(result, 0);
+  assert.equal(attempts, 2);
+  assert.ok(records.some((record) => record.state === 'candidate-failed'));
+  assert.ok(records.some((record) => record.state === 'healthy' && record.current.head === runtimeB.head));
 });
 
 test('candidate health doctor runs at a cooperative pause boundary and failure preserves rollback evidence', async () => {

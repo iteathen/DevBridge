@@ -41,6 +41,10 @@ function updateCheckDelay(ms) {
   });
 }
 
+export function isRetryableCandidateValidationError(error) {
+  return error?.code === 'DEVBRIDGE_ENVIRONMENT_LIFECYCLE_BUSY';
+}
+
 function daemonControlResult(command, result) {
   if (!result || !Number.isInteger(result.status)) throw new Error(`daemon ${command} control returned no exit status`);
   let control;
@@ -535,13 +539,16 @@ async function superviseDaemonOwned(args, paths, initialRuntime, {
               );
             }
           }
-          failedCandidateHead = remoteHead;
+          const retryable = isRetryableCandidateValidationError(failure);
+          if (!retryable) failedCandidateHead = remoteHead;
           await recordActivation(recordActivationFn, paths, activationRecord('candidate-failed', paths, runtime, planned, {
             current: runtime,
             failedCandidate: planned,
             error: failure,
           }));
-          process.stderr.write(`[devbridge-supervisor] candidate-validation-failed ${failure.message}; current runtime remains ${runtime.head}\n`);
+          process.stderr.write(
+            `[devbridge-supervisor] candidate-validation-${retryable ? 'deferred' : 'failed'} ${failure.message}; current runtime remains ${runtime.head}\n`,
+          );
           if (failure !== error) throw failure;
           continue;
         }

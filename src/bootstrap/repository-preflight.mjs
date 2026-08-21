@@ -8,6 +8,7 @@ const SYNTAX_FILES = [
   'devbridge.mjs',
   'src/cli.js',
   'src/config.js',
+  'src/errors.js',
   'src/app/runtime.js',
   'src/app/runtime-execution.js',
   'src/app/repository-execution.js',
@@ -21,6 +22,7 @@ const SYNTAX_FILES = [
   'src/run/run-coordinator.js',
   'src/runtime/repository-execution.js',
   'src/runtime/daemon-lock.js',
+  'src/runtime/persistent-environments.js',
   'src/runtime/repository-environment-execution.js',
   'src/runtime/file-tree-transfer.js',
   'src/guest/workspace-agent.mjs',
@@ -90,6 +92,7 @@ const TARGETED_TESTS = [
   'test/controller-plan.test.js',
   'test/runtime-activation.test.js',
   'test/daemon-lock.test.js',
+  'test/persistent-environments.test.js',
   'test/rate-budget.test.js',
 ];
 

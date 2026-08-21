@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { EnvironmentLifecycleBusyError } from '../src/errors.js';
 import { PersistentEnvironments } from '../src/runtime/persistent-environments.js';
 
 const SOURCE_A = 'img-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -217,7 +218,10 @@ test('separate registry instances cannot overlap one directory lifecycle', async
     const second = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
     const ensuring = first.ensure(request());
     await entered;
-    await assert.rejects(() => second.ensure(request()), /lifecycle mutation is already active/u);
+    await assert.rejects(
+      () => second.ensure(request()),
+      (error) => error instanceof EnvironmentLifecycleBusyError && error.code === 'DEVBRIDGE_ENVIRONMENT_LIFECYCLE_BUSY',
+    );
     assert.equal(fake.provisionCalls(), 0);
     release();
     await ensuring;

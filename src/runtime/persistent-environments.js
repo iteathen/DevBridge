@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { EnvironmentLifecycleBusyError } from '../errors.js';
 
 const PROTOCOL = 'devbridge/persistent-environments-v1';
 const ENVIRONMENT_ID = /^env-[a-f0-9]{32}$/u;
@@ -199,7 +200,7 @@ export class PersistentEnvironments {
       handle = await open(this.#guardFile, 'wx', 0o600);
     } catch (error) {
       if (error?.code === 'EEXIST') {
-        throw new Error('environment lifecycle mutation is already active; remove lifecycle.lock only after confirming no operation is running');
+        throw new EnvironmentLifecycleBusyError('environment lifecycle mutation is already active; remove lifecycle.lock only after confirming no operation is running');
       }
       throw error;
     }
