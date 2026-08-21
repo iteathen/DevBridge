@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 function git(args, cwd) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8', shell: false, windowsHide: true });
   if (result.error || result.status !== 0) throw new Error(String(result.stderr || result.stdout || result.error?.message));
+  return result.stdout.trim();
 }
 
 function initializeRuntimeRepository(runtime) {
@@ -36,6 +37,56 @@ test('standalone launcher reaches managed bootstrap with no adjacent src tree', 
   assert.equal(path.join(downloadDir, 'src') === path.join(runtime, 'src'), false);
   const args = JSON.parse(readFileSync(path.join(home, 'stage0-marker.json'), 'utf8'));
   assert.deepEqual(args, ['doctor', '--home', home, '--no-update']);
+});
+
+test('standalone launcher imports only the exact persisted accepted runtime after activation', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'devbridge-stage0-accepted-'));
+  const home = path.join(root, 'home');
+  const mutable = path.join(home, 'runtime');
+  mkdirSync(path.join(mutable, 'src', 'bootstrap'), { recursive: true });
+  writeFileSync(path.join(mutable, 'package.json'), '{"name":"devbridge","version":"0.1.0","type":"module","devbridge":{"stage0Protocol":1}}\n');
+  writeFileSync(path.join(mutable, 'src', 'bootstrap', 'secure-bootstrap.mjs'), `import { writeFileSync } from 'node:fs'; export async function bootstrap() { writeFileSync(${JSON.stringify(path.join(home, 'selected.txt'))}, 'mutable'); return 0; }`);
+  initializeRuntimeRepository(mutable);
+
+  const candidateRoot = path.join(home, 'runtime-candidates', 'pending');
+  mkdirSync(path.join(candidateRoot, 'src', 'bootstrap'), { recursive: true });
+  writeFileSync(path.join(candidateRoot, 'package.json'), '{"name":"devbridge","version":"0.1.0","type":"module","devbridge":{"stage0Protocol":1}}\n');
+  writeFileSync(path.join(candidateRoot, 'src', 'cli.js'), 'export {};\n');
+  writeFileSync(path.join(candidateRoot, 'src', 'bootstrap', 'secure-bootstrap.mjs'), `import { writeFileSync } from 'node:fs'; export async function bootstrap() { writeFileSync(${JSON.stringify(path.join(home, 'selected.txt'))}, 'accepted'); return 0; }`);
+  initializeRuntimeRepository(candidateRoot);
+  const head = git(['rev-parse', 'HEAD'], candidateRoot);
+  const accepted = path.join(home, 'runtime-candidates', head);
+  mkdirSync(path.dirname(accepted), { recursive: true });
+  cpSync(candidateRoot, accepted, { recursive: true });
+  writeFileSync(path.join(home, 'runtime-activation.json'), `${JSON.stringify({
+    protocol: 'devbridge/runtime-activation-v1', state: 'healthy',
+    current: { head, runtimeDir: accepted, cliPath: path.join(accepted, 'src', 'cli.js') },
+  })}\n`);
+
+  const launcher = path.join(root, 'devbridge.mjs');
+  copyFileSync(new URL('../devbridge.mjs', import.meta.url), launcher);
+  const result = spawnSync(process.execPath, [launcher, 'doctor', '--home', home, '--no-update'], { encoding: 'utf8', shell: false, windowsHide: true });
+  assert.equal(result.status, 0, String(result.stderr || result.stdout));
+  assert.equal(readFileSync(path.join(home, 'selected.txt'), 'utf8'), 'accepted');
+});
+
+test('standalone launcher fails closed on a path-substituted accepted activation record', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'devbridge-stage0-accepted-path-'));
+  const home = path.join(root, 'home');
+  const mutable = path.join(home, 'runtime');
+  mkdirSync(path.join(mutable, 'src', 'bootstrap'), { recursive: true });
+  writeFileSync(path.join(mutable, 'package.json'), '{"name":"devbridge","version":"0.1.0","type":"module","devbridge":{"stage0Protocol":1}}\n');
+  writeFileSync(path.join(mutable, 'src', 'bootstrap', 'secure-bootstrap.mjs'), 'export async function bootstrap() { return 0; }');
+  initializeRuntimeRepository(mutable);
+  writeFileSync(path.join(home, 'runtime-activation.json'), `${JSON.stringify({
+    protocol: 'devbridge/runtime-activation-v1', state: 'healthy',
+    current: { head: 'a'.repeat(40), runtimeDir: mutable, cliPath: path.join(mutable, 'src', 'cli.js') },
+  })}\n`);
+  const launcher = path.join(root, 'devbridge.mjs');
+  copyFileSync(new URL('../devbridge.mjs', import.meta.url), launcher);
+  const result = spawnSync(process.execPath, [launcher, 'doctor', '--home', home, '--no-update'], { encoding: 'utf8', shell: false, windowsHide: true });
+  assert.equal(result.status, 1, String(result.stderr || result.stdout));
+  assert.match(result.stderr, /does not use its derived runtime directory/u);
 });
 
 test('standalone launcher help is available before installation', () => {

@@ -56,7 +56,7 @@ Each provider keeps its own private ownership/lineage record containing only pro
 
 The Windows adapter creates one derived writable VHD/VHDX with `New-VHD -ParentPath ... -Differencing` and verifies the exact parent through `Test-VHD`/`Get-VHD`.
 
-It creates one owned VM whose name, ownership marker, configuration location, disk location, and recorded Hyper-V VM identity are derived or captured locally. Automatic checkpoints are disabled so hidden AVHDX/checkpoint chains cannot silently change the one-parent lineage. VM start/stop/remove operations re-check provider identity and ownership before mutation.
+It creates one owned VM whose name, ownership marker, configuration location, disk location, and recorded Hyper-V VM identity are derived or captured locally. Automatic checkpoints are disabled so hidden AVHDX/checkpoint chains cannot silently change the one-parent lineage. VM start/stop/remove operations re-check provider identity and ownership before mutation. Graceful stop uses the supported parameterless `Stop-VM -Name ...` shutdown form; `-TurnOff` remains limited to an explicit forced operation. Hyper-V does not define a `-Shutdown` switch.
 
 A crash after `New-VM` but before ownership metadata is written is recoverable only when the partial VM has no foreign marker and is already attached to the exact pre-recorded writable disk. A differently owned object is never adopted.
 

@@ -38,6 +38,12 @@ function ipv4(value, name) {
   return value;
 }
 
+function usableGuestDns(value) {
+  if (!IPV4.test(value)) return false;
+  const [first, second] = value.split('.').map(Number);
+  return first !== 0 && first !== 127 && first < 224 && !(first === 169 && second === 254);
+}
+
 function normalizeLocation(raw) {
   const value = requireObject(raw, 'bootstrap location');
   onlyKeys(value, new Set(['reference', 'proof', 'family', 'network']), 'bootstrap location');
@@ -120,6 +126,24 @@ Copy-VMFile -VMName ([string]$data.reference) -SourcePath ([string]$data.source)
 @{ copied = $true } | ConvertTo-Json -Compress
 `;
 
+const RESET_COPY_SERVICE_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$data = [Console]::In.ReadToEnd() | ConvertFrom-Json
+Import-Module Hyper-V -ErrorAction Stop
+$item = Get-VM -Name ([string]$data.reference) -ErrorAction Stop
+if ([string]$item.Notes -ne [string]$data.proof) { throw 'environment ownership proof does not match' }
+if ([string]$item.State -ne 'Running') { throw 'environment is not running' }
+$service = Get-VMIntegrationService -VMName ([string]$data.reference) -ErrorAction Stop | Where-Object { $_.Name -eq 'Guest Service Interface' } | Select-Object -First 1
+if ($null -eq $service -or -not $service.Enabled) { throw 'guest file service is not enabled' }
+Disable-VMIntegrationService -VMIntegrationService $service -ErrorAction Stop | Out-Null
+$disabled = Get-VMIntegrationService -VMName ([string]$data.reference) -ErrorAction Stop | Where-Object { $_.Name -eq 'Guest Service Interface' } | Select-Object -First 1
+if ($null -eq $disabled -or $disabled.Enabled) { throw 'guest file service did not disable for recovery' }
+Enable-VMIntegrationService -VMIntegrationService $disabled -ErrorAction Stop | Out-Null
+$enabled = Get-VMIntegrationService -VMName ([string]$data.reference) -ErrorAction Stop | Where-Object { $_.Name -eq 'Guest Service Interface' } | Select-Object -First 1
+if ($null -eq $enabled -or -not $enabled.Enabled) { throw 'guest file service did not re-enable for recovery' }
+@{ reset = $true } | ConvertTo-Json -Compress
+`;
+
 export class HyperVEnvironmentBootstrap {
   #directory;
   #stateFile;
@@ -128,14 +152,28 @@ export class HyperVEnvironmentBootstrap {
   #locate;
   #connection;
   #dnsServers;
+  #now;
+  #delay;
+  #copySettleMs;
   #tail = Promise.resolve();
 
-  constructor({ directory, invoke, locate, connection, dnsServers = () => dns.getServers() }) {
+  constructor({
+    directory,
+    invoke,
+    locate,
+    connection,
+    dnsServers = () => dns.getServers(),
+    now = () => Date.now(),
+    delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    copySettleMs = 90_000,
+  }) {
     if (typeof directory !== 'string' || directory.length === 0) throw new TypeError('bootstrap directory is required');
     if (typeof invoke !== 'function') throw new TypeError('bootstrap invoke must be a function');
     if (typeof locate !== 'function') throw new TypeError('bootstrap locate must be a function');
     if (typeof connection !== 'function') throw new TypeError('bootstrap connection must be a function');
     if (typeof dnsServers !== 'function') throw new TypeError('bootstrap dnsServers must be a function');
+    if (typeof now !== 'function' || typeof delay !== 'function') throw new TypeError('bootstrap timing contracts are invalid');
+    if (!Number.isSafeInteger(copySettleMs) || copySettleMs < 1_000 || copySettleMs > 300_000) throw new TypeError('bootstrap copy settling window is invalid');
     this.#directory = path.resolve(directory);
     this.#stateFile = path.join(this.#directory, 'state.json');
     this.#guardFile = path.join(this.#directory, 'allocation.lock');
@@ -143,6 +181,9 @@ export class HyperVEnvironmentBootstrap {
     this.#locate = locate;
     this.#connection = connection;
     this.#dnsServers = dnsServers;
+    this.#now = now;
+    this.#delay = delay;
+    this.#copySettleMs = copySettleMs;
   }
 
   async #acquire() {
@@ -272,7 +313,7 @@ export class HyperVEnvironmentBootstrap {
   async activate(rawTarget) {
     const target = targetId(rawTarget);
     const { location, address } = await this.#resolved(target);
-    const servers = [...new Set(this.#dnsServers().filter((entry) => IPV4.test(entry)))].slice(0, 4);
+    const servers = [...new Set(this.#dnsServers().filter((entry) => usableGuestDns(entry)))].slice(0, 4);
     if (servers.length === 0) servers.push('1.1.1.1');
     const seed = {
       protocol: 'devbridge/network-seed-v1',
@@ -284,14 +325,17 @@ export class HyperVEnvironmentBootstrap {
       revision: 1,
     };
     await this.#ensure();
-    const temporary = path.join(this.#directory, `seed-${randomUUID()}.json`);
+    const temporaryDirectory = path.join(this.#directory, `seed-${randomUUID()}`);
+    await mkdir(temporaryDirectory, { recursive: false, mode: 0o700 });
+    const temporary = path.join(temporaryDirectory, 'network-seed.json');
     await writeFile(temporary, `${JSON.stringify(seed)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     try {
       const destination = location.family === 'windows'
         ? 'C:\\ProgramData\\DevBridge\\bootstrap\\network-seed.json'
-        : '/var/lib/devbridge/bootstrap/network-seed.json';
-      const deadline = Date.now() + 90_000;
+        : '/var/lib/devbridge/bootstrap';
+      const deadline = this.#now() + this.#copySettleMs;
       let last = null;
+      let resetAttempted = false;
       do {
         try {
           const result = await this.#powerShell(COPY_SCRIPT, { reference: location.reference, proof: location.proof, source: temporary, destination }, 20_000);
@@ -299,12 +343,25 @@ export class HyperVEnvironmentBootstrap {
           last = new Error('guest seed copy did not report completion');
         } catch (error) {
           last = error;
+          if (!resetAttempted) {
+            resetAttempted = true;
+            try {
+              const reset = await this.#powerShell(RESET_COPY_SERVICE_SCRIPT, {
+                reference: location.reference,
+                proof: location.proof,
+                resetService: true,
+              }, 20_000);
+              if (reset.reset !== true) last = new Error('guest file service reset did not report completion');
+            } catch (resetError) {
+              last = resetError;
+            }
+          }
         }
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
-      } while (Date.now() < deadline);
-      throw new Error(`guest seed copy did not become ready: ${last?.message ?? 'unknown failure'}`);
+        await this.#delay(1_000);
+      } while (this.#now() < deadline);
+      return { ready: false, cycleRequired: true, address };
     } finally {
-      await rm(temporary, { force: true });
+      await rm(temporaryDirectory, { recursive: true, force: true });
     }
   }
 

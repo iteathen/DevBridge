@@ -21,7 +21,7 @@ The downloaded launcher uses only Node.js built-ins plus the local `git` executa
 9. performs a one-time, clean, exact fast-forward compatibility transition for an older pre-protocol managed checkout, with a lock, durable intent, and rollback ref; and
 10. transfers control to managed secure bootstrap.
 
-The compatibility transition exists because older disposable installs cannot reach the current secure updater. It accepts only the fixed repository/branch, exact remote head, clean checkout, required stage-0 protocol, and fast-forward ancestry. Ordinary runtime updates remain behind DB-011's candidate-validation boundary. The accepted managed runtime refreshes only the canonical installed launcher at `~/.devbridge/bin/devbridge.mjs`, so the loader follows a validated activation instead of remaining stale.
+The compatibility transition exists because older disposable installs cannot reach the current secure updater. It accepts only the fixed repository/branch, exact remote head, clean checkout, required stage-0 protocol, and fast-forward ancestry. Ordinary runtime updates remain behind DB-011's candidate-validation boundary. The accepted managed runtime refreshes only the canonical installed launcher at `~/.devbridge/bin/devbridge.mjs`. On every later process, stage 0 prefers the exact current runtime from the DevBridge-owned activation journal only when its state is one of the closed accepted/in-progress states, its 40-hex head derives the exact `runtime-candidates/<head>` directory, its CLI path matches, and that clean checkout still has the fixed origin and exact recorded Git head. Invalid activation state fails closed; absence alone falls back to the compatibility checkout. This keeps supervisor and recovery code on the validated activation rather than the original bootstrap generation.
 
 `--no-update` requires an existing managed runtime; it cannot bootstrap an empty home.
 
@@ -130,7 +130,7 @@ One supervisor lease covers the entire installation home, regardless of which co
 
 After it owns that lease, the supervisor may also reconcile an exact daemon lock whose recorded process is proven dead. This recovery is unavailable to uncoordinated callers and rereads the unchanged PID/token/time generation before removing its lock and token-bound controls.
 
-Candidate content/test failures quarantine that exact head until another head is published. Exact environment-lifecycle contention is different: it resumes the accepted daemon, records the failed attempt, and retries the same candidate on the normal bounded update interval after the competing lifecycle mutation clears.
+Candidate content/test failures quarantine that exact head until another head is published. Exact environment-lifecycle contention and exhausted Hyper-V guest-file-service readiness are different: they resume the accepted daemon, record the failed attempt, and retry the same candidate on the normal bounded update interval after the local infrastructure condition clears.
 
 A mutable branch is transport, not production release authority.
 

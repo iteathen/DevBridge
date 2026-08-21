@@ -5,6 +5,7 @@ import { createEnvironmentFoundation } from './environment-foundation.js';
 import { EnvironmentBootstrap } from '../runtime/environment-bootstrap.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { loadOrCreateLocalIdentity } from '../runtime/local-identity.js';
+import { HyperVGuestFileServiceUnavailableError } from '../errors.js';
 import { HyperVEnvironmentBootstrap } from '../runtime/providers/hyperv-environment-bootstrap.js';
 import { LibvirtEnvironmentBootstrap } from '../runtime/providers/libvirt-environment-bootstrap.js';
 
@@ -64,6 +65,21 @@ function running(state) {
 
 function stopped(state) {
   return ['stopped', 'shut off', 'off', 'shutdown', 'crashed'].includes(String(state ?? '').toLowerCase());
+}
+
+export async function activateBootstrapAttachment({ target, attachment, foundation, waitForBridge, allowCycle }) {
+  let activation = await attachment.activate(target);
+  if (activation?.cycleRequired === true && allowCycle) {
+    const current = await foundation.observeEnvironment(target);
+    if (!running(current.observation?.state)) throw new Error('environment stopped before requested bootstrap recovery cycle');
+    await foundation.stopEnvironment(target, { force: false, timeoutMs: 60_000 });
+    await foundation.startEnvironment(target);
+    activation = await attachment.activate(target);
+  }
+  if (activation?.ready !== true || activation?.cycleRequired === true) {
+    throw new HyperVGuestFileServiceUnavailableError();
+  }
+  await waitForBridge(target);
 }
 
 async function parseBootstrapOutput(outcome) {
@@ -153,8 +169,7 @@ export async function createEnvironmentBootstrap({
       if (!stopped(current.observation?.state)) throw new Error('environment state is incompatible with bootstrap activation');
       await foundation.startEnvironment(target);
     }
-    await attachment.activate(target);
-    await waitForBridge(target);
+    await activateBootstrapAttachment({ target, attachment, foundation, waitForBridge, allowCycle: true });
   };
 
   const basis = async (target) => {
@@ -195,8 +210,7 @@ export async function createEnvironmentBootstrap({
     const current = await foundation.observeEnvironment(target);
     if (running(current.observation?.state)) await foundation.stopEnvironment(target, { force: false, timeoutMs: 60_000 });
     await foundation.startEnvironment(target);
-    await attachment.activate(target);
-    await waitForBridge(target);
+    await activateBootstrapAttachment({ target, attachment, foundation, waitForBridge, allowCycle: false });
   };
 
   const bootstrap = new EnvironmentBootstrap({

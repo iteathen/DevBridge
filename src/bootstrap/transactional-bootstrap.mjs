@@ -42,7 +42,8 @@ function updateCheckDelay(ms) {
 }
 
 export function isRetryableCandidateValidationError(error) {
-  return error?.code === 'DEVBRIDGE_ENVIRONMENT_LIFECYCLE_BUSY';
+  return error?.code === 'DEVBRIDGE_ENVIRONMENT_LIFECYCLE_BUSY'
+    || error?.code === 'DEVBRIDGE_HYPERV_GUEST_FILE_SERVICE_UNAVAILABLE';
 }
 
 function daemonControlResult(command, result) {

@@ -82,3 +82,22 @@ test('bounded provider failures retain the actionable end of noisy PowerShell er
     assert.ok(status.capabilities.management.reason.length < 2_200);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('instance lifecycle uses supported graceful Stop-VM syntax and reserves TurnOff for explicit force', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage2-hv-stop-'));
+  let script = null;
+  try {
+    const adapter = new HyperVEnvironment({
+      directory: path.join(root, 'control'), assetRoot: path.join(root, 'images'),
+      identity: '0123456789abcdef0123456789abcdef',
+      invoke: async (request) => {
+        script = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
+        return success({ exists: true, owned: true, state: 'off' });
+      },
+    });
+    await adapter.stopInstance('a'.repeat(32), { force: false });
+    assert.match(script, /Stop-VM -Name \$data\.name -Confirm:\$false -ErrorAction Stop/u);
+    assert.doesNotMatch(script, /-Shutdown/u);
+    assert.match(script, /if \(\$data\.force -eq \$true\).*?-TurnOff/su);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

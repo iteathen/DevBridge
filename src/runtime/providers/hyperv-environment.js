@@ -166,7 +166,7 @@ $item = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq $data.name } | Sel
 if ($null -eq $item) { @{ exists = $false; owned = $false; state = 'absent' } | ConvertTo-Json -Compress; exit 0 }
 if ([string]$item.Notes -ne [string]$data.marker) { throw 'instance ownership evidence does not match' }
 if ([string]$item.State -ne 'Off') {
-  try { Stop-VM -Name $data.name -Shutdown -Confirm:$false -ErrorAction Stop }
+  try { Stop-VM -Name $data.name -Confirm:$false -ErrorAction Stop }
   catch { if ($data.force -eq $true) { Stop-VM -Name $data.name -TurnOff -Confirm:$false -ErrorAction Stop } else { throw } }
 }
 $item = Get-VM -Name $data.name -ErrorAction Stop

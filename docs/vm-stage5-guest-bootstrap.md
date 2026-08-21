@@ -33,6 +33,8 @@ The guest records the generation only after all required observations are ready.
 
 Reset/reseed already replaces the Stage-3 writable layer and changes the exact environment identity/generation. Stage 5 binds its record to that exact basis; a replacement environment starts with no valid Stage-5 generation until it is prepared and observed again.
 
+Host DNS observations are filtered before projection: loopback, link-local, unspecified, multicast, and non-IPv4 values are not meaningful guest resolvers. If no usable IPv4 resolver remains, the bounded seed uses the fixed public fallback already defined by this adapter.
+
 ## Baseline development capability contract
 
 The default Stage-5 plan requests neutral capability identities rather than concrete upstream/downstream names:
@@ -94,8 +96,14 @@ The Hyper-V Stage-5 adapter:
 5. allocates a collision-free address from the owned `/24` using a small provider-local durable allocation registry;
 6. after the VM is running, copies one bounded `devbridge/network-seed-v1` JSON object into the guest through `Copy-VMFile`;
 7. retries only that exact overwrite while the integration service becomes ready;
-8. exposes the allocated address only through the local connection stud used by current composition;
-9. prunes stale allocations from the current active-environment set during reconciliation.
+8. after an initial copy failure, performs at most one ownership-checked disable/enable reset of that VM's Guest Service Interface before continuing the bounded retries;
+9. if that bounded recovery is exhausted, requests one lifecycle cycle through the owning composition boundary and retries the exact seed after restart;
+10. exposes the allocated address only through the local connection stud used by current composition;
+11. prunes stale allocations from the current active-environment set during reconciliation.
+
+For Linux guests, Hyper-V's file-copy daemon combines the destination directory with the host source basename. The adapter therefore creates an installation-owned temporary directory containing the fixed basename `network-seed.json` and supplies `/var/lib/devbridge/bootstrap` as the destination directory. Random source basenames or a filename-shaped Linux destination are rejected by real `hv_fcopy_daemon` behavior and must not be reintroduced.
+
+Exhausted guest-file-service readiness after the one allowed lifecycle cycle is a typed provider failure. Candidate admission retries that exact infrastructure failure on the normal update interval; it does not misclassify the candidate source as permanently bad. The reset and cycle remain bounded to the exact owned running environment and never introduce a host-filesystem or network fallback. The Hyper-V attachment requests the cycle; the environment-foundation composition that owns lifecycle authority performs it.
 
 This replaced the earlier KVP-write approach. Hyper-V management methods may return asynchronous `4096` jobs, which would require a separate job reconciliation contract. The Guest Service Interface/`Copy-VMFile` path is documented for both Windows (`vmicguestinterface`) and Linux (`hv_fcopy_daemon`) guests and avoids using KVP mutation as an additional Stage-5 effect surface.
 

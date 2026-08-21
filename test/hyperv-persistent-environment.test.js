@@ -60,6 +60,10 @@ test('Hyper-V persistent adapter owns differencing-disk creation and exact linea
 
     assert.equal((await adapter.start(identity)).state, 'running');
     assert.equal((await adapter.stop(identity)).state, 'off');
+    const stopScript = calls.map(decode).find((script) => script.includes('Stop-VM'));
+    assert.match(stopScript, /Stop-VM -Name \$data\.name -Confirm:\$false -ErrorAction Stop/u);
+    assert.doesNotMatch(stopScript, /-Shutdown/u);
+    assert.match(stopScript, /-TurnOff/u);
     assert.equal(await readFile(sourcePath, 'utf8'), 'immutable-base');
 
     const stateFile = path.join(root, 'persistent', 'state.json');

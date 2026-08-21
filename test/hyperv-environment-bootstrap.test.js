@@ -39,7 +39,8 @@ test('Hyper-V preparation uses only located ownership/network state and activati
     if (payload.source) {
       copies += 1;
       copiedSeed = JSON.parse(await readFile(payload.source, 'utf8'));
-      assert.equal(payload.destination, '/var/lib/devbridge/bootstrap/network-seed.json');
+      assert.equal(payload.destination, '/var/lib/devbridge/bootstrap');
+      assert.equal(path.basename(payload.source), 'network-seed.json');
       return success(JSON.stringify({ copied: true }));
     }
     throw new Error('unexpected management request');
@@ -92,6 +93,81 @@ test('Hyper-V address allocation is durable, collision-free within retained targ
     assert.equal(reconciled.retained, 1);
     const state = JSON.parse(await readFile(path.join(root, 'state.json'), 'utf8'));
     assert.deepEqual(Object.keys(state.allocations), [target]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Hyper-V activation resets the exact owned guest file service once after a failed copy', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-hv-bootstrap-reset-'));
+  let copies = 0;
+  let resets = 0;
+  const invoke = async (request) => {
+    const payload = JSON.parse(request.input);
+    if (payload.source) {
+      copies += 1;
+      if (copies === 1) return { ...success(''), exitCode: 1, stderr: 'guest service channel unavailable' };
+      const seed = JSON.parse(await readFile(payload.source, 'utf8'));
+      assert.deepEqual(seed.dns, ['1.1.1.1']);
+      return success(JSON.stringify({ copied: true }));
+    }
+    if (payload.resetService === true) {
+      resets += 1;
+      assert.equal(payload.reference, location(target).reference);
+      assert.equal(payload.proof, location(target).proof);
+      return success(JSON.stringify({ reset: true }));
+    }
+    throw new Error('unexpected management request');
+  };
+  try {
+    const adapter = new HyperVEnvironmentBootstrap({
+      directory: root,
+      invoke,
+      locate: async (value) => location(value),
+      connection: async () => baseConnection,
+      dnsServers: () => ['127.0.0.1', '169.254.10.20'],
+    });
+    assert.deepEqual(await adapter.activate(target), { ready: true, address: (await adapter.connection(target)).address });
+    assert.equal(copies, 2);
+    assert.equal(resets, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Hyper-V activation requests one lifecycle-owned cycle after bounded copy recovery is exhausted', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-hv-bootstrap-cycle-'));
+  let now = 0;
+  let copies = 0;
+  let resets = 0;
+  const invoke = async (request) => {
+    const payload = JSON.parse(request.input);
+    if (payload.source) {
+      copies += 1;
+      return { ...success(''), exitCode: 1, stderr: 'guest service channel unavailable' };
+    }
+    if (payload.resetService === true) {
+      resets += 1;
+      return success(JSON.stringify({ reset: true }));
+    }
+    throw new Error('unexpected management request');
+  };
+  try {
+    const adapter = new HyperVEnvironmentBootstrap({
+      directory: root,
+      invoke,
+      locate: async (value) => location(value),
+      connection: async () => baseConnection,
+      dnsServers: () => ['10.0.0.53'],
+      now: () => now,
+      delay: async (ms) => { now += ms; },
+      copySettleMs: 2_000,
+    });
+    const activated = await adapter.activate(target);
+    assert.equal(activated.ready, false);
+    assert.equal(activated.cycleRequired, true);
+    assert.equal(copies, 2);
+    assert.equal(resets, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

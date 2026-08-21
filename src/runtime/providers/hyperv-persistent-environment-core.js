@@ -222,7 +222,7 @@ if (-not [string]::IsNullOrWhiteSpace([string]$data.providerIdentity) -and ([str
 if ([string]$item.Notes -ne [string]$data.marker) { throw 'environment ownership evidence does not match' }
 if ([string]$item.State -ne 'Off') {
   if ($data.force -eq $true) { Stop-VM -Name $data.name -TurnOff -Confirm:$false -ErrorAction Stop }
-  else { Stop-VM -Name $data.name -Shutdown -Confirm:$false -ErrorAction Stop }
+  else { Stop-VM -Name $data.name -Confirm:$false -ErrorAction Stop }
 }
 @{ changed = $true } | ConvertTo-Json -Compress
 `;

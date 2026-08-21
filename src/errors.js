@@ -18,6 +18,13 @@ export class EnvironmentLifecycleBusyError extends DevBridgeError {
   }
 }
 
+export class HyperVGuestFileServiceUnavailableError extends DevBridgeError {
+  constructor(message = 'Hyper-V guest file service did not become ready') {
+    super(message);
+    this.code = 'DEVBRIDGE_HYPERV_GUEST_FILE_SERVICE_UNAVAILABLE';
+  }
+}
+
 export class BaselineReverificationRequiredError extends CandidateValidationError {
   constructor(message, reconciliation = {}, options = {}) {
     super(message, options);

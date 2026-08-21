@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { activateBootstrapAttachment } from '../src/app/environment-bootstrap.js';
 import { EnvironmentBootstrap, ENVIRONMENT_BOOTSTRAP_PROTOCOL, environmentBootstrapGeneration } from '../src/runtime/environment-bootstrap.js';
 
 const target = 'env-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -142,4 +143,27 @@ test('bounded settling can wait for asynchronously applied local prerequisites',
   const status = await instance.ensure(target);
   assert.equal(status.ready, true);
   assert.ok(attempts >= 3);
+});
+
+test('attachment recovery delegates one requested cycle to the lifecycle owner', async () => {
+  const events = [];
+  let activations = 0;
+  await activateBootstrapAttachment({
+    target,
+    attachment: {
+      async activate() {
+        activations += 1;
+        events.push(`activate-${activations}`);
+        return activations === 1 ? { ready: false, cycleRequired: true } : { ready: true };
+      },
+    },
+    foundation: {
+      async observeEnvironment() { events.push('observe'); return { observation: { state: 'running' } }; },
+      async stopEnvironment(received, options) { events.push('stop'); assert.equal(received, target); assert.deepEqual(options, { force: false, timeoutMs: 60_000 }); },
+      async startEnvironment(received) { events.push('start'); assert.equal(received, target); },
+    },
+    waitForBridge: async (received) => { events.push('bridge'); assert.equal(received, target); },
+    allowCycle: true,
+  });
+  assert.deepEqual(events, ['activate-1', 'observe', 'stop', 'start', 'activate-2', 'bridge']);
 });

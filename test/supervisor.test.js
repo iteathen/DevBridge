@@ -7,7 +7,7 @@ import {
   remoteBranchHead,
   superviseDaemon,
 } from '../src/bootstrap/transactional-bootstrap.mjs';
-import { EnvironmentLifecycleBusyError } from '../src/errors.js';
+import { EnvironmentLifecycleBusyError, HyperVGuestFileServiceUnavailableError } from '../src/errors.js';
 
 const paths = {
   home: '/managed',
@@ -53,7 +53,9 @@ test('supervisor action compatibility still prioritizes operator stop, then upda
 
 test('only exact environment lifecycle contention is a retryable candidate admission failure', () => {
   assert.equal(isRetryableCandidateValidationError(new EnvironmentLifecycleBusyError()), true);
+  assert.equal(isRetryableCandidateValidationError(new HyperVGuestFileServiceUnavailableError()), true);
   assert.equal(isRetryableCandidateValidationError(new Error('environment lifecycle mutation is already active')), false);
+  assert.equal(isRetryableCandidateValidationError(new Error('Hyper-V guest file service did not become ready')), false);
 });
 
 test('supervisor owns the installation home before stopping a daemon and releases it on failure', async () => {

@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import {
   closeSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -22,6 +23,11 @@ export const STAGE0_PROTOCOL = 1;
 const MIGRATION_PROTOCOL = 'devbridge/stage0-runtime-migration-v1';
 const POLICY_PROTOCOL = 'devbridge/bootstrap-policy-v1';
 const INSTALL_MANIFEST_PROTOCOL = 'devbridge/install-manifest-v1';
+const ACTIVATION_PROTOCOL = 'devbridge/runtime-activation-v1';
+const ACCEPTED_ACTIVATION_STATES = new Set([
+  'healthy', 'candidate-planned', 'candidate-failed', 'candidate-validated',
+  'drain-requested', 'activating', 'health-failed', 'rolled-back',
+]);
 const MINIMUM_NODE = Object.freeze([22, 16, 0]);
 const CAPTURE_LIMIT = 4 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -103,6 +109,8 @@ export function resolveStage0Paths(args, environment = process.env) {
   return {
     home,
     runtime: path.join(home, 'runtime'),
+    runtimeCandidates: path.join(home, 'runtime-candidates'),
+    activationState: path.join(home, 'runtime-activation.json'),
     config: path.resolve(expandHome(args.config || path.join(home, 'config.json'))),
     gitHome: path.join(home, 'bootstrap-git-home'),
     hooks: path.join(home, 'bootstrap-empty-hooks'),
@@ -208,6 +216,40 @@ function runtimeHead(paths, runner) {
   const head = exactHead(runGit(['rev-parse', 'HEAD'], { paths, cwd: paths.runtime, runner }).stdout);
   if (!head) fail('Managed DevBridge runtime does not have an exact Git head.');
   return head;
+}
+
+export function loadAcceptedStage0Runtime(paths, runner = defaultRunner) {
+  if (!existsSync(paths.activationState)) return null;
+  let record;
+  try {
+    const info = lstatSync(paths.activationState);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024) fail('Accepted DevBridge activation state is not a bounded real file.');
+    record = JSON.parse(readFileSync(paths.activationState, 'utf8'));
+  } catch (error) {
+    fail(`Accepted DevBridge activation state is invalid: ${error.message}`);
+  }
+  if (record?.protocol !== ACTIVATION_PROTOCOL || !ACCEPTED_ACTIVATION_STATES.has(record.state)) {
+    fail('Accepted DevBridge activation state has an unsupported protocol or state.');
+  }
+  const head = exactHead(record.current?.head);
+  if (!head) fail('Accepted DevBridge activation state does not identify an exact current head.');
+  const expectedRuntime = path.join(paths.runtimeCandidates, head);
+  if (path.resolve(record.current?.runtimeDir ?? '') !== path.resolve(expectedRuntime)) {
+    fail('Accepted DevBridge activation state does not use its derived runtime directory.');
+  }
+  const expectedCli = path.join(expectedRuntime, 'src', 'cli.js');
+  if (record.current?.cliPath != null && path.resolve(record.current.cliPath) !== path.resolve(expectedCli)) {
+    fail('Accepted DevBridge activation state does not use its derived CLI path.');
+  }
+  const selectedPaths = { ...paths, runtime: expectedRuntime };
+  validateRuntimeRepository(selectedPaths, runner);
+  const observedHead = runtimeHead(selectedPaths, runner);
+  if (observedHead !== head) fail('Accepted DevBridge runtime checkout does not match its recorded head.');
+  const shape = validateRuntimeShape(expectedRuntime);
+  if (shape.stage0Protocol !== STAGE0_PROTOCOL) {
+    fail(`Accepted DevBridge runtime requires incompatible stage-0 protocol ${shape.stage0Protocol}; expected ${STAGE0_PROTOCOL}.`);
+  }
+  return { ...shape, head, accepted: true };
 }
 
 export function remoteSourceHead(paths, runner = defaultRunner) {
@@ -491,7 +533,8 @@ export async function bootstrapStage0(argv = process.argv.slice(2), runner = def
   const paths = resolveStage0Paths(args);
   const channel = resolveOperatorChannel(args, paths);
   const runtimePreexisting = existsSync(paths.runtime);
-  const runtime = ensureStage0Runtime(args, paths, runner);
+  const stage0Runtime = ensureStage0Runtime(args, paths, runner);
+  const runtime = loadAcceptedStage0Runtime(paths, runner) ?? stage0Runtime;
   if (channel.source !== 'default') persistOperatorChannel(args, paths, channel.channel);
   recordStage0Install(paths, { runtimePreexisting, launcherPath: process.argv[1] ? path.resolve(process.argv[1]) : null });
   const module = await import(pathToFileURL(runtime.secureBootstrapPath).href);
