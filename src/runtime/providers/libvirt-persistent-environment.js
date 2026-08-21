@@ -1,5 +1,6 @@
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { preflightExecutionProfileMemory } from '../profile-resource-preflight.js';
 import { LibvirtPersistentEnvironment as PersistentEnvironmentCore } from './libvirt-persistent-environment-core.js';
 
 async function canonicalRoot(value) {
@@ -37,7 +38,10 @@ export class LibvirtPersistentEnvironment {
     return this.#delegate;
   }
 
-  async provision(input) { return (await this.#core()).provision(input); }
+  async provision(input) {
+    preflightExecutionProfileMemory(input?.settings);
+    return (await this.#core()).provision(input);
+  }
   async observe(identity) { return (await this.#core()).observe(identity); }
   async start(identity) { return (await this.#core()).start(identity); }
   async stop(identity, options) { return (await this.#core()).stop(identity, options); }
