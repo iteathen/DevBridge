@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { once } from 'node:events';
-import { mkdtemp } from 'node:fs/promises';
+import { EventEmitter, once } from 'node:events';
+import { access, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
   acquireRuntimeSupervisorLock,
+  runtimeSupervisorClaimFile,
   runtimeSupervisorEndpoint,
 } from '../src/bootstrap/runtime-supervisor-lock.mjs';
 
@@ -34,6 +35,24 @@ test('only one supervisor can own an installation home and release permits clean
   await releaseReplacement();
   await releaseReplacement();
   await releaseOther();
+  await assert.rejects(access(runtimeSupervisorClaimFile(root)), { code: 'ENOENT' });
+});
+
+test('home claim remains exclusive even if a platform admits another pipe instance', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-supervisor-multi-pipe-'));
+  const createNonexclusiveServer = () => {
+    const server = new EventEmitter();
+    server.listen = () => queueMicrotask(() => server.emit('listening'));
+    server.close = (callback) => queueMicrotask(() => callback());
+    return server;
+  };
+  const options = { platform: 'win32', createServer: createNonexclusiveServer };
+  const release = await acquireRuntimeSupervisorLock(root, options);
+  await assert.rejects(
+    acquireRuntimeSupervisorLock(root, options),
+    (error) => error?.code === 'DEVBRIDGE_SUPERVISOR_ACTIVE',
+  );
+  await release();
 });
 
 test('operating system releases supervisor ownership after the owner process is terminated', async (context) => {
@@ -56,8 +75,20 @@ test('operating system releases supervisor ownership after the owner process is 
     once(child, 'exit').then(([code]) => { throw new Error(`lock owner exited before readiness with ${code}`); }),
   ]);
   assert.equal(observed, 'locked\n');
+  await assert.rejects(
+    acquireRuntimeSupervisorLock(root),
+    (error) => error?.code === 'DEVBRIDGE_SUPERVISOR_ACTIVE',
+  );
   child.kill();
   await once(child, 'exit');
   const release = await acquireRuntimeSupervisorLock(root);
   await release();
+});
+
+test('malformed supervisor claims fail closed without being replaced', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-supervisor-malformed-'));
+  const claimFile = runtimeSupervisorClaimFile(root);
+  await writeFile(claimFile, '{"protocol":"forged"}\n', { encoding: 'utf8', mode: 0o600 });
+  await assert.rejects(acquireRuntimeSupervisorLock(root), /claim is malformed/u);
+  assert.equal(await readFile(claimFile, 'utf8'), '{"protocol":"forged"}\n');
 });

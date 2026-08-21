@@ -9,7 +9,7 @@ import {
 import path from 'node:path';
 import process from 'node:process';
 import { loadConfig } from '../config.js';
-import { reconcileExitedDaemonLock } from '../runtime/daemon-lock.js';
+import { reconcileDeadDaemonLock, reconcileExitedDaemonLock } from '../runtime/daemon-lock.js';
 import * as runtimeCore from './runtime-bootstrap.mjs';
 import { acquireRuntimeSupervisorLock } from './runtime-supervisor-lock.mjs';
 
@@ -217,6 +217,12 @@ export function syncInstalledLauncher(paths, runtime, options) {
 }
 
 export async function stopExistingDaemon(paths, runtime, runner = defaultRunner, options = {}) {
+  if (options.exclusiveSupervisorOwned === true) {
+    const config = await loadConfig(paths.config);
+    await reconcileDeadDaemonLock(path.join(config.state.directory, 'daemon.lock'), {
+      exclusiveSupervisorOwned: true,
+    });
+  }
   return runtimeCore.stopExistingDaemon(paths, runtime, runner, {
     ...options,
     stopCommandFn: options.stopCommandFn ?? (() => runDevBridgeCliCaptured('stop', paths, runtime, runner)),
@@ -354,7 +360,7 @@ async function superviseDaemonOwned(args, paths, initialRuntime, {
   let failedCandidateHead = null;
   let firstUpdateCheck = true;
 
-  if (stopExisting) await stopExistingFn(paths, runtime, runner);
+  if (stopExisting) await stopExistingFn(paths, runtime, runner, { exclusiveSupervisorOwned: true });
 
   while (iterations < maxIterations) {
     iterations += 1;

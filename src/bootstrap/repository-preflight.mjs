@@ -20,6 +20,7 @@ const SYNTAX_FILES = [
   'src/run/controller-plan.js',
   'src/run/run-coordinator.js',
   'src/runtime/repository-execution.js',
+  'src/runtime/daemon-lock.js',
   'src/runtime/repository-environment-execution.js',
   'src/runtime/file-tree-transfer.js',
   'src/guest/workspace-agent.mjs',
@@ -88,6 +89,7 @@ const TARGETED_TESTS = [
   'test/context-budget.test.js',
   'test/controller-plan.test.js',
   'test/runtime-activation.test.js',
+  'test/daemon-lock.test.js',
   'test/rate-budget.test.js',
 ];
 

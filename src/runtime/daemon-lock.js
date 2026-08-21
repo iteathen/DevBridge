@@ -41,6 +41,24 @@ export async function readDaemonLock(filePath) {
   }
 }
 
+function sameLockRecord(left, right) {
+  return left?.protocol === right?.protocol &&
+    left?.pid === right?.pid &&
+    left?.token === right?.token &&
+    left?.createdAt === right?.createdAt;
+}
+
+function defaultIsProcessAlive(pid) {
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false;
+    return true;
+  }
+}
+
 export async function reconcileExitedDaemonLock(filePath, { pid, spawnedAt }) {
   if (!Number.isSafeInteger(pid) || pid <= 0) throw new TypeError('exited daemon PID must be a positive safe integer');
   if (!Number.isFinite(spawnedAt) || spawnedAt <= 0) throw new TypeError('exited daemon spawn time must be a positive timestamp');
@@ -54,6 +72,27 @@ export async function reconcileExitedDaemonLock(filePath, { pid, spawnedAt }) {
   const current = await readDaemonLock(filePath);
   if (!current || current.pid !== lock.pid || current.token !== lock.token || current.createdAt !== lock.createdAt) {
     throw new PolicyError('daemon lock ownership changed during exited-child reconciliation');
+  }
+  await unlink(filePath);
+  await unlinkIfExists(stopFilePath(filePath, lock.token));
+  await unlinkIfExists(pauseFilePath(filePath, lock.token));
+  await unlinkIfExists(pausedFilePath(filePath, lock.token));
+  return { reconciled: true, pid: lock.pid, token: lock.token };
+}
+
+export async function reconcileDeadDaemonLock(filePath, {
+  exclusiveSupervisorOwned = false,
+  isProcessAlive = defaultIsProcessAlive,
+} = {}) {
+  if (exclusiveSupervisorOwned !== true) {
+    throw new PolicyError('dead daemon reconciliation requires exclusive supervisor ownership');
+  }
+  const lock = await readDaemonLock(filePath);
+  if (!lock) return { reconciled: false, reason: 'absent' };
+  if (isProcessAlive(lock.pid)) return { reconciled: false, reason: 'live', pid: lock.pid };
+  const current = await readDaemonLock(filePath);
+  if (!sameLockRecord(lock, current)) {
+    throw new PolicyError('daemon lock ownership changed during dead-process reconciliation');
   }
   await unlink(filePath);
   await unlinkIfExists(stopFilePath(filePath, lock.token));

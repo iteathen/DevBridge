@@ -57,7 +57,8 @@ test('supervisor owns the installation home before stopping a daemon and release
         events.push(`acquire:${home}`);
         return async () => { events.push('release'); };
       },
-      stopExistingFn: async () => {
+      stopExistingFn: async (_paths, _runtime, _runner, options) => {
+        assert.equal(options.exclusiveSupervisorOwned, true);
         events.push('stop-existing');
         throw new Error('fixture stop failure');
       },

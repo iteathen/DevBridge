@@ -126,7 +126,9 @@ The supervisor, not stage 0, owns:
 - activation/health checking;
 - last-known-good rollback.
 
-One operating-system-backed supervisor lease covers the entire installation home, regardless of which config file a launch selects. Windows uses a named pipe and Linux uses an abstract Unix-domain socket, so the lease disappears when its owning process exits or crashes without relying on stale PID/lock-file cleanup. A competing daemon/update launch fails before it can stop the accepted daemon or mutate the shared candidate/activation state.
+One supervisor lease covers the entire installation home, regardless of which config file a launch selects. A held Windows named pipe or Linux abstract Unix-domain socket serializes claim/recovery, while an exact PID/token-bound home claim defends against platform pipe-instance quirks. Clean exit removes the claim; after a crash, the next endpoint owner may replace it only after proving the recorded PID is no longer live and rereading the exact unchanged claim. A competing daemon/update launch fails before it can stop the accepted daemon or mutate the shared candidate/activation state.
+
+After it owns that lease, the supervisor may also reconcile an exact daemon lock whose recorded process is proven dead. This recovery is unavailable to uncoordinated callers and rereads the unchanged PID/token/time generation before removing its lock and token-bound controls.
 
 A mutable branch is transport, not production release authority.
 

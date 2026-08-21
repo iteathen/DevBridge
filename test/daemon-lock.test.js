@@ -7,6 +7,7 @@ import {
   acquireDaemonLock,
   consumeDaemonStopRequest,
   daemonStatus,
+  reconcileDeadDaemonLock,
   reconcileExitedDaemonLock,
   requestDaemonStop,
   stopDaemon,
@@ -109,4 +110,28 @@ test('supervisor reconciliation removes only an exact exited-child lock generati
   await assert.rejects(access(file), /ENOENT/u);
   await assert.rejects(access(`${file}.stop-${token}`), /ENOENT/u);
   assert.deepEqual(await reconcileExitedDaemonLock(file, { pid, spawnedAt }), { reconciled: false, reason: 'absent' });
+});
+
+test('dead daemon reconciliation requires exclusive supervisor ownership and preserves a live generation', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'pp-lock-dead-'));
+  const file = path.join(root, 'daemon.lock');
+  const token = '12345678-1234-1234-1234-123456789abc';
+  const record = { protocol: 'devbridge/daemon-lock-v1', pid: 424242, token, createdAt: new Date().toISOString() };
+  await writeFile(file, `${JSON.stringify(record)}\n`);
+  await writeFile(`${file}.stop-${token}`, `${JSON.stringify({
+    protocol: 'devbridge/daemon-stop-v1', pid: record.pid, token, requestedAt: new Date().toISOString(),
+  })}\n`);
+
+  await assert.rejects(reconcileDeadDaemonLock(file, { isProcessAlive: () => false }), /exclusive supervisor ownership/u);
+  assert.deepEqual(
+    await reconcileDeadDaemonLock(file, { exclusiveSupervisorOwned: true, isProcessAlive: () => true }),
+    { reconciled: false, reason: 'live', pid: record.pid },
+  );
+  await access(file);
+
+  const result = await reconcileDeadDaemonLock(file, { exclusiveSupervisorOwned: true, isProcessAlive: () => false });
+  assert.equal(result.reconciled, true);
+  assert.equal(result.token, token);
+  await assert.rejects(access(file), /ENOENT/u);
+  await assert.rejects(access(`${file}.stop-${token}`), /ENOENT/u);
 });
