@@ -255,6 +255,8 @@ Stage 0 establishes only the fixed managed checkout needed to reach the secure s
 
 DB-011 owns update policy, signed production release subjects, exact runtime artifact identity, candidate validation, daemon drain, activation health, and rollback.
 
+Only one supervisor may own a DevBridge installation home at a time, even when launches select different config files. A second daemon/update launch fails closed before touching the accepted daemon, runtime candidates, or activation journal; use the active launch's config for `status` and `stop`.
+
 Stage 1 removed the former host candidate execution path. Stage 6 restores candidate preflight/tests through one locally admitted VM validation route while release identity/last-known-good/rollback remain intact. Route or environment absence fails closed before activation.
 
 VM validation attaches through:

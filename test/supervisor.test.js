@@ -32,6 +32,8 @@ function timer(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(1, ms)));
 }
 
+async function acquireFixtureSupervisorLock() { return async () => {}; }
+
 test('remote branch head parser accepts only an exact 40-hex SHA', () => {
   const runner = () => ({ status: 0, stdout: `${'A'.repeat(40)}\trefs/heads/main\n` });
   assert.equal(
@@ -45,6 +47,24 @@ test('supervisor action compatibility still prioritizes operator stop, then upda
   assert.equal(decideSupervisorAction({ childExitCode: 0, updatePending: true }), 'update');
   assert.equal(decideSupervisorAction({ childExitCode: 0, updatePending: false }), 'stop');
   assert.equal(decideSupervisorAction({ childExitCode: 1, updatePending: false }), 'restart');
+});
+
+test('supervisor owns the installation home before stopping a daemon and releases it on failure', async () => {
+  const events = [];
+  await assert.rejects(
+    superviseDaemon({ channel: 'testing', update: false }, paths, runtimeA, {
+      acquireSupervisorLockFn: async (home) => {
+        events.push(`acquire:${home}`);
+        return async () => { events.push('release'); };
+      },
+      stopExistingFn: async () => {
+        events.push('stop-existing');
+        throw new Error('fixture stop failure');
+      },
+    }),
+    /fixture stop failure/u,
+  );
+  assert.deepEqual(events, ['acquire:/managed', 'stop-existing', 'release']);
 });
 
 test('supervisor validates an exact candidate before draining current daemon, then health-checks activation', async () => {
@@ -88,6 +108,7 @@ test('supervisor validates an exact candidate before draining current daemon, th
       restartBackoffMs: 1,
       healthWindowMs: 1,
       maxIterations: 2,
+      acquireSupervisorLockFn: acquireFixtureSupervisorLock,
       stopExisting: false,
       reconcileExitedDaemonFn: async () => ({ reconciled: false, reason: 'fixture' }),
       remoteHeadFn: () => runtimeB.head,
@@ -130,6 +151,7 @@ test('failed candidate validation never drains the healthy current daemon', asyn
     paths,
     runtimeA,
     {
+      acquireSupervisorLockFn: acquireFixtureSupervisorLock,
       spawnImpl: () => {
         setTimeout(() => child.emit('exit', 0, null), 10);
         return child;
@@ -187,6 +209,7 @@ test('candidate daemon crash inside health window rolls back to last-known-good 
       spawnImpl,
       updateIntervalMs: 5,
       maxIterations: 3,
+      acquireSupervisorLockFn: acquireFixtureSupervisorLock,
       stopExisting: false,
       reconcileExitedDaemonFn: async () => ({ reconciled: false, reason: 'fixture' }),
       remoteHeadFn: () => runtimeB.head,
@@ -230,6 +253,7 @@ test('candidate health doctor runs at a cooperative pause boundary and failure p
     paths,
     runtimeA,
     {
+      acquireSupervisorLockFn: acquireFixtureSupervisorLock,
       spawnImpl,
       updateIntervalMs: 5,
       restartBackoffMs: 1,
@@ -290,6 +314,7 @@ test('supervisor restarts an unexpected daemon crash without mutating runtime', 
     {
       spawnImpl,
       maxIterations: 2,
+      acquireSupervisorLockFn: acquireFixtureSupervisorLock,
       stopExisting: false,
       reconcileExitedDaemonFn: async (_paths, observed) => { reconciled.push(observed.pid); return { reconciled: true }; },
       restartBackoffMs: 1,

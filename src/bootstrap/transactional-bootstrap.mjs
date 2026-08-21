@@ -11,6 +11,7 @@ import process from 'node:process';
 import { loadConfig } from '../config.js';
 import { reconcileExitedDaemonLock } from '../runtime/daemon-lock.js';
 import * as runtimeCore from './runtime-bootstrap.mjs';
+import { acquireRuntimeSupervisorLock } from './runtime-supervisor-lock.mjs';
 
 export * from './runtime-bootstrap.mjs';
 
@@ -322,7 +323,7 @@ async function recordActivation(recordActivationFn, paths, record) {
   return recordActivationFn(paths, record);
 }
 
-export async function superviseDaemon(args, paths, initialRuntime, {
+async function superviseDaemonOwned(args, paths, initialRuntime, {
   runner = defaultRunner,
   spawnImpl = spawn,
   updateIntervalMs = UPDATE_CHECK_INTERVAL_MS,
@@ -581,6 +582,16 @@ export async function superviseDaemon(args, paths, initialRuntime, {
   return 0;
 }
 
+export async function superviseDaemon(args, paths, initialRuntime, options = {}) {
+  const acquireSupervisorLockFn = options.acquireSupervisorLockFn ?? acquireRuntimeSupervisorLock;
+  const releaseSupervisorLock = await acquireSupervisorLockFn(paths.home);
+  try {
+    return await superviseDaemonOwned(args, paths, initialRuntime, options);
+  } finally {
+    await releaseSupervisorLock();
+  }
+}
+
 export async function bootstrap(argv = process.argv.slice(2), runner = defaultRunner) {
   runtimeCore.assertSupportedNode();
   const args = runtimeCore.parseBootstrapArgs(argv);
@@ -614,7 +625,6 @@ export async function bootstrap(argv = process.argv.slice(2), runner = defaultRu
     return runDevBridgeCli(args.command, paths, runtime, runner);
   }
 
-  await stopExistingDaemon(paths, runtime, runner);
   const controller = new AbortController();
   const requestStop = () => controller.abort();
   process.once('SIGINT', requestStop);
@@ -624,7 +634,7 @@ export async function bootstrap(argv = process.argv.slice(2), runner = defaultRu
       { ...args, command: 'daemon' },
       paths,
       runtime,
-      { runner, stopExisting: false, signal: controller.signal },
+      { runner, stopExisting: true, signal: controller.signal },
     );
   } finally {
     process.removeListener('SIGINT', requestStop);

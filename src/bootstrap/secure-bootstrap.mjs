@@ -459,7 +459,6 @@ export async function bootstrap(argv = process.argv.slice(2), runner) {
     return transactional.runDevBridgeCli(args.command, paths, runtime, runner);
   }
 
-  await transactional.stopExistingDaemon(paths, runtime, runner);
   const controller = new AbortController();
   const requestStop = () => controller.abort();
   process.once('SIGINT', requestStop);
@@ -469,7 +468,7 @@ export async function bootstrap(argv = process.argv.slice(2), runner) {
       { ...args, command: 'daemon' },
       paths,
       runtime,
-      { runner, stopExisting: false, signal: controller.signal },
+      { runner, stopExisting: true, signal: controller.signal },
     );
   } finally {
     process.removeListener('SIGINT', requestStop);

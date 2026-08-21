@@ -217,8 +217,9 @@ export async function launchElevatedProviderHelper({
   nodeExecutable = process.execPath,
   helperFile = fileURLToPath(import.meta.url),
   invoke = invokeCommand,
+  platform = process.platform,
 } = {}) {
-  if (process.platform !== 'win32') throw new Error('UAC provider setup is available only on Windows');
+  if (platform !== 'win32') throw new Error('UAC provider setup is available only on Windows');
   if (typeof requestFile !== 'string' || !path.isAbsolute(requestFile)) throw new TypeError('elevation request file must be absolute');
   if (typeof requestSha256 !== 'string' || !SHA256.test(requestSha256)) throw new TypeError('elevation request digest is invalid');
   const argumentsText = [helperFile, ELEVATED_SWITCH, requestFile, requestSha256].map(windowsQuoteArgument).join(' ');

@@ -54,6 +54,7 @@ const runtimeB = {
 };
 
 function timer(ms) { return new Promise((resolve) => setTimeout(resolve, Math.max(1, ms))); }
+async function acquireFixtureSupervisorLock() { return async () => {}; }
 
 function exactFakeDigest(runtimeDir) {
   if (runtimeDir === runtimeA.runtimeDir) return { sha256: artifactA };
@@ -101,6 +102,7 @@ test('production supervisor ignores mutable stable movement that is not the sign
   let candidatePrepares = 0;
   let stops = 0;
   const result = await superviseDaemon(productionArgs(files), paths, runtimeA, {
+    acquireSupervisorLockFn: acquireFixtureSupervisorLock,
     spawnImpl: () => {
       setTimeout(() => child.emit('exit', 0, null), 15);
       return child;
@@ -136,6 +138,7 @@ test('production supervisor validates only the signed head and journals exact ar
     return child;
   };
   const result = await superviseDaemon(productionArgs(files), paths, runtimeA, {
+    acquireSupervisorLockFn: acquireFixtureSupervisorLock,
     spawnImpl,
     artifactDigestSyncFn: exactFakeDigest,
     maxIterations: 2,
@@ -190,6 +193,7 @@ test('production supervisor refuses a candidate whose bytes change after validat
     return child;
   };
   const result = superviseDaemon(productionArgs(files), paths, runtimeA, {
+    acquireSupervisorLockFn: acquireFixtureSupervisorLock,
     spawnImpl,
     artifactDigestSyncFn: (runtimeDir) => {
       if (runtimeDir === runtimeA.runtimeDir) return { sha256: artifactA };

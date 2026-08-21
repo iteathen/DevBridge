@@ -126,6 +126,8 @@ The supervisor, not stage 0, owns:
 - activation/health checking;
 - last-known-good rollback.
 
+One operating-system-backed supervisor lease covers the entire installation home, regardless of which config file a launch selects. Windows uses a named pipe and Linux uses an abstract Unix-domain socket, so the lease disappears when its owning process exits or crashes without relying on stale PID/lock-file cleanup. A competing daemon/update launch fails before it can stop the accepted daemon or mutate the shared candidate/activation state.
+
 A mutable branch is transport, not production release authority.
 
 ## Candidate-controlled validation

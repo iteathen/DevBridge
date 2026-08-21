@@ -44,6 +44,8 @@ const SYNTAX_FILES = [
   'src/app/tool-onboarding-composition.js',
   'src/values/project-relative-path.js',
   'src/bootstrap/candidate-validator.mjs',
+  'src/bootstrap/elevated-provider-setup.mjs',
+  'src/bootstrap/runtime-supervisor-lock.mjs',
   'src/bootstrap/secure-bootstrap.mjs',
   'src/bootstrap/transactional-bootstrap.mjs',
 ];
@@ -61,6 +63,8 @@ const TARGETED_TESTS = [
   'test/file-tree-transfer.test.js',
   'test/workspace-agent.test.js',
   'test/bootstrap-candidate-execution.test.js',
+  'test/elevated-provider-setup.test.js',
+  'test/runtime-supervisor-lock.test.js',
   'test/environment-bootstrap-agent.test.js',
   'test/stage6-lego-boundary.test.js',
   'test/repository-execution-boundary-absence.test.js',

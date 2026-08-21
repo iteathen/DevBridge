@@ -227,6 +227,7 @@ test('UAC launcher requests runas for a hidden fixed helper and strips credentia
     requestSha256: 'c'.repeat(64),
     nodeExecutable: 'C:\\Program Files\\nodejs\\node.exe',
     helperFile: 'C:\\Users\\Example User\\DevBridge\\src\\bootstrap\\elevated-provider-setup.mjs',
+    platform: 'win32',
     invoke: async (request) => {
       captured = request;
       return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"pid":2468}\n', stderr: '' };
