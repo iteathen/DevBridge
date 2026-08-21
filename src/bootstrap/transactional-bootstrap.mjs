@@ -308,7 +308,8 @@ export async function superviseDaemon(args, paths, initialRuntime, {
       : new Promise(() => {});
 
     while (true) {
-      const waits = [exitPromise.then((exit) => ({ type: 'exit', exit })), abortPromise];
+      const waits = [exitPromise.then((exit) => ({ type: 'exit', exit }))];
+      if (!operatorStopPending) waits.push(abortPromise);
       if (args.update && !updatePending && !operatorStopPending) {
         const checkDelay = firstUpdateCheck ? 0 : updateIntervalMs;
         waits.push(updateCheckDelayFn(checkDelay).then(() => ({ type: 'update-check' })));
