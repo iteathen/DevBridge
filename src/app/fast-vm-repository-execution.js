@@ -3,8 +3,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createEnvironmentBridge } from './environment-bridge.js';
 import { createEnvironmentFoundation } from './environment-foundation.js';
+import { createExecutionProfileRepositoryExecution } from './execution-profile-routing.js';
 import { createFastPersistentEnvironmentChannel } from './fast-persistent-environment-channel.js';
-import { createRepositoryExecution } from './repository-execution.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 
 const TARGET = /^env-[a-f0-9]{32}$/u;
@@ -206,5 +206,5 @@ export async function createFastVmRepositoryExecution(options = {}) {
       prepare: (target) => bridge.put(target, bufferPort(agentBytes), FAST_AGENT_LOCATION, { maxBytes: agentBytes.length }),
     });
   };
-  return createRepositoryExecution({ ...options, createState, createPreparation, createChannel });
+  return createExecutionProfileRepositoryExecution({ ...options, createState, createPreparation, createChannel });
 }
