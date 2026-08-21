@@ -32,9 +32,10 @@ test('classifies authentication without exposing raw credential diagnostics', ()
   assert.doesNotMatch(result.message, /github\.com\/owner\/repo/u);
 });
 
-test('distinguishes authorization, hidden repository, ref, worktree, corruption, and timeout repair classes', () => {
+test('distinguishes authorization, hidden repository, origin, ref, worktree, corruption, and timeout repair classes', () => {
   assert.equal(classifyRepositoryAdmissionFailure(failure(['fetch', 'origin'], 'remote: HTTP 403 access denied')).kind, 'authorization');
   assert.equal(classifyRepositoryAdmissionFailure(failure(['ls-remote', 'origin', 'HEAD'], 'remote: Repository not found.')).kind, 'repository-not-visible');
+  assert.equal(classifyRepositoryAdmissionFailure(failure(['remote', 'get-url', 'origin'], 'fatal: no such remote')).kind, 'origin-mismatch');
   assert.equal(classifyRepositoryAdmissionFailure(failure(['fetch', 'origin'], 'fatal: remote ref refs/heads/missing not found')).kind, 'fetch-or-ref');
   assert.equal(classifyRepositoryAdmissionFailure(failure(['worktree', 'add', '/managed/run', 'branch'], "fatal: 'branch' is already checked out at '/other'" )).kind, 'worktree-collision');
   assert.equal(classifyRepositoryAdmissionFailure(failure(['cat-file', '-e', 'deadbeef^{commit}'], 'fatal: loose object abc is corrupt')).kind, 'local-corruption');
@@ -46,6 +47,13 @@ test('sanitizes credential-bearing remote URLs', () => {
   const sanitized = sanitizeGitRemote(`https://x-access-token:${secret}@github.com/owner/repo.git?token=${secret}#fragment`);
   assert.equal(sanitized, 'https://github.com/owner/repo.git');
   assert.doesNotMatch(sanitized, /x-access-token|github_pat_|token=|fragment/u);
+});
+
+test('preserves local Git remote identity without treating Windows drive letters as URL schemes', () => {
+  assert.equal(sanitizeGitRemote('C:\\Users\\Name\\repo.git'), 'C:\\Users\\Name\\repo.git');
+  assert.equal(sanitizeGitRemote('D:/Work/repo.git/'), 'D:/Work/repo.git');
+  assert.equal(sanitizeGitRemote('\\\\server\\share\\repo.git'), '\\\\server\\share\\repo.git');
+  assert.equal(sanitizeGitRemote('/srv/git/repo.git/'), '/srv/git/repo.git');
 });
 
 test('GitClient never returns embedded remote credentials from remote get-url', async () => {
