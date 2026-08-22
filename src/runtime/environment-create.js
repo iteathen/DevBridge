@@ -5,6 +5,7 @@ function safeId(value, name) { if (typeof value !== 'string' || !SAFE_ID.test(va
 function active(record) { return record != null && record.entries?.at(-1)?.stage !== 'terminal'; }
 function lastStage(record) { return record.entries.at(-1).stage; }
 function assertPort(value, methods, name) { if (!value || methods.some((method) => typeof value[method] !== 'function')) throw new TypeError(`environment create ${name} contract is incomplete`); return value; }
+function fenceEntry(record) { return record.entries.find((entry) => entry.stage === 'fenced-attempt') ?? null; }
 
 export class EnvironmentCreate {
   #declarations; #journal; #observer; #fence; #construction;
@@ -24,6 +25,18 @@ export class EnvironmentCreate {
     })));
     if (value.environmentIdentity !== record.identity || value.declarationRevision !== record.revision) throw new Error('environment create observation does not match declaration authority');
     return value;
+  }
+
+  async #acquireFence(record) {
+    const held = await this.#fence.acquire(Object.freeze({ environmentIdentity: record.environmentIdentity, operationId: record.operationId }));
+    if (!held || typeof held.release !== 'function') throw new Error('environment create fence did not return a release contract');
+    const subject = safeId(held.subject, 'environment create fence subject');
+    const prior = fenceEntry(record)?.fence ?? null;
+    if (prior != null && subject !== prior) {
+      await held.release();
+      throw new Error('environment create fence subject changed during resume');
+    }
+    return { held, subject };
   }
 
   async create(rawIdentity) {
@@ -49,15 +62,11 @@ export class EnvironmentCreate {
       }
 
       if (lastStage(record) === 'pre-observation') {
-        held = await this.#fence.acquire(Object.freeze({ environmentIdentity: identity, operationId: record.operationId }));
-        if (!held || typeof held.release !== 'function') throw new Error('environment create fence did not return a release contract');
-        const subject = safeId(held.subject, 'environment create fence subject');
-        record = await this.#journal.advance(identity, record.operationId, { stage: 'fenced-attempt', outcome: 'attempted', fence: subject });
-      } else if (lastStage(record) === 'fenced-attempt') {
-        held = await this.#fence.acquire(Object.freeze({ environmentIdentity: identity, operationId: record.operationId }));
-        if (!held || typeof held.release !== 'function') throw new Error('environment create fence did not return a release contract');
-        const expected = record.entries.at(-1).fence;
-        if (safeId(held.subject, 'environment create fence subject') !== expected) throw new Error('environment create fence subject changed during resume');
+        const acquired = await this.#acquireFence(record);
+        held = acquired.held;
+        record = await this.#journal.advance(identity, record.operationId, { stage: 'fenced-attempt', outcome: 'attempted', fence: acquired.subject });
+      } else if (['fenced-attempt', 'post-observation', 'verification'].includes(lastStage(record))) {
+        held = (await this.#acquireFence(record)).held;
       }
 
       if (lastStage(record) === 'fenced-attempt') {
