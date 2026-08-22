@@ -42,6 +42,16 @@ export function createExecutionProfileResourceGuard(foundation, {
   });
 }
 
+function withRebuildLifecycle(foundation, lifecycle) {
+  return new Proxy(foundation, {
+    get(target, property) {
+      if (property === 'rebuildEnvironment') return (identity, options) => lifecycle.rebuild(identity, options);
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 export async function createEnvironmentFoundation({
   stateDirectory,
   platform = process.platform,
@@ -93,6 +103,6 @@ export async function createEnvironmentFoundation({
     source,
     operations,
   });
-
-  return createExecutionProfileResourceGuard(new EnvironmentFoundation({ identity, control, images, lifecycle }));
+  const guarded = createExecutionProfileResourceGuard(new EnvironmentFoundation({ identity, control, images, lifecycle }));
+  return withRebuildLifecycle(guarded, lifecycle);
 }
