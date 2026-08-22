@@ -23,7 +23,7 @@ A declaration binds the locally approved execution profile to:
 - resource requirements;
 - a neutral network requirement;
 - bootstrap/tooling generation and requirements;
-- neutral workspace identities that can be reseeded;
+- neutral workspace identities plus opaque host-authority identities used for reseeding;
 - protected state classes, if any.
 
 The logical environment identity is derived from the approved profile and does not change when image, resources, guest materialization, or implementation generation changes. Declaration replacement is compare-and-swap revisioned so stale setup/recovery work cannot silently overwrite newer local authority.
@@ -41,9 +41,10 @@ Observation is evidence, not authority. It separately reports:
 - bootstrap/tooling state;
 - guest health;
 - incomplete or ambiguous transition state;
+- the declaration revision used as the observation basis;
 - the current implementation generation when one is actually observed.
 
-This allows later diagnosis to distinguish a missing implementation from missing system storage, invalid storage, stale enrollment, bootstrap degradation, provider unobservability, and interrupted lifecycle work without importing implementation-specific detail into the lifecycle core.
+The declaration revision makes stale observations explicit rather than allowing old evidence to authorize a new declaration. This allows later diagnosis to distinguish a missing implementation from missing system storage, invalid storage, stale enrollment, bootstrap degradation, provider unobservability, and interrupted lifecycle work without importing implementation-specific detail into the lifecycle core.
 
 ## Mutable-state taxonomy
 
