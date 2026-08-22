@@ -1,21 +1,23 @@
 #!/usr/bin/env node
-import path from 'node:path';
 import process from 'node:process';
-import { pathToFileURL } from 'node:url';
-import {
-  bootstrapStage0,
-  parseStage0Args,
-  resolveStage0Paths,
-  selectStage0Runtime,
-} from './devbridge.mjs';
 
 const SELECTED_ENTRY_FLAGS = new Set(['--ref', '--branch']);
+const DEFAULT_ENTRY_URL = new URL('./devbridge.mjs', import.meta.url).href;
+const SELECTED_ENTRY_URL = new URL('./src/entry/experimental-entry.mjs', import.meta.url).href;
 
 function fail(message) { throw new Error(message); }
 
 function requireEntry(value, name) {
   if (typeof value !== 'function') throw new TypeError(`${name} must be a function`);
   return value;
+}
+
+async function loadEntry(url, exportName, importModuleFn, label) {
+  requireEntry(importModuleFn, 'entry module loader');
+  let module;
+  try { module = await importModuleFn(url); }
+  catch { fail(`${label} is unavailable`); }
+  return requireEntry(module?.[exportName], label);
 }
 
 export function hasSelectedEntrySelector(argv) {
@@ -33,43 +35,29 @@ export function hasSelectedEntrySelector(argv) {
   return selected;
 }
 
-export async function loadSelectedEntry(argv, {
-  runtimeSelector = (paths) => selectStage0Runtime(paths),
-  importModuleFn = (url) => import(url),
-} = {}) {
-  requireEntry(runtimeSelector, 'runtimeSelector');
-  requireEntry(importModuleFn, 'importModuleFn');
-  const args = parseStage0Args(argv);
-  const paths = resolveStage0Paths(args);
-  const selection = await runtimeSelector(paths);
-  const runtimeDir = selection?.runtime?.runtimeDir;
-  if (typeof runtimeDir !== 'string' || !path.isAbsolute(runtimeDir)) {
-    fail('Accepted DevBridge runtime does not identify one absolute selected-entry root.');
-  }
-  const adapterUrl = pathToFileURL(path.join(runtimeDir, 'src', 'entry', 'selected-entry.mjs')).href;
-  let module;
-  try {
-    module = await importModuleFn(adapterUrl);
-  } catch {
-    fail('Accepted DevBridge runtime does not provide a usable selected-entry adapter.');
-  }
-  return requireEntry(module?.runSelectedEntry, 'selected-entry adapter');
+export async function loadDefaultEntry({ importModuleFn = (url) => import(url) } = {}) {
+  return loadEntry(DEFAULT_ENTRY_URL, 'bootstrapStage0', importModuleFn, 'default entry');
+}
+
+export async function loadSelectedEntry({ importModuleFn = (url) => import(url) } = {}) {
+  return loadEntry(SELECTED_ENTRY_URL, 'runExperimentalEntry', importModuleFn, 'selected entry');
 }
 
 export async function runInstalledEntry(argv = process.argv.slice(2), {
-  defaultEntry = bootstrapStage0,
+  defaultEntryLoader = loadDefaultEntry,
   selectedEntryLoader = loadSelectedEntry,
 } = {}) {
-  requireEntry(defaultEntry, 'defaultEntry');
+  requireEntry(defaultEntryLoader, 'defaultEntryLoader');
   requireEntry(selectedEntryLoader, 'selectedEntryLoader');
   const input = [...argv];
-  if (!hasSelectedEntrySelector(input)) return defaultEntry(input);
-  const selectedEntry = requireEntry(await selectedEntryLoader(input), 'selectedEntry');
-  return selectedEntry([...input]);
+  const selected = hasSelectedEntrySelector(input);
+  const entry = selected
+    ? requireEntry(await selectedEntryLoader(), 'selected entry')
+    : requireEntry(await defaultEntryLoader(), 'default entry');
+  return entry([...input]);
 }
 
-const invoked = process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
-if (invoked) {
+if (import.meta.url === `file://${process.argv[1]?.replaceAll('\\', '/')}` || process.argv[1]?.endsWith('/devbridge-entry.mjs') || process.argv[1]?.endsWith('\\devbridge-entry.mjs')) {
   try {
     const status = await runInstalledEntry();
     if (Number.isInteger(status)) process.exitCode = status;
