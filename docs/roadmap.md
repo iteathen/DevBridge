@@ -110,6 +110,8 @@ The relevant active owners include:
 
 The GPU roadmap is intentionally sequenced behind this recovery work. A GPU profile that cannot be recreated after a missing disk, cannot be selected through supported setup, or depends on manual hypervisor surgery is not a completed DevBridge capability.
 
+Issue #186 is therefore a **post-recovery implementation tracker**, not current priority work.
+
 ## Issue #138 implementation slices
 
 The execution-profile correction is considered complete only when all of the following hold:
@@ -146,16 +148,16 @@ GPU support is not one setting and should not start by building a universal comp
 
 The post-recovery sequence is:
 
-1. **real-host feasibility canary** — on the actual target host/GPU/provider combination, prove a supported/accepted device-exposure mechanism and run a real CUDA kernel inside one guest;
-2. **usable real-CUDA execution profile** — provide one reproducible CUDA-capable profile image/toolchain, provider device attachment, bounded guest attestation, `doctor`, create/rebuild behavior, and repository execution through the normal workspace route;
-3. **setup/routing integration** — allow local setup/reconfiguration to discover/propose the GPU profile and allow neutral capability requirements to select it without repository-specific branches;
-4. **generalized compute routing** — only then expand #162-style source requirement detection, CPU-backed OpenCL/Vulkan functionality, framework CPU fallback, alternate hardware/cloud adapters, and common validity semantics.
+1. **#186 Level 0 — real-host feasibility canary** — on the actual target host/GPU/provider combination, prove a supported/accepted device-exposure mechanism and run a real CUDA kernel inside one guest;
+2. **#186 Level 1 — usable real-CUDA execution profile** — provide one reproducible CUDA-capable profile image/toolchain, provider device attachment, bounded guest attestation, `doctor`, create/rebuild behavior, and repository execution through the normal workspace route;
+3. **#186 Level 2 — setup/routing integration** — allow local setup/reconfiguration to discover/propose the GPU profile and allow neutral capability requirements to select it without repository-specific branches;
+4. **#162 Level 3 — generalized compute routing** — then expand source requirement detection, CPU-backed OpenCL/Vulkan functionality, framework CPU fallback, alternate hardware/cloud adapters, and common validity semantics.
 
 A successful device listing is not enough for the first milestone. Real CUDA memory transfer + kernel execution is required.
 
 The first real-CUDA milestone may target one provider/guest path selected by feasibility. Do not force false Windows/Linux symmetry before the underlying provider/hardware mechanisms are proven. Additional provider support remains an adapter/qualification follow-on behind the same profile and evidence contracts.
 
-See `docs/gpu-execution-profiles.md` for the staged GPU architecture and ownership boundaries.
+See `docs/gpu-execution-profiles.md` and #186 for the staged GPU architecture and implementation acceptance.
 
 ## Workspace lifecycle follow-through
 
@@ -224,9 +226,9 @@ For a GPU profile, setup should separately explain host GPU capability, provider
 
 After recovery/installability, issue #138, and Stage 7/8 qualification:
 
-- the focused first real-CUDA execution-profile work defined in `docs/gpu-execution-profiles.md`;
-- richer profile compatibility/capability selection;
-- #162 generalized compute-requirement detection and alternate CPU/software/hardware routing after the real-CUDA path is proven;
+- #186 first real-CUDA execution-profile feasibility, implementation, recovery, and operator integration;
+- richer profile compatibility/capability selection where #186 exposes a genuine need;
+- #162 generalized compute-requirement detection and alternate CPU/software/hardware routing after #186 proves the real-CUDA path;
 - workspace lifecycle/migration tooling;
 - resource-aware scheduling across profiles;
 - optional stronger per-workspace isolation mechanisms if a real threat model requires them;
@@ -243,6 +245,6 @@ Current active target documents are:
 - `docs/setup.md`;
 - `docs/vm-migration.md`;
 - this roadmap;
-- active issues #103, #107, #115, #116, #117, #138, #169–#182, and #162.
+- active issues #103, #107, #115, #116, #117, #138, #159, #162, #169–#182, and #186.
 
 Historical Stage 3 ownership language, old sandbox work, handoffs, tests, and PRs remain evidence but are non-normative where they conflict with the execution-profile correction or recovery-first sequencing.
