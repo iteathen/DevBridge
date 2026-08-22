@@ -24,13 +24,21 @@ The shared stages are:
 
 A separate bounded construction checkpoint stores only the logical environment identity, outer lifecycle operation identity, declaration revision, contiguous completed stages, current implementation generation, and final neutral readiness observation. Each port is an observe/ensure contract and must be idempotent for the exact declaration + operation subject. If the process stops after an external effect but before a checkpoint write, repeating that port must reconcile the exact effect rather than blindly create another one.
 
-`create`, and later rebuild/reset/recreate, consume this same pipeline. They do not own independent provider provisioning stacks.
+`create`, rebuild, and later reset/recreate consume this same pipeline. They do not own independent provider provisioning stacks.
 
 ## Create
 
 `create` is locally authorized against one persisted declaration. It refuses to create without a declaration and refuses any pre-observation other than `materialization-not-created`. It records the #170 lifecycle intent and pre-observation, acquires an exclusive logical fence, runs/resumes the shared pipeline, records post-observation, independently re-verifies healthy readiness, clears only the exact construction checkpoint, and terminates the lifecycle journal.
 
 A failed/interrupted create leaves the outer lifecycle journal and fine-grained construction checkpoint available for exact resume. Re-entry verifies the same declaration revision and reacquires the same logical fence subject before continuing. A changed fence subject, declaration revision, implementation generation, image subject, or readiness observation fails closed rather than broadening authority.
+
+## Rebuild consumption
+
+#173 reuses this pipeline after diagnosis has selected rebuild for missing or invalid replaceable system storage. The lifecycle owner, not the construction pipeline, must first prove the exact current implementation exists and is owned. Storage-health evidence may select rebuild only after that ownership proof; provider-local reason text is never ownership authority.
+
+Once fenced, rebuild assigns one planned replacement implementation generation and passes that generation through this same pipeline. `image.ensure` therefore reacquires the exact declared image through #178 when necessary before materialization. `materialization.ensure` creates or reconciles the planned replacement without requiring the superseded system disk. `preparation.ensure` establishes fresh implementation-local bootstrap/enrollment identity. `workspaces.ensure` reseeds from host-authoritative registrations. `readiness.verify` qualifies the replacement independently before lifecycle completion.
+
+The construction checkpoint remains keyed to the outer lifecycle operation, so an interruption after an external replacement effect resumes the same generation rather than allocating another. Cleanup of a damaged superseded generation is deliberately outside construction; rebuild retains it unless a separate exact-owned cleanup decision proves removal safe.
 
 ## Preparation ownership
 
@@ -39,5 +47,7 @@ Construction passes the declared boot, enrollment, and bootstrap requirements bu
 ## Qualification
 
 The code-level construction contract is qualified across every durable stage: interruption at image, resource preflight, materialization, preparation, workspace materialization, or readiness resumes from the exact contiguous checkpoint without replaying already completed stages. Tests also cover exact-image unavailability, provider/storage/network prerequisite blockers, implementation-generation drift, fence-subject drift during create resume, post-construction generation substitution, missing declaration/setup re-entry, and overwrite refusal.
+
+#173 adds rebuild qualification around the same contract: missing/invalid storage diagnosis must not bypass ownership proof, the planned replacement generation must remain stable across interruption, and old damaged state must not be required for reconstruction.
 
 Hosted CI proves the neutral orchestration and fail-closed contracts on Windows and Linux runners. Real Hyper-V and KVM/libvirt fresh-create/fault canaries remain provider-hardware qualification owned with #115/#116 and are not represented as proven by hosted CI.
