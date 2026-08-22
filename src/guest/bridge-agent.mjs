@@ -233,6 +233,16 @@ function resultState(record) {
   catch { return { state: 'indeterminate', result: null, reason: 'bridge operation monitor is no longer observable' }; }
 }
 
+async function observedState(request, target, record) {
+  const initial = resultState(record);
+  if (initial.state !== 'indeterminate' || initial.reason !== 'bridge operation monitor is no longer observable') return initial;
+  const refreshed = await loadOperation(request);
+  if (!refreshed) return initial;
+  validateOperationRecord(refreshed, request, target);
+  if (refreshed.state !== 'completed' && refreshed.state !== 'failed') return initial;
+  return resultState(refreshed);
+}
+
 async function terminateTree(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return;
   if (process.platform === 'win32') {
@@ -385,6 +395,20 @@ async function runOperation(request, token) {
     return;
   }
 
+  let inputFailure = null;
+  let settleInput;
+  const inputCompletion = new Promise((resolve) => {
+    let inputSettled = false;
+    settleInput = (error = null) => {
+      if (inputSettled) return;
+      inputSettled = true;
+      inputFailure = body.input == null ? null : error;
+      resolve();
+    };
+    child.stdin.once('error', (error) => settleInput(error));
+    child.stdin.once('close', () => settleInput(body.input == null ? null : new Error('bridge operation input closed before delivery')));
+  });
+
   record.state = 'running';
   record.childPid = child.pid;
   record.startedAt = new Date().toISOString();
@@ -402,11 +426,22 @@ async function runOperation(request, token) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      await inputCompletion;
       if (error) {
         record.state = 'failed';
         record.reason = String(error.message ?? 'bridge operation process failed').slice(0, 2_048);
         record.finishedAt = new Date().toISOString();
         await atomicJson(operationFile(request), record);
+        await rm(monitorFile(request), { force: true });
+        resolve();
+        return;
+      }
+      if (inputFailure) {
+        record.state = 'failed';
+        record.reason = 'bridge operation input could not be delivered';
+        record.finishedAt = new Date().toISOString();
+        await atomicJson(operationFile(request), record);
+        await rm(cancelFile(request), { force: true });
         await rm(monitorFile(request), { force: true });
         resolve();
         return;
@@ -438,8 +473,7 @@ async function runOperation(request, token) {
     child.once('close', (code, signal) => void finish(code, signal));
   });
 
-  if (body.input == null) child.stdin.end();
-  else child.stdin.end(body.input);
+  child.stdin.end(body.input ?? undefined, () => settleInput(null));
   await completion;
 }
 
@@ -495,7 +529,7 @@ async function observe(frame) {
   const record = await loadOperation(frame.request);
   if (!record) return { state: 'absent', result: null, reason: null };
   validateOperationRecord(record, frame.request, frame.target);
-  return resultState(record);
+  return observedState(frame.request, frame.target, record);
 }
 
 async function cancel(frame) {

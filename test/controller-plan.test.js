@@ -63,6 +63,51 @@ test('rejects operation authority fields and assertions that name unknown operat
   })), /unknown operation/u);
 });
 
+test('contains-assertion diagnostics identify the expected marker without echoing operation output', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-controller-diagnostic-'));
+  try {
+    const operationRegistry = {
+      validate() {},
+      async execute() {
+        return {
+          exitCode: 1,
+          timedOut: false,
+          outputTruncated: false,
+          stdout: 'UNTRUSTED_OUTPUT:/guest/private/path SECRET_TOKEN=do-not-echo\n',
+          stderr: 'UNTRUSTED_ERROR:C:\\guest\\private\\path API_KEY=do-not-echo\n',
+          startedAt: null,
+          finishedAt: null,
+          lastOutputAt: null,
+        };
+      },
+    };
+    const workspace = { worktreeDir: root, branch: 'fixture', baseSha: '1'.repeat(40) };
+    const workspaceManager = { snapshot: async () => ({ dirty: false }), validate: async () => ({ changedFiles: [] }) };
+    const executor = new ControllerPlanExecutor({ operationRegistry, processRunner: {}, workspaceManager });
+    const expected = 'DB153_STAGE:healthy\nNEXT';
+
+    for (const stream of ['stdout', 'stderr']) {
+      const plan = normalizeControllerPlan(basePlan({
+        operations: [{ id: 'probe', operation: 'fixture.probe', params: {} }],
+        assertions: [{ kind: `${stream}-contains`, operation: 'probe', value: expected }],
+      }));
+      await assert.rejects(
+        () => executor.execute({ plan, state: {}, workspace, persist: async () => {} }),
+        (error) => {
+          assert.equal(error.message.includes(`${stream} missing marker "DB153_STAGE:healthy\\nNEXT"`), true);
+          assert.equal(error.message.includes('UNTRUSTED_OUTPUT'), false);
+          assert.equal(error.message.includes('SECRET_TOKEN'), false);
+          assert.equal(error.message.includes('UNTRUSTED_ERROR'), false);
+          assert.equal(error.message.includes('API_KEY'), false);
+          return true;
+        },
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('generic controller executor materializes a multi-file project, runs static Node inspection, and removes ephemeral files', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-controller-plan-'));
   try {
