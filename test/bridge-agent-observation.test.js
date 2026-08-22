@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -57,6 +57,7 @@ test('a dead monitor remains indeterminate when the durable record is still nont
     const health = await exchange(root, 'e'.repeat(32), 'health');
     assert.equal(health.ok, true);
     const deadMonitorPid = await exitedProcessId();
+    await mkdir(path.join(root, '.operations'), { recursive: true });
     await writeFile(path.join(root, '.operations', `${request}.json`), `${JSON.stringify({
       protocol: recordProtocol,
       request,
