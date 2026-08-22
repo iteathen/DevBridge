@@ -118,14 +118,16 @@ export function createEnvironmentConstructionPreparation({
       try {
         const { selected } = await resolve(request);
         const result = await selected.bootstrap.inspect(selected.target);
+        const networkReady = result?.network?.nameResolution === true && result?.network?.secureWeb === true;
         return Object.freeze({
           ready: result?.ready === true,
-          enrollment: result?.ready === true ? 'ready' : 'unavailable',
-          bootstrap: result?.ready === true ? 'ready' : 'unavailable',
+          enrollment: 'ready',
+          bootstrap: result?.ready === true ? 'ready' : 'degraded',
+          network: networkReady ? 'ready' : 'degraded',
           reason: result?.ready === true ? null : String(result?.reason ?? 'environment bootstrap is unavailable').slice(0, 2048),
         });
       } catch (error) {
-        return Object.freeze({ ready: false, enrollment: 'unknown', bootstrap: 'unavailable', reason: safeReason(error) });
+        return Object.freeze({ ready: false, enrollment: 'unknown', bootstrap: 'unknown', network: 'unknown', reason: safeReason(error) });
       }
     },
     async access(request) {
