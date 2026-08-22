@@ -8,19 +8,20 @@ import {
   runInstalledEntry,
 } from '../devbridge-entry.mjs';
 
-test('installed entry leaves the stable path unchanged without an explicit ref selector', async () => {
+test('installed entry routes ordinary invocation through stable runner management without an explicit ref selector', async () => {
   for (const argv of [
     ['doctor', '--config', 'local.json'],
     ['--channel', 'stable', 'status'],
     ['--channel', 'testing', 'daemon'],
+    ['entry-status'],
   ]) {
     const calls = [];
     const status = await runInstalledEntry(argv, {
-      defaultEntryLoader: async () => async (received) => { calls.push(['default', received]); return 17; },
+      defaultEntryLoader: async () => async (received) => { calls.push(['stable', received]); return 17; },
       selectedEntryLoader: async () => { throw new Error('selected path must not load'); },
     });
     assert.equal(status, 17);
-    assert.deepEqual(calls, [['default', argv]]);
+    assert.deepEqual(calls, [['stable', argv]]);
   }
 });
 
@@ -32,7 +33,7 @@ test('installed entry recognizes only explicit ref or branch selection and prese
     const argv = [...selector, 'daemon', '--config', 'local.json'];
     const calls = [];
     const status = await runInstalledEntry(argv, {
-      defaultEntryLoader: async () => { throw new Error('default path must not load'); },
+      defaultEntryLoader: async () => { throw new Error('stable path must not load'); },
       selectedEntryLoader: async () => async (forwarded) => { calls.push(['selected', forwarded]); return 23; },
     });
     assert.equal(status, 23);
@@ -57,12 +58,12 @@ test('installed entry rejects malformed or conflicting local selectors before ei
   assert.equal(loads, 0);
 });
 
-test('explicit selected recovery does not load the evolving default Stage 0 path', async () => {
+test('explicit selected recovery does not load the stable/default manager', async () => {
   let defaultLoads = 0;
   const status = await runInstalledEntry(['--ref', 'fix/157-controller-owned-fixture', 'doctor'], {
     defaultEntryLoader: async () => {
       defaultLoads += 1;
-      throw new SyntaxError('simulated incompatible evolving Stage 0');
+      throw new SyntaxError('simulated incompatible stable manager');
     },
     selectedEntryLoader: async () => async () => 29,
   });
@@ -76,7 +77,8 @@ test('permanent router has no static dependency on neighboring evolving modules'
   assert.deepEqual(imports, ['node:path', 'node:process', 'node:url']);
   assert.doesNotMatch(source, /\bfrom\s*['"]\.\//u);
   assert.doesNotMatch(source, /\bimport\s*['"]\.\//u);
-  assert.match(source, /new URL\('\.\/devbridge\.mjs', import\.meta\.url\)/u);
+  assert.match(source, /new URL\('\.\/src\/entry\/stable-entry\.mjs', import\.meta\.url\)/u);
+  assert.doesNotMatch(source, /new URL\('\.\/devbridge\.mjs', import\.meta\.url\)/u);
 });
 
 test('default and selected module loaders resolve separate local entry modules lazily', async () => {
@@ -84,12 +86,12 @@ test('default and selected module loaders resolve separate local entry modules l
   const defaultEntry = async () => 1;
   const selectedEntry = async () => 2;
   assert.equal(await loadDefaultEntry({
-    importModuleFn: async (url) => { observed.push(['default', url]); return { bootstrapStage0: defaultEntry }; },
+    importModuleFn: async (url) => { observed.push(['default', url]); return { runStableEntry: defaultEntry }; },
   }), defaultEntry);
   assert.equal(await loadSelectedEntry({
     importModuleFn: async (url) => { observed.push(['selected', url]); return { runExperimentalEntry: selectedEntry }; },
   }), selectedEntry);
-  assert.match(observed[0][1], /\/devbridge\.mjs$/u);
+  assert.match(observed[0][1], /\/src\/entry\/stable-entry\.mjs$/u);
   assert.match(observed[1][1], /\/src\/entry\/experimental-entry\.mjs$/u);
   assert.notEqual(observed[0][1], observed[1][1]);
 });
@@ -100,7 +102,7 @@ test('one route cannot satisfy the other route contract accidentally', async () 
     /default entry must be a function/u,
   );
   await assert.rejects(
-    () => loadSelectedEntry({ importModuleFn: async () => ({ bootstrapStage0: async () => 0 }) }),
+    () => loadSelectedEntry({ importModuleFn: async () => ({ runStableEntry: async () => 0 }) }),
     /selected entry must be a function/u,
   );
 });
