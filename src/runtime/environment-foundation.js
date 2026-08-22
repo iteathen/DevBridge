@@ -241,8 +241,49 @@ export class EnvironmentFoundation {
     return this.inspect();
   }
 
-  async observeInstance(identity) { return instanceObservation(requireInstanceIdentity(identity), await this.#control.observeInstance({ identity })); }
-  async startInstance(identity) { await this.#control.startInstance({ identity: requireInstanceIdentity(identity) }); return this.observeInstance(identity); }
-  async stopInstance(identity, options = {}) { await this.#control.stopInstance({ identity: requireInstanceIdentity(identity), force: options.force === true }); return this.observeInstance(identity); }
-  async removeInstance(identity) { return removalObservation(requireInstanceIdentity(identity), await this.#control.removeInstance({ identity })); }
+  async observeInstance(identity) {
+    const local = requireInstanceIdentity(identity);
+    return instanceObservation(local, await this.#control.observeInstance(local));
+  }
+
+  async startInstance(identity) {
+    const local = requireInstanceIdentity(identity);
+    return instanceObservation(local, await this.#control.startInstance(local));
+  }
+
+  async stopInstance(identity, options = {}) {
+    const local = requireInstanceIdentity(identity);
+    return instanceObservation(local, await this.#control.stopInstance(local, options));
+  }
+
+  async removeInstance(identity) {
+    const local = requireInstanceIdentity(identity);
+    return removalObservation(local, await this.#control.removeInstance(local));
+  }
 }
+
+export class UnavailableEnvironmentControl {
+  #identity;
+  #reason;
+  constructor({ identity, reason = 'environment management is unavailable' }) {
+    if (typeof identity !== 'string' || !SAFE_IDENTITY.test(identity)) throw new TypeError('environment control identity is invalid');
+    this.#identity = identity;
+    this.#reason = String(reason);
+  }
+  async inspect() {
+    const entry = { state: 'unavailable', ready: false, reason: this.#reason };
+    return { identity: this.#identity, capabilities: { management: entry, networking: entry, storage: entry } };
+  }
+  async inspectImage() { return { usable: false, reason: this.#reason, format: 'image', contentIdentity: null, parentIdentity: null, virtualSize: 1 }; }
+  async ensureNetwork() { throw new Error(this.#reason); }
+  async releaseNetwork() { return { released: false, reason: this.#reason }; }
+  async ensureStorage() { throw new Error(this.#reason); }
+  async releaseStorage() { return { released: false, reason: this.#reason }; }
+  async reconcile() { return this.inspect(); }
+  async observeInstance(identity) { return { identity, exists: false, owned: false, state: 'unavailable', reason: this.#reason }; }
+  async startInstance() { throw new Error(this.#reason); }
+  async stopInstance() { throw new Error(this.#reason); }
+  async removeInstance() { throw new Error(this.#reason); }
+}
+
+export { PROTOCOL as ENVIRONMENT_FOUNDATION_STATUS_PROTOCOL };
