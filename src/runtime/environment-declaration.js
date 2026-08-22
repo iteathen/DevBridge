@@ -90,7 +90,20 @@ function normalizeBootstrap(raw) {
 }
 
 function normalizeWorkspaces(raw) {
-  return uniqueIds(raw, 'environment declaration.workspaces', MAX_WORKSPACES);
+  if (!Array.isArray(raw) || raw.length > MAX_WORKSPACES) throw new TypeError('environment declaration.workspaces is invalid');
+  const identities = new Set();
+  const values = raw.map((rawWorkspace, index) => {
+    const value = requireObject(rawWorkspace, `environment declaration.workspaces[${index}]`);
+    onlyKeys(value, new Set(['identity', 'authority']), `environment declaration.workspaces[${index}]`);
+    const identity = safeId(value.identity, `environment declaration.workspaces[${index}].identity`);
+    if (identities.has(identity)) throw new TypeError('environment declaration.workspaces contains duplicate identities');
+    identities.add(identity);
+    return Object.freeze({
+      identity,
+      authority: safeId(value.authority, `environment declaration.workspaces[${index}].authority`),
+    });
+  });
+  return Object.freeze(values);
 }
 
 export function normalizeEnvironmentDeclaration(raw) {
