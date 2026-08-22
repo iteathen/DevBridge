@@ -22,7 +22,14 @@ function subject(head, bytes, overrides = {}) {
   };
 }
 
-function fakeGit({ head, artifactBytes, cliBytes = Buffer.from('#!/usr/bin/env node\n'), wrongHead = null, dirty = () => false } = {}) {
+function fakeGit({
+  head,
+  artifactBytes,
+  cliBytes = Buffer.from('#!/usr/bin/env node\n'),
+  wrongHead = null,
+  dirty = () => false,
+  rejectShallowExact = false,
+} = {}) {
   const calls = [];
   const run = async (program, args, context) => {
     calls.push({ program, args: [...args], context });
@@ -34,6 +41,9 @@ function fakeGit({ head, artifactBytes, cliBytes = Buffer.from('#!/usr/bin/env n
     }
     const target = args[1];
     const command = args[2];
+    if (command === 'fetch' && rejectShallowExact && args.includes('--depth')) {
+      return { exitCode: 1, stdout: '', stderr: 'shallow exact request refused' };
+    }
     if (command === 'checkout') {
       await mkdir(path.join(target, 'src'), { recursive: true });
       await writeFile(path.join(target, 'devbridge.mjs'), artifactBytes);
@@ -77,7 +87,7 @@ test('provider fetches only the exact head from the fixed source and launches th
     const remote = git.calls.find((entry) => entry.args[2] === 'remote');
     assert.deepEqual(remote.args.slice(2), ['remote', 'add', 'origin', fixedRemote]);
     assert.equal(fetchCalls(git.calls).length, 1);
-    assert.deepEqual(fetchCalls(git.calls)[0].args.slice(2), ['fetch', '--no-tags', '--depth', '1', 'origin', head]);
+    assert.deepEqual(fetchCalls(git.calls)[0].args.slice(2), ['fetch', '--no-tags', 'origin', head]);
     assert.match(launches[0].entry.replaceAll('\\', '/'), /\/src\/cli\.js$/u);
     assert.deepEqual(launches[0].argv, ['doctor', '--config', 'local.json']);
     assert.equal(launches[0].context.env.DEVBRIDGE_ENTRY_TEST_VALUE, 'present');
@@ -88,6 +98,25 @@ test('provider fetches only the exact head from the fixed source and launches th
   } finally {
     if (previous == null) delete process.env.DEVBRIDGE_ENTRY_TEST_VALUE;
     else process.env.DEVBRIDGE_ENTRY_TEST_VALUE = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('provider does not use shallow semantics for an exact-object fetch', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-entry-checkout-exact-fetch-'));
+  try {
+    const head = '1'.repeat(40);
+    const bytes = Buffer.from('runner');
+    const git = fakeGit({ head, artifactBytes: bytes, rejectShallowExact: true });
+    const provider = new ExperimentalCheckoutRunnerProvider({ cacheRoot: root, run: git.run, launch() { return 0; } });
+
+    await provider.prepare(subject(head, bytes));
+
+    const fetch = fetchCalls(git.calls);
+    assert.equal(fetch.length, 1);
+    assert.deepEqual(fetch[0].args.slice(2), ['fetch', '--no-tags', 'origin', head]);
+    assert.equal(fetch[0].args.includes('--depth'), false);
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
