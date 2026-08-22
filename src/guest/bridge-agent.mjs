@@ -24,6 +24,8 @@ const MAX_CHUNK_BYTES = 16 * 1024;
 const MAX_OUTPUT_BYTES = 3 * 1024 * 1024;
 const MAX_STDIN_BYTES = 16 * 1024;
 const MAX_TIMEOUT_MS = 28_800_000;
+const ATOMIC_RENAME_RETRY_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
+const ATOMIC_RENAME_RETRY_DELAYS_MS = Object.freeze([5, 10, 20, 40, 80, 160]);
 const SELF = fileURLToPath(import.meta.url);
 
 function requireObject(value, name) {
@@ -195,7 +197,23 @@ async function atomicJson(file, value) {
   await ensureRoot();
   const temporary = `${file}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-  await rename(temporary, file);
+  try {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await rename(temporary, file);
+        return;
+      } catch (error) {
+        const retry = process.platform === 'win32'
+          && ATOMIC_RENAME_RETRY_CODES.has(error?.code)
+          && attempt < ATOMIC_RENAME_RETRY_DELAYS_MS.length;
+        if (!retry) throw error;
+        await new Promise((resolve) => setTimeout(resolve, ATOMIC_RENAME_RETRY_DELAYS_MS[attempt]));
+      }
+    }
+  } catch (error) {
+    try { await rm(temporary, { force: true }); } catch {}
+    throw error;
+  }
 }
 
 async function readJson(file, name) {
