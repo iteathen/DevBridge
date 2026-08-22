@@ -32,6 +32,10 @@ function expandHome(value, homeDirectory) {
   return value;
 }
 
+function statusPassthroughIsLocalOnly(argv) {
+  return argv.length === 0 || (argv.length === 2 && argv[0] === '--home');
+}
+
 export function parseStableEntryArgs(argv, { env = process.env, homeDirectory = os.homedir() } = {}) {
   if (!Array.isArray(argv)) throw new TypeError('stable-entry argv must be an array');
   const passthrough = [];
@@ -86,7 +90,7 @@ export function parseStableEntryArgs(argv, { env = process.env, homeDirectory = 
 
   const configuredHome = home ?? env.DEVBRIDGE_HOME ?? path.join(homeDirectory, '.devbridge');
   const resolvedHome = path.resolve(expandHome(String(configuredHome), homeDirectory));
-  if (command != null && passthrough.length !== 0) fail('entry-status cannot be combined with runtime arguments');
+  if (command != null && !statusPassthroughIsLocalOnly(passthrough)) fail('entry-status cannot be combined with runtime arguments');
   if (releaseMode !== 'production' && (manifest != null || publicKey != null)) {
     fail('entry runner signing inputs require --release-mode production');
   }
