@@ -25,6 +25,8 @@ function subject(head, bytes, overrides = {}) {
 function fakeGit({
   head,
   artifactBytes,
+  committedArtifactBytes = artifactBytes,
+  worktreeArtifactBytes = artifactBytes,
   cliBytes = Buffer.from('#!/usr/bin/env node\n'),
   wrongHead = null,
   dirty = () => false,
@@ -42,12 +44,13 @@ function fakeGit({
     const command = args[2];
     if (command === 'checkout') {
       await mkdir(path.join(target, 'src'), { recursive: true });
-      await writeFile(path.join(target, 'devbridge.mjs'), artifactBytes);
+      await writeFile(path.join(target, 'devbridge.mjs'), worktreeArtifactBytes);
       await writeFile(path.join(target, 'src', 'cli.js'), cliBytes);
       return { exitCode: 0, stdout: '', stderr: '' };
     }
     if (command === 'rev-parse') return { exitCode: 0, stdout: `${wrongHead ?? head}\n`, stderr: '' };
     if (command === 'status') return { exitCode: 0, stdout: dirty() ? ' M src/cli.js\n' : '', stderr: '' };
+    if (command === 'cat-file') return { exitCode: 0, stdout: Buffer.from(committedArtifactBytes).toString('utf8'), stderr: '' };
     return { exitCode: 0, stdout: '', stderr: '' };
   };
   return { run, calls };
@@ -89,11 +92,36 @@ test('provider fetches only the exact head from the fixed source and launches th
     assert.equal(launches[0].context.env.DEVBRIDGE_ENTRY_TEST_VALUE, 'present');
 
     const gitEnvironment = remote.context.env;
+    assert.equal(gitEnvironment.GIT_CONFIG_NOSYSTEM, '1');
     assert.equal(gitEnvironment.GIT_TERMINAL_PROMPT, '0');
     assert.equal(gitEnvironment.DEVBRIDGE_ENTRY_TEST_VALUE, undefined);
   } finally {
     if (previous == null) delete process.env.DEVBRIDGE_ENTRY_TEST_VALUE;
     else process.env.DEVBRIDGE_ENTRY_TEST_VALUE = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('provider verifies committed runner bytes independently of working-tree text materialization', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-entry-checkout-eol-'));
+  try {
+    const head = '0'.repeat(40);
+    const committed = Buffer.from('line-one\nline-two\n');
+    const materialized = Buffer.from('line-one\r\nline-two\r\n');
+    const git = fakeGit({
+      head,
+      artifactBytes: committed,
+      committedArtifactBytes: committed,
+      worktreeArtifactBytes: materialized,
+    });
+    const provider = new ExperimentalCheckoutRunnerProvider({ cacheRoot: root, run: git.run, launch() { return 0; } });
+
+    await provider.prepare(subject(head, committed));
+
+    const verification = git.calls.find((entry) => entry.args[2] === 'cat-file');
+    assert.ok(verification);
+    assert.deepEqual(verification.args.slice(2), ['cat-file', 'blob', `${head}:devbridge.mjs`]);
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
