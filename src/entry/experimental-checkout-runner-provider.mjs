@@ -104,6 +104,7 @@ function gitEnvironment(home) {
   env.HOME = home;
   if (process.platform === 'win32') env.USERPROFILE = home;
   env.GIT_CONFIG_GLOBAL = path.join(home, 'gitconfig');
+  env.GIT_CONFIG_NOSYSTEM = '1';
   env.GIT_TERMINAL_PROMPT = '0';
   env.GCM_INTERACTIVE = 'Never';
   return env;
@@ -162,8 +163,14 @@ export class ExperimentalCheckoutRunnerProvider {
     const status = await runChecked(this.#run, ['-C', root, 'status', '--porcelain=v1', '--untracked-files=all'], context, 'cleanliness verification');
     if (status.stdout.trim() !== '') fail('experimental checkout is not clean');
 
-    const artifact = await requireRegularFile(root, 'devbridge.mjs', 'experimental checkout runner artifact');
-    if (digest(artifact.bytes) !== subject.sha256) fail('experimental checkout runner artifact digest differs from the exact subject');
+    await requireRegularFile(root, 'devbridge.mjs', 'experimental checkout runner artifact');
+    const artifact = await runChecked(
+      this.#run,
+      ['-C', root, 'cat-file', 'blob', `${subject.head}:devbridge.mjs`],
+      context,
+      'runner artifact verification',
+    );
+    if (digest(Buffer.from(artifact.stdout, 'utf8')) !== subject.sha256) fail('experimental checkout runner artifact digest differs from the exact subject');
     const entry = await requireRegularFile(root, 'src/cli.js', 'experimental checkout control-plane entry');
     return { root, entry: entry.path };
   }
