@@ -8,6 +8,7 @@ import {
 import { createEnvironmentConstructionPreparation } from './environment-construction-preparation.js';
 import { createEnvironmentConstructionWorkspaces } from './environment-construction-workspaces.js';
 import { createEnvironmentFoundation } from './environment-foundation.js';
+import { createEnvironmentImageAvailability } from './environment-image-availability.js';
 import { createEnvironmentLifecycle } from './environment-lifecycle.js';
 import { createEnvironmentLifecycleFence } from './environment-lifecycle-fence.js';
 import { createEnvironmentMaterialization } from './environment-materialization.js';
@@ -21,7 +22,10 @@ function assertAvailability(value) {
 
 export async function createEnvironmentConstructionRuntime({
   stateDirectory,
-  availability,
+  availability = null,
+  source = null,
+  codec = null,
+  capacity = null,
   resolveAuthority,
   platform = process.platform,
   invoke = invokeCommand,
@@ -35,8 +39,10 @@ export async function createEnvironmentConstructionRuntime({
   if (typeof resolveAuthority !== 'function') throw new TypeError('environment construction runtime authority resolver is required');
   if (typeof invoke !== 'function') throw new TypeError('environment construction runtime invocation contract is invalid');
 
-  const localAvailability = assertAvailability(availability);
   const localFoundation = foundation ?? await createEnvironmentFoundation({ stateDirectory, platform, invoke });
+  const localAvailability = availability == null
+    ? createEnvironmentImageAvailability({ stateDirectory, foundation: localFoundation, source, codec, capacity })
+    : assertAvailability(availability);
   const localLifecycle = lifecycle ?? createEnvironmentLifecycle({ stateDirectory, ...(now ? { now } : {}) });
   const policy = createEnvironmentMaterializationPolicy();
   const materialization = createEnvironmentMaterialization({
