@@ -209,6 +209,31 @@ function toolchainProbeAdapter(toolchains) {
   };
 }
 
+function inputMaterializeAdapter(inputRegistry) {
+  return {
+    layer: 'core',
+    validate(raw) {
+      const params = objectParams(raw, 'input.materialize');
+      onlyKeys(params, new Set(['source']), 'input.materialize');
+      const source = safeId(params.source, 'input.materialize source');
+      if (!inputRegistry || typeof inputRegistry.has !== 'function' || !inputRegistry.has(source)) {
+        throw new PolicyError(`input.materialize source ${source} is not locally registered`);
+      }
+      return { source };
+    },
+    async execute(params, { projectDir, scratch }) {
+      const result = await inputRegistry.materialize(params.source, { projectDir, scratch });
+      return observedResult(`${JSON.stringify({
+        source: result.name,
+        subject: result.subject,
+        sha256: result.sha256,
+        bytes: result.bytes,
+        reconciled: result.reconciled,
+      })}\n`);
+    },
+  };
+}
+
 function cmakeConfigureAdapter() {
   return {
     layer: 'core',
@@ -298,12 +323,13 @@ function ctestAdapter() {
   };
 }
 
-export function createCoreOperationRegistry({ toolchainRegistry = null } = {}) {
+export function createCoreOperationRegistry({ toolchainRegistry = null, inputRegistry = null } = {}) {
   const toolchains = toolchainRegistry ?? createCoreToolchainRegistry();
   return new DeterministicOperationRegistry()
     .register('node.syntax-check', nodeScriptAdapter({ mode: 'node.syntax-check' }))
     .register('node.test', nodeScriptAdapter({ mode: 'node.test' }))
     .register('toolchain.probe', toolchainProbeAdapter(toolchains))
+    .register('input.materialize', inputMaterializeAdapter(inputRegistry))
     .register('cmake.configure', cmakeConfigureAdapter())
     .register('cmake.build', cmakeBuildAdapter())
     .register('ctest.run', ctestAdapter());
