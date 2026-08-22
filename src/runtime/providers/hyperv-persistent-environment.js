@@ -31,6 +31,10 @@ function storageState(observation) {
   return 'unknown';
 }
 
+function observed(value) {
+  return Object.freeze({ ...value, storageState: storageState(value) });
+}
+
 export class HyperVPersistentEnvironment {
   #options;
   #delegate = null;
@@ -59,11 +63,10 @@ export class HyperVPersistentEnvironment {
       directory: this.#options.directory,
       sourceLocation: input?.source?.handle?.location,
     });
-    return this.observeResult(await (await this.#core()).provision(input));
+    return observed(await (await this.#core()).provision(input));
   }
-  observeResult(value) { return Object.freeze({ ...value, storageState: storageState(value) }); }
-  async observe(identity) { return this.observeResult(await (await this.#core()).observe(identity)); }
-  async start(identity) { return this.observeResult(await (await this.#core()).start(identity)); }
-  async stop(identity, options) { return this.observeResult(await (await this.#core()).stop(identity, options)); }
+  async observe(identity) { return observed(await (await this.#core()).observe(identity)); }
+  async start(identity) { return observed(await (await this.#core()).start(identity)); }
+  async stop(identity, options) { return observed(await (await this.#core()).stop(identity, options)); }
   async drop(identity) { return (await this.#core()).drop(identity); }
 }
