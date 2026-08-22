@@ -74,10 +74,10 @@ function normalizeResources(raw) {
   });
 }
 
-function normalizeNetwork(raw) {
-  const value = requireObject(raw, 'environment declaration.network');
-  onlyKeys(value, new Set(['requirement']), 'environment declaration.network');
-  return Object.freeze({ requirement: safeId(value.requirement, 'environment declaration.network.requirement') });
+function normalizeRequirement(raw, name) {
+  const value = requireObject(raw, `environment declaration.${name}`);
+  onlyKeys(value, new Set(['requirement']), `environment declaration.${name}`);
+  return Object.freeze({ requirement: safeId(value.requirement, `environment declaration.${name}.requirement`) });
 }
 
 function normalizeBootstrap(raw) {
@@ -109,8 +109,8 @@ function normalizeWorkspaces(raw) {
 export function normalizeEnvironmentDeclaration(raw) {
   const value = requireObject(raw, 'environment declaration');
   onlyKeys(value, new Set([
-    'protocol', 'profile', 'schemaGeneration', 'guest', 'image', 'resources', 'network',
-    'bootstrap', 'workspaces', 'protectedStateClasses',
+    'protocol', 'profile', 'schemaGeneration', 'guest', 'image', 'resources', 'boot', 'network',
+    'bootstrap', 'enrollment', 'workspaces', 'protectedStateClasses',
   ]), 'environment declaration');
   if (value.protocol !== ENVIRONMENT_DECLARATION_PROTOCOL) throw new TypeError('environment declaration protocol is unsupported');
   return Object.freeze({
@@ -120,8 +120,10 @@ export function normalizeEnvironmentDeclaration(raw) {
     guest: normalizeGuest(value.guest),
     image: normalizeImage(value.image),
     resources: normalizeResources(value.resources),
-    network: normalizeNetwork(value.network),
+    boot: normalizeRequirement(value.boot, 'boot'),
+    network: normalizeRequirement(value.network, 'network'),
     bootstrap: normalizeBootstrap(value.bootstrap),
+    enrollment: normalizeRequirement(value.enrollment, 'enrollment'),
     workspaces: normalizeWorkspaces(value.workspaces),
     protectedStateClasses: uniqueIds(value.protectedStateClasses, 'environment declaration.protectedStateClasses', MAX_PROTECTED_CLASSES),
   });
