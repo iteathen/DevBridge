@@ -1,4 +1,5 @@
 import { EnvironmentDiagnosisService } from '../runtime/environment-diagnosis.js';
+import { EnvironmentRebuild } from '../runtime/environment-rebuild.js';
 import { EnvironmentRepair } from '../runtime/environment-repair.js';
 
 function assertPort(value, methods, name) {
@@ -98,7 +99,7 @@ export function createEnvironmentRepairCorrection({ foundation, materialization,
   });
 }
 
-export function createEnvironmentRecovery({ lifecycle, observer, fence, foundation, materialization, preparation, workspaces } = {}) {
+export function createEnvironmentRecovery({ lifecycle, observer, fence, foundation, materialization, preparation, workspaces, rebuildConstruction = null } = {}) {
   if (!lifecycle?.declarations || !lifecycle?.journal) throw new TypeError('environment recovery lifecycle contract is incomplete');
   const localObserver = assertPort(observer, ['observe'], 'observation');
   const localFence = assertPort(fence, ['acquire'], 'fence');
@@ -118,10 +119,20 @@ export function createEnvironmentRecovery({ lifecycle, observer, fence, foundati
     correction,
     evidence,
   });
+  const rebuild = rebuildConstruction == null ? null : new EnvironmentRebuild({
+    declarations: lifecycle.declarations,
+    journal: lifecycle.journal,
+    observer: localObserver,
+    fence: localFence,
+    construction: assertPort(rebuildConstruction, ['run', 'clear'], 'rebuild construction'),
+    evidence,
+  });
   return Object.freeze({
     diagnosis,
     diagnose: (identity) => diagnosis.diagnose(identity),
     list: () => diagnosis.list(),
     repair: (identity) => repair.repair(identity),
+    planRebuild: rebuild == null ? null : (identity) => rebuild.plan(identity),
+    rebuild: rebuild == null ? null : (identity) => rebuild.rebuild(identity),
   });
 }
