@@ -57,7 +57,12 @@ export function normalizeEnvironmentLifecycleJournal(raw) {
   if (value.protocol !== ENVIRONMENT_LIFECYCLE_JOURNAL_PROTOCOL) throw new TypeError('environment lifecycle journal protocol is unsupported');
   if (!Number.isSafeInteger(value.declarationRevision) || value.declarationRevision < 1) throw new TypeError('environment lifecycle declaration revision is invalid');
   if (!Array.isArray(value.entries) || value.entries.length < 1 || value.entries.length > ENVIRONMENT_LIFECYCLE_STAGES.length) throw new TypeError('environment lifecycle journal entries are invalid');
+  const environmentIdentity = safeId(value.environmentIdentity, 'environment lifecycle journal.environmentIdentity');
   const entries = value.entries.map(normalizeEntry);
+  for (const entry of entries) {
+    if (entry.observation && entry.observation.environmentIdentity !== environmentIdentity) throw new TypeError('environment lifecycle observation belongs to another environment');
+    if (entry.observation && entry.observation.declarationRevision !== value.declarationRevision) throw new TypeError('environment lifecycle observation is stale for the journal declaration revision');
+  }
   if (entries[0].stage !== 'intent') throw new TypeError('environment lifecycle journal must begin with intent');
   for (let index = 1; index < entries.length; index += 1) {
     const prior = ENVIRONMENT_LIFECYCLE_STAGES.indexOf(entries[index - 1].stage);
@@ -66,7 +71,7 @@ export function normalizeEnvironmentLifecycleJournal(raw) {
   }
   return Object.freeze({
     protocol: ENVIRONMENT_LIFECYCLE_JOURNAL_PROTOCOL,
-    environmentIdentity: safeId(value.environmentIdentity, 'environment lifecycle journal.environmentIdentity'),
+    environmentIdentity,
     operationId: safeId(value.operationId, 'environment lifecycle journal.operationId'),
     operation: operation(value.operation),
     declarationRevision: value.declarationRevision,
