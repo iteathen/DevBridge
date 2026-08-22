@@ -2,7 +2,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { runPermanentEntry } from './permanent-entry.mjs';
 import { GitHubRunnerSource } from './github-runner-source.mjs';
 import { ExperimentalSubjectAuthority } from './experimental-subject-authority.mjs';
@@ -11,10 +11,11 @@ import { ExperimentalCheckoutRunnerProvider } from './experimental-checkout-runn
 function fail(message) { throw new Error(message); }
 
 export function experimentalEntryCacheRoot({ env = process.env, platform = process.platform, home = os.homedir() } = {}) {
+  const localPath = platform === 'win32' ? path.win32 : path.posix;
   const explicit = env.DEVBRIDGE_ENTRY_CACHE_ROOT;
   if (explicit != null) {
-    if (typeof explicit !== 'string' || !path.isAbsolute(explicit)) fail('DEVBRIDGE_ENTRY_CACHE_ROOT must be an absolute local path');
-    return path.resolve(explicit);
+    if (typeof explicit !== 'string' || !localPath.isAbsolute(explicit)) fail('DEVBRIDGE_ENTRY_CACHE_ROOT must be an absolute local path');
+    return localPath.resolve(explicit);
   }
   if (platform === 'win32') {
     const base = typeof env.LOCALAPPDATA === 'string' && path.win32.isAbsolute(env.LOCALAPPDATA)
