@@ -7,6 +7,7 @@ const ENVIRONMENT_ID = /^env-[a-f0-9]{32}$/u;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
 const DIGEST = /^[a-f0-9]{64}$/u;
 const BINDING = /^[a-f0-9]{32}$/u;
+const STORAGE_STATES = new Set(['unknown', 'absent', 'present', 'invalid']);
 const MAX_SUBJECT_BYTES = 512;
 const DEFAULT_MEMORY_BYTES = 2 * 1024 * 1024 * 1024;
 const MIN_MEMORY_BYTES = 256 * 1024 * 1024;
@@ -135,7 +136,7 @@ function normalizeBinding(raw) {
 
 function normalizeObservation(raw, expectedIdentity) {
   const value = requireObject(raw, 'environment observation');
-  onlyKeys(value, new Set(['identity', 'exists', 'owned', 'compatible', 'state', 'reason', 'storage']), 'environment observation');
+  onlyKeys(value, new Set(['identity', 'exists', 'owned', 'compatible', 'state', 'reason', 'storage', 'storageState']), 'environment observation');
   if (value.identity !== expectedIdentity) throw new Error('environment observation identity changed');
   const exists = value.exists === true;
   const owned = value.owned === true;
@@ -154,7 +155,11 @@ function normalizeObservation(raw, expectedIdentity) {
       allocatedBytes,
     };
   }
-  return { identity: expectedIdentity, exists, owned, compatible, state, reason, storage };
+  const storageState = value.storageState == null
+    ? storage != null ? (compatible ? 'present' : 'invalid') : 'unknown'
+    : String(value.storageState);
+  if (!STORAGE_STATES.has(storageState)) throw new TypeError('environment observation.storageState is invalid');
+  return { identity: expectedIdentity, exists, owned, compatible, state, reason, storage, storageState };
 }
 
 function requireObservedSource(observation, sourceIdentity) {
@@ -172,6 +177,10 @@ function assertOperations(value) {
   const methods = ['inspect', 'provision', 'observe', 'start', 'stop', 'drop'];
   if (!value || methods.some((name) => typeof value[name] !== 'function')) throw new TypeError('environment operations contract is incomplete');
   return value;
+}
+
+function stoppedState(value) {
+  return ['stopped', 'shut off', 'off', 'shutdown', 'crashed'].includes(String(value ?? '').toLowerCase());
 }
 
 export class PersistentEnvironments {
@@ -377,7 +386,7 @@ export class PersistentEnvironments {
       const values = [];
       for (const entry of Object.values(catalog.entries)) {
         if (entry.binding !== binding) {
-          values.push({ record: publicRecord(entry), observation: { identity: entry.current.identity, exists: false, owned: false, compatible: false, state: 'unavailable', reason: 'environment attachment identity changed', storage: null } });
+          values.push({ record: publicRecord(entry), observation: { identity: entry.current.identity, exists: false, owned: false, compatible: false, state: 'unavailable', reason: 'environment attachment identity changed', storage: null, storageState: 'unknown' } });
           continue;
         }
         values.push(await this.#observeEntry(entry));
@@ -391,7 +400,7 @@ export class PersistentEnvironments {
       const binding = await this.#binding();
       const catalog = await this.#load();
       const { entry } = this.#findEntry(catalog, identity);
-      if (entry.binding !== binding) return { record: publicRecord(entry), observation: { identity: entry.current.identity, exists: false, owned: false, compatible: false, state: 'unavailable', reason: 'environment attachment identity changed', storage: null } };
+      if (entry.binding !== binding) return { record: publicRecord(entry), observation: { identity: entry.current.identity, exists: false, owned: false, compatible: false, state: 'unavailable', reason: 'environment attachment identity changed', storage: null, storageState: 'unknown' } };
       return this.#observeEntry(entry);
     });
   }
@@ -402,7 +411,7 @@ export class PersistentEnvironments {
     let observed = normalizeObservation(await this.#operations.observe(operation.identity), operation.identity);
     if (!observed.exists || !observed.owned || !observed.compatible) throw new Error(observed.reason ?? 'environment is unavailable for lifecycle transition');
     requireObservedSource(observed, entry.current.source.identity);
-    const stopped = ['stopped', 'shut off', 'off', 'shutdown'].includes(observed.state);
+    const stopped = stoppedState(observed.state);
     const running = ['running', 'blocked'].includes(observed.state);
     if (operation.kind === 'start' && !running) observed = normalizeObservation(await this.#operations.start(operation.identity), operation.identity);
     if (operation.kind === 'stop' && !stopped) observed = normalizeObservation(await this.#operations.stop(operation.identity, operation.options ?? {}), operation.identity);
@@ -445,9 +454,8 @@ export class PersistentEnvironments {
       let oldObserved = normalizeObservation(await this.#operations.observe(operation.oldIdentity), operation.oldIdentity);
       if (!oldObserved.exists || !oldObserved.owned || !oldObserved.compatible) throw new Error(oldObserved.reason ?? 'current environment is unavailable for reset');
       requireObservedSource(oldObserved, operation.oldSource.identity);
-      const stopped = ['stopped', 'shut off', 'off', 'shutdown'].includes(oldObserved.state);
-      if (!stopped) oldObserved = normalizeObservation(await this.#operations.stop(operation.oldIdentity, { force: true, timeoutMs: 60_000 }), operation.oldIdentity);
-      if (!['stopped', 'shut off', 'off', 'shutdown'].includes(oldObserved.state)) throw new Error('current environment did not stop before rotation');
+      if (!stoppedState(oldObserved.state)) oldObserved = normalizeObservation(await this.#operations.stop(operation.oldIdentity, { force: true, timeoutMs: 60_000 }), operation.oldIdentity);
+      if (!stoppedState(oldObserved.state)) throw new Error('current environment did not stop before rotation');
       requireObservedSource(oldObserved, operation.oldSource.identity);
 
       const request = { subject: found.subject, profile: found.profile, sourceIdentity: operation.source.identity, settings: operation.settings };
@@ -528,13 +536,130 @@ export class PersistentEnvironments {
   async reset(identity) { return this.#rotate(identity); }
   async reseed(identity, { sourceIdentity }) { return this.#rotate(identity, requireId(sourceIdentity, 'environment source identity')); }
 
+  async #completeRebuild(catalog, operation) {
+    const found = Object.values(catalog.entries).find((entry) => entry.slot === operation.slot);
+    if (!found) throw new Error('environment rebuild subject disappeared');
+    if (found.current.identity !== operation.oldIdentity && found.current.identity !== operation.newIdentity) throw new Error('environment rebuild subject changed unexpectedly');
+
+    if (found.current.identity === operation.oldIdentity) {
+      let oldObserved = normalizeObservation(await this.#operations.observe(operation.oldIdentity), operation.oldIdentity);
+      if (!oldObserved.exists) throw new Error('environment provider implementation is missing; recreate is required');
+      if (!oldObserved.owned) throw new Error(oldObserved.reason ?? 'environment ownership evidence does not match');
+      if (oldObserved.compatible || !['absent', 'invalid'].includes(oldObserved.storageState)) {
+        throw new Error('environment rebuild requires missing or invalid system storage');
+      }
+      if (!stoppedState(oldObserved.state)) {
+        if (typeof this.#operations.quiesce !== 'function') throw new Error('degraded environment is still running and cannot be safely quiesced for rebuild');
+        oldObserved = normalizeObservation(await this.#operations.quiesce(operation.oldIdentity), operation.oldIdentity);
+        if (oldObserved.exists && !oldObserved.owned) throw new Error(oldObserved.reason ?? 'environment ownership evidence changed while quiescing');
+        if (oldObserved.exists && !stoppedState(oldObserved.state)) throw new Error('degraded environment did not quiesce before rebuild');
+      }
+
+      const request = { subject: found.subject, profile: found.profile, sourceIdentity: operation.source.identity, settings: operation.settings };
+      const resolved = await this.#resolve(request, operation.source);
+      let nextObserved = normalizeObservation(await this.#operations.observe(operation.newIdentity), operation.newIdentity);
+      if (nextObserved.exists) {
+        if (!nextObserved.owned || !nextObserved.compatible) throw new Error(nextObserved.reason ?? 'existing rebuild generation conflicts with the intended replacement');
+        requireObservedSource(nextObserved, operation.source.identity);
+      } else {
+        nextObserved = normalizeObservation(await this.#operations.provision({ identity: operation.newIdentity, source: operationSource(resolved), settings: operation.settings }), operation.newIdentity);
+        if (!nextObserved.exists || !nextObserved.owned || !nextObserved.compatible) throw new Error(nextObserved.reason ?? 'replacement environment did not provision compatibly');
+        requireObservedSource(nextObserved, operation.source.identity);
+      }
+      operation.state = 'attempted';
+      operation.attemptedAt = new Date().toISOString();
+      await this.#save(catalog);
+
+      found.history ??= [];
+      found.history.push({ ...found.current, supersededAt: new Date().toISOString(), removedAt: null });
+      found.current = {
+        identity: operation.newIdentity,
+        generation: operation.generation,
+        source: operation.source,
+        settings: operation.settings,
+        createdAt: operation.plannedAt,
+      };
+      operation.state = 'switched';
+      operation.switchedAt = new Date().toISOString();
+      await this.#save(catalog);
+    }
+
+    const historical = (found.history ?? []).find((item) => item.identity === operation.oldIdentity);
+    let cleanup = operation.cleanup ?? 'retained';
+    try {
+      const oldObserved = normalizeObservation(await this.#operations.observe(operation.oldIdentity), operation.oldIdentity);
+      if (!oldObserved.exists) cleanup = 'absent';
+      else if (oldObserved.owned && oldObserved.compatible && stoppedState(oldObserved.state)) {
+        const removal = await this.#operations.drop(operation.oldIdentity);
+        if (removal?.removed === true || removal?.absent === true) cleanup = 'removed';
+      }
+    } catch {
+      cleanup = 'retained';
+    }
+    if (historical && ['removed', 'absent'].includes(cleanup) && historical.removedAt == null) historical.removedAt = new Date().toISOString();
+    operation.cleanup = cleanup;
+    operation.state = 'reconciled';
+    operation.reconciledAt = new Date().toISOString();
+    await this.#save(catalog);
+    const current = await this.#observeEntry(found);
+    return { ...current, superseded: { identity: operation.oldIdentity, cleanup } };
+  }
+
+  async rebuild(identity, { requestId, expectedPreviousIdentity } = {}) {
+    return this.#serial(async () => {
+      const requested = requireEnvironmentId(identity);
+      const requestIdentity = requireId(requestId, 'environment rebuild request identity');
+      const expectedPrevious = requireEnvironmentId(expectedPreviousIdentity);
+      const binding = await this.#binding();
+      const catalog = await this.#load();
+      const prior = Object.values(catalog.operations).find((operation) => operation.kind === 'rebuild' && operation.requestId === requestIdentity);
+      if (prior) {
+        if (prior.binding !== binding) throw new Error('environment attachment identity changed; pending rebuild will not be replayed');
+        if (prior.oldIdentity !== expectedPrevious) throw new Error('environment rebuild request no longer matches its previous implementation generation');
+        if (![prior.oldIdentity, prior.newIdentity].includes(requested)) throw new Error('environment rebuild request identity is stale');
+        return this.#completeRebuild(catalog, prior);
+      }
+      const { slot, entry } = this.#findEntry(catalog, requested);
+      if (entry.binding !== binding) throw new Error('environment attachment identity changed');
+      if (entry.current.identity !== expectedPrevious) throw new Error('environment rebuild previous implementation generation changed');
+      const request = {
+        subject: entry.subject,
+        profile: entry.profile,
+        sourceIdentity: entry.current.source.identity,
+        settings: entry.current.settings,
+      };
+      const resolved = await this.#resolve(request, entry.current.source);
+      const generation = Number(entry.current.generation) + 1;
+      const newIdentity = environmentIdentity(slot, generation, resolved.identity);
+      const operationId = `op-${randomUUID()}`;
+      catalog.operations[operationId] = {
+        id: operationId,
+        kind: 'rebuild',
+        requestId: requestIdentity,
+        state: 'planned',
+        binding,
+        slot,
+        oldIdentity: entry.current.identity,
+        newIdentity,
+        generation,
+        source: sourceRecord(resolved),
+        oldSource: structuredClone(entry.current.source),
+        settings: entry.current.settings,
+        cleanup: null,
+        plannedAt: new Date().toISOString(),
+      };
+      await this.#save(catalog);
+      return this.#completeRebuild(catalog, catalog.operations[operationId]);
+    });
+  }
+
   async #completeRemove(catalog, operation) {
     const found = Object.values(catalog.entries).find((entry) => entry.current?.identity === operation.identity);
     if (found) {
       let observed = normalizeObservation(await this.#operations.observe(operation.identity), operation.identity);
       if (observed.exists && (!observed.owned || !observed.compatible)) throw new Error(observed.reason ?? 'environment ownership evidence does not match');
       if (observed.exists) requireObservedSource(observed, found.current.source.identity);
-      if (observed.exists && !['stopped', 'shut off', 'off', 'shutdown'].includes(observed.state)) {
+      if (observed.exists && !stoppedState(observed.state)) {
         observed = normalizeObservation(await this.#operations.stop(operation.identity, { force: true, timeoutMs: 60_000 }), operation.identity);
         requireObservedSource(observed, found.current.source.identity);
       }
@@ -574,6 +699,7 @@ export class PersistentEnvironments {
         if (operation.kind === 'provision') await this.#completeProvision(catalog, operation);
         else if (operation.kind === 'start' || operation.kind === 'stop') await this.#completeTransition(catalog, operation);
         else if (operation.kind === 'rotate') await this.#completeRotate(catalog, operation);
+        else if (operation.kind === 'rebuild') await this.#completeRebuild(catalog, operation);
         else if (operation.kind === 'remove') await this.#completeRemove(catalog, operation);
         else throw new Error(`unknown environment operation kind: ${operation.kind}`);
         catalog = await this.#load();
@@ -581,7 +707,7 @@ export class PersistentEnvironments {
       const values = [];
       for (const entry of Object.values(catalog.entries)) {
         if (entry.binding !== binding) {
-          values.push({ record: publicRecord(entry), observation: { identity: entry.current.identity, exists: false, owned: false, compatible: false, state: 'unavailable', reason: 'environment attachment identity changed', storage: null } });
+          values.push({ record: publicRecord(entry), observation: { identity: entry.current.identity, exists: false, owned: false, compatible: false, state: 'unavailable', reason: 'environment attachment identity changed', storage: null, storageState: 'unknown' } });
         } else {
           values.push(await this.#observeEntry(entry));
         }
@@ -618,7 +744,7 @@ export class UnavailablePersistentOperations {
   }
   async inspect() { return { identity: this.#identity }; }
   async provision() { throw new Error(this.#reason); }
-  async observe(identity) { return { identity, exists: false, owned: false, compatible: false, state: 'unavailable', reason: this.#reason, storage: null }; }
+  async observe(identity) { return { identity, exists: false, owned: false, compatible: false, state: 'unavailable', reason: this.#reason, storage: null, storageState: 'unknown' }; }
   async start() { throw new Error(this.#reason); }
   async stop() { throw new Error(this.#reason); }
   async drop() { throw new Error(this.#reason); }
