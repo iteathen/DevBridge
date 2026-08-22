@@ -58,7 +58,7 @@ export function normalizeEnvironmentFoundationStatus(raw) {
 }
 
 export function assertEnvironmentFoundationContract(value) {
-  const methods = ['inspect', 'publishImage', 'listImages', 'observeImage', 'verifyImage', 'retireImage', 'collectImages', 'ensureNetwork', 'releaseNetwork', 'ensureStorage', 'releaseStorage', 'reconcile', 'observeInstance', 'startInstance', 'stopInstance', 'removeInstance'];
+  const methods = ['inspect', 'publishImage', 'listImages', 'verifyImage', 'retireImage', 'collectImages', 'ensureNetwork', 'releaseNetwork', 'ensureStorage', 'releaseStorage', 'reconcile', 'observeInstance', 'startInstance', 'stopInstance', 'removeInstance'];
   if (!value || methods.some((name) => typeof value[name] !== 'function')) throw new TypeError('environment foundation contract is incomplete');
   return value;
 }
