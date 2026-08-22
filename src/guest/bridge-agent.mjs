@@ -24,7 +24,7 @@ const MAX_CHUNK_BYTES = 16 * 1024;
 const MAX_OUTPUT_BYTES = 3 * 1024 * 1024;
 const MAX_STDIN_BYTES = 16 * 1024;
 const MAX_TIMEOUT_MS = 28_800_000;
-const SELF = fileURLToPath(import.meta.url);
+const SELF = fileURLToPath(new URL(import.meta.url));
 
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
@@ -395,6 +395,20 @@ async function runOperation(request, token) {
     return;
   }
 
+  let inputFailure = null;
+  const inputCompletion = new Promise((resolve) => {
+    let inputSettled = false;
+    const settleInput = (error = null) => {
+      if (inputSettled) return;
+      inputSettled = true;
+      inputFailure = body.input == null ? null : error;
+      resolve();
+    };
+    child.stdin.once('error', (error) => settleInput(error));
+    child.stdin.once('close', () => settleInput(body.input == null ? null : new Error('bridge operation input closed before delivery')));
+    child.stdin.end(body.input ?? undefined, () => settleInput(null));
+  });
+
   record.state = 'running';
   record.childPid = child.pid;
   record.startedAt = new Date().toISOString();
@@ -412,11 +426,22 @@ async function runOperation(request, token) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      await inputCompletion;
       if (error) {
         record.state = 'failed';
         record.reason = String(error.message ?? 'bridge operation process failed').slice(0, 2_048);
         record.finishedAt = new Date().toISOString();
         await atomicJson(operationFile(request), record);
+        await rm(monitorFile(request), { force: true });
+        resolve();
+        return;
+      }
+      if (inputFailure) {
+        record.state = 'failed';
+        record.reason = 'bridge operation input could not be delivered';
+        record.finishedAt = new Date().toISOString();
+        await atomicJson(operationFile(request), record);
+        await rm(cancelFile(request), { force: true });
         await rm(monitorFile(request), { force: true });
         resolve();
         return;
@@ -448,8 +473,6 @@ async function runOperation(request, token) {
     child.once('close', (code, signal) => void finish(code, signal));
   });
 
-  if (body.input == null) child.stdin.end();
-  else child.stdin.end(body.input);
   await completion;
 }
 
