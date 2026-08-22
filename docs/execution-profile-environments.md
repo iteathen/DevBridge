@@ -20,6 +20,8 @@ Examples of materially distinct execution profiles include:
 
 Profiles are created on demand. Merely discovering or approving another repository must not create or start another VM.
 
+GPU-capable profiles are a post-recovery specialization of this same ownership model, not a separate VM architecture. See `gpu-execution-profiles.md` for the recovery-first CUDA/GPU sequence and evidence rules.
+
 ## Why the ownership boundary changes
 
 The repository-per-VM model scales VM count with repository count and duplicates OS state, toolchains, caches, memory reservations, update work, and lifecycle state. Selecting many repositories can therefore turn a harmless repository-management choice into a large resource-allocation event.
@@ -42,6 +44,7 @@ Owned by the profile VM and its provider attachment:
 - shared installed runtimes/SDKs/toolchains appropriate to the profile;
 - shared download caches where safe;
 - GPU drivers/runtime where applicable;
+- provider-owned device assignment/partition state where applicable;
 - DevBridge guest/bootstrap components;
 - profile-level resource policy.
 
@@ -117,6 +120,31 @@ If no compatible ready profile exists, execution fails/degrades or setup offers 
 
 The initial implementation preserves the existing local route file as a repository-to-profile compatibility table while moving physical environment lookup to a deterministic profile subject. This is intentionally an ownership correction rather than a provider rewrite.
 
+### GPU/device routing boundary
+
+A GPU-capable profile adds a hardware capability to the profile; it does not give the repository direct hardware-selection authority.
+
+Generic routing may express requirements such as:
+
+- accelerator/device capability class;
+- compile-only versus real-device execution requirement;
+- compatible runtime/compute capability range;
+- functional versus performance-valid evidence requirement;
+- device exclusivity/share requirement where local policy exposes one.
+
+Repository/task input may not supply provider-native device identifiers, PCI addresses, partition identifiers, driver paths, provider commands, or VM attachment objects. Those identities remain local/provider-owned.
+
+Device presence is also not equivalent to profile readiness. A qualified GPU profile should distinguish at least:
+
+1. host device observed;
+2. provider assignment/partition mechanism ready;
+3. device bound to the exact profile environment generation;
+4. guest driver/runtime compatible and usable;
+5. real device operation successfully attested;
+6. performance-valid evidence available only when separately qualified.
+
+The first real CUDA path is deliberately allowed to support only one proven host/provider/guest combination. Additional platform adapters should be added after feasibility is demonstrated rather than inventing false symmetry in the generic profile contract.
+
 ## Setup and discovery semantics
 
 Repository discovery and execution-profile provisioning are separate workflows.
@@ -133,6 +161,8 @@ Additional profiles required now: 0
 
 Profile provisioning is explicit and resource-aware. Before provider allocation, DevBridge preflights requested startup memory plus a bounded host reserve. A shortage is reported as `ExecutionProfileResourceError` with code `PROFILE_RESOURCES_UNAVAILABLE` rather than as a repository failure.
 
+GPU profile setup must also account for device availability/assignment impact and must not silently attach a discovered GPU merely because a repository could use it.
+
 Profiles that are merely possible but not needed are not created.
 
 ## Resource governance
@@ -145,10 +175,12 @@ DevBridge accounts for:
 - profile memory and vCPU policy;
 - host available memory/storage;
 - idle shutdown/suspend policy without discarding persistent profile/workspace state;
-- GPU/device exclusivity where relevant;
+- GPU/device exclusivity or sharing policy where relevant and actually supported;
 - per-task/process resource limits inside a running profile where supported.
 
-Repository/task scheduling must not assume that every approved repository has a dedicated RAM reservation.
+Repository/task scheduling must not assume that every approved repository has a dedicated RAM or GPU reservation.
+
+A generic `gpu: true` or `cuda: true` declaration is not sufficient evidence of execution readiness. Device assignment, guest runtime compatibility, and real functional execution remain observed facts.
 
 ## Migration from repository-owned VMs
 
@@ -171,7 +203,7 @@ Do not merge several old writable VM disks into a shared profile disk blindly.
 
 ## Provider and LEGO boundaries
 
-Hyper-V and libvirt/QEMU remain provider attachments. They manage execution-profile VM lifecycle and provider-native disk/machine details, not repository identity semantics.
+Hyper-V and libvirt/QEMU remain provider attachments. They manage execution-profile VM lifecycle and provider-native disk/machine/device details, not repository identity semantics.
 
 Generic modules communicate using neutral concepts such as:
 
@@ -180,11 +212,14 @@ Generic modules communicate using neutral concepts such as:
 - workspace identity;
 - workspace root handle;
 - task identity;
-- lifecycle/resource status.
+- lifecycle/resource status;
+- bounded device capability/readiness handles where applicable.
 
-Provider adapters do not need repository names. Workspace routing does not need Hyper-V/libvirt identities. Repository modules do not assume a particular profile implementation.
+Provider adapters do not need repository names. Workspace routing does not need Hyper-V/libvirt/GPU-native identities. Repository modules do not assume a particular profile implementation.
 
 The existing persistent-environment LEGO remains reusable because its `subject` was already opaque. The architecture correction changes composition so that subject is a stable profile-derived identity. A separate routing adapter synthesizes workspace targets for repository execution and maps them back to the profile environment before provider operations.
+
+GPU/CUDA support must preserve the same split: CUDA-specific toolchain/image details stay in their local adapter/profile owner, while provider device-assignment details stay in provider adapters. Do not create one cross-module object that combines repository identity, CUDA package state, and provider-native GPU identity.
 
 ## Qualification requirements
 
@@ -201,6 +236,8 @@ The corrected architecture is not complete until tests prove:
 - host resource exhaustion is preflighted for profile creation/start and reported as a profile resource problem, not a repository failure;
 - provider failure remains fail-closed with no direct-host fallback;
 - authoritative Git/credentials/publication remain host-owned as required by DB-020.
+
+GPU-capable profile qualification adds its own evidence and does not weaken these requirements. In particular, compile-only success, device enumeration, mocks, CPU fallback, or software rendering/compute do not prove real CUDA hardware execution.
 
 ## Migration impact on existing VM program
 

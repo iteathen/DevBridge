@@ -16,6 +16,7 @@ DevBridge has accumulated implementation plans, migration records, normative spe
 | Understand security and control flow | [`architecture.md`](architecture.md) |
 | Understand engineering rules | [`design-principles.md`](design-principles.md) and [`../AGENTS.md`](../AGENTS.md) |
 | Understand persistent VM/workspace ownership | [`execution-profile-environments.md`](execution-profile-environments.md) |
+| Understand post-recovery CUDA/GPU direction | [`gpu-execution-profiles.md`](gpu-execution-profiles.md) |
 | Understand Stage 0 and self-update | [`bootstrap.md`](bootstrap.md) and [`bootstrap-compatibility.md`](bootstrap-compatibility.md) |
 | Understand current VM-program status | [`roadmap.md`](roadmap.md) |
 
@@ -80,6 +81,8 @@ The important current rules are:
 - missing or unready VM execution fails closed rather than falling back to direct host execution;
 - the persistent installed DevBridge and disposable test installations are different installations and should be distinguished by their stable `DB-<12 hex>` installation tags.
 
+GPU-capable profiles remain a future specialization of this same model. They are intentionally sequenced after installer/runtime recovery and reconstructable VM lifecycle work. A GPU profile must use the same create/rebuild/setup/provider ownership surfaces rather than becoming a parallel provisioning stack.
+
 ## Identity vocabulary
 
 Several independent identities are intentionally present. Do not collapse them into one "version" concept.
@@ -128,6 +131,7 @@ These documents describe current implementation structure and intended operator 
 - [`application-management-decisions.md`](application-management-decisions.md) — compact architectural decisions that prevent application-management layer drift.
 - [`architecture.md`](architecture.md) — authority hierarchy, trust domains, provider-neutral flow, Git/source/candidate model.
 - [`execution-profile-environments.md`](execution-profile-environments.md) — physical profile VM ownership and repository workspace routing.
+- [`gpu-execution-profiles.md`](gpu-execution-profiles.md) — recovery-first real-CUDA/GPU sequencing, capability/evidence boundaries, and follow-on generalized compute routing.
 - [`tool-profiles.md`](tool-profiles.md) — tool/profile surface and execution policy.
 - [`bootstrap.md`](bootstrap.md) — standalone launcher and secure-bootstrap flow.
 - [`bootstrap-compatibility.md`](bootstrap-compatibility.md) — Stage-0 protocol compatibility, accepted-runtime selection, installation tags, one-time legacy migration.
