@@ -13,8 +13,10 @@ function declaration() {
     guest: { family: 'ubuntu', generation: '24.04.4' },
     image: { identity: 'image-ubuntu-2404-v1', generation: 'ubuntu-24.04.4-v1' },
     resources: { memoryBytes: 4294967296, processorCount: 4 },
+    boot: { requirement: 'efi-v1' },
     network: { requirement: 'managed-egress-v1' },
     bootstrap: { generation: 'tooling-v1', requirements: ['runtime-js'] },
+    enrollment: { requirement: 'unique-guest-trust-v1' },
     workspaces: [], protectedStateClasses: [],
   };
 }
