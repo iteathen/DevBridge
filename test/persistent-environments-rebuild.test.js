@@ -134,3 +134,48 @@ test('rebuild rejects a healthy, foreign, running-unquiesceable, or stale previo
     }), /previous implementation generation changed/u);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('rebuild re-proves provider existence and ownership after quiesce before replacement', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-rebuild-quiesce-proof-'));
+  const fake = fixture();
+  try {
+    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const created = await registry.ensure(request());
+    loseSystemStorage(fake, created.record.identity, 'absent');
+    fake.instances.get(created.record.identity).state = 'running';
+    fake.operations.quiesce = async (identity) => ({
+      identity, exists: false, owned: false, compatible: false, state: 'absent', reason: 'provider object disappeared', storage: null, storageState: 'unknown',
+    });
+    await assert.rejects(() => registry.rebuild(created.record.identity, {
+      requestId: 'quiesce-proof-rebuild', expectedPreviousIdentity: created.record.identity,
+    }), /disappeared while quiescing/u);
+    assert.equal(fake.provisionCalls(), 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('rebuild retains the superseded generation even if it later appears compatible', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-rebuild-retention-'));
+  const fake = fixture();
+  try {
+    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const created = await registry.ensure(request());
+    loseSystemStorage(fake, created.record.identity, 'invalid');
+    const provision = fake.operations.provision.bind(fake.operations);
+    fake.operations.provision = async (input) => {
+      const result = await provision(input);
+      const superseded = fake.instances.get(created.record.identity);
+      superseded.compatible = true;
+      superseded.state = 'stopped';
+      superseded.reason = null;
+      superseded.storageState = 'present';
+      superseded.storage = { identity: `storage-${created.record.identity}`, sourceIdentity: SOURCE, allocatedBytes: 4096 };
+      return result;
+    };
+    const rebuilt = await registry.rebuild(created.record.identity, {
+      requestId: 'retention-rebuild', expectedPreviousIdentity: created.record.identity,
+    });
+    assert.deepEqual(rebuilt.superseded, { identity: created.record.identity, cleanup: 'retained' });
+    assert.equal(fake.instances.has(created.record.identity), true);
+    assert.equal(fake.instances.has(rebuilt.record.identity), true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
