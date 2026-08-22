@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   hasSelectedEntrySelector,
   loadDefaultEntry,
@@ -67,6 +68,14 @@ test('explicit selected recovery does not load the evolving default Stage 0 path
   });
   assert.equal(status, 29);
   assert.equal(defaultLoads, 0);
+});
+
+test('permanent router has no static dependency on the evolving Stage 0 module', async () => {
+  const source = await readFile(new URL('../devbridge-entry.mjs', import.meta.url), 'utf8');
+  const imports = [...source.matchAll(/^import\s+.*?from\s+['"]([^'"]+)['"];?$/gmu)].map((match) => match[1]).sort();
+  assert.deepEqual(imports, ['node:path', 'node:process', 'node:url']);
+  assert.match(source, /new URL\('\.\/devbridge\.mjs', import\.meta\.url\)/u);
+  assert.doesNotMatch(source, /from\s+['"]\.\/devbridge\.mjs['"]/u);
 });
 
 test('default and selected module loaders resolve separate local entry modules lazily', async () => {
