@@ -29,7 +29,7 @@ test('construction preparation keeps stable route access separate from resolved 
       events.push(['bootstrap', input.revision, [...input.requirements]]);
       return {
         ensure: async (target) => { events.push(['ensure', target]); return { ready: true }; },
-        inspect: async (target) => { events.push(['inspect', target]); return { ready: true }; },
+        inspect: async (target) => { events.push(['inspect', target]); return { ready: true, network: { nameResolution: true, secureWeb: true } }; },
         connection: async (target) => ({ ...resolved, target }),
       };
     },
@@ -37,7 +37,7 @@ test('construction preparation keeps stable route access separate from resolved 
   const selected = request();
   const target = executionProfileSubject(selected.declaration.profile);
   assert.deepEqual(await port.ensure(selected), { ready: true, implementationGeneration: selected.implementationGeneration });
-  assert.deepEqual(await port.inspect(selected), { ready: true, enrollment: 'ready', bootstrap: 'ready', reason: null });
+  assert.deepEqual(await port.inspect(selected), { ready: true, enrollment: 'ready', bootstrap: 'ready', network: 'ready', reason: null });
   assert.deepEqual(await port.access(selected), { ...routeAccess, target });
   assert.deepEqual(await port.connection(selected, target), { ...resolved, target });
   await assert.rejects(() => port.connection(selected, 'other-target'), /does not match declaration authority/u);
@@ -48,11 +48,24 @@ test('construction preparation keeps stable route access separate from resolved 
   ]);
 });
 
+test('construction preparation projects bootstrap and network degradation without provider detail leakage', async () => {
+  const port = createEnvironmentConstructionPreparation({
+    stateDirectory: '/state',
+    createAccess: async () => ({ connection: async () => ({ family: 'linux' }), prepare: null }),
+    createBootstrap: async () => ({
+      ensure: async () => ({ ready: true }),
+      inspect: async () => ({ ready: false, state: 'degraded', reason: 'capability unavailable', network: { nameResolution: true, secureWeb: false } }),
+      connection: async () => ({ family: 'linux' }),
+    }),
+  });
+  assert.deepEqual(await port.inspect(request()), { ready: false, enrollment: 'ready', bootstrap: 'degraded', network: 'degraded', reason: 'capability unavailable' });
+});
+
 test('construction preparation refuses enrollment drift and unsupported enrollment', async () => {
   const port = createEnvironmentConstructionPreparation({
     stateDirectory: '/state',
     createAccess: async () => ({ connection: async () => ({ family: 'linux' }), prepare: null }),
-    createBootstrap: async () => ({ ensure: async () => ({ ready: true }), inspect: async () => ({ ready: true }), connection: async () => ({ family: 'linux' }) }),
+    createBootstrap: async () => ({ ensure: async () => ({ ready: true }), inspect: async () => ({ ready: true, network: { nameResolution: true, secureWeb: true } }), connection: async () => ({ family: 'linux' }) }),
   });
   const selected = request();
   await assert.rejects(() => port.ensure({ ...selected, enrollment: { requirement: 'other-v1' } }), /no longer matches/u);
