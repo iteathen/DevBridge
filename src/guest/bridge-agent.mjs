@@ -363,7 +363,6 @@ async function runOperation(request, token) {
   const capture = { bytes: 0, truncated: false, lastOutputAt: null };
   let timedOut = false;
   let spawnFailure = null;
-  let settled = false;
   let child;
   const append = (list, chunk) => {
     const bytes = Buffer.from(chunk);
@@ -409,6 +408,19 @@ async function runOperation(request, token) {
     child.stdin.once('close', () => settleInput(body.input == null ? null : new Error('bridge operation input closed before delivery')));
   });
 
+  const processCompletion = new Promise((resolve) => {
+    let processSettled = false;
+    const settleProcess = (exitCode, signal, error = null) => {
+      if (processSettled) return;
+      processSettled = true;
+      resolve({ exitCode, signal, error });
+    };
+    child.stdout.on('data', (chunk) => append(stdout, chunk));
+    child.stderr.on('data', (chunk) => append(stderr, chunk));
+    child.once('error', (error) => settleProcess(null, null, error));
+    child.once('close', (code, signal) => settleProcess(code, signal));
+  });
+
   record.state = 'running';
   record.childPid = child.pid;
   record.startedAt = new Date().toISOString();
@@ -421,60 +433,48 @@ async function runOperation(request, token) {
   }, body.timeoutMs);
   timer.unref?.();
 
-  const completion = new Promise((resolve) => {
-    const finish = async (exitCode, signal, error = null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      await inputCompletion;
-      if (error) {
-        record.state = 'failed';
-        record.reason = String(error.message ?? 'bridge operation process failed').slice(0, 2_048);
-        record.finishedAt = new Date().toISOString();
-        await atomicJson(operationFile(request), record);
-        await rm(monitorFile(request), { force: true });
-        resolve();
-        return;
-      }
-      if (inputFailure) {
-        record.state = 'failed';
-        record.reason = 'bridge operation input could not be delivered';
-        record.finishedAt = new Date().toISOString();
-        await atomicJson(operationFile(request), record);
-        await rm(cancelFile(request), { force: true });
-        await rm(monitorFile(request), { force: true });
-        resolve();
-        return;
-      }
-      const reason = timedOut ? 'timeout' : await cancellationReason(request);
-      const finishedAt = new Date().toISOString();
-      record.state = 'completed';
-      record.finishedAt = finishedAt;
-      record.result = {
-        exitCode: exitCode == null ? null : Math.max(-1, Math.min(255, Number(exitCode))),
-        signal: signal == null ? null : String(signal).slice(0, 128),
-        timedOut: reason === 'timeout',
-        aborted: reason === 'abort',
-        outputTruncated: capture.truncated,
-        stdout: Buffer.concat(stdout).toString('base64'),
-        stderr: Buffer.concat(stderr).toString('base64'),
-        startedAt: record.startedAt,
-        finishedAt,
-        lastOutputAt: capture.lastOutputAt,
-      };
-      await atomicJson(operationFile(request), record);
-      await rm(cancelFile(request), { force: true });
-      await rm(monitorFile(request), { force: true });
-      resolve();
-    };
-    child.stdout.on('data', (chunk) => append(stdout, chunk));
-    child.stderr.on('data', (chunk) => append(stderr, chunk));
-    child.once('error', (error) => void finish(null, null, error));
-    child.once('close', (code, signal) => void finish(code, signal));
-  });
-
   child.stdin.end(body.input ?? undefined, () => settleInput(null));
-  await completion;
+  const outcome = await processCompletion;
+  clearTimeout(timer);
+  await inputCompletion;
+
+  if (outcome.error) {
+    record.state = 'failed';
+    record.reason = String(outcome.error.message ?? 'bridge operation process failed').slice(0, 2_048);
+    record.finishedAt = new Date().toISOString();
+    await atomicJson(operationFile(request), record);
+    await rm(monitorFile(request), { force: true });
+    return;
+  }
+  if (inputFailure) {
+    record.state = 'failed';
+    record.reason = 'bridge operation input could not be delivered';
+    record.finishedAt = new Date().toISOString();
+    await atomicJson(operationFile(request), record);
+    await rm(cancelFile(request), { force: true });
+    await rm(monitorFile(request), { force: true });
+    return;
+  }
+
+  const reason = timedOut ? 'timeout' : await cancellationReason(request);
+  const finishedAt = new Date().toISOString();
+  record.state = 'completed';
+  record.finishedAt = finishedAt;
+  record.result = {
+    exitCode: outcome.exitCode == null ? null : Math.max(-1, Math.min(255, Number(outcome.exitCode))),
+    signal: outcome.signal == null ? null : String(outcome.signal).slice(0, 128),
+    timedOut: reason === 'timeout',
+    aborted: reason === 'abort',
+    outputTruncated: capture.truncated,
+    stdout: Buffer.concat(stdout).toString('base64'),
+    stderr: Buffer.concat(stderr).toString('base64'),
+    startedAt: record.startedAt,
+    finishedAt,
+    lastOutputAt: capture.lastOutputAt,
+  };
+  await atomicJson(operationFile(request), record);
+  await rm(cancelFile(request), { force: true });
+  await rm(monitorFile(request), { force: true });
 }
 
 async function execute(frame) {
