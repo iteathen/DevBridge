@@ -551,8 +551,9 @@ export class PersistentEnvironments {
       if (!stoppedState(oldObserved.state)) {
         if (typeof this.#operations.quiesce !== 'function') throw new Error('degraded environment is still running and cannot be safely quiesced for rebuild');
         oldObserved = normalizeObservation(await this.#operations.quiesce(operation.oldIdentity), operation.oldIdentity);
-        if (oldObserved.exists && !oldObserved.owned) throw new Error('environment ownership evidence changed while quiescing');
-        if (oldObserved.exists && !stoppedState(oldObserved.state)) throw new Error('degraded environment did not quiesce before rebuild');
+        if (!oldObserved.exists) throw new Error('environment provider implementation disappeared while quiescing');
+        if (!oldObserved.owned) throw new Error('environment ownership evidence changed while quiescing');
+        if (!stoppedState(oldObserved.state)) throw new Error('degraded environment did not quiesce before rebuild');
       }
 
       const request = { subject: found.subject, profile: found.profile, sourceIdentity: operation.source.identity, settings: operation.settings };
@@ -588,15 +589,11 @@ export class PersistentEnvironments {
     let cleanup = operation.cleanup ?? 'retained';
     try {
       const oldObserved = normalizeObservation(await this.#operations.observe(operation.oldIdentity), operation.oldIdentity);
-      if (!oldObserved.exists) cleanup = 'absent';
-      else if (oldObserved.owned && oldObserved.compatible && stoppedState(oldObserved.state)) {
-        const removal = await this.#operations.drop(operation.oldIdentity);
-        if (removal?.removed === true || removal?.absent === true) cleanup = 'removed';
-      }
+      cleanup = oldObserved.exists ? 'retained' : 'absent';
     } catch {
       cleanup = 'retained';
     }
-    if (historical && ['removed', 'absent'].includes(cleanup) && historical.removedAt == null) historical.removedAt = new Date().toISOString();
+    if (historical && cleanup === 'absent' && historical.removedAt == null) historical.removedAt = new Date().toISOString();
     operation.cleanup = cleanup;
     operation.state = 'reconciled';
     operation.reconciledAt = new Date().toISOString();
