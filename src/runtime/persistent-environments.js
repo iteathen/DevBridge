@@ -619,6 +619,15 @@ export class PersistentEnvironments {
       const { slot, entry } = this.#findEntry(catalog, requested);
       if (entry.binding !== binding) throw new Error('environment attachment identity changed');
       if (entry.current.identity !== expectedPrevious) throw new Error('environment rebuild previous implementation generation changed');
+      const preflight = normalizeObservation(await this.#operations.observe(entry.current.identity), entry.current.identity);
+      if (!preflight.exists) throw new Error('environment provider implementation is missing; recreate is required');
+      if (!preflight.owned) throw new Error('environment ownership evidence does not match');
+      if (preflight.compatible || !['absent', 'invalid'].includes(preflight.storageState)) {
+        throw new Error('environment rebuild requires missing or invalid system storage');
+      }
+      if (!stoppedState(preflight.state) && typeof this.#operations.quiesce !== 'function') {
+        throw new Error('degraded environment is still running and cannot be safely quiesced for rebuild');
+      }
       const request = {
         subject: entry.subject,
         profile: entry.profile,
