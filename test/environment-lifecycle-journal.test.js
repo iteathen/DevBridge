@@ -14,10 +14,11 @@ function memoryPort() {
     async scan() { return [...values.values()].map((value) => structuredClone(value)); },
   };
 }
-function observation() {
+function observation(declarationRevision = 1) {
   return {
     protocol: ENVIRONMENT_OBSERVATION_PROTOCOL,
     environmentIdentity: 'environment-0123456789abcdef0123456789abcdef',
+    declarationRevision,
     implementationGeneration: null,
     materialization: 'none', systemStorage: 'unknown', attachment: 'unknown', enrollment: 'unknown',
     bootstrap: 'unknown', guest: 'unknown', transition: 'clear',
@@ -51,8 +52,14 @@ test('journal enforces contiguous restartable lifecycle stages', async () => {
 test('active scan exposes interrupted transitions without replaying them', async () => {
   const journal = new EnvironmentLifecycleJournal({ port: memoryPort(), id: () => 'lifecycle-fixed-2' });
   const record = await journal.begin({ environmentIdentity: observation().environmentIdentity, operation: 'rebuild', declarationRevision: 3 });
-  await journal.advance(record.environmentIdentity, record.operationId, { stage: 'pre-observation', outcome: 'observed', observation: observation() });
+  await journal.advance(record.environmentIdentity, record.operationId, { stage: 'pre-observation', outcome: 'observed', observation: observation(3) });
   const active = await journal.active();
   assert.equal(active.length, 1);
   assert.equal(active[0].entries.at(-1).stage, 'pre-observation');
+});
+
+test('journal rejects observation from stale declaration authority', async () => {
+  const journal = new EnvironmentLifecycleJournal({ port: memoryPort(), id: () => 'lifecycle-fixed-3' });
+  const record = await journal.begin({ environmentIdentity: observation().environmentIdentity, operation: 'repair', declarationRevision: 2 });
+  await assert.rejects(() => journal.advance(record.environmentIdentity, record.operationId, { stage: 'pre-observation', outcome: 'observed', observation: observation(1) }), /stale/u);
 });
