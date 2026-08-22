@@ -13,6 +13,7 @@ const GIT_TIMEOUT_MS = 120_000;
 const GIT_OUTPUT_BYTES = 256 * 1024;
 const PUBLISH_RETRY_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
 const PUBLISH_RETRY_DELAYS_MS = Object.freeze([5, 10, 20, 40, 80, 160]);
+const CHECKOUT_ID_DOMAIN = 'devbridge/experimental-checkout-cache-v1';
 
 function fail(message) { throw new Error(message); }
 
@@ -29,6 +30,16 @@ function normalizeSubject(input) {
 
 function digest(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+function checkoutIdentity(subject) {
+  return createHash('sha256')
+    .update(CHECKOUT_ID_DOMAIN)
+    .update('\0')
+    .update(subject.head)
+    .update('\0')
+    .update(subject.sha256)
+    .digest('hex');
 }
 
 async function exists(candidate) {
@@ -162,19 +173,19 @@ export class ExperimentalCheckoutRunnerProvider {
     const root = await requireRealDirectory(this.#root, 'experimental checkout cache root', { create: true });
     const checkouts = await requireRealDirectory(path.join(root, 'checkouts'), 'experimental checkout object root', { create: true });
     const context = await this.#context(root);
-    const identity = `${subject.head}-${subject.sha256}`;
+    const identity = checkoutIdentity(subject);
     const destination = path.join(checkouts, identity);
 
     if (!(await exists(destination))) {
-      const temporary = path.join(checkouts, `.${identity}.${randomUUID()}.tmp`);
+      // Keep transient filesystem names independent of exact identity length.
+      // On Windows, embedding head + digest + UUID here can push Git's internal
+      // .git/object paths beyond the default MAX_PATH budget during fetch.
+      const temporary = path.join(checkouts, `.prepare-${randomUUID()}.tmp`);
       await mkdir(temporary, { mode: 0o700 });
       try {
         await runChecked(this.#run, ['init', '--quiet', temporary], context, 'initialization');
         await runChecked(this.#run, ['-C', temporary, 'remote', 'add', 'origin', FIXED_REMOTE], context, 'source binding');
-        // Exact-object fetches are deliberately not shallow. Some Git servers
-        // permit reachable exact wants but reject the shallow form of the same
-        // request. The requested identity remains only the already-resolved SHA.
-        await runChecked(this.#run, ['-C', temporary, 'fetch', '--no-tags', 'origin', subject.head], context, 'exact fetch');
+        await runChecked(this.#run, ['-C', temporary, 'fetch', '--no-tags', '--depth', '1', 'origin', subject.head], context, 'exact fetch');
         await runChecked(this.#run, ['-C', temporary, 'checkout', '--detach', '--force', subject.head], context, 'exact checkout');
         await this.#verify(temporary, subject, context);
         const publication = await publishDirectory(temporary, destination);
