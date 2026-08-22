@@ -16,7 +16,7 @@ The intended order is:
 4. under #186, add one real CUDA-capable execution profile and qualify actual kernel execution;
 5. under #162 and follow-ons, generalize compute-requirement detection, alternate software backends, automatic matching, and additional hardware/provider adapters afterward.
 
-This is deliberately different from building a broad GPU abstraction first. CUDA-JS, UMCGS, and other CUDA-dependent repositories need truthful real-device execution more urgently than they need CPU emulation of unrelated GPU APIs.
+This is deliberately different from building a broad GPU abstraction first. CUDA-dependent repositories need truthful real-device execution more urgently than they need CPU emulation of unrelated GPU APIs.
 
 ## Relationship to the execution-profile model
 
@@ -113,7 +113,7 @@ A CPU fallback, software Vulkan/OpenCL implementation, compile-only pass, or moc
 
 Preserve the existing module-isolation rule.
 
-- Execution-profile lifecycle does not name CUDA-JS, UMCGS, UCI Arena, or another consumer.
+- Execution-profile lifecycle does not name or depend on current downstream consumers.
 - Repository requirement/routing logic does not know provider-native GPU identities.
 - Provider adapters do not know repository names or project-specific build semantics.
 - CUDA toolchain/image code owns CUDA-specific package/runtime details but not provider lifecycle.
