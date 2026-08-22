@@ -4,7 +4,7 @@ import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
 const SELECTED_ENTRY_FLAGS = new Set(['--ref', '--branch']);
-const DEFAULT_ENTRY_URL = new URL('./devbridge.mjs', import.meta.url).href;
+const DEFAULT_ENTRY_URL = new URL('./src/entry/stable-entry.mjs', import.meta.url).href;
 const SELECTED_ENTRY_URL = new URL('./src/entry/experimental-entry.mjs', import.meta.url).href;
 
 function fail(message) { throw new Error(message); }
@@ -38,7 +38,7 @@ export function hasSelectedEntrySelector(argv) {
 }
 
 export async function loadDefaultEntry({ importModuleFn = (url) => import(url) } = {}) {
-  return loadEntry(DEFAULT_ENTRY_URL, 'bootstrapStage0', importModuleFn, 'default entry');
+  return loadEntry(DEFAULT_ENTRY_URL, 'runStableEntry', importModuleFn, 'default entry');
 }
 
 export async function loadSelectedEntry({ importModuleFn = (url) => import(url) } = {}) {
