@@ -1,5 +1,5 @@
 import { createEnvironmentBridge } from './environment-bridge.js';
-import { createEnvironmentConstruction } from './environment-construction.js';
+import { createEnvironmentConstruction, createEnvironmentConstructionPipeline } from './environment-construction.js';
 import { createEnvironmentConstructionObservation } from './environment-construction-observation.js';
 import {
   createEnvironmentImagePort,
@@ -11,7 +11,7 @@ import { createEnvironmentFoundation } from './environment-foundation.js';
 import { createEnvironmentImageAvailability } from './environment-image-availability.js';
 import { createEnvironmentLifecycle } from './environment-lifecycle.js';
 import { createEnvironmentLifecycleFence } from './environment-lifecycle-fence.js';
-import { createEnvironmentMaterialization } from './environment-materialization.js';
+import { createEnvironmentMaterialization, createEnvironmentRebuildMaterialization } from './environment-materialization.js';
 import { createEnvironmentMaterializationPolicy } from './environment-materialization-policy.js';
 import { createEnvironmentRecovery } from './environment-recovery.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
@@ -51,6 +51,11 @@ export async function createEnvironmentConstructionRuntime({
     subject: policy.subject,
     settings: policy.settings,
   });
+  const rebuildMaterialization = createEnvironmentRebuildMaterialization({
+    state: localFoundation,
+    subject: policy.subject,
+    journal: localLifecycle.journal,
+  });
   const preparation = createEnvironmentConstructionPreparation({
     stateDirectory,
     platform,
@@ -72,14 +77,25 @@ export async function createEnvironmentConstructionRuntime({
   const observation = createEnvironmentConstructionObservation({ materialization, preparation, workspaces });
   const localFence = fence ?? createEnvironmentLifecycleFence({ stateDirectory });
   const resources = createEnvironmentResourcePort({ state: localFoundation, settings: policy.settings });
+  const image = createEnvironmentImagePort({ availability: localAvailability });
   const construction = createEnvironmentConstruction({
     stateDirectory,
     lifecycle: localLifecycle,
     observer: observation,
     fence: localFence,
-    image: createEnvironmentImagePort({ availability: localAvailability }),
+    image,
     resources,
     materialization,
+    preparation,
+    workspaces,
+    readiness: observation.readiness,
+    ...(now ? { now } : {}),
+  });
+  const rebuildConstruction = createEnvironmentConstructionPipeline({
+    stateDirectory,
+    image,
+    resources,
+    materialization: rebuildMaterialization,
     preparation,
     workspaces,
     readiness: observation.readiness,
@@ -93,6 +109,7 @@ export async function createEnvironmentConstructionRuntime({
     materialization,
     preparation,
     workspaces,
+    rebuildConstruction,
   });
 
   return Object.freeze({
@@ -104,5 +121,7 @@ export async function createEnvironmentConstructionRuntime({
     diagnosis: recovery.diagnosis,
     diagnose: recovery.diagnose,
     repair: recovery.repair,
+    planRebuild: recovery.planRebuild,
+    rebuild: recovery.rebuild,
   });
 }
