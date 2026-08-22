@@ -16,3 +16,48 @@ test('create refuses to overwrite an observed materialization', async () => { co
 test('create journals the full lifecycle and keeps provider work behind one fence', async () => { const f = await fixture(); let state = 'none'; let fenceHeld = false; let released = 0; const create = new EnvironmentCreate({ declarations: f.declarations, journal: f.journal, observer: { observe: async () => observation(f.registered, state, state === 'none' ? null : 'implementation-1') }, fence: { acquire: async () => { fenceHeld = true; return { subject: 'fence-1', release: async () => { fenceHeld = false; released += 1; } }; } }, construction: { run: async () => { assert.equal(fenceHeld, true); state = 'present'; return { implementationGeneration: 'implementation-1' }; }, clear: async () => { assert.equal(fenceHeld, true); } } }); const result = await create.create(f.registered.identity); assert.equal(result.state, 'complete'); assert.equal(released, 1); const record = await f.journal.current(f.registered.identity); assert.deepEqual(record.entries.map((entry) => entry.stage), ENVIRONMENT_LIFECYCLE_STAGES); });
 
 test('create resumes a failed construction with the same logical fence subject', async () => { const f = await fixture(); let state = 'none'; let first = true; let acquisitions = 0; const construction = { run: async () => { if (first) { first = false; throw new Error('interrupted'); } state = 'present'; return { implementationGeneration: 'implementation-1' }; }, clear: async () => {} }; const fence = { acquire: async () => { acquisitions += 1; return { subject: 'fence-stable', release: async () => {} }; } }; const create = new EnvironmentCreate({ declarations: f.declarations, journal: f.journal, observer: { observe: async () => observation(f.registered, state, state === 'none' ? null : 'implementation-1') }, fence, construction }); await assert.rejects(() => create.create(f.registered.identity), /interrupted/u); const active = await f.journal.current(f.registered.identity); assert.equal(active.entries.at(-1).stage, 'fenced-attempt'); const result = await create.create(f.registered.identity); assert.equal(result.state, 'complete'); assert.equal(acquisitions, 2); });
+
+test('create refuses resume when the lifecycle fence subject changes', async () => {
+  const f = await fixture();
+  let acquisitions = 0;
+  let releases = 0;
+  let runs = 0;
+  const create = new EnvironmentCreate({
+    declarations: f.declarations,
+    journal: f.journal,
+    observer: { observe: async () => observation(f.registered, 'none') },
+    fence: { acquire: async () => {
+      acquisitions += 1;
+      return { subject: acquisitions === 1 ? 'fence-stable' : 'fence-changed', release: async () => { releases += 1; } };
+    } },
+    construction: { run: async () => { runs += 1; throw new Error('interrupted'); }, clear: async () => {} },
+  });
+  await assert.rejects(() => create.create(f.registered.identity), /interrupted/u);
+  await assert.rejects(() => create.create(f.registered.identity), /fence subject changed/u);
+  assert.equal(runs, 1);
+  assert.equal(releases, 2);
+});
+
+test('create rejects a post-construction implementation-generation substitution', async () => {
+  const f = await fixture();
+  let state = 'none';
+  const create = new EnvironmentCreate({
+    declarations: f.declarations,
+    journal: f.journal,
+    observer: { observe: async () => observation(f.registered, state, state === 'none' ? null : 'implementation-2') },
+    fence: { acquire: async () => ({ subject: 'fence-1', release: async () => {} }) },
+    construction: { run: async () => { state = 'present'; return { implementationGeneration: 'implementation-1' }; }, clear: async () => {} },
+  });
+  await assert.rejects(() => create.create(f.registered.identity), /post-observation generation changed/u);
+});
+
+test('create routes a missing declaration to setup re-entry before provider work', async () => {
+  const create = new EnvironmentCreate({
+    declarations: { get: async () => null },
+    journal: { current: async () => { throw new Error('unused'); }, begin: async () => { throw new Error('unused'); }, advance: async () => { throw new Error('unused'); } },
+    observer: { observe: async () => { throw new Error('unused'); } },
+    fence: { acquire: async () => { throw new Error('unused'); } },
+    construction: { run: async () => { throw new Error('unused'); }, clear: async () => { throw new Error('unused'); } },
+  });
+  await assert.rejects(() => create.create('environment-missing'), /setup re-entry is required/u);
+});

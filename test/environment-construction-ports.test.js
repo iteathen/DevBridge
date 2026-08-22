@@ -10,6 +10,11 @@ test('image construction port asks only for the exact declared semantic image', 
   assert.deepEqual(request, { identity: 'img-1', generation: 'generation-1' });
 });
 
+test('image construction port fails closed when the exact image is unavailable', async () => {
+  const port = createEnvironmentImagePort({ availability: { ensure: async () => ({ state: 'blocked' }) } });
+  await assert.rejects(() => port.ensure({ image: { identity: 'img-1', generation: 'generation-1' } }), /exact environment image did not become available/u);
+});
+
 test('resource construction port verifies policy before preparing shared resources', async () => {
   const events = [];
   const port = createEnvironmentResourcePort({
@@ -22,6 +27,27 @@ test('resource construction port verifies policy before preparing shared resourc
   });
   assert.deepEqual(await port.ensure({ profile: 'p', resources: { memoryBytes: 1, processorCount: 1 }, boot: { requirement: 'efi-v1' }, network: { requirement: 'managed-v1' } }), { ready: true });
   assert.deepEqual(events, ['settings', 'inspect', 'storage', 'network']);
+});
+
+test('resource construction port stops at the exact unavailable prerequisite', async () => {
+  const cases = [
+    { name: 'management', expected: ['settings', 'inspect'], reason: 'provider unavailable' },
+    { name: 'storage', expected: ['settings', 'inspect', 'storage'], reason: 'storage unavailable' },
+    { name: 'network', expected: ['settings', 'inspect', 'storage', 'network'], reason: 'network unavailable' },
+  ];
+  for (const selected of cases) {
+    const events = [];
+    const port = createEnvironmentResourcePort({
+      settings: { resolve: async () => { events.push('settings'); return { firmware: 'efi' }; } },
+      state: {
+        inspect: async () => { events.push('inspect'); return { capabilities: { management: selected.name === 'management' ? { ready: false, reason: selected.reason } : { ready: true } } }; },
+        ensureStorage: async () => { events.push('storage'); return selected.name === 'storage' ? { ready: false, reason: selected.reason } : { ready: true }; },
+        ensureNetwork: async () => { events.push('network'); return selected.name === 'network' ? { ready: false, reason: selected.reason } : { ready: true }; },
+      },
+    });
+    await assert.rejects(() => port.ensure({ profile: 'p', resources: { memoryBytes: 1, processorCount: 1 }, boot: { requirement: 'efi-v1' }, network: { requirement: 'managed-v1' } }), new RegExp(selected.reason, 'u'));
+    assert.deepEqual(events, selected.expected);
+  }
 });
 
 test('initial materialization policy supports the declared EFI contract without provider identity', async () => {
