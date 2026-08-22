@@ -11,11 +11,17 @@ const SOURCE_ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const MAX_COMPONENT_BYTES = 1024 * 1024;
 const COMPONENTS = Object.freeze([
   'devbridge-entry.mjs',
+  'src/entry/content-addressed-runner-provider.mjs',
+  'src/entry/development-stable-subject-authority.mjs',
   'src/entry/experimental-checkout-runner-provider.mjs',
   'src/entry/experimental-entry.mjs',
   'src/entry/experimental-subject-authority.mjs',
   'src/entry/github-runner-source.mjs',
+  'src/entry/installation-identity.mjs',
   'src/entry/permanent-entry.mjs',
+  'src/entry/production-stable-subject-authority.mjs',
+  'src/entry/stable-entry.mjs',
+  'src/entry/stable-runner-state.mjs',
 ]);
 
 function fail(message) { throw new Error(message); }
@@ -74,6 +80,9 @@ export async function stageEntryCandidate({ stableLauncher, output, sourceRoot =
   const temporary = path.join(parent, `.${path.basename(outputPath)}.tmp-${randomUUID()}`);
   await mkdir(temporary, { mode: 0o700 });
   try {
+    // Preserve the previously installed launcher bytes only as cutover rollback
+    // evidence. The candidate permanent router has no default-path dependency
+    // on this file.
     await writeFile(path.join(temporary, 'devbridge.mjs'), stableBytes, { mode: 0o600, flag: 'wx' });
     const files = [];
     for (const { relative, bytes } of sources) {
@@ -85,7 +94,7 @@ export async function stageEntryCandidate({ stableLauncher, output, sourceRoot =
     const evidence = Object.freeze({
       protocol: ENTRY_CANDIDATE_BUNDLE_PROTOCOL,
       entry: 'devbridge-entry.mjs',
-      stableLauncher: Object.freeze({ path: 'devbridge.mjs', sha256: digest(stableBytes) }),
+      stableLauncher: Object.freeze({ path: 'devbridge.mjs', sha256: digest(stableBytes), role: 'rollback-only' }),
       files: Object.freeze(files),
     });
     await writeFile(
