@@ -544,14 +544,14 @@ export class PersistentEnvironments {
     if (found.current.identity === operation.oldIdentity) {
       let oldObserved = normalizeObservation(await this.#operations.observe(operation.oldIdentity), operation.oldIdentity);
       if (!oldObserved.exists) throw new Error('environment provider implementation is missing; recreate is required');
-      if (!oldObserved.owned) throw new Error(oldObserved.reason ?? 'environment ownership evidence does not match');
+      if (!oldObserved.owned) throw new Error('environment ownership evidence does not match');
       if (oldObserved.compatible || !['absent', 'invalid'].includes(oldObserved.storageState)) {
         throw new Error('environment rebuild requires missing or invalid system storage');
       }
       if (!stoppedState(oldObserved.state)) {
         if (typeof this.#operations.quiesce !== 'function') throw new Error('degraded environment is still running and cannot be safely quiesced for rebuild');
         oldObserved = normalizeObservation(await this.#operations.quiesce(operation.oldIdentity), operation.oldIdentity);
-        if (oldObserved.exists && !oldObserved.owned) throw new Error(oldObserved.reason ?? 'environment ownership evidence changed while quiescing');
+        if (oldObserved.exists && !oldObserved.owned) throw new Error('environment ownership evidence changed while quiescing');
         if (oldObserved.exists && !stoppedState(oldObserved.state)) throw new Error('degraded environment did not quiesce before rebuild');
       }
 
