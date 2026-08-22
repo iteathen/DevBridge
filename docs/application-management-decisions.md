@@ -104,7 +104,7 @@ Permanent Entry
 
 A true fresh host with no retained operator authority must instead reconstruct application software and stop at guided setup until the operator re-establishes authority.
 
-Owner: dedicated whole-stack application recovery/integration issue, coordinating #159, #153, #116, and #169–#178.
+Owner: #180, coordinating #159, #153, #116, and #169–#178.
 
 ## Decision 8: no recovery layer may absorb neighboring identities
 
@@ -118,8 +118,19 @@ Strict LEGO rules apply to application management as strongly as to VM/provider 
 
 Composition owns temporary topology.
 
-## Decision 9: design references are references, not dependencies
+## Decision 9: JetBrains Toolbox is the primary application-management reference, not an implementation dependency
 
-The management experience should learn from mature launcher/manager products and transactional update systems: stable manager separate from managed application versions, side-by-side preparation, explicit activation, last-known-good recovery, and state separate from executable payloads.
+For installation/update/setup-management ergonomics and ownership separation, **JetBrains Toolbox is the primary external design reference**: a manager/entry experience distinct from managed application versions, version/channel management, side-by-side application preparation, and user state/configuration separate from replaceable application payloads.
 
-DevBridge must implement those ideas according to its own security and recovery contracts. No external product is normative authority for DevBridge behavior.
+For recovery semantics, transactional/last-known-good updater designs such as Chromium-style alternate-generation activation are the secondary reference: prepare replacement away from the active generation, switch authority explicitly, verify health, and retain a truthful known-good recovery path when possible.
+
+Consequences:
+
+- DevBridge should feel like a manager of its replaceable runtime rather than a monolithic checkout that mutates itself in place;
+- configuration and installation identity stay outside the managed runtime payload;
+- new runtime generations are prepared before activation;
+- rollback/LKG claims must be backed by exact durable evidence rather than UI convention;
+- the permanent entry remains much smaller and more stable than the managed application runtime;
+- DevBridge security, DB-009/DB-011 recovery, and LEGO contracts override any external product behavior that conflicts with them.
+
+These products are design references only. DevBridge must not depend on their software, file layouts, update services, APIs, or trust models, and no external product is normative authority for DevBridge behavior.
