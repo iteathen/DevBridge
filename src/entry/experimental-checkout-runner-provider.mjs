@@ -171,7 +171,10 @@ export class ExperimentalCheckoutRunnerProvider {
       try {
         await runChecked(this.#run, ['init', '--quiet', temporary], context, 'initialization');
         await runChecked(this.#run, ['-C', temporary, 'remote', 'add', 'origin', FIXED_REMOTE], context, 'source binding');
-        await runChecked(this.#run, ['-C', temporary, 'fetch', '--no-tags', '--depth', '1', 'origin', subject.head], context, 'exact fetch');
+        // Exact-object fetches are deliberately not shallow. Some Git servers
+        // permit reachable exact wants but reject the shallow form of the same
+        // request. The requested identity remains only the already-resolved SHA.
+        await runChecked(this.#run, ['-C', temporary, 'fetch', '--no-tags', 'origin', subject.head], context, 'exact fetch');
         await runChecked(this.#run, ['-C', temporary, 'checkout', '--detach', '--force', subject.head], context, 'exact checkout');
         await this.#verify(temporary, subject, context);
         const publication = await publishDirectory(temporary, destination);
