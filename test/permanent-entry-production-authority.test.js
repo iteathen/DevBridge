@@ -13,7 +13,7 @@ import {
 import { StableRunnerState } from '../src/entry/stable-runner-state.mjs';
 
 const { publicKey, privateKey } = generateKeyPairSync('ed25519');
-const PUBLIC_KEY = publicKey.export({ type: 'spki', format: 'pem' });
+const PUBLIC_KEY = Buffer.from(publicKey.export({ type: 'spki', format: 'pem' }), 'utf8');
 
 function release(sequence, head = String(sequence).repeat(40).slice(0, 40), sha256 = String(sequence).repeat(64).slice(0, 64)) {
   return {
