@@ -33,10 +33,8 @@ export function createEnvironmentConstructionObservation({ materialization, prep
     }
 
     const selected = requestWithGeneration(request, base.implementationGeneration);
-    const [prepared, workspace] = await Promise.all([
-      preparationPort.inspect(selected),
-      workspacePort.inspect(selected),
-    ]);
+    const prepared = await preparationPort.inspect(selected);
+    const workspace = await workspacePort.inspect(selected);
     const enrollment = ['ready', 'missing', 'stale'].includes(prepared?.enrollment) ? prepared.enrollment : 'unknown';
     const bootstrap = ['ready', 'degraded'].includes(prepared?.bootstrap) ? prepared.bootstrap : 'unknown';
     const guest = prepared?.ready === true && workspace?.ready === true ? 'healthy' : 'degraded';
