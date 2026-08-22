@@ -19,6 +19,23 @@ async function canonicalRoot(value) {
   return realpath(lexical);
 }
 
+function storageState(observation) {
+  if (observation?.storage != null && observation?.compatible === true) return 'present';
+  const reason = String(observation?.reason ?? '').toLowerCase();
+  if (reason.includes('storage lineage is incomplete')) return 'invalid';
+  if (reason.includes('storage lineage shape')
+      || reason.includes('source filesystem identity')
+      || reason.includes('writable filesystem identity')
+      || reason.includes('storage backing')
+      || reason.includes('storage inspection failed')) return 'invalid';
+  if (reason.includes('storage attachment') || observation?.storage != null) return 'present';
+  return 'unknown';
+}
+
+function observed(value) {
+  return Object.freeze({ ...value, storageState: storageState(value) });
+}
+
 export class LibvirtPersistentEnvironment {
   #options;
   #delegate = null;
@@ -47,10 +64,10 @@ export class LibvirtPersistentEnvironment {
       directory: this.#options.directory,
       sourceLocation: input?.source?.handle?.location,
     });
-    return (await this.#core()).provision(input);
+    return observed(await (await this.#core()).provision(input));
   }
-  async observe(identity) { return (await this.#core()).observe(identity); }
-  async start(identity) { return (await this.#core()).start(identity); }
-  async stop(identity, options) { return (await this.#core()).stop(identity, options); }
+  async observe(identity) { return observed(await (await this.#core()).observe(identity)); }
+  async start(identity) { return observed(await (await this.#core()).start(identity)); }
+  async stop(identity, options) { return observed(await (await this.#core()).stop(identity, options)); }
   async drop(identity) { return (await this.#core()).drop(identity); }
 }
