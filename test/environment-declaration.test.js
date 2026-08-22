@@ -17,8 +17,10 @@ function declaration(overrides = {}) {
     guest: { family: 'ubuntu', generation: '24.04.4' },
     image: { identity: 'image-ubuntu-2404-v1', generation: 'ubuntu-24.04.4-v1' },
     resources: { memoryBytes: 4 * 1024 * 1024 * 1024, processorCount: 4 },
+    boot: { requirement: 'efi-v1' },
     network: { requirement: 'managed-egress-v1' },
     bootstrap: { generation: 'tooling-v1', requirements: ['runtime-js', 'source-control'] },
+    enrollment: { requirement: 'unique-guest-trust-v1' },
     workspaces: [{ identity: 'workspace-a', authority: 'authority-123' }],
     protectedStateClasses: [],
     ...overrides,
@@ -47,6 +49,13 @@ test('logical environment identity is stable across replaceable declaration chan
 test('declaration rejects topology and implementation details outside its local contract', () => {
   assert.throws(() => normalizeEnvironmentDeclaration({ ...declaration(), diskPath: 'foreign' }), /diskPath is not allowed/u);
   assert.throws(() => normalizeEnvironmentDeclaration({ ...declaration(), guest: { ...declaration().guest, machineName: 'foreign' } }), /machineName is not allowed/u);
+});
+
+test('declaration requires boot and enrollment authority rather than implicit defaults', () => {
+  assert.throws(() => normalizeEnvironmentDeclaration({ ...declaration(), boot: undefined }), /boot must be an object/u);
+  assert.throws(() => normalizeEnvironmentDeclaration({ ...declaration(), enrollment: undefined }), /enrollment must be an object/u);
+  assert.equal(normalizeEnvironmentDeclaration(declaration()).boot.requirement, 'efi-v1');
+  assert.equal(normalizeEnvironmentDeclaration(declaration()).enrollment.requirement, 'unique-guest-trust-v1');
 });
 
 test('registry uses revision compare-and-swap for authority replacement', async () => {
