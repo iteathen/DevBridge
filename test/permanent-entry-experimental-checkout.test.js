@@ -118,12 +118,15 @@ test('provider keeps transient and accepted checkout names compact and subject-b
     assert.equal(temporaryName.includes(exact.sha256), false);
     assert.ok(temporaryName.length < 64);
 
+    // Verification canonicalizes the published directory with realpath(). On
+    // Windows that spelling may differ from the original temp-root spelling
+    // (for example 8.3 expansion), so assert the owned basename contract rather
+    // than requiring equivalent absolute paths to be byte-identical.
     const accepted = git.calls
-      .filter((entry) => entry.args[0] === '-C')
+      .filter((entry) => entry.args[0] === '-C' && entry.args[1] !== temporary)
       .map((entry) => entry.args[1])
-      .find((entry) => entry !== temporary && path.dirname(entry) === path.join(root, 'checkouts'));
+      .find((entry) => /^[0-9a-f]{64}$/u.test(path.basename(entry)));
     assert.ok(accepted);
-    assert.match(path.basename(accepted), /^[0-9a-f]{64}$/u);
     assert.equal(path.basename(accepted).includes(exact.head), false);
     assert.equal(path.basename(accepted).includes(exact.sha256), false);
   } finally {
