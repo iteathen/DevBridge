@@ -60,7 +60,7 @@ export function parsePermanentEntryArgs(argv) {
   });
 }
 
-function normalizeSubject(input) {
+export function normalizeRunnerSubject(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail('runner subject is missing');
   if (input.protocol !== RUNNER_SUBJECT_PROTOCOL) fail('runner subject protocol is unsupported');
   const head = String(input.head ?? '').toLowerCase();
@@ -83,7 +83,7 @@ function normalizeSubject(input) {
   });
 }
 
-function sameSubject(left, right) {
+export function sameRunnerSubject(left, right) {
   return left.protocol === right.protocol &&
     left.head === right.head &&
     left.sha256 === right.sha256 &&
@@ -96,18 +96,39 @@ function requirePort(value, name, method) {
   if (!value || typeof value[method] !== 'function') throw new TypeError(`${name}.${method} must be a function`);
 }
 
+async function prepareExact(subject, runnerProvider) {
+  const prepared = await runnerProvider.prepare(subject);
+  if (!prepared || typeof prepared !== 'object' || typeof prepared.launch !== 'function') {
+    fail('runner provider did not return a launchable verified subject');
+  }
+  const preparedSubject = normalizeRunnerSubject(prepared.subject);
+  if (!sameRunnerSubject(subject, preparedSubject)) fail('prepared runner subject changed after exact resolution');
+  return { prepared, preparedSubject };
+}
+
 export async function runPermanentEntry(argv, { subjectAuthority, runnerProvider } = {}) {
   requirePort(subjectAuthority, 'subjectAuthority', 'resolve');
   requirePort(runnerProvider, 'runnerProvider', 'prepare');
 
   const request = parsePermanentEntryArgs(argv);
-  const subject = normalizeSubject(await subjectAuthority.resolve(request.selector));
-  const prepared = await runnerProvider.prepare(subject);
-  if (!prepared || typeof prepared !== 'object' || typeof prepared.launch !== 'function') {
-    fail('runner provider did not return a launchable verified subject');
-  }
-  const preparedSubject = normalizeSubject(prepared.subject);
-  if (!sameSubject(subject, preparedSubject)) fail('prepared runner subject changed after exact resolution');
+  let subject = normalizeRunnerSubject(await subjectAuthority.resolve(request.selector));
+  let preparedResult;
 
-  return prepared.launch([...request.argv]);
+  try {
+    preparedResult = await prepareExact(subject, runnerProvider);
+  } catch (error) {
+    if (typeof subjectAuthority.recover !== 'function') throw error;
+    const recovered = await subjectAuthority.recover(subject, error);
+    if (recovered == null) throw error;
+    const fallback = normalizeRunnerSubject(recovered);
+    if (sameRunnerSubject(subject, fallback)) fail('runner recovery returned the failed subject again');
+    subject = fallback;
+    preparedResult = await prepareExact(subject, runnerProvider);
+  }
+
+  if (typeof subjectAuthority.accept === 'function') {
+    await subjectAuthority.accept(preparedResult.preparedSubject, request.selector);
+  }
+
+  return preparedResult.prepared.launch([...request.argv]);
 }
