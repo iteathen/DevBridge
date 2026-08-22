@@ -84,7 +84,7 @@ function defaultLaunch(entry, argv, { cwd, env }) {
   return result.status ?? 1;
 }
 
-function baseEnvironment(home) {
+function gitEnvironment(home) {
   const names = process.platform === 'win32'
     ? ['PATH', 'Path', 'SystemRoot', 'WINDIR', 'PATHEXT', 'TEMP', 'TMP', 'ComSpec', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)']
     : ['PATH', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'];
@@ -137,7 +137,7 @@ export class ExperimentalCheckoutRunnerProvider {
     const home = await requireRealDirectory(path.join(root, 'control-home'), 'experimental checkout control home', { create: true });
     const gitconfig = path.join(home, 'gitconfig');
     if (!(await exists(gitconfig))) await writeFile(gitconfig, '', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    return { cwd: root, env: baseEnvironment(home) };
+    return { cwd: root, env: gitEnvironment(home) };
   }
 
   async #verify(directory, subject, context) {
@@ -182,14 +182,14 @@ export class ExperimentalCheckoutRunnerProvider {
       }
     }
 
-    const verified = await this.#verify(destination, subject, context);
+    await this.#verify(destination, subject, context);
     const provider = this;
     return Object.freeze({
       subject,
       async launch(argv) {
         if (!Array.isArray(argv) || argv.some((entry) => typeof entry !== 'string')) fail('experimental checkout launch argv must be an array of strings');
         const current = await provider.#verify(destination, subject, context);
-        return provider.#launch(current.entry, [...argv], { cwd: current.root, env: context.env });
+        return provider.#launch(current.entry, [...argv], { cwd: current.root, env: { ...process.env } });
       },
     });
   }
