@@ -233,6 +233,16 @@ function resultState(record) {
   catch { return { state: 'indeterminate', result: null, reason: 'bridge operation monitor is no longer observable' }; }
 }
 
+async function observedState(request, target, record) {
+  const initial = resultState(record);
+  if (initial.state !== 'indeterminate' || initial.reason !== 'bridge operation monitor is no longer observable') return initial;
+  const refreshed = await loadOperation(request);
+  if (!refreshed) return initial;
+  validateOperationRecord(refreshed, request, target);
+  if (refreshed.state !== 'completed' && refreshed.state !== 'failed') return initial;
+  return resultState(refreshed);
+}
+
 async function terminateTree(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return;
   if (process.platform === 'win32') {
@@ -495,7 +505,7 @@ async function observe(frame) {
   const record = await loadOperation(frame.request);
   if (!record) return { state: 'absent', result: null, reason: null };
   validateOperationRecord(record, frame.request, frame.target);
-  return resultState(record);
+  return observedState(frame.request, frame.target, record);
 }
 
 async function cancel(frame) {
