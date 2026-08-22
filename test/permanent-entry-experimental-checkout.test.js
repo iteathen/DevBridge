@@ -98,7 +98,7 @@ test('provider fetches only the exact head from the fixed source and launches th
   }
 });
 
-test('provider keeps transient checkout names short and independent of exact subject length', async () => {
+test('provider keeps transient and accepted checkout names compact and subject-bound', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-entry-checkout-path-budget-'));
   try {
     const head = '1'.repeat(40);
@@ -110,6 +110,7 @@ test('provider keeps transient checkout names short and independent of exact sub
     await provider.prepare(exact);
 
     const init = git.calls.find((entry) => entry.args[0] === 'init');
+    assert.ok(init);
     const temporary = init.args[2];
     const temporaryName = path.basename(temporary);
     assert.match(temporaryName, /^\.prepare-[0-9a-f-]{36}\.tmp$/u);
@@ -117,12 +118,14 @@ test('provider keeps transient checkout names short and independent of exact sub
     assert.equal(temporaryName.includes(exact.sha256), false);
     assert.ok(temporaryName.length < 64);
 
-    const checkoutDirectories = git.calls
+    const accepted = git.calls
       .filter((entry) => entry.args[0] === '-C')
       .map((entry) => entry.args[1])
-      .filter((entry) => entry !== temporary);
-    const published = checkoutDirectories.find((entry) => path.dirname(entry) === path.join(root, 'checkouts'));
-    if (published) assert.match(path.basename(published), /^[0-9a-f]{64}$/u);
+      .find((entry) => entry !== temporary && path.dirname(entry) === path.join(root, 'checkouts'));
+    assert.ok(accepted);
+    assert.match(path.basename(accepted), /^[0-9a-f]{64}$/u);
+    assert.equal(path.basename(accepted).includes(exact.head), false);
+    assert.equal(path.basename(accepted).includes(exact.sha256), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
