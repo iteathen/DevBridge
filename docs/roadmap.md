@@ -245,6 +245,6 @@ Current active target documents are:
 - `docs/setup.md`;
 - `docs/vm-migration.md`;
 - this roadmap;
-- active issues #103, #107, #115, #116, #117, #138, #159, #162, #169–#182, and #186.
+- active issues #103, #107, #115, #116, #117, #138, #153, #159, #162, #169–#178, #180, #182, and #186.
 
 Historical Stage 3 ownership language, old sandbox work, handoffs, tests, and PRs remain evidence but are non-normative where they conflict with the execution-profile correction or recovery-first sequencing.
