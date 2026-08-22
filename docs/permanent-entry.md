@@ -1,6 +1,6 @@
 # Permanent entry architecture
 
-Status: architecture plus experimental selection/handoff slices are implemented on #159; the installed entry path is not cut over yet.
+Status: architecture plus experimental selection/handoff and the candidate installed-router seam are implemented on #159; the installed entry path is not cut over yet.
 
 The target entry path is:
 
@@ -14,7 +14,7 @@ This is intentionally different from continuously expanding the host-installed `
 local selector -> exact verified runner subject -> verified prepared runner -> argv handoff
 ```
 
-Current `devbridge.mjs` remains the installed authority until stable release authority, accepted-runner state, installed composition/cutover, and Windows/Linux qualification are complete.
+Current `devbridge.mjs` remains the installed authority until stable release authority, accepted-runner state, installed packaging/cutover, and Windows/Linux qualification are complete.
 
 ## Ownership boundaries
 
@@ -128,6 +128,23 @@ experimental-entry --ref <development-ref> run-once --config <local-config> ...
 
 The ref is local selection input only. The selected runner receives no mutable ref name; it runs from the exact verified commit.
 
+### Candidate permanent installed router
+
+`devbridge-entry.mjs` is the candidate host-installed routing seam. It is present for qualification but is **not yet the installed DevBridge entrypoint**.
+
+Its most important invariant is that explicit recovery selection does not depend on the evolving Stage-0 module. The file has static imports only from Node built-ins. It never statically imports `devbridge.mjs` or Stage-0 helpers.
+
+Routing is intentionally asymmetric during transition:
+
+- with no `--ref` / `--branch`, it lazily imports the existing `devbridge.mjs` and delegates to `bootstrapStage0`, preserving the current stable/default behavior until stable subject authority is ready;
+- with an explicit `--ref` / `--branch`, it does **not** load Stage 0 at all. It lazily imports the permanent experimental-entry bundle directly and lets that bundle resolve, verify, prepare, and launch the selected exact control-plane tree.
+
+This means an incompatible or syntactically broken future Stage-0 module can break only the legacy default route during the transition; it cannot prevent the explicit recovery route from selecting another exact DevBridge control plane. A regression test simulates a broken default Stage-0 loader and requires the selected route to complete without touching it.
+
+A source-level architecture guard also requires the permanent router's static imports to remain Node built-ins only. Reintroducing a static `./devbridge.mjs` import is therefore a test failure.
+
+The router and its `src/entry/*` support modules must eventually be packaged as one frozen installed entry component. Merely adding these files to the repository does not constitute cutover. Once signed stable authority and accepted-state/LKG handling exist, the default route can stop lazily delegating to legacy Stage 0 and use the same permanent subject/provider boundary as stable production selection.
+
 ## Selector semantics
 
 The core parser preserves current downstream CLI behavior:
@@ -141,6 +158,8 @@ The core parser preserves current downstream CLI behavior:
 Only one entry selector is accepted. Conflicting selectors fail closed.
 
 The explicit experimental composition is stricter than the core: it refuses the default/stable path and requires `--ref`/`--branch` because stable trust is not implemented there.
+
+The candidate installed router recognizes only `--ref` and `--branch` as the transition recovery route. It does not reinterpret existing `--channel` values as permission to bypass the legacy stable/default path.
 
 ## Exact runner subject
 
@@ -181,7 +200,11 @@ The entry path fails closed when:
 - the checkout is dirty or its entry/artifact shape is unsafe;
 - checkout publication cannot be completed/reverified;
 - prepared subject identity changes after exact resolution;
+- the selected permanent entry module is unavailable when explicit recovery was requested;
+- the legacy default entry is unavailable when the default transition route was requested;
 - stable refresh is ambiguous and no policy-authorized stable LKG exists.
+
+Failure of the default transition route must not force the selected recovery route to import or execute the broken default module.
 
 A failed future stable refresh must not erase a previously verified stable LKG.
 
@@ -195,9 +218,9 @@ fix/157-controller-owned-fixture
 
 Former PR #164 is closed without merge. That machinery must not be moved onto stable `main` merely to run the canary.
 
-#159 now contains the generic development mechanism needed to select that temporary DevBridge control-plane branch: explicit ref -> exact subject -> exact checkout -> verified full-tree `src/cli.js` handoff.
+#159 now contains the generic development mechanism needed to select that temporary DevBridge control-plane branch: explicit ref -> exact subject -> exact checkout -> verified full-tree `src/cli.js` handoff. It also contains a candidate installed router whose selected route is independent of the evolving Stage-0 module.
 
-What remains is deployment authority, not a legacy architecture gap. The currently installed stable entry does not yet contain/call this permanent-entry composition, so the physical poller cannot automatically switch itself to the temp branch. After the installed-entry boundary is qualified, #157 can select the temp branch explicitly and resume its controller-owned offline fixture canary without adding legacy support to stable composition.
+The remaining blocker is deployment/qualification, not legacy architecture. The physical installation still starts through the current stable entry and has not been cut over to the frozen permanent-entry bundle. Once that installation boundary is qualified, #157 can select its temp branch explicitly and resume the controller-owned offline fixture canary without adding legacy support to stable composition.
 
 ## Adoption sequence
 
@@ -207,13 +230,14 @@ Work should continue by ownership boundary:
 2. **Implemented:** fixed-source experimental ref -> exact commit resolution and artifact SHA-256 subject creation.
 3. **Implemented:** verified content-addressed standalone runner objects.
 4. **Implemented:** development-only exact Git checkout and full selected control-plane handoff.
-5. **Implemented but not installed:** explicit experimental entry composition.
-6. Implement signed stable subject authority and immutable release evidence.
-7. Implement atomic stable/ref accepted-subject state with stable LKG fallback and experimental-state isolation.
-8. Add bounded status projection showing installation tag plus exact selected runner subject.
-9. Build/qualify the deliberately small installed host entry and migrate installation to it.
-10. Qualify stable, exact-ref, moving-ref, corruption, signature/digest failure, offline/cache fallback, interruption recovery, protocol incompatibility, and #157 temp-runner selection on Windows and Linux.
-11. Only then retire the evolving current Stage-0 installation role and update installation/update documentation.
+5. **Implemented:** explicit experimental entry composition.
+6. **Implemented, not installed:** Stage-0-independent explicit recovery routing with lazy legacy default delegation.
+7. Implement signed stable subject authority and immutable release evidence.
+8. Implement atomic stable/ref accepted-subject state with stable LKG fallback and experimental-state isolation.
+9. Add bounded status projection showing installation tag plus exact selected runner subject.
+10. Package the deliberately small permanent entry bundle, change installation to that frozen component, and retain a bounded rollback path.
+11. Qualify stable/default compatibility, exact-ref, moving-ref, broken-default recovery, corruption, signature/digest failure, offline/cache fallback, interruption recovery, protocol incompatibility, and #157 temp-runner selection on Windows and Linux.
+12. Only then retire the evolving current Stage-0 installation role and update installation/update documentation as authoritative behavior.
 
 No step may reintroduce repository-code/model-controlled host execution or allow remote task content to choose runner source, selector, signing policy, cache authority, or verification mode.
 
