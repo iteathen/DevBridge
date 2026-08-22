@@ -216,9 +216,7 @@ function inputMaterializeAdapter(inputRegistry) {
       const params = objectParams(raw, 'input.materialize');
       onlyKeys(params, new Set(['source']), 'input.materialize');
       const source = safeId(params.source, 'input.materialize source');
-      if (!inputRegistry || typeof inputRegistry.has !== 'function' || !inputRegistry.has(source)) {
-        throw new PolicyError(`input.materialize source ${source} is not locally registered`);
-      }
+      if (!inputRegistry.has(source)) throw new PolicyError(`input.materialize source ${source} is not locally registered`);
       return { source };
     },
     async execute(params, { projectDir, scratch }) {
@@ -325,12 +323,13 @@ function ctestAdapter() {
 
 export function createCoreOperationRegistry({ toolchainRegistry = null, inputRegistry = null } = {}) {
   const toolchains = toolchainRegistry ?? createCoreToolchainRegistry();
-  return new DeterministicOperationRegistry()
+  const registry = new DeterministicOperationRegistry()
     .register('node.syntax-check', nodeScriptAdapter({ mode: 'node.syntax-check' }))
     .register('node.test', nodeScriptAdapter({ mode: 'node.test' }))
     .register('toolchain.probe', toolchainProbeAdapter(toolchains))
-    .register('input.materialize', inputMaterializeAdapter(inputRegistry))
     .register('cmake.configure', cmakeConfigureAdapter())
     .register('cmake.build', cmakeBuildAdapter())
     .register('ctest.run', ctestAdapter());
+  if (inputRegistry != null) registry.register('input.materialize', inputMaterializeAdapter(inputRegistry));
+  return registry;
 }
