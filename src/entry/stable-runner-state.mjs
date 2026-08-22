@@ -1,13 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, readFile, realpath, rename, rm } from 'node:fs/promises';
+import { link, lstat, mkdir, open, readFile, readdir, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { normalizeRunnerSubject, sameRunnerSubject } from './permanent-entry.mjs';
 
 export const STABLE_RUNNER_STATE_PROTOCOL = 'devbridge/entry-stable-state-v1';
 
 const MAX_STATE_BYTES = 32 * 1024;
+const MAX_REVISIONS = 100_000;
 const DIGEST = /^[0-9a-f]{64}$/u;
 const KEY_ID = /^[A-Za-z0-9_.:-]+$/u;
+const REVISION_FILE = /^(\d{12})\.json$/u;
+const TEMP_FILE = /^\.stable-state\.[0-9a-f-]{36}\.tmp$/iu;
 
 function fail(message) { throw new Error(message); }
 
@@ -53,7 +56,9 @@ function normalizeState(input) {
   const allowed = new Set(['protocol', 'revision', 'current', 'previous']);
   for (const key of Object.keys(input)) if (!allowed.has(key)) fail(`stable runner state.${key} is unsupported`);
   if (input.protocol !== STABLE_RUNNER_STATE_PROTOCOL) fail('stable runner state protocol is unsupported');
-  if (!Number.isSafeInteger(input.revision) || input.revision < 1) fail('stable runner state revision is invalid');
+  if (!Number.isSafeInteger(input.revision) || input.revision < 1 || input.revision > MAX_REVISIONS) {
+    fail('stable runner state revision is invalid');
+  }
   return Object.freeze({
     protocol: STABLE_RUNNER_STATE_PROTOCOL,
     revision: input.revision,
@@ -72,22 +77,20 @@ function sameRecord(left, right) {
     left.acceptedAt === right.acceptedAt;
 }
 
-function sameState(left, right) {
-  return left.protocol === right.protocol && left.revision === right.revision &&
-    sameRecord(left.current, right.current) && sameRecord(left.previous, right.previous);
-}
-
-async function ensureRealDirectory(directory) {
+async function ensureRealDirectory(directory, name = 'stable runner state directory') {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const info = await lstat(directory);
-  if (!info.isDirectory() || info.isSymbolicLink()) fail('stable runner state root must be a real directory');
+  if (!info.isDirectory() || info.isSymbolicLink()) fail(`${name} must be a real directory`);
   return realpath(directory);
 }
 
-async function readStateFile(file) {
-  let info;
-  try { info = await lstat(file); }
-  catch (error) { if (error?.code === 'ENOENT') return null; throw error; }
+function revisionName(revision) {
+  if (!Number.isSafeInteger(revision) || revision < 1 || revision > MAX_REVISIONS) fail('stable runner revision is out of range');
+  return `${String(revision).padStart(12, '0')}.json`;
+}
+
+async function readStateFile(file, expectedRevision) {
+  const info = await lstat(file);
   if (!info.isFile() || info.isSymbolicLink() || info.size < 1 || info.size > MAX_STATE_BYTES) {
     fail('stable runner state file is invalid');
   }
@@ -96,7 +99,43 @@ async function readStateFile(file) {
   let parsed;
   try { parsed = JSON.parse(bytes.toString('utf8')); }
   catch { fail('stable runner state is not valid JSON'); }
-  return normalizeState(parsed);
+  const state = normalizeState(parsed);
+  if (state.revision !== expectedRevision) fail('stable runner state revision does not match its immutable journal identity');
+  return state;
+}
+
+async function readJournal(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const revisions = [];
+  for (const entry of entries) {
+    if (entry.isFile() && TEMP_FILE.test(entry.name)) continue;
+    const matched = entry.isFile() ? entry.name.match(REVISION_FILE) : null;
+    if (!matched) fail(`stable runner state contains an unsupported entry: ${entry.name}`);
+    const revision = Number.parseInt(matched[1], 10);
+    if (!Number.isSafeInteger(revision) || revision < 1 || revision > MAX_REVISIONS) fail('stable runner journal revision is invalid');
+    revisions.push(revision);
+  }
+  revisions.sort((left, right) => left - right);
+  for (let index = 0; index < revisions.length; index += 1) {
+    if (revisions[index] !== index + 1) fail('stable runner state journal has a missing or duplicate revision');
+  }
+  if (revisions.length === 0) return null;
+  const revision = revisions.at(-1);
+  return readStateFile(path.join(directory, revisionName(revision)), revision);
+}
+
+function sameAuthority(left, right) {
+  return sameRunnerSubject(left.subject, right.subject) &&
+    left.mode === right.mode && left.sequence === right.sequence &&
+    left.manifestSha256 === right.manifestSha256 && left.keyId === right.keyId;
+}
+
+function enforceProductionSequence(before, record) {
+  if (record.mode !== 'production' || before?.current?.mode !== 'production') return;
+  if (record.sequence < before.current.sequence) fail('stable production runner manifest sequence would roll back accepted authority');
+  if (record.sequence === before.current.sequence && !sameAuthority(before.current, record)) {
+    fail('stable production runner manifest sequence conflicts with accepted authority');
+  }
 }
 
 export class StableRunnerState {
@@ -109,52 +148,80 @@ export class StableRunnerState {
     this.#root = path.resolve(stateRoot);
   }
 
+  async #journal() {
+    const root = await ensureRealDirectory(this.#root, 'stable runner state root');
+    return ensureRealDirectory(path.join(root, 'stable'), 'stable runner journal');
+  }
+
   async read() {
-    const root = await ensureRealDirectory(this.#root);
-    return readStateFile(path.join(root, 'stable-state.json'));
+    return readJournal(await this.#journal());
   }
 
   async accept(input) {
     const record = normalizeRecord(input);
-    const root = await ensureRealDirectory(this.#root);
-    const file = path.join(root, 'stable-state.json');
-    const before = await readStateFile(file);
-    if (before && sameRunnerSubject(before.current.subject, record.subject) &&
-        before.current.mode === record.mode && before.current.sequence === record.sequence &&
-        before.current.manifestSha256 === record.manifestSha256 && before.current.keyId === record.keyId) {
-      return before;
-    }
+    const directory = await this.#journal();
 
-    const next = normalizeState({
-      protocol: STABLE_RUNNER_STATE_PROTOCOL,
-      revision: (before?.revision ?? 0) + 1,
-      current: record,
-      previous: before?.current ?? null,
-    });
-    const temporary = path.join(root, `.stable-state.${randomUUID()}.tmp`);
-    let handle = null;
-    try {
-      handle = await open(temporary, 'wx', 0o600);
-      await handle.writeFile(`${JSON.stringify(next)}\n`, 'utf8');
-      await handle.sync();
-      await handle.close();
-      handle = null;
-      await rename(temporary, file);
-      const observed = await readStateFile(file);
-      if (!observed || !sameState(next, observed)) fail('stable runner state publication became ambiguous');
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const before = await readJournal(directory);
+      if (before && sameAuthority(before.current, record)) return before;
+      enforceProductionSequence(before, record);
+      const revision = (before?.revision ?? 0) + 1;
+      if (revision > MAX_REVISIONS) fail('stable runner state journal reached its bounded revision limit');
+      const next = normalizeState({
+        protocol: STABLE_RUNNER_STATE_PROTOCOL,
+        revision,
+        current: record,
+        previous: before?.current ?? null,
+      });
+      const temporary = path.join(directory, `.stable-state.${randomUUID()}.tmp`);
+      const target = path.join(directory, revisionName(revision));
+      let handle = null;
+      try {
+        handle = await open(temporary, 'wx', 0o600);
+        await handle.writeFile(`${JSON.stringify(next)}\n`, 'utf8');
+        await handle.sync();
+        await handle.close();
+        handle = null;
+        try {
+          await link(temporary, target);
+        } catch (error) {
+          if (error?.code === 'EEXIST') continue;
+          throw error;
+        }
+      } finally {
+        if (handle) { try { await handle.close(); } catch {} }
+        await rm(temporary, { force: true }).catch(() => {});
+      }
+
+      const observed = await readJournal(directory);
+      if (!observed || observed.revision < revision) fail('stable runner state publication became indeterminate');
+      if (!sameAuthority(observed.current, record)) {
+        fail('stable runner acceptance was superseded concurrently; refusing to launch stale authority');
+      }
       return observed;
-    } finally {
-      if (handle) { try { await handle.close(); } catch {} }
-      await rm(temporary, { force: true }).catch(() => {});
     }
+    fail('stable runner state changed continuously during bounded acceptance');
   }
 
-  async fallback(failedSubject) {
-    const failed = normalizeRunnerSubject(failedSubject);
+  async preferred(mode) {
+    if (!['development', 'production'].includes(mode)) throw new TypeError('stable runner preferred mode is invalid');
     const state = await this.read();
     if (!state) return null;
-    if (!sameRunnerSubject(state.current.subject, failed)) return state.current.subject;
-    return state.previous?.subject ?? null;
+    if (state.current.mode === mode) return state.current.subject;
+    if (state.previous?.mode === mode) return state.previous.subject;
+    return null;
+  }
+
+  async fallback(failedSubject, mode = null) {
+    const failed = normalizeRunnerSubject(failedSubject);
+    if (mode != null && !['development', 'production'].includes(mode)) throw new TypeError('stable runner fallback mode is invalid');
+    const state = await this.read();
+    if (!state) return null;
+    for (const record of [state.current, state.previous]) {
+      if (!record || (mode != null && record.mode !== mode)) continue;
+      if (!sameRunnerSubject(record.subject, failed)) return record.subject;
+    }
+    return null;
   }
 
   async status() {
