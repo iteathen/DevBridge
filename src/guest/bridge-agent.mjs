@@ -24,7 +24,7 @@ const MAX_CHUNK_BYTES = 16 * 1024;
 const MAX_OUTPUT_BYTES = 3 * 1024 * 1024;
 const MAX_STDIN_BYTES = 16 * 1024;
 const MAX_TIMEOUT_MS = 28_800_000;
-const SELF = fileURLToPath(new URL(import.meta.url));
+const SELF = fileURLToPath(import.meta.url);
 
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
@@ -396,9 +396,10 @@ async function runOperation(request, token) {
   }
 
   let inputFailure = null;
+  let settleInput;
   const inputCompletion = new Promise((resolve) => {
     let inputSettled = false;
-    const settleInput = (error = null) => {
+    settleInput = (error = null) => {
       if (inputSettled) return;
       inputSettled = true;
       inputFailure = body.input == null ? null : error;
@@ -406,7 +407,6 @@ async function runOperation(request, token) {
     };
     child.stdin.once('error', (error) => settleInput(error));
     child.stdin.once('close', () => settleInput(body.input == null ? null : new Error('bridge operation input closed before delivery')));
-    child.stdin.end(body.input ?? undefined, () => settleInput(null));
   });
 
   record.state = 'running';
@@ -473,6 +473,7 @@ async function runOperation(request, token) {
     child.once('close', (code, signal) => void finish(code, signal));
   });
 
+  child.stdin.end(body.input ?? undefined, () => settleInput(null));
   await completion;
 }
 
