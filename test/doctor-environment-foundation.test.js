@@ -45,3 +45,21 @@ test('doctor reports environment foundation separately while repository executio
     assert.equal(result.capabilities.core.controllerPlans.operations.find((entry) => entry.name === 'node.test').usable, false);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('doctor projects bounded environment diagnoses without invoking mutation', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-doctor-diagnosis-'));
+  try {
+    let reads = 0;
+    const projected = [{
+      protocol: 'devbridge/environment-diagnosis-v1', environmentIdentity: 'environment-a', declarationRevision: 1,
+      state: 'degraded', cause: 'system-storage-missing', repairableInPlace: false, supportedNextAction: 'rebuild',
+      explanation: 'Guest system storage is missing.', impact: { destructive: true, preserves: ['logical-environment'], unavailable: ['guest-mutable-state'], reseedable: ['workspace-source'] },
+    }];
+    const result = await doctor(configFor(root), {
+      checkGit: false, checkGitHubAuth: false, probeCoreCapabilities: false, probeEnvironmentFoundation: false, env: {},
+      environmentDiagnosis: { async list() { reads += 1; return projected; } },
+    });
+    assert.equal(reads, 1);
+    assert.deepEqual(result.capabilities.environmentDiagnostics, projected);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
