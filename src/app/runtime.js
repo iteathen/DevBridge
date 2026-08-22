@@ -22,12 +22,13 @@ import { ToolOnboarding } from '../runtime/tool-onboarding.js';
 import { canonicalExternalDirectory } from '../runtime/external-directory.js';
 import { connectToolOnboarding } from './tool-onboarding-composition.js';
 import { composeWorkRunner } from './work-runner-composition.js';
+import { composeControllerInputs } from './controller-input-composition.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
 import { ToolInventoryService } from '../runtime/tool-inventory.js';
 import { DeterministicFaultInjector } from '../runtime/fault-injector.js';
 import { builtInToolProfiles } from '../runtime/builtin-tool-profiles.js';
 import { ControllerPlanExecutor } from '../run/controller-plan-executor.js';
-import { LeaseExecutionContext } from '../run/lease-execution-context.js';
+import { LeaseExecutionContext, guardActiveTaskLease } from '../run/lease-execution-context.js';
 import { LivenessProjectingPlanExecutor } from '../run/liveness-projecting-plan-executor.js';
 import { RunCoordinator } from '../run/run-coordinator.js';
 import { TaskLeaseManager } from '../run/task-lease-manager.js';
@@ -206,7 +207,8 @@ export async function createRuntime(config, {
     : scopedDeterministicProcessRunner;
 
   const toolchainRegistry = createCoreToolchainRegistry({ env });
-  const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
+  const controllerInputRegistry = composeControllerInputs({ gitClient, effectGuard: guardActiveTaskLease });
+  const operationRegistry = createCoreOperationRegistry({ toolchainRegistry, inputRegistry: controllerInputRegistry });
   const onboardingConfig = config.execution.toolOnboarding ?? {
     enabled: false,
     manifestDirectory: null,
@@ -313,6 +315,7 @@ export async function createRuntime(config, {
     repositoryExecution,
     faultInjector,
     toolchainRegistry,
+    controllerInputRegistry,
     operationRegistry,
     controllerPlanExecutor,
     baseCoordinator,

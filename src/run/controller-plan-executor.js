@@ -6,6 +6,8 @@ import { isWithin } from '../security/workspace-policy.js';
 import { ManagedScratchTransaction } from '../runtime/managed-scratch.js';
 import { guardActiveTaskLease } from './lease-execution-context.js';
 
+const ASSERTION_MARKER_DIAGNOSTIC_CHARACTERS = 160;
+
 async function exists(candidate) {
   try { await lstat(candidate); return true; }
   catch (error) { if (error?.code === 'ENOENT') return false; throw error; }
@@ -80,6 +82,13 @@ function primitiveAtPath(value, dotted) {
     current = current[segment];
   }
   return { found: true, value: current };
+}
+
+function assertionMarkerDiagnostic(value) {
+  const characters = [...String(value)];
+  const truncated = characters.length > ASSERTION_MARKER_DIAGNOSTIC_CHARACTERS;
+  const bounded = characters.slice(0, ASSERTION_MARKER_DIAGNOSTIC_CHARACTERS).join('');
+  return `${JSON.stringify(bounded)}${truncated ? ' (truncated)' : ''}`;
 }
 
 export class ControllerPlanExecutor {
@@ -228,9 +237,9 @@ export class ControllerPlanExecutor {
     if (assertion.kind === 'exit-equals' && result.exitCode !== assertion.value) fail(`${assertion.operation} exit ${result.exitCode} != ${assertion.value}`);
     if (assertion.kind === 'exit-not-equals' && result.exitCode === assertion.value) fail(`${assertion.operation} exit unexpectedly equals ${assertion.value}`);
     if (assertion.kind === 'stdout-equals' && result.stdout !== assertion.value) fail(`${assertion.operation} stdout differs`);
-    if (assertion.kind === 'stdout-contains' && !result.stdout.includes(assertion.value)) fail(`${assertion.operation} stdout missing marker`);
+    if (assertion.kind === 'stdout-contains' && !result.stdout.includes(assertion.value)) fail(`${assertion.operation} stdout missing marker ${assertionMarkerDiagnostic(assertion.value)}`);
     if (assertion.kind === 'stderr-equals' && result.stderr !== assertion.value) fail(`${assertion.operation} stderr differs`);
-    if (assertion.kind === 'stderr-contains' && !result.stderr.includes(assertion.value)) fail(`${assertion.operation} stderr missing marker`);
+    if (assertion.kind === 'stderr-contains' && !result.stderr.includes(assertion.value)) fail(`${assertion.operation} stderr missing marker ${assertionMarkerDiagnostic(assertion.value)}`);
     if (assertion.kind === 'outputs-equal') {
       const left = results.get(assertion.leftOperation);
       const right = results.get(assertion.rightOperation);

@@ -18,6 +18,15 @@ function pause(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitUntil(predicate, { timeoutMs = 3000, pollMs = 10 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await pause(Math.min(pollMs, Math.max(1, deadline - Date.now())));
+  }
+  throw new Error('timed out waiting for daemon lock condition');
+}
+
 const inactiveStatus = {
   activeLock: false,
   stopRequested: false,
@@ -67,10 +76,7 @@ test('stopDaemon waits for the lock owner to release instead of deleting its loc
   const release = await acquireDaemonLock(file);
 
   const stopping = stopDaemon(file, { timeoutMs: 2000, pollMs: 10 });
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if ((await daemonStatus(file)).stopRequested) break;
-    await pause(5);
-  }
+  await waitUntil(async () => (await daemonStatus(file)).stopRequested, { timeoutMs: 2500, pollMs: 10 });
   assert.equal((await daemonStatus(file)).stopRequested, true);
 
   assert.equal(await consumeDaemonStopRequest(file, release.record), true);

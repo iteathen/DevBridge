@@ -419,7 +419,10 @@ export async function resumeDaemon(filePath, { timeoutMs = 15000, pollMs = 100 }
     const acknowledgement = await readPausedAcknowledgement(filePath, lock.token);
     const currentRequest = await readPauseRequest(filePath, lock.token);
     if (!acknowledgement && !currentRequest) {
-      return { activeLock: true, pid: lock.pid, resumed: true, pauseRequested: false, paused: false };
+      const confirmed = await readDaemonLock(filePath);
+      if (!confirmed) return { activeLock: false, resumed: true, pauseRequested: false, paused: false };
+      if (confirmed.token !== lock.token) throw new PolicyError('daemon lock ownership changed while confirming resume');
+      return { activeLock: true, pid: confirmed.pid, resumed: true, pauseRequested: false, paused: false };
     }
     await pause(Math.min(pollMs, Math.max(1, deadline - Date.now())));
   }

@@ -1,5 +1,5 @@
 const STATIC_INSPECTION = new Set(['node.syntax-check']);
-const CONTROL_PROCESS = new Set(['toolchain.probe']);
+const CONTROL_PROCESS = new Set(['toolchain.probe', 'input.materialize']);
 const KNOWN_REPOSITORY_CODE = new Set(['node.test', 'cmake.configure', 'cmake.build', 'ctest.run']);
 
 export function deterministicOperationSecurity(operation) {
