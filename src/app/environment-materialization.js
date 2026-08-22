@@ -5,6 +5,11 @@ function assertState(value) {
   if (!value || methods.some((name) => typeof value[name] !== 'function')) throw new TypeError('environment materialization state contract is incomplete');
   return value;
 }
+function assertRebuildState(value) {
+  const methods = ['listEnvironments', 'rebuildEnvironment'];
+  if (!value || methods.some((name) => typeof value[name] !== 'function')) throw new TypeError('environment rebuild materialization state contract is incomplete');
+  return value;
+}
 function assertResolver(value, name) {
   if (!value || typeof value.resolve !== 'function') throw new TypeError(`environment materialization ${name} contract is incomplete`);
   return value;
@@ -16,6 +21,14 @@ function requireRequest(value) {
 function implementation(record) {
   if (!record || typeof record.identity !== 'string' || !/^env-[a-f0-9]{32}$/u.test(record.identity)) throw new Error('environment materialization returned an invalid implementation generation');
   return record.identity;
+}
+
+function systemStorage(raw, storageMatches) {
+  if (raw?.storageState === 'absent') return 'absent';
+  if (raw?.storageState === 'invalid') return 'invalid';
+  if (raw?.storageState === 'present') return storageMatches ? 'present' : 'invalid';
+  if (raw?.storage != null) return storageMatches && raw.compatible === true ? 'present' : 'invalid';
+  return 'unknown';
 }
 
 export function createEnvironmentMaterialization({ state, subject, settings } = {}) {
@@ -82,8 +95,8 @@ export function createEnvironmentMaterialization({ state, subject, settings } = 
       });
     }
     const storageMatches = raw.storage?.sourceIdentity === input.declaration.image.identity;
-    const storageState = raw.compatible === true && storageMatches ? 'present' : raw.storage != null ? 'invalid' : 'unknown';
-    const attachment = raw.compatible === true && storageMatches ? 'ready' : 'invalid';
+    const storageState = systemStorage(raw, storageMatches);
+    const attachment = storageState === 'present' && raw.compatible === true ? 'ready' : raw.exists === true ? 'invalid' : 'unknown';
     return normalizeEnvironmentObservation({
       protocol: ENVIRONMENT_OBSERVATION_PROTOCOL,
       environmentIdentity: input.environmentIdentity,
@@ -117,6 +130,42 @@ export function createEnvironmentMaterialization({ state, subject, settings } = 
       });
       const generation = implementation(result?.record);
       return Object.freeze({ ready: result?.observation?.exists === true && result?.observation?.owned === true && result?.observation?.compatible === true, implementationGeneration: generation });
+    },
+  });
+}
+
+export function createEnvironmentRebuildMaterialization({ state, subject, journal } = {}) {
+  const localState = assertRebuildState(state);
+  const subjectResolver = assertResolver(subject, 'rebuild subject');
+  if (!journal || typeof journal.current !== 'function') throw new TypeError('environment rebuild materialization journal contract is incomplete');
+  return Object.freeze({
+    async ensure(rawRequest) {
+      const request = requireRequest(rawRequest);
+      const localSubject = await subjectResolver.resolve(Object.freeze({
+        environmentIdentity: request.environmentIdentity,
+        profile: request.declaration.profile,
+      }));
+      const matches = (await localState.listEnvironments()).filter((entry) => entry?.record?.subject === localSubject && entry?.record?.profile === request.declaration.profile);
+      if (matches.length !== 1) throw new Error('environment rebuild materialization is missing or ambiguous');
+      const selected = matches[0];
+      if (selected.record?.source?.identity !== request.declaration.image.identity) throw new Error('environment rebuild source no longer matches declaration authority');
+      const active = await journal.current(request.environmentIdentity);
+      if (!active || active.operation !== 'rebuild' || active.operationId !== request.operationId || active.declarationRevision !== request.declarationRevision) {
+        throw new Error('environment rebuild materialization is not bound to the active rebuild lifecycle');
+      }
+      const previous = active.entries.find((entry) => entry.stage === 'pre-observation')?.implementationGeneration;
+      if (typeof previous !== 'string' || !/^env-[a-f0-9]{32}$/u.test(previous)) throw new Error('environment rebuild previous implementation generation is unavailable');
+      const result = await localState.rebuildEnvironment(implementation(selected.record), {
+        requestId: request.operationId,
+        expectedPreviousIdentity: previous,
+      });
+      const generation = implementation(result?.record);
+      if (generation === previous) throw new Error('environment rebuild did not create a new implementation generation');
+      return Object.freeze({
+        ready: result?.observation?.exists === true && result?.observation?.owned === true && result?.observation?.compatible === true,
+        implementationGeneration: generation,
+        superseded: result?.superseded == null ? null : Object.freeze({ ...result.superseded }),
+      });
     },
   });
 }
