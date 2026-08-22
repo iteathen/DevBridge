@@ -14,7 +14,7 @@ function requireSource(source) {
 }
 
 function requireState(state) {
-  for (const method of ['read', 'accept', 'fallback']) {
+  for (const method of ['read', 'accept', 'fallback', 'preferred']) {
     if (!state || typeof state[method] !== 'function') throw new TypeError(`development stable authority state.${method} must be a function`);
   }
   return state;
@@ -63,6 +63,15 @@ export class DevelopmentStableSubjectAuthority {
     return record.subject;
   }
 
+  async #acceptedDevelopment() {
+    const subject = await this.#state.preferred('development');
+    if (!subject) return null;
+    const state = await this.#state.read();
+    const record = currentRecord(state, subject);
+    if (!record || record.mode !== 'development') fail('development stable state changed during selection');
+    return record;
+  }
+
   async resolve(selector) {
     if (!selector || selector.kind !== 'channel' || selector.value !== 'stable') {
       fail('development stable authority accepts only the stable channel selector');
@@ -81,7 +90,7 @@ export class DevelopmentStableSubjectAuthority {
         releaseId: `development-${head}`,
       });
       const existing = currentRecord(accepted, subject);
-      if (existing && accepted && sameRunnerSubject(accepted.current.subject, subject)) {
+      if (existing?.mode === 'development' && accepted && sameRunnerSubject(accepted.current.subject, subject)) {
         return this.#remember(existing, false);
       }
       const record = Object.freeze({
@@ -94,17 +103,18 @@ export class DevelopmentStableSubjectAuthority {
       });
       return this.#remember(record, true);
     } catch (error) {
-      if (!accepted) throw error;
-      return this.#remember(accepted.current, false);
+      const fallback = await this.#acceptedDevelopment();
+      if (!fallback) throw error;
+      return this.#remember(fallback, false);
     }
   }
 
   async recover(failedSubject) {
-    const fallback = await this.#state.fallback(failedSubject);
+    const fallback = await this.#state.fallback(failedSubject, 'development');
     if (!fallback) return null;
     const state = await this.#state.read();
     const record = currentRecord(state, fallback);
-    if (!record) fail('stable runner fallback state changed during recovery');
+    if (!record || record.mode !== 'development') fail('development stable fallback state changed during recovery');
     return this.#remember(record, false);
   }
 
@@ -112,8 +122,8 @@ export class DevelopmentStableSubjectAuthority {
     const pending = this.#pending.get(key(subject));
     if (!pending) {
       const state = await this.#state.read();
-      if (state && sameRunnerSubject(state.current.subject, subject)) return state;
-      fail('stable runner acceptance has no matching resolved evidence');
+      if (state?.current?.mode === 'development' && sameRunnerSubject(state.current.subject, subject)) return state;
+      fail('development stable runner acceptance has no matching resolved evidence');
     }
     if (!pending.commit) return this.#state.read();
     return this.#state.accept(pending.record);
