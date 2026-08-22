@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   ENVIRONMENT_OBSERVATION_PROTOCOL,
   environmentObservationCondition,
+  environmentObservationMatchesDeclaration,
   normalizeEnvironmentObservation,
 } from '../src/runtime/environment-observation.js';
 
@@ -10,6 +11,7 @@ function observation(overrides = {}) {
   return {
     protocol: ENVIRONMENT_OBSERVATION_PROTOCOL,
     environmentIdentity: 'environment-0123456789abcdef0123456789abcdef',
+    declarationRevision: 2,
     implementationGeneration: 'generation-1',
     materialization: 'present',
     systemStorage: 'present',
@@ -39,4 +41,9 @@ test('observation distinguishes never-created from a missing implementation', ()
 
 test('observation rejects implementation details outside the neutral contract', () => {
   assert.throws(() => normalizeEnvironmentObservation({ ...observation(), storagePath: 'foreign' }), /storagePath is not allowed/u);
+});
+
+test('observation basis exposes stale declaration evidence without guessing', () => {
+  assert.equal(environmentObservationMatchesDeclaration(observation(), 2), true);
+  assert.equal(environmentObservationMatchesDeclaration(observation(), 3), false);
 });
