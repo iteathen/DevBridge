@@ -19,7 +19,7 @@ function declaration(overrides = {}) {
     resources: { memoryBytes: 4 * 1024 * 1024 * 1024, processorCount: 4 },
     network: { requirement: 'managed-egress-v1' },
     bootstrap: { generation: 'tooling-v1', requirements: ['runtime-js', 'source-control'] },
-    workspaces: ['workspace-a'],
+    workspaces: [{ identity: 'workspace-a', authority: 'authority-123' }],
     protectedStateClasses: [],
     ...overrides,
   };
