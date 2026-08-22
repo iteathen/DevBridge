@@ -47,8 +47,13 @@ test('locally registered input materializes through host control into an ephemer
   }
 });
 
-test('input.materialize cannot select an unregistered source', () => {
-  const operationRegistry = createCoreOperationRegistry({ inputRegistry: new ControllerInputRegistry() });
-  assert.throws(() => operationRegistry.validate('input.materialize', { source: 'fixture.missing' }), /not locally registered/u);
-  assert.throws(() => operationRegistry.validate('input.materialize', { source: 'fixture.one', path: 'elsewhere' }), /parameter path is not allowed/u);
+test('controller input operation exists only when local input authority is composed', () => {
+  const plainRegistry = createCoreOperationRegistry();
+  assert.equal(plainRegistry.has('input.materialize'), false);
+
+  const inputRegistry = new ControllerInputRegistry();
+  const composedRegistry = createCoreOperationRegistry({ inputRegistry });
+  assert.equal(composedRegistry.has('input.materialize'), true);
+  assert.throws(() => composedRegistry.validate('input.materialize', { source: 'fixture.missing' }), /not locally registered/u);
+  assert.throws(() => composedRegistry.validate('input.materialize', { source: 'fixture.one', path: 'elsewhere' }), /parameter path is not allowed/u);
 });
