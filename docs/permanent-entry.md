@@ -1,6 +1,6 @@
 # Permanent entry architecture
 
-Status: architecture slice in progress for #159.
+Status: architecture and experimental-source slices in progress for #159.
 
 The target entry path is:
 
@@ -14,7 +14,7 @@ This is intentionally different from continuously expanding the host-installed `
 local selector -> exact verified runner subject -> verified prepared runner -> argv handoff
 ```
 
-The first implementation slice introduces that neutral contract without changing the installed entry path yet. Current `devbridge.mjs` remains authoritative until the source/cache/release adapters and installation transition are complete and qualified on Windows and Linux.
+The installed entry path has not changed yet. Current `devbridge.mjs` remains authoritative until stable release authority, accepted-runner state, composition/cutover, and Windows/Linux qualification are complete.
 
 ## Ownership boundaries
 
@@ -30,44 +30,62 @@ The first implementation slice introduces that neutral contract without changing
 - requiring the prepared runner to retain the exact resolved subject;
 - forwarding runner argv only after those invariants hold.
 
-It does not know Git commands, filesystem cache paths, signing keys, VM providers, repository tasks, model adapters, guest bridge paths, publication, GitHub queues, runtime activation journals, or supervisor internals.
+It does not know Git commands, GitHub URLs, filesystem cache paths, signing keys, VM providers, repository tasks, model adapters, guest bridge paths, publication, GitHub queues, runtime activation journals, or supervisor internals.
 
-### Subject authority adapter
+### Experimental subject authority
 
-The future subject-authority adapter owns the fixed trusted DevBridge source and verification policy. Its `resolve(selector)` contract must return one already-authorized exact runner subject.
+`src/entry/experimental-subject-authority.mjs` owns only the development/testing subject policy. It accepts only local `ref` or exact selectors. A named selector is resolved exactly once through its injected fixed-source port, and only the resulting exact 40-hex commit is used to read runner bytes.
 
-For `stable`, that means resolving a trusted immutable runner release/manifest that binds at least:
+The resulting `devbridge/entry-runner-subject-v1` contains:
 
-- exact runner Git head or equivalent immutable artifact identity;
-- exact runner artifact SHA-256;
-- runner release identity;
-- stable channel identity;
-- minimum permanent-entry protocol;
-- production signature/evidence required by release policy.
+- the exact immutable commit;
+- SHA-256 of the exact runner artifact bytes;
+- permanent-entry protocol requirement `1` for the current development contract;
+- the explicit `experimental` channel identity;
+- an immutable development release identity derived from the exact commit.
 
-A mutable branch must never be returned as runner identity. For a local experimental ref/branch selector, the adapter resolves the name once through the fixed trusted source to an exact immutable commit, applies the explicitly local development verification policy, and returns the resulting exact subject.
+The moving branch/ref name is deliberately absent from the returned subject. Exact selectors bypass mutable ref resolution entirely but still require exact artifact bytes from the fixed source.
 
-Remote task text, repository content, issue comments, model output, and guest code do not participate in this selector/authority API.
+This adapter does not implement stable production release authority. Stable subjects require separate signed immutable release evidence and must not inherit development trust rules.
 
-### Runner provider adapter
+### Fixed source adapter
 
-The future runner-provider adapter owns materialization, content-addressed cache state, exact byte verification, last-known-good channel acceptance, and process launch. Its `prepare(subject)` result must identify the same exact subject and expose a bounded launch capability; the core rejects a prepared subject substitution before launch.
+`src/entry/github-runner-source.mjs` is provider-local and owns the current fixed DevBridge GitHub source for experimental qualification.
 
-The provider must eventually enforce:
+It:
 
-- cache content keyed by exact immutable identity/digest;
-- SHA-256 verification of materialized runner bytes before launch;
-- atomic accepted-runner updates only after complete verification;
-- stable last-known-good retention across refresh/network failure when policy permits;
-- separate experimental-ref cache/acceptance state that cannot overwrite stable last-known-good state;
-- reconciliation of ambiguous/interrupted cache acceptance rather than blind overwrite;
-- no mutable branch bytes executed directly from transport.
+- hard-binds source authority to `iteathen/DevBridge`;
+- accepts only bounded safe Git ref syntax;
+- rejects traversal/ref-control forms such as `..`, `@{`, option-shaped selectors, and `.lock` suffixes;
+- resolves a named selector through the fixed repository to one exact commit;
+- reads `devbridge.mjs` only by that exact commit;
+- rejects redirects rather than following source authority elsewhere;
+- accepts only a bounded base64 file record for the fixed runner path.
 
-Physical paths are owned by this adapter. They do not enter the permanent-entry core contract.
+Source URLs, repository identity, and transport mechanics stop at this adapter. They do not enter the permanent-entry core or runner subject contract.
+
+### Content-addressed runner provider
+
+`src/entry/content-addressed-runner-provider.mjs` owns exact runner object materialization and launch capability creation behind the core `runnerProvider.prepare(subject)` stud.
+
+For the current slice it:
+
+- derives the object identity only from the subject SHA-256;
+- reuses an existing object only after hashing its exact bytes;
+- refuses to launch corrupt, oversized, symlinked, or non-file cache entries;
+- re-fetches by exact subject head when an object is absent/corrupt;
+- rejects fetched bytes whose SHA-256 differs from the exact subject;
+- publishes a verified object through a temporary file plus exclusive hard-link commit;
+- exposes launch only after the committed object re-verifies;
+- accepts only closed string argv at the launch boundary.
+
+Physical cache paths are constructor-local authority. They never enter the permanent-entry core contract or remote task data.
+
+This slice does **not** yet define accepted stable/ref pointers or last-known-good fallback. Those are a separate state-ownership layer over verified content-addressed objects.
 
 ## Selector semantics
 
-The initial parser deliberately preserves current runner CLI behavior during migration:
+The parser deliberately preserves current runner CLI behavior during migration:
 
 - no entry selector -> stable runner selection;
 - `--ref <name>` and `--branch <name>` are entry-local selectors and are consumed before runner handoff;
@@ -81,7 +99,7 @@ This split avoids making the permanent-entry layer steal the existing runtime `-
 
 ## Exact runner subject
 
-The architecture slice defines `devbridge/entry-runner-subject-v1` with these core-owned fields:
+The core defines `devbridge/entry-runner-subject-v1` with these fields:
 
 - `head`: exact 40-hex immutable commit;
 - `sha256`: exact 64-hex runner artifact digest;
@@ -89,7 +107,7 @@ The architecture slice defines `devbridge/entry-runner-subject-v1` with these co
 - `channel`: bounded channel identity;
 - `releaseId`: bounded release/development subject identity.
 
-Signature material, Git transport data, cache paths, and other adapter-private evidence do not leak into this core subject.
+Signature material, source transport data, cache paths, and other adapter-private evidence do not leak into this core subject.
 
 The exact subject is runner identity. It is distinct from:
 
@@ -97,36 +115,60 @@ The exact subject is runner identity. It is distinct from:
 - accepted runtime identity, which belongs to the bootstrap/supervisor layer;
 - a mutable branch/ref name, which is only a local selector before exact resolution.
 
+## Stable and experimental state separation
+
+Experimental selection must never overwrite stable last-known-good authority.
+
+The current implementation already separates experimental subject policy from stable authority and stores verified objects by content digest rather than channel name. The next accepted-state layer must therefore keep at least two distinct namespaces:
+
+- stable accepted/LKG subject state, updated only after signed stable verification;
+- experimental accepted/ref state, updated only after exact development subject verification.
+
+Shared immutable content objects are allowed when their exact digest is identical. Mutable accepted pointers/state are not shared across those authority classes.
+
 ## Failure behavior
 
-The permanent entry must fail closed when:
+The permanent entry fails closed when:
 
 - selectors conflict or are malformed;
 - the subject authority cannot produce one exact authorized runner subject;
 - the subject needs a newer permanent-entry protocol;
-- the runner provider cannot materialize/verify the subject;
+- exact source resolution or artifact retrieval fails;
+- fetched or cached bytes do not match the exact subject;
+- the runner provider cannot commit/reverify a content-addressed object;
 - prepared bytes identify a different subject;
 - stable refresh is ambiguous and no policy-authorized last-known-good subject is available.
 
 A failed refresh must not erase an already verified last-known-good runner.
 
+## Relationship to #157
+
+The #153 migration canary intentionally keeps its legacy fixture machinery on `fix/157-controller-owned-fixture`; former PR #164 is closed without merge.
+
+That means the physical canary must eventually run an explicitly selected temporary DevBridge control-plane runner rather than adding compatibility-only input authority to stable `main`. #159's local experimental `--ref`/exact selection is the intended permanent boundary for that qualification.
+
+The current #159 slices prove exact selection, exact artifact identity, and verified content-addressed materialization. They do not yet change the installed entry path or execute the full selected control-plane package, so #157 remains paused until that composition/cutover slice is qualified.
+
 ## Adoption sequence
 
-The remaining #159 work should proceed by ownership boundary rather than growing the core:
+Remaining work should continue by ownership boundary rather than growing the core:
 
-1. implement the fixed-source subject-authority adapter, including stable signed subject verification and exact experimental-ref resolution;
-2. implement the content-addressed runner provider with atomic stable/ref acceptance state and offline last-known-good behavior;
-3. add bounded status projection showing installation tag plus exact selected runner subject;
-4. add a deliberately small host entry executable that composes only these entry-owned modules and hands off to the selected runner;
-5. move evolving bootstrap behavior behind the runner boundary so current Stage-0 logic is no longer the permanently installed component;
-6. qualify stable, exact-ref, moving-branch, corruption, signature/digest failure, cache fallback, interruption recovery, and protocol incompatibility on Windows and Linux;
-7. only then change installation/update docs and the installed entry path.
+1. **Implemented for experimental use:** fixed-source named-ref -> exact commit resolution and exact runner artifact SHA-256 subject creation.
+2. **Implemented object layer:** content-addressed runner object materialization with exact digest verification and corruption recovery.
+3. Implement signed stable subject authority and immutable release evidence.
+4. Implement atomic stable/ref accepted-subject state, with stable LKG fallback and experimental state isolation.
+5. Add bounded status projection showing installation tag plus exact selected runner subject.
+6. Add the deliberately small host entry composition/executable and full selected-runner handoff.
+7. Move evolving bootstrap behavior behind the runner boundary so current Stage-0 logic is no longer the permanently installed component.
+8. Qualify stable, exact-ref, moving-branch, corruption, signature/digest failure, cache fallback, interruption recovery, protocol incompatibility, and #157 temp-runner selection on Windows and Linux.
+9. Only then change installation/update docs and the installed entry path.
 
 No step may reintroduce repository-code/model-controlled host execution or allow remote content to choose runner source, selector, signing policy, cache authority, or verification mode.
 
 ## Related contracts
 
 - #159 — permanent entry shim and stable/experimental runner selection.
+- #157 — temporary #153 compatibility canary that will consume the explicit experimental runner path.
 - #153 — evidence for why an evolving permanent launcher can deadlock itself across compatibility generations.
 - DB-011 — accepted runtime supervision and release integrity after runner handoff.
 - DB-019 — verification/evidence/timing policy.
