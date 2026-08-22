@@ -146,7 +146,7 @@ export class EnvironmentConstructionPipeline {
         readyResult(await this.#image.ensure(Object.freeze({ ...request, image: declaration.image, bootstrapGeneration: declaration.bootstrap.generation })), 'image');
         current = await this.#save(current, stage);
       } else if (stage === 'resources') {
-        readyResult(await this.#resources.ensure(Object.freeze({ ...request, resources: declaration.resources, boot: declaration.boot, network: declaration.network })), 'resources');
+        readyResult(await this.#resources.ensure(Object.freeze({ ...request, profile: declaration.profile, resources: declaration.resources, boot: declaration.boot, network: declaration.network })), 'resources');
         current = await this.#save(current, stage);
       } else if (stage === 'materialization') {
         const result = generationResult(await this.#materialization.ensure(request), 'materialization');
