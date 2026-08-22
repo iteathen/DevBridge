@@ -135,6 +135,24 @@ test('rebuild rejects a healthy, foreign, running-unquiesceable, or stale previo
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('definitive rebuild preflight rejection does not become latent reconciliation authority', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-rebuild-inert-rejection-'));
+  const fake = fixture();
+  try {
+    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const created = await registry.ensure(request());
+    await assert.rejects(() => registry.rebuild(created.record.identity, {
+      requestId: 'rejected-while-healthy', expectedPreviousIdentity: created.record.identity,
+    }), /requires missing or invalid/u);
+    loseSystemStorage(fake, created.record.identity, 'absent');
+    const reconciled = await registry.reconcile();
+    assert.equal(reconciled.length, 1);
+    assert.equal(reconciled[0].record.identity, created.record.identity);
+    assert.equal(reconciled[0].record.generation, 1);
+    assert.equal(fake.provisionCalls(), 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('rebuild re-proves provider existence and ownership after quiesce before replacement', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-rebuild-quiesce-proof-'));
   const fake = fixture();
