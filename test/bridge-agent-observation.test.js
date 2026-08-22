@@ -35,7 +35,10 @@ async function exitedProcessId() {
   const pid = await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore', shell: false, windowsHide: true });
     child.once('error', reject);
-    child.once('close', () => resolve(child.pid));
+    child.once('spawn', () => {
+      const spawnedPid = child.pid;
+      child.once('close', () => resolve(spawnedPid));
+    });
   });
   assert.equal(Number.isSafeInteger(pid), true);
   const deadline = Date.now() + 3_000;
