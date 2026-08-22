@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+import path from 'node:path';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 
 const SELECTED_ENTRY_FLAGS = new Set(['--ref', '--branch']);
 const DEFAULT_ENTRY_URL = new URL('./devbridge.mjs', import.meta.url).href;
@@ -57,7 +59,8 @@ export async function runInstalledEntry(argv = process.argv.slice(2), {
   return entry([...input]);
 }
 
-if (import.meta.url === `file://${process.argv[1]?.replaceAll('\\', '/')}` || process.argv[1]?.endsWith('/devbridge-entry.mjs') || process.argv[1]?.endsWith('\\devbridge-entry.mjs')) {
+const invoked = process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+if (invoked) {
   try {
     const status = await runInstalledEntry();
     if (Number.isInteger(status)) process.exitCode = status;
