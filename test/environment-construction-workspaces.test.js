@@ -65,6 +65,29 @@ test('construction workspaces publish exact routes and prepare scoped roots', as
   }
 });
 
+test('construction workspaces may resolve a request-scoped channel without persisting transport topology', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'devbridge-workspaces-'));
+  try {
+    const profile = 'linux-development';
+    const subject = '42';
+    const workspace = { identity: executionWorkspaceIdentity(subject, profile), authority: 'authority-a' };
+    const declaration = { profile, workspaces: [workspace] };
+    let resolved = 0;
+    const port = createEnvironmentConstructionWorkspaces({
+      stateDirectory: directory,
+      state: stateFor(profile),
+      resolveChannel: async ({ declaration: selected }) => { assert.equal(selected, declaration); resolved += 1; return channel([]); },
+      resolveAuthority: async () => subject,
+      resolveAccess: async () => ({ family: 'linux', user: 'devbridge', identityFile: '/host/identity', knownHostsFile: '/host/known-hosts' }),
+    });
+    const request = { declaration, workspaces: declaration.workspaces, implementationGeneration: 'env-0123456789abcdef0123456789abcdef' };
+    assert.equal((await port.ensure(request)).ready, true);
+    assert.equal(resolved, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('construction workspaces refuse identity or access authority drift', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'devbridge-workspaces-'));
   try {

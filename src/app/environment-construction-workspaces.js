@@ -25,6 +25,11 @@ function sameAccess(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function assertChannel(value) {
+  if (!value || ['health', 'execute', 'put', 'get'].some((name) => typeof value[name] !== 'function')) throw new TypeError('environment workspace channel contract is incomplete');
+  return value;
+}
+
 function sourceFor(bytes) {
   const value = Buffer.from(bytes);
   return Object.freeze({
@@ -71,13 +76,16 @@ function normalizedAccess(profile, raw) {
 export function createEnvironmentConstructionWorkspaces({
   stateDirectory,
   state,
-  channel,
+  channel = null,
+  resolveChannel = null,
   resolveAuthority,
   resolveAccess,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('environment workspace stateDirectory is required');
   if (!state || typeof state.listEnvironments !== 'function' || typeof state.observeEnvironment !== 'function' || typeof state.inspect !== 'function') throw new TypeError('environment workspace state contract is incomplete');
-  if (!channel || typeof channel.health !== 'function' || typeof channel.execute !== 'function' || typeof channel.put !== 'function' || typeof channel.get !== 'function') throw new TypeError('environment workspace channel contract is incomplete');
+  if (channel == null && typeof resolveChannel !== 'function') throw new TypeError('environment workspace channel contract is incomplete');
+  if (channel != null) assertChannel(channel);
+  if (resolveChannel != null && typeof resolveChannel !== 'function') throw new TypeError('environment workspace channel resolver is invalid');
   if (typeof resolveAuthority !== 'function' || typeof resolveAccess !== 'function') throw new TypeError('environment workspace authority contract is incomplete');
 
   const resolve = async (rawRequest, { publish = false } = {}) => {
@@ -109,8 +117,9 @@ export function createEnvironmentConstructionWorkspaces({
     }
     const policy = normalizeEnvironmentExecutionRoutes({ protocol: ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL, routes });
     if (publish && changed) await atomicPolicy(stateDirectory, policy);
+    const selectedChannel = assertChannel(channel ?? await resolveChannel(Object.freeze({ declaration })));
     const routing = createExecutionProfileRouting({ state, policy });
-    const scoped = createWorkspaceScopedChannel({ channel, routing });
+    const scoped = createWorkspaceScopedChannel({ channel: selectedChannel, routing });
     return { request, declaration, selected, policy, routing, scoped, changed };
   };
 

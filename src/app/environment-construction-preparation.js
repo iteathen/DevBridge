@@ -101,7 +101,7 @@ export function createEnvironmentConstructionPreparation({
         requirements: declaration.bootstrap.requirements,
         revision: declaration.bootstrap.generation,
       });
-      if (!bootstrap || typeof bootstrap.ensure !== 'function' || typeof bootstrap.inspect !== 'function') throw new TypeError('environment bootstrap composition contract is incomplete');
+      if (!bootstrap || typeof bootstrap.ensure !== 'function' || typeof bootstrap.inspect !== 'function' || typeof bootstrap.connection !== 'function') throw new TypeError('environment bootstrap composition contract is incomplete');
       values.set(key, Object.freeze({ target, access, bootstrap }));
     }
     return { request, declaration, selected: values.get(key) };
@@ -131,6 +131,11 @@ export function createEnvironmentConstructionPreparation({
     async access(request) {
       const { selected } = await resolve(request);
       return selected.access.connection(selected.target);
+    },
+    async connection(request, target = null) {
+      const { selected } = await resolve(request);
+      if (target != null && target !== selected.target) throw new Error('environment preparation connection target does not match declaration authority');
+      return selected.bootstrap.connection(selected.target);
     },
   });
 }
