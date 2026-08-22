@@ -13,6 +13,7 @@ import { createEnvironmentLifecycle } from './environment-lifecycle.js';
 import { createEnvironmentLifecycleFence } from './environment-lifecycle-fence.js';
 import { createEnvironmentMaterialization } from './environment-materialization.js';
 import { createEnvironmentMaterializationPolicy } from './environment-materialization-policy.js';
+import { createEnvironmentRecovery } from './environment-recovery.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 
 function assertAvailability(value) {
@@ -70,18 +71,28 @@ export async function createEnvironmentConstructionRuntime({
   });
   const observation = createEnvironmentConstructionObservation({ materialization, preparation, workspaces });
   const localFence = fence ?? createEnvironmentLifecycleFence({ stateDirectory });
+  const resources = createEnvironmentResourcePort({ state: localFoundation, settings: policy.settings });
   const construction = createEnvironmentConstruction({
     stateDirectory,
     lifecycle: localLifecycle,
     observer: observation,
     fence: localFence,
     image: createEnvironmentImagePort({ availability: localAvailability }),
-    resources: createEnvironmentResourcePort({ state: localFoundation, settings: policy.settings }),
+    resources,
     materialization,
     preparation,
     workspaces,
     readiness: observation.readiness,
     ...(now ? { now } : {}),
+  });
+  const recovery = createEnvironmentRecovery({
+    lifecycle: localLifecycle,
+    observer: observation,
+    fence: localFence,
+    foundation: localFoundation,
+    materialization,
+    preparation,
+    workspaces,
   });
 
   return Object.freeze({
@@ -90,5 +101,8 @@ export async function createEnvironmentConstructionRuntime({
     observer: observation,
     create: construction.create,
     pipeline: construction.pipeline,
+    diagnosis: recovery.diagnosis,
+    diagnose: recovery.diagnose,
+    repair: recovery.repair,
   });
 }
