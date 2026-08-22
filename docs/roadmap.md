@@ -12,6 +12,8 @@ Issue #138 corrects the persistent VM ownership model that emerged during the fi
 
 This correction is now part of the active VM roadmap. Repository count must not determine VM count.
 
+The immediate priority remains recovery and installability. GPU/CUDA work must not displace the application-management, installer/setup/re-entry, reconstructable-image, VM lifecycle, or backing-store protection work required to recover a configured DevBridge installation from missing runtime/VM state.
+
 ## Active provider targets
 
 Required host providers remain:
@@ -93,6 +95,21 @@ Legacy repository-owned VMs are migration candidates, not silently adopted profi
 
 Remove stale sandbox-era and repository-owned-topology compatibility/documentation after migration behavior and real provider qualification are complete.
 
+## Recovery-first prerequisite program
+
+The original VM stages are no longer the only prerequisite for dependable repository execution. The deleted-VM-disk incident exposed a separate reconstructability gap that is now active architecture.
+
+Before GPU work becomes an implementation priority, DevBridge should be able to recover a configured installation through supported surfaces when replaceable runtime and execution-environment state is missing.
+
+The relevant active owners include:
+
+- #159 / #153 — permanent entry and stale-runtime escape path;
+- #180 / #182 — application-management composition and recovery-control bootstrap;
+- #169–#178 — reconstructable environment/image lifecycle, including `create`, diagnosis, `rebuild`, reset/recreate, operator UX, and backing-store authority isolation;
+- #116 / #103 — install/setup/re-entry and explicit local authority decisions.
+
+The GPU roadmap is intentionally sequenced behind this recovery work. A GPU profile that cannot be recreated after a missing disk, cannot be selected through supported setup, or depends on manual hypervisor surgery is not a completed DevBridge capability.
+
 ## Issue #138 implementation slices
 
 The execution-profile correction is considered complete only when all of the following hold:
@@ -123,6 +140,23 @@ A new profile is justified only by actual compatibility/isolation/resource requi
 
 Do not create profiles merely because repositories differ.
 
+## CUDA/GPU sequence after recovery
+
+GPU support is not one setting and should not start by building a universal compute abstraction.
+
+The post-recovery sequence is:
+
+1. **real-host feasibility canary** — on the actual target host/GPU/provider combination, prove a supported/accepted device-exposure mechanism and run a real CUDA kernel inside one guest;
+2. **usable real-CUDA execution profile** — provide one reproducible CUDA-capable profile image/toolchain, provider device attachment, bounded guest attestation, `doctor`, create/rebuild behavior, and repository execution through the normal workspace route;
+3. **setup/routing integration** — allow local setup/reconfiguration to discover/propose the GPU profile and allow neutral capability requirements to select it without repository-specific branches;
+4. **generalized compute routing** — only then expand #162-style source requirement detection, CPU-backed OpenCL/Vulkan functionality, framework CPU fallback, alternate hardware/cloud adapters, and common validity semantics.
+
+A successful device listing is not enough for the first milestone. Real CUDA memory transfer + kernel execution is required.
+
+The first real-CUDA milestone may target one provider/guest path selected by feasibility. Do not force false Windows/Linux symmetry before the underlying provider/hardware mechanisms are proven. Additional provider support remains an adapter/qualification follow-on behind the same profile and evidence contracts.
+
+See `docs/gpu-execution-profiles.md` for the staged GPU architecture and ownership boundaries.
+
 ## Workspace lifecycle follow-through
 
 Near-term work after the basic routing correction should make workspace lifecycle first-class where needed:
@@ -146,10 +180,12 @@ Profile resource policy owns:
 - persistent disk growth/retention;
 - active-profile/warm-pool policy;
 - idle shutdown/suspend;
-- GPU/device exclusivity;
+- GPU/device exclusivity or sharing policy where supported;
 - operation timeout/cancel.
 
 Task/process limits inside a running profile may be separate. A raw repository count or `maxConcurrentTasks` value must not imply VM fleet size or a scheduler.
+
+GPU device availability is not a boolean declaration. Provider/profile qualification must distinguish host device presence, provider assignment readiness, guest visibility/runtime compatibility, real functional execution, and performance-valid evidence.
 
 ## Verification governance
 
@@ -157,7 +193,9 @@ Cost-aware verification remains control-plane authority.
 
 Cheap checks should run before expensive provider qualification. Real VM/security claims require capable hardware; hosted CI unit/mocks are architecture evidence but do not substitute for real Hyper-V/KVM boundary qualification.
 
-Evidence should bind relevant candidate, provider, image, profile environment, workspace, bridge, and toolchain identities so still-valid expensive evidence can be reused safely.
+Evidence should bind relevant candidate, provider, image, profile environment, workspace, bridge, toolchain, and when applicable device/driver/runtime compatibility identities so still-valid expensive evidence can be reused safely.
+
+A compile-only CUDA pass, CPU fallback, mocked device, or software GPU implementation must not be reused as evidence for real CUDA hardware execution or performance.
 
 ## Setup/operator experience target
 
@@ -180,12 +218,15 @@ Create linux+cuda profile VM: 8 GiB RAM, 4 vCPU, GPU access
 
 rather than as fifteen repository VM decisions.
 
+For a GPU profile, setup should separately explain host GPU capability, provider assignment readiness, guest CUDA readiness, and the impact/exclusivity of assigning a device. Repository discovery must never silently grant GPU/provider authority.
+
 ## Deferred/future work
 
-After issue #138 and Stage 7/8 qualification:
+After recovery/installability, issue #138, and Stage 7/8 qualification:
 
+- the focused first real-CUDA execution-profile work defined in `docs/gpu-execution-profiles.md`;
 - richer profile compatibility/capability selection;
-- GPU execution-profile support where hardware exists;
+- #162 generalized compute-requirement detection and alternate CPU/software/hardware routing after the real-CUDA path is proven;
 - workspace lifecycle/migration tooling;
 - resource-aware scheduling across profiles;
 - optional stronger per-workspace isolation mechanisms if a real threat model requires them;
@@ -197,10 +238,11 @@ Current active target documents are:
 
 - `specs/DB-020-vm-execution-boundary.md`;
 - `docs/execution-profile-environments.md`;
+- `docs/gpu-execution-profiles.md`;
 - `docs/architecture.md`;
 - `docs/setup.md`;
 - `docs/vm-migration.md`;
 - this roadmap;
-- active issues #103, #107, #115, #116, #117, and #138.
+- active issues #103, #107, #115, #116, #117, #138, #169–#182, and #162.
 
-Historical Stage 3 ownership language, old sandbox work, handoffs, tests, and PRs remain evidence but are non-normative where they conflict with the execution-profile correction.
+Historical Stage 3 ownership language, old sandbox work, handoffs, tests, and PRs remain evidence but are non-normative where they conflict with the execution-profile correction or recovery-first sequencing.
