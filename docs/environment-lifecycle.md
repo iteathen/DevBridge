@@ -1,6 +1,6 @@
 # Reconstructable environment lifecycle
 
-Issue #170 establishes the source-of-truth contract used by the lifecycle program in #169. Issue #172 adds diagnosis and bounded in-place repair without changing the durable authority model.
+Issue #170 establishes the source-of-truth contract used by the lifecycle program in #169. Issue #172 adds diagnosis and bounded in-place repair without changing the durable authority model. Issue #173 adds rebuild for missing or invalid replaceable system storage by reusing the shared construction pipeline.
 
 ## LEGO boundary
 
@@ -84,6 +84,23 @@ Missing/invalid system storage, missing provider implementation, ambiguous owner
 
 If a correction effect succeeds but its response is lost, restart does not blindly replay it. The resumed repair re-observes state; if the environment is already healthy it advances the existing journal without repeating the effect. An in-place repair may not change implementation generation.
 
+## Rebuild
+
+`rebuild` preserves the logical environment and declaration while replacing the implementation generation whose system storage is missing or invalid. It consumes the same #171 construction stages rather than owning a second provisioning stack.
+
+Rebuild authorization has an explicit evidence order:
+
+1. the exact current provider implementation must still be identifiable;
+2. ownership of that exact implementation must be proven independently;
+3. only after ownership is proven may `system-storage-missing` or `system-storage-invalid` authorize replacement;
+4. if the implementation must be quiesced, ownership is re-proven after quiescence before replacement continues.
+
+Provider-local `reason` text is descriptive health evidence only. A storage-health reason such as “system storage missing” cannot substitute for ownership proof and cannot mask `owned=false`. Missing or ambiguous ownership fails closed before any storage-health evidence can authorize destructive recovery.
+
+After the ownership gate, rebuild resolves the exact approved image through #178, runs/resumes the shared construction pipeline for a new implementation generation, re-establishes guest/bootstrap/enrollment state, reseeds registered workspaces from host authority, and independently re-verifies readiness. The old system disk is not required to exist.
+
+The outer lifecycle/rebuild request identity is the idempotency subject for ambiguous effects. A restart reconciles the same planned replacement generation rather than allocating another generation. Damaged or invalid superseded state is retained by default; cleanup may remove only exact owned state after separate safe-cleanup evidence permits it. Provider-specific health prose never broadens cleanup authority.
+
 ## Mutable-state taxonomy
 
 Lifecycle planning uses five neutral classes:
@@ -122,6 +139,6 @@ The classifier never promotes unverified or ambiguous ownership into destructive
 - #178 makes the exact declared image reconstructably available.
 - #171 owns the shared restartable construction pipeline and `create`.
 - #172 owns diagnosis and bounded in-place `repair`.
-- #173 reuses the same construction stages for missing/invalid system-storage `rebuild`.
+- #173 reuses the same construction stages for missing/invalid system-storage `rebuild` with ownership proven before storage-health evidence.
 - #174/#175 add destructive `reset` and complete implementation `recreate` semantics.
 - #176 exposes the lifecycle through operator CLI/setup/doctor/re-entry UX.
