@@ -17,12 +17,13 @@ function requireObject(value, name) {
 }
 function onlyKeys(value, allowed, name) { for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`${name}.${key} is not allowed`); }
 function safeId(value, name) { if (typeof value !== 'string' || !SAFE_ID.test(value)) throw new TypeError(`${name} is invalid`); return value; }
+function positiveSafeInteger(value, name) { if (!Number.isSafeInteger(value) || value < 1) throw new TypeError(`${name} is invalid`); return value; }
 function state(value, name) { if (!STATES[name].has(value)) throw new TypeError(`environment observation.${name} is invalid`); return value; }
 
 export function normalizeEnvironmentObservation(raw) {
   const value = requireObject(raw, 'environment observation');
   onlyKeys(value, new Set([
-    'protocol', 'environmentIdentity', 'implementationGeneration', 'materialization', 'systemStorage',
+    'protocol', 'environmentIdentity', 'declarationRevision', 'implementationGeneration', 'materialization', 'systemStorage',
     'attachment', 'enrollment', 'bootstrap', 'guest', 'transition',
   ]), 'environment observation');
   if (value.protocol !== ENVIRONMENT_OBSERVATION_PROTOCOL) throw new TypeError('environment observation protocol is unsupported');
@@ -35,6 +36,7 @@ export function normalizeEnvironmentObservation(raw) {
   return Object.freeze({
     protocol: ENVIRONMENT_OBSERVATION_PROTOCOL,
     environmentIdentity: safeId(value.environmentIdentity, 'environment observation.environmentIdentity'),
+    declarationRevision: positiveSafeInteger(value.declarationRevision, 'environment observation.declarationRevision'),
     implementationGeneration,
     materialization,
     systemStorage: state(value.systemStorage, 'systemStorage'),
@@ -64,4 +66,10 @@ export function environmentObservationCondition(raw) {
   if (value.guest === 'degraded') return 'guest-degraded';
   if ([value.systemStorage, value.attachment, value.enrollment, value.bootstrap, value.guest].includes('unknown')) return 'incomplete-observation';
   return 'healthy';
+}
+
+export function environmentObservationMatchesDeclaration(raw, declarationRevision) {
+  const value = normalizeEnvironmentObservation(raw);
+  if (!Number.isSafeInteger(declarationRevision) || declarationRevision < 1) throw new TypeError('environment declaration revision is invalid');
+  return value.declarationRevision === declarationRevision;
 }
