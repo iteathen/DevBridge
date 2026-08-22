@@ -21,10 +21,14 @@ A declaration binds the locally approved execution profile to:
 - guest family and generation;
 - immutable image identity and generation;
 - resource requirements;
+- a neutral boot requirement;
 - a neutral network requirement;
 - bootstrap/tooling generation and requirements;
+- a neutral enrollment/trust requirement;
 - neutral workspace identities plus opaque host-authority identities used for reseeding;
 - protected state classes, if any.
+
+Boot and enrollment are explicit declaration authority rather than provisioning defaults. Construction adapters may map those requirement identities onto their local mechanisms, but the declaration does not name provider firmware objects, credentials, key files, or guest paths.
 
 The logical environment identity is derived from the approved profile and does not change when image, resources, guest materialization, or implementation generation changes. Declaration replacement is compare-and-swap revisioned so stale setup/recovery work cannot silently overwrite newer local authority.
 
