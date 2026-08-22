@@ -9,6 +9,7 @@ DevBridge has accumulated implementation plans, migration records, normative spe
 | Need | Read |
 | --- | --- |
 | Understand what DevBridge is | [`../README.md`](../README.md) |
+| Understand install/update/runtime ownership | [`application-management.md`](application-management.md), [`application-management-decisions.md`](application-management-decisions.md), and [`application-recovery-matrix.md`](application-recovery-matrix.md) |
 | Install or configure DevBridge | [`setup.md`](setup.md) |
 | Operate an installed DevBridge | [`operations.md`](operations.md) |
 | Diagnose a failure | [`troubleshooting.md`](troubleshooting.md) |
@@ -20,7 +21,35 @@ DevBridge has accumulated implementation plans, migration records, normative spe
 
 ## Current product model
 
-The current architecture can be summarized as:
+The current architecture has two complementary views.
+
+### Application-management hierarchy
+
+```text
+Permanent DevBridge Entry
+        |
+        v
+Runner / Bootstrap Manager
+        |
+        v
+Accepted DevBridge Runtime
+        |
+        v
+DevBridge Services
+        |
+        v
+Declared Execution Environments
+```
+
+Installation identity and operator configuration/authority are durable local control state stored separately from replaceable runner/runtime/service generations.
+
+The governing replaceability rule is:
+
+> Each layer may reconstruct or replace the layer immediately below it. No lower layer may be the only authority required to reconstruct its owner.
+
+See [`application-management.md`](application-management.md) for ownership, [`application-recovery-matrix.md`](application-recovery-matrix.md) for zero-state recovery qualification, and [`application-management-decisions.md`](application-management-decisions.md) for the decisions agents must preserve.
+
+### Repository execution hierarchy
 
 ```text
 remote request / controller
@@ -58,6 +87,7 @@ Several independent identities are intentionally present. Do not collapse them i
 | Identity | Meaning | Example |
 | --- | --- | --- |
 | Installation tag | Which local DevBridge installation is this? | `DB-7A41C0E25F19` |
+| Runner subject | Which exact bootstrap-manager generation did the permanent entry select? | exact immutable subject + digest |
 | Runtime head | Which exact DevBridge code is accepted for that installation? | 40-hex Git commit |
 | Activation state | Is the accepted runtime healthy, rolled back, etc.? | `healthy` |
 | Supervisor/daemon generation | Which live local owner/process generation is authoritative? | local bounded generation record |
@@ -65,7 +95,7 @@ Several independent identities are intentionally present. Do not collapse them i
 | Repository workspace | Which repository-local workspace inside the profile VM? | deterministic repository+profile identity |
 | Run/task identity | Which bounded work transaction is active? | DevBridge run identity |
 
-The installation tag is stable across runtime updates. Two different installation homes get different tags even when they run the same runtime head.
+The installation tag is stable across runner/runtime updates. Two different installation homes get different tags even when they run the same runtime head.
 
 See [`operations.md`](operations.md) for operator use of these identities.
 
@@ -93,6 +123,9 @@ Documentation explains those contracts. It does not silently weaken them.
 
 These documents describe current implementation structure and intended operator behavior:
 
+- [`application-management.md`](application-management.md) — permanent entry, runner, accepted runtime, services, execution environments, state separation, and whole-stack management lifecycle.
+- [`application-recovery-matrix.md`](application-recovery-matrix.md) — exact loss/recovery ownership matrix and configured/fresh-host zero-state canaries.
+- [`application-management-decisions.md`](application-management-decisions.md) — compact architectural decisions that prevent application-management layer drift.
 - [`architecture.md`](architecture.md) — authority hierarchy, trust domains, provider-neutral flow, Git/source/candidate model.
 - [`execution-profile-environments.md`](execution-profile-environments.md) — physical profile VM ownership and repository workspace routing.
 - [`tool-profiles.md`](tool-profiles.md) — tool/profile surface and execution policy.
@@ -128,8 +161,9 @@ When behavior changes:
 4. mark superseded historical material instead of rewriting history;
 5. keep examples path-free and secret-free unless a local path is essential to the operator action;
 6. distinguish **configured**, **observed**, **ready**, **accepted**, and **healthy** states instead of using a generic "enabled" label;
-7. distinguish installation identity from runtime/version identity;
-8. do not document a direct-host repository-code fallback—there is none.
+7. distinguish installation identity from runner/runtime/version identity;
+8. preserve the application-management hierarchy: Permanent Entry -> Runner -> Accepted Runtime -> Services -> Declared Execution Environments;
+9. do not document a direct-host repository-code fallback—there is none.
 
 The goal is that an operator or a fresh agent can answer three questions without reading issue history:
 
