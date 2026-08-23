@@ -31,6 +31,7 @@ function classify(repository) {
 }
 
 function normalizeRequested(requested) {
+  if (requested == null) return Object.freeze([]);
   if (!Array.isArray(requested)) throw new TypeError('requested repositories must be an array');
   const values = requested.map((entry) => {
     if (entry === 'all') return 'all';
@@ -80,14 +81,14 @@ export function selectRepositoryDefaults(rawRepositories, {
   eligible.sort((left, right) => left.fullName.localeCompare(right.fullName));
   excluded.sort((left, right) => left.fullName.localeCompare(right.fullName));
 
-  const explicit = requested == null ? null : normalizeRequested(requested);
+  const explicit = normalizeRequested(requested);
   const preserved = accepted == null ? null : normalizeAccepted(accepted);
   let selected = [];
   let needsSelection = false;
   let reason = null;
-  if (explicit?.length === 1 && explicit[0] === 'all') {
+  if (explicit.length === 1 && explicit[0] === 'all') {
     selected = eligible;
-  } else if (explicit != null) {
+  } else if (explicit.length > 0) {
     const eligibleByName = new Map(eligible.map((repository) => [repository.fullName, repository]));
     const missing = explicit.filter((name) => !eligibleByName.has(name));
     if (missing.length > 0) throw new Error(`requested repositories are not eligible: ${missing.join(', ')}`);
