@@ -7,6 +7,7 @@ import { HyperVEnvironmentBootstrap } from '../src/runtime/providers/hyperv-envi
 
 const target = 'env-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const other = 'env-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const reserved = 'subject-cccccccccccccccccccccccccccccccc';
 
 function success(stdout) {
   return { exitCode: 0, signal: null, timedOut: false, aborted: false, outputTruncated: false, stdout, stderr: '' };
@@ -92,6 +93,57 @@ test('Hyper-V address allocation is durable, collision-free within retained targ
     assert.equal(reconciled.retained, 1);
     const state = JSON.parse(await readFile(path.join(root, 'state.json'), 'utf8'));
     assert.deepEqual(Object.keys(state.allocations), [target]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('reserved addresses share the collision domain but survive managed-target reconciliation', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-hv-reserved-address-'));
+  const options = {
+    directory: root,
+    invoke: async () => success(JSON.stringify({ ready: true })),
+    locate: async (value) => location(value),
+    connection: async () => baseConnection,
+    dnsServers: () => ['10.0.0.53', 'not-an-ipv4'],
+  };
+  try {
+    const adapter = new HyperVEnvironmentBootstrap(options);
+    const lease = await adapter.reserveAddress(reserved, location(reserved).network);
+    const managed = (await adapter.connection(target)).address;
+    assert.notEqual(lease.address, managed);
+    assert.equal(lease.prefixLength, 24);
+    assert.equal(lease.gateway, '192.168.90.1');
+    assert.deepEqual(lease.dns, ['10.0.0.53']);
+
+    const reconciled = await adapter.reconcile([]);
+    assert.equal(reconciled.changed, true);
+    const state = JSON.parse(await readFile(path.join(root, 'state.json'), 'utf8'));
+    assert.equal(state.allocations[reserved].scope, 'reserved');
+    assert.equal(state.allocations[reserved].address, lease.address);
+    assert.equal(state.allocations[target], undefined);
+
+    assert.deepEqual(await adapter.releaseAddress(reserved), { changed: true, absent: false });
+    assert.deepEqual(await adapter.releaseAddress(reserved), { changed: false, absent: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('reserved addresses cannot silently adopt managed allocation ownership', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-hv-reserved-scope-'));
+  const options = {
+    directory: root,
+    invoke: async () => success(JSON.stringify({ ready: true })),
+    locate: async (value) => location(value),
+    connection: async () => baseConnection,
+    dnsServers: () => [],
+  };
+  try {
+    const adapter = new HyperVEnvironmentBootstrap(options);
+    await adapter.connection(target);
+    await assert.rejects(() => adapter.reserveAddress(target, location(target).network), /scope changed/u);
+    await assert.rejects(() => adapter.releaseAddress(target), /managed network allocation/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
