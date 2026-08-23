@@ -13,6 +13,7 @@ import { createEnvironmentLifecycle } from './environment-lifecycle.js';
 import { createEnvironmentLifecycleFence } from './environment-lifecycle-fence.js';
 import { createEnvironmentMaterialization, createEnvironmentRebuildMaterialization } from './environment-materialization.js';
 import { createEnvironmentMaterializationPolicy } from './environment-materialization-policy.js';
+import { createEnvironmentRecreateMaterialization, createEnvironmentRecreateRetirement } from './environment-recreate.js';
 import { createEnvironmentRecovery } from './environment-recovery.js';
 import { createEnvironmentResetMaterialization, createEnvironmentResetRetirement } from './environment-reset.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
@@ -65,6 +66,13 @@ export async function createEnvironmentConstructionRuntime({
     journal: localLifecycle.journal,
   }) : null;
   const resetRetirement = resetAvailable ? createEnvironmentResetRetirement({ state: localFoundation, journal: localLifecycle.journal }) : null;
+  const recreateAvailable = typeof localFoundation.recreateEnvironment === 'function' && typeof localFoundation.retireSupersededEnvironment === 'function';
+  const recreateMaterialization = recreateAvailable ? createEnvironmentRecreateMaterialization({
+    state: localFoundation,
+    subject: policy.subject,
+    journal: localLifecycle.journal,
+  }) : null;
+  const recreateRetirement = recreateAvailable ? createEnvironmentRecreateRetirement({ state: localFoundation, journal: localLifecycle.journal }) : null;
   const preparation = createEnvironmentConstructionPreparation({
     stateDirectory,
     platform,
@@ -120,6 +128,16 @@ export async function createEnvironmentConstructionRuntime({
     readiness: observation.readiness,
     ...(now ? { now } : {}),
   }) : null;
+  const recreateConstruction = recreateAvailable ? createEnvironmentConstructionPipeline({
+    stateDirectory,
+    image,
+    resources,
+    materialization: recreateMaterialization,
+    preparation,
+    workspaces,
+    readiness: observation.readiness,
+    ...(now ? { now } : {}),
+  }) : null;
   const recovery = createEnvironmentRecovery({
     lifecycle: localLifecycle,
     observer: observation,
@@ -129,6 +147,8 @@ export async function createEnvironmentConstructionRuntime({
     preparation,
     workspaces,
     rebuildConstruction,
+    recreateConstruction,
+    recreateRetirement,
     resetConstruction,
     resetRetirement,
     resetAuthorization,
@@ -145,6 +165,8 @@ export async function createEnvironmentConstructionRuntime({
     repair: recovery.repair,
     planRebuild: recovery.planRebuild,
     rebuild: recovery.rebuild,
+    planRecreate: recovery.planRecreate,
+    recreate: recovery.recreate,
     planReset: recovery.planReset,
     reset: recovery.reset,
   });
