@@ -1,6 +1,6 @@
 # DevBridge setup
 
-DevBridge is installed from one standalone stage-0 launcher and then keeps its managed runtime current through the secure supervisor.
+DevBridge is installed from a Node-only zero-state bootstrap into one permanent entry and then keeps its managed runtime current through the secure supervisor.
 
 ## Current implementation versus VM target
 
@@ -54,23 +54,17 @@ See `docs/fresh-host-image-provisioning.md` and #192 for the complete image/lice
 
 ## One-command installation contract
 
-The normal installation experience is **one copy/paste bootstrap invocation from a blank supported machine to an operational DevBridge installation**.
+The normal installation experience is **one copy/paste Node bootstrap invocation from a blank supported machine into the supported setup/re-entry path**.
 
-The exact final shell syntax is implementation-owned, but conceptually it is:
+The exact current stable and `cuda-target` qualification commands are documented in `docs/self-install.md`. They begin with `node`, fetch bounded `bootstrap-devbridge.mjs` bytes with Node's built-in `fetch`, and do not require a pre-existing installer file, checkout, Git, npm package, GPG/GPGV installation, or provider/image tool before the bootstrap itself starts.
 
-```text
-fetch trusted DevBridge stage-0 launcher | run setup --reasonable-defaults --non-interactive
-```
+For a moving development selector, Stage 0 resolves the selector to one exact commit and persists that exact subject before permanent-entry publication. An argument-equivalent interrupted rerun resumes the persisted subject even if the branch moved in the meantime. The permanent-entry component set is then fetched from that exact commit with the nested Node exact-source acquisition LEGO; the zero-state exact-subject path does not use Git.
 
-The single setup invocation must be allowed to carry bounded local consent for routine setup changes, such as installing required prerequisites, enabling the selected provider, accepting the ordinary Linux profile, enabling repository execution after validation, requesting elevation when necessary, and resuming after a required reboot. These flags are local operator authority; they do not weaken verification or permit remote task text to grant host capability.
+The current #238 setup path deliberately stops after prerequisite reconciliation, Ubuntu construction-authority establishment, and the read-only production-image physical `status` gate. It never calls physical construction `run`. Reaching `ready-for-construction` therefore means the setup/status gate is satisfied; it does **not** mean an image or VM has been constructed.
 
-`reasonable-defaults` / non-interactive behavior means **make every safely defaultable choice automatically**, not skip safety checks. The internal sequence still preserves discovery, immutable authority construction, read-only preflight/status, and mutation only after the gate passes.
+The broader one-command target remains responsible for eventually carrying bounded local consent for routine setup changes, such as enabling a selected provider, constructing/qualifying the required image, and enabling repository execution after validation. Those later construction/provisioning steps remain coordinated by #192/#197 and their owning roadmap gates rather than being implied by #238 bootstrap completion.
 
-For the ordinary default path, setup should establish a supported Linux/Ubuntu execution profile without asking the user to choose internal source-media, package, snapshot, keyring, payload, image, provider-object, or resource identifiers. Windows remains a separate explicit profile because source/licensing/activation/distribution choices may require real operator decisions.
-
-A one-command setup may pause only when the platform or policy genuinely requires human action. After that action or reboot, re-entry must resume durable progress rather than restart the questionnaire.
-
-The current bootstrap implementation may lag this target while #103/#192 and their implementation slices are in progress. Documentation, tests, and acceptance work must judge the final installer against this contract rather than treating manual config editing or internal canary entrypoints as acceptable user setup.
+A setup invocation may pause only when the platform or policy genuinely requires human action. Accepted repository selection and the exact Ubuntu package snapshot are durable across re-entry so an elevation, restart, authentication, or later readiness blocker does not restart the questionnaire.
 
 ## PATH and permanent command
 
@@ -100,13 +94,20 @@ Repository count does not determine VM count. Repositories sharing a compatible 
 
 ## Current requirements
 
-Current main requires:
+The **zero-state bootstrap boundary** requires only:
 
 - Node.js 22.16.0 or newer;
-- Git;
-- a GitHub account with access to the configured task queue and target repositories.
+- network access to the fixed DevBridge GitHub source for first-byte/exact-source acquisition.
 
-The one-command setup target may eventually acquire or guide installation of bootstrap prerequisites where that can be done safely, but it must never pretend a missing foundational prerequisite is already satisfied.
+Git is not required for zero-state bootstrap or permanent-entry component acquisition. The already-present direct `install-devbridge.mjs` qualification path retains a managed Git compatibility route, and downstream repository/runtime operations may have their own Git requirements, but those are not assumptions of the blank-host bootstrap.
+
+After permanent entry commits, `devbridge setup` discovers later prerequisites before use:
+
+- GitHub authentication is required for the current repository-discovery path and may come from `GH_TOKEN`/`GITHUB_TOKEN` or an authenticated GitHub CLI;
+- `gpgv`/`gpgv.exe` must be usable before Ubuntu release-signature verification is attempted;
+- on Windows, missing OpenSSH Client may be established through the exact `OpenSSH.Client~~~~0.0.1.0` Windows capability only when the current setup process is already elevated and Windows reports the capability as `NotPresent`; setup re-verifies `ssh.exe` and `ssh-keygen.exe` afterward;
+- missing GPGV, non-elevated OpenSSH repair, restart/pending servicing, servicing policy/source failures, or inconsistent capability state are focused resumable blockers rather than guessed repairs;
+- Hyper-V/provider/image readiness remains independently inspected by the read-only physical canary status/preflight owner. Setup does not silently enable Hyper-V or restart the host.
 
 Stage-2 host-foundation requirements are provider-specific when those capabilities are expected to be ready:
 
@@ -118,6 +119,8 @@ Setup must not infer VM readiness merely from Hyper-V being installed, `/dev/kvm
 ## Fresh install target
 
 A normal user should need one bootstrap command, not a sequence that first creates an example JSON file and then asks the user to read/edit it.
+
+For #238 qualification, the supported setup path currently ends at the read-only physical production-image status gate. The broader fresh-install target below continues beyond that gate only under the separately authorized image/provider roadmap.
 
 The setup invocation is responsible for:
 
