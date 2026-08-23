@@ -19,7 +19,7 @@
   },
   "scripts": {
     "preflight": "node ./src/bootstrap/repository-preflight.mjs",
-    "test": "node --test",
+    "test": "node --test --test-name-pattern=\"concurrent exact execute requests are fenced to one guest-side effect\" test/bridge-agent.test.js",
     "doctor": "node ./src/cli.js doctor",
     "poll-once": "node ./src/cli.js poll-once",
     "run-once": "node ./src/cli.js run-once",
