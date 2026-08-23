@@ -64,7 +64,7 @@ export function parseBootstrapArgs(argv) {
   }
   if (!Object.hasOwn(CHANNELS, result.channel)) fail(`Unknown DevBridge channel: ${result.channel}`);
   if (repositories.length > 0) {
-    if (result.command !== 'setup') fail('--repository is valid only with devbridge setup');
+    if (result.command !== 'setup') fail('Unknown bootstrap argument: --repository');
     result.repositories = [...new Set(repositories)];
   }
   return result;
@@ -282,4 +282,61 @@ export async function stopExistingDaemon(paths, runtime, runner = defaultRunner,
     }
   }
   fail('Existing DevBridge daemon did not stop at the cooperative boundary; refusing to terminate an unverified process.');
+}
+
+export async function superviseDaemon(paths, initialRuntime, {
+  runner = defaultRunner,
+  spawnImpl = spawn,
+  updateIntervalMs = UPDATE_CHECK_INTERVAL_MS,
+  restartBackoffMs = CHILD_RESTART_BACKOFF_MS,
+  maxIterations = Number.POSITIVE_INFINITY,
+} = {}) {
+  let runtime = initialRuntime;
+  let iterations = 0;
+  while (iterations < maxIterations) {
+    iterations += 1;
+    const child = spawnDevBridgeDaemon(paths, runtime, spawnImpl);
+    process.stdout.write(`[devbridge-supervisor] daemon-started runtime=${runtime.head}\n`);
+    const exit = await new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('exit', (code, signal) => resolve({ code, signal }));
+    });
+    const action = decideSupervisorAction({ childExitCode: exit.code, updatePending: false });
+    if (action === 'stop') return;
+    process.stdout.write(`[devbridge-supervisor] daemon-exited code=${exit.code ?? 'null'} signal=${exit.signal ?? 'none'}; restarting\n`);
+    await delay(restartBackoffMs);
+    if (updateIntervalMs > 0) await delay(Math.min(updateIntervalMs, 1));
+  }
+}
+
+export async function bootstrap(argv = process.argv.slice(2), runner = defaultRunner) {
+  assertSupportedNode();
+  const args = parseBootstrapArgs(argv);
+  const paths = resolveBootstrapPaths(args);
+  const runtime = ensureRuntime(args, paths, runner);
+  const createdConfig = prepareLocalConfig(paths);
+  if (createdConfig) {
+    console.log(`[devbridge-bootstrap] created safe example config at ${paths.config}`);
+    console.log('[devbridge-bootstrap] edit the config for your installation, then run the same command again.');
+    return 2;
+  }
+  const doctorStatus = runDevBridgeCli('doctor', paths, runtime, runner);
+  if (doctorStatus !== 0) return doctorStatus;
+  if (args.command === 'setup') return runDevBridgeCli('setup', paths, runtime, runner);
+  if (args.command !== 'daemon') return runDevBridgeCli(args.command, paths, runtime, runner);
+  await stopExistingDaemon(paths, runtime, runner);
+  await superviseDaemon(paths, runtime, { runner });
+  return 0;
+}
+
+function invokedDirectly() {
+  const entry = process.argv[1];
+  return Boolean(entry) && pathToFileURL(path.resolve(entry)).href === import.meta.url;
+}
+
+if (invokedDirectly()) {
+  bootstrap().then(
+    (code) => { process.exitCode = code; },
+    (error) => { console.error(`[devbridge-bootstrap] ${error.message}`); process.exitCode = 1; },
+  );
 }
