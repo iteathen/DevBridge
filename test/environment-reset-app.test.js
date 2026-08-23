@@ -5,6 +5,7 @@ import { createEnvironmentResetMaterialization, createEnvironmentResetRetirement
 const OLD = `env-${'1'.repeat(32)}`;
 const NEXT = `env-${'2'.repeat(32)}`;
 const IMAGE = 'image-ubuntu-v1';
+const AUTH = `reset-${'a'.repeat(64)}`;
 
 function request() {
   return {
@@ -15,15 +16,15 @@ function request() {
   };
 }
 
-function activeJournal() {
-  return {
-    operation: 'reset', operationId: 'lifecycle-reset-1', declarationRevision: 1,
-    entries: [
-      { stage: 'intent', implementationGeneration: null },
-      { stage: 'pre-observation', implementationGeneration: OLD },
-      { stage: 'fenced-attempt', implementationGeneration: OLD },
-    ],
-  };
+function activeJournal(stage = 'fenced-attempt') {
+  const entries = [
+    { stage: 'intent', implementationGeneration: null },
+    { stage: 'pre-observation', implementationGeneration: OLD, subjects: [AUTH] },
+    { stage: 'fenced-attempt', implementationGeneration: OLD, subjects: [AUTH] },
+  ];
+  if (['post-observation', 'verification'].includes(stage)) entries.push({ stage: 'post-observation', implementationGeneration: NEXT, subjects: [AUTH] });
+  if (stage === 'verification') entries.push({ stage: 'verification', implementationGeneration: NEXT, subjects: [AUTH] });
+  return { operation: 'reset', operationId: 'lifecycle-reset-1', declarationRevision: 1, entries };
 }
 
 test('reset materialization binds staged replacement to the active outer lifecycle and retains the old generation', async () => {
@@ -71,7 +72,7 @@ test('reset materialization refuses a replacement not bound to the exact reset l
   assert.equal(calls, 0);
 });
 
-test('reset retirement can target only the exact previous generation after verification', async () => {
+test('reset retirement can target only the exact previous generation after verified outer lifecycle state', async () => {
   let calls = 0;
   const retirement = createEnvironmentResetRetirement({
     state: {
@@ -82,6 +83,7 @@ test('reset retirement can target only the exact previous generation after verif
         return { identity: OLD, removed: true, absent: false };
       },
     },
+    journal: { current: async () => activeJournal('verification') },
   });
   const result = await retirement.ensure({
     environmentIdentity: 'logical-environment-a',
@@ -89,8 +91,31 @@ test('reset retirement can target only the exact previous generation after verif
     declarationRevision: 1,
     previousImplementationGeneration: OLD,
     implementationGeneration: NEXT,
-    authorizationSubject: `reset-${'a'.repeat(64)}`,
+    authorizationSubject: AUTH,
   });
   assert.deepEqual(result, { ready: true, identity: OLD, removed: true, absent: false });
   assert.equal(calls, 1);
+});
+
+test('reset retirement refuses pre-verification, generation drift, or changed authorization subject before deletion', async () => {
+  let calls = 0;
+  const state = { async retireSupersededEnvironment() { calls += 1; return { identity: OLD, removed: true }; } };
+  const input = {
+    environmentIdentity: 'logical-environment-a', operationId: 'lifecycle-reset-1', declarationRevision: 1,
+    previousImplementationGeneration: OLD, implementationGeneration: NEXT, authorizationSubject: AUTH,
+  };
+  let journalState = activeJournal('post-observation');
+  const retirement = createEnvironmentResetRetirement({ state, journal: { current: async () => journalState } });
+  await assert.rejects(() => retirement.ensure(input), /verified active reset lifecycle/u);
+  assert.equal(calls, 0);
+
+  journalState = activeJournal('verification');
+  journalState.entries.at(-1).implementationGeneration = `env-${'3'.repeat(32)}`;
+  await assert.rejects(() => retirement.ensure(input), /generation evidence changed/u);
+  assert.equal(calls, 0);
+
+  journalState = activeJournal('verification');
+  journalState.entries.at(-1).subjects = [`reset-${'b'.repeat(64)}`];
+  await assert.rejects(() => retirement.ensure(input), /authorization subject changed/u);
+  assert.equal(calls, 0);
 });
