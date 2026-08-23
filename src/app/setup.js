@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import { DEFAULT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES } from '../github/auth-provider.js';
 import { GitHubRestClient } from '../github/rest-client.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { JsonStateStore } from '../state/json-state-store.js';
@@ -16,15 +17,17 @@ const DEFAULT_MEMORY_BYTES = 2 * 1024 * 1024 * 1024;
 const DEFAULT_DISK_BYTES = 32 * 1024 * 1024 * 1024;
 const DEFAULT_PROCESSORS = 2;
 
-function absoluteHome(value) {
-  const selected = value ?? process.env.DEVBRIDGE_HOME ?? path.join(os.homedir(), '.devbridge');
+function absoluteHome(value, env) {
+  const selected = value ?? env.DEVBRIDGE_HOME ?? path.join(os.homedir(), '.devbridge');
   if (typeof selected !== 'string' || selected.length === 0 || selected.includes('\0')) throw new TypeError('DevBridge setup home is invalid');
   return path.resolve(selected);
 }
 
 async function resolveGitHubToken({ env = process.env, invoke = invokeCommand } = {}) {
-  const direct = [env.GH_TOKEN, env.GITHUB_TOKEN].find((value) => typeof value === 'string' && value.trim().length > 0);
-  if (direct) return direct.trim();
+  for (const name of DEFAULT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES) {
+    const value = env[name];
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+  }
   try {
     const result = await invoke({
       executable: process.platform === 'win32' ? 'gh.exe' : 'gh',
@@ -88,9 +91,7 @@ export function formatSetupHandoff(result) {
       '',
     ].join('\n');
   }
-  if (result.phase === 'image-complete') {
-    return 'Welcome to DevBridge — the Linux production image is already complete.\n';
-  }
+  if (result.phase === 'image-complete') return 'Welcome to DevBridge — the Linux production image is already complete.\n';
   return `DevBridge setup state: ${result.phase}\n`;
 }
 
@@ -113,42 +114,28 @@ export async function runDevBridgeSetup({
   authorityFactory = createUbuntuSetupAuthority,
   canaryFactory = createUbuntuProductionImagePhysicalCanary,
 } = {}) {
-  const root = absoluteHome(home);
+  const root = absoluteHome(home, env);
   const store = storeFactory(path.join(root, 'state', 'setup.json'));
   const previous = await store.get(STATE_KEY);
 
   let pathStatus;
   try {
-    pathStatus = await pathInstaller({
-      home: root,
-      stage0Launcher: env.DEVBRIDGE_STAGE0_LAUNCHER ?? null,
-      platform,
-      env,
-      invoke,
-    });
+    pathStatus = await pathInstaller({ home: root, stage0Launcher: env.DEVBRIDGE_STAGE0_LAUNCHER ?? null, platform, env, invoke });
   } catch (error) {
     return publicResult({ home: root, pathStatus: null, blocker: error.message });
   }
 
   const token = await tokenResolver({ env, invoke });
-  if (!token) return publicResult({ home: root, pathStatus, blocker: 'GitHub authentication is unavailable; authenticate with GitHub CLI or provide GH_TOKEN/GITHUB_TOKEN and re-run devbridge setup' });
+  if (!token) return publicResult({ home: root, pathStatus, blocker: 'GitHub authentication is unavailable; authenticate with GitHub CLI or provide a supported DevBridge/GitHub token environment variable and re-run devbridge setup' });
 
   let scope;
-  try {
-    scope = await discover(clientFactory(token));
-  } catch (error) {
-    return publicResult({ home: root, pathStatus, blocker: `GitHub discovery failed: ${error.message}` });
-  }
+  try { scope = await discover(clientFactory(token)); }
+  catch (error) { return publicResult({ home: root, pathStatus, blocker: `GitHub discovery failed: ${error.message}` }); }
 
   let repositories;
-  try {
-    repositories = selectRepositories(scope.repositories, { requested: requestedRepositories });
-  } catch (error) {
-    return publicResult({ home: root, pathStatus, identity: scope.identity, blocker: error.message });
-  }
-  if (repositories.needsSelection) {
-    return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, blocker: repositories.reason });
-  }
+  try { repositories = selectRepositories(scope.repositories, { requested: requestedRepositories }); }
+  catch (error) { return publicResult({ home: root, pathStatus, identity: scope.identity, blocker: error.message }); }
+  if (repositories.needsSelection) return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, blocker: repositories.reason });
 
   const snapshot = previous?.ubuntu?.snapshot ?? defaultUbuntuPackageSnapshot(now());
   await store.set(STATE_KEY, setupState(previous, { identity: scope.identity, repositories, snapshot }));
@@ -179,7 +166,6 @@ export async function runDevBridgeSetup({
   } catch (error) {
     return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, blocker: `read-only production-image status gate failed: ${error.message}` });
   }
-
   return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, physical });
 }
 
