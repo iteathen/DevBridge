@@ -28,7 +28,7 @@ function authority() {
       protocol: 'devbridge/ubuntu-autoinstall-recipe-v1', sourceSha256, generation: 'recipe-v1',
       patches: [{ id: 'boot', occurrences: 1, before: 'prompt', after: 'autogo' }],
     },
-    packages: { generation: 'packages-v1', packages: [{ name: 'nodejs', version: '22.16.0+dfsg-1' }] },
+    packages: { generation: 'packages-v1', snapshot: '20260823T100000Z', packages: [{ name: 'nodejs', version: '22.16.0+dfsg-1' }] },
     payload: { generation: 'guest-image-0123456789abcdef01234567' },
     qualification: { commands: [] },
     output: { profile: 'linux-development', generation: 'ubuntu-production-v1', bootstrap: 'guest-image-v1' },
