@@ -74,6 +74,17 @@ Once permanent entry is committed and verified, installation is complete. Later 
 
 Prerequisites are classified by owner instead of routed through one generic installer.
 
+### Dependency closure rule
+
+Every prerequisite discovered after the Node bootstrap boundary remains owned by setup until its owning adapter reaches one of two outcomes:
+
+1. the prerequisite is established under bounded local authority and its actual usability is verified; or
+2. the adapter proves that an external authority boundary prevents safe automatic reconciliation.
+
+A missing ordinary dependency by itself is **not** an operator action. Setup must not print instructions to install a package manually merely because the current implementation lacks an acquisition path. It must either own a pinned, bounded, platform-appropriate reconciliation path or stop at a real external boundary such as elevation, reboot, licensing, ownership ambiguity, host policy, unsupported platform, network failure, or integrity failure.
+
+Acquisition authority remains local to the owning prerequisite adapter. The generic setup orchestrator receives readiness/blocker evidence and any narrow local binding it must pass to the immediate consumer; it does not learn package-manager or vendor-specific mechanics.
+
 ### Node
 
 Node.js is the bootstrap prerequisite. The launcher verifies the supported version and fails with a precise prerequisite message when it is too old.
@@ -88,17 +99,20 @@ If runtime JavaScript dependencies are introduced later, they must be version-lo
 
 Git, GPG/GPGV, provider-management utilities, image tools, virtualization features, services, privileges, and similar requirements belong to setup-owned platform prerequisite adapters or the downstream provider status gate that owns their readiness.
 
-Setup inspects a prerequisite before the first operation that consumes it. Where installation is safe, bounded, platform-owned, and covered by current local setup authority, the owning adapter may establish the prerequisite and then verify actual readiness. Where elevation, reboot, licensing, ownership ambiguity, servicing policy, or operator policy prevents automatic repair, setup reports a focused blocker and resumes afterward.
+Setup inspects a prerequisite before the first operation that consumes it. Where installation is safe, bounded, platform-owned, and covered by current local setup authority, the owning adapter establishes the prerequisite and then verifies actual readiness. Where elevation, reboot, licensing, ownership ambiguity, servicing policy, unsupported platform, network integrity, or operator policy prevents automatic repair, setup reports a focused blocker and resumes afterward.
 
 The current bounded reconciliation slice behaves as follows:
 
-- `gpgv`/`gpgv.exe` must execute successfully before Ubuntu release-signature verification is attempted. If it is unavailable, setup returns a focused system-package blocker; DevBridge does not guess a third-party GPG installer.
+- `gpgv`/`gpgv.exe` must execute successfully before Ubuntu release-signature verification is attempted.
+- On Windows, an already-usable signature verifier is reused without package mutation. If it is absent and the setup process is already elevated, the signature-verifier prerequisite adapter fetches only the exact runtime-pinned official installer through bounded Node networking, verifies its pinned SHA-256 before execution, performs the vendor-supported unattended installation, removes the transient installer, re-discovers `gpgv.exe`, and executes it before claiming readiness.
+- The exact verifier executable discovered by that adapter is a local-only binding. Setup may carry it directly into Ubuntu release verification so a PATH update that is invisible to the current process does not force a new shell. The executable path is not remote setup/status data.
+- A non-elevated missing Windows signature verifier stops **before** download or mutation at the elevation boundary. Package digest disagreement, download/integrity failure, installer failure, or an unusable post-install verifier is a focused resumable blocker; none is converted into a manual-package-install instruction.
 - On Windows, setup inspects `ssh.exe` and `ssh-keygen.exe` before the physical image path needs them. If they are unavailable and the current process is already elevated, DevBridge may establish only the Windows `OpenSSH.Client~~~~0.0.1.0` capability when Windows reports that exact capability as `NotPresent`, then re-inspects the commands.
 - DevBridge never self-elevates. A non-elevated OpenSSH gap is an explicit elevation boundary.
 - A Windows servicing state that is pending/inconsistent, an installation result requiring restart, or a servicing-policy/source failure is a resumable caller boundary rather than authority to perform broader repair.
 - Hyper-V remains owned by the read-only physical canary readiness gate. Setup does not silently enable Hyper-V or restart the host. Provider/image readiness must pass the existing status preflight before construction can be separately authorized.
 
-Presence is not readiness. Finding an executable, capability record, or virtualization feature does not by itself prove the capability is usable.
+Presence is not readiness. Finding an executable, capability record, installer exit code, or virtualization feature does not by itself prove the capability is usable.
 
 ## Setup re-entry and status gate
 
@@ -131,7 +145,8 @@ Do not attempt to enumerate every machine instruction as a transaction phase. Te
 - interruption during exact component acquisition or component/wrapper publication;
 - interruption after permanent entry commit but before setup completion;
 - interruption after setup authority/selection persistence;
-- missing prerequisite followed by bounded prerequisite establishment, verification, and re-entry;
+- missing prerequisite followed by bounded prerequisite establishment, verification, same-invocation continuation, and re-entry;
+- prerequisite acquisition with bad package digest or unusable post-install capability;
 - elevation and restart boundaries;
 - moving branch between the interrupted invocation and rerun;
 - corruption of DevBridge-owned committed state;
@@ -141,8 +156,8 @@ For each recoverable case, rerun must converge on the same intended exact subjec
 
 ## Live-host gate
 
-The physical host remains untouched while #238 qualification is in progress. Repository tests, hosted CI, and documentation changes do not authorize a real-host installer or construction run.
+The first real Windows zero-state pass exposed an incomplete prerequisite contract: missing `gpgv.exe` was reported as an operator installation task even though GPG/GPGV is explicitly not a zero-state assumption. That finding reopens #238 until the setup-owned reconciliation path is fully qualified and proved on the live host.
 
-Only after the complete #238 contract is green may the physical host use the supported Node-initiated zero-state bootstrap. Even then, the first real-host pass stops at the setup-owned read-only physical `status` gate.
+The live host must not be used to work around this gap manually. The correction is qualified in hosted Windows/Linux CI first. The next supported live-host pass must exercise the updated zero-state setup path itself, including setup-owned reconciliation of a missing signature verifier when local authority permits it.
 
-A fully ready status does not itself authorize automatic construction. Physical Ubuntu image construction remains separately gated by #197 and an explicit operator decision after the status result has been reviewed.
+Even after the prerequisite contract is green, the live pass stops at the setup-owned read-only physical `status` gate. A fully ready status does not itself authorize automatic construction. Physical Ubuntu image construction remains separately gated by #197 and an explicit operator decision after the status result has been reviewed.
