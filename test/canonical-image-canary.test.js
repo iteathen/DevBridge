@@ -22,21 +22,53 @@ function request(overrides = {}) {
 
 function memoryJournal() {
   const values = new Map();
+  let failedPhase = null;
   return {
     async load(identity) { return values.has(identity) ? structuredClone(values.get(identity)) : undefined; },
-    async save(identity, value) { values.set(identity, structuredClone(value)); },
+    async save(identity, value) {
+      if (failedPhase === value.phase) {
+        failedPhase = null;
+        throw new Error(`simulated outer ${value.phase} checkpoint loss`);
+      }
+      values.set(identity, structuredClone(value));
+    },
+    failOn(phase) { failedPhase = phase; },
   };
 }
 
 function harness({ journal = memoryJournal(), probe = null, finalize = null, verify = null } = {}) {
   const calls = [];
+  let constructionState = 'absent';
   const construction = {
-    async prepare(input) { calls.push(['prepare', structuredClone(input)]); return { identity: IDENTITY }; },
-    async observe(identity) { calls.push(['observe', identity]); return { identity }; },
-    async start(identity) { calls.push(['start', identity]); return { identity }; },
-    async activate(identity) { calls.push(['activate', identity]); return { identity }; },
-    async accept(identity, evidence) { calls.push(['accept', identity, structuredClone(evidence)]); return { identity }; },
-    async retain(identity) { calls.push(['retain', identity]); return { identity, location: '/owned/opaque/canonical.img' }; },
+    async prepare(input) {
+      calls.push(['prepare', structuredClone(input)]);
+      constructionState = 'prepared';
+      return { identity: IDENTITY };
+    },
+    async observe(identity) {
+      calls.push(['observe', identity, constructionState]);
+      return { identity, state: constructionState };
+    },
+    async start(identity) {
+      calls.push(['start', identity]);
+      constructionState = 'running';
+      return { identity };
+    },
+    async activate(identity) {
+      calls.push(['activate', identity]);
+      constructionState = 'active';
+      return { identity };
+    },
+    async accept(identity, evidence) {
+      calls.push(['accept', identity, structuredClone(evidence)]);
+      constructionState = 'accepted';
+      return { identity };
+    },
+    async retain(identity) {
+      calls.push(['retain', identity]);
+      constructionState = 'retained';
+      return { identity, location: '/owned/opaque/canonical.img' };
+    },
   };
   const qualification = {
     async probe(input) {
@@ -79,6 +111,10 @@ function canary(parts) {
   });
 }
 
+function effectNames(parts) {
+  return parts.calls.map(([name]) => name).filter((name) => name !== 'observe');
+}
+
 test('canary advances one durable phase at a time and survives a fresh coordinator between every phase', async () => {
   const parts = harness();
   const phases = [
@@ -105,7 +141,7 @@ test('canary advances one durable phase at a time and survives a fresh coordinat
   assert.equal(status.complete, true);
   assert.equal(status.image.identity, IMAGE_IDENTITY);
   assert.equal(JSON.stringify(status).includes('/owned/'), false);
-  assert.deepEqual(parts.calls.map(([name]) => name), [
+  assert.deepEqual(effectNames(parts), [
     'prepare',
     'start',
     'activate',
@@ -123,6 +159,30 @@ test('canary advances one durable phase at a time and survives a fresh coordinat
     probe: { generation: 'check-1', protocol: 'probe-v1', ready: true },
     finalization: { finalized: true, protocol: 'finalization-v1' },
   });
+});
+
+test('outer restart reconciles completed inner construction effects instead of replaying them', async () => {
+  const cases = [
+    { phase: 'prepared', setupAdvances: 1, effect: 'prepare' },
+    { phase: 'running', setupAdvances: 2, effect: 'start' },
+    { phase: 'active', setupAdvances: 3, effect: 'activate' },
+    { phase: 'accepted', setupAdvances: 7, effect: 'accept' },
+    { phase: 'retained', setupAdvances: 8, effect: 'retain' },
+  ];
+
+  for (const item of cases) {
+    const journal = memoryJournal();
+    const parts = harness({ journal });
+    for (let index = 0; index < item.setupAdvances; index += 1) await canary(parts).advance(request());
+    journal.failOn(item.phase);
+    await assert.rejects(() => canary(parts).advance(request()), new RegExp(`simulated outer ${item.phase} checkpoint loss`, 'u'));
+    const countAfterEffect = effectNames(parts).filter((name) => name === item.effect).length;
+    assert.equal(countAfterEffect, 1, `${item.effect} should have completed exactly once before outer checkpoint loss`);
+
+    const resumed = await canary(parts).advance(request());
+    assert.equal(resumed.phase, item.phase);
+    assert.equal(effectNames(parts).filter((name) => name === item.effect).length, countAfterEffect, `${item.effect} must not replay after restart`);
+  }
 });
 
 test('destructive finalization intent is durable before the effect starts', async () => {
@@ -157,12 +217,13 @@ test('interrupted destructive finalization is observed and blocked rather than r
   await assert.rejects(() => canary(parts).advance(request()), /simulated host loss/u);
   assert.equal((await journal.load(IDENTITY)).phase, 'finalization-attempted');
 
+  const observationsBeforeResume = parts.calls.filter(([name]) => name === 'observe').length;
   const resumed = await canary(parts).advance(request());
   assert.equal(resumed.phase, 'finalization-attempted');
   assert.equal(resumed.blocked, true);
   assert.match(resumed.reason, /exact reconciliation/u);
   assert.equal(finalizeCalls, 1);
-  assert.equal(parts.calls.filter(([name]) => name === 'observe').length, 1);
+  assert.equal(parts.calls.filter(([name]) => name === 'observe').length, observationsBeforeResume + 1);
   assert.equal(parts.calls.some(([name]) => name === 'accept'), false);
   assert.equal(parts.calls.some(([name]) => name === 'publish'), false);
 });
