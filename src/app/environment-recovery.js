@@ -112,6 +112,7 @@ export function createEnvironmentRecovery({
   rebuildConstruction = null,
   recreateConstruction = null,
   recreateRetirement = null,
+  recreateAuthorization = null,
   resetConstruction = null,
   resetRetirement = null,
   resetAuthorization = null,
@@ -151,6 +152,7 @@ export function createEnvironmentRecovery({
     construction: assertPort(recreateConstruction, ['run', 'clear'], 'recreate construction'),
     retirement: assertPort(recreateRetirement, ['ensure'], 'recreate retirement'),
     evidence,
+    authorization: recreateAuthorization,
   });
   const reset = resetConstruction == null || resetRetirement == null ? null : new EnvironmentReset({
     declarations: lifecycle.declarations,
