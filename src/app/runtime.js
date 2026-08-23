@@ -16,13 +16,14 @@ import { importAgentPublicIdentity, loadOrCreateAgentIdentity } from '../securit
 import { WorkspacePolicy } from '../security/workspace-policy.js';
 import { GitClient } from '../git/git-client.js';
 import { GitTaskLeaseStore } from '../git/task-lease-store.js';
-import { GitWorkspaceManager } from '../git/workspace-manager.js';
+import { GitWorkspaceManager } from '../git/git-workspace-manager.js';
 import { DeterministicProcessRunner } from '../runtime/deterministic-process-runner.js';
 import { WorkerExchange } from '../runtime/worker-exchange.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
 import { loadLocalOperationManifests } from '../runtime/local-operation-manifest.js';
 import { ToolOnboarding } from '../runtime/tool-onboarding.js';
 import { canonicalExternalDirectory } from '../runtime/external-directory.js';
+import { createSetupStatusOperation } from '../setup/status-operation.js';
 import { connectToolOnboarding } from './tool-onboarding-composition.js';
 import { composeWorkRunner } from './work-runner-composition.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
@@ -37,6 +38,7 @@ import { TaskLeaseManager } from '../run/task-lease-manager.js';
 import { HardGateController } from '../run/hard-gate-controller.js';
 import { DecisionGatedRunCoordinator, DecisionGatedWorkspaceManager } from '../run/decision-gated-coordinator.js';
 import { createRuntimeExecutionContext } from './runtime-execution.js';
+import { runDevBridgeSetup } from './setup.js';
 
 export { stateFileName } from '../state/state-file.js';
 
@@ -206,6 +208,9 @@ export async function createRuntime(config, {
 
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
+  operationRegistry.register('setup.status', createSetupStatusOperation({
+    runSetup: () => runDevBridgeSetup({ env }, { fetchImpl }),
+  }));
   const onboardingConfig = config.execution.toolOnboarding ?? {
     enabled: false,
     manifestDirectory: null,
