@@ -58,12 +58,13 @@ export async function createEnvironmentConstructionRuntime({
     subject: policy.subject,
     journal: localLifecycle.journal,
   });
-  const resetMaterialization = createEnvironmentResetMaterialization({
+  const resetAvailable = typeof localFoundation.replaceEnvironment === 'function' && typeof localFoundation.retireSupersededEnvironment === 'function';
+  const resetMaterialization = resetAvailable ? createEnvironmentResetMaterialization({
     state: localFoundation,
     subject: policy.subject,
     journal: localLifecycle.journal,
-  });
-  const resetRetirement = createEnvironmentResetRetirement({ state: localFoundation });
+  }) : null;
+  const resetRetirement = resetAvailable ? createEnvironmentResetRetirement({ state: localFoundation }) : null;
   const preparation = createEnvironmentConstructionPreparation({
     stateDirectory,
     platform,
@@ -109,7 +110,7 @@ export async function createEnvironmentConstructionRuntime({
     readiness: observation.readiness,
     ...(now ? { now } : {}),
   });
-  const resetConstruction = createEnvironmentConstructionPipeline({
+  const resetConstruction = resetAvailable ? createEnvironmentConstructionPipeline({
     stateDirectory,
     image,
     resources,
@@ -118,7 +119,7 @@ export async function createEnvironmentConstructionRuntime({
     workspaces,
     readiness: observation.readiness,
     ...(now ? { now } : {}),
-  });
+  }) : null;
   const recovery = createEnvironmentRecovery({
     lifecycle: localLifecycle,
     observer: observation,
