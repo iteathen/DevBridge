@@ -14,6 +14,13 @@ async function fixture() {
   return { root, home, bin };
 }
 
+function pathInvoke(invocations = []) {
+  return async (request) => {
+    invocations.push(request);
+    return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"changed":true}', stderr: '' };
+  };
+}
+
 test('setup installs an owned stable command and persists its bin directory', async () => {
   const data = await fixture();
   try {
@@ -23,10 +30,7 @@ test('setup installs an owned stable command and persists its bin directory', as
       platform: process.platform,
       homeDirectory: data.root,
       env: { ...process.env, PATH: '' },
-      invoke: async (request) => {
-        invocations.push(request);
-        return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"changed":true}', stderr: '' };
-      },
+      invoke: pathInvoke(invocations),
     });
     assert.equal(result.persisted, true);
     assert.equal(result.requiresNewShell, true);
@@ -35,6 +39,30 @@ test('setup installs an owned stable command and persists its bin directory', as
     assert.match(launcher, /devbridge-entry\.mjs/u);
     if (process.platform === 'win32') assert.equal(invocations.length, 1);
     else assert.match(await readFile(path.join(data.root, '.profile'), 'utf8'), /DevBridge managed PATH/u);
+  } finally {
+    await rm(data.root, { recursive: true, force: true });
+  }
+});
+
+test('setup preserves the active Stage 0 launcher when the permanent entry is not installed yet', async () => {
+  const data = await fixture();
+  try {
+    await rm(path.join(data.bin, 'devbridge-entry.mjs'));
+    const stage0 = path.join(data.root, 'downloaded-devbridge.mjs');
+    await writeFile(stage0, '#!/usr/bin/env node\nexport const STAGE0_PROTOCOL = 1;\n');
+    const result = await installStableDevBridgeCommand({
+      home: data.home,
+      stage0Launcher: stage0,
+      platform: process.platform,
+      homeDirectory: data.root,
+      env: { ...process.env, PATH: '' },
+      invoke: pathInvoke(),
+    });
+    assert.equal(result.launcher, path.join(data.bin, 'devbridge-stage0.mjs'));
+    assert.equal(await readFile(result.launcher, 'utf8'), '#!/usr/bin/env node\nexport const STAGE0_PROTOCOL = 1;\n');
+    assert.match(await readFile(`${result.launcher}.owner`, 'utf8'), /DevBridge managed Stage 0 source/u);
+    assert.match(await readFile(result.command, 'utf8'), /devbridge-stage0\.mjs/u);
+    assert.match(result.temporaryCommand, /devbridge-stage0\.mjs/u);
   } finally {
     await rm(data.root, { recursive: true, force: true });
   }
