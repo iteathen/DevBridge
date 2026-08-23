@@ -119,7 +119,13 @@ export async function runDevBridgeSetup({
 
   let pathStatus;
   try {
-    pathStatus = await pathInstaller({ home: root, platform, env, invoke });
+    pathStatus = await pathInstaller({
+      home: root,
+      stage0Launcher: env.DEVBRIDGE_STAGE0_LAUNCHER ?? null,
+      platform,
+      env,
+      invoke,
+    });
   } catch (error) {
     return publicResult({ home: root, pathStatus: null, blocker: error.message });
   }
