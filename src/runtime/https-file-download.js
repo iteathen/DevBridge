@@ -28,6 +28,16 @@ async function realParent(destination) {
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('download destination parent must be a real directory');
 }
 
+async function requireAbsent(destination) {
+  try {
+    await lstat(destination);
+    throw new Error('download destination already exists');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw error;
+  }
+}
+
 export class HttpsFileDownload {
   #fetch;
   #allowedHosts;
@@ -57,9 +67,11 @@ export class HttpsFileDownload {
     if (typeof destination !== 'string' || destination.length === 0 || destination.includes('\0')) throw new TypeError('download destination is invalid');
     const output = path.resolve(destination);
     await realParent(output);
+    await requireAbsent(output);
     const signal = AbortSignal.timeout(this.#maxDurationMs);
     let current = approvedUrl(url, this.#allowedHosts);
     let response;
+    let created = false;
 
     try {
       for (let redirects = 0; ; redirects += 1) {
@@ -77,6 +89,7 @@ export class HttpsFileDownload {
       if (Number.isFinite(declared) && declared > this.#maxBytes) throw new Error('download exceeds its byte bound');
 
       const handle = await open(output, 'wx', 0o600);
+      created = true;
       let bytes = 0;
       try {
         for await (const chunk of response.body) {
@@ -91,7 +104,7 @@ export class HttpsFileDownload {
       }
       return Object.freeze({ finalUrl: current.toString(), bytes });
     } catch (error) {
-      await rm(output, { force: true }).catch(() => {});
+      if (created) await rm(output, { force: true }).catch(() => {});
       throw error;
     }
   }
