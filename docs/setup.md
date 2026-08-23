@@ -207,14 +207,14 @@ A Windows base image must be generalized and contain no user's activation secret
 
 Setup treats these independently:
 
-- **source/construction authority** — the approved official Microsoft source media and deterministic recipe;
+- **source/construction authority** — the approved official Microsoft source media and versioned recipe;
 - **distribution authority** — whether/where prepared Windows bytes may be stored;
 - **activation authority** — retail/MAK/KMS/AD/subscription/configure-later policy applied to the materialized VM;
 - **environment declaration** — exact Windows image/profile/bootstrap/resource selection.
 
 Never infer that the host's OEM/digital activation is reusable in a VM. Never serialize a product key/MAK secret into normal config, Git/GitHub, logs, status, evidence, exported templates, or a generalized image.
 
-Private artifact hosting is not proof of Microsoft redistribution rights. If the selected source/license permits prepared-image storage, the exact generalized image may use #178 remote-artifact recovery. If not, durable setup authority must preserve an exact local-reconstruction path from approved Microsoft source media/recipe so the same expected canonical image can be rebuilt, verified, and admitted without guessing another generation.
+Private artifact hosting is not proof of Microsoft redistribution rights. If the selected source/license permits prepared-image storage, the exact generalized image may use #178 remote-artifact recovery. If not, setup preserves an approved local reconstruction/regeneration path. A locally regenerated Windows VHDX may satisfy the current image subject only when exact canonical size/SHA-256 reproduction is proven. A different but otherwise qualified canonical digest is a new immutable image subject/generation and requires an explicit local declaration rebind/migration before `create`/`rebuild` can consume it. Never ignore or normalize away a digest mismatch.
 
 Windows Evaluation media is an explicit temporary evaluation path only; it is not silently substituted for a durable production image.
 
