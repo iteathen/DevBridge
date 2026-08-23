@@ -101,4 +101,21 @@ export class SshAccessMaterial {
       throw error;
     }
   }
+
+  async discard(target) {
+    const root = this.#root(target);
+    try {
+      const info = await lstat(root);
+      if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('SSH access material root must be a real directory');
+    } catch (error) {
+      if (error?.code === 'ENOENT') return Object.freeze({ changed: false, absent: true });
+      throw error;
+    }
+    await rm(root, { recursive: true, force: true });
+    return Object.freeze({ changed: true, absent: false });
+  }
+}
+
+export function createSshAccessMaterial(options) {
+  return new SshAccessMaterial(options);
 }

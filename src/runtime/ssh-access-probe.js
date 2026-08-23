@@ -36,3 +36,7 @@ export class SshAccessProbe {
     return Object.freeze({ ready: true, reason: null });
   }
 }
+
+export function createSshAccessProbe(options) {
+  return new SshAccessProbe(options);
+}

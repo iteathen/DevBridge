@@ -38,28 +38,32 @@ function ipv4(value, name) {
   return value;
 }
 
-function normalizeLocation(raw) {
-  const value = requireObject(raw, 'bootstrap location');
-  onlyKeys(value, new Set(['reference', 'proof', 'family', 'network']), 'bootstrap location');
-  if (typeof value.reference !== 'string' || !REFERENCE.test(value.reference)) throw new TypeError('bootstrap location.reference is invalid');
-  if (!['windows', 'linux'].includes(value.family)) throw new TypeError('bootstrap location.family is invalid');
-  const network = requireObject(value.network, 'bootstrap location.network');
+function normalizeNetwork(raw) {
+  const network = requireObject(raw, 'bootstrap location.network');
   onlyKeys(network, new Set(['reference', 'proof', 'prefix', 'gateway']), 'bootstrap location.network');
   if (typeof network.reference !== 'string' || !REFERENCE.test(network.reference)) throw new TypeError('bootstrap network.reference is invalid');
   const prefix = bounded(network.prefix, 'bootstrap network.prefix', 64);
   const match = /^(\d+\.\d+\.\d+)\.0\/(\d{1,2})$/u.exec(prefix);
   if (!match || Number(match[2]) !== 24 || !IPV4.test(`${match[1]}.0`)) throw new TypeError('bootstrap network.prefix must be an IPv4 /24');
   return {
+    reference: network.reference,
+    proof: bounded(network.proof, 'bootstrap location.network.proof', 2_048),
+    prefix,
+    base: match[1],
+    gateway: ipv4(network.gateway, 'bootstrap location.network.gateway'),
+  };
+}
+
+function normalizeLocation(raw) {
+  const value = requireObject(raw, 'bootstrap location');
+  onlyKeys(value, new Set(['reference', 'proof', 'family', 'network']), 'bootstrap location');
+  if (typeof value.reference !== 'string' || !REFERENCE.test(value.reference)) throw new TypeError('bootstrap location.reference is invalid');
+  if (!['windows', 'linux'].includes(value.family)) throw new TypeError('bootstrap location.family is invalid');
+  return {
     reference: value.reference,
     proof: bounded(value.proof, 'bootstrap location.proof', 2_048),
     family: value.family,
-    network: {
-      reference: network.reference,
-      proof: bounded(network.proof, 'bootstrap location.network.proof', 2_048),
-      prefix,
-      base: match[1],
-      gateway: ipv4(network.gateway, 'bootstrap location.network.gateway'),
-    },
+    network: normalizeNetwork(value.network),
   };
 }
 
@@ -225,12 +229,20 @@ export class HyperVEnvironmentBootstrap {
     try { return JSON.parse(result.stdout); } catch { throw new Error('bootstrap management operation returned invalid structured output'); }
   }
 
-  async #allocation(target, location) {
+  #servers() {
+    const servers = [...new Set(this.#dnsServers().filter((entry) => IPV4.test(entry)))].slice(0, 4);
+    if (servers.length === 0) servers.push('1.1.1.1');
+    return servers;
+  }
+
+  async #allocation(target, location, scope = 'managed') {
     return this.#serial(async () => {
       const state = await this.#load();
       const existing = state.allocations[target];
       if (existing) {
         if (existing.prefix !== location.network.prefix) throw new Error('bootstrap network identity changed for an existing target');
+        const existingScope = existing.scope ?? 'managed';
+        if (existingScope !== scope) throw new Error('bootstrap network allocation scope changed for an existing target');
         return existing.address;
       }
       const used = new Set(Object.values(state.allocations).filter((entry) => entry.prefix === location.network.prefix).map((entry) => entry.address));
@@ -243,7 +255,7 @@ export class HyperVEnvironmentBootstrap {
         if (candidate !== location.network.gateway && !used.has(candidate)) { selected = candidate; break; }
       }
       if (!selected) throw new Error('bootstrap network address pool is exhausted');
-      state.allocations[target] = { address: selected, prefix: location.network.prefix, allocatedAt: new Date().toISOString() };
+      state.allocations[target] = { address: selected, prefix: location.network.prefix, scope, allocatedAt: new Date().toISOString() };
       await this.#save(state);
       return selected;
     });
@@ -252,8 +264,28 @@ export class HyperVEnvironmentBootstrap {
   async #resolved(target) {
     const location = normalizeLocation(await this.#locate(target));
     const baseConnection = normalizeConnection(await this.#connection(target), location.family);
-    const address = await this.#allocation(target, location);
+    const address = await this.#allocation(target, location, 'managed');
     return { location, baseConnection, address };
+  }
+
+  async reserveAddress(rawTarget, rawNetwork) {
+    const target = targetId(rawTarget);
+    const network = normalizeNetwork(rawNetwork);
+    const address = await this.#allocation(target, { network }, 'reserved');
+    return Object.freeze({ address, prefixLength: 24, gateway: network.gateway, dns: Object.freeze(this.#servers()) });
+  }
+
+  async releaseAddress(rawTarget) {
+    const target = targetId(rawTarget);
+    return this.#serial(async () => {
+      const state = await this.#load();
+      const existing = state.allocations[target];
+      if (!existing) return Object.freeze({ changed: false, absent: true });
+      if ((existing.scope ?? 'managed') !== 'reserved') throw new Error('bootstrap managed network allocation cannot be released as a reservation');
+      delete state.allocations[target];
+      await this.#save(state);
+      return Object.freeze({ changed: true, absent: false });
+    });
   }
 
   async prepare(rawTarget) {
@@ -272,15 +304,13 @@ export class HyperVEnvironmentBootstrap {
   async activate(rawTarget) {
     const target = targetId(rawTarget);
     const { location, address } = await this.#resolved(target);
-    const servers = [...new Set(this.#dnsServers().filter((entry) => IPV4.test(entry)))].slice(0, 4);
-    if (servers.length === 0) servers.push('1.1.1.1');
     const seed = {
       protocol: 'devbridge/network-seed-v1',
       target,
       address,
       prefixLength: 24,
       gateway: location.network.gateway,
-      dns: servers,
+      dns: this.#servers(),
       revision: 1,
     };
     await this.#ensure();
@@ -321,8 +351,8 @@ export class HyperVEnvironmentBootstrap {
       const state = await this.#load();
       const retained = new Set(activeTargets);
       let changed = false;
-      for (const key of Object.keys(state.allocations)) {
-        if (!retained.has(key)) { delete state.allocations[key]; changed = true; }
+      for (const [key, entry] of Object.entries(state.allocations)) {
+        if ((entry.scope ?? 'managed') === 'managed' && !retained.has(key)) { delete state.allocations[key]; changed = true; }
       }
       if (changed) await this.#save(state);
       return { changed, retained: Object.keys(state.allocations).length };
