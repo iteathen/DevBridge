@@ -10,6 +10,7 @@ DevBridge has accumulated implementation plans, migration records, normative spe
 | --- | --- |
 | Understand what DevBridge is | [`../README.md`](../README.md) |
 | Install or configure DevBridge | [`setup.md`](setup.md) |
+| Provision/recover base images or Windows licensing | [`fresh-host-image-provisioning.md`](fresh-host-image-provisioning.md) and [`image-artifact-recovery.md`](image-artifact-recovery.md) |
 | Operate an installed DevBridge | [`operations.md`](operations.md) |
 | Diagnose a failure | [`troubleshooting.md`](troubleshooting.md) |
 | Understand security and control flow | [`architecture.md`](architecture.md) |
@@ -46,7 +47,9 @@ The important current rules are:
 - Windows uses Hyper-V and Linux uses KVM/QEMU through libvirt as the initial provider families;
 - execution profiles own physical persistent VMs;
 - repositories own isolated workspaces inside compatible profile VMs;
-- authoritative Git, credentials, publication state, provider authority, runtime-supervision state, and other machine authority stay on the host;
+- authoritative Git, credentials, publication state, provider authority, runtime-supervision state, image-source/distribution policy, Windows activation authority, and other machine authority stay on the host;
+- generalized Windows base images contain no user activation secret; Windows source-media authority, prepared-image distribution policy, activation authority, and environment declaration are separate concerns;
+- authoritative image recovery must not assume a developer-owned artifact repository or a pre-existing local image cache;
 - guest output, model output, repository content, and remote task text are data/proposals, not authority;
 - missing or unready VM execution fails closed rather than falling back to direct host execution;
 - the persistent installed DevBridge and disposable test installations are different installations and should be distinguished by their stable `DB-<12 hex>` installation tags.
@@ -95,6 +98,8 @@ These documents describe current implementation structure and intended operator 
 
 - [`architecture.md`](architecture.md) — authority hierarchy, trust domains, provider-neutral flow, Git/source/candidate model.
 - [`execution-profile-environments.md`](execution-profile-environments.md) — physical profile VM ownership and repository workspace routing.
+- [`fresh-host-image-provisioning.md`](fresh-host-image-provisioning.md) — blank-slate image construction/distribution authority, Windows licensing/activation separation, re-entry, and recovery supply.
+- [`image-artifact-recovery.md`](image-artifact-recovery.md) — immutable canonical/encoded/transport image recovery contract.
 - [`tool-profiles.md`](tool-profiles.md) — tool/profile surface and execution policy.
 - [`bootstrap.md`](bootstrap.md) — standalone launcher and secure-bootstrap flow.
 - [`bootstrap-compatibility.md`](bootstrap-compatibility.md) — Stage-0 protocol compatibility, accepted-runtime selection, installation tags, one-time legacy migration.

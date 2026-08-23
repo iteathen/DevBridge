@@ -25,7 +25,29 @@ The migration stack behaves as follows:
 
 The completed Stages 3–5 interval kept execution unavailable. Stage 6 restores it through persistent VMs only. Do not introduce direct/uncontained host execution as compatibility behavior.
 
-Stage 2 does not add installer mutation UX. Do not manually configure provider objects and assume DevBridge owns them merely because `doctor` can observe the host. VM Stage 8 (#116), coordinated with setup/reconfiguration issue #103, owns supported discovery/provisioning/re-entry after the lower VM stages are implemented and qualified. Stage 8 must provision/reuse physical environments by execution profile and create/repair repository workspaces separately.
+Stage 2 does not add installer mutation UX. Do not manually configure provider objects and assume DevBridge owns them merely because `doctor` can observe the host. VM Stage 8 (#116), coordinated with setup/reconfiguration issue #103 and fresh-host image/licensing issue #192, owns supported discovery/provisioning/re-entry after the lower VM stages are implemented and qualified. Stage 8 must provision/reuse physical environments by execution profile and create/repair repository workspaces separately.
+
+## Blank-slate installation rule
+
+DevBridge setup must behave as if the user is a normal new user on an unknown host. It must not rely on developer-workstation history.
+
+Do not assume:
+
+- virtualization/provider features are installed, enabled, authorized, or healthy;
+- source ISOs or prepared base images exist;
+- the user wants Windows;
+- a Windows product key or organization activation service exists;
+- host Windows activation can be reused in a VM;
+- the user is legally permitted to publish prepared Windows bytes;
+- any image artifact repository exists;
+- the GitHub owner is `iteathen` or any other fixed account;
+- GitHub credentials can create repositories/Releases;
+- zstd/qemu-img/xorriso/ADK or other image-construction tools are installed;
+- the local image cache is durable reconstruction authority.
+
+Discover safe facts first. Ask only for unresolved choices or explicit local consent.
+
+See `docs/fresh-host-image-provisioning.md` and #192 for the complete image/licensing/recovery flow.
 
 ## Current requirements
 
@@ -133,7 +155,11 @@ Discover where safe:
 - execution-profile VM/differencing-disk state;
 - legacy repository-owned VM state as migration candidates;
 - repository workspace-route state;
-- provider networking and bridge readiness.
+- provider networking and bridge readiness;
+- approved/available Windows source-media options without treating discovery as license authority;
+- configured activation-authority status without exposing secret material;
+- configured image recovery/distribution policy;
+- installed image-construction utilities and free-space requirements.
 
 ### Linux host discovery
 
@@ -146,24 +172,51 @@ Discover where safe:
 - execution-profile domain/storage state;
 - legacy repository-owned domain/overlay state as migration candidates;
 - repository workspace-route state;
-- libvirt network and bridge readiness.
+- libvirt network and bridge readiness;
+- approved/available OS image source and artifact-recovery state;
+- installed image-construction/conversion utilities and free-space requirements.
 
 ### Common guided flow
 
-1. discover provider/account/repository facts before prompting;
-2. propose approved repositories and compatible/preferred execution profiles independently;
-3. group selected repositories by compatible execution profile and show the physical profile environments actually required;
-4. propose image generations and provider-native storage/resource implications per profile, not per repository;
-5. show required host changes such as elevation/reboot or Linux package/service/group/session actions;
-6. require explicit operator approval before provisioning/enabling authority-bearing changes;
-7. verify provider/image/profile-environment/bridge/workspace-route readiness;
-8. allow re-entering setup later to add/remove/change repositories, execution profiles, images, resource policy, or repair/reset/reseed profile environments and repository workspaces.
+1. discover host/provider/GitHub/account/repository facts before prompting;
+2. ask which execution profiles are actually needed now; do not ask Windows media/license questions for Linux-only setup;
+3. propose approved repositories and compatible/preferred execution profiles independently;
+4. group selected repositories by compatible execution profile and show the physical profile environments actually required;
+5. propose provider prerequisites and exact local changes, including elevation/reboot/package/service/group/session requirements;
+6. establish exact approved image construction authority for each required profile;
+7. for Windows, separately establish activation method or explicit `configure later` and separately establish whether prepared Windows bytes may be stored in the selected recovery source;
+8. when GitHub Releases are selected for image recovery, derive the authenticated owner and propose a private `<authenticated-owner>/devbridge-base-images` source or another authorized repository; verify repository/Release capability before mutation;
+9. construct and functionally qualify the canonical image from approved source authority;
+10. package remote artifacts only through #178's complete-image zstd -> 1 GiB transport-object contract;
+11. redownload/reconstruct/verify remote artifacts through the real acquisition path before accepting them;
+12. create the required execution-profile environment from the exact approved image subject;
+13. apply/verify Windows activation after materialization through the separate protected activation authority when required;
+14. verify provider/image/profile-environment/activation/bridge/workspace-route readiness separately;
+15. require explicit operator approval before enabling authority-bearing execution;
+16. allow re-entering setup later to add Windows, change source/activation/artifact policy, add/remove repositories, change profiles/resources, or repair/reset/reseed environments/workspaces.
 
 Selecting `all` repositories means approve/register all selected repository workspaces. It does **not** mean create/start one VM per repository. Setup must report repository/workspace counts separately from physical execution-profile VM counts.
 
-Do not blindly prompt for repository names, local paths, provider object names, or provider details that can be safely discovered and verified. Do not auto-enable discovered capabilities merely because they exist.
+Do not blindly prompt for repository names, local paths, provider object names, provider details, or GitHub usernames that can be safely discovered and verified. Do not auto-enable discovered capabilities merely because they exist.
 
 VM/profile readiness failure must degrade/fail closed; setup never recreates the removed host repository-execution path. Resource admission failures must be reported as profile-level resource problems rather than as repository failures.
+
+## Windows media, distribution, and activation are separate
+
+A Windows base image must be generalized and contain no user's activation secret. Image identity is derived from the canonical image/profile/generation, not from a product key or activation method.
+
+Setup treats these independently:
+
+- **source/construction authority** — the approved official Microsoft source media and versioned recipe;
+- **distribution authority** — whether/where prepared Windows bytes may be stored;
+- **activation authority** — retail/MAK/KMS/AD/subscription/configure-later policy applied to the materialized VM;
+- **environment declaration** — exact Windows image/profile/bootstrap/resource selection.
+
+Never infer that the host's OEM/digital activation is reusable in a VM. Never serialize a product key/MAK secret into normal config, Git/GitHub, logs, status, evidence, exported templates, or a generalized image.
+
+Private artifact hosting is not proof of Microsoft redistribution rights. If the selected source/license permits prepared-image storage, the exact generalized image may use #178 remote-artifact recovery. If not, setup preserves an approved local reconstruction/regeneration path. A locally regenerated Windows VHDX may satisfy the current image subject only when exact canonical size/SHA-256 reproduction is proven. A different but otherwise qualified canonical digest is a new immutable image subject/generation and requires an explicit local declaration rebind/migration before `create`/`rebuild` can consume it. Never ignore or normalize away a digest mismatch.
+
+Windows Evaluation media is an explicit temporary evaluation path only; it is not silently substituted for a durable production image.
 
 ## Provider-owned versus operator-owned infrastructure
 
@@ -174,6 +227,8 @@ Windows uninstall/repair must not casually disable Hyper-V or delete operator-ow
 Linux uninstall/repair must not casually remove KVM/QEMU/libvirt packages, stop shared libvirt infrastructure, delete operator-owned domains/storage pools/networks/images, or rewrite system virtualization policy when a DevBridge-owned object suffices.
 
 Legacy repository-owned DevBridge VMs are retained as migration candidates until their replacement workspace is proven or the operator explicitly authorizes retirement. Multiple old writable VM disks must not be blindly merged into one shared profile disk.
+
+Remote image repositories/releases and operator Windows licensing authority are also operator-owned state. Uninstall must not delete remote artifacts or revoke/remove licensing infrastructure by default.
 
 ## Runtime updates
 
@@ -217,7 +272,7 @@ Future VM lifecycle commands/setup surfaces preserve persistent profile VM state
 
 - Pre-Stage-1 historical main: Bubblewrap verification existed for supported Linux repository execution and Windows failed closed.
 - Stage 1 through Stage 5 history: repository execution was unavailable/no-provider while trusted control-plane functions could remain usable.
-- VM transition: do not interpret partial Hyper-V, KVM, libvirt, image, VM/domain, profile, workspace-route, or bridge state as completed DB-020 support.
-- After Stage 7/8: expect exact provider/image/profile-environment/workspace/bridge readiness evidence and no host fallback.
+- VM transition: do not interpret partial Hyper-V, KVM, libvirt, image, VM/domain, profile, workspace-route, bridge, source-media, artifact-recovery, or Windows-activation state as completed DB-020 support.
+- After Stage 7/8/#192: expect exact provider/image/source/profile-environment/activation/workspace/bridge readiness evidence and no host fallback.
 
-See `docs/execution-profile-environments.md` for VM/workspace ownership, `docs/roadmap.md` for staging, `docs/vm-lego-studs.md` for replaceability, and `docs/vm-migration.md` for removal/retention details.
+See `docs/execution-profile-environments.md` for VM/workspace ownership, `docs/fresh-host-image-provisioning.md` for blank-slate image/licensing setup, `docs/image-artifact-recovery.md` for immutable artifact recovery, `docs/roadmap.md` for staging, `docs/vm-lego-studs.md` for replaceability, and `docs/vm-migration.md` for removal/retention details.
