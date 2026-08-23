@@ -67,6 +67,8 @@ The guest is untrusted even at administrator/root and normally has network acces
 
 If the required profile/environment/bridge/workspace route is unavailable, repository execution fails closed. There is no direct-host or legacy host-sandbox fallback.
 
+The development environment is intentionally persistent and adaptable: DevBridge should provide a capable foundation, close common or painful setup gaps in prepared images, and use ordinary guest tooling plus a carefully bounded indirect console as the long-tail extensibility path rather than adding bespoke installers for every technology. See [`docs/development-environment.md`](docs/development-environment.md).
+
 See [`docs/architecture.md`](docs/architecture.md), [`docs/execution-profile-environments.md`](docs/execution-profile-environments.md), and DB-020.
 
 ## GUI tooling
@@ -76,6 +78,8 @@ GUI software is not prohibited in DevBridge guests. Agents may install, launch, 
 DevBridge's reliable automation surface is currently command-line and other programmatic guest interaction. It does not currently provide a general-purpose, reliable way for automated agents to inspect and interact with arbitrary GUI applications. As a result, workflows that depend heavily on GUI-only interaction may be difficult to automate even when the software itself can be installed and run successfully.
 
 Prefer CLI, API, headless, configuration-file, or other programmatic interfaces when they are available, but do not treat a tool as prohibited merely because it also has or requires a GUI.
+
+The broader development-environment policy, including console-first extensibility and the distinction between prepared, self-installed, and external capabilities, is documented in [`docs/development-environment.md`](docs/development-environment.md).
 
 ## Installation identity versus runtime version
 
@@ -358,6 +362,7 @@ Core guides:
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — symptom-to-boundary diagnosis.
 - [`docs/architecture.md`](docs/architecture.md) — control-plane/provider/VM/bridge architecture.
 - [`docs/execution-profile-environments.md`](docs/execution-profile-environments.md) — profile VM/workspace ownership.
+- [`docs/development-environment.md`](docs/development-environment.md) — persistent workstation, console-first extensibility, tooling preparation, GUI limitation, testing, and observation approach.
 - [`docs/bootstrap.md`](docs/bootstrap.md) — Stage-0/self-update behavior.
 - [`docs/bootstrap-compatibility.md`](docs/bootstrap-compatibility.md) — installation tags and compatibility recovery.
 - [`docs/design-principles.md`](docs/design-principles.md) — engineering principles.
