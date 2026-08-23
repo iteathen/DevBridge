@@ -90,7 +90,7 @@ jobs:
 
           aider "${AIDER_ARGS[@]}"
 
-      - name: Create pull request when files changed
+      - name: Publish AI branch and create pull request when allowed
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -119,10 +119,14 @@ jobs:
             printf '\n%s\n' "Review and test these changes before merging."
           } > "$RUNNER_TEMP/pr-body.md"
 
-          PR_URL="$(gh pr create \
+          if PR_URL="$(gh pr create \
             --base "$BASE_BRANCH" \
             --head "$BRANCH" \
             --title "AI task: Ox Alpha changes" \
-            --body-file "$RUNNER_TEMP/pr-body.md")"
-
-          printf 'Created pull request: %s\n' "$PR_URL" >> "$GITHUB_STEP_SUMMARY"
+            --body-file "$RUNNER_TEMP/pr-body.md" 2>"$RUNNER_TEMP/pr-error.txt")"; then
+            printf 'Created pull request: %s\n' "$PR_URL" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::GitHub policy blocked automatic pull-request creation. The AI branch was pushed successfully."
+            printf 'AI branch pushed: `%s`\n\n' "$BRANCH" >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' "Open a pull request from that branch manually, or enable Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and approve pull requests." >> "$GITHUB_STEP_SUMMARY"
+          fi
