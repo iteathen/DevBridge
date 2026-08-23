@@ -106,7 +106,7 @@ Windows activation secrets are never base-image identity and are not embedded in
 
 For GitHub-backed recovery, setup may propose a user-derived private artifact source such as `<authenticated-owner>/devbridge-base-images`; it must not hard-code the developer's repository. Remote artifacts continue to use #178's whole-image zstd encoding and 1 GiB post-compression transport chunks.
 
-Prepared Windows bytes have a separate distribution-rights gate. When remote storage is not permitted, Windows recovery must be able to reconstruct the exact expected canonical image locally from approved Microsoft source media + deterministic recipe, verify the canonical identity, and admit it through the same image-library boundary.
+Prepared Windows bytes have a separate distribution-rights gate. When remote storage is not permitted, Windows may regenerate a canonical image locally from approved Microsoft source media plus the versioned construction recipe. Exact canonical digest reproduction may reuse the existing image subject; a different but otherwise qualified digest is a new immutable image subject/generation and requires an explicit local declaration rebind/migration before create/rebuild may consume it. Recipe equivalence never permits ignoring image identity.
 
 Real acceptance starts with no DevBridge image cache and reaches VM-only CMake/CTest execution through supported setup/recovery surfaces. Synthetic image fixtures and manually staged workstation images are not sufficient evidence.
 
