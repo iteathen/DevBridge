@@ -211,6 +211,15 @@ export function setupAuthorityBlockers(rawSnapshot) {
   const snapshot = normalizeSetupAuthoritySnapshot(rawSnapshot);
   const blockers = [];
   for (const authority of snapshot.authorities) {
+    if (authority.provenance === 'imported') {
+      blockers.push(Object.freeze({
+        code: `${authority.class}-authority-revalidation-required`,
+        profile: authority.profile,
+        authorityClass: authority.class,
+        action: 'revalidate',
+      }));
+      continue;
+    }
     if (authority.requirement !== 'required') continue;
     if (authority.approval !== 'approved') {
       blockers.push(Object.freeze({
@@ -385,6 +394,11 @@ export class SetupAuthorityManager {
   async replaceAuthority(operationId, authority) {
     const current = await this.#working(operationId);
     return this.#saveEdit(current, replaceSetupAuthority(current.working.snapshot, authority));
+  }
+
+  async importTemplate(operationId, template) {
+    const current = await this.#working(operationId);
+    return this.#saveEdit(current, importSetupAuthorityTemplate(template));
   }
 
   async markValidation(operationId, outcome) {

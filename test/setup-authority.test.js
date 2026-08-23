@@ -87,7 +87,7 @@ test('strict schema rejects arbitrary secret-shaped fields and non-opaque author
   assert.throws(() => replaceSetupAuthority(snapshot, { ...first, subjectRef: 'AAAAA-BBBBB-CCCCC-DDDDD-EEEEE' }), /opaque local subject reference/u);
 });
 
-test('sanitized export/import preserves requirements but imports no authority', () => {
+test('sanitized import contains no authority and cannot validate before local revalidation', async () => {
   let snapshot = createSetupAuthoritySnapshot({
     requestedProfiles: ['windows'],
     requirements: [
@@ -108,8 +108,16 @@ test('sanitized export/import preserves requirements but imports no authority', 
   assert.equal(importedActivation.availability, 'unknown');
   assert.equal(imported.authorities.every((entry) => entry.provenance === 'imported'), true);
   assert.deepEqual(setupAuthorityBlockers(imported).map((entry) => entry.code).sort(), [
-    'activation-authority-required', 'construction-authority-required',
+    'activation-authority-revalidation-required',
+    'construction-authority-revalidation-required',
+    'declaration-authority-revalidation-required',
+    'distribution-authority-revalidation-required',
   ]);
+
+  const manager = new SetupAuthorityManager({ port: memoryPort(), id: () => 'setup-import-test' });
+  let record = (await manager.begin()).record;
+  record = await manager.importTemplate(record.working.operationId, template);
+  await assert.rejects(() => manager.markValidation(record.working.operationId, 'passed'), /unresolved blockers/u);
 });
 
 test('working edits invalidate validation and stale accepted revisions cannot commit', async () => {
