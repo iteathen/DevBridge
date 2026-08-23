@@ -1,8 +1,28 @@
 import { createCanonicalImageCanary } from './canonical-image-canary.js';
 
+const CONSTRUCTION_STATE = Object.freeze({
+  absent: 'absent',
+  planned: 'planned',
+  prepared: 'prepared',
+  installing: 'running',
+  qualifying: 'active',
+  qualified: 'accepted',
+  retained: 'retained',
+});
+
 function requireMethods(value, methods, name) {
   if (!value || methods.some((method) => typeof value[method] !== 'function')) throw new TypeError(`${name} contract is incomplete`);
   return value;
+}
+
+async function observeConstruction(construction, identity) {
+  const observed = await construction.status(identity);
+  if (!observed || typeof observed !== 'object' || Array.isArray(observed) || observed.identity !== identity) {
+    throw new Error('production image construction observation identity changed');
+  }
+  const state = CONSTRUCTION_STATE[observed.phase];
+  if (!state) throw new Error('production image construction observation phase is unsupported');
+  return Object.freeze({ identity, state });
 }
 
 export function createUbuntuProductionImageCanaryComposition({ journal, construction, qualification, foundation } = {}) {
@@ -18,7 +38,7 @@ export function createUbuntuProductionImageCanaryComposition({ journal, construc
     journal,
     construction: Object.freeze({
       prepare: (input) => selectedConstruction.prepare(input),
-      observe: (identity) => selectedConstruction.status(identity),
+      observe: (identity) => observeConstruction(selectedConstruction, identity),
       start: (identity) => selectedConstruction.startInstall(identity),
       activate: (identity) => selectedConstruction.bootInstalled(identity),
       accept: (identity, evidence) => selectedConstruction.markQualified(identity, evidence),
