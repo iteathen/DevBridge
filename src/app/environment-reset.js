@@ -60,16 +60,27 @@ export function createEnvironmentResetMaterialization({ state, subject, journal 
   });
 }
 
-export function createEnvironmentResetRetirement({ state } = {}) {
+export function createEnvironmentResetRetirement({ state, journal } = {}) {
   const localState = assertPort(state, ['retireSupersededEnvironment'], 'retirement state');
+  const localJournal = assertPort(journal, ['current'], 'retirement journal');
   return Object.freeze({
     async ensure(input) {
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('environment reset retirement request is invalid');
       const current = implementation(input.implementationGeneration, 'environment reset current implementation generation');
       const previous = implementation(input.previousImplementationGeneration, 'environment reset previous implementation generation');
-      const requestId = requestIdentity(input.operationId);
+      const operationId = requestIdentity(input.operationId);
       if (current === previous) throw new Error('environment reset retirement cannot target the current generation');
-      const result = await localState.retireSupersededEnvironment(current, { supersededIdentity: previous, requestId });
+      const active = await localJournal.current(input.environmentIdentity);
+      const verification = active?.entries?.at(-1);
+      const pre = active?.entries?.find((entry) => entry.stage === 'pre-observation');
+      if (!active || active.operation !== 'reset' || active.operationId !== operationId || active.declarationRevision !== input.declarationRevision || verification?.stage !== 'verification') {
+        throw new Error('environment reset retirement is not bound to the verified active reset lifecycle');
+      }
+      if (pre?.implementationGeneration !== previous || verification.implementationGeneration !== current) throw new Error('environment reset retirement generation evidence changed');
+      if (pre?.subjects?.[0] !== input.authorizationSubject || verification.subjects?.[0] !== input.authorizationSubject) {
+        throw new Error('environment reset retirement authorization subject changed');
+      }
+      const result = await localState.retireSupersededEnvironment(current, { supersededIdentity: previous });
       if (result?.identity !== previous || (result?.removed !== true && result?.absent !== true)) throw new Error('environment reset retirement did not reconcile the exact superseded generation');
       return Object.freeze({ ready: true, identity: previous, removed: result.removed === true, absent: result.absent === true });
     },
