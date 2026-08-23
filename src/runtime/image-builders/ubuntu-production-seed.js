@@ -9,6 +9,7 @@ const PAYLOAD_PATH = /^\/usr\/local\/libexec\/devbridge\/[A-Za-z0-9][A-Za-z0-9._
 const GENERATION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const PACKAGE_NAME = /^[a-z0-9][a-z0-9+.-]{0,79}$/u;
 const PACKAGE_VERSION = /^[A-Za-z0-9][A-Za-z0-9.+:~_-]{0,159}$/u;
+const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const MUTABLE_VERSION = /^(?:latest|stable|current|head|main|master)$/iu;
 
@@ -46,8 +47,9 @@ function normalizePayload(raw) {
 
 function normalizePackages(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('package set is invalid');
-  for (const key of Object.keys(raw)) if (!['generation', 'packages'].includes(key)) throw new TypeError(`package set.${key} is not allowed`);
+  for (const key of Object.keys(raw)) if (!['generation', 'snapshot', 'packages'].includes(key)) throw new TypeError(`package set.${key} is not allowed`);
   if (typeof raw.generation !== 'string' || !GENERATION.test(raw.generation)) throw new TypeError('package generation is invalid');
+  if (typeof raw.snapshot !== 'string' || !SNAPSHOT.test(raw.snapshot)) throw new TypeError('package snapshot is invalid');
   if (!Array.isArray(raw.packages) || raw.packages.length === 0 || raw.packages.length > 64) throw new TypeError('package set is invalid');
   const seen = new Set();
   const packages = raw.packages.map((entry, index) => {
@@ -58,7 +60,7 @@ function normalizePackages(raw) {
     seen.add(entry.name);
     return Object.freeze({ name: entry.name, version, specification: `${entry.name}=${version}` });
   });
-  return Object.freeze({ generation: raw.generation, packages });
+  return Object.freeze({ generation: raw.generation, snapshot: raw.snapshot, packages });
 }
 
 function normalizeRequest(raw) {
@@ -113,7 +115,7 @@ export class UbuntuProductionSeedFactory {
     const packageSpecifications = packages.packages.map((entry) => entry.specification);
     const lines = ['#cloud-config', 'autoinstall:', '  version: 1', '  locale: en_US.UTF-8', '  keyboard:', '    layout: us', '  storage:', '    layout:', '      name: direct', '  network:', '    version: 2', '    ethernets:', '      build:', '        match:', '          name: "e*"', '        dhcp4: false', '        addresses:', `          - ${yamlString(`${request.address}/${request.prefixLength}`)}`, '        routes:', '          - to: default', `            via: ${yamlString(request.gateway)}`, '        nameservers:', '          addresses:'];
     for (const entry of request.dns) lines.push(`            - ${yamlString(entry)}`);
-    lines.push('  ssh:', '    install-server: false', '    allow-pw: false', '  late-commands:', `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', 'update'])}`, `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', 'install', '-y', '--no-install-recommends', ...packageSpecifications])}`, '  shutdown: poweroff', '  user-data:', '    users:', '      - name: devbridge', '        gecos: DevBridge Image Builder', '        groups: [adm, sudo]', '        shell: /bin/bash', '        lock_passwd: true', '        ssh_authorized_keys:', `          - ${yamlString(request.authorizedKey)}`, '    write_files:');
+    lines.push('  ssh:', '    install-server: false', '    allow-pw: false', '  late-commands:', `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--snapshot', packages.snapshot, 'update'])}`, `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--snapshot', packages.snapshot, 'install', '-y', '--no-install-recommends', ...packageSpecifications])}`, '  shutdown: poweroff', '  user-data:', '    users:', '      - name: devbridge', '        gecos: DevBridge Image Builder', '        groups: [adm, sudo]', '        shell: /bin/bash', '        lock_passwd: true', '        ssh_authorized_keys:', `          - ${yamlString(request.authorizedKey)}`, '    write_files:');
     for (const file of payload.files) writeFileYaml(lines, file);
     writeFileYaml(lines, { path: '/etc/ssh/ssh_host_ed25519_key', content: `${request.hostPrivateKey.trimEnd()}\n`, permissions: '0600' });
     writeFileYaml(lines, { path: '/etc/ssh/ssh_host_ed25519_key.pub', content: `${request.hostPublicKey}\n`, permissions: '0644' });
@@ -133,6 +135,7 @@ export class UbuntuProductionSeedFactory {
         payloadGeneration: payload.generation,
         files: fileEvidence,
         packageGeneration: packages.generation,
+        packageSnapshot: packages.snapshot,
         packages: packages.packages.map(({ name, version }) => ({ name, version })),
         userDataSha256: digest(userData),
       }),
