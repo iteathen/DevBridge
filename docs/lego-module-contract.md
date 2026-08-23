@@ -10,6 +10,66 @@ The purpose is to prevent today's wiring from becoming tomorrow's dependency.
 
 Read this with [`design-principles.md`](design-principles.md), `AGENTS.md`, and the owning DB specification.
 
+## Large parent LEGOs and recursive structure
+
+A LEGO does **not** have to be physically small.
+
+A large domain may remain one parent LEGO while being internally composed from smaller nested LEGOs. The parent owns the domain, authority, public studs, and internal topology; nested children own bounded local mechanics or subdomains.
+
+The rule is:
+
+> **Force LEGO invariants, not LEGO geometry. Let ownership and reasoning boundaries determine the nested shape.**
+
+Do not impose a universal directory template, maximum line count, one-class-per-file rule, or fixed set of `index` / `ports` / `state` / `service` files. Those shapes become accidental architecture when they do not match the domain.
+
+A lifecycle parent may naturally contain catalog, transition, generation, and reconciliation children. A protocol endpoint may naturally contain framing, containment, execution, and transfer children. A provider adapter may have a completely different internal shape because its concrete platform has different invariants.
+
+The outside world should normally continue to address the parent LEGO. Internal children do not become application-wide services merely because they were extracted.
+
+### Nested topology follows the same rules
+
+The parent/composition layer may know which children are currently connected. A child should not know another child exists merely because the parent wires them together.
+
+For example, a parent may compose:
+
+```text
+Persistent Environments
+  -> catalog
+  -> lifecycle guard
+  -> generation transition
+  -> reconciliation
+```
+
+but the generation child should consume its own local record/operation contract rather than importing or naming the catalog implementation or reconciliation implementation.
+
+Nested LEGO structure is recursive. If one child later grows into a substantial domain, it may itself become a parent collection of smaller LEGOs.
+
+### Agent-attention boundary
+
+A useful reason to introduce nesting is when one implementation surface contains enough independent state machines, effects, recovery paths, or local concepts that an agent cannot reliably complete a bounded task while retaining all relevant obligations in active attention.
+
+File size is only a warning signal. A large cohesive piece may remain one piece. A smaller file with several unrelated authorities may need restructuring.
+
+Ask:
+
+> **Can an agent work inside this piece, understand its local contract and invariants, complete the task, and know what must remain true without loading the entire parent domain?**
+
+If not, look for real nested ownership seams before expanding the parent further.
+
+### Preserve the parent when nesting
+
+Internal restructuring should preserve, wherever practical:
+
+- the parent responsibility and authority;
+- caller-facing studs/contracts;
+- externally durable protocols and state identity;
+- security and recovery semantics;
+- externally visible behavior.
+
+Do not dismantle one healthy parent LEGO into several unrelated public services merely to make files smaller. Do not hide behavior changes inside structural extraction.
+
+See [`nested-lego-restructuring.md`](nested-lego-restructuring.md) for the current restructuring program and target-selection method.
+
 ## Non-negotiable rules
 
 ### 1. Complete module isolation
@@ -234,6 +294,8 @@ The connected modules themselves should not encode that sentence internally.
 
 Composition code should remain thin. It wires capabilities; it does not become a second implementation of their business rules.
 
+For a large parent LEGO, this rule applies recursively: the parent may know which nested children it wires, while the children should remain unaware of sibling topology.
+
 ## Adapter exception
 
 An adapter owns the translation between a neutral port and a concrete external domain.
@@ -260,6 +322,8 @@ Examples of suspicious helpers:
 
 Put the translation at the owning adapter/boundary instead.
 
+The same rule applies during nested restructuring. Do not create a shared helper merely because two children currently need similar code. Extract another nested LEGO only when that behavior has a real local contract and ownership boundary.
+
 ## Schema evolution
 
 When a local contract evolves:
@@ -280,7 +344,9 @@ Useful boundary tests include:
 - prove absent provider fails at the port rather than branching to another concrete implementation inside core logic;
 - prove physical path changes do not affect higher-level result/work semantics;
 - prove multiple repositories can map to one profile without provider adapter changes;
-- prove a different profile/provider can be wired without repository-routing changes.
+- prove a different profile/provider can be wired without repository-routing changes;
+- exercise a nested child through a local fake/contract without constructing unrelated siblings;
+- retain parent-level tests proving the nested collection still satisfies the original parent contract.
 
 ## Review checklist
 
@@ -293,6 +359,8 @@ For every meaningful code change, reviewers/agents should ask:
 - [ ] Did any foreign type/object/path cross into generic logic?
 - [ ] Did a helper merely move the leak instead of removing it?
 - [ ] Is topology expressed in composition rather than business logic?
+- [ ] For a large parent, are nested responsibilities separated where agent reasoning would otherwise span independent state/effect domains?
+- [ ] Did restructuring preserve the parent authority/public studs rather than exposing children broadly?
 - [ ] Does the test prove the contract with a replaceable fake/alternate implementation where useful?
 
 If these answers are not clear, stop expanding the feature and repair the connection stud first.
@@ -308,4 +376,6 @@ This LEGO contract complements the other design rules:
 
 A design can have small classes and dependency injection and still violate LEGO if its names/types encode current topology.
 
-That naming-level discipline is intentional: boundary leaks usually begin as convenient vocabulary long before they become obvious hard dependencies.
+A design can also have a large parent directory and still satisfy LEGO when the parent is a coherent domain composed from bounded nested pieces.
+
+That naming-level and ownership-level discipline is intentional: boundary leaks usually begin as convenient vocabulary or oversized reasoning surfaces long before they become obvious hard dependencies.
