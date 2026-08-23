@@ -103,9 +103,11 @@ export function parseInstallArgs(argv, { environment = process.env, homeDirector
   let home = environment.DEVBRIDGE_HOME ?? path.join(homeDirectory, '.devbridge');
   let selector = null;
   let help = false;
+  let runSetup = true;
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === '--help' || value === '-h') { help = true; continue; }
+    if (value === '--install-only') { runSetup = false; continue; }
     if (value === '--home') {
       home = takeValue(argv, index, value);
       index += 1;
@@ -124,6 +126,7 @@ export function parseInstallArgs(argv, { environment = process.env, homeDirector
     home: path.resolve(expandHome(String(home), homeDirectory)),
     selector: selector ?? Object.freeze({ kind: 'branch', value: 'main' }),
     pinSelectedRunner: selector != null,
+    runSetup,
   });
 }
 
@@ -630,15 +633,38 @@ export function installDevBridge(options, {
   }
 }
 
+export function runInstalledSetup(installed, {
+  runner = defaultRunner,
+  environment = process.env,
+} = {}) {
+  const launcher = installed?.wrappers?.javascript;
+  if (typeof installed?.home !== 'string' || !path.isAbsolute(installed.home) || typeof launcher !== 'string' || !path.isAbsolute(launcher)) {
+    throw new TypeError('installed setup handoff requires one exact installed DevBridge launcher');
+  }
+  const result = runner(process.execPath, [launcher, 'setup'], {
+    cwd: installed.home,
+    env: environment,
+    stdio: 'inherit',
+    shell: false,
+    windowsHide: false,
+  });
+  if (result?.error) fail(`Could not enter DevBridge setup: ${result.error.message}`);
+  if (!Number.isInteger(result?.status)) fail('DevBridge setup exited without a bounded status code');
+  return result.status;
+}
+
 export function installHelp() {
   return `DevBridge permanent-entry installer
 
 Usage:
   node install-devbridge.mjs [--home <path>]
   node install-devbridge.mjs --ref <branch-or-exact-head> [--home <path>]
+  node install-devbridge.mjs --install-only [--ref <branch-or-exact-head>] [--home <path>]
 
+By default the installer establishes the permanent entry and immediately enters the installed runner's public DevBridge setup path.
 No selector installs the permanent entry from the exact current main head and leaves normal stable runner selection active.
 An explicit --ref/--branch is local qualification authority: it is resolved once and the generated entry wrapper pins that exact runner head by default.
+--install-only stops after permanent-entry installation for explicit qualification/recovery work.
 The installer writes devbridge-entry.* beside any existing devbridge.mjs Stage-0 launcher; it does not overwrite Stage 0.
 `;
 }
@@ -648,7 +674,11 @@ if (invoked) {
   try {
     const args = parseInstallArgs(process.argv.slice(2));
     if (args.help) process.stdout.write(installHelp());
-    else process.stdout.write(`${JSON.stringify(installDevBridge(args))}\n`);
+    else {
+      const installed = installDevBridge(args);
+      if (args.runSetup) process.exitCode = runInstalledSetup(installed);
+      else process.stdout.write(`${JSON.stringify(installed)}\n`);
+    }
   } catch (error) {
     process.stderr.write(`[devbridge-installer] ${String(error?.message ?? error)}\n`);
     process.exitCode = 1;
