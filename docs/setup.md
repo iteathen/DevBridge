@@ -64,7 +64,7 @@ The current #238 setup path deliberately stops after prerequisite reconciliation
 
 The broader one-command target remains responsible for eventually carrying bounded local consent for routine setup changes, such as enabling a selected provider, constructing/qualifying the required image, and enabling repository execution after validation. Those later construction/provisioning steps remain coordinated by #192/#197 and their owning roadmap gates rather than being implied by #238 bootstrap completion.
 
-A setup invocation may pause only when the platform or policy genuinely requires human action. Accepted repository selection and the exact Ubuntu package snapshot are durable across re-entry so an elevation, restart, authentication, or later readiness blocker does not restart the questionnaire.
+A setup invocation may pause only when the platform or policy genuinely requires human action. A missing ordinary dependency is not by itself such a boundary: its owning setup adapter must reconcile and verify it when bounded local authority permits, or prove the external authority that prevents safe reconciliation. Accepted repository selection and the exact Ubuntu package snapshot are durable across re-entry so an elevation, restart, authentication, or later readiness blocker does not restart the questionnaire.
 
 ## PATH and permanent command
 
@@ -101,12 +101,17 @@ The **zero-state bootstrap boundary** requires only:
 
 Git is not required for zero-state bootstrap or permanent-entry component acquisition. The already-present direct `install-devbridge.mjs` qualification path retains a managed Git compatibility route, and downstream repository/runtime operations may have their own Git requirements, but those are not assumptions of the blank-host bootstrap.
 
-After permanent entry commits, `devbridge setup` discovers later prerequisites before use:
+After permanent entry commits, `devbridge setup` discovers later prerequisites before use. Every discovered prerequisite remains setup-owned until its narrow adapter either establishes and verifies it or returns a focused blocker proving a genuine external-authority boundary. Setup must not turn an implementation gap into instructions for the operator to install an ordinary dependency manually.
+
+Current behavior includes:
 
 - GitHub authentication is required for the current repository-discovery path and may come from `GH_TOKEN`/`GITHUB_TOKEN` or an authenticated GitHub CLI;
 - `gpgv`/`gpgv.exe` must be usable before Ubuntu release-signature verification is attempted;
+- on Windows, an already-usable signature verifier is reused without mutation; when absent and setup is already elevated, the owning prerequisite adapter fetches only the exact runtime-pinned official Gpg4win installer through bounded Node networking, verifies its pinned SHA-256, runs the vendor-supported unattended installation, removes the transient installer, re-discovers `gpgv.exe`, and executes it before claiming readiness;
+- the exact verifier executable is a local-only binding carried directly into Ubuntu release verification so the same invocation can continue even when the current process cannot see a newly persisted PATH; the path is not projected through remote `setup.status`;
+- a non-elevated missing Windows verifier stops before download/mutation at the elevation boundary; package digest disagreement, network/integrity failure, installer failure, or unusable post-install verification is a focused resumable blocker rather than a manual-install instruction;
 - on Windows, missing OpenSSH Client may be established through the exact `OpenSSH.Client~~~~0.0.1.0` Windows capability only when the current setup process is already elevated and Windows reports the capability as `NotPresent`; setup re-verifies `ssh.exe` and `ssh-keygen.exe` afterward;
-- missing GPGV, non-elevated OpenSSH repair, restart/pending servicing, servicing policy/source failures, or inconsistent capability state are focused resumable blockers rather than guessed repairs;
+- non-elevated OpenSSH repair, restart/pending servicing, servicing policy/source failures, or inconsistent capability state are focused resumable blockers;
 - Hyper-V/provider/image readiness remains independently inspected by the read-only physical canary status/preflight owner. Setup does not silently enable Hyper-V or restart the host.
 
 Stage-2 host-foundation requirements are provider-specific when those capabilities are expected to be ready:
@@ -127,15 +132,16 @@ The setup invocation is responsible for:
 1. establishing and verifying the trusted Stage-0 launcher and accepted managed runtime;
 2. creating DevBridge-owned state/configuration internally;
 3. discovering the host, authentication, repositories, provider capabilities, storage, networking, tools, elevation/reboot state, and existing DevBridge-owned resources;
-4. applying reasonable defaults and using prompts only at genuine blockers;
-5. establishing exact image/source authority from trusted local/runtime-owned policy rather than user-authored plumbing;
-6. performing read-only provider/image preflight before mutation;
-7. constructing, qualifying, publishing/reacquiring, or reconstructing the required immutable base image through the owning image contracts;
-8. creating the required execution-profile VM/environment and repository workspaces;
-9. verifying guest/bootstrap/tooling/network/bridge/workspace readiness;
-10. enabling only the capabilities covered by the operator's local setup consent and verified readiness;
-11. installing the permanent `devbridge` command on PATH;
-12. ending with a clear success/welcome handoff.
+4. reconciling setup-owned prerequisites through narrow adapters and prompting only at genuine external-authority blockers;
+5. applying reasonable defaults and using prompts only at genuine blockers;
+6. establishing exact image/source authority from trusted local/runtime-owned policy rather than user-authored plumbing;
+7. performing read-only provider/image preflight before mutation;
+8. constructing, qualifying, publishing/reacquiring, or reconstructing the required immutable base image through the owning image contracts;
+9. creating the required execution-profile VM/environment and repository workspaces;
+10. verifying guest/bootstrap/tooling/network/bridge/workspace readiness;
+11. enabling only the capabilities covered by the operator's local setup consent and verified readiness;
+12. installing the permanent `devbridge` command on PATH;
+13. ending with a clear success/welcome handoff.
 
 Internal helper programs, canary entrypoints, transient configuration files, authority records, package snapshots, signing keyrings, and provider object identities are implementation details. They may exist internally but are not prerequisites the operator must create or understand.
 
@@ -216,7 +222,7 @@ Discover where safe:
 2. apply the supported ordinary Linux profile by default unless the operator explicitly requests another profile or local facts make that default invalid;
 3. apply the repository default rule above (all when at most 30 eligible; ask when 31+);
 4. group selected repositories by compatible execution profile and report repository/workspace counts separately from physical profile-environment counts;
-5. determine provider prerequisites and exact local changes, using initial setup consent where sufficient and stopping only for unavoidable elevation/reboot/manual boundaries;
+5. determine and reconcile setup-owned prerequisites and exact local changes through their owning adapters, using initial setup consent where sufficient and stopping only at genuine authentication/elevation/reboot/licensing/ownership/policy/integrity boundaries;
 6. establish exact approved image construction authority for each required profile internally;
 7. for Windows, separately establish activation method or explicit `configure later` and separately establish whether prepared Windows bytes may be stored in the selected recovery source;
 8. when GitHub Releases are selected for image recovery, derive the authenticated owner and propose a private `<authenticated-owner>/devbridge-base-images` source or another authorized repository; verify repository/Release capability before mutation;
@@ -229,11 +235,11 @@ Discover where safe:
 15. enable authority-bearing execution only when covered by explicit local setup consent and all required readiness gates are satisfied;
 16. persist the stable `devbridge` PATH command and verify it resolves;
 17. emit the successful operator handoff;
-18. allow `devbridge setup` re-entry later to add Windows, change source/activation/artifact policy, add/remove repositories, change profiles/resources, or repair/reset/reseed environments/workspaces.
+18. allow `devbridge setup` re-entry later to add Windows, change source/activation/artifact policy, add/remove repositories, change profiles/resources, credentials, image/recovery policy, or repair/reset/reseed environments/workspaces.
 
 Selecting `all` repositories means approve/register all selected repository workspaces. It does **not** mean create/start one VM per repository.
 
-Do not blindly prompt for repository names, local paths, provider object names, provider details, GitHub usernames, snapshots, package versions, keyrings, or payload generations that can be safely discovered/derived and verified. Do not auto-enable discovered capabilities merely because they exist; initial command-line consent and subsequent setup approvals remain local authority.
+Do not blindly prompt for repository names, local paths, provider object names, provider details, GitHub usernames, snapshots, package versions, keyrings, payload generations, or ordinary dependency installation that can be safely discovered/derived/reconciled and verified. Do not auto-enable discovered capabilities merely because they exist; initial command-line consent and subsequent setup approvals remain local authority.
 
 VM/profile readiness failure must degrade/fail closed; setup never recreates the removed host repository-execution path. Resource admission failures must be reported as profile-level resource problems rather than repository failures.
 
