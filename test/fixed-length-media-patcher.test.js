@@ -13,9 +13,9 @@ test('fixed-length patcher replaces exact occurrences including a chunk boundary
     const source = path.join(directory, 'source.iso');
     const destination = path.join(directory, 'derived.iso');
     const before = 'boot quiet ---        ';
-    const after = 'boot quiet autoinstall ';
+    const after = 'boot quiet autoinstall';
     const prefix = 'x'.repeat((64 * 1024) - 7);
-    const content = `${prefix}${before}middle${before}tail`;
+    const content = `${prefix}${before} middle${before} tail`;
     await writeFile(source, content);
     const result = await applyFixedLengthMediaPatches({
       source,
@@ -26,7 +26,7 @@ test('fixed-length patcher replaces exact occurrences including a chunk boundary
     assert.equal(result.applied[0].occurrences, 2);
     assert.equal(result.source.bytes, result.derived.bytes);
     assert.notEqual(result.source.sha256, result.derived.sha256);
-    assert.equal(await readFile(destination, 'utf8'), `${prefix}${after}middle${after}tail`);
+    assert.equal(await readFile(destination, 'utf8'), `${prefix}${after} middle${after} tail`);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
