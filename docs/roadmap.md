@@ -89,6 +89,29 @@ Repository `all` means all eligible workspaces, not one VM per repository. Profi
 
 Legacy repository-owned VMs are migration candidates, not silently adopted profile environments.
 
+### Fresh-host image supply and Windows licensing — #192 — active high-priority gate
+
+The existing image/cache/recovery code does not by itself create a production image supply chain for a normal user. #192 adds the missing blank-slate path and is part of Stage 7/8 and whole-stack recovery acceptance.
+
+A fresh install must assume no provider, source ISO, prepared image, product key, artifact repository, GitHub Release permission, or durable local image cache.
+
+Keep four authorities distinct:
+
+1. approved image construction source/recipe;
+2. prepared-image distribution/storage policy;
+3. Windows activation authority for a materialized VM;
+4. exact execution-environment declaration.
+
+Windows activation secrets are never base-image identity and are not embedded in generalized images or normal configuration. Host OEM/digital activation is not assumed reusable for a VM.
+
+For GitHub-backed recovery, setup may propose a user-derived private artifact source such as `<authenticated-owner>/devbridge-base-images`; it must not hard-code the developer's repository. Remote artifacts continue to use #178's whole-image zstd encoding and 1 GiB post-compression transport chunks.
+
+Prepared Windows bytes have a separate distribution-rights gate. When remote storage is not permitted, Windows recovery must be able to reconstruct the exact expected canonical image locally from approved Microsoft source media + deterministic recipe, verify the canonical identity, and admit it through the same image-library boundary.
+
+Real acceptance starts with no DevBridge image cache and reaches VM-only CMake/CTest execution through supported setup/recovery surfaces. Synthetic image fixtures and manually staged workstation images are not sufficient evidence.
+
+See `docs/fresh-host-image-provisioning.md`.
+
 ### Stage 9 — final cleanup — #117 — pending final qualification
 
 Remove stale sandbox-era and repository-owned-topology compatibility/documentation after migration behavior and real provider qualification are complete.
@@ -172,6 +195,15 @@ Ready execution profiles: 1
 Additional profiles required now: 0
 ```
 
+For Windows, setup also keeps image/licensing state explicit without forcing irrelevant questions on Linux-only users, for example:
+
+```text
+Windows profile requested: yes
+Windows source media: needed
+Activation: not configured
+Private recovery artifact: not configured
+```
+
 A resource-bearing change should be expressed in profile terms, for example:
 
 ```text
@@ -182,7 +214,7 @@ rather than as fifteen repository VM decisions.
 
 ## Deferred/future work
 
-After issue #138 and Stage 7/8 qualification:
+After issue #138 and Stage 7/8/#192 qualification:
 
 - richer profile compatibility/capability selection;
 - GPU execution-profile support where hardware exists;
@@ -191,16 +223,20 @@ After issue #138 and Stage 7/8 qualification:
 - optional stronger per-workspace isolation mechanisms if a real threat model requires them;
 - additional providers only when justified, not for abstraction symmetry.
 
+CUDA #186 remains post-recovery and should not begin merely because image-acquisition code passes fixtures. At least one ordinary supported profile must first complete the #192 blank-slate image/recovery path.
+
 ## Documentation authority
 
 Current active target documents are:
 
 - `specs/DB-020-vm-execution-boundary.md`;
 - `docs/execution-profile-environments.md`;
+- `docs/fresh-host-image-provisioning.md`;
+- `docs/image-artifact-recovery.md`;
 - `docs/architecture.md`;
 - `docs/setup.md`;
 - `docs/vm-migration.md`;
 - this roadmap;
-- active issues #103, #107, #115, #116, #117, and #138.
+- active issues #103, #107, #115, #116, #117, #138, #169–#180, and #192.
 
-Historical Stage 3 ownership language, old sandbox work, handoffs, tests, and PRs remain evidence but are non-normative where they conflict with the execution-profile correction.
+Historical Stage 3 ownership language, old sandbox work, handoffs, tests, and PRs remain evidence but are non-normative where they conflict with the execution-profile correction or the fresh-host image/licensing plan.
