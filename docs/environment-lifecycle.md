@@ -1,6 +1,6 @@
 # Reconstructable environment lifecycle
 
-Issue #170 establishes the source-of-truth contract used by the lifecycle program in #169. Issue #172 adds diagnosis and bounded in-place repair without changing the durable authority model. Issue #173 adds rebuild for missing or invalid replaceable system storage by reusing the shared construction pipeline.
+Issue #170 establishes the source-of-truth contract used by the lifecycle program in #169. Issue #172 adds diagnosis and bounded in-place repair without changing the durable authority model. Issue #173 adds rebuild for missing or invalid replaceable system storage by reusing the shared construction pipeline. Issue #174 adds explicit profile-wide reset with exact data-loss impact and local destructive authorization.
 
 ## LEGO boundary
 
@@ -101,6 +101,42 @@ After the ownership gate, rebuild resolves the exact approved image through #178
 
 The outer lifecycle/rebuild request identity is the idempotency subject for ambiguous effects. A restart reconciles the same planned replacement generation rather than allocating another generation. Damaged or invalid superseded state is retained by default; cleanup may remove only exact owned state after separate safe-cleanup evidence permits it. Provider-specific health prose never broadens cleanup authority.
 
+## Reset
+
+`reset` is an explicit profile-wide destructive transition back to the exact declared clean baseline. It is not diagnosis-driven repair and it is not permission to target a single repository workspace while silently affecting sibling workspaces.
+
+`planReset` is read-only. Its deterministic impact binds at least:
+
+- logical environment identity and declaration revision;
+- exact current implementation generation and current storage/transition state;
+- exact target image and bootstrap generations;
+- every affected registered workspace identity and count;
+- preserved and discarded state classes;
+- protected-state blockers;
+- provider/image/resource/network/workspace prerequisites;
+- whether the implementation generation changes;
+- the rollback contract;
+- one content-derived authorization subject.
+
+A blocked preview is still useful: protected state, missing/ambiguous implementation, non-clear transition state, or unavailable resource prerequisites are reported in the impact rather than hidden by the preview path. Execution then fails closed until those blockers are resolved.
+
+Reset has no default destructive authority. The execution path requires an injected local authorization contract to verify an opaque operator approval receipt against the exact impact subject, declaration revision, and current implementation generation. The receipt is not persisted in the lifecycle journal. Remote issue text, model output, repository content, guest output, or an arbitrary string cannot become reset authority merely by reaching the generic lifecycle code.
+
+After authorization, reset records the exact impact subject in the lifecycle journal, acquires the normal exclusive fence, and re-observes the impact immediately before mutation. If the current generation has not changed, any material impact drift invalidates the approval before construction. If a replacement effect already happened but its response was lost, the outer reset delegates reconciliation to the request-bound replacement owner instead of inventing another generation or requiring a second approval.
+
+The persistent-environment owner exposes staged replacement for this path:
+
+1. create/reconcile one replacement generation under the outer lifecycle operation identity;
+2. switch the logical environment's current implementation generation while retaining the exact superseded generation;
+3. run the shared construction stages through preparation, workspace reseed, and readiness verification;
+4. independently verify the final generation;
+5. only then retire the exact retained history generation;
+6. reconcile exact retirement if its response is lost.
+
+Retirement accepts only an exact superseded history identity belonging to the still-current logical environment. Foreign/unowned state, a non-history identity, a running superseded generation, or changed attachment authority fails closed before provider deletion. Historical direct reset behavior remains separate compatibility behavior; the #174 profile-reset path uses staged replacement so old state is not retired before the new clean baseline is verified.
+
+Workspace-local reset remains a separate narrower lifecycle contract. A workspace route/reset cannot authorize profile reset, and profile reset enumerates all sibling workspace identities before mutation.
+
 ## Mutable-state taxonomy
 
 Lifecycle planning uses five neutral classes:
@@ -140,5 +176,6 @@ The classifier never promotes unverified or ambiguous ownership into destructive
 - #171 owns the shared restartable construction pipeline and `create`.
 - #172 owns diagnosis and bounded in-place `repair`.
 - #173 reuses the same construction stages for missing/invalid system-storage `rebuild` with ownership proven before storage-health evidence.
-- #174/#175 add destructive `reset` and complete implementation `recreate` semantics.
+- #174 owns explicit profile-wide clean-baseline `reset` with exact local destructive authorization and post-verification retirement.
+- #175 adds complete provider-instance `recreate` semantics using the same staged replacement/construction direction where applicable.
 - #176 exposes the lifecycle through operator CLI/setup/doctor/re-entry UX.
