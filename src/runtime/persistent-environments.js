@@ -536,6 +536,136 @@ export class PersistentEnvironments {
   async reset(identity) { return this.#rotate(identity); }
   async reseed(identity, { sourceIdentity }) { return this.#rotate(identity, requireId(sourceIdentity, 'environment source identity')); }
 
+  async #completeReplacement(catalog, operation) {
+    const found = Object.values(catalog.entries).find((entry) => entry.slot === operation.slot);
+    if (!found) throw new Error('environment replacement subject disappeared');
+    if (found.current.identity !== operation.oldIdentity && found.current.identity !== operation.newIdentity) throw new Error('environment replacement subject changed unexpectedly');
+
+    if (found.current.identity === operation.oldIdentity) {
+      let oldObserved = normalizeObservation(await this.#operations.observe(operation.oldIdentity), operation.oldIdentity);
+      if (!oldObserved.exists) throw new Error('environment provider implementation is missing; recreate is required');
+      if (!oldObserved.owned) throw new Error('environment ownership evidence does not match');
+      if (!stoppedState(oldObserved.state)) {
+        oldObserved = normalizeObservation(await this.#operations.stop(operation.oldIdentity, { force: true, timeoutMs: 60_000 }), operation.oldIdentity);
+        if (!oldObserved.exists) throw new Error('environment provider implementation disappeared while stopping');
+        if (!oldObserved.owned) throw new Error('environment ownership evidence changed while stopping');
+        if (!stoppedState(oldObserved.state)) throw new Error('environment did not stop before replacement');
+      }
+
+      const request = { subject: found.subject, profile: found.profile, sourceIdentity: operation.source.identity, settings: operation.settings };
+      const resolved = await this.#resolve(request, operation.source);
+      let nextObserved = normalizeObservation(await this.#operations.observe(operation.newIdentity), operation.newIdentity);
+      if (nextObserved.exists) {
+        if (!nextObserved.owned || !nextObserved.compatible) throw new Error(nextObserved.reason ?? 'existing replacement environment conflicts with the intended replacement');
+        requireObservedSource(nextObserved, operation.source.identity);
+      } else {
+        nextObserved = normalizeObservation(await this.#operations.provision({ identity: operation.newIdentity, source: operationSource(resolved), settings: operation.settings }), operation.newIdentity);
+        if (!nextObserved.exists || !nextObserved.owned || !nextObserved.compatible) throw new Error(nextObserved.reason ?? 'replacement environment did not provision compatibly');
+        requireObservedSource(nextObserved, operation.source.identity);
+      }
+      operation.state = 'attempted';
+      operation.attemptedAt = new Date().toISOString();
+      await this.#save(catalog);
+
+      found.history ??= [];
+      found.history.push({ ...found.current, supersededAt: new Date().toISOString(), removedAt: null });
+      found.current = {
+        identity: operation.newIdentity,
+        generation: operation.generation,
+        source: operation.source,
+        settings: operation.settings,
+        createdAt: operation.plannedAt,
+      };
+      operation.state = 'switched';
+      operation.switchedAt = new Date().toISOString();
+      await this.#save(catalog);
+    }
+
+    operation.state = 'reconciled';
+    operation.reconciledAt = new Date().toISOString();
+    await this.#save(catalog);
+    const current = await this.#observeEntry(found);
+    return { ...current, superseded: { identity: operation.oldIdentity, cleanup: 'retained' } };
+  }
+
+  async replace(identity, { requestId, expectedPreviousIdentity } = {}) {
+    return this.#serial(async () => {
+      const requested = requireEnvironmentId(identity);
+      const requestIdentity = requireId(requestId, 'environment replacement request identity');
+      const expectedPrevious = requireEnvironmentId(expectedPreviousIdentity);
+      const binding = await this.#binding();
+      const catalog = await this.#load();
+      const prior = Object.values(catalog.operations).find((operation) => operation.kind === 'replace' && operation.requestId === requestIdentity);
+      if (prior) {
+        if (prior.binding !== binding) throw new Error('environment attachment identity changed; pending replacement will not be replayed');
+        if (prior.oldIdentity !== expectedPrevious) throw new Error('environment replacement request no longer matches its previous implementation generation');
+        if (![prior.oldIdentity, prior.newIdentity].includes(requested)) throw new Error('environment replacement request identity is stale');
+        return this.#completeReplacement(catalog, prior);
+      }
+      const { slot, entry } = this.#findEntry(catalog, requested);
+      if (entry.binding !== binding) throw new Error('environment attachment identity changed');
+      if (entry.current.identity !== expectedPrevious) throw new Error('environment replacement previous implementation generation changed');
+      const preflight = normalizeObservation(await this.#operations.observe(entry.current.identity), entry.current.identity);
+      if (!preflight.exists) throw new Error('environment provider implementation is missing; recreate is required');
+      if (!preflight.owned) throw new Error('environment ownership evidence does not match');
+      const request = {
+        subject: entry.subject,
+        profile: entry.profile,
+        sourceIdentity: entry.current.source.identity,
+        settings: entry.current.settings,
+      };
+      const resolved = await this.#resolve(request, entry.current.source);
+      const generation = Number(entry.current.generation) + 1;
+      const newIdentity = environmentIdentity(slot, generation, resolved.identity);
+      const operationId = `op-${randomUUID()}`;
+      catalog.operations[operationId] = {
+        id: operationId,
+        kind: 'replace',
+        requestId: requestIdentity,
+        state: 'planned',
+        binding,
+        slot,
+        oldIdentity: entry.current.identity,
+        newIdentity,
+        generation,
+        source: sourceRecord(resolved),
+        oldSource: structuredClone(entry.current.source),
+        settings: entry.current.settings,
+        plannedAt: new Date().toISOString(),
+      };
+      await this.#save(catalog);
+      return this.#completeReplacement(catalog, catalog.operations[operationId]);
+    });
+  }
+
+  async retireSuperseded(identity, { supersededIdentity } = {}) {
+    return this.#serial(async () => {
+      const currentIdentity = requireEnvironmentId(identity);
+      const oldIdentity = requireEnvironmentId(supersededIdentity);
+      const binding = await this.#binding();
+      const catalog = await this.#load();
+      const { entry } = this.#findEntry(catalog, currentIdentity);
+      if (entry.binding !== binding) throw new Error('environment attachment identity changed');
+      if (entry.current.identity !== currentIdentity) throw new Error('environment retirement current implementation generation changed');
+      const old = (entry.history ?? []).find((item) => item.identity === oldIdentity);
+      if (!old) throw new Error('environment retirement subject is not an exact superseded generation');
+      if (old.removedAt != null) return { identity: oldIdentity, removed: false, absent: true };
+      const observed = normalizeObservation(await this.#operations.observe(oldIdentity), oldIdentity);
+      if (!observed.exists) {
+        old.removedAt = new Date().toISOString();
+        await this.#save(catalog);
+        return { identity: oldIdentity, removed: false, absent: true };
+      }
+      if (!observed.owned) throw new Error('environment superseded ownership evidence does not match');
+      if (!stoppedState(observed.state)) throw new Error('environment superseded generation is not stopped for retirement');
+      const removal = await this.#operations.drop(oldIdentity);
+      if (!removal || (removal.removed !== true && removal.absent !== true)) throw new Error('environment superseded retirement did not reconcile');
+      old.removedAt = new Date().toISOString();
+      await this.#save(catalog);
+      return { identity: oldIdentity, removed: removal.removed === true, absent: removal.absent === true };
+    });
+  }
+
   async #completeRebuild(catalog, operation) {
     const found = Object.values(catalog.entries).find((entry) => entry.slot === operation.slot);
     if (!found) throw new Error('environment rebuild subject disappeared');
@@ -705,6 +835,7 @@ export class PersistentEnvironments {
         if (operation.kind === 'provision') await this.#completeProvision(catalog, operation);
         else if (operation.kind === 'start' || operation.kind === 'stop') await this.#completeTransition(catalog, operation);
         else if (operation.kind === 'rotate') await this.#completeRotate(catalog, operation);
+        else if (operation.kind === 'replace') await this.#completeReplacement(catalog, operation);
         else if (operation.kind === 'rebuild') await this.#completeRebuild(catalog, operation);
         else if (operation.kind === 'remove') await this.#completeRemove(catalog, operation);
         else throw new Error(`unknown environment operation kind: ${operation.kind}`);
