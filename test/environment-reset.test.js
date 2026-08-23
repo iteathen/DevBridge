@@ -96,6 +96,8 @@ test('reset binds profile-wide impact to local authorization, verifies readiness
 
   const impact = await reset.plan(f.registered.identity);
   assert.deepEqual(impact.affectedWorkspaces, ['workspace-a', 'workspace-b']);
+  assert.equal(impact.affectedWorkspaceCount, 2);
+  assert.equal(impact.blocked, false);
   assert.equal(impact.implementationGenerationChanges, true);
   assert.equal(impact.rollback, 'superseded-generation-retained-until-verification');
   assert.equal(impact.discards.includes('workspace-materialization'), true);
@@ -129,6 +131,11 @@ test('protected state and changed post-authorization impact fail before construc
     evidence: readyEvidence(),
     authorization: { verify: async (input) => { authorizationCalls += 1; return { approved: true, subject: input.subject }; } },
   });
+  const blockedImpact = await blockedReset.plan(blocked.registered.identity);
+  assert.equal(blockedImpact.blocked, true);
+  assert.equal(blockedImpact.affectedWorkspaceCount, 2);
+  assert.deepEqual(blockedImpact.protectedState, ['database-state']);
+  assert.equal(blockedImpact.blockers.includes('protected-state'), true);
   await assert.rejects(() => blockedReset.reset(blocked.registered.identity, { approval: 'approved' }), /protected state/u);
   assert.equal(authorizationCalls, 0);
   assert.equal(constructionCalls, 0);
