@@ -52,6 +52,20 @@ function setupState(previous, { identity, repositories, snapshot }) {
   });
 }
 
+function acceptedRepositorySelection(previous, identity, requestedRepositories) {
+  if (requestedRepositories != null || previous?.repositories?.selected == null) return null;
+  if (previous.protocol !== PROTOCOL || !Array.isArray(previous.repositories.selected)) {
+    throw new Error('persisted repository selection is invalid; use --repository to establish the selection explicitly');
+  }
+  if (!Number.isSafeInteger(previous?.identity?.id) || previous.identity.id < 1 || typeof previous.identity.login !== 'string') {
+    throw new Error('persisted repository authority is invalid; use --repository to establish the selection explicitly');
+  }
+  if (previous.identity.id !== identity.id) {
+    throw new Error(`GitHub setup identity changed from ${previous.identity.login} to ${identity.login}; use --repository to explicitly accept a selection for the current identity`);
+  }
+  return previous.repositories.selected;
+}
+
 function publicResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, physical = null, blocker = null }) {
   const readyForConstruction = physical?.blocked === false && physical?.complete !== true && physical?.state === 'absent';
   return Object.freeze({
@@ -142,7 +156,8 @@ export async function runDevBridgeSetup({
 
   let repositories;
   try {
-    repositories = selectRepositories(scope.repositories, { requested: requestedRepositories });
+    const accepted = acceptedRepositorySelection(previous, scope.identity, requestedRepositories);
+    repositories = selectRepositories(scope.repositories, { requested: requestedRepositories, accepted });
   } catch (error) {
     return publicResult({ home: root, pathStatus, identity: scope.identity, blocker: error.message });
   }
