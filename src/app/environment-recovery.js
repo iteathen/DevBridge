@@ -1,6 +1,7 @@
 import { EnvironmentDiagnosisService } from '../runtime/environment-diagnosis.js';
 import { EnvironmentRebuild } from '../runtime/environment-rebuild.js';
 import { EnvironmentRepair } from '../runtime/environment-repair.js';
+import { EnvironmentReset } from '../runtime/environment-reset.js';
 
 function assertPort(value, methods, name) {
   if (!value || methods.some((method) => typeof value[method] !== 'function')) throw new TypeError(`environment recovery ${name} contract is incomplete`);
@@ -99,7 +100,19 @@ export function createEnvironmentRepairCorrection({ foundation, materialization,
   });
 }
 
-export function createEnvironmentRecovery({ lifecycle, observer, fence, foundation, materialization, preparation, workspaces, rebuildConstruction = null } = {}) {
+export function createEnvironmentRecovery({
+  lifecycle,
+  observer,
+  fence,
+  foundation,
+  materialization,
+  preparation,
+  workspaces,
+  rebuildConstruction = null,
+  resetConstruction = null,
+  resetRetirement = null,
+  resetAuthorization = null,
+} = {}) {
   if (!lifecycle?.declarations || !lifecycle?.journal) throw new TypeError('environment recovery lifecycle contract is incomplete');
   const localObserver = assertPort(observer, ['observe'], 'observation');
   const localFence = assertPort(fence, ['acquire'], 'fence');
@@ -127,6 +140,16 @@ export function createEnvironmentRecovery({ lifecycle, observer, fence, foundati
     construction: assertPort(rebuildConstruction, ['run', 'clear'], 'rebuild construction'),
     evidence,
   });
+  const reset = resetConstruction == null || resetRetirement == null ? null : new EnvironmentReset({
+    declarations: lifecycle.declarations,
+    journal: lifecycle.journal,
+    observer: localObserver,
+    fence: localFence,
+    construction: assertPort(resetConstruction, ['run', 'clear'], 'reset construction'),
+    retirement: assertPort(resetRetirement, ['ensure'], 'reset retirement'),
+    evidence,
+    authorization: resetAuthorization,
+  });
   return Object.freeze({
     diagnosis,
     diagnose: (identity) => diagnosis.diagnose(identity),
@@ -134,5 +157,7 @@ export function createEnvironmentRecovery({ lifecycle, observer, fence, foundati
     repair: (identity) => repair.repair(identity),
     planRebuild: rebuild == null ? null : (identity) => rebuild.plan(identity),
     rebuild: rebuild == null ? null : (identity) => rebuild.rebuild(identity),
+    planReset: reset == null ? null : (identity) => reset.plan(identity),
+    reset: reset == null ? null : (identity, options) => reset.reset(identity, options),
   });
 }
