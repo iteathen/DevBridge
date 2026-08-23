@@ -69,6 +69,14 @@ If the required profile/environment/bridge/workspace route is unavailable, repos
 
 See [`docs/architecture.md`](docs/architecture.md), [`docs/execution-profile-environments.md`](docs/execution-profile-environments.md), and DB-020.
 
+## GUI tooling
+
+GUI software is not prohibited in DevBridge guests. Agents may install, launch, configure, or otherwise use GUI applications when they are useful to the development environment.
+
+DevBridge's reliable automation surface is currently command-line and other programmatic guest interaction. It does not currently provide a general-purpose, reliable way for automated agents to inspect and interact with arbitrary GUI applications. As a result, workflows that depend heavily on GUI-only interaction may be difficult to automate even when the software itself can be installed and run successfully.
+
+Prefer CLI, API, headless, configuration-file, or other programmatic interfaces when they are available, but do not treat a tool as prohibited merely because it also has or requires a GUI.
+
 ## Installation identity versus runtime version
 
 A workstation may run more than one DevBridge installation—for example:
@@ -144,9 +152,9 @@ mkdir -p "$HOME/.devbridge/bin" \
 ### Windows PowerShell
 
 ```powershell
-New-Item -ItemType Directory -Force "$HOME\.devbridge\bin" | Out-Null
-Invoke-WebRequest "https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs" -OutFile "$HOME\.devbridge\bin\devbridge.mjs"
-node "$HOME\.devbridge\bin\devbridge.mjs"
+New-Item -ItemType Directory -Force "$HOME\\.devbridge\\bin" | Out-Null
+Invoke-WebRequest "https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs" -OutFile "$HOME\\.devbridge\\bin\\devbridge.mjs"
+node "$HOME\\.devbridge\\bin\\devbridge.mjs"
 ```
 
 `devbridge.mjs` is the standalone Stage-0 launcher. It establishes/verifies the fixed managed DevBridge runtime and transfers control to secure bootstrap. It does not silently enable repository execution or provision VM authority.
