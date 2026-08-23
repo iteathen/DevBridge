@@ -8,6 +8,7 @@ const CORE = [
   new URL('../src/runtime/environment-diagnosis.js', import.meta.url),
   new URL('../src/runtime/environment-repair.js', import.meta.url),
   new URL('../src/runtime/environment-rebuild.js', import.meta.url),
+  new URL('../src/runtime/environment-reset.js', import.meta.url),
 ];
 const FORBIDDEN = ['Hyper-V', 'libvirt', 'VHDX', 'qcow2', 'PowerShell', 'SSH', 'knownHosts', 'password', 'repository-execution', 'execution-profile-routing', 'environment-foundation', './providers/', '../providers/'];
 test('lifecycle core contains no provider, guest-access, or routing implementation identity', async () => { for (const file of CORE) { const source = await readFile(file, 'utf8'); for (const term of FORBIDDEN) assert.equal(source.includes(term), false, `${file.pathname} leaked ${term}`); } });
