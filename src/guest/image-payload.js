@@ -25,16 +25,20 @@ function generationFor(files) {
   return `guest-image-${hash.digest('hex').slice(0, 24)}`;
 }
 
-async function loadMember(root, name) {
+async function loadMember(root, canonicalRoot, name) {
   const location = path.join(root, name);
-  const [canonicalRoot, canonicalFile] = await Promise.all([realpath(root), realpath(location)]);
-  if (path.dirname(canonicalFile) !== canonicalRoot) throw new Error('guest image payload member escaped its owning directory');
-  const info = await lstat(canonicalFile);
-  if (!info.isFile() || info.isSymbolicLink() || info.size < 1 || info.size > MAX_FILE_BYTES) throw new Error('guest image payload member is invalid');
+  const lexicalInfo = await lstat(location);
+  if (!lexicalInfo.isFile() || lexicalInfo.isSymbolicLink() || lexicalInfo.size < 1 || lexicalInfo.size > MAX_FILE_BYTES) {
+    throw new Error('guest image payload member is invalid');
+  }
+  const canonicalFile = await realpath(location);
+  if (path.dirname(canonicalFile) !== canonicalRoot || canonicalFile !== path.join(canonicalRoot, name)) {
+    throw new Error('guest image payload member escaped its owning directory');
+  }
   const content = await readFile(canonicalFile, 'utf8');
   if (content.includes('\0')) throw new Error('guest image payload member contains invalid bytes');
   const bytes = Buffer.byteLength(content, 'utf8');
-  if (bytes !== info.size) throw new Error('guest image payload member changed during read');
+  if (bytes !== lexicalInfo.size) throw new Error('guest image payload member changed during read');
   const sha256 = createHash('sha256').update(content, 'utf8').digest('hex');
   return Object.freeze({ path: `${TARGET_ROOT}/${name}`, content, bytes, sha256 });
 }
@@ -44,10 +48,11 @@ export async function createGuestImagePayload({ directory = DEFAULT_ROOT } = {})
   const root = path.resolve(directory);
   const info = await lstat(root);
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('guest image payload directory must be a real directory');
+  const canonicalRoot = await realpath(root);
   const files = [];
   let totalBytes = 0;
   for (const name of MEMBERS) {
-    const file = await loadMember(root, name);
+    const file = await loadMember(root, canonicalRoot, name);
     totalBytes += file.bytes;
     if (totalBytes > MAX_TOTAL_BYTES) throw new Error('guest image payload exceeds its total size bound');
     files.push(file);
