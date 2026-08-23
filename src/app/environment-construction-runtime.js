@@ -37,6 +37,7 @@ export async function createEnvironmentConstructionRuntime({
   fence = null,
   windowsAccess = null,
   resetAuthorization = null,
+  recreateAuthorization = null,
   now,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('environment construction runtime stateDirectory is required');
@@ -149,6 +150,7 @@ export async function createEnvironmentConstructionRuntime({
     rebuildConstruction,
     recreateConstruction,
     recreateRetirement,
+    recreateAuthorization,
     resetConstruction,
     resetRetirement,
     resetAuthorization,
