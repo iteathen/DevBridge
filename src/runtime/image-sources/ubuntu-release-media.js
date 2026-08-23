@@ -1,6 +1,6 @@
 import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, readFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 const PROTOCOL = 'devbridge/ubuntu-release-media-v1';
@@ -9,7 +9,7 @@ const SHA256 = /^[a-f0-9]{64}$/u;
 const RELEASE = /^[0-9]{2}\.[0-9]{2}(?:\.[0-9]+)?$/u;
 const ARCHITECTURE = /^[a-z0-9][a-z0-9._-]{0,31}$/u;
 const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/u;
-const FINGERPRINT = /^[A-F0-9]{16,64}$/u;
+const FINGERPRINT = /^(?:[A-F0-9]{40}|[A-F0-9]{64})$/u;
 const DEFAULT_ALLOWED_HOSTS = Object.freeze(['releases.ubuntu.com', 'cdimage.ubuntu.com']);
 
 async function regularFile(location, label) {
@@ -82,7 +82,8 @@ async function ensureDestination(directory) {
 
 async function acquire(download, url, destination, allowedHosts, label) {
   const result = await download({ url, destination });
-  if (result?.finalUrl !== undefined) checkedUrl(result.finalUrl, allowedHosts, `${label} redirect`);
+  if (!result || typeof result.finalUrl !== 'string') throw new Error(`${label} download did not report its final source URL`);
+  checkedUrl(result.finalUrl, allowedHosts, `${label} final source`);
   await regularFile(destination, label);
 }
 
@@ -109,43 +110,55 @@ export class UbuntuReleaseMediaSource {
     const authority = validateAuthority(await this.#authorityLookup(authorityRef), this.#allowedHosts);
     await ensureDestination(destination);
 
-    const manifestLocation = path.join(destination, 'SHA256SUMS');
-    const signatureLocation = path.join(destination, 'SHA256SUMS.gpg');
-    const mediaLocation = path.join(destination, authority.media.name);
-    await acquire(this.#download, authority.checksums.manifestUrl, manifestLocation, this.#allowedHosts, 'checksum manifest');
-    await acquire(this.#download, authority.checksums.signatureUrl, signatureLocation, this.#allowedHosts, 'checksum signature');
+    try {
+      const manifestLocation = path.join(destination, 'SHA256SUMS');
+      const signatureLocation = path.join(destination, 'SHA256SUMS.gpg');
+      const mediaLocation = path.join(destination, authority.media.name);
+      await acquire(this.#download, authority.checksums.manifestUrl, manifestLocation, this.#allowedHosts, 'checksum manifest');
+      await acquire(this.#download, authority.checksums.signatureUrl, signatureLocation, this.#allowedHosts, 'checksum signature');
 
-    const verification = await this.#verifyManifest({
-      manifest: manifestLocation,
-      signature: signatureLocation,
-      expectedFingerprint: authority.checksums.signerFingerprint,
-    });
-    if (!verification || verification.verified !== true || verification.signerFingerprint !== authority.checksums.signerFingerprint) {
-      throw new Error('release checksum signature verification failed');
+      const manifestDigestBeforeVerification = await sha256File(manifestLocation);
+      const verification = await this.#verifyManifest({
+        manifest: manifestLocation,
+        signature: signatureLocation,
+        expectedFingerprint: authority.checksums.signerFingerprint,
+      });
+      if (
+        !verification
+        || verification.verified !== true
+        || verification.signerFingerprint !== authority.checksums.signerFingerprint
+        || verification.manifestSha256 !== manifestDigestBeforeVerification
+      ) {
+        throw new Error('release checksum signature verification failed');
+      }
+
+      const manifestDigest = await sha256File(manifestLocation);
+      if (manifestDigest !== manifestDigestBeforeVerification) throw new Error('release checksum manifest changed after signature verification');
+      const manifestText = await readFile(manifestLocation, 'utf8');
+      if (digestFromManifest(manifestText, authority.media.name) !== authority.media.sha256) throw new Error('approved media digest does not match signed checksum manifest');
+
+      await acquire(this.#download, authority.media.url, mediaLocation, this.#allowedHosts, 'release media');
+      const info = await regularFile(mediaLocation, 'release media');
+      if (info.size !== authority.media.bytes) throw new Error('release media byte count does not match authority');
+      if (await sha256File(mediaLocation) !== authority.media.sha256) throw new Error('release media digest does not match authority');
+
+      return {
+        location: mediaLocation,
+        identity: {
+          protocol: PROTOCOL,
+          release: authority.release,
+          architecture: authority.architecture,
+          name: authority.media.name,
+          bytes: authority.media.bytes,
+          sha256: authority.media.sha256,
+          checksumManifestSha256: manifestDigest,
+          checksumSignerFingerprint: authority.checksums.signerFingerprint,
+        },
+      };
+    } catch (error) {
+      await rm(destination, { recursive: true, force: true });
+      throw error;
     }
-
-    const manifestText = await readFile(manifestLocation, 'utf8');
-    const manifestDigest = await sha256File(manifestLocation);
-    if (digestFromManifest(manifestText, authority.media.name) !== authority.media.sha256) throw new Error('approved media digest does not match signed checksum manifest');
-
-    await acquire(this.#download, authority.media.url, mediaLocation, this.#allowedHosts, 'release media');
-    const info = await regularFile(mediaLocation, 'release media');
-    if (info.size !== authority.media.bytes) throw new Error('release media byte count does not match authority');
-    if (await sha256File(mediaLocation) !== authority.media.sha256) throw new Error('release media digest does not match authority');
-
-    return {
-      location: mediaLocation,
-      identity: {
-        protocol: PROTOCOL,
-        release: authority.release,
-        architecture: authority.architecture,
-        name: authority.media.name,
-        bytes: authority.media.bytes,
-        sha256: authority.media.sha256,
-        checksumManifestSha256: manifestDigest,
-        checksumSignerFingerprint: authority.checksums.signerFingerprint,
-      },
-    };
   }
 }
 
