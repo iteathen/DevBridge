@@ -5,12 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { WindowsImapiNoCloudSeedWriter } from '../src/runtime/providers/windows-imapi-nocloud-seed.js';
 
-async function root() { return mkdtemp(path.join(os.tmpdir(), 'db-imapi-seed-')); }
+async function makeRoot() { return mkdtemp(path.join(os.tmpdir(), 'db-imapi-seed-')); }
 
 test('Windows IMAPI seed writer stages only NoCloud files and removes secret-bearing staging', async () => {
-  const workspace = await root();
+  const root = await makeRoot();
   try {
-    const destination = path.join(workspace, 'cidata.iso');
+    const destination = path.join(root, 'cidata.iso');
     const calls = [];
     const writer = new WindowsImapiNoCloudSeedWriter({
       invoke: async (request) => {
@@ -23,7 +23,7 @@ test('Windows IMAPI seed writer stages only NoCloud files and removes secret-bea
       },
     });
     const result = await writer.create({
-      workspace,
+      root,
       destination,
       userData: '#cloud-config\nsecret: transient',
       metaData: 'instance-id: image-build',
@@ -33,21 +33,21 @@ test('Windows IMAPI seed writer stages only NoCloud files and removes secret-bea
     assert.match(result.sha256, /^[a-f0-9]{64}$/u);
     assert.equal(calls[0].executable, 'powershell.exe');
     assert.equal(calls[0].input.includes('transient'), false);
-    assert.deepEqual(await readdir(workspace), ['cidata.iso']);
-  } finally { await rm(workspace, { recursive: true, force: true }); }
+    assert.deepEqual(await readdir(root), ['cidata.iso']);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('Windows IMAPI seed writer refuses destinations outside its owned workspace', async () => {
-  const workspace = await root();
+test('Windows IMAPI seed writer refuses destinations outside its owned root', async () => {
+  const root = await makeRoot();
   try {
     let invoked = false;
     const writer = new WindowsImapiNoCloudSeedWriter({ invoke: async () => { invoked = true; } });
     await assert.rejects(() => writer.create({
-      workspace,
-      destination: path.join(path.dirname(workspace), 'foreign.iso'),
+      root,
+      destination: path.join(path.dirname(root), 'foreign.iso'),
       userData: '#cloud-config',
       metaData: 'instance-id: build',
-    }), /inside the owned workspace/u);
+    }), /inside the owned root/u);
     assert.equal(invoked, false);
-  } finally { await rm(workspace, { recursive: true, force: true }); }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
