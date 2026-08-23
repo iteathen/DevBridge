@@ -51,6 +51,18 @@ async function fixture(protectedStateClasses = []) {
 function readyEvidence(state = null) {
   return { inspect: async () => ({ resources: 'ready', network: state?.network ?? 'ready', workspaces: 'ready' }) };
 }
+function ports(f, overrides = {}) {
+  return {
+    declarations: f.declarations,
+    journal: f.journal,
+    observer: { observe: async () => observation(f.registered, OLD, true) },
+    fence: { acquire: async () => ({ subject: 'fence-reset', release: async () => {} }) },
+    construction: { run: async () => ({ implementationGeneration: NEXT }), clear: async () => {} },
+    retirement: { ensure: async () => ({ ready: true }) },
+    evidence: readyEvidence(),
+    ...overrides,
+  };
+}
 
 test('reset binds profile-wide impact to local authorization, verifies readiness, then retires the exact old generation', async () => {
   const f = await fixture();
@@ -196,4 +208,34 @@ test('reset resumes an ambiguous replacement effect through the same lifecycle o
   assert.equal(authorizationCalls, 1);
   assert.equal(constructionCalls, 2);
   assert.equal(retirementCalls, 1);
+});
+
+test('profile reset rejects workspace-local authority fields and has no default destructive authorization', async () => {
+  const f = await fixture();
+  let authorizationCalls = 0;
+  const reset = new EnvironmentReset(ports(f, {
+    authorization: { verify: async () => { authorizationCalls += 1; return { approved: true, subject: 'unused' }; } },
+  }));
+  await assert.rejects(() => reset.reset(f.registered.identity, { approval: 'approved', workspaceIdentity: 'workspace-a' }), /workspaceIdentity is not allowed/u);
+  assert.equal(authorizationCalls, 0);
+
+  const noAuthority = new EnvironmentReset(ports(f, { authorization: null }));
+  await assert.rejects(() => noAuthority.reset(f.registered.identity, { approval: 'just-a-string' }), /local destructive authorization is unavailable/u);
+});
+
+test('reset resume rejects changed fence authority before another construction effect', async () => {
+  const f = await fixture();
+  let acquisition = 0;
+  let constructionCalls = 0;
+  let authorizationCalls = 0;
+  const reset = new EnvironmentReset(ports(f, {
+    fence: { acquire: async () => ({ subject: ++acquisition === 1 ? 'fence-a' : 'fence-b', release: async () => {} }) },
+    construction: { run: async () => { constructionCalls += 1; throw new Error('interrupted before replacement'); }, clear: async () => {} },
+    authorization: { verify: async (input) => { authorizationCalls += 1; return { approved: true, subject: input.subject }; } },
+  }));
+  await assert.rejects(() => reset.reset(f.registered.identity, { approval: 'approved' }), /interrupted/u);
+  assert.equal(constructionCalls, 1);
+  await assert.rejects(() => reset.reset(f.registered.identity), /fence subject changed/u);
+  assert.equal(constructionCalls, 1);
+  assert.equal(authorizationCalls, 1);
 });
