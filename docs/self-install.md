@@ -4,6 +4,8 @@ DevBridge supports a standalone installer for the permanent-entry component with
 
 The installer is `install-devbridge.mjs`. It has only Node.js built-in imports and can be downloaded into an otherwise empty directory. The installer remains an installation/control-plane boundary: source authority, installed component membership, filesystem ownership, and wrapper activation are closed local contracts. After that boundary commits successfully, normal CLI use immediately hands off to the exact installed runner's public `setup` surface; setup/provider/image behavior is not duplicated inside the installer.
 
+> **Fresh-host qualification note:** possessing `install-devbridge.mjs` is itself a prerequisite. Therefore `node .\install-devbridge.mjs ...` is an installer qualification command, not the final zero-state user entrypoint. The supported blank-host entrypoint must begin with Node fetching the first bounded DevBridge bootstrap bytes itself. See `docs/bootstrap-durability.md`.
+
 ## Stable/default install
 
 With no selector, the installer resolves the exact current `main` head, installs the permanent-entry component bound to that exact commit, leaves normal stable runner selection active, and then enters `devbridge setup` through the installed entry:
@@ -51,6 +53,8 @@ The installer:
 9. pins the resolved exact runner commit as the wrapper's default selection;
 10. invokes only that installed wrapper with the literal `setup` command unless `--install-only` was explicitly requested.
 
+The current installer resolves a moving branch again on a later installer invocation. That is acceptable for explicit installer qualification, but it is **not** sufficient for interruption recovery of the final fresh-host bootstrap. Before live-host qualification, the outer zero-state bootstrap must persist the first resolved exact subject and resume that subject after interruption rather than silently following a newer branch head.
+
 The generated wrapper still permits an explicit local `--ref`/`--branch` override. Remote task content does not participate in installer selection.
 
 The installed component is deliberately **not** copied with a `src/entry/*` wildcard. Its file membership is an explicit installer contract. Adding a new permanent-entry dependency therefore requires an intentional installer/test review rather than silently expanding the host-installed trusted component.
@@ -62,6 +66,20 @@ devbridge-entry entry-install-status
 ```
 
 `entry-install-status` is wrapper-owned and does not import the installed component first, so the local operator can still identify the selected installed component when that component itself needs repair.
+
+## Dependency boundary
+
+The standalone installer checks the supported Node.js version but currently uses local `git` for repository acquisition. Later setup paths also use system prerequisites such as GPG/GPGV and provider/image tooling.
+
+These tools must not be mistaken for zero-state prerequisites merely because the current implementation invokes them. The final bootstrap contract is:
+
+- Node is the only assumed starting prerequisite;
+- Node fetches the first bounded DevBridge bootstrap bytes;
+- later host/system prerequisites are discovered before use;
+- safely repairable prerequisites may be established through their owning setup adapter and then verified;
+- elevation/reboot/licensing/ownership boundaries become focused resumable blockers rather than guessed repairs.
+
+DevBridge currently declares no npm runtime dependencies. `npm install` is therefore not part of self-install recovery. If JavaScript dependencies are introduced later, they must use an exact lockfile-backed installation/verification path rather than treating npm as a general system dependency manager.
 
 ## Fixed source and Git isolation
 
