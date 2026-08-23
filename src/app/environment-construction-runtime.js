@@ -14,6 +14,7 @@ import { createEnvironmentLifecycleFence } from './environment-lifecycle-fence.j
 import { createEnvironmentMaterialization, createEnvironmentRebuildMaterialization } from './environment-materialization.js';
 import { createEnvironmentMaterializationPolicy } from './environment-materialization-policy.js';
 import { createEnvironmentRecovery } from './environment-recovery.js';
+import { createEnvironmentResetMaterialization, createEnvironmentResetRetirement } from './environment-reset.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 
 function assertAvailability(value) {
@@ -34,6 +35,7 @@ export async function createEnvironmentConstructionRuntime({
   lifecycle = null,
   fence = null,
   windowsAccess = null,
+  resetAuthorization = null,
   now,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('environment construction runtime stateDirectory is required');
@@ -56,6 +58,12 @@ export async function createEnvironmentConstructionRuntime({
     subject: policy.subject,
     journal: localLifecycle.journal,
   });
+  const resetMaterialization = createEnvironmentResetMaterialization({
+    state: localFoundation,
+    subject: policy.subject,
+    journal: localLifecycle.journal,
+  });
+  const resetRetirement = createEnvironmentResetRetirement({ state: localFoundation });
   const preparation = createEnvironmentConstructionPreparation({
     stateDirectory,
     platform,
@@ -101,6 +109,16 @@ export async function createEnvironmentConstructionRuntime({
     readiness: observation.readiness,
     ...(now ? { now } : {}),
   });
+  const resetConstruction = createEnvironmentConstructionPipeline({
+    stateDirectory,
+    image,
+    resources,
+    materialization: resetMaterialization,
+    preparation,
+    workspaces,
+    readiness: observation.readiness,
+    ...(now ? { now } : {}),
+  });
   const recovery = createEnvironmentRecovery({
     lifecycle: localLifecycle,
     observer: observation,
@@ -110,6 +128,9 @@ export async function createEnvironmentConstructionRuntime({
     preparation,
     workspaces,
     rebuildConstruction,
+    resetConstruction,
+    resetRetirement,
+    resetAuthorization,
   });
 
   return Object.freeze({
@@ -123,5 +144,7 @@ export async function createEnvironmentConstructionRuntime({
     repair: recovery.repair,
     planRebuild: recovery.planRebuild,
     rebuild: recovery.rebuild,
+    planReset: recovery.planReset,
+    reset: recovery.reset,
   });
 }
