@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lstat, mkdtemp, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createGuestImagePayload } from '../src/guest/image-payload.js';
@@ -71,6 +72,54 @@ function status(phase, { complete = false, blocked = false, reason = null, image
   return Object.freeze({ protocol: 'devbridge/canonical-image-canary-v1', identity: `subject-${'1'.repeat(32)}`, phase, revision: 1, complete, blocked, reason, image });
 }
 
+function stable(value) {
+  if (Array.isArray(value)) return value.map(stable);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])]));
+}
+
+function canonicalRequest(data, subject) {
+  return {
+    identity: subject,
+    work: stable({ subject }),
+    check: stable({
+      payloadGeneration: data.payload.generation,
+      files: data.payload.files.map((file) => ({ path: file.path, sha256: file.sha256 })),
+      packageGeneration: data.config.authority.packages.generation,
+      packages: data.config.authority.packages.packages.map((entry) => ({ ...entry })),
+      commands: [...data.config.authority.qualification.commands],
+    }),
+    output: {
+      profile: data.config.authority.output.profile,
+      generation: data.config.authority.output.generation,
+      provenance: Object.fromEntries(Object.entries({
+        origin: 'ubuntu-production-image-canary',
+        authority: subject,
+        source: data.config.authority.source.media.sha256,
+        bootstrap: data.config.authority.output.bootstrap,
+      }).sort(([left], [right]) => left.localeCompare(right))),
+    },
+  };
+}
+
+async function writeCanaryRecord(data, subject, phase, image = null) {
+  const requestDigest = createHash('sha256').update(JSON.stringify(canonicalRequest(data, subject)), 'utf8').digest('hex');
+  const file = path.join(data.config.stateDirectory, 'production-image-canary', 'journal.json');
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, `${JSON.stringify({
+    [`canonical-image-canary:${subject}`]: {
+      protocol: 'devbridge/canonical-image-canary-v1',
+      identity: subject,
+      requestDigest,
+      revision: 3,
+      phase,
+      probe: null,
+      finalization: null,
+      image,
+    },
+  }, null, 2)}\n`);
+}
+
 async function absent(value) {
   try { await lstat(value); return false; }
   catch (error) { if (error?.code === 'ENOENT') return true; throw error; }
@@ -93,6 +142,26 @@ test('physical canary status is genuinely non-mutating before host admission', a
     assert.equal(result.authorityRegistered, false);
     assert.equal(runtimeCalls, 0);
     assert.equal(await absent(data.config.stateDirectory), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('resource preflight does not strand a canary after physical allocation has started', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-continuation-'));
+  try {
+    const data = await fixture(root);
+    const canary = createUbuntuProductionImagePhysicalCanary(data.config, {
+      platform: 'win32',
+      preflight: { async inspect() { return { protocol: 'test/preflight-v1', ready: false, reason: 'free resources fell below initial admission threshold' }; } },
+      payloadFactory: async () => data.payload,
+    });
+    await writeCanaryRecord(data, canary.subject, 'running');
+    const result = await canary.status();
+    assert.equal(result.state, 'running');
+    assert.equal(result.blocked, false);
+    assert.equal(result.reason, null);
+    assert.equal(result.preflight.ready, false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -173,11 +242,12 @@ test('physical canary run waits for sanitizer shutdown before qualified acceptan
   }
 });
 
-test('physical canary completed state releases only its reserved network address', async () => {
+test('physical canary completed state releases its reserved address and host access material', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-complete-'));
   try {
     const data = await fixture(root);
     let releases = 0;
+    let discards = 0;
     const runtimeFactory = async ({ subject }) => ({
       canary: {
         async inspect() { return { ...status('completed', { complete: true, image: { identity: `img-${'2'.repeat(32)}` } }), identity: subject }; },
@@ -187,11 +257,55 @@ test('physical canary completed state releases only its reserved network address
       accessProbe: { async inspect() { throw new Error('completed canary must not probe access'); } },
       async access() { throw new Error('completed canary must not resolve access'); },
       addressOwner: { async releaseAddress(value) { assert.equal(value, subject); releases += 1; } },
+      accessMaterial: { async discard(value) { assert.equal(value, subject); discards += 1; } },
     });
     const canary = createUbuntuProductionImagePhysicalCanary(data.config, { platform: 'win32', preflight: readyPreflight, payloadFactory: async () => data.payload, runtimeFactory });
     const result = await canary.run();
     assert.equal(result.state, 'completed');
     assert.equal(releases, 1);
+    assert.equal(discards, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a completed journal can recover exact cleanup without replaying the physical runtime', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-complete-recovery-'));
+  try {
+    const data = await fixture(root);
+    let runtimeCalls = 0;
+    const canary = createUbuntuProductionImagePhysicalCanary(data.config, {
+      platform: 'win32',
+      preflight: readyPreflight,
+      payloadFactory: async () => data.payload,
+      invoke: async () => { throw new Error('completed cleanup must not invoke host commands'); },
+      runtimeFactory: async () => { runtimeCalls += 1; throw new Error('completed cleanup must not recreate runtime'); },
+    });
+    const image = {
+      identity: `img-${'2'.repeat(32)}`,
+      profile: data.config.authority.output.profile,
+      generation: data.config.authority.output.generation,
+      digest: '3'.repeat(64),
+      size: 4096,
+    };
+    await writeCanaryRecord(data, canary.subject, 'completed', image);
+
+    const accessRoot = path.join(data.config.stateDirectory, 'production-image-canary', 'access', createHash('sha256').update(canary.subject, 'utf8').digest('hex').slice(0, 32));
+    await mkdir(accessRoot, { recursive: true });
+    await writeFile(path.join(accessRoot, 'client_ed25519'), 'temporary-build-credential');
+    const attachmentRoot = path.join(data.config.stateDirectory, 'environment-foundation', 'bootstrap', 'attachment');
+    await mkdir(attachmentRoot, { recursive: true });
+    await writeFile(path.join(attachmentRoot, 'state.json'), `${JSON.stringify({
+      protocol: 'devbridge/hyperv-environment-bootstrap-state-v1',
+      allocations: { [canary.subject]: { address: '192.168.90.20', prefix: '192.168.90.0/24', scope: 'reserved', allocatedAt: new Date().toISOString() } },
+    })}\n`);
+
+    const result = await canary.run();
+    assert.equal(result.state, 'completed');
+    assert.equal(runtimeCalls, 0);
+    assert.equal(await absent(accessRoot), true);
+    const attachment = JSON.parse(await readFile(path.join(attachmentRoot, 'state.json'), 'utf8'));
+    assert.equal(attachment.allocations[canary.subject], undefined);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
