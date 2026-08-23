@@ -25,10 +25,11 @@ async function observeConstruction(construction, identity) {
   return Object.freeze({ identity, state });
 }
 
-export function createUbuntuProductionImageCanaryComposition({ journal, construction, qualification, foundation } = {}) {
+export function createUbuntuProductionImageCanaryComposition({ journal, preparation, construction, qualification, foundation } = {}) {
+  const selectedPreparation = requireMethods(preparation, ['prepare'], 'production image preparation');
   const selectedConstruction = requireMethods(
     construction,
-    ['prepare', 'status', 'startInstall', 'bootInstalled', 'markQualified', 'retain'],
+    ['status', 'startInstall', 'bootInstalled', 'markQualified', 'retain'],
     'production image construction',
   );
   const selectedQualification = requireMethods(qualification, ['probe', 'finalize'], 'production image qualification');
@@ -37,7 +38,7 @@ export function createUbuntuProductionImageCanaryComposition({ journal, construc
   return createCanonicalImageCanary({
     journal,
     construction: Object.freeze({
-      prepare: (input) => selectedConstruction.prepare(input),
+      prepare: (input) => selectedPreparation.prepare(input),
       observe: (identity) => observeConstruction(selectedConstruction, identity),
       start: (identity) => selectedConstruction.startInstall(identity),
       activate: (identity) => selectedConstruction.bootInstalled(identity),
