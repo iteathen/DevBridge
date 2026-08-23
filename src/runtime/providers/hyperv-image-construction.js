@@ -406,6 +406,16 @@ export class HyperVImageConstruction {
     };
   }
 
+  async locate(rawIdentity) {
+    const identity = subject(rawIdentity);
+    const state = await this.#load();
+    const record = state.records[identity];
+    if (!record || record.phase !== 'qualifying' || !record.providerIdentity) throw new Error('construction is not available for qualification');
+    const observed = await this.status(identity);
+    if (!observed.exists || !observed.owned || observed.state !== 'running') throw new Error('construction is not running for qualification');
+    return Object.freeze({ reference: record.name, proof: record.marker });
+  }
+
   async startInstall(rawIdentity) {
     const identity = subject(rawIdentity);
     const state = await this.#load();

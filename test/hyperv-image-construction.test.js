@@ -77,6 +77,7 @@ test('Hyper-V image construction resumes exact intent through install, qualifica
     assert.equal(prepared.phase, 'prepared');
     assert.equal(prepared.exists, true);
     assert.equal(prepared.state, 'off');
+    await assert.rejects(() => first.locate(data.request.identity), /not available for qualification/u);
 
     const resumed = new HyperVImageConstruction({ directory: data.stateRoot, sourceRoot: data.sourceRoot, outputRoot: data.outputRoot, identity: 'a'.repeat(32), invoke: host.invoke });
     const installing = await resumed.startInstall(data.request.identity);
@@ -87,6 +88,9 @@ test('Hyper-V image construction resumes exact intent through install, qualifica
     const qualifying = await resumed.bootInstalled(data.request.identity);
     assert.equal(qualifying.phase, 'qualifying');
     assert.equal(qualifying.state, 'running');
+    const location = await resumed.locate(data.request.identity);
+    assert.match(location.reference, /^db-image-build-[a-f0-9]{16}$/u);
+    assert.equal(location.proof, `devbridge-owned:${'a'.repeat(32)}:image-build:${data.request.identity}:v1`);
 
     await resumed.stop(data.request.identity);
     await resumed.markQualified(data.request.identity, { protocol: 'test/qualification-v1', passed: true });
@@ -98,7 +102,8 @@ test('Hyper-V image construction resumes exact intent through install, qualifica
     assert.equal(host.state.diskPresent, true);
 
     const preparePayload = host.state.calls.find((entry) => entry.script.includes('construction media attachment count is incompatible')).payload;
-    assert.match(preparePayload.name, /^db-image-build-[a-f0-9]{16}$/u);
+    assert.equal(location.reference, preparePayload.name);
+    assert.equal(location.proof, preparePayload.marker);
     assert.equal(preparePayload.diskPath, retained.location);
   } finally { await rm(data.directory, { recursive: true, force: true }); }
 });
