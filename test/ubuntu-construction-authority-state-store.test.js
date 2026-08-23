@@ -4,7 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { JsonStateStore } from '../src/state/json-state-store.js';
-import { UbuntuConstructionAuthorityStateStore } from '../src/state/ubuntu-construction-authority-state-store.js';
+import { UbuntuConstructionAuthorityCatalog } from '../src/runtime/image-builders/ubuntu-construction-authority-catalog.js';
+import { createUbuntuConstructionAuthorityStateStore } from '../src/state/ubuntu-construction-authority-state-store.js';
 
 async function root() { return mkdtemp(path.join(os.tmpdir(), 'db-ubuntu-construction-authority-')); }
 
@@ -34,11 +35,15 @@ function authority() {
   };
 }
 
-test('construction authority store persists immutable content-addressed subjects across restart', async () => {
+function catalog(file) {
+  return new UbuntuConstructionAuthorityCatalog({ store: createUbuntuConstructionAuthorityStateStore(file) });
+}
+
+test('construction authority catalog persists immutable content-addressed subjects across restart', async () => {
   const directory = await root();
   try {
     const file = path.join(directory, 'authorities.json');
-    const first = new UbuntuConstructionAuthorityStateStore(file);
+    const first = catalog(file);
     const created = await first.register(authority());
     assert.equal(created.created, true);
     assert.match(created.subjectRef, /^subject-[a-f0-9]{32}$/u);
@@ -46,25 +51,28 @@ test('construction authority store persists immutable content-addressed subjects
     assert.equal(duplicate.created, false);
     assert.equal(duplicate.subjectRef, created.subjectRef);
 
-    const resumed = new UbuntuConstructionAuthorityStateStore(file);
+    const resumed = catalog(file);
     const loaded = await resumed.lookup(created.subjectRef);
     assert.equal(loaded.output.generation, 'ubuntu-production-v1');
     assert.deepEqual((await resumed.list()).map((entry) => entry.subjectRef), [created.subjectRef]);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('construction authority store detects content-address drift instead of trusting its key', async () => {
+test('construction authority catalog detects content-address drift instead of trusting persistence keys', async () => {
   const directory = await root();
   try {
     const file = path.join(directory, 'authorities.json');
-    const catalog = new UbuntuConstructionAuthorityStateStore(file);
-    const created = await catalog.register(authority());
+    const first = catalog(file);
+    const created = await first.register(authority());
     const raw = new JsonStateStore(file);
     await raw.set(`authority:${created.subjectRef}`, {
       ...authority(),
       output: { ...authority().output, generation: 'different-v2' },
     });
-    const resumed = new UbuntuConstructionAuthorityStateStore(file);
-    await assert.rejects(() => resumed.lookup(created.subjectRef), /identity is corrupt/u);
+    await assert.rejects(() => catalog(file).lookup(created.subjectRef), /identity is corrupt/u);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('construction authority catalog accepts only the narrow storage port', () => {
+  assert.throws(() => new UbuntuConstructionAuthorityCatalog({ store: { load() {}, save() {} } }), /store contract is incomplete/u);
 });
