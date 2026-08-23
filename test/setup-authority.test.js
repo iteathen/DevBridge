@@ -55,8 +55,8 @@ test('discovered availability is not approval and authorities remain independent
   assert.deepEqual(setupAuthorityBlockers(snapshot).map((entry) => entry.code), [
     'construction-authority-required', 'declaration-authority-required',
   ]);
-  assert.equal(authority(snapshot, 'distribution').approval, 'unapproved');
-  assert.equal(authority(snapshot, 'activation').subjectRef, null);
+  assert.equal(authority(snapshot, 'linux', 'distribution').approval, 'unapproved');
+  assert.equal(authority(snapshot, 'linux', 'activation').subjectRef, null);
 
   snapshot = replaceSetupAuthority(snapshot, replacement(snapshot, 'linux', 'construction', { approval: 'approved' }));
   assert.deepEqual(setupAuthorityBlockers(snapshot).map((entry) => entry.code), ['declaration-authority-required']);
@@ -148,7 +148,8 @@ test('working edits invalidate validation and stale accepted revisions cannot co
   record = await manager.commit(record.working.operationId);
   assert.equal(record.revision, 1);
 
-  const working = (await manager.begin()).record;
+  let working = (await manager.begin()).record;
+  working = await manager.markValidation(working.working.operationId, 'passed');
   port.force({ ...working, revision: 2, updatedAt: '2027-01-15T08:00:00.000Z' });
   await assert.rejects(() => manager.commit(working.working.operationId), /accepted revision changed/u);
 });
