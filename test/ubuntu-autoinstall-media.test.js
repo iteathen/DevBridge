@@ -15,7 +15,7 @@ test('Ubuntu media preparation binds exact admitted source, recipe patches, and 
   const parent = await root();
   try {
     const sourceLocation = path.join(parent, 'ubuntu.iso');
-    const sourceBytes = 'prefix boot ---        suffix';
+    const sourceBytes = 'prefix boot ---         suffix';
     await writeFile(sourceLocation, sourceBytes);
     const sourceSha256 = sha256(sourceBytes);
     let seedRequest = null;
@@ -26,7 +26,7 @@ test('Ubuntu media preparation binds exact admitted source, recipe patches, and 
           protocol: 'devbridge/ubuntu-autoinstall-recipe-v1',
           sourceSha256,
           generation: 'ubuntu-26.04-amd64-v1',
-          patches: [{ id: 'boot', before: 'boot ---        ', after: 'boot autoinstall ', occurrences: 1 }],
+          patches: [{ id: 'boot', before: 'boot ---        ', after: 'boot autoinstall', occurrences: 1 }],
         };
       },
       seedFactory: async ({ recipeGeneration, sourceIdentity }) => {
