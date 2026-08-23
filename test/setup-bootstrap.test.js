@@ -19,7 +19,7 @@ test('managed bootstrap accepts setup repository selection but no other command 
     update: true,
     repositories: ['owner/one', 'owner/two'],
   });
-  assert.throws(() => parseBootstrapArgs(['doctor', '--repository', 'owner/one']), /valid only with devbridge setup/u);
+  assert.throws(() => parseBootstrapArgs(['doctor', '--repository', 'owner/one']), /Unknown bootstrap argument/u);
 });
 
 test('setup bootstrap does not create the legacy example config', () => {
