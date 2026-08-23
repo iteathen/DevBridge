@@ -38,7 +38,6 @@ const STATUS_PROTOCOL = 'devbridge/ubuntu-production-image-physical-canary-statu
 const PREPARATION_PROTOCOL = 'devbridge/ubuntu-production-image-physical-preparation-v1';
 const SOURCE_HOSTS = Object.freeze(['releases.ubuntu.com', 'cdimage.ubuntu.com']);
 const SHA256 = /^[a-f0-9]{64}$/u;
-const SUBJECT = /^subject-[a-f0-9]{32}$/u;
 const IPV4 = /^(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/u;
 const MIN_MEMORY_BYTES = 512 * 1024 * 1024;
 const MAX_MEMORY_BYTES = 1024 * 1024 * 1024 * 1024;
@@ -280,6 +279,22 @@ async function withRunLock(lockPath, work) {
   }
 }
 
+async function cleanupCompletedState({ paths, subject, invoke }) {
+  const reasons = [];
+  const addressOwner = new HyperVEnvironmentBootstrap({
+    directory: path.join(paths.foundationRoot, 'bootstrap', 'attachment'),
+    invoke,
+    locate: async () => { throw new Error('completed cleanup must not locate a provider subject'); },
+    connection: async () => { throw new Error('completed cleanup must not resolve guest access'); },
+  });
+  try { await addressOwner.releaseAddress(subject); }
+  catch (error) { reasons.push(`network reservation cleanup failed: ${error.message}`); }
+  const accessMaterial = createSshAccessMaterial({ directory: paths.accessRoot, invoke });
+  try { await accessMaterial.discard(subject); }
+  catch (error) { reasons.push(`SSH access cleanup failed: ${error.message}`); }
+  return reasons.length === 0 ? null : reasons.join('; ');
+}
+
 async function createPhysicalRuntime({ config, subject, payload, paths, invoke, fetchImpl, catalog, preparationStore }) {
   const localIdentity = await loadOrCreateLocalIdentity({ directory: paths.foundationRoot });
   const providerLocation = createHyperVEnvironmentLocation(localIdentity);
@@ -450,6 +465,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
     access,
     accessProbe: createSshAccessProbe({ invoke }),
     addressOwner,
+    accessMaterial,
   });
 }
 
@@ -493,7 +509,8 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
     }
     const reasons = [];
     if (!payloadMatches) reasons.push('current guest payload generation does not match construction authority');
-    if (!preflightResult.ready) reasons.push(preflightResult.reason);
+    const preflightRequired = canary == null || ['absent', 'planned', 'prepared'].includes(canary.phase);
+    if (preflightRequired && !preflightResult.ready) reasons.push(preflightResult.reason);
     if (journalReason) reasons.push(journalReason);
     if (canary?.blocked) reasons.push(canary.reason);
     const complete = canary?.complete === true;
@@ -508,7 +525,18 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
 
   const run = async () => {
     const before = await status();
-    if (before.complete || before.blocked) return before;
+    if (before.complete) {
+      return withRunLock(paths.runLock, async () => {
+        const cleanupReason = await cleanupCompletedState({ paths, subject, invoke });
+        return publicResult(subject, before, {
+          state: 'completed',
+          reason: cleanupReason ?? before.reason,
+          preflight: before.preflight,
+          authorityRegistered: before.authorityRegistered,
+        });
+      });
+    }
+    if (before.blocked) return before;
     if (platform !== 'win32') return publicResult(subject, null, { state: 'blocked', reason: 'physical production image canary requires a Windows Hyper-V host', preflight: before.preflight, authorityRegistered: before.authorityRegistered });
     return withRunLock(paths.runLock, async () => {
       const payload = await payloadFactory();
@@ -523,12 +551,21 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
       for (let index = 0; index < MAX_ADVANCES; index += 1) {
         const current = await runtime.canary.inspect(request);
         if (current.complete) {
-          let cleanupReason = null;
+          const cleanupReasons = [];
           if (runtime.addressOwner?.releaseAddress) {
             try { await runtime.addressOwner.releaseAddress(subject); }
-            catch (error) { cleanupReason = `image completed but network reservation cleanup failed: ${error.message}`; }
+            catch (error) { cleanupReasons.push(`network reservation cleanup failed: ${error.message}`); }
           }
-          return publicResult(subject, current, { state: 'completed', reason: cleanupReason, authorityRegistered: true, preflight: before.preflight });
+          if (runtime.accessMaterial?.discard) {
+            try { await runtime.accessMaterial.discard(subject); }
+            catch (error) { cleanupReasons.push(`SSH access cleanup failed: ${error.message}`); }
+          }
+          return publicResult(subject, current, {
+            state: 'completed',
+            reason: cleanupReasons.length === 0 ? null : cleanupReasons.join('; '),
+            authorityRegistered: true,
+            preflight: before.preflight,
+          });
         }
         if (current.blocked) return publicResult(subject, current, { state: 'blocked', reason: current.reason, authorityRegistered: true, preflight: before.preflight });
 
