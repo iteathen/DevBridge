@@ -33,6 +33,14 @@ function makeHome() {
   return mkdtempSync(path.join(tmpdir(), 'devbridge-zero-state-'));
 }
 
+function preparedSource(home) {
+  return async (_stage, subject) => Object.freeze({
+    head: subject.head,
+    root: home,
+    cleanup() {},
+  });
+}
+
 test('bootstrap parser preserves explicit selector intent separately from exact subject', () => {
   const root = path.resolve('bootstrap-home');
   const stable = parseBootstrapArgs(['--home', root], { environment: {}, homeDirectory: root });
@@ -86,6 +94,7 @@ test('bootstrap selection is durable before activation and clears only after per
       environment: {},
       homeDirectory: home,
       fetcher,
+      prepareSource: preparedSource(home),
       async loadStage() {
         return {
           installDevBridge(options) {
@@ -124,7 +133,10 @@ test('failed activation retains the exact recovery checkpoint', async () => {
   try {
     await assert.rejects(
       runZeroStateBootstrap(['--ref', 'cuda-target', '--home', home], {
-        environment: {}, homeDirectory: home, fetcher,
+        environment: {},
+        homeDirectory: home,
+        fetcher,
+        prepareSource: preparedSource(home),
         async loadStage() {
           return {
             installDevBridge() { throw new Error('injected interruption'); },
@@ -139,7 +151,10 @@ test('failed activation retains the exact recovery checkpoint', async () => {
     remoteHead = HEAD_B;
     await assert.rejects(
       runZeroStateBootstrap(['--ref', 'cuda-target', '--home', home], {
-        environment: {}, homeDirectory: home, fetcher,
+        environment: {},
+        homeDirectory: home,
+        fetcher,
+        prepareSource: preparedSource(home),
         async loadStage() {
           return {
             installDevBridge(options) {

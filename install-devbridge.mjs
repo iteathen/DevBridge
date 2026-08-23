@@ -387,6 +387,15 @@ function copyComponent(checkout, destination) {
   }
 }
 
+function preparedSourceRoot(subject, preparedSource) {
+  if (preparedSource == null) return null;
+  if (subject?.selector?.kind !== 'exact' || preparedSource?.head !== subject.head ||
+      typeof preparedSource?.root !== 'string' || !path.isAbsolute(preparedSource.root)) {
+    fail('Prepared installer source does not match the resolved exact subject.');
+  }
+  return ensureRealDirectory(preparedSource.root, 'Prepared installer source');
+}
+
 function safeExistingFile(candidate) {
   if (!existsSync(candidate)) return;
   const info = lstatSync(candidate);
@@ -570,6 +579,7 @@ export function installDevBridge(options, {
   runner = defaultRunner,
   allowLocalSource = false,
   environment = process.env,
+  preparedSource = null,
 } = {}) {
   assertSupportedNode();
 
@@ -585,6 +595,7 @@ export function installDevBridge(options, {
     const subject = resolveInstallSubject(selector, {
       sourceRepository, runner, allowLocalSource, environment,
     });
+    const preparedRoot = preparedSourceRoot(subject, preparedSource);
 
     const components = ensureChildDirectory(entryRoot, 'components');
     const staging = ensureChildDirectory(entryRoot, 'staging');
@@ -595,12 +606,16 @@ export function installDevBridge(options, {
       quarantineInvalidComponent(target, quarantine, subject.head);
       const work = mkdtempSync(path.join(staging, `${subject.head.slice(0, 12)}-`));
       try {
-        const checkout = path.join(work, 'source');
         const component = path.join(work, 'component');
-        checkoutExact(subject, checkout, {
-          sourceRepository, runner, allowLocalSource, environment,
-        });
-        copyComponent(realpathSync.native(checkout), component);
+        let source = preparedRoot;
+        if (source == null) {
+          const checkout = path.join(work, 'source');
+          checkoutExact(subject, checkout, {
+            sourceRepository, runner, allowLocalSource, environment,
+          });
+          source = realpathSync.native(checkout);
+        }
+        copyComponent(source, component);
         writeComponentManifest(component, componentManifest(component, subject.head, sourceRepository));
         if (!verifyInstalledComponent(component, subject.head, sourceRepository)) {
           fail('Staged permanent-entry component failed self-verification.');
