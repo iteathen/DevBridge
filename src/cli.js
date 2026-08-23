@@ -9,6 +9,7 @@ import { runDaemon } from './app/daemon.js';
 import { createRuntime } from './app/runtime.js';
 import { createLocalEnvironmentOperator } from './app/environment-operator-runtime.js';
 import { chatHandoffSeed, chatHandoffStatus } from './app/chat-handoff.js';
+import { formatSetupHandoff, runDevBridgeSetup } from './app/setup.js';
 import { PolicyError } from './errors.js';
 import { logicalEnvironmentIdentity } from './runtime/environment-declaration.js';
 import { daemonStatus, pauseDaemon, resumeDaemon, stopDaemon } from './runtime/daemon-lock.js';
@@ -17,7 +18,8 @@ const installationTag = process.env.DEVBRIDGE_INSTALLATION_TAG;
 if (/^DB-[0-9A-F]{12}$/u.test(installationTag ?? '')) process.title = `DevBridge[${installationTag}]`;
 
 function usage() {
-  console.error('Usage: devbridge <doctor|poll-once|run-once|daemon|status|pause|resume|stop|restart|handoff-status|handoff-seed|handoff-project|environment> --config <path> [options]');
+  console.error('Usage: devbridge setup [--home <path>] [--repository owner/name|all]...');
+  console.error('       devbridge <doctor|poll-once|run-once|daemon|status|pause|resume|stop|restart|handoff-status|handoff-seed|handoff-project|environment> --config <path> [options]');
   console.error('       devbridge environment <list|show|plan|create|repair|rebuild|reset|recreate|resume|setup-reentry> --config <path> [--identity id|--profile name] [--operation op] [--confirm subject]');
 }
 
@@ -25,6 +27,17 @@ function optionValue(argv, name) {
   const index = argv.indexOf(name);
   if (index < 0 || !argv[index + 1]) return null;
   return argv[index + 1];
+}
+
+function optionValues(argv, name) {
+  const values = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] !== name) continue;
+    if (!argv[index + 1]) throw new PolicyError(`${name} requires a value`);
+    values.push(argv[index + 1]);
+    index += 1;
+  }
+  return values;
 }
 
 function configPath(argv) {
@@ -91,8 +104,25 @@ async function runDaemonCommand(config) {
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
+  if (!command) {
+    usage();
+    process.exitCode = 2;
+    return;
+  }
+
+  if (command === 'setup') {
+    const requestedRepositories = optionValues(args, '--repository');
+    const result = await runDevBridgeSetup({
+      home: optionValue(args, '--home'),
+      requestedRepositories: requestedRepositories.length > 0 ? requestedRepositories : null,
+    });
+    process.stdout.write(formatSetupHandoff(result));
+    if (result.blocked) process.exitCode = 3;
+    return;
+  }
+
   const file = configPath(args);
-  if (!command || !file) {
+  if (!file) {
     usage();
     process.exitCode = 2;
     return;
