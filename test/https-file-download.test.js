@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { HttpsFileDownload } from '../src/runtime/https-file-download.js';
@@ -64,16 +64,19 @@ test('HTTPS downloader enforces a streaming byte bound and removes partial outpu
 test('HTTPS downloader refuses a non-real parent and does not replace caller data', async () => {
   const directory = await root();
   try {
+    let calls = 0;
     const adapter = new HttpsFileDownload({
       allowedHosts: ['releases.example.test'],
-      fetchImpl: async () => response(200, ['new']),
+      fetchImpl: async () => { calls += 1; return response(200, ['new']); },
     });
     const destination = path.join(directory, 'media.iso');
     await writeFile(destination, 'caller');
-    await assert.rejects(() => adapter.download({ url: 'https://releases.example.test/media.iso', destination }), /EEXIST/u);
+    await assert.rejects(() => adapter.download({ url: 'https://releases.example.test/media.iso', destination }), /already exists/u);
+    assert.equal(calls, 0);
     assert.equal(await readFile(destination, 'utf8'), 'caller');
 
     const missingParent = path.join(directory, 'absent', 'media.iso');
     await assert.rejects(() => adapter.download({ url: 'https://releases.example.test/media.iso', destination: missingParent }), /ENOENT/u);
+    assert.equal(calls, 0);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
