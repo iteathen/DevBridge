@@ -336,7 +336,7 @@ export async function reconcileSetupPrerequisites({
   return result({
     platform,
     ready: true,
-    changed: signatureChanged || true,
+    changed: true,
     capabilities: { gpgv: true, opensshClient: true },
     local,
   });
