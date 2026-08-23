@@ -15,6 +15,11 @@ function assertPort(value, methods, name) {
   if (!value || methods.some((method) => typeof value[method] !== 'function')) throw new TypeError(`environment reset ${name} contract is incomplete`);
   return value;
 }
+function normalizeResetOptions(raw = {}) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('environment reset options must be an object');
+  for (const key of Object.keys(raw)) if (key !== 'approval') throw new TypeError(`environment reset options.${key} is not allowed`);
+  return { approval: raw.approval };
+}
 function active(record) { return record != null && record.entries?.at(-1)?.stage !== 'terminal'; }
 function lastStage(record) { return record.entries.at(-1).stage; }
 function fenceEntry(record) { return record.entries.find((entry) => entry.stage === 'fenced-attempt') ?? null; }
@@ -167,7 +172,8 @@ export class EnvironmentReset {
     return this.#impact(declaration, observation);
   }
 
-  async reset(rawIdentity, { approval } = {}) {
+  async reset(rawIdentity, rawOptions = {}) {
+    const { approval } = normalizeResetOptions(rawOptions);
     const identity = safeId(rawIdentity, 'environment identity');
     const declaration = await this.#declarations.get(identity);
     if (!declaration) throw new Error('environment declaration is unavailable; setup re-entry is required');
