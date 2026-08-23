@@ -197,7 +197,7 @@ test('explicit branch install resolves once, installs the closed component, pres
   assert.equal(installStatus.protocol, INSTALL_STATUS_PROTOCOL);
   assert.equal(installStatus.componentHead, fixture.head);
   assert.equal(installStatus.pinnedRunnerHead, fixture.head);
-  assert.equal(path.resolve(installStatus.home), path.resolve(home));
+  assert.equal(installStatus.home, installed.home);
 
   writeFileSync(path.join(component, 'devbridge-entry.mjs'), 'corrupt\n');
   assert.equal(verifyInstalledComponent(component, fixture.head, fixture.source), false);
