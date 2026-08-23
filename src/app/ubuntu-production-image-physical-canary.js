@@ -350,15 +350,10 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
     if (observed.phase !== 'absent') throw new Error('construction state exists without its physical preparation receipt');
     await rm(paths.subjectRoot, { recursive: true, force: true });
     await mkdir(paths.subjectRoot, { recursive: false, mode: 0o700 });
-    await foundation.ensureStorage();
-    await foundation.ensureNetwork();
     let reserved = false;
     let preparedAccess = null;
+    let lease = null;
     try {
-      const lease = await addressOwner.reserveAddress(subject, networkIdentity);
-      reserved = true;
-      preparedAccess = await accessMaterial.prepare(subject);
-      const keyMaterial = await accessSeed(preparedAccess.seedFile, subject);
       const download = createHttpsFileDownload({ fetchImpl, allowedHosts: SOURCE_HOSTS });
       const verifyManifest = createDetachedSignatureVerifier({ invoke, keyring: config.keyring });
       const source = createUbuntuReleaseMediaSource({
@@ -384,6 +379,12 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
         },
         seedFactory: async ({ recipeGeneration, sourceIdentity }) => {
           if (recipeGeneration !== authority.recipe.generation || sourceIdentity.sha256 !== authority.source.media.sha256) throw new Error('autoinstall seed basis changed');
+          await foundation.ensureStorage();
+          await foundation.ensureNetwork();
+          lease = await addressOwner.reserveAddress(subject, networkIdentity);
+          reserved = true;
+          preparedAccess = await accessMaterial.prepare(subject);
+          const keyMaterial = await accessSeed(preparedAccess.seedFile, subject);
           return seedFactory.create({
             identity: subject,
             address: lease.address,
@@ -399,6 +400,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
       });
       const admitted = await source.acquire({ authorityRef: subject, destination: paths.releaseDirectory });
       const prepared = await media.prepare({ source: admitted, recipeRef: subject, destination: paths.preparedDirectory });
+      if (!lease || !preparedAccess) throw new Error('physical preparation did not establish bounded host material');
       if (prepared.evidence?.seed?.payloadGeneration !== payload.generation || prepared.evidence?.seed?.packageGeneration !== authority.packages.generation) throw new Error('prepared seed evidence does not match construction authority');
       await rm(paths.releaseDirectory, { recursive: true, force: true });
       const baseAccess = preparedAccess.connection;
@@ -428,6 +430,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
       return receipt;
     } catch (error) {
       if (reserved) await addressOwner.releaseAddress(subject).catch(() => {});
+      await accessMaterial.discard(subject).catch(() => {});
       await rm(paths.subjectRoot, { recursive: true, force: true }).catch(() => {});
       throw error;
     } finally {
