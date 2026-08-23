@@ -5,6 +5,7 @@ import { createEnvironmentRecreateMaterialization, createEnvironmentRecreateReti
 const OLD = `env-${'1'.repeat(32)}`;
 const NEXT = `env-${'2'.repeat(32)}`;
 const IMAGE = 'image-ubuntu-v1';
+const AUTHORIZATION = `recreate-${'a'.repeat(64)}`;
 
 function request() {
   return {
@@ -16,12 +17,12 @@ function request() {
 }
 function activeJournal(stage = 'fenced-attempt') {
   const entries = [
-    { stage: 'intent', implementationGeneration: null },
-    { stage: 'pre-observation', implementationGeneration: OLD, subjects: ['provider-instance'] },
-    { stage: 'fenced-attempt', implementationGeneration: OLD, subjects: ['provider-instance'] },
+    { stage: 'intent', implementationGeneration: null, subjects: [] },
+    { stage: 'pre-observation', implementationGeneration: OLD, subjects: [AUTHORIZATION] },
+    { stage: 'fenced-attempt', implementationGeneration: OLD, subjects: [AUTHORIZATION] },
   ];
-  if (['post-observation', 'verification'].includes(stage)) entries.push({ stage: 'post-observation', implementationGeneration: NEXT, subjects: ['provider-instance'] });
-  if (stage === 'verification') entries.push({ stage: 'verification', implementationGeneration: NEXT, subjects: ['provider-instance'] });
+  if (['post-observation', 'verification'].includes(stage)) entries.push({ stage: 'post-observation', implementationGeneration: NEXT, subjects: [AUTHORIZATION] });
+  if (stage === 'verification') entries.push({ stage: 'verification', implementationGeneration: NEXT, subjects: [AUTHORIZATION] });
   return { operation: 'recreate', operationId: 'lifecycle-recreate-1', declarationRevision: 1, entries };
 }
 
@@ -62,7 +63,7 @@ test('recreate materialization refuses provider effects not bound to the exact r
   assert.equal(calls, 0);
 });
 
-test('recreate retirement is bound to verified journal generations and exact superseded identity', async () => {
+test('recreate retirement is bound to verified journal generations, authorization subject, and exact superseded identity', async () => {
   let calls = 0;
   const retirement = createEnvironmentRecreateRetirement({
     state: {
@@ -77,8 +78,21 @@ test('recreate retirement is bound to verified journal generations and exact sup
   });
   const result = await retirement.ensure({
     environmentIdentity: 'logical-environment-a', operationId: 'lifecycle-recreate-1', declarationRevision: 1,
-    previousImplementationGeneration: OLD, implementationGeneration: NEXT,
+    previousImplementationGeneration: OLD, implementationGeneration: NEXT, authorizationSubject: AUTHORIZATION,
   });
   assert.deepEqual(result, { ready: true, identity: OLD, removed: false, absent: true });
   assert.equal(calls, 1);
+});
+
+test('recreate retirement refuses authorization drift before provider deletion', async () => {
+  let calls = 0;
+  const retirement = createEnvironmentRecreateRetirement({
+    state: { async retireSupersededEnvironment() { calls += 1; return { identity: OLD, removed: true, absent: false }; } },
+    journal: { current: async () => activeJournal('verification') },
+  });
+  await assert.rejects(() => retirement.ensure({
+    environmentIdentity: 'logical-environment-a', operationId: 'lifecycle-recreate-1', declarationRevision: 1,
+    previousImplementationGeneration: OLD, implementationGeneration: NEXT, authorizationSubject: `recreate-${'b'.repeat(64)}`,
+  }), /authorization evidence changed/u);
+  assert.equal(calls, 0);
 });
