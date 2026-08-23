@@ -167,6 +167,61 @@ test('resource preflight does not strand a canary after physical allocation has 
   }
 });
 
+test('invalid installer patch fails before provider network or access allocation', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-media-first-'));
+  try {
+    const data = await fixture(root);
+    const media = Buffer.from('exact-test-image-without-the-required-trigger', 'utf8');
+    const mediaSha256 = createHash('sha256').update(media).digest('hex');
+    data.config.authority.source.media.bytes = media.length;
+    data.config.authority.source.media.sha256 = mediaSha256;
+    data.config.authority.recipe.sourceSha256 = mediaSha256;
+    data.config.authority.recipe.patches = [{ id: 'missing-trigger', occurrences: 1, before: 'MISSING', after: 'CHANGED' }];
+    await mkdir(path.dirname(data.config.keyring), { recursive: true });
+    await writeFile(data.config.keyring, 'test-keyring');
+
+    const fingerprint = data.config.authority.source.checksums.signerFingerprint;
+    const manifest = Buffer.from(`${mediaSha256}  ${data.config.authority.source.media.name}\n`, 'utf8');
+    const signature = Buffer.from('test-signature', 'utf8');
+    const fetchImpl = async (url) => {
+      const text = String(url);
+      const body = text.endsWith('/SHA256SUMS') ? manifest : text.endsWith('/SHA256SUMS.gpg') ? signature : media;
+      return new Response(body, { status: 200, headers: { 'content-length': String(body.length) } });
+    };
+    const invocations = [];
+    const invoke = async (request) => {
+      invocations.push(request.executable);
+      if (String(request.executable).toLowerCase().includes('gpgv')) {
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          aborted: false,
+          outputTruncated: false,
+          stdout: `[GNUPG:] VALIDSIG ${fingerprint} a b c d e f g h ${fingerprint}\n`,
+          stderr: '',
+        };
+      }
+      throw new Error(`provider/access allocation occurred before patch validation: ${request.executable}`);
+    };
+
+    const canary = createUbuntuProductionImagePhysicalCanary(data.config, {
+      platform: 'win32',
+      preflight: readyPreflight,
+      payloadFactory: async () => data.payload,
+      fetchImpl,
+      invoke,
+    });
+    await assert.rejects(() => canary.run(), /expected 1 occurrence\(s\) but found 0/u);
+    assert.equal(invocations.length, 1);
+    assert.match(invocations[0], /gpgv/iu);
+    assert.equal(await absent(path.join(data.config.stateDirectory, 'environment-foundation', 'bootstrap', 'attachment')), true);
+    assert.equal(await absent(path.join(data.config.stateDirectory, 'production-image-canary', 'access')), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('physical canary run returns waiting while unattended installation owns the frontier', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-install-'));
   try {
