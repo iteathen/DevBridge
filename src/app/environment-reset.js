@@ -14,6 +14,10 @@ function implementation(value, name = 'environment reset implementation generati
   if (typeof value !== 'string' || !/^env-[a-f0-9]{32}$/u.test(value)) throw new Error(`${name} is invalid`);
   return value;
 }
+function requestIdentity(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,159}$/u.test(value)) throw new Error('environment reset operation identity is invalid');
+  return value;
+}
 
 export function createEnvironmentResetMaterialization({ state, subject, journal } = {}) {
   const localState = assertPort(state, ['listEnvironments', 'replaceEnvironment'], 'materialization state');
@@ -63,8 +67,9 @@ export function createEnvironmentResetRetirement({ state } = {}) {
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('environment reset retirement request is invalid');
       const current = implementation(input.implementationGeneration, 'environment reset current implementation generation');
       const previous = implementation(input.previousImplementationGeneration, 'environment reset previous implementation generation');
+      const requestId = requestIdentity(input.operationId);
       if (current === previous) throw new Error('environment reset retirement cannot target the current generation');
-      const result = await localState.retireSupersededEnvironment(current, { supersededIdentity: previous });
+      const result = await localState.retireSupersededEnvironment(current, { supersededIdentity: previous, requestId });
       if (result?.identity !== previous || (result?.removed !== true && result?.absent !== true)) throw new Error('environment reset retirement did not reconcile the exact superseded generation');
       return Object.freeze({ ready: true, identity: previous, removed: result.removed === true, absent: result.absent === true });
     },
