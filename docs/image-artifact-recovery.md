@@ -54,7 +54,7 @@ Passing the artifact/recovery tests does not prove that a production Windows or 
 
 Keep these authorities separate:
 
-- **construction authority** — approved source media + deterministic recipe;
+- **construction authority** — approved source media + versioned recipe;
 - **distribution authority** — whether/where prepared bytes may be stored;
 - **Windows activation authority** — how a materialized Windows VM is activated;
 - **environment declaration authority** — exact image/profile/bootstrap/resource policy.
@@ -63,11 +63,13 @@ The artifact bundle contains no Windows product key, MAK, KMS secret, directory/
 
 A regular-user GitHub source must not be hard-coded to a developer-owned repository. The initial setup proposal may derive a private repository such as `<authenticated-owner>/devbridge-base-images`, subject to local approval and credential capability. The exact release numeric subject and pinned manifest digest remain the remote artifact authority after publication.
 
-Prepared Windows image bytes have an additional distribution-rights gate. Private hosting is not itself proof that the selected Microsoft source/license permits publishing the generalized VHDX. Windows therefore supports two recovery-source modes without changing the generic image contract:
+Prepared Windows image bytes have an additional distribution-rights gate. Private hosting is not itself proof that the selected Microsoft source/license permits publishing the generalized VHDX. Windows therefore supports two supply modes without changing the #178 exact-artifact contract:
 
 1. **remote artifact** — exact prepared bytes are permitted, published, redownloaded, reconstructed, verified, and admitted through this #178 path;
-2. **local reconstruction** — durable local authority retains the exact approved source-media identity and construction recipe, reconstructs the expected canonical image locally, verifies its semantic identity, then admits it to the same immutable cache.
+2. **local reconstruction/regeneration** — durable local authority retains the approved source-media identity and versioned construction recipe and constructs a replacement canonical image locally.
 
-If neither an exact verified cache entry, an approved remote artifact, nor the exact required reconstruction source is available, image availability reports a typed blocker and never substitutes another generation.
+The second mode does **not** weaken image identity. A Windows construction recipe is not automatically byte-deterministic. If local reconstruction reproduces the exact expected canonical size/SHA-256, the existing image subject may be admitted. If it produces different but otherwise qualified canonical bytes, those bytes are a **new immutable image subject/generation**. They cannot satisfy `ensure exact image available` for the old declaration. A separate explicit local image-regeneration/declaration-rebind migration must authorize the new subject before `create`/`rebuild` consumes it.
+
+If neither an exact verified cache entry, an approved exact remote artifact, nor an authorized reconstruction/regeneration path is available, image availability reports a typed blocker and never substitutes another generation or ignores a digest mismatch.
 
 See `docs/fresh-host-image-provisioning.md` and issue #192 for the installation/licensing/re-entry plan.
