@@ -161,9 +161,21 @@ test('canary advances one durable phase at a time and survives a fresh coordinat
   });
 });
 
+test('planned restart re-enters the owning preparation contract to revalidate exact work', async () => {
+  const journal = memoryJournal();
+  const parts = harness({ journal });
+  await canary(parts).advance(request());
+  journal.failOn('prepared');
+  await assert.rejects(() => canary(parts).advance(request()), /simulated outer prepared checkpoint loss/u);
+  assert.equal(effectNames(parts).filter((name) => name === 'prepare').length, 1);
+
+  const resumed = await canary(parts).advance(request());
+  assert.equal(resumed.phase, 'prepared');
+  assert.equal(effectNames(parts).filter((name) => name === 'prepare').length, 2);
+});
+
 test('outer restart reconciles completed inner construction effects instead of replaying them', async () => {
   const cases = [
-    { phase: 'prepared', setupAdvances: 1, effect: 'prepare' },
     { phase: 'running', setupAdvances: 2, effect: 'start' },
     { phase: 'active', setupAdvances: 3, effect: 'activate' },
     { phase: 'accepted', setupAdvances: 7, effect: 'accept' },
