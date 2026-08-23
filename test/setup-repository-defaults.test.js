@@ -54,3 +54,29 @@ test('explicit selection fails closed when a named repository is not eligible', 
     /not eligible/u,
   );
 });
+
+test('accepted selection follows the same stable repository identity across a rename', () => {
+  const result = selectRepositoryDefaults([
+    repository(0, { full_name: 'owner/renamed' }),
+    repository(1),
+  ], {
+    accepted: [{ id: 1, fullName: 'owner/repo-00' }],
+  });
+  assert.equal(result.selectedCount, 1);
+  assert.equal(result.selected[0].id, 1);
+  assert.equal(result.selected[0].fullName, 'owner/renamed');
+});
+
+test('accepted empty selection remains empty when new repositories become eligible', () => {
+  const result = selectRepositoryDefaults([repository(0), repository(1)], { accepted: [] });
+  assert.equal(result.eligibleCount, 2);
+  assert.equal(result.selectedCount, 0);
+  assert.equal(result.needsSelection, false);
+});
+
+test('accepted selection fails closed when its stable repository identity is unavailable', () => {
+  assert.throws(
+    () => selectRepositoryDefaults([repository(1)], { accepted: [{ id: 1, fullName: 'owner/repo-00' }] }),
+    /accepted repositories are unavailable/u,
+  );
+});
