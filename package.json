@@ -8,6 +8,8 @@
     "node": ">=22.16.0"
   },
   "devbridge": {
+    "stage0Protocol": 1,
+    "runtimeUpdateProtocol": 1,
     "bootstrap": {
       "minimumStage0Protocol": 1
     }
