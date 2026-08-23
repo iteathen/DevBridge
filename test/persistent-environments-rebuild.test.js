@@ -83,7 +83,7 @@ test('rebuild replaces a missing-storage generation without requiring the old di
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('rebuild reconciles a provider effect after interruption without allocating another generation', async () => {
+test('rebuild waits for the outer lifecycle owner after restart, then reconciles the same provider effect', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-rebuild-reconcile-'));
   const fake = fixture();
   try {
@@ -98,10 +98,18 @@ test('rebuild reconciles a provider effect after interruption without allocating
     assert.equal(fake.instances.size, 2);
 
     registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
-    const reconciled = await registry.reconcile();
-    assert.equal(reconciled.length, 1);
-    assert.equal(reconciled[0].record.generation, 2);
-    assert.notEqual(reconciled[0].record.identity, created.record.identity);
+    const generic = await registry.reconcile();
+    assert.equal(generic.length, 1);
+    assert.equal(generic[0].record.identity, created.record.identity);
+    assert.equal(generic[0].record.generation, 1);
+    assert.equal(fake.provisionCalls(), 2);
+
+    const reconciled = await registry.rebuild(created.record.identity, {
+      requestId: 'lifecycle-rebuild-2',
+      expectedPreviousIdentity: created.record.identity,
+    });
+    assert.equal(reconciled.record.generation, 2);
+    assert.notEqual(reconciled.record.identity, created.record.identity);
     assert.equal(fake.provisionCalls(), 2);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
