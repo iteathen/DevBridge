@@ -251,11 +251,7 @@ export class CanonicalImageCanary {
 
     if (record.phase === 'planned') {
       const observed = await this.#observe(request.identity);
-      if (observed.state === 'prepared') {
-        record = await this.#save(record, 'prepared');
-        return publicStatus(record);
-      }
-      if (!['absent', 'planned'].includes(observed.state)) throw new Error(`canary construction state ${observed.state} cannot reconcile planned preparation`);
+      if (!['absent', 'planned', 'prepared'].includes(observed.state)) throw new Error(`canary construction state ${observed.state} cannot reconcile planned preparation`);
       requireIdentityResult(await this.#construction.prepare(structuredClone(request.work)), request.identity, 'canary preparation');
       record = await this.#save(record, 'prepared');
       return publicStatus(record);
