@@ -9,6 +9,7 @@ const PAYLOAD_PATH = /^\/usr\/local\/libexec\/devbridge\/[A-Za-z0-9][A-Za-z0-9._
 const GENERATION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const PACKAGE_NAME = /^[a-z0-9][a-z0-9+.-]{0,79}$/u;
 const PACKAGE_VERSION = /^[A-Za-z0-9][A-Za-z0-9.+:~_-]{0,159}$/u;
+const SHA256 = /^[a-f0-9]{64}$/u;
 const MUTABLE_VERSION = /^(?:latest|stable|current|head|main|master)$/iu;
 
 function yamlString(value) { return JSON.stringify(String(value)); }
@@ -27,15 +28,18 @@ function normalizePayload(raw) {
   const seen = new Set();
   const files = raw.files.map((entry, index) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new TypeError(`payload file ${index} is invalid`);
-    for (const key of Object.keys(entry)) if (!['path', 'content'].includes(key)) throw new TypeError(`payload file ${index}.${key} is not allowed`);
+    for (const key of Object.keys(entry)) if (!['path', 'content', 'bytes', 'sha256'].includes(key)) throw new TypeError(`payload file ${index}.${key} is not allowed`);
     if (typeof entry.path !== 'string' || !PAYLOAD_PATH.test(entry.path) || seen.has(entry.path)) throw new TypeError(`payload file ${index}.path is invalid`);
     if (typeof entry.content !== 'string' || entry.content.includes('\0')) throw new TypeError(`payload file ${index}.content is invalid`);
     const bytes = Buffer.byteLength(entry.content, 'utf8');
     if (bytes < 1 || bytes > 512 * 1024) throw new TypeError(`payload file ${index}.content is outside bounds`);
+    const sha256 = digest(entry.content);
+    if (entry.bytes !== undefined && (!Number.isSafeInteger(entry.bytes) || entry.bytes !== bytes)) throw new TypeError(`payload file ${index}.bytes does not match content`);
+    if (entry.sha256 !== undefined && (typeof entry.sha256 !== 'string' || !SHA256.test(entry.sha256) || entry.sha256 !== sha256)) throw new TypeError(`payload file ${index}.sha256 does not match content`);
     total += bytes;
     if (total > 2 * 1024 * 1024) throw new TypeError('payload file set is too large');
     seen.add(entry.path);
-    return Object.freeze({ path: entry.path, content: entry.content, bytes, sha256: digest(entry.content) });
+    return Object.freeze({ path: entry.path, content: entry.content, bytes, sha256 });
   });
   return Object.freeze({ generation: raw.generation, files });
 }
