@@ -58,11 +58,9 @@ function successEvidence() {
   ].join('\n');
 }
 
-test('Ubuntu production qualification proves exact files/packages/network/build and finalizes only after success', async () => {
-  const calls = [];
-  let finalized = 0;
+function successfulBridge(calls) {
   const states = new Map();
-  const bridge = {
+  return {
     async exchange(frame) {
       calls.push(frame);
       if (frame.kind === 'execute') {
@@ -82,22 +80,41 @@ test('Ubuntu production qualification proves exact files/packages/network/build 
       return bridgeResponse(frame, count < 2 ? { state: 'running', result: null, reason: null } : completion(successEvidence()));
     },
   };
+}
+
+test('Ubuntu production probe proves exact files/packages/network/build without destroying access', async () => {
+  const calls = [];
+  let finalized = 0;
   const qualifier = new UbuntuProductionImageQualification({
-    bridge,
-    finalizer: { async finalize(selected) { finalized += 1; assert.equal(selected, target); return { finalized: true }; } },
+    bridge: successfulBridge(calls),
+    finalizer: { async finalize() { finalized += 1; return { finalized: true }; } },
     sleep: async () => {},
     pollMs: 10,
   });
-  const result = await qualifier.qualify({ target, expected });
+  const result = await qualifier.probe({ target, expected });
   assert.equal(result.os, '26.04');
   assert.equal(result.payloadGeneration, 'guest-payload-v7');
   assert.equal(result.packageGeneration, 'ubuntu-tools-v4');
   assert.deepEqual(result.commands, ['hv_fcopy_daemon']);
   assert.equal(result.network, true);
   assert.equal(result.cmakeCtest, true);
+  assert.equal(result.sanitized, false);
+  assert.equal(finalized, 0);
+  assert.equal(calls.filter((entry) => entry.kind === 'execute').length, 1);
+});
+
+test('Ubuntu production qualification finalizes only after successful probe', async () => {
+  const calls = [];
+  let finalized = 0;
+  const qualifier = new UbuntuProductionImageQualification({
+    bridge: successfulBridge(calls),
+    finalizer: { async finalize(selected) { finalized += 1; assert.equal(selected, target); return { finalized: true }; } },
+    sleep: async () => {},
+    pollMs: 10,
+  });
+  const result = await qualifier.qualify({ target, expected });
   assert.equal(result.sanitized, true);
   assert.equal(finalized, 1);
-  assert.equal(calls.filter((entry) => entry.kind === 'execute').length, 1);
 });
 
 test('Ubuntu production qualification never finalizes a failed functional probe', async () => {
@@ -121,7 +138,7 @@ test('Ubuntu production qualification rejects mutable authority before guest eff
     bridge: { async exchange() { effects += 1; } },
     finalizer: { async finalize() { effects += 1; } },
   });
-  await assert.rejects(() => qualifier.qualify({
+  await assert.rejects(() => qualifier.probe({
     target,
     expected: { ...expected, packages: [{ name: 'nodejs', version: 'latest' }] },
   }), /version is invalid/u);
@@ -134,5 +151,5 @@ test('Ubuntu production qualification requires finalization completion evidence'
     bridge,
     finalizer: { async finalize() { return { finalized: false }; } },
   });
-  await assert.rejects(() => qualifier.qualify({ target, expected }), /finalization did not report completion/u);
+  await assert.rejects(() => qualifier.finalize(target), /finalization did not report completion/u);
 });

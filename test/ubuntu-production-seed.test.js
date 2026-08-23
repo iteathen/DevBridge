@@ -70,7 +70,7 @@ test('Ubuntu production seed binds exact package and payload generations without
   assert.match(result.metaData, /^instance-id: devbridge-image-/u);
 });
 
-test('Ubuntu production seed limits temporary privilege to one self-removing sanitizer', async () => {
+test('Ubuntu production seed limits temporary privilege to one self-removing sanitizer that powers off only after cleanup', async () => {
   const result = await factory().create(request());
   const embedded = embeddedContents(result.userData);
   const sudoers = embedded.find((entry) => entry.startsWith('devbridge ALL='));
@@ -83,6 +83,10 @@ test('Ubuntu production seed limits temporary privilege to one self-removing san
   assert.match(sanitizer, /truncate -s 0 \/etc\/machine-id/u);
   assert.match(sanitizer, /rm -f \/etc\/sudoers\.d\/devbridge-image-build/u);
   assert.match(sanitizer, /rm -f \/usr\/local\/libexec\/devbridge\/image-sanitize\.sh/u);
+  const sentinel = sanitizer.indexOf("printf 'devbridge-image-sanitize-v1\\n'");
+  const poweroff = sanitizer.indexOf('systemctl poweroff --no-block');
+  assert.ok(sentinel > 0);
+  assert.ok(poweroff > sentinel);
 });
 
 test('Ubuntu production seed embeds transient access only in seed material and enables future local seed agents', async () => {
