@@ -22,15 +22,16 @@ function request() {
   };
 }
 
-test('production composition maps concrete studs only at the topology edge', async () => {
+test('production composition maps concrete studs and durable phases only at the topology edge', async () => {
   const calls = [];
+  let phase = 'absent';
   const construction = {
-    async prepare(input) { calls.push(['prepare', input]); return { identity: IDENTITY }; },
-    async status(identity) { calls.push(['status', identity]); return { identity }; },
-    async startInstall(identity) { calls.push(['startInstall', identity]); return { identity }; },
-    async bootInstalled(identity) { calls.push(['bootInstalled', identity]); return { identity }; },
-    async markQualified(identity, evidence) { calls.push(['markQualified', identity, evidence]); return { identity }; },
-    async retain(identity) { calls.push(['retain', identity]); return { identity, location: 'retained-source' }; },
+    async prepare(input) { calls.push(['prepare', input]); phase = 'prepared'; return { identity: IDENTITY }; },
+    async status(identity) { calls.push(['status', identity, phase]); return { identity, phase }; },
+    async startInstall(identity) { calls.push(['startInstall', identity]); phase = 'installing'; return { identity }; },
+    async bootInstalled(identity) { calls.push(['bootInstalled', identity]); phase = 'qualifying'; return { identity }; },
+    async markQualified(identity, evidence) { calls.push(['markQualified', identity, evidence]); phase = 'qualified'; return { identity }; },
+    async retain(identity) { calls.push(['retain', identity]); phase = 'retained'; return { identity, location: 'retained-source' }; },
   };
   const qualification = {
     async probe(input) { calls.push(['probe', input]); return { ready: true }; },
@@ -47,11 +48,27 @@ test('production composition maps concrete studs only at the topology edge', asy
 
   for (let index = 0; index < 11; index += 1) await canary.advance(request());
 
-  assert.deepEqual(calls.map(([name]) => name), [
+  assert.deepEqual(calls.map(([name]) => name).filter((name) => name !== 'status'), [
     'prepare', 'startInstall', 'bootInstalled', 'probe', 'finalize', 'markQualified',
     'retain', 'retain', 'publishImage', 'verifyImage',
   ]);
   const publication = calls.find(([name]) => name === 'publishImage')[1];
   assert.equal(publication.source, 'retained-source');
   assert.deepEqual(publication.provenance, { origin: 'production-canary' });
+});
+
+test('production composition rejects a concrete construction phase it cannot map into the neutral contract', async () => {
+  const construction = {
+    async prepare() { return { identity: IDENTITY }; },
+    async status(identity) { return { identity, phase: 'foreign-phase' }; },
+    async startInstall() { return { identity: IDENTITY }; },
+    async bootInstalled() { return { identity: IDENTITY }; },
+    async markQualified() { return { identity: IDENTITY }; },
+    async retain() { return { identity: IDENTITY, location: 'retained-source' }; },
+  };
+  const qualification = { async probe() { return { ready: true }; }, async finalize() { return { finalized: true }; } };
+  const foundation = { async publishImage() {}, async verifyImage() {} };
+  const canary = createUbuntuProductionImageCanaryComposition({ journal: memoryJournal(), construction, qualification, foundation });
+  await canary.advance(request());
+  await assert.rejects(() => canary.advance(request()), /phase is unsupported/u);
 });
