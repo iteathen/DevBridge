@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { UbuntuProductionImageQualification } from '../src/runtime/image-builders/ubuntu-production-qualification.js';
 
 const target = 'subject-0123456789abcdef0123456789abcdef';
+const snapshot = '20260823T100000Z';
 const expected = {
   payloadGeneration: 'guest-payload-v7',
   files: [
@@ -10,6 +11,7 @@ const expected = {
     { path: '/usr/local/libexec/devbridge/network-seed-agent.mjs', sha256: '2'.repeat(64) },
   ],
   packageGeneration: 'ubuntu-tools-v4',
+  packageSnapshot: snapshot,
   packages: [
     { name: 'nodejs', version: '22.16.0+dfsg-1' },
     { name: 'cmake', version: '3.31.6-1' },
@@ -41,21 +43,23 @@ function completion(stdout, { exitCode = 0, stderr = '' } = {}) {
   };
 }
 
-function successEvidence() {
-  return [
-    'protocol=devbridge/ubuntu-production-qualification-v1',
-    'os=26.04',
-    'node=v22.16.0',
-    'npm=10.9.2',
-    'git=git version 2.48.1',
-    'cmake=cmake version 3.31.6',
-    'compiler=cc (Ubuntu 14.2.0) 14.2.0',
-    'payload-generation=guest-payload-v7',
-    'package-generation=ubuntu-tools-v4',
-    'network=ready',
-    'cmake-ctest=passed',
-    '',
-  ].join('\n');
+function successEvidence(overrides = {}) {
+  const values = {
+    protocol: 'devbridge/ubuntu-production-qualification-v1',
+    os: '26.04',
+    node: 'v22.16.0',
+    npm: '10.9.2',
+    git: 'git version 2.48.1',
+    cmake: 'cmake version 3.31.6',
+    compiler: 'cc (Ubuntu 14.2.0) 14.2.0',
+    'payload-generation': 'guest-payload-v7',
+    'package-generation': 'ubuntu-tools-v4',
+    'package-snapshot': snapshot,
+    network: 'ready',
+    'cmake-ctest': 'passed',
+    ...overrides,
+  };
+  return `${Object.entries(values).map(([key, value]) => `${key}=${value}`).join('\n')}\n`;
 }
 
 function successfulBridge(calls) {
@@ -67,6 +71,7 @@ function successfulBridge(calls) {
         const script = frame.body.arguments[1];
         assert.match(script, /dpkg-query -W/u);
         assert.match(script, /22\.16\.0\+dfsg-1/u);
+        assert.match(script, new RegExp(`apt-get --snapshot '${snapshot}' --simulate install`, 'u'));
         assert.match(script, /sha256sum -c/u);
         assert.match(script, /hv_fcopy_daemon/u);
         assert.match(script, /cmake -S/u);
@@ -82,7 +87,7 @@ function successfulBridge(calls) {
   };
 }
 
-test('Ubuntu production probe proves exact files/packages/network/build without destroying access', async () => {
+test('Ubuntu production probe proves exact files/packages/snapshot/network/build without destroying access', async () => {
   const calls = [];
   let finalized = 0;
   const qualifier = new UbuntuProductionImageQualification({
@@ -95,6 +100,7 @@ test('Ubuntu production probe proves exact files/packages/network/build without 
   assert.equal(result.os, '26.04');
   assert.equal(result.payloadGeneration, 'guest-payload-v7');
   assert.equal(result.packageGeneration, 'ubuntu-tools-v4');
+  assert.equal(result.packageSnapshot, snapshot);
   assert.deepEqual(result.commands, ['hv_fcopy_daemon']);
   assert.equal(result.network, true);
   assert.equal(result.cmakeCtest, true);
@@ -114,6 +120,7 @@ test('Ubuntu production qualification finalizes only after successful probe', as
   });
   const result = await qualifier.qualify({ target, expected });
   assert.equal(result.sanitized, true);
+  assert.equal(result.packageSnapshot, snapshot);
   assert.equal(finalized, 1);
 });
 
@@ -142,7 +149,26 @@ test('Ubuntu production qualification rejects mutable authority before guest eff
     target,
     expected: { ...expected, packages: [{ name: 'nodejs', version: 'latest' }] },
   }), /version is invalid/u);
+  await assert.rejects(() => qualifier.probe({
+    target,
+    expected: { ...expected, packageSnapshot: 'latest' },
+  }), /package snapshot is invalid/u);
   assert.equal(effects, 0);
+});
+
+test('Ubuntu production qualification rejects observed snapshot drift before finalization', async () => {
+  let finalized = 0;
+  const bridge = {
+    async exchange(frame) {
+      return bridgeResponse(frame, completion(successEvidence({ 'package-snapshot': '20260824T100000Z' })));
+    },
+  };
+  const qualifier = new UbuntuProductionImageQualification({
+    bridge,
+    finalizer: { async finalize() { finalized += 1; return { finalized: true }; } },
+  });
+  await assert.rejects(() => qualifier.qualify({ target, expected }), /does not match the required image contract/u);
+  assert.equal(finalized, 0);
 });
 
 test('Ubuntu production qualification requires finalization completion evidence', async () => {

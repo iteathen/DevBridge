@@ -12,6 +12,7 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,159}$/u;
 const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/u;
 const PACKAGE_NAME = /^[a-z0-9][a-z0-9+.-]{0,79}$/u;
 const PACKAGE_VERSION = /^[A-Za-z0-9][A-Za-z0-9.+:~_-]{0,159}$/u;
+const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
 const PATCH_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const COMMAND = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/u;
 const MUTABLE_VERSION = /^(?:latest|stable|current|head|main|master)$/iu;
@@ -105,8 +106,9 @@ function normalizeRecipe(raw, expectedSourceSha256) {
 }
 
 function normalizePackages(raw) {
-  const value = onlyKeys(raw, new Set(['generation', 'packages']), 'construction packages');
+  const value = onlyKeys(raw, new Set(['generation', 'snapshot', 'packages']), 'construction packages');
   const generation = safeId(value.generation, 'construction package generation');
+  if (typeof value.snapshot !== 'string' || !SNAPSHOT.test(value.snapshot)) throw new TypeError('construction package snapshot is invalid');
   if (!Array.isArray(value.packages) || value.packages.length === 0 || value.packages.length > 64) throw new TypeError('construction package set is invalid');
   const seen = new Set();
   const packages = value.packages.map((entry, index) => {
@@ -116,7 +118,7 @@ function normalizePackages(raw) {
     seen.add(item.name);
     return Object.freeze({ name: item.name, version: item.version });
   });
-  return Object.freeze({ generation, packages: Object.freeze(packages) });
+  return Object.freeze({ generation, snapshot: value.snapshot, packages: Object.freeze(packages) });
 }
 
 function normalizePayload(raw) {

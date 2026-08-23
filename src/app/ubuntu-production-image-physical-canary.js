@@ -38,6 +38,7 @@ const STATUS_PROTOCOL = 'devbridge/ubuntu-production-image-physical-canary-statu
 const PREPARATION_PROTOCOL = 'devbridge/ubuntu-production-image-physical-preparation-v1';
 const SOURCE_HOSTS = Object.freeze(['releases.ubuntu.com', 'cdimage.ubuntu.com']);
 const SHA256 = /^[a-f0-9]{64}$/u;
+const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
 const IPV4 = /^(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/u;
 const MIN_MEMORY_BYTES = 512 * 1024 * 1024;
 const MAX_MEMORY_BYTES = 1024 * 1024 * 1024 * 1024;
@@ -164,9 +165,10 @@ function receiptAccess(raw) {
 }
 
 function normalizePreparation(raw, config, subject) {
-  const value = onlyKeys(raw, new Set(['protocol', 'identity', 'payloadGeneration', 'packageGeneration', 'resources', 'network', 'installer', 'seed', 'access']), 'physical preparation');
+  const value = onlyKeys(raw, new Set(['protocol', 'identity', 'payloadGeneration', 'packageGeneration', 'packageSnapshot', 'resources', 'network', 'installer', 'seed', 'access']), 'physical preparation');
   if (value.protocol !== PREPARATION_PROTOCOL || value.identity !== subject) throw new Error('physical preparation identity changed');
   if (value.payloadGeneration !== config.authority.payload.generation || value.packageGeneration !== config.authority.packages.generation) throw new Error('physical preparation generation changed');
+  if (typeof value.packageSnapshot !== 'string' || !SNAPSHOT.test(value.packageSnapshot) || value.packageSnapshot !== config.authority.packages.snapshot) throw new Error('physical preparation package snapshot changed');
   const resources = onlyKeys(value.resources, new Set(['memoryBytes', 'processorCount', 'diskBytes']), 'physical preparation resources');
   if (resources.memoryBytes !== config.resources.memoryBytes || resources.processorCount !== config.resources.processorCount || resources.diskBytes !== config.resources.diskBytes) throw new Error('physical preparation resource policy changed');
   return Object.freeze({
@@ -174,6 +176,7 @@ function normalizePreparation(raw, config, subject) {
     identity: subject,
     payloadGeneration: value.payloadGeneration,
     packageGeneration: value.packageGeneration,
+    packageSnapshot: value.packageSnapshot,
     resources: config.resources,
     network: receiptNetwork(value.network),
     installer: receiptMedia(value.installer, 'physical preparation installer'),
@@ -219,6 +222,7 @@ function requestFor(config, subject, payload) {
       payloadGeneration: payload.generation,
       files: Object.freeze(payload.files.map((file) => Object.freeze({ path: file.path, sha256: file.sha256 }))),
       packageGeneration: config.authority.packages.generation,
+      packageSnapshot: config.authority.packages.snapshot,
       packages: Object.freeze(config.authority.packages.packages.map((entry) => Object.freeze({ ...entry }))),
       commands: Object.freeze([...config.authority.qualification.commands]),
     }),
@@ -401,7 +405,11 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
       const admitted = await source.acquire({ authorityRef: subject, destination: paths.releaseDirectory });
       const prepared = await media.prepare({ source: admitted, recipeRef: subject, destination: paths.preparedDirectory });
       if (!lease || !preparedAccess) throw new Error('physical preparation did not establish bounded host material');
-      if (prepared.evidence?.seed?.payloadGeneration !== payload.generation || prepared.evidence?.seed?.packageGeneration !== authority.packages.generation) throw new Error('prepared seed evidence does not match construction authority');
+      if (
+        prepared.evidence?.seed?.payloadGeneration !== payload.generation
+        || prepared.evidence?.seed?.packageGeneration !== authority.packages.generation
+        || prepared.evidence?.seed?.packageSnapshot !== authority.packages.snapshot
+      ) throw new Error('prepared seed evidence does not match construction authority');
       await rm(paths.releaseDirectory, { recursive: true, force: true });
       const baseAccess = preparedAccess.connection;
       const [identityEvidence, knownHostsEvidence] = await Promise.all([
@@ -413,6 +421,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
         identity: subject,
         payloadGeneration: payload.generation,
         packageGeneration: authority.packages.generation,
+        packageSnapshot: authority.packages.snapshot,
         resources: config.resources,
         network: Object.freeze({ reference: networkIdentity.reference, proof: networkIdentity.proof, ...lease, dns: [...lease.dns] }),
         installer: Object.freeze({ ...prepared.installer }),

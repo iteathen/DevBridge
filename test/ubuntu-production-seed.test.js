@@ -6,6 +6,7 @@ import { UbuntuProductionSeedFactory } from '../src/runtime/image-builders/ubunt
 const publicKey = `ssh-ed25519 ${'A'.repeat(44)} build-key`;
 const hostPrivateKey = '-----BEGIN OPENSSH PRIVATE KEY-----\ntransient-private-material\n-----END OPENSSH PRIVATE KEY-----\n';
 const hostPublicKey = `ssh-ed25519 ${'B'.repeat(44)} build-host`;
+const snapshot = '20260823T100000Z';
 
 function request(overrides = {}) {
   return {
@@ -33,6 +34,7 @@ function factory(overrides = {}) {
     }),
     packageSet: async () => ({
       generation: 'ubuntu-tools-v4',
+      snapshot,
       packages: [
         { name: 'build-essential', version: '12.12ubuntu1' },
         { name: 'ca-certificates', version: '20240203' },
@@ -57,16 +59,18 @@ function neutralPayload(payload, files = payload.files) {
   return { generation: payload.generation, files };
 }
 
-test('Ubuntu production seed binds exact package and payload generations without latest-update authority', async () => {
+test('Ubuntu production seed binds exact package snapshot, versions, and payload generation', async () => {
   const result = await factory().create(request());
   assert.match(result.userData, /^#cloud-config\nautoinstall:/u);
   assert.match(result.userData, /"nodejs=22\.16\.0\+dfsg-1"/u);
   assert.match(result.userData, /"linux-cloud-tools-virtual=6\.14\.0\.29\.29"/u);
-  assert.match(result.userData, /apt-get", "install", "-y", "--no-install-recommends"/u);
+  assert.match(result.userData, new RegExp(`apt-get", "--snapshot", "${snapshot}", "update"`, 'u'));
+  assert.match(result.userData, new RegExp(`apt-get", "--snapshot", "${snapshot}", "install", "-y", "--no-install-recommends"`, 'u'));
   assert.doesNotMatch(result.userData, /updates:\s+security/u);
   assert.doesNotMatch(result.userData, /install-server:\s+true/u);
   assert.equal(result.evidence.payloadGeneration, 'guest-payload-v7');
   assert.equal(result.evidence.packageGeneration, 'ubuntu-tools-v4');
+  assert.equal(result.evidence.packageSnapshot, snapshot);
   assert.equal(result.evidence.packages.find((entry) => entry.name === 'git').version, '1:2.48.1-0ubuntu1');
   assert.equal(result.evidence.files.length, 3);
   assert.match(result.evidence.userDataSha256, /^[a-f0-9]{64}$/u);
@@ -136,13 +140,23 @@ test('Ubuntu production seed embeds transient access only in seed material and e
 test('Ubuntu production seed rejects mutable or ambiguous package authority', async () => {
   await assert.rejects(() => new UbuntuProductionSeedFactory({
     payloadSet: async () => ({ generation: 'payload-v1', files: [{ path: '/usr/local/libexec/devbridge/a.mjs', content: 'x' }] }),
-    packageSet: async () => ({ generation: 'packages-v1', packages: [{ name: 'nodejs', version: 'latest' }] }),
+    packageSet: async () => ({ generation: 'packages-v1', snapshot, packages: [{ name: 'nodejs', version: 'latest' }] }),
   }).create(request()), /package 0.version is invalid/u);
 
   await assert.rejects(() => new UbuntuProductionSeedFactory({
     payloadSet: async () => ({ generation: 'payload-v1', files: [{ path: '/usr/local/libexec/devbridge/a.mjs', content: 'x' }] }),
-    packageSet: async () => ({ generation: 'packages-v1', packages: [{ name: 'nodejs', version: '22.16.0' }, { name: 'nodejs', version: '22.16.1' }] }),
+    packageSet: async () => ({ generation: 'packages-v1', snapshot, packages: [{ name: 'nodejs', version: '22.16.0' }, { name: 'nodejs', version: '22.16.1' }] }),
   }).create(request()), /package 1.name is invalid/u);
+
+  await assert.rejects(() => new UbuntuProductionSeedFactory({
+    payloadSet: async () => ({ generation: 'payload-v1', files: [{ path: '/usr/local/libexec/devbridge/a.mjs', content: 'x' }] }),
+    packageSet: async () => ({ generation: 'packages-v1', packages: [{ name: 'nodejs', version: '22.16.0' }] }),
+  }).create(request()), /package snapshot is invalid/u);
+
+  await assert.rejects(() => new UbuntuProductionSeedFactory({
+    payloadSet: async () => ({ generation: 'payload-v1', files: [{ path: '/usr/local/libexec/devbridge/a.mjs', content: 'x' }] }),
+    packageSet: async () => ({ generation: 'packages-v1', snapshot: 'latest', packages: [{ name: 'nodejs', version: '22.16.0' }] }),
+  }).create(request()), /package snapshot is invalid/u);
 });
 
 test('Ubuntu production seed keeps its input contract topology-neutral', async () => {

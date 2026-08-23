@@ -10,6 +10,8 @@ import {
   UBUNTU_PRODUCTION_IMAGE_PHYSICAL_CANARY_CONFIG_PROTOCOL,
 } from '../src/app/ubuntu-production-image-physical-canary.js';
 
+const PACKAGE_SNAPSHOT = '20260823T100000Z';
+
 async function fixture(root) {
   const payload = await createGuestImagePayload();
   const sourceSha256 = 'a'.repeat(64);
@@ -45,6 +47,7 @@ async function fixture(root) {
         },
         packages: {
           generation: 'ubuntu-2604-tools-v1',
+          snapshot: PACKAGE_SNAPSHOT,
           packages: [
             { name: 'build-essential', version: '12.12ubuntu1' },
             { name: 'cmake', version: '3.31.6-1' },
@@ -86,6 +89,7 @@ function canonicalRequest(data, subject) {
       payloadGeneration: data.payload.generation,
       files: data.payload.files.map((file) => ({ path: file.path, sha256: file.sha256 })),
       packageGeneration: data.config.authority.packages.generation,
+      packageSnapshot: data.config.authority.packages.snapshot,
       packages: data.config.authority.packages.packages.map((entry) => ({ ...entry })),
       commands: [...data.config.authority.qualification.commands],
     }),

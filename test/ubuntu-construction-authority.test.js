@@ -5,6 +5,8 @@ import {
   ubuntuConstructionAuthoritySubject,
 } from '../src/runtime/image-builders/ubuntu-construction-authority.js';
 
+const SNAPSHOT = '20260823T100000Z';
+
 function authority(overrides = {}) {
   const sourceSha256 = 'a'.repeat(64);
   return {
@@ -33,6 +35,7 @@ function authority(overrides = {}) {
     },
     packages: {
       generation: 'ubuntu-2604-tools-v1',
+      snapshot: SNAPSHOT,
       packages: [
         { name: 'build-essential', version: '12.12ubuntu1' },
         { name: 'cmake', version: '3.31.6-1' },
@@ -61,10 +64,20 @@ test('Ubuntu construction authority is content-addressed and normalizes stable o
   };
   const normalized = normalizeUbuntuConstructionAuthority(first);
   assert.equal(normalized.source.release, '26.04');
+  assert.equal(normalized.packages.snapshot, SNAPSHOT);
   assert.equal(normalized.output.profile, 'linux-development');
   assert.deepEqual(normalized.qualification.commands, ['make']);
   assert.match(ubuntuConstructionAuthoritySubject(first), /^subject-[a-f0-9]{32}$/u);
   assert.equal(ubuntuConstructionAuthoritySubject(first), ubuntuConstructionAuthoritySubject(reordered));
+});
+
+test('Ubuntu construction authority binds package archive time into the immutable subject', () => {
+  const first = authority();
+  const changed = {
+    ...first,
+    packages: { ...first.packages, snapshot: '20260824T100000Z' },
+  };
+  assert.notEqual(ubuntuConstructionAuthoritySubject(first), ubuntuConstructionAuthoritySubject(changed));
 });
 
 test('Ubuntu construction authority binds recipe to exact admitted source bytes', () => {
@@ -73,12 +86,24 @@ test('Ubuntu construction authority binds recipe to exact admitted source bytes'
   })), /recipe source does not match construction media/u);
 });
 
-test('Ubuntu construction authority rejects mutable packages, unapproved source hosts, and extra authority', () => {
+test('Ubuntu construction authority rejects mutable package versions or archive time', () => {
   const base = authority();
   assert.throws(() => normalizeUbuntuConstructionAuthority({
     ...base,
-    packages: { generation: 'packages-v1', packages: [{ name: 'nodejs', version: 'latest' }] },
+    packages: { generation: 'packages-v1', snapshot: SNAPSHOT, packages: [{ name: 'nodejs', version: 'latest' }] },
   }), /version is invalid/u);
+  assert.throws(() => normalizeUbuntuConstructionAuthority({
+    ...base,
+    packages: { generation: 'packages-v1', packages: [{ name: 'nodejs', version: '22.16.0' }] },
+  }), /snapshot is invalid/u);
+  assert.throws(() => normalizeUbuntuConstructionAuthority({
+    ...base,
+    packages: { ...base.packages, snapshot: 'latest' },
+  }), /snapshot is invalid/u);
+});
+
+test('Ubuntu construction authority rejects unapproved source hosts and extra authority', () => {
+  const base = authority();
   assert.throws(() => normalizeUbuntuConstructionAuthority({
     ...base,
     source: { ...base.source, media: { ...base.source.media, url: 'https://example.com/ubuntu.iso' } },

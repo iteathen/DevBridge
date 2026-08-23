@@ -8,6 +8,7 @@ const PAYLOAD_PATH = /^\/usr\/local\/libexec\/devbridge\/[A-Za-z0-9][A-Za-z0-9._
 const GENERATION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const PACKAGE_NAME = /^[a-z0-9][a-z0-9+.-]{0,79}$/u;
 const PACKAGE_VERSION = /^[A-Za-z0-9][A-Za-z0-9.+:~_-]{0,159}$/u;
+const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
 const MUTABLE_VERSION = /^(?:latest|stable|current|head|main|master)$/iu;
 const COMMAND = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/u;
 const DEFAULT_POLL_MS = 250;
@@ -24,9 +25,10 @@ function packageVersion(value, name) {
 }
 
 function normalizeExpected(raw) {
-  const value = onlyKeys(raw, new Set(['payloadGeneration', 'files', 'packageGeneration', 'packages', 'commands']), 'qualification expected state');
+  const value = onlyKeys(raw, new Set(['payloadGeneration', 'files', 'packageGeneration', 'packageSnapshot', 'packages', 'commands']), 'qualification expected state');
   if (typeof value.payloadGeneration !== 'string' || !GENERATION.test(value.payloadGeneration)) throw new TypeError('qualification payload generation is invalid');
   if (typeof value.packageGeneration !== 'string' || !GENERATION.test(value.packageGeneration)) throw new TypeError('qualification package generation is invalid');
+  if (typeof value.packageSnapshot !== 'string' || !SNAPSHOT.test(value.packageSnapshot)) throw new TypeError('qualification package snapshot is invalid');
   if (!Array.isArray(value.files) || value.files.length === 0 || value.files.length > 32) throw new TypeError('qualification expected file set is invalid');
   if (!Array.isArray(value.packages) || value.packages.length === 0 || value.packages.length > 64) throw new TypeError('qualification expected package set is invalid');
   if (!Array.isArray(value.commands) || value.commands.length > 32) throw new TypeError('qualification expected command set is invalid');
@@ -53,7 +55,7 @@ function normalizeExpected(raw) {
     commandNames.add(entry);
     commands.push(entry);
   }
-  return Object.freeze({ payloadGeneration: value.payloadGeneration, files, packageGeneration: value.packageGeneration, packages, commands });
+  return Object.freeze({ payloadGeneration: value.payloadGeneration, files, packageGeneration: value.packageGeneration, packageSnapshot: value.packageSnapshot, packages, commands });
 }
 
 function requestId(target, phase, body) {
@@ -67,8 +69,9 @@ function shellQuote(value) {
 function qualificationScript(expected) {
   const fileChecks = expected.files.map((file) => `printf '%s  %s\\n' ${shellQuote(file.sha256)} ${shellQuote(file.path)}`).join('\n');
   const packageChecks = expected.packages.map((item) => `[ "$(dpkg-query -W -f='${'$'}{Version}' ${shellQuote(item.name)})" = ${shellQuote(item.version)} ]`).join('\n');
-  const commands = [...new Set(['node', 'npm', 'git', 'cmake', 'ctest', 'cc', 'c++', 'curl', 'getent', 'sha256sum', 'dpkg-query', ...expected.commands])];
-  return `set -eu\n. /etc/os-release\n[ "${'$'}ID" = ubuntu ]\nfor command in ${commands.map(shellQuote).join(' ')}; do command -v "${'$'}command" >/dev/null 2>&1; done\n${packageChecks}\ngetent ahostsv4 example.com >/dev/null\ncurl --fail --silent --show-error --max-time 15 https://example.com/ -o /dev/null\n{\n${fileChecks}\n} | sha256sum -c - >/dev/null\nroot=$(mktemp -d)\ntrap 'rm -rf "${'$'}root"' EXIT HUP INT TERM\ncat >"${'$'}root/CMakeLists.txt" <<'CMAKE'\ncmake_minimum_required(VERSION 3.16)\nproject(devbridge_image_probe C)\nenable_testing()\nadd_executable(probe main.c)\nadd_test(NAME probe COMMAND probe)\nCMAKE\ncat >"${'$'}root/main.c" <<'C'\n#include <stdio.h>\nint main(void) { puts("devbridge-image-probe"); return 0; }\nC\ncmake -S "${'$'}root" -B "${'$'}root/build" >/dev/null\ncmake --build "${'$'}root/build" >/dev/null\nctest --test-dir "${'$'}root/build" --output-on-failure >/dev/null\nprintf 'protocol=${PROTOCOL}\\n'\nprintf 'os=%s\\n' "${'$'}VERSION_ID"\nprintf 'node='; node --version\nprintf 'npm='; npm --version\nprintf 'git='; git --version\nprintf 'cmake='; cmake --version | head -n 1\nprintf 'compiler='; cc --version | head -n 1\nprintf 'payload-generation=${expected.payloadGeneration}\\n'\nprintf 'package-generation=${expected.packageGeneration}\\n'\nprintf 'network=ready\\n'\nprintf 'cmake-ctest=passed\\n'\n`;
+  const packageSpecifications = expected.packages.map((item) => `${item.name}=${item.version}`);
+  const commands = [...new Set(['node', 'npm', 'git', 'cmake', 'ctest', 'cc', 'c++', 'curl', 'getent', 'sha256sum', 'dpkg-query', 'apt-get', ...expected.commands])];
+  return `set -eu\n. /etc/os-release\n[ "${'$'}ID" = ubuntu ]\nfor command in ${commands.map(shellQuote).join(' ')}; do command -v "${'$'}command" >/dev/null 2>&1; done\n${packageChecks}\napt-get --snapshot ${shellQuote(expected.packageSnapshot)} --simulate install -y --no-install-recommends ${packageSpecifications.map(shellQuote).join(' ')} >/dev/null\ngetent ahostsv4 example.com >/dev/null\ncurl --fail --silent --show-error --max-time 15 https://example.com/ -o /dev/null\n{\n${fileChecks}\n} | sha256sum -c - >/dev/null\nroot=$(mktemp -d)\ntrap 'rm -rf "${'$'}root"' EXIT HUP INT TERM\ncat >"${'$'}root/CMakeLists.txt" <<'CMAKE'\ncmake_minimum_required(VERSION 3.16)\nproject(devbridge_image_probe C)\nenable_testing()\nadd_executable(probe main.c)\nadd_test(NAME probe COMMAND probe)\nCMAKE\ncat >"${'$'}root/main.c" <<'C'\n#include <stdio.h>\nint main(void) { puts("devbridge-image-probe"); return 0; }\nC\ncmake -S "${'$'}root" -B "${'$'}root/build" >/dev/null\ncmake --build "${'$'}root/build" >/dev/null\nctest --test-dir "${'$'}root/build" --output-on-failure >/dev/null\nprintf 'protocol=${PROTOCOL}\\n'\nprintf 'os=%s\\n' "${'$'}VERSION_ID"\nprintf 'node='; node --version\nprintf 'npm='; npm --version\nprintf 'git='; git --version\nprintf 'cmake='; cmake --version | head -n 1\nprintf 'compiler='; cc --version | head -n 1\nprintf 'payload-generation=${expected.payloadGeneration}\\n'\nprintf 'package-generation=${expected.packageGeneration}\\n'\nprintf 'package-snapshot=${expected.packageSnapshot}\\n'\nprintf 'network=ready\\n'\nprintf 'cmake-ctest=passed\\n'\n`;
 }
 
 function operationBody(script, timeoutMs) {
@@ -138,6 +141,7 @@ function qualificationEvidence(qualified, selected, sanitized) {
     compiler: qualified.compiler,
     payloadGeneration: selected.payloadGeneration,
     packageGeneration: selected.packageGeneration,
+    packageSnapshot: selected.packageSnapshot,
     commands: Object.freeze([...selected.commands]),
     network: true,
     cmakeCtest: true,
@@ -185,6 +189,7 @@ export class UbuntuProductionImageQualification {
     if (
       qualified['payload-generation'] !== selected.payloadGeneration
       || qualified['package-generation'] !== selected.packageGeneration
+      || qualified['package-snapshot'] !== selected.packageSnapshot
       || qualified.network !== 'ready'
       || qualified['cmake-ctest'] !== 'passed'
     ) throw new Error('qualification evidence does not match the required image contract');
