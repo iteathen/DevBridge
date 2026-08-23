@@ -5,17 +5,7 @@ const POSIX_HOME_PATH = /\/(?:home|Users|tmp|var\/tmp)\/[^;\r\n]*/gu;
 
 function observedResult(stdout, stderr = '', exitCode = 0) {
   const now = new Date().toISOString();
-  return Object.freeze({
-    exitCode,
-    signal: null,
-    timedOut: false,
-    outputTruncated: false,
-    stdout,
-    stderr,
-    startedAt: now,
-    finishedAt: now,
-    lastOutputAt: stdout || stderr ? now : null,
-  });
+  return Object.freeze({ exitCode, signal: null, timedOut: false, outputTruncated: false, stdout, stderr, startedAt: now, finishedAt: now, lastOutputAt: stdout || stderr ? now : null });
 }
 
 function paramsOnly(raw) {
@@ -26,11 +16,7 @@ function paramsOnly(raw) {
 
 function remoteReason(value) {
   if (typeof value !== 'string' || value.length === 0) return null;
-  return value
-    .replace(WINDOWS_PATH, '<local-path>')
-    .replace(UNC_PATH, '<local-path>')
-    .replace(POSIX_HOME_PATH, '<local-path>')
-    .slice(0, 4096);
+  return value.replace(WINDOWS_PATH, '<local-path>').replace(UNC_PATH, '<local-path>').replace(POSIX_HOME_PATH, '<local-path>').slice(0, 4096);
 }
 
 function repositoryProjection(value) {
@@ -78,9 +64,7 @@ function physicalProjection(value) {
 }
 
 export function projectSetupStatus(result) {
-  if (!result || typeof result !== 'object' || result.protocol !== 'devbridge/setup-status-v1') {
-    throw new TypeError('setup.status received an invalid setup result');
-  }
+  if (!result || typeof result !== 'object' || result.protocol !== 'devbridge/setup-status-v1') throw new TypeError('setup.status received an invalid setup result');
   return Object.freeze({
     protocol: PROTOCOL,
     phase: typeof result.phase === 'string' ? result.phase : null,
@@ -88,11 +72,7 @@ export function projectSetupStatus(result) {
     blocker: remoteReason(result.blocker),
     readyForConstruction: result.readyForConstruction === true,
     path: result.path && typeof result.path === 'object'
-      ? Object.freeze({
-          persisted: result.path.persisted === true,
-          changed: result.path.changed === true,
-          requiresNewShell: result.path.requiresNewShell === true,
-        })
+      ? Object.freeze({ persisted: result.path.persisted === true, changed: result.path.changed === true, requiresNewShell: result.path.requiresNewShell === true })
       : null,
     repositories: repositoryProjection(result.repositories),
     linuxProfile: Object.freeze({
@@ -112,7 +92,7 @@ export function createSetupStatusOperation({ runSetup } = {}) {
     async execute() {
       try {
         const projected = projectSetupStatus(await runSetup());
-        return observedResult(`${JSON.stringify(projected)}\n`, '', projected.blocked ? 3 : 0);
+        return observedResult(`${JSON.stringify(projected)}\n`);
       } catch (error) {
         return observedResult('', `setup.status failed: ${remoteReason(error?.message) ?? 'unknown failure'}\n`, 1);
       }
