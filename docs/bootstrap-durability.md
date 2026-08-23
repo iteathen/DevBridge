@@ -17,9 +17,9 @@ Recovery must not require an operator or coding agent to infer which runner, rep
 
 ## Zero-state bootstrap boundary
 
-The normal fresh-host command may assume only a supported Node.js runtime. The first DevBridge bytes must be acquired by the command itself using Node facilities.
+The normal fresh-host command may assume only a supported Node.js runtime. The first DevBridge bytes are acquired by the command itself using Node facilities.
 
-Therefore the supported zero-state command must not require any of these files or tools to exist before the bootstrap starts:
+Therefore the supported zero-state path does not require any of these files or tools to exist before bootstrap starts:
 
 - `install-devbridge.mjs`;
 - a DevBridge checkout;
@@ -31,15 +31,31 @@ Therefore the supported zero-state command must not require any of these files o
 
 Node is unavoidable because the command itself begins with `node`. Everything after Node is a discovered prerequisite, not an assumption.
 
-The exact copy/paste command remains implementation-owned until the fetch/bootstrap path is implemented and qualified. Documentation must not present `node .\\install-devbridge.mjs ...` as the true blank-host entrypoint.
+`bootstrap-devbridge.mjs` is the standalone first DevBridge stage. It can execute directly from bounded bytes loaded through a Node `data:` import, so the blank-host shell does not need to create an installer file or checkout first.
 
-## First-byte acquisition
+For a stable install, the Node first-byte loader fetches `bootstrap-devbridge.mjs` from the fixed DevBridge source and invokes it with no selector. For development qualification, the same loader may fetch the bootstrap from `cuda-target` and pass `--ref cuda-target`. A moving development branch is only a locator for the bootstrap bytes; durable installation progress is bound inside Stage 0 before any permanent-entry publication.
 
-Use Node's built-in networking facilities for the tiny bootstrap acquisition boundary so Git is not required to obtain the installer itself.
+The direct command `node .\install-devbridge.mjs ...` remains useful installer qualification, but it is not the zero-state entry because possessing that file is already a prerequisite.
 
-The acquired bootstrap must remain bounded and source-fixed. A mutable branch name may locate development/qualification bytes, but durable progress must bind to an exact resolved subject before later installation mutation proceeds.
+## First-byte and exact-source acquisition
 
-Do not turn the first-byte loader into a second package manager, setup implementation, provider manager, or runtime supervisor.
+The first-byte loader and Stage 0 use Node's built-in networking facilities. Git is not part of the supported zero-state exact-subject installation path.
+
+Stage 0:
+
+1. resolves a moving selector, when supplied, to one exact commit;
+2. persists that exact subject before permanent-entry installation mutation;
+3. fetches the installer stage from that exact commit;
+4. fetches the exact-source acquisition child from the same exact commit;
+5. gives that child only the installer's fixed permanent-entry component membership;
+6. materializes those files directly from the persisted exact commit with bounded Node fetches;
+7. hands the prepared exact source to the existing installer transaction.
+
+The acquisition child is a nested bootstrap LEGO. It owns only exact-source retrieval, path containment, byte bounds, and cleanup of partial materialization. It does not own manifest admission, wrapper activation, PATH, setup, provider state, or construction authority.
+
+The permanent-entry installer continues to own its existing manifest generation, per-file SHA-256 verification, quarantine, installation lock, atomic component publication, previous-wrapper preservation, and JavaScript-wrapper commit point. A direct moving-ref/local-fixture installer invocation may still use its managed Git compatibility path; that compatibility path is not used by zero-state exact-subject bootstrap.
+
+Do not turn the first-byte loader or exact-source child into a package manager, setup implementation, provider manager, or runtime supervisor.
 
 ## Durable exact selection
 
@@ -50,6 +66,8 @@ For an explicit development selector such as `cuda-target`:
 3. if bootstrap is interrupted, an argument-equivalent rerun resumes that exact subject rather than resolving the moving branch again;
 4. changing to another exact subject requires an explicit update/restart decision rather than being an accidental property of retrying the same command.
 
+The recovery record is an authority checkpoint, not an event log. Partial source materialization and temporary stages are disposable and are rebuilt from the persisted exact subject.
+
 Once permanent entry is committed and verified, installation is complete. Later setup blockers are resumed through `devbridge setup`; they do not require repeating the first-byte/bootstrap installation path.
 
 ## Prerequisite model
@@ -58,7 +76,7 @@ Prerequisites are classified by owner instead of routed through one generic inst
 
 ### Node
 
-Node.js is the bootstrap prerequisite. The launcher must verify the supported version and fail with a precise prerequisite message when it is too old.
+Node.js is the bootstrap prerequisite. The launcher verifies the supported version and fails with a precise prerequisite message when it is too old.
 
 ### JavaScript packages
 
@@ -68,11 +86,27 @@ If runtime JavaScript dependencies are introduced later, they must be version-lo
 
 ### Host/system prerequisites
 
-Git, GPG/GPGV, provider-management utilities, image tools, virtualization features, services, privileges, and similar requirements belong to setup-owned platform prerequisite adapters.
+Git, GPG/GPGV, provider-management utilities, image tools, virtualization features, services, privileges, and similar requirements belong to setup-owned platform prerequisite adapters or the downstream provider status gate that owns their readiness.
 
-Setup must inspect before use. Where installation is safe, bounded, and covered by local setup authority, the owning adapter may establish the prerequisite and then verify actual readiness. Where elevation, reboot, licensing, ownership ambiguity, or operator policy prevents automatic repair, setup reports a focused blocker and resumes afterward.
+Setup inspects a prerequisite before the first operation that consumes it. Where installation is safe, bounded, platform-owned, and covered by current local setup authority, the owning adapter may establish the prerequisite and then verify actual readiness. Where elevation, reboot, licensing, ownership ambiguity, servicing policy, or operator policy prevents automatic repair, setup reports a focused blocker and resumes afterward.
 
-Presence is not readiness. Finding an executable or platform feature does not by itself prove the capability is usable.
+The current bounded reconciliation slice behaves as follows:
+
+- `gpgv`/`gpgv.exe` must execute successfully before Ubuntu release-signature verification is attempted. If it is unavailable, setup returns a focused system-package blocker; DevBridge does not guess a third-party GPG installer.
+- On Windows, setup inspects `ssh.exe` and `ssh-keygen.exe` before the physical image path needs them. If they are unavailable and the current process is already elevated, DevBridge may establish only the Windows `OpenSSH.Client~~~~0.0.1.0` capability when Windows reports that exact capability as `NotPresent`, then re-inspects the commands.
+- DevBridge never self-elevates. A non-elevated OpenSSH gap is an explicit elevation boundary.
+- A Windows servicing state that is pending/inconsistent, an installation result requiring restart, or a servicing-policy/source failure is a resumable caller boundary rather than authority to perform broader repair.
+- Hyper-V remains owned by the read-only physical canary readiness gate. Setup does not silently enable Hyper-V or restart the host. Provider/image readiness must pass the existing status preflight before construction can be separately authorized.
+
+Presence is not readiness. Finding an executable, capability record, or virtualization feature does not by itself prove the capability is usable.
+
+## Setup re-entry and status gate
+
+Accepted repository identity/selection and the exact Ubuntu package snapshot are persisted before later prerequisite/authority work. A setup rerun therefore reuses accepted authority rather than silently recalculating it because discovery changed.
+
+After prerequisites are ready, setup establishes/verifies Ubuntu release and package authority, creates the physical-canary configuration internally, and calls only the canary `status()` surface.
+
+`devbridge setup` never calls physical construction `run()`. A ready status means the separate construction gate may be considered by the operator; it does not mean setup already constructed an image or VM.
 
 ## Recovery semantics
 
@@ -82,8 +116,9 @@ Prefer roll-forward reconciliation over destructive rollback.
 - Exact DevBridge-owned corrupt components may be quarantined and reconstructed.
 - Valid committed components are verified and reused.
 - Foreign or ambiguously owned state fails closed rather than being adopted or deleted.
-- PATH should point to one stable DevBridge launcher surface; normal repair happens behind that surface.
+- PATH points to one stable DevBridge launcher surface; normal repair happens behind that surface.
 - A setup rerun validates accepted choices and current reality. It must not silently choose different repositories or construction authority because discovery changed.
+- A prerequisite that was successfully established before a later interruption is inspected again on re-entry; if it is ready, the mutation is not repeated.
 
 The recovery path should be boring: rerun the supported surface, verify, repair owned incomplete state, and continue.
 
@@ -93,26 +128,21 @@ Do not attempt to enumerate every machine instruction as a transaction phase. Te
 
 - interruption before exact subject persistence;
 - interruption after exact subject persistence but before permanent entry commit;
-- interruption during component/wrapper publication;
+- interruption during exact component acquisition or component/wrapper publication;
 - interruption after permanent entry commit but before setup completion;
 - interruption after setup authority/selection persistence;
-- missing prerequisite followed by prerequisite establishment and re-entry;
+- missing prerequisite followed by bounded prerequisite establishment, verification, and re-entry;
+- elevation and restart boundaries;
 - moving branch between the interrupted invocation and rerun;
 - corruption of DevBridge-owned committed state;
 - foreign/unowned collision.
 
-For each recoverable case, rerun must converge on the same intended exact subject and accepted configuration without manual filesystem surgery. Setup must never invoke the physical construction `run` surface while qualifying this bootstrap/recovery gate.
+For each recoverable case, rerun must converge on the same intended exact subject and accepted configuration without manual filesystem surgery. Hosted Windows and Linux CI exercise the bootstrap/recovery contracts. Setup qualification must never invoke the physical construction `run` surface.
 
 ## Live-host gate
 
-The physical host must not use the development bootstrap as a fresh-host qualification step until all of the following are true:
+The physical host remains untouched while #238 qualification is in progress. Repository tests, hosted CI, and documentation changes do not authorize a real-host installer or construction run.
 
-- the documented entry command fetches its own first DevBridge bytes using Node;
-- later prerequisites are discovered before they are depended on;
-- explicit moving selectors are durably pinned for interrupted recovery;
-- permanent-entry commit is distinguishable from incomplete installation;
-- setup re-entry preserves accepted authority/selection instead of silently recalculating it;
-- focused interruption/recovery tests are green on supported hosted CI;
-- the setup path still stops at the read-only physical status gate and never crosses into construction automatically.
+Only after the complete #238 contract is green may the physical host use the supported Node-initiated zero-state bootstrap. Even then, the first real-host pass stops at the setup-owned read-only physical `status` gate.
 
-This gate is about dependable installation state. It does not authorize physical Ubuntu image construction; that remains separately gated by #197 and the real-host status result.
+A fully ready status does not itself authorize automatic construction. Physical Ubuntu image construction remains separately gated by #197 and an explicit operator decision after the status result has been reviewed.

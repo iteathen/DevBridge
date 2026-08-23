@@ -34,9 +34,16 @@ function memoryStore(initial = null) {
   };
 }
 
-function dependencies({ count = 2, repositories = null, identity = { id: 42, login: 'owner' }, physical = null, initialState = null } = {}) {
+function dependencies({
+  count = 2,
+  repositories = null,
+  identity = { id: 42, login: 'owner' },
+  physical = null,
+  prerequisite = null,
+  initialState = null,
+} = {}) {
   const store = memoryStore(initialState);
-  const calls = { authority: 0, canaryStatus: 0, canaryRun: 0 };
+  const calls = { prerequisite: 0, authority: 0, canaryStatus: 0, canaryRun: 0 };
   const discoveredRepositories = repositories ?? Array.from({ length: count }, (_, index) => repository(index));
   return {
     calls,
@@ -49,6 +56,10 @@ function dependencies({ count = 2, repositories = null, identity = { id: 42, log
       tokenResolver: async () => 'test-token',
       clientFactory: () => ({}),
       discover: async () => ({ identity, repositories: discoveredRepositories }),
+      prerequisiteReconciler: async () => {
+        calls.prerequisite += 1;
+        return prerequisite ?? { protocol: 'test/prerequisites', ready: true, blocker: null, changed: false, restartRequired: false, capabilities: {} };
+      },
       releaseAuthority: async ({ home }) => ({ keyring: path.join(home, 'authority', 'ubuntu.gpg') }),
       authorityFactory: async ({ snapshot }) => { calls.authority += 1; return { protocol: 'test/authority', snapshot }; },
       canaryFactory: () => ({
@@ -68,15 +79,41 @@ test('setup reaches the physical status gate without invoking construction', asy
   assert.equal(result.readyForConstruction, true);
   assert.equal(result.phase, 'ready-for-construction');
   assert.equal(result.repositories.selectedCount, 2);
+  assert.equal(fixture.calls.prerequisite, 1);
   assert.equal(fixture.calls.canaryStatus, 1);
   assert.equal(fixture.calls.canaryRun, 0);
 });
 
-test('setup preserves the repository selection boundary before image authority work', async () => {
+test('setup preserves the repository selection boundary before prerequisite or image authority work', async () => {
   const fixture = dependencies({ count: 31 });
   const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-many') }, fixture.deps);
   assert.equal(result.blocked, true);
   assert.match(result.blocker, /31 eligible repositories/u);
+  assert.equal(fixture.calls.prerequisite, 0);
+  assert.equal(fixture.calls.authority, 0);
+  assert.equal(fixture.calls.canaryStatus, 0);
+  assert.equal(fixture.calls.canaryRun, 0);
+});
+
+test('setup persists accepted authority before returning a focused prerequisite blocker', async () => {
+  const fixture = dependencies({
+    prerequisite: {
+      protocol: 'test/prerequisites',
+      ready: false,
+      blocker: 'Windows OpenSSH Client requires elevation; re-run setup from an elevated shell',
+      changed: false,
+      restartRequired: false,
+      capabilities: { gpgv: true, opensshClient: false },
+    },
+  });
+  const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-prerequisite-blocked') }, fixture.deps);
+
+  assert.equal(result.blocked, true);
+  assert.match(result.blocker, /OpenSSH Client requires elevation/u);
+  assert.equal(result.prerequisites.ready, false);
+  assert.equal(fixture.store.value().identity.id, 42);
+  assert.equal(fixture.store.value().repositories.selected.length, 2);
+  assert.equal(fixture.calls.prerequisite, 1);
   assert.equal(fixture.calls.authority, 0);
   assert.equal(fixture.calls.canaryStatus, 0);
   assert.equal(fixture.calls.canaryRun, 0);
@@ -88,6 +125,7 @@ test('setup reports physical preflight blockers without crossing the status gate
   assert.equal(result.blocked, true);
   assert.equal(result.readyForConstruction, false);
   assert.match(result.blocker, /Hyper-V/u);
+  assert.equal(fixture.calls.prerequisite, 1);
   assert.equal(fixture.calls.canaryStatus, 1);
   assert.equal(fixture.calls.canaryRun, 0);
 });
@@ -99,6 +137,27 @@ test('setup re-entry reuses the exact persisted package snapshot', async () => {
   fixture.deps.authorityFactory = async ({ snapshot: value }) => { observed = value; return { protocol: 'test/authority', snapshot: value }; };
   await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-reentry') }, fixture.deps);
   assert.equal(observed, snapshot);
+});
+
+test('setup re-entry after a later authority failure returns through prerequisites and reaches status without construction', async () => {
+  const fixture = dependencies();
+  let releaseCalls = 0;
+  fixture.deps.releaseAuthority = async ({ home }) => {
+    releaseCalls += 1;
+    if (releaseCalls === 1) throw new Error('injected post-prerequisite interruption');
+    return { keyring: path.join(home, 'authority', 'ubuntu.gpg') };
+  };
+
+  const first = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-post-prerequisite') }, fixture.deps);
+  assert.equal(first.blocked, true);
+  assert.match(first.blocker, /post-prerequisite interruption/u);
+  assert.equal(fixture.calls.canaryStatus, 0);
+
+  const resumed = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-post-prerequisite') }, fixture.deps);
+  assert.equal(resumed.readyForConstruction, true);
+  assert.equal(fixture.calls.prerequisite, 2);
+  assert.equal(fixture.calls.canaryStatus, 1);
+  assert.equal(fixture.calls.canaryRun, 0);
 });
 
 test('setup re-entry preserves accepted stable repository identities across discovery changes', async () => {
@@ -132,6 +191,7 @@ test('setup re-entry blocks if an accepted stable repository identity disappears
   const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-missing-accepted') }, fixture.deps);
   assert.equal(result.blocked, true);
   assert.match(result.blocker, /accepted repositories are unavailable/u);
+  assert.equal(fixture.calls.prerequisite, 0);
   assert.equal(fixture.calls.authority, 0);
   assert.equal(fixture.calls.canaryStatus, 0);
   assert.equal(fixture.calls.canaryRun, 0);
@@ -149,6 +209,7 @@ test('setup identity drift requires explicit repository selection before authori
   const blocked = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-identity-drift') }, fixture.deps);
   assert.equal(blocked.blocked, true);
   assert.match(blocked.blocker, /GitHub setup identity changed/u);
+  assert.equal(fixture.calls.prerequisite, 0);
   assert.equal(fixture.calls.authority, 0);
   assert.equal(fixture.calls.canaryStatus, 0);
 
@@ -159,5 +220,6 @@ test('setup identity drift requires explicit repository selection before authori
   assert.equal(rebound.readyForConstruction, true);
   assert.equal(rebound.repositories.selectedCount, 1);
   assert.equal(fixture.store.value().identity.id, 42);
+  assert.equal(fixture.calls.prerequisite, 1);
   assert.equal(fixture.calls.canaryRun, 0);
 });

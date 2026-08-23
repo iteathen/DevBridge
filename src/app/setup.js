@@ -6,6 +6,7 @@ import { JsonStateStore } from '../state/json-state-store.js';
 import { createUbuntuProductionImagePhysicalCanary, UBUNTU_PRODUCTION_IMAGE_PHYSICAL_CANARY_CONFIG_PROTOCOL } from './ubuntu-production-image-physical-canary.js';
 import { discoverGitHubSetupScope } from '../setup/github-discovery.js';
 import { installStableDevBridgeCommand } from '../setup/path-installation.js';
+import { reconcileSetupPrerequisites } from '../setup/prerequisite-reconciliation.js';
 import { selectRepositoryDefaults } from '../setup/repository-defaults.js';
 import { createUbuntuSetupAuthority, defaultUbuntuPackageSnapshot } from '../setup/ubuntu-authority.js';
 import { establishUbuntuReleaseAuthority } from '../setup/ubuntu-release-authority.js';
@@ -66,7 +67,7 @@ function acceptedRepositorySelection(previous, identity, requestedRepositories) 
   return previous.repositories.selected;
 }
 
-function publicResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, physical = null, blocker = null }) {
+function publicResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, physical = null, blocker = null }) {
   const readyForConstruction = physical?.blocked === false && physical?.complete !== true && physical?.state === 'absent';
   return Object.freeze({
     protocol: PROTOCOL,
@@ -78,6 +79,7 @@ function publicResult({ home, pathStatus, repositories = null, identity = null, 
     path: pathStatus,
     github: identity ? Object.freeze({ id: identity.id, login: identity.login }) : null,
     repositories,
+    prerequisites,
     linuxProfile: Object.freeze({ profile: 'linux-development', snapshot, physicalStatus: physical }),
   });
 }
@@ -123,6 +125,7 @@ export async function runDevBridgeSetup({
   clientFactory = (token) => new GitHubRestClient({ tokenProvider: async () => token, fetchImpl }),
   discover = discoverGitHubSetupScope,
   selectRepositories = selectRepositoryDefaults,
+  prerequisiteReconciler = reconcileSetupPrerequisites,
   releaseAuthority = establishUbuntuReleaseAuthority,
   authorityFactory = createUbuntuSetupAuthority,
   canaryFactory = createUbuntuProductionImagePhysicalCanary,
@@ -168,6 +171,31 @@ export async function runDevBridgeSetup({
   const snapshot = previous?.ubuntu?.snapshot ?? defaultUbuntuPackageSnapshot(now());
   await store.set(STATE_KEY, setupState(previous, { identity: scope.identity, repositories, snapshot }));
 
+  let prerequisites;
+  try {
+    prerequisites = await prerequisiteReconciler({ platform, invoke, environment: env });
+  } catch (error) {
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      blocker: `System prerequisite reconciliation failed: ${error.message}`,
+    });
+  }
+  if (prerequisites?.ready !== true) {
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      prerequisites,
+      blocker: prerequisites?.blocker ?? 'System prerequisites are not ready; resolve the reported host boundary and re-run devbridge setup',
+    });
+  }
+
   let release;
   let authority;
   try {
@@ -176,7 +204,7 @@ export async function runDevBridgeSetup({
       authorityFactory({ snapshot, fetchImpl }),
     ]);
   } catch (error) {
-    return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, blocker: `Ubuntu construction authority is unavailable: ${error.message}` });
+    return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, blocker: `Ubuntu construction authority is unavailable: ${error.message}` });
   }
 
   const physicalConfig = Object.freeze({
@@ -192,10 +220,10 @@ export async function runDevBridgeSetup({
     const canary = canaryFactory(physicalConfig, { platform, invoke, fetchImpl });
     physical = await canary.status();
   } catch (error) {
-    return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, blocker: `read-only production-image status gate failed: ${error.message}` });
+    return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, blocker: `read-only production-image status gate failed: ${error.message}` });
   }
 
-  return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, physical });
+  return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, physical });
 }
 
 export { PROTOCOL as SETUP_STATUS_PROTOCOL };
