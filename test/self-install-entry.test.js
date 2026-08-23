@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   copyFileSync,
   mkdirSync,
@@ -87,6 +87,25 @@ function assertInstalledClosure(component) {
     const url = pathToFileURL(path.join(component, ...relative.split('/'))).href;
     run(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(url)})`]);
   }
+}
+
+function exitedChildPid() {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['-e', 'process.exit(0)'], {
+      stdio: 'ignore',
+      shell: false,
+      windowsHide: true,
+    });
+    const pid = child.pid;
+    child.once('error', reject);
+    child.once('exit', () => {
+      if (!Number.isSafeInteger(pid) || pid <= 0) {
+        reject(new Error('child process did not expose a valid process identity'));
+        return;
+      }
+      resolve(pid);
+    });
+  });
 }
 
 test('installer is actually standalone and accepts only bounded local selection', () => {
@@ -240,7 +259,7 @@ test('wrapper activation preserves the prior authority before any replacement ca
   assert.deepEqual(readFileSync(previous), firstWrapper);
 });
 
-test('installer lock fails closed for a live owner and reclaims only a dead owner record', () => {
+test('installer lock fails closed for a live owner and reclaims only a dead owner record', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'devbridge-install-lock-'));
   const fixture = fixtureRepository(root);
   const home = path.join(root, 'home');
@@ -261,8 +280,7 @@ test('installer lock fails closed for a live owner and reclaims only a dead owne
   );
 
   rmSync(lockPath, { force: true });
-  const deadPid = run(process.execPath, ['-e', 'process.exit(0)']).pid;
-  assert.equal(Number.isInteger(deadPid), true);
+  const deadPid = await exitedChildPid();
   writeFileSync(lockPath, `${JSON.stringify({
     protocol: INSTALL_LOCK_PROTOCOL,
     pid: deadPid,
