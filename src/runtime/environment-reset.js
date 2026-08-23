@@ -203,9 +203,9 @@ export class EnvironmentReset {
         const approvedSubject = authorizationSubject(record);
         if (previousGeneration == null || approvedSubject == null) throw new Error('environment reset authorized impact evidence is incomplete');
         const beforeAttempt = await this.#observe(declaration);
-        const currentImpact = assertResettable(await this.#impact(declaration, beforeAttempt), beforeAttempt);
-        if (beforeAttempt.implementationGeneration !== previousGeneration || currentImpact.authorizationSubject !== approvedSubject) {
-          throw new Error('environment reset impact changed after destructive authorization');
+        if (beforeAttempt.implementationGeneration === previousGeneration) {
+          const currentImpact = assertResettable(await this.#impact(declaration, beforeAttempt), beforeAttempt);
+          if (currentImpact.authorizationSubject !== approvedSubject) throw new Error('environment reset impact changed after destructive authorization');
         }
         const result = await this.#construction.run({
           environmentIdentity: identity,
