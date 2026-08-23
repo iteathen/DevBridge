@@ -51,8 +51,16 @@ async function fixture(protectedStateClasses = []) {
   return { declarations, registered, journal };
 }
 function evidence(resources = 'ready') { return { inspect: async () => ({ resources, network: 'ready', workspaces: 'ready' }) }; }
+function authorization(onVerify = null) {
+  return {
+    async verify(input) {
+      onVerify?.(input);
+      return { approved: true, subject: input.subject };
+    },
+  };
+}
 
-test('recreate preview distinguishes retained rollback from an already-missing provider', async () => {
+test('recreate preview distinguishes retained rollback from an already-missing provider and binds an exact authorization subject', async () => {
   const f = await fixture();
   let materialization = 'present';
   const recreate = new EnvironmentRecreate({
@@ -67,22 +75,30 @@ test('recreate preview distinguishes retained rollback from an already-missing p
   const present = await recreate.plan(f.registered.identity);
   assert.equal(present.destructive, true);
   assert.equal(present.previousProvider, 'present');
+  assert.equal(present.sideBySideReplacement, true);
   assert.equal(present.rollback, 'superseded-generation-retained-until-verification');
+  assert.equal(present.destructiveFallback.automatic, false);
+  assert.deepEqual(present.affectedWorkspaces, ['workspace-a', 'workspace-b']);
+  assert.equal(present.affectedWorkspaceCount, 2);
   assert.deepEqual(present.reseeds, ['workspace-a', 'workspace-b']);
+  assert.match(present.authorizationSubject, /^recreate-[a-f0-9]{64}$/u);
   assert.equal(present.blocked, false);
 
   materialization = 'missing';
   const missing = await recreate.plan(f.registered.identity);
   assert.equal(missing.previousProvider, 'missing');
+  assert.equal(missing.sideBySideReplacement, false);
   assert.equal(missing.rollback, 'unavailable-provider-already-missing');
+  assert.notEqual(missing.authorizationSubject, present.authorizationSubject);
   assert.equal(missing.blocked, false);
 });
 
-test('recreate runs shared construction, verifies the replacement, then retires the exact old generation', async () => {
+test('recreate runs shared construction, verifies the replacement, then retires the exact old generation under the approved impact', async () => {
   const f = await fixture();
   let generation = OLD;
   let retired = 0;
   let cleared = 0;
+  let approvedSubject = null;
   const recreate = new EnvironmentRecreate({
     declarations: f.declarations,
     journal: f.journal,
@@ -100,21 +116,74 @@ test('recreate runs shared construction, verifies the replacement, then retires 
       ensure: async (input) => {
         assert.equal(input.previousImplementationGeneration, OLD);
         assert.equal(input.implementationGeneration, NEXT);
+        assert.equal(input.authorizationSubject, approvedSubject);
         retired += 1;
         return { ready: true };
       },
     },
     evidence: evidence(),
+    authorization: authorization((input) => {
+      assert.equal(input.operation, 'recreate');
+      assert.equal(input.approval, 'approved-impact');
+      assert.equal(input.implementationGeneration, OLD);
+      approvedSubject = input.subject;
+    }),
   });
 
-  const result = await recreate.recreate(f.registered.identity);
+  const result = await recreate.recreate(f.registered.identity, { approval: 'approved-impact' });
   assert.equal(result.state, 'complete');
   assert.equal(result.previousImplementationGeneration, OLD);
   assert.equal(result.implementationGeneration, NEXT);
+  assert.equal(result.authorizationSubject, approvedSubject);
+  assert.equal(result.rollback, 'retired-after-verification');
   assert.equal(retired, 1);
   assert.equal(cleared, 1);
   const record = await f.journal.current(f.registered.identity);
   assert.deepEqual(record.entries.map((entry) => entry.stage), ENVIRONMENT_LIFECYCLE_STAGES);
+  assert.equal(record.entries.find((entry) => entry.stage === 'pre-observation').subjects[0], approvedSubject);
+});
+
+test('recreate refuses changed impact after authorization before shared construction runs', async () => {
+  const f = await fixture();
+  let observations = 0;
+  let constructionCalls = 0;
+  const recreate = new EnvironmentRecreate({
+    declarations: f.declarations,
+    journal: f.journal,
+    observer: {
+      observe: async () => {
+        observations += 1;
+        const value = observation(f.registered, OLD, 'present', true);
+        if (observations > 1) return { ...value, systemStorage: 'invalid', attachment: 'invalid', enrollment: 'unknown', bootstrap: 'unknown', guest: 'unknown' };
+        return value;
+      },
+    },
+    fence: { acquire: async () => ({ subject: 'fence-recreate-drift', release: async () => {} }) },
+    construction: { run: async () => { constructionCalls += 1; return { implementationGeneration: NEXT }; }, clear: async () => {} },
+    retirement: { ensure: async () => ({ ready: true }) },
+    evidence: evidence(),
+    authorization: authorization(),
+  });
+  await assert.rejects(() => recreate.recreate(f.registered.identity, { approval: 'approved-impact' }), /impact changed after destructive authorization/u);
+  assert.equal(constructionCalls, 0);
+});
+
+test('recreate refuses mismatched destructive authorization before creating a lifecycle mutation record', async () => {
+  const f = await fixture();
+  let constructionCalls = 0;
+  const recreate = new EnvironmentRecreate({
+    declarations: f.declarations,
+    journal: f.journal,
+    observer: { observe: async () => observation(f.registered, OLD, 'present', true) },
+    fence: { acquire: async () => ({ subject: 'fence-recreate-auth', release: async () => {} }) },
+    construction: { run: async () => { constructionCalls += 1; return { implementationGeneration: NEXT }; }, clear: async () => {} },
+    retirement: { ensure: async () => ({ ready: true }) },
+    evidence: evidence(),
+    authorization: { verify: async () => ({ approved: true, subject: `recreate-${'0'.repeat(64)}` }) },
+  });
+  await assert.rejects(() => recreate.recreate(f.registered.identity, { approval: 'wrong-impact' }), /did not match the exact impact subject/u);
+  assert.equal(await f.journal.current(f.registered.identity), null);
+  assert.equal(constructionCalls, 0);
 });
 
 test('interrupted recreate exposes deterministic resume instructions and reuses the same lifecycle operation', async () => {
@@ -139,14 +208,15 @@ test('interrupted recreate exposes deterministic resume instructions and reuses 
     },
     retirement: { ensure: async () => { retirementCalls += 1; return { ready: true }; } },
     evidence: evidence(),
+    authorization: authorization(),
   });
 
   let failure;
-  try { await recreate.recreate(f.registered.identity); } catch (error) { failure = error; }
+  try { await recreate.recreate(f.registered.identity, { approval: 'approved-impact' }); } catch (error) { failure = error; }
   assert.match(failure.message, /interrupted/u);
   assert.deepEqual(failure.recovery, {
-    state: 'resume-required', environmentIdentity: f.registered.identity, operationId: 'lifecycle-recreate-1', stage: 'fenced-attempt',
-    instruction: 're-run recreate for the same logical environment; do not manually delete provider objects selected by the active lifecycle operation',
+    state: 'resume-required', environmentIdentity: f.registered.identity, operationId: 'lifecycle-recreate-1', stage: 'fenced-attempt', previousProvider: 'present',
+    instruction: 're-run recreate for the same logical environment with the same approved impact; do not manually delete provider objects selected by the active lifecycle operation',
   });
   const resumed = await recreate.recreate(f.registered.identity);
   assert.equal(resumed.state, 'complete');
@@ -165,9 +235,10 @@ test('recreate blocks protected state, ambiguous provider selection, and resourc
     construction: { run: async () => { constructionCalls += 1; return { implementationGeneration: NEXT }; }, clear: async () => {} },
     retirement: { ensure: async () => ({ ready: true }) },
     evidence: evidence(),
+    authorization: authorization(),
   });
   assert.equal((await protectedRecreate.plan(protectedFixture.registered.identity)).blocked, true);
-  await assert.rejects(() => protectedRecreate.recreate(protectedFixture.registered.identity), /protected state/u);
+  await assert.rejects(() => protectedRecreate.recreate(protectedFixture.registered.identity, { approval: 'approved-impact' }), /protected state/u);
 
   const ambiguous = await fixture();
   const ambiguousRecreate = new EnvironmentRecreate({
@@ -178,8 +249,9 @@ test('recreate blocks protected state, ambiguous provider selection, and resourc
     construction: { run: async () => { constructionCalls += 1; return { implementationGeneration: NEXT }; }, clear: async () => {} },
     retirement: { ensure: async () => ({ ready: true }) },
     evidence: evidence(),
+    authorization: authorization(),
   });
-  await assert.rejects(() => ambiguousRecreate.recreate(ambiguous.registered.identity), /ambiguous or unavailable provider selection/u);
+  await assert.rejects(() => ambiguousRecreate.recreate(ambiguous.registered.identity, { approval: 'approved-impact' }), /ambiguous or unavailable provider selection/u);
 
   const constrained = await fixture();
   const constrainedRecreate = new EnvironmentRecreate({
@@ -190,7 +262,8 @@ test('recreate blocks protected state, ambiguous provider selection, and resourc
     construction: { run: async () => { constructionCalls += 1; return { implementationGeneration: NEXT }; }, clear: async () => {} },
     retirement: { ensure: async () => ({ ready: true }) },
     evidence: evidence('blocked'),
+    authorization: authorization(),
   });
-  await assert.rejects(() => constrainedRecreate.recreate(constrained.registered.identity), /resource prerequisites/u);
+  await assert.rejects(() => constrainedRecreate.recreate(constrained.registered.identity, { approval: 'approved-impact' }), /resource prerequisites/u);
   assert.equal(constructionCalls, 0);
 });
