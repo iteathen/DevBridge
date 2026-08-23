@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createSubjectPreparationAdapter } from '../src/app/subject-preparation-adapter.js';
 import { createUbuntuProductionImageCanaryComposition } from '../src/runtime/image-builders/ubuntu-production-image-canary-composition.js';
 
 const IDENTITY = `subject-${'4'.repeat(32)}`;
@@ -16,7 +17,7 @@ function memoryJournal() {
 function request() {
   return {
     identity: IDENTITY,
-    work: { identity: IDENTITY, material: 'opaque' },
+    work: { subject: IDENTITY },
     check: { expected: 'opaque' },
     output: { profile: 'linux-pr', generation: 'qualified-1', provenance: { origin: 'production-canary' } },
   };
@@ -25,8 +26,18 @@ function request() {
 test('production composition maps concrete studs and durable phases only at the topology edge', async () => {
   const calls = [];
   let phase = 'absent';
+  const preparation = createSubjectPreparationAdapter({
+    async resolve(subject) {
+      calls.push(['resolve', subject]);
+      return { identity: subject, material: 'physical-opaque' };
+    },
+    async apply(input) {
+      calls.push(['apply', input]);
+      phase = 'prepared';
+      return { identity: input.identity };
+    },
+  });
   const construction = {
-    async prepare(input) { calls.push(['prepare', input]); phase = 'prepared'; return { identity: IDENTITY }; },
     async status(identity) { calls.push(['status', identity, phase]); return { identity, phase }; },
     async startInstall(identity) { calls.push(['startInstall', identity]); phase = 'installing'; return { identity }; },
     async bootInstalled(identity) { calls.push(['bootInstalled', identity]); phase = 'qualifying'; return { identity }; },
@@ -44,22 +55,50 @@ test('production composition maps concrete studs and durable phases only at the 
     },
     async verifyImage(identity) { calls.push(['verifyImage', identity]); return { identity, usable: true, verified: true }; },
   };
-  const canary = createUbuntuProductionImageCanaryComposition({ journal: memoryJournal(), construction, qualification, foundation });
+  const canary = createUbuntuProductionImageCanaryComposition({ journal: memoryJournal(), preparation, construction, qualification, foundation });
 
   for (let index = 0; index < 11; index += 1) await canary.advance(request());
 
   assert.deepEqual(calls.map(([name]) => name).filter((name) => name !== 'status'), [
-    'prepare', 'startInstall', 'bootInstalled', 'probe', 'finalize', 'markQualified',
+    'resolve', 'apply', 'startInstall', 'bootInstalled', 'probe', 'finalize', 'markQualified',
     'retain', 'retain', 'publishImage', 'verifyImage',
   ]);
+  assert.deepEqual(calls.find(([name]) => name === 'resolve'), ['resolve', IDENTITY]);
+  assert.deepEqual(calls.find(([name]) => name === 'apply')[1], { identity: IDENTITY, material: 'physical-opaque' });
   const publication = calls.find(([name]) => name === 'publishImage')[1];
   assert.equal(publication.source, 'retained-source');
   assert.deepEqual(publication.provenance, { origin: 'production-canary' });
 });
 
-test('production composition rejects a concrete construction phase it cannot map into the neutral contract', async () => {
+test('production composition rejects topology leakage before physical preparation resolution', async () => {
+  let resolved = false;
+  const preparation = createSubjectPreparationAdapter({
+    async resolve(subject) { resolved = true; return { identity: subject }; },
+    async apply(input) { return { identity: input.identity }; },
+  });
   const construction = {
-    async prepare() { return { identity: IDENTITY }; },
+    async status(identity) { return { identity, phase: 'absent' }; },
+    async startInstall(identity) { return { identity }; },
+    async bootInstalled(identity) { return { identity }; },
+    async markQualified(identity) { return { identity }; },
+    async retain(identity) { return { identity, location: 'retained-source' }; },
+  };
+  const qualification = { async probe() { return { ready: true }; }, async finalize() { return { finalized: true }; } };
+  const foundation = { async publishImage() {}, async verifyImage() {} };
+  const canary = createUbuntuProductionImageCanaryComposition({ journal: memoryJournal(), preparation, construction, qualification, foundation });
+  const leaked = { ...request(), work: { subject: IDENTITY, installer: 'forbidden' } };
+
+  await canary.advance(leaked);
+  await assert.rejects(() => canary.advance(leaked), /must contain only subject/u);
+  assert.equal(resolved, false);
+});
+
+test('production composition rejects a concrete construction phase it cannot map into the neutral contract', async () => {
+  const preparation = createSubjectPreparationAdapter({
+    async resolve(subject) { return { identity: subject }; },
+    async apply(input) { return { identity: input.identity }; },
+  });
+  const construction = {
     async status(identity) { return { identity, phase: 'foreign-phase' }; },
     async startInstall() { return { identity: IDENTITY }; },
     async bootInstalled() { return { identity: IDENTITY }; },
@@ -68,7 +107,7 @@ test('production composition rejects a concrete construction phase it cannot map
   };
   const qualification = { async probe() { return { ready: true }; }, async finalize() { return { finalized: true }; } };
   const foundation = { async publishImage() {}, async verifyImage() {} };
-  const canary = createUbuntuProductionImageCanaryComposition({ journal: memoryJournal(), construction, qualification, foundation });
+  const canary = createUbuntuProductionImageCanaryComposition({ journal: memoryJournal(), preparation, construction, qualification, foundation });
   await canary.advance(request());
   await assert.rejects(() => canary.advance(request()), /phase is unsupported/u);
 });
