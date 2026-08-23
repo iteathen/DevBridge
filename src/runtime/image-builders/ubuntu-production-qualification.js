@@ -127,6 +127,24 @@ function parseEvidence(stdout, expectedProtocol) {
   return result;
 }
 
+function qualificationEvidence(qualified, selected, sanitized) {
+  return Object.freeze({
+    protocol: PROTOCOL,
+    os: qualified.os,
+    node: qualified.node,
+    npm: qualified.npm,
+    git: qualified.git,
+    cmake: qualified.cmake,
+    compiler: qualified.compiler,
+    payloadGeneration: selected.payloadGeneration,
+    packageGeneration: selected.packageGeneration,
+    commands: Object.freeze([...selected.commands]),
+    network: true,
+    cmakeCtest: true,
+    sanitized,
+  });
+}
+
 export class UbuntuProductionImageQualification {
   #bridge;
   #finalizer;
@@ -160,7 +178,7 @@ export class UbuntuProductionImageQualification {
     return result.stdout;
   }
 
-  async qualify({ target, expected }) {
+  async probe({ target, expected }) {
     if (typeof target !== 'string' || !TARGET.test(target)) throw new TypeError('qualification target is invalid');
     const selected = normalizeExpected(expected);
     const qualified = parseEvidence(await this.#run(target, operationBody(qualificationScript(selected), 5 * 60 * 1000)), PROTOCOL);
@@ -170,23 +188,20 @@ export class UbuntuProductionImageQualification {
       || qualified.network !== 'ready'
       || qualified['cmake-ctest'] !== 'passed'
     ) throw new Error('qualification evidence does not match the required image contract');
+    return qualificationEvidence(qualified, selected, false);
+  }
+
+  async finalize(target) {
+    if (typeof target !== 'string' || !TARGET.test(target)) throw new TypeError('qualification target is invalid');
     const finalized = await this.#finalizer.finalize(target);
     if (!finalized || finalized.finalized !== true) throw new Error('image finalization did not report completion');
-    return Object.freeze({
-      protocol: PROTOCOL,
-      os: qualified.os,
-      node: qualified.node,
-      npm: qualified.npm,
-      git: qualified.git,
-      cmake: qualified.cmake,
-      compiler: qualified.compiler,
-      payloadGeneration: selected.payloadGeneration,
-      packageGeneration: selected.packageGeneration,
-      commands: Object.freeze([...selected.commands]),
-      network: true,
-      cmakeCtest: true,
-      sanitized: true,
-    });
+    return Object.freeze({ protocol: finalized.protocol ?? 'devbridge/image-finalization-v1', finalized: true });
+  }
+
+  async qualify({ target, expected }) {
+    const probed = await this.probe({ target, expected });
+    await this.finalize(target);
+    return Object.freeze({ ...probed, sanitized: true });
   }
 }
 
