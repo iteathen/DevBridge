@@ -102,3 +102,7 @@ export class SshAccessMaterial {
     }
   }
 }
+
+export function createSshAccessMaterial(options) {
+  return new SshAccessMaterial(options);
+}
