@@ -86,7 +86,7 @@ test('request-bound replacement retains the exact superseded generation until ex
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('interrupted replacement reconciles the planned generation without another provider effect', async () => {
+test('interrupted replacement waits for the outer lifecycle owner, then reconciles the same planned generation', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-replacement-reconcile-'));
   const fake = fixture();
   try {
@@ -100,9 +100,19 @@ test('interrupted replacement reconciles the planned generation without another 
     assert.equal(fake.instances.size, 2);
 
     registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
-    const reconciled = await registry.reconcile();
-    assert.equal(reconciled.length, 1);
-    assert.equal(reconciled[0].record.generation, 2);
+    const generic = await registry.reconcile();
+    assert.equal(generic.length, 1);
+    assert.equal(generic[0].record.generation, 1);
+    assert.equal(generic[0].record.identity, created.record.identity);
+    assert.equal(fake.provisionCalls(), 2);
+    assert.equal(fake.dropCalls(), 0);
+
+    const reconciled = await registry.replace(created.record.identity, {
+      requestId: 'lifecycle-reset-2',
+      expectedPreviousIdentity: created.record.identity,
+    });
+    assert.equal(reconciled.record.generation, 2);
+    assert.notEqual(reconciled.record.identity, created.record.identity);
     assert.equal(fake.provisionCalls(), 2);
     assert.equal(fake.dropCalls(), 0);
     assert.equal(fake.instances.has(created.record.identity), true);
