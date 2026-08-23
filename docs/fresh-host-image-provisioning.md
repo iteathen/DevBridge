@@ -147,14 +147,27 @@ Activation rights and prepared-image distribution/storage rights are separate.
 
 Private GitHub hosting does not by itself prove that the selected Microsoft source/license permits storing or redistributing a prepared Windows VHDX. Setup must obtain explicit local confirmation/policy before publishing prepared Windows bytes.
 
-Windows therefore supports two durable recovery modes:
+Windows therefore supports two durable recovery-source modes:
 
 - **remote artifact** — the exact generalized image may be published to the approved private source and later reacquired through #178;
-- **local reconstruction** — prepared bytes are not remotely published; durable authority retains the exact approved source-media identity and deterministic construction recipe so the canonical image can be reconstructed locally and verified before admission.
+- **local reconstruction/regeneration** — prepared bytes are not remotely published; durable authority retains the approved source-media identity and versioned construction recipe so a replacement canonical image can be constructed locally.
 
 Ubuntu/Linux may use remote immutable artifacts when the applicable upstream/source terms permit it.
 
-### 9. Prove remote artifacts before accepting them
+### 9. Reconstruction identity rule
+
+A construction recipe is not automatically a canonical image identity.
+
+Rebuilding a Windows VHDX from the same source media and recipe can legitimately introduce fresh container/guest metadata, timestamps, servicing results, or other bytes. DevBridge must not claim byte determinism unless the exact construction path has proved it.
+
+A local reconstruction/regeneration therefore has two possible results:
+
+1. **Exact deterministic reproduction** — the rebuilt canonical file has the expected size and SHA-256, so it is the same image subject and may satisfy the current declaration.
+2. **New qualified canonical result** — the build used the exact approved source/recipe and passes all construction/tooling/provider qualification but has a different canonical digest. It is admitted as a **new immutable image subject/generation**. It cannot silently satisfy the old declaration. A separate explicit local image-regeneration/declaration-rebind migration must authorize the new image subject before `create`/`rebuild` consumes it.
+
+If deterministic reproduction has not been demonstrated for the exact construction path, assume the second outcome. Never weaken canonical digest verification or reuse an old image identity for different bytes.
+
+### 10. Prove remote artifacts before accepting them
 
 For a remote artifact, publication is not complete at upload.
 
@@ -167,7 +180,7 @@ For a remote artifact, publication is not complete at upload.
 
 A release/tag name is discovery metadata, not image authority.
 
-### 10. Materialize and activate
+### 11. Materialize and activate
 
 #171 `create` consumes the exact approved image subject and creates a new implementation generation.
 
@@ -186,14 +199,15 @@ Status/doctor should distinguish at least:
 
 ## Recovery
 
-#173 rebuild must not depend on the old system disk for either image supply or licensing configuration.
+#173 rebuild must not depend on the old system disk for either image supply or licensing configuration, but rebuild itself still consumes the **exact image subject in the current declaration**.
 
 Image recovery:
 
 - verified local cache -> use exact image;
 - approved remote artifact -> #178 reacquires exact image;
-- Windows local-reconstruction policy -> rebuild exact canonical image from approved source/recipe, verify expected identity, admit to cache;
-- no exact cache/source -> report a typed reconstruction-source blocker; never substitute another generation.
+- local construction reproduces the exact canonical digest -> admit/use the existing image subject;
+- local construction produces a different qualified digest -> admit a new immutable image subject, stop rebuild, require explicit declaration rebind/migration, then rebuild from the newly approved subject;
+- no exact cache/artifact/source -> report a typed reconstruction-source blocker; never substitute another generation.
 
 After Windows rebuild materializes a new implementation generation, the same locally owned activation authority is reapplied/reconciled when required.
 
@@ -206,6 +220,7 @@ Setup is a durable configuration-management workflow, not a one-shot installer. 
 - replace/rotate activation authority;
 - change private artifact source;
 - switch from local reconstruction to approved remote artifact storage when policy changes;
+- perform the explicit image-regeneration/declaration-rebind migration when a locally regenerated canonical image has a new digest;
 - repair provider/image/recovery authority without reinstalling unrelated components.
 
 Sanitized export contains no activation secret and no blindly transferable host/license authority.
