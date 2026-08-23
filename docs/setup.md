@@ -43,19 +43,70 @@ Do not assume:
 - the GitHub owner is `iteathen` or any other fixed account;
 - GitHub credentials can create repositories/Releases;
 - zstd/qemu-img/xorriso/ADK or other image-construction tools are installed;
-- the local image cache is durable reconstruction authority.
+- the local image cache is durable reconstruction authority;
+- any DevBridge configuration file, signing keyring, package snapshot, image authority, payload generation, VM name, or helper script already exists.
 
-Discover safe facts first. Ask only for unresolved choices or explicit local consent.
+Discover safe facts first. Choose reasonable safe defaults for everything that can be determined without ambiguity. Prompt only for a genuine unresolved choice, a required authentication/elevation/reboot boundary, a legal/licensing decision, or another decision for which DevBridge cannot safely choose a default.
+
+The user is not expected to understand or manually author internal configuration schemas, image-construction authorities, package pins, guest-payload generations, canary files, provider object names, or internal entrypoints.
 
 See `docs/fresh-host-image-provisioning.md` and #192 for the complete image/licensing/recovery flow.
+
+## One-command installation contract
+
+The normal installation experience is **one copy/paste bootstrap invocation from a blank supported machine to an operational DevBridge installation**.
+
+The exact final shell syntax is implementation-owned, but conceptually it is:
+
+```text
+fetch trusted DevBridge stage-0 launcher | run setup --reasonable-defaults --non-interactive
+```
+
+The single setup invocation must be allowed to carry bounded local consent for routine setup changes, such as installing required prerequisites, enabling the selected provider, accepting the ordinary Linux profile, enabling repository execution after validation, requesting elevation when necessary, and resuming after a required reboot. These flags are local operator authority; they do not weaken verification or permit remote task text to grant host capability.
+
+`reasonable-defaults` / non-interactive behavior means **make every safely defaultable choice automatically**, not skip safety checks. The internal sequence still preserves discovery, immutable authority construction, read-only preflight/status, and mutation only after the gate passes.
+
+For the ordinary default path, setup should establish a supported Linux/Ubuntu execution profile without asking the user to choose internal source-media, package, snapshot, keyring, payload, image, provider-object, or resource identifiers. Windows remains a separate explicit profile because source/licensing/activation/distribution choices may require real operator decisions.
+
+A one-command setup may pause only when the platform or policy genuinely requires human action. After that action or reboot, re-entry must resume durable progress rather than restart the questionnaire.
+
+The current bootstrap implementation may lag this target while #103/#192 and their implementation slices are in progress. Documentation, tests, and acceptance work must judge the final installer against this contract rather than treating manual config editing or internal canary entrypoints as acceptable user setup.
+
+## PATH and permanent command
+
+Successful setup must leave a stable `devbridge` command available on the user's `PATH`.
+
+- The bootstrap may use a temporary/downloaded stage-0 file, but normal post-install operation must not require users to type `node ~/.devbridge/bin/devbridge.mjs ...` or an equivalent implementation path.
+- Setup owns a stable launcher/shim under the DevBridge installation and adds its bin directory to the appropriate user PATH using platform-appropriate persistent configuration.
+- Do not overwrite an unrelated existing `devbridge` executable. A collision is a focused blocker that identifies the conflicting command and offers a safe resolution.
+- PATH mutation must be installation-owned and reversible by uninstall/reconfiguration.
+- Before reporting success, setup verifies both the launcher target and command resolution. Where the current shell cannot observe a newly persisted PATH value, the completion message must say that a new shell is required and show the temporary exact command needed only until then.
+
+After successful installation, normal operator documentation uses commands such as `devbridge setup`, `devbridge status`, and `devbridge doctor`, not internal Node file paths.
+
+## Repository defaults
+
+Repository discovery is driven by the authenticated GitHub identity and verified access, not by a hard-coded owner or a manual repository questionnaire.
+
+For eligible repositories belonging to / available to the authenticated user under the selected policy:
+
+- **0–30 eligible repositories:** setup selects all of them by default and proceeds without a repository-selection question;
+- **31 or more eligible repositories:** setup stops at the repository-selection boundary and asks which repositories to include; `all` remains an explicit choice;
+- setup must never silently truncate discovery to the first 30 repositories.
+
+Eligibility and effective capabilities must still be verified. Archived/read-only/inaccessible repositories or repositories that cannot satisfy the intended operation should be reported truthfully rather than silently treated as writable execution targets.
+
+Repository count does not determine VM count. Repositories sharing a compatible execution profile share the physical profile VM through distinct workspace identities.
 
 ## Current requirements
 
 Current main requires:
 
-- Node.js 22.16.0 or newer
-- Git
-- a GitHub account with access to the configured task queue and target repositories
+- Node.js 22.16.0 or newer;
+- Git;
+- a GitHub account with access to the configured task queue and target repositories.
+
+The one-command setup target may eventually acquire or guide installation of bootstrap prerequisites where that can be done safely, but it must never pretend a missing foundational prerequisite is already satisfied.
 
 Stage-2 host-foundation requirements are provider-specific when those capabilities are expected to be ready:
 
@@ -64,74 +115,52 @@ Stage-2 host-foundation requirements are provider-specific when those capabiliti
 
 Setup must not infer VM readiness merely from Hyper-V being installed, `/dev/kvm` existing, `virsh` being present, or a VM/domain name existing.
 
-## Fresh install
+## Fresh install target
 
-### Linux
+A normal user should need one bootstrap command, not a sequence that first creates an example JSON file and then asks the user to read/edit it.
 
-```sh
-mkdir -p "$HOME/.devbridge/bin" && curl -fsSL https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs -o "$HOME/.devbridge/bin/devbridge.mjs" && node "$HOME/.devbridge/bin/devbridge.mjs"
-```
+The setup invocation is responsible for:
 
-### Windows PowerShell
+1. establishing and verifying the trusted Stage-0 launcher and accepted managed runtime;
+2. creating DevBridge-owned state/configuration internally;
+3. discovering the host, authentication, repositories, provider capabilities, storage, networking, tools, elevation/reboot state, and existing DevBridge-owned resources;
+4. applying reasonable defaults and using prompts only at genuine blockers;
+5. establishing exact image/source authority from trusted local/runtime-owned policy rather than user-authored plumbing;
+6. performing read-only provider/image preflight before mutation;
+7. constructing, qualifying, publishing/reacquiring, or reconstructing the required immutable base image through the owning image contracts;
+8. creating the required execution-profile VM/environment and repository workspaces;
+9. verifying guest/bootstrap/tooling/network/bridge/workspace readiness;
+10. enabling only the capabilities covered by the operator's local setup consent and verified readiness;
+11. installing the permanent `devbridge` command on PATH;
+12. ending with a clear success/welcome handoff.
 
-```powershell
-New-Item -ItemType Directory -Force "$HOME\.devbridge\bin" | Out-Null; Invoke-WebRequest "https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs" -OutFile "$HOME\.devbridge\bin\devbridge.mjs"; node "$HOME\.devbridge\bin\devbridge.mjs"
-```
-
-The launcher uses only Node.js built-ins and local Git to establish/verify the fixed managed DevBridge runtime. It does not silently enable repository execution or VM management.
-
-On a fresh home, the managed secure bootstrap creates the safe example configuration and exits. Review local authority before enabling anything.
-
-Then use:
-
-```text
-node ~/.devbridge/bin/devbridge.mjs doctor
-node ~/.devbridge/bin/devbridge.mjs
-```
-
-PowerShell users can use `$HOME\.devbridge\bin\devbridge.mjs` in the same commands.
-
-## Removed host-sandbox prerequisite
-
-Bubblewrap is no longer an active repository-execution prerequisite. Stage 1 removed the host-sandbox execution implementation and Stage 2 does not reintroduce it.
-
-Historical sandbox documentation remains evidence only. From Stage 1 until Stage 6, repository execution is unavailable rather than falling back to Bubblewrap or the direct host.
+Internal helper programs, canary entrypoints, transient configuration files, authority records, package snapshots, signing keyrings, and provider object identities are implementation details. They may exist internally but are not prerequisites the operator must create or understand.
 
 ## Configuration authority
 
-The canonical checked-in example is:
+Configuration remains local machine authority under DB-003. The default user workflow, however, is setup/re-entry rather than hand-editing JSON.
+
+The canonical checked-in example remains useful for development, testing, advanced declarative automation, and schema reference:
 
 ```text
 config/devbridge.example.json
 ```
 
-Fresh configuration keeps execution, model adapters, coordination, dynamic tool onboarding, and automatic task-branch publication conservative/off by default.
+It is **not** a required reading assignment or hand-authored prerequisite for normal installation.
 
-Review at least:
-
-- `github.queueRepository`
-- `github.trustedActorIds`
-- `workspace.allowedOwners`
-- `workspace.baselineChannels`
-- `execution.*`
-- `execution.decisionAuthorities`
-- `coordination.*`
-- `publication.*`
-- local tool profiles/credentials.
+Fresh configuration keeps model adapters, coordination, dynamic tool onboarding, and automatic task-branch publication conservative/off unless the setup command's explicit local options enable them. Existing operator configuration is never silently rewritten during self-update.
 
 `workspace.externalReadRoots`, proposal profile `sandbox.*`, and `execution.allowUncontainedTools` are host-sandbox-era surface. Stage 1 removes their ability to authorize repository-code host execution. Stage 8 defines deliberate operator-facing migration/deprecation, and Stage 9 removes remaining compatibility where appropriate.
 
 `execution.allowUncontainedTools` or equivalent must never bypass the no-provider state.
 
-Existing operator configuration is never silently rewritten during self-update.
-
 ## Execution remains opt-in and provider-bound
 
-Setting `execution.enabled` is local machine authority. Task text cannot enable it.
+Execution authority must be granted locally. A first-run `setup` invocation may carry that explicit local consent as a bounded command option so the installer does not need to stop later merely to ask the same question again.
 
-Current pre-migration main fails closed if a requested repository-code execution class lacks the provider it actually implements/verifies.
+Remote task text cannot enable execution.
 
-Stage 6 VM-backed execution requires observed provider + image + compatible execution-profile environment + bridge + repository workspace-route readiness, even if `execution.enabled` is configured. If any are missing, execution remains unavailable; it never redirects to direct host execution. A legacy repository-owned VM record is not silently adopted as the physical profile environment.
+Stage 6 VM-backed execution requires observed provider + image + compatible execution-profile environment + bridge + repository workspace-route readiness. If any are missing, execution remains unavailable; it never redirects to direct host execution. A legacy repository-owned VM record is not silently adopted as the physical profile environment.
 
 ## GitHub authentication
 
@@ -141,9 +170,11 @@ DevBridge may use configured environment-variable providers or the current GitHu
 
 Under DB-020 repository guests normally have network access, so host GitHub/SSH/publication credentials must remain absent from the guest. Private dependency/coding-service support requires explicit later scoped mechanisms rather than copying the host token into a persistent VM.
 
+If no usable GitHub authentication exists, setup may stop for the focused authentication action and then resume. It should never ask the user to type an account name that the authenticated credential can identify itself.
+
 ## Persistent VM setup target
 
-When Stage 8 lands, setup/reconfiguration follows discover-before-prompt and treats execution profiles as the VM provisioning unit.
+Setup/reconfiguration follows discover-before-prompt and treats execution profiles as the VM provisioning unit.
 
 ### Windows host discovery
 
@@ -176,14 +207,14 @@ Discover where safe:
 - approved/available OS image source and artifact-recovery state;
 - installed image-construction/conversion utilities and free-space requirements.
 
-### Common guided flow
+### Common setup flow
 
 1. discover host/provider/GitHub/account/repository facts before prompting;
-2. ask which execution profiles are actually needed now; do not ask Windows media/license questions for Linux-only setup;
-3. propose approved repositories and compatible/preferred execution profiles independently;
-4. group selected repositories by compatible execution profile and show the physical profile environments actually required;
-5. propose provider prerequisites and exact local changes, including elevation/reboot/package/service/group/session requirements;
-6. establish exact approved image construction authority for each required profile;
+2. apply the supported ordinary Linux profile by default unless the operator explicitly requests another profile or local facts make that default invalid;
+3. apply the repository default rule above (all when at most 30 eligible; ask when 31+);
+4. group selected repositories by compatible execution profile and report repository/workspace counts separately from physical profile-environment counts;
+5. determine provider prerequisites and exact local changes, using initial setup consent where sufficient and stopping only for unavoidable elevation/reboot/manual boundaries;
+6. establish exact approved image construction authority for each required profile internally;
 7. for Windows, separately establish activation method or explicit `configure later` and separately establish whether prepared Windows bytes may be stored in the selected recovery source;
 8. when GitHub Releases are selected for image recovery, derive the authenticated owner and propose a private `<authenticated-owner>/devbridge-base-images` source or another authorized repository; verify repository/Release capability before mutation;
 9. construct and functionally qualify the canonical image from approved source authority;
@@ -192,14 +223,55 @@ Discover where safe:
 12. create the required execution-profile environment from the exact approved image subject;
 13. apply/verify Windows activation after materialization through the separate protected activation authority when required;
 14. verify provider/image/profile-environment/activation/bridge/workspace-route readiness separately;
-15. require explicit operator approval before enabling authority-bearing execution;
-16. allow re-entering setup later to add Windows, change source/activation/artifact policy, add/remove repositories, change profiles/resources, or repair/reset/reseed environments/workspaces.
+15. enable authority-bearing execution only when covered by explicit local setup consent and all required readiness gates are satisfied;
+16. persist the stable `devbridge` PATH command and verify it resolves;
+17. emit the successful operator handoff;
+18. allow `devbridge setup` re-entry later to add Windows, change source/activation/artifact policy, add/remove repositories, change profiles/resources, or repair/reset/reseed environments/workspaces.
 
-Selecting `all` repositories means approve/register all selected repository workspaces. It does **not** mean create/start one VM per repository. Setup must report repository/workspace counts separately from physical execution-profile VM counts.
+Selecting `all` repositories means approve/register all selected repository workspaces. It does **not** mean create/start one VM per repository.
 
-Do not blindly prompt for repository names, local paths, provider object names, provider details, or GitHub usernames that can be safely discovered and verified. Do not auto-enable discovered capabilities merely because they exist.
+Do not blindly prompt for repository names, local paths, provider object names, provider details, GitHub usernames, snapshots, package versions, keyrings, or payload generations that can be safely discovered/derived and verified. Do not auto-enable discovered capabilities merely because they exist; initial command-line consent and subsequent setup approvals remain local authority.
 
-VM/profile readiness failure must degrade/fail closed; setup never recreates the removed host repository-execution path. Resource admission failures must be reported as profile-level resource problems rather than as repository failures.
+VM/profile readiness failure must degrade/fail closed; setup never recreates the removed host repository-execution path. Resource admission failures must be reported as profile-level resource problems rather than repository failures.
+
+## Successful completion and welcome handoff
+
+Setup is not complete merely because internal state was written or an image build returned success. Before printing success, DevBridge must verify the selected installation is operational to the degree promised by the setup mode.
+
+A successful first-run setup ends with a concise human-readable welcome message containing at least:
+
+- an unambiguous **setup completed successfully / welcome to DevBridge** statement;
+- selected execution-profile readiness;
+- configured repository/workspace count and physical profile-environment count;
+- whether DevBridge is running / ready for work;
+- any non-blocking deferred capability, such as Windows activation configured-later;
+- how to start normal use;
+- how to check status/health;
+- how to re-enter setup to change repositories, profiles, resources, credentials, image/recovery policy, or repair/rebuild owned environments;
+- any requirement to open a new shell before the newly persisted PATH is visible.
+
+Normal post-install guidance should be short and command-oriented, for example:
+
+```text
+Welcome to DevBridge — setup completed successfully.
+
+Linux execution profile: ready
+Repositories: 12 configured
+Execution environments: 1 ready
+DevBridge: ready
+
+Start / continue using DevBridge:
+  devbridge
+
+Check health:
+  devbridge status
+  devbridge doctor
+
+Change this installation later:
+  devbridge setup
+```
+
+The exact prose may evolve, but successful setup must end with an operator handoff, not raw JSON, an internal subject identifier, or instructions to read source documentation before proceeding.
 
 ## Windows media, distribution, and activation are separate
 
@@ -248,6 +320,8 @@ VM validation attaches through:
 Canonical commands include:
 
 ```text
+devbridge
+devbridge setup
 devbridge doctor
 devbridge poll-once
 devbridge run-once
@@ -261,6 +335,8 @@ devbridge handoff-status
 devbridge handoff-seed
 devbridge handoff-project
 ```
+
+`devbridge setup` is the supported re-entry point for changing installation-owned configuration and recovering/repairing the setup state. Manual JSON editing is not the normal recovery workflow.
 
 `pause` is cooperative task-admission pause at a safe cycle boundary, not an unsafe process/VM freeze. `stop` takes precedence.
 

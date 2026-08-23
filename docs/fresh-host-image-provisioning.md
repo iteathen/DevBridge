@@ -13,9 +13,32 @@ Setup begins with no assumptions about:
 - whether the user needs Windows, Linux, both, or neither immediately;
 - Windows edition, media, activation method, virtualization entitlement, or prepared-image distribution rights;
 - GitHub repository/Release creation permission;
-- network availability, free storage, reboot/elevation state, or durable local cache.
+- network availability, free storage, reboot/elevation state, or durable local cache;
+- any prior DevBridge config file, image authority, package snapshot, signing keyring, payload generation, provider object name, or helper script.
 
 Safe discovery may establish facts. Discovery never grants authority.
+
+## One-command regular-user contract
+
+A regular user should be able to start from a blank supported machine, run one trusted DevBridge bootstrap/setup invocation with reasonable-default options, and reach an operational DevBridge installation without manually reading or authoring internal configuration.
+
+The one command may carry bounded local consent for routine setup work. Non-interactive/default mode means **choose every safely defaultable value automatically**, not bypass verification or authority boundaries.
+
+The user must not be required to manually construct:
+
+- DevBridge JSON configuration;
+- Ubuntu source/checksum/signature/keyring records;
+- archive snapshot timestamps or exact package pins;
+- guest-payload generations;
+- physical-canary configuration;
+- VM/provider object names;
+- image-library subjects or helper scripts.
+
+Those are internal implementation details owned by the accepted runtime and its local setup authorities.
+
+Setup may stop only for a genuine non-defaultable boundary such as missing authentication, required elevation/UAC, a reboot/session restart, an unresolved legal/licensing choice, a resource conflict, or a policy decision for which DevBridge cannot safely choose on the user's behalf. Durable setup state must resume after that boundary rather than restarting from zero.
+
+Successful setup must also install a stable `devbridge` command on the user's persistent PATH and verify command resolution before declaring success. Normal post-install instructions use `devbridge ...`, not internal Node paths.
 
 ## Four independent authorities
 
@@ -32,25 +55,37 @@ A product key, MAK, KMS endpoint, directory activation state, subscription ident
 
 ### 1. Discover before prompting
 
-The accepted runtime discovers the host OS/architecture, virtualization capability, provider state, free storage, GitHub authentication/identity, existing DevBridge-owned state, required image tools, and reboot/elevation prerequisites read-only.
+The accepted runtime discovers the host OS/architecture, virtualization capability, provider state, free storage, GitHub authentication/identity, existing DevBridge-owned state, required image tools, repository candidates, and reboot/elevation prerequisites read-only.
 
-Setup then asks only for unresolved choices or explicit consent.
+Setup then applies reasonable defaults and asks only for unresolved choices or explicit consent that was not already supplied by the local setup invocation.
 
 Repository selection is separate from VM provisioning. Execution profiles own VMs; repository count does not determine VM count.
 
+For eligible repositories discoverable through the authenticated GitHub identity:
+
+- when there are **30 or fewer**, select all by default and proceed without a repository-selection prompt;
+- when there are **31 or more**, stop at repository selection and ask which to include; `all` remains an explicit choice;
+- never silently truncate the repository set to the first 30.
+
+Repository eligibility/capability must still be verified; archived, read-only, inaccessible, or otherwise unsuitable repositories are reported truthfully.
+
 ### 2. Select required execution profiles
 
-The user may select Linux, Windows, both, or defer them. A Linux-only install is not blocked by Windows media/licensing questions. Specialized profiles such as CUDA remain gated by their own roadmap issues.
+The ordinary reasonable-default installation path selects the supported Linux/Ubuntu execution profile. The user may explicitly request Windows, both, none/defer, or later specialized profiles when their owning roadmap gates are open.
+
+A Linux-only install is not blocked by Windows media/licensing questions. Windows remains an explicit profile because media/licensing/activation/distribution choices may require genuine user decisions. Specialized profiles such as CUDA remain gated by their own roadmap issues.
 
 ### 3. Establish provider prerequisites
 
-Setup proposes only the provider changes required for selected profiles. Hyper-V feature/authorization/reboot changes and KVM/QEMU/libvirt package/service/group/provider changes are explicit local operations with restartable setup state.
+Setup proposes or performs only the provider changes required for selected profiles and covered by the local setup invocation's authority. Hyper-V feature/authorization/reboot changes and KVM/QEMU/libvirt package/service/group/provider changes remain explicit local operations with restartable setup state.
 
 Remote tasks, repository content, or model output cannot authorize these changes.
 
+If elevation or a reboot is unavoidable, setup checkpoints exact progress, instructs the user on the minimum required action, and resumes from that checkpoint afterward.
+
 ### 4. Establish source-media authority
 
-Ubuntu/Linux construction uses an approved official source plus pinned checksum/signature policy.
+Ubuntu/Linux construction uses an approved official source plus pinned checksum/signature policy. The accepted runtime owns the default official Ubuntu source identity, signature/keyring handling, deterministic recipe generation, package snapshot selection, exact package resolution, and local payload binding. These are not first-run questions for a normal user.
 
 Windows construction uses one approved source class, for example:
 
@@ -95,6 +130,8 @@ Every production base must provide the common profile-level capabilities require
 - current DevBridge guest/bootstrap helpers.
 
 Before capture, a real network + CMake -> compile -> CTest canary must pass.
+
+The supported setup path owns the internal read-only preflight/status gate and may proceed to mutation only after that gate is ready. Users do not manually invoke internal physical-canary entrypoints or prepare their configuration.
 
 Windows construction additionally requires:
 
@@ -180,7 +217,7 @@ For a remote artifact, publication is not complete at upload.
 
 A release/tag name is discovery metadata, not image authority.
 
-### 11. Materialize and activate
+### 11. Materialize, activate, and finish setup
 
 #171 `create` consumes the exact approved image subject and creates a new implementation generation.
 
@@ -196,6 +233,22 @@ Status/doctor should distinguish at least:
 - repository execution ready.
 
 `configure later` may leave a Windows profile explicitly `activation-required`; DevBridge must not replace that choice with Evaluation media or direct-host fallback.
+
+Before first-run setup reports success it must also:
+
+1. create/verify repository workspace routes for the selected repositories;
+2. verify the promised VM-only execution path;
+3. install/persist the stable `devbridge` PATH command without replacing an unrelated executable;
+4. verify command resolution, or explicitly state that a new shell is required for a newly persisted PATH value;
+5. emit a concise welcome/success handoff showing what is ready and how to proceed.
+
+The completion handoff should tell a normal user at minimum how to:
+
+- start/continue using DevBridge (`devbridge`);
+- inspect status/health (`devbridge status`, `devbridge doctor`);
+- re-enter setup and make changes (`devbridge setup`).
+
+It should summarize selected profile readiness, repository/workspace count, physical execution-environment count, and any non-blocking deferred capability. Raw internal JSON/subjects are not a substitute for the successful operator handoff.
 
 ## Recovery
 
@@ -213,22 +266,27 @@ After Windows rebuild materializes a new implementation generation, the same loc
 
 ## Re-entry and uninstall
 
-Setup is a durable configuration-management workflow, not a one-shot installer. Re-entry can:
+Setup is a durable configuration-management workflow, not a one-shot installer. The supported re-entry command is `devbridge setup`.
+
+Re-entry can:
 
 - add Windows later;
 - change source-media policy;
 - replace/rotate activation authority;
 - change private artifact source;
+- add/remove repositories or change execution profiles/resources;
 - switch from local reconstruction to approved remote artifact storage when policy changes;
 - perform the explicit image-regeneration/declaration-rebind migration when a locally regenerated canonical image has a new digest;
 - repair provider/image/recovery authority without reinstalling unrelated components.
 
 Sanitized export contains no activation secret and no blindly transferable host/license authority.
 
-Uninstall distinguishes application removal, VM removal, local image/cache removal, activation-secret removal, and remote artifact deletion. Remote user artifacts and operator-owned license/provider infrastructure are preserved by default.
+Uninstall distinguishes application removal, PATH launcher removal, VM removal, local image/cache removal, activation-secret removal, and remote artifact deletion. Remote user artifacts and operator-owned license/provider infrastructure are preserved by default.
 
 ## Completion gate
 
 The image supply chain is not production-ready because #178's core code passes synthetic artifact tests. Production readiness requires real blank-slate Windows and Linux canaries that begin without a DevBridge image cache and reach VM-only repository execution through supported setup/recovery surfaces.
+
+For ordinary Linux blank-slate qualification, success must begin from the one-command setup surface, require no pre-authored config/keyring/snapshot/package/payload/canary files, apply the <=30 repository default rule, install the PATH command, and end with the successful welcome/operator handoff.
 
 Issue #192 is the integration owner for this missing fresh-host layer. #115, #116, #169, #178, and #180 must treat it as part of whole-path acceptance. CUDA issue #186 remains post-recovery.
