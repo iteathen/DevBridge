@@ -47,3 +47,27 @@ Future mirrors, offline bundles, or other artifact services can implement the sa
 ## Construction integration
 
 #171 consumes only the semantic image identity/generation already present in the #170 declaration and calls `ensure exact image available` before allocating provider storage. It does not select external image repositories, URLs, tags, or transport object names.
+
+## Fresh-host image supply is a separate installation concern
+
+Passing the artifact/recovery tests does not prove that a production Windows or Linux image subject actually exists. Issue #192 owns the blank-slate installation path that establishes a real canonical image and its durable reconstruction authority.
+
+Keep these authorities separate:
+
+- **construction authority** — approved source media + deterministic recipe;
+- **distribution authority** — whether/where prepared bytes may be stored;
+- **Windows activation authority** — how a materialized Windows VM is activated;
+- **environment declaration authority** — exact image/profile/bootstrap/resource policy.
+
+The artifact bundle contains no Windows product key, MAK, KMS secret, directory/subscription credential, or other activation secret. Activation is applied after environment materialization and does not participate in image identity.
+
+A regular-user GitHub source must not be hard-coded to a developer-owned repository. The initial setup proposal may derive a private repository such as `<authenticated-owner>/devbridge-base-images`, subject to local approval and credential capability. The exact release numeric subject and pinned manifest digest remain the remote artifact authority after publication.
+
+Prepared Windows image bytes have an additional distribution-rights gate. Private hosting is not itself proof that the selected Microsoft source/license permits publishing the generalized VHDX. Windows therefore supports two recovery-source modes without changing the generic image contract:
+
+1. **remote artifact** — exact prepared bytes are permitted, published, redownloaded, reconstructed, verified, and admitted through this #178 path;
+2. **local reconstruction** — durable local authority retains the exact approved source-media identity and construction recipe, reconstructs the expected canonical image locally, verifies its semantic identity, then admits it to the same immutable cache.
+
+If neither an exact verified cache entry, an approved remote artifact, nor the exact required reconstruction source is available, image availability reports a typed blocker and never substitutes another generation.
+
+See `docs/fresh-host-image-provisioning.md` and issue #192 for the installation/licensing/re-entry plan.
