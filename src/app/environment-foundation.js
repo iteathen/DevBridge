@@ -42,10 +42,12 @@ export function createExecutionProfileResourceGuard(foundation, {
   });
 }
 
-function withRebuildLifecycle(foundation, lifecycle) {
+function withRecoveryLifecycle(foundation, lifecycle) {
   return new Proxy(foundation, {
     get(target, property) {
       if (property === 'rebuildEnvironment') return (identity, options) => lifecycle.rebuild(identity, options);
+      if (property === 'replaceEnvironment') return (identity, options) => lifecycle.replace(identity, options);
+      if (property === 'retireSupersededEnvironment') return (identity, options) => lifecycle.retireSuperseded(identity, options);
       const value = Reflect.get(target, property, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
@@ -104,5 +106,5 @@ export async function createEnvironmentFoundation({
     operations,
   });
   const guarded = createExecutionProfileResourceGuard(new EnvironmentFoundation({ identity, control, images, lifecycle }));
-  return withRebuildLifecycle(guarded, lifecycle);
+  return withRecoveryLifecycle(guarded, lifecycle);
 }
