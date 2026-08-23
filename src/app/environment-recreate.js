@@ -70,6 +70,7 @@ export function createEnvironmentRecreateRetirement({ state, journal } = {}) {
       const current = implementation(input.implementationGeneration, 'environment recreate current implementation generation');
       const previous = implementation(input.previousImplementationGeneration, 'environment recreate previous implementation generation');
       const operationId = requestIdentity(input.operationId);
+      const approvedSubject = requestIdentity(input.authorizationSubject);
       if (current === previous) throw new Error('environment recreate retirement cannot target the current generation');
       const active = await localJournal.current(input.environmentIdentity);
       const verification = active?.entries?.at(-1);
@@ -78,6 +79,7 @@ export function createEnvironmentRecreateRetirement({ state, journal } = {}) {
         throw new Error('environment recreate retirement is not bound to the verified active recreate lifecycle');
       }
       if (pre?.implementationGeneration !== previous || verification.implementationGeneration !== current) throw new Error('environment recreate retirement generation evidence changed');
+      if (pre?.subjects?.[0] !== approvedSubject || verification?.subjects?.[0] !== approvedSubject) throw new Error('environment recreate retirement authorization evidence changed');
       const result = await localState.retireSupersededEnvironment(current, { supersededIdentity: previous });
       if (result?.identity !== previous || (result?.removed !== true && result?.absent !== true)) throw new Error('environment recreate retirement did not reconcile the exact superseded generation');
       return Object.freeze({ ready: true, identity: previous, removed: result.removed === true, absent: result.absent === true });
