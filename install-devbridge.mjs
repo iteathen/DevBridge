@@ -10,6 +10,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -36,7 +37,7 @@ const SCRUBBED_GIT_ENVIRONMENT = Object.freeze([
 ]);
 
 function fail(message) { throw new Error(message); }
-function sha256(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
+function digest(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
 
 export function assertSupportedNode(version = process.versions.node) {
   const parts = String(version).split('.').map((value) => Number.parseInt(value, 10));
@@ -63,9 +64,9 @@ export function normalizeInstallRef(value) {
   const ref = String(value ?? '');
   const exact = ref.toLowerCase();
   if (EXACT_HEAD.test(exact)) return Object.freeze({ kind: 'exact', value: exact });
-  if (!SAFE_REF.test(ref) || ref.startsWith('-') || ref.includes('..') || ref.includes('\\') || ref.endsWith('/') || ref.endsWith('.lock')) {
-    fail('Install ref is invalid.');
-  }
+  const segments = ref.split('/');
+  if (!SAFE_REF.test(ref) || ref.startsWith('-') || ref.includes('\\') || ref.endsWith('/') || ref.endsWith('.lock') ||
+      segments.some((segment) => segment === '' || segment === '.' || segment === '..')) fail('Install ref is invalid.');
   return Object.freeze({ kind: 'branch', value: ref });
 }
 
@@ -90,10 +91,9 @@ export function parseInstallArgs(argv, { environment = process.env, homeDirector
     }
     fail(`Unsupported installer argument: ${value}`);
   }
-  const resolvedHome = path.resolve(expandHome(String(home), homeDirectory));
   return Object.freeze({
     help,
-    home: resolvedHome,
+    home: path.resolve(expandHome(String(home), homeDirectory)),
     selector: selector ?? Object.freeze({ kind: 'branch', value: 'main' }),
     pinSelectedRunner: selector != null,
   });
@@ -123,21 +123,18 @@ function defaultRunner(executable, args, options) {
   });
 }
 
-function gitPrefix(allowLocalSource) {
-  return [
-    '-c', 'credential.helper=',
-    '-c', 'protocol.ext.allow=never',
-    '-c', `protocol.file.allow=${allowLocalSource ? 'always' : 'never'}`,
-  ];
-}
-
 function runGit(args, {
   cwd = undefined,
   runner = defaultRunner,
   allowLocalSource = false,
   environment = process.env,
 } = {}) {
-  const fullArgs = [...gitPrefix(allowLocalSource), ...args];
+  const fullArgs = [
+    '-c', 'credential.helper=',
+    '-c', 'protocol.ext.allow=never',
+    '-c', `protocol.file.allow=${allowLocalSource ? 'always' : 'never'}`,
+    ...args,
+  ];
   const result = runner('git', fullArgs, {
     cwd,
     env: managedGitEnvironment(environment),
@@ -197,8 +194,7 @@ function checkoutExact(subject, destination, {
 }
 
 function walkFiles(root, current = root, result = []) {
-  const names = (awaitableReadDirectory(current));
-  for (const name of names) {
+  for (const name of readdirSync(current).sort()) {
     const candidate = path.join(current, name);
     const info = lstatSync(candidate);
     if (info.isSymbolicLink()) fail('Entry component contains a symbolic link.');
@@ -209,18 +205,6 @@ function walkFiles(root, current = root, result = []) {
   return result;
 }
 
-function awaitableReadDirectory(directory) {
-  return readDirectorySync(directory);
-}
-
-function readDirectorySync(directory) {
-  return Object.keys(Object.fromEntries(readDirectoryEntries(directory).map((name) => [name, true]))).sort();
-}
-
-function readDirectoryEntries(directory) {
-  return require('node:fs').readdirSync(directory);
-}
-
 function componentManifest(root, head, sourceRepository) {
   const files = walkFiles(root).filter((relative) => relative !== '.devbridge-entry-install.json').sort();
   return Object.freeze({
@@ -229,7 +213,7 @@ function componentManifest(root, head, sourceRepository) {
     sourceRepository: normalizedRemote(sourceRepository),
     files: files.map((relative) => {
       const bytes = readFileSync(path.join(root, ...relative.split('/')));
-      return Object.freeze({ path: relative, bytes: bytes.length, sha256: sha256(bytes) });
+      return Object.freeze({ path: relative, bytes: bytes.length, sha256: digest(bytes) });
     }),
   });
 }
@@ -252,13 +236,14 @@ export function verifyInstalledComponent(root, expectedHead, sourceRepository = 
         manifest.sourceRepository !== normalizedRemote(sourceRepository) || !Array.isArray(manifest.files) || manifest.files.length < 2) return false;
     const listed = new Set();
     for (const record of manifest.files) {
-      if (!record || typeof record.path !== 'string' || record.path.startsWith('/') || record.path.includes('..') || listed.has(record.path)) return false;
+      const segments = typeof record?.path === 'string' ? record.path.split('/') : [];
+      if (segments.length < 1 || segments.some((segment) => !segment || segment === '.' || segment === '..') || listed.has(record.path)) return false;
       listed.add(record.path);
-      const file = path.join(root, ...record.path.split('/'));
+      const file = path.join(root, ...segments);
       const fileInfo = lstatSync(file);
       if (!fileInfo.isFile() || fileInfo.isSymbolicLink()) return false;
       const bytes = readFileSync(file);
-      if (bytes.length !== record.bytes || sha256(bytes) !== record.sha256) return false;
+      if (bytes.length !== record.bytes || digest(bytes) !== record.sha256) return false;
     }
     const actual = walkFiles(root).filter((relative) => relative !== '.devbridge-entry-install.json').sort();
     if (actual.length !== listed.size || actual.some((relative) => !listed.has(relative))) return false;
@@ -282,12 +267,16 @@ function copyComponent(checkout, destination) {
   }
 }
 
+function safeExistingFile(candidate) {
+  if (!existsSync(candidate)) return;
+  const info = lstatSync(candidate);
+  if (!info.isFile() || info.isSymbolicLink()) fail(`Refusing to replace unsafe installer target: ${path.basename(candidate)}`);
+}
+
 function atomicReplaceText(target, content, { mode = 0o600, previous = null } = {}) {
   mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-  if (existsSync(target)) {
-    const info = lstatSync(target);
-    if (!info.isFile() || info.isSymbolicLink()) fail(`Refusing to replace unsafe installer target: ${path.basename(target)}`);
-  }
+  safeExistingFile(target);
+  if (previous) safeExistingFile(previous);
   const next = `${target}.next-${process.pid}`;
   const old = `${target}.old-${process.pid}`;
   writeFileSync(next, content, { encoding: 'utf8', mode, flag: 'wx' });
