@@ -1,0 +1,128 @@
+name: Reusable Ox Alpha AI Task
+
+on:
+  workflow_call:
+    inputs:
+      task:
+        description: "Describe the coding task for Ox Alpha"
+        required: true
+        type: string
+    secrets:
+      OPENROUTER_API_KEY:
+        required: true
+
+jobs:
+  ox-alpha:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Verify OpenRouter key is configured
+        shell: bash
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "::error::Add repository secret OPENROUTER_API_KEY before running this workflow."
+            exit 1
+          fi
+
+      - name: Check out default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned Aider
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check "aider-chat==0.86.2"
+
+      - name: Prepare isolated Aider configuration
+        shell: bash
+        run: |
+          : > "$RUNNER_TEMP/aider.env"
+          printf '%s\n' '[]' > "$RUNNER_TEMP/aider-model-settings.yml"
+          : > "$RUNNER_TEMP/aider.conf.yml"
+
+      - name: Run Ox Alpha
+        shell: bash
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          AI_TASK: ${{ inputs.task }}
+        run: |
+          {
+            printf '%s\n\n' "Follow the repository's checked-in instructions and engineering rules. Make only the code/documentation changes needed for the task. Do not execute shell commands. Do not modify the Ox Alpha workflow unless the task explicitly asks for that."
+            printf '%s\n' "$AI_TASK"
+          } > "$RUNNER_TEMP/ai-task.txt"
+
+          AIDER_ARGS=(
+            --model openrouter/stealth/ox-alpha
+            --message-file "$RUNNER_TEMP/ai-task.txt"
+            --yes-always
+            --no-suggest-shell-commands
+            --no-auto-commits
+            --no-dirty-commits
+            --no-gitignore
+            --no-detect-urls
+            --disable-playwright
+            --no-pretty
+            --no-stream
+            --config "$RUNNER_TEMP/aider.conf.yml"
+            --env-file "$RUNNER_TEMP/aider.env"
+            --model-settings-file "$RUNNER_TEMP/aider-model-settings.yml"
+            --input-history-file "$RUNNER_TEMP/aider-input.history"
+            --chat-history-file "$RUNNER_TEMP/aider-chat.history.md"
+            --llm-history-file "$RUNNER_TEMP/aider-llm.history"
+          )
+
+          for instruction_file in AGENTS.md CONTRIBUTING.md; do
+            if [ -f "$instruction_file" ]; then
+              AIDER_ARGS+=(--read "$instruction_file")
+            fi
+          done
+
+          aider "${AIDER_ARGS[@]}"
+
+      - name: Create pull request when files changed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AI_TASK: ${{ inputs.task }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Ox Alpha completed without repository changes." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          BRANCH="ai/ox-alpha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "AI task: Ox Alpha changes"
+
+          gh auth setup-git
+          git push --set-upstream origin "$BRANCH"
+
+          {
+            printf '%s\n\n' "Automated Ox Alpha task requested through the manual GitHub Actions workflow."
+            printf '%s\n\n' "Task:"
+            printf '%s\n' "$AI_TASK"
+            printf '\n%s\n' "Review and test these changes before merging."
+          } > "$RUNNER_TEMP/pr-body.md"
+
+          PR_URL="$(gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$BRANCH" \
+            --title "AI task: Ox Alpha changes" \
+            --body-file "$RUNNER_TEMP/pr-body.md")"
+
+          printf 'Created pull request: %s\n' "$PR_URL" >> "$GITHUB_STEP_SUMMARY"
