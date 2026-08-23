@@ -64,7 +64,7 @@ export async function createEnvironmentConstructionRuntime({
     subject: policy.subject,
     journal: localLifecycle.journal,
   }) : null;
-  const resetRetirement = resetAvailable ? createEnvironmentResetRetirement({ state: localFoundation }) : null;
+  const resetRetirement = resetAvailable ? createEnvironmentResetRetirement({ state: localFoundation, journal: localLifecycle.journal }) : null;
   const preparation = createEnvironmentConstructionPreparation({
     stateDirectory,
     platform,
