@@ -835,8 +835,7 @@ export class PersistentEnvironments {
         if (operation.kind === 'provision') await this.#completeProvision(catalog, operation);
         else if (operation.kind === 'start' || operation.kind === 'stop') await this.#completeTransition(catalog, operation);
         else if (operation.kind === 'rotate') await this.#completeRotate(catalog, operation);
-        else if (operation.kind === 'replace') await this.#completeReplacement(catalog, operation);
-        else if (operation.kind === 'rebuild') await this.#completeRebuild(catalog, operation);
+        else if (operation.kind === 'replace' || operation.kind === 'rebuild') continue;
         else if (operation.kind === 'remove') await this.#completeRemove(catalog, operation);
         else throw new Error(`unknown environment operation kind: ${operation.kind}`);
         catalog = await this.#load();
