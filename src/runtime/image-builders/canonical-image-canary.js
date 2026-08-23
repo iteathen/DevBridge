@@ -20,6 +20,7 @@ const PHASES = new Set([
   'published',
   'completed',
 ]);
+const CONSTRUCTION_STATES = new Set(['absent', 'planned', 'prepared', 'running', 'active', 'accepted', 'retained']);
 const MAX_OPAQUE_BYTES = 4 * 1024 * 1024;
 const MAX_EVIDENCE_BYTES = 256 * 1024;
 
@@ -130,6 +131,13 @@ function requireIdentityResult(raw, identity, name) {
   return raw;
 }
 
+function constructionObservation(raw, identity) {
+  const value = onlyKeys(raw, new Set(['identity', 'state']), 'canary construction observation');
+  if (value.identity !== identity) throw new Error('canary construction observation identity changed');
+  if (typeof value.state !== 'string' || !CONSTRUCTION_STATES.has(value.state)) throw new Error('canary construction observation state is invalid');
+  return Object.freeze({ identity, state: value.state });
+}
+
 function normalizeImageReceipt(raw, output) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || typeof raw.identity !== 'string' || !IMAGE.test(raw.identity)) {
     throw new Error('canary image admission returned an invalid identity');
@@ -199,6 +207,10 @@ export class CanonicalImageCanary {
     return next;
   }
 
+  async #observe(identity) {
+    return constructionObservation(await this.#construction.observe(identity), identity);
+  }
+
   async inspect(rawRequest) {
     const request = normalizeRequest(rawRequest);
     const requestDigest = stableDigest(request);
@@ -233,40 +245,64 @@ export class CanonicalImageCanary {
     if (record.phase === 'completed') return publicStatus(record);
 
     if (record.phase === 'finalization-attempted') {
-      requireIdentityResult(await this.#construction.observe(request.identity), request.identity, 'canary finalization observation');
+      await this.#observe(request.identity);
       return publicStatus(record, 'destructive finalization was attempted without a durable completion receipt; exact reconciliation is required before reuse or admission');
     }
 
     if (record.phase === 'planned') {
+      const observed = await this.#observe(request.identity);
+      if (observed.state === 'prepared') {
+        record = await this.#save(record, 'prepared');
+        return publicStatus(record);
+      }
+      if (!['absent', 'planned'].includes(observed.state)) throw new Error(`canary construction state ${observed.state} cannot reconcile planned preparation`);
       requireIdentityResult(await this.#construction.prepare(structuredClone(request.work)), request.identity, 'canary preparation');
       record = await this.#save(record, 'prepared');
       return publicStatus(record);
     }
 
     if (record.phase === 'prepared') {
+      const observed = await this.#observe(request.identity);
+      if (observed.state === 'running') {
+        record = await this.#save(record, 'running');
+        return publicStatus(record);
+      }
+      if (observed.state !== 'prepared') throw new Error(`canary construction state ${observed.state} cannot reconcile start`);
       requireIdentityResult(await this.#construction.start(request.identity), request.identity, 'canary start');
       record = await this.#save(record, 'running');
       return publicStatus(record);
     }
 
     if (record.phase === 'running') {
+      const observed = await this.#observe(request.identity);
+      if (observed.state === 'active') {
+        record = await this.#save(record, 'active');
+        return publicStatus(record);
+      }
+      if (observed.state !== 'running') throw new Error(`canary construction state ${observed.state} cannot reconcile activation`);
       requireIdentityResult(await this.#construction.activate(request.identity), request.identity, 'canary activation');
       record = await this.#save(record, 'active');
       return publicStatus(record);
     }
 
     if (record.phase === 'active') {
+      const observed = await this.#observe(request.identity);
+      if (observed.state !== 'active') throw new Error(`canary construction state ${observed.state} cannot support probing`);
       const probe = boundedJson(await this.#qualification.probe({ target: request.identity, expected: structuredClone(request.check) }), 'canary probe evidence', MAX_EVIDENCE_BYTES);
       record = await this.#save(record, 'probed', { probe });
       return publicStatus(record);
     }
 
     if (record.phase === 'probed') {
+      const observed = await this.#observe(request.identity);
+      if (observed.state !== 'active') throw new Error(`canary construction state ${observed.state} cannot support finalization planning`);
       record = await this.#save(record, 'finalization-planned');
       return publicStatus(record);
     }
 
     if (record.phase === 'finalization-planned') {
+      const observed = await this.#observe(request.identity);
+      if (observed.state !== 'active') throw new Error(`canary construction state ${observed.state} cannot support finalization`);
       record = await this.#save(record, 'finalization-attempted');
       const finalization = boundedJson(await this.#qualification.finalize(request.identity), 'canary finalization evidence', MAX_EVIDENCE_BYTES);
       record = await this.#save(record, 'finalized', { finalization });
@@ -274,6 +310,12 @@ export class CanonicalImageCanary {
     }
 
     if (record.phase === 'finalized') {
+      const observed = await this.#observe(request.identity);
+      if (observed.state === 'accepted') {
+        record = await this.#save(record, 'accepted');
+        return publicStatus(record);
+      }
+      if (observed.state !== 'active') throw new Error(`canary construction state ${observed.state} cannot reconcile acceptance`);
       const evidence = { probe: structuredClone(record.probe), finalization: structuredClone(record.finalization) };
       requireIdentityResult(await this.#construction.accept(request.identity, evidence), request.identity, 'canary acceptance');
       record = await this.#save(record, 'accepted');
@@ -281,6 +323,12 @@ export class CanonicalImageCanary {
     }
 
     if (record.phase === 'accepted') {
+      const observed = await this.#observe(request.identity);
+      if (observed.state === 'retained') {
+        record = await this.#save(record, 'retained');
+        return publicStatus(record);
+      }
+      if (observed.state !== 'accepted') throw new Error(`canary construction state ${observed.state} cannot reconcile retention`);
       const retained = requireIdentityResult(await this.#construction.retain(request.identity), request.identity, 'canary retention');
       if (typeof retained.location !== 'string' || retained.location.length === 0 || retained.location.includes('\0')) throw new Error('canary retention did not expose a bounded admission source');
       record = await this.#save(record, 'retained');
@@ -288,6 +336,8 @@ export class CanonicalImageCanary {
     }
 
     if (record.phase === 'retained') {
+      const observed = await this.#observe(request.identity);
+      if (observed.state !== 'retained') throw new Error(`canary construction state ${observed.state} cannot support image admission`);
       const retained = requireIdentityResult(await this.#construction.retain(request.identity), request.identity, 'canary retained observation');
       if (typeof retained.location !== 'string' || retained.location.length === 0 || retained.location.includes('\0')) throw new Error('canary retained observation did not expose a bounded admission source');
       const published = await this.#images.publish({
