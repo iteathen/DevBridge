@@ -1,12 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { SshAccessMaterial } from '../src/runtime/ssh-access-material.js';
 
 const PRIVATE = '-----BEGIN OPENSSH PRIVATE KEY-----\nZmFrZQ==\n-----END OPENSSH PRIVATE KEY-----\n';
 const PUBLIC = `ssh-ed25519 ${'A'.repeat(44)}`;
+
+async function missing(value) {
+  try { await lstat(value); return false; }
+  catch (error) { if (error?.code === 'ENOENT') return true; throw error; }
+}
 
 test('SSH access material keeps a stable client identity and rotates only ephemeral guest host seed', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-ssh-material-'));
@@ -49,6 +54,34 @@ test('SSH access material refuses a partial persisted client identity', async ()
       await writeFile(connection.identityFile, PRIVATE);
     });
     await assert.rejects(() => material.prepare('env-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'), /incomplete/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('SSH access material discards only the exact target-owned client state', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-ssh-discard-'));
+  try {
+    const invoke = async ({ arguments: args }) => {
+      const base = args.at(-1);
+      await writeFile(base, PRIVATE, { mode: 0o600 });
+      await writeFile(`${base}.pub`, `${PUBLIC}\n`, { mode: 0o600 });
+      return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '', stderr: '' };
+    };
+    const material = new SshAccessMaterial({ directory: root, invoke, executable: 'ssh-keygen-test' });
+    const firstTarget = 'env-cccccccccccccccccccccccccccccccc';
+    const secondTarget = 'env-dddddddddddddddddddddddddddddddd';
+    const first = await material.prepare(firstTarget);
+    const second = await material.prepare(secondTarget);
+    await first.cleanup();
+    await second.cleanup();
+    const firstConnection = material.connection(firstTarget);
+    const secondConnection = material.connection(secondTarget);
+
+    assert.deepEqual(await material.discard(firstTarget), { changed: true, absent: false });
+    assert.equal(await missing(firstConnection.identityFile), true);
+    assert.equal(await missing(secondConnection.identityFile), false);
+    assert.deepEqual(await material.discard(firstTarget), { changed: false, absent: true });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
