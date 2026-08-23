@@ -19,13 +19,16 @@ import { pathToFileURL } from 'node:url';
 export const BOOTSTRAP_PROTOCOL = 'devbridge/zero-state-bootstrap-v1';
 export const SOURCE_ID = 'iteathen/DevBridge';
 export const STAGE_PATH = 'install-devbridge.mjs';
+export const SOURCE_STAGE_PATH = 'src/bootstrap/exact-source-acquisition.mjs';
 
 const MINIMUM_NODE = Object.freeze([22, 16, 0]);
 const EXACT_HEAD = /^[0-9a-f]{40}$/u;
 const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/u;
 const MAX_RECORD_BYTES = 4096;
 const MAX_STAGE_BYTES = 512 * 1024;
+const MAX_SOURCE_STAGE_BYTES = 128 * 1024;
 const USER_AGENT = 'DevBridge-zero-state-bootstrap/1';
+const SOURCE_RAW_BASE = 'https://raw.githubusercontent.com/iteathen/DevBridge/';
 
 function fail(message) { throw new Error(message); }
 
@@ -173,6 +176,11 @@ async function requestBytes(url, { fetcher = globalThis.fetch, name, maxBytes, a
   return readBoundedResponse(response, name, maxBytes);
 }
 
+function exactRawUrl(head, relative) {
+  const encoded = String(relative).split('/').map((segment) => encodeURIComponent(segment)).join('/');
+  return `${SOURCE_RAW_BASE}${head}/${encoded}`;
+}
+
 export async function resolveBootstrapSubject(selector, { fetcher = globalThis.fetch } = {}) {
   const normalized = normalizeBootstrapRef(selector?.value ?? selector);
   if (normalized.kind === 'exact') return normalized.value;
@@ -255,7 +263,7 @@ export function clearBootstrapSelection(subject) {
 export async function fetchBootstrapStage(head, { fetcher = globalThis.fetch } = {}) {
   const exact = String(head ?? '').toLowerCase();
   if (!EXACT_HEAD.test(exact)) fail('Bootstrap stage requires an exact subject.');
-  return requestBytes(`https://raw.githubusercontent.com/iteathen/DevBridge/${exact}/${STAGE_PATH}`, {
+  return requestBytes(exactRawUrl(exact, STAGE_PATH), {
     fetcher,
     name: 'Bootstrap stage',
     maxBytes: MAX_STAGE_BYTES,
@@ -267,10 +275,53 @@ async function defaultLoadStage(stagePath) {
   return import(pathToFileURL(stagePath).href);
 }
 
-function writeStage(bootstrapRoot, head, bytes) {
-  const stagePath = path.join(bootstrapRoot, `.stage-${head.slice(0, 12)}-${process.pid}-${randomUUID()}.mjs`);
+function writeStage(bootstrapRoot, head, bytes, role = 'stage') {
+  const stagePath = path.join(bootstrapRoot, `.${role}-${head.slice(0, 12)}-${process.pid}-${randomUUID()}.mjs`);
   writeFileSync(stagePath, bytes, { mode: 0o600, flag: 'wx', flush: true });
   return stagePath;
+}
+
+async function defaultPrepareSource(stage, subject, { fetcher, bootstrapRoot }) {
+  if (!Array.isArray(stage?.INSTALLED_COMPONENT_FILES) || stage.INSTALLED_COMPONENT_FILES.length < 1) {
+    fail('Bootstrap stage source contract is unavailable.');
+  }
+  const helperBytes = await requestBytes(exactRawUrl(subject.head, SOURCE_STAGE_PATH), {
+    fetcher,
+    name: 'Bootstrap source-acquisition stage',
+    maxBytes: MAX_SOURCE_STAGE_BYTES,
+    accept: 'application/octet-stream',
+  });
+  const helperPath = writeStage(bootstrapRoot, subject.head, helperBytes, 'source-stage');
+  const destination = path.join(
+    bootstrapRoot,
+    `.source-${subject.head.slice(0, 12)}-${process.pid}-${randomUUID()}`,
+  );
+  try {
+    const helper = await import(pathToFileURL(helperPath).href);
+    if (typeof helper?.materializeExactSource !== 'function') {
+      fail('Bootstrap source-acquisition contract is unavailable.');
+    }
+    const prepared = await helper.materializeExactSource({
+      revision: subject.head,
+      paths: stage.INSTALLED_COMPONENT_FILES,
+      destination,
+      sourceBase: SOURCE_RAW_BASE,
+      fetcher,
+      userAgent: USER_AGENT,
+    });
+    return Object.freeze({
+      head: subject.head,
+      root: prepared.root,
+      cleanup() {
+        try { rmSync(prepared.root, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 }); } catch {}
+        try { rmSync(helperPath, { force: true }); } catch {}
+      },
+    });
+  } catch (error) {
+    try { rmSync(destination, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 }); } catch {}
+    try { rmSync(helperPath, { force: true }); } catch {}
+    throw error;
+  }
 }
 
 export async function runZeroStateBootstrap(argv, {
@@ -278,6 +329,7 @@ export async function runZeroStateBootstrap(argv, {
   homeDirectory = homedir(),
   fetcher = globalThis.fetch,
   loadStage = defaultLoadStage,
+  prepareSource = defaultPrepareSource,
 } = {}) {
   assertSupportedNode();
   const options = parseBootstrapArgs(argv, { environment, homeDirectory });
@@ -292,18 +344,26 @@ export async function runZeroStateBootstrap(argv, {
     if (typeof stage?.installDevBridge !== 'function' || typeof stage?.runInstalledSetup !== 'function') {
       fail('Bootstrap stage contract is unavailable.');
     }
-    const installed = stage.installDevBridge({
-      home: subject.home,
-      selector: Object.freeze({ kind: 'exact', value: subject.head }),
-      pinSelectedRunner: options.explicitSelector,
-    }, { environment });
+    const prepared = await prepareSource(stage, subject, { fetcher, bootstrapRoot });
+    try {
+      const installed = stage.installDevBridge({
+        home: subject.home,
+        selector: Object.freeze({ kind: 'exact', value: subject.head }),
+        pinSelectedRunner: options.explicitSelector,
+      }, {
+        environment,
+        preparedSource: Object.freeze({ head: subject.head, root: prepared.root }),
+      });
 
-    clearBootstrapSelection(subject);
+      clearBootstrapSelection(subject);
 
-    if (!options.runSetup) return Object.freeze({ help: false, status: 0, installed, subject });
-    const status = stage.runInstalledSetup(installed, { environment });
-    if (!Number.isInteger(status)) fail('Bootstrap continuation exited without a bounded status code.');
-    return Object.freeze({ help: false, status, installed, subject });
+      if (!options.runSetup) return Object.freeze({ help: false, status: 0, installed, subject });
+      const status = stage.runInstalledSetup(installed, { environment });
+      if (!Number.isInteger(status)) fail('Bootstrap continuation exited without a bounded status code.');
+      return Object.freeze({ help: false, status, installed, subject });
+    } finally {
+      try { prepared.cleanup?.(); } catch {}
+    }
   } finally {
     try { rmSync(stagePath, { force: true }); } catch {}
   }
