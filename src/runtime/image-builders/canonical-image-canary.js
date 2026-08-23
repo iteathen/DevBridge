@@ -9,13 +9,13 @@ const SHA256 = /^[a-f0-9]{64}$/u;
 const PHASES = new Set([
   'planned',
   'prepared',
-  'installing',
-  'qualifying',
+  'running',
+  'active',
   'probed',
   'finalization-planned',
   'finalization-attempted',
   'finalized',
-  'qualified',
+  'accepted',
   'retained',
   'published',
   'completed',
@@ -65,10 +65,12 @@ function boundedJson(value, name, maxBytes = MAX_OPAQUE_BYTES) {
 }
 
 function normalizeProvenance(raw) {
-  const value = onlyKeys(raw, new Set(Object.keys(raw ?? {})), 'canary image provenance');
-  const normalized = {};
-  const entries = Object.entries(value);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('canary image provenance must be an object');
+  const prototype = Object.getPrototypeOf(raw);
+  if (prototype !== Object.prototype && prototype !== null) throw new TypeError('canary image provenance must be a plain object');
+  const entries = Object.entries(raw).sort(([left], [right]) => left.localeCompare(right));
   if (entries.length === 0 || entries.length > 32) throw new TypeError('canary image provenance is invalid');
+  const normalized = {};
   for (const [key, entry] of entries) {
     safeId(key, 'canary image provenance key');
     if (typeof entry !== 'string' || entry.includes('\0') || Buffer.byteLength(entry, 'utf8') > 4096) throw new TypeError(`canary image provenance.${key} is invalid`);
@@ -108,7 +110,7 @@ function assertJournal(value) {
 }
 
 function assertConstruction(value) {
-  const methods = ['prepare', 'status', 'startInstall', 'bootInstalled', 'markQualified', 'retain'];
+  const methods = ['prepare', 'observe', 'start', 'activate', 'accept', 'retain'];
   if (!value || methods.some((name) => typeof value[name] !== 'function')) throw new TypeError('canary construction contract is incomplete');
   return value;
 }
@@ -119,7 +121,7 @@ function assertQualification(value) {
 }
 
 function assertImages(value) {
-  if (!value || typeof value.publishImage !== 'function' || typeof value.verifyImage !== 'function') throw new TypeError('canary image admission contract is incomplete');
+  if (!value || typeof value.publish !== 'function' || typeof value.verify !== 'function') throw new TypeError('canary image admission contract is incomplete');
   return value;
 }
 
@@ -231,7 +233,7 @@ export class CanonicalImageCanary {
     if (record.phase === 'completed') return publicStatus(record);
 
     if (record.phase === 'finalization-attempted') {
-      requireIdentityResult(await this.#construction.status(request.identity), request.identity, 'canary finalization observation');
+      requireIdentityResult(await this.#construction.observe(request.identity), request.identity, 'canary finalization observation');
       return publicStatus(record, 'destructive finalization was attempted without a durable completion receipt; exact reconciliation is required before reuse or admission');
     }
 
@@ -242,18 +244,18 @@ export class CanonicalImageCanary {
     }
 
     if (record.phase === 'prepared') {
-      requireIdentityResult(await this.#construction.startInstall(request.identity), request.identity, 'canary start');
-      record = await this.#save(record, 'installing');
+      requireIdentityResult(await this.#construction.start(request.identity), request.identity, 'canary start');
+      record = await this.#save(record, 'running');
       return publicStatus(record);
     }
 
-    if (record.phase === 'installing') {
-      requireIdentityResult(await this.#construction.bootInstalled(request.identity), request.identity, 'canary activation');
-      record = await this.#save(record, 'qualifying');
+    if (record.phase === 'running') {
+      requireIdentityResult(await this.#construction.activate(request.identity), request.identity, 'canary activation');
+      record = await this.#save(record, 'active');
       return publicStatus(record);
     }
 
-    if (record.phase === 'qualifying') {
+    if (record.phase === 'active') {
       const probe = boundedJson(await this.#qualification.probe({ target: request.identity, expected: structuredClone(request.check) }), 'canary probe evidence', MAX_EVIDENCE_BYTES);
       record = await this.#save(record, 'probed', { probe });
       return publicStatus(record);
@@ -273,12 +275,12 @@ export class CanonicalImageCanary {
 
     if (record.phase === 'finalized') {
       const evidence = { probe: structuredClone(record.probe), finalization: structuredClone(record.finalization) };
-      requireIdentityResult(await this.#construction.markQualified(request.identity, evidence), request.identity, 'canary qualification acceptance');
-      record = await this.#save(record, 'qualified');
+      requireIdentityResult(await this.#construction.accept(request.identity, evidence), request.identity, 'canary acceptance');
+      record = await this.#save(record, 'accepted');
       return publicStatus(record);
     }
 
-    if (record.phase === 'qualified') {
+    if (record.phase === 'accepted') {
       const retained = requireIdentityResult(await this.#construction.retain(request.identity), request.identity, 'canary retention');
       if (typeof retained.location !== 'string' || retained.location.length === 0 || retained.location.includes('\0')) throw new Error('canary retention did not expose a bounded admission source');
       record = await this.#save(record, 'retained');
@@ -288,7 +290,7 @@ export class CanonicalImageCanary {
     if (record.phase === 'retained') {
       const retained = requireIdentityResult(await this.#construction.retain(request.identity), request.identity, 'canary retained observation');
       if (typeof retained.location !== 'string' || retained.location.length === 0 || retained.location.includes('\0')) throw new Error('canary retained observation did not expose a bounded admission source');
-      const published = await this.#images.publishImage({
+      const published = await this.#images.publish({
         profile: request.output.profile,
         generation: request.output.generation,
         source: retained.location,
@@ -300,7 +302,7 @@ export class CanonicalImageCanary {
     }
 
     if (record.phase === 'published') {
-      const verified = await this.#images.verifyImage(record.image.identity);
+      const verified = await this.#images.verify(record.image.identity);
       if (!verified || verified.identity !== record.image.identity || verified.usable !== true || verified.verified !== true) throw new Error('canary published image did not verify through the admission boundary');
       record = await this.#save(record, 'completed');
       return publicStatus(record);
