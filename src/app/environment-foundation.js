@@ -47,6 +47,7 @@ function withRecoveryLifecycle(foundation, lifecycle) {
     get(target, property) {
       if (property === 'rebuildEnvironment') return (identity, options) => lifecycle.rebuild(identity, options);
       if (property === 'replaceEnvironment') return (identity, options) => lifecycle.replace(identity, options);
+      if (property === 'recreateEnvironment') return (identity, options) => lifecycle.recreate(identity, options);
       if (property === 'retireSupersededEnvironment') return (identity, options) => lifecycle.retireSuperseded(identity, options);
       const value = Reflect.get(target, property, target);
       return typeof value === 'function' ? value.bind(target) : value;
