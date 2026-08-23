@@ -43,8 +43,11 @@ function assertManifestMedia(manifest) {
   if (digest !== expected) throw new Error('Ubuntu release manifest digest does not match runtime-owned source policy');
 }
 
-async function verifyFiles({ keyring, manifest, signature, invoke }) {
-  return createDetachedSignatureVerifier({ invoke, keyring }).verify({
+async function verifyFiles({ keyring, manifest, signature, invoke, signatureVerifierExecutable }) {
+  const options = { invoke, keyring };
+  if (signatureVerifierExecutable != null) options.executable = signatureVerifierExecutable;
+  const verify = createDetachedSignatureVerifier(options);
+  return verify({
     manifest,
     signature,
     expectedFingerprint: UBUNTU_SETUP_SOURCE_POLICY.signerFingerprint,
@@ -55,10 +58,14 @@ export async function establishUbuntuReleaseAuthority({
   home,
   fetchImpl = globalThis.fetch,
   invoke = invokeCommand,
+  signatureVerifierExecutable = null,
 } = {}) {
   if (typeof home !== 'string' || home.length === 0 || home.includes('\0') || !path.isAbsolute(home)) throw new TypeError('DevBridge home must be an absolute local path');
   if (typeof fetchImpl !== 'function') throw new TypeError('Ubuntu authority fetch implementation is invalid');
   if (typeof invoke !== 'function') throw new TypeError('Ubuntu authority invocation contract is invalid');
+  if (signatureVerifierExecutable != null && (typeof signatureVerifierExecutable !== 'string' || signatureVerifierExecutable.length === 0 || signatureVerifierExecutable.includes('\0'))) {
+    throw new TypeError('Ubuntu authority signature-verifier executable binding is invalid');
+  }
 
   const directory = path.join(path.resolve(home), 'authority', 'ubuntu-26.04');
   const keyring = path.join(directory, 'cdimage-keyring.gpg');
@@ -79,7 +86,7 @@ export async function establishUbuntuReleaseAuthority({
   let existingVerified = false;
   try {
     await readFile(keyring);
-    await verifyFiles({ keyring, manifest, signature, invoke });
+    await verifyFiles({ keyring, manifest, signature, invoke, signatureVerifierExecutable });
     existingVerified = true;
   } catch {
     existingVerified = false;
@@ -90,7 +97,7 @@ export async function establishUbuntuReleaseAuthority({
     const keyUrl = `https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${fingerprint}`;
     const armored = await boundedFetch(keyUrl, MAX_KEY_BYTES, fetchImpl);
     await writeFile(keyring, dearmorPublicKey(armored), { mode: 0o600 });
-    await verifyFiles({ keyring, manifest, signature, invoke });
+    await verifyFiles({ keyring, manifest, signature, invoke, signatureVerifierExecutable });
   }
 
   await rm(manifest, { force: true });
