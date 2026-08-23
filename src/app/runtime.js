@@ -16,7 +16,7 @@ import { importAgentPublicIdentity, loadOrCreateAgentIdentity } from '../securit
 import { WorkspacePolicy } from '../security/workspace-policy.js';
 import { GitClient } from '../git/git-client.js';
 import { GitTaskLeaseStore } from '../git/task-lease-store.js';
-import { GitWorkspaceManager } from '../git/git-workspace-manager.js';
+import { GitWorkspaceManager } from '../git/workspace-manager.js';
 import { DeterministicProcessRunner } from '../runtime/deterministic-process-runner.js';
 import { WorkerExchange } from '../runtime/worker-exchange.js';
 import { createCoreOperationRegistry } from '../runtime/deterministic-operation-registry.js';
