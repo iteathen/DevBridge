@@ -101,6 +101,8 @@ After the ownership gate, rebuild resolves the exact approved image through #178
 
 The outer lifecycle/rebuild request identity is the idempotency subject for ambiguous effects. A restart reconciles the same planned replacement generation rather than allocating another generation. Damaged or invalid superseded state is retained by default; cleanup may remove only exact owned state after separate safe-cleanup evidence permits it. Provider-specific health prose never broadens cleanup authority.
 
+Request-bound rebuild effects remain subordinate to the outer lifecycle fence across process restart. The low-level persistent registry's generic startup reconciliation may observe a pending rebuild record but does **not** execute it. The outer `EnvironmentRebuild` owner must reacquire the current lifecycle fence and re-present the same request/previous-generation pair; only then may the provider owner reconcile an already-performed effect or continue the planned replacement. This prevents a stale daemon-lock generation from turning startup reconciliation into unfenced provider mutation.
+
 ## Reset
 
 `reset` is an explicit profile-wide destructive transition back to the exact declared clean baseline. It is not diagnosis-driven repair and it is not permission to target a single repository workspace while silently affecting sibling workspaces.
@@ -120,9 +122,11 @@ The outer lifecycle/rebuild request identity is the idempotency subject for ambi
 
 A blocked preview is still useful: protected state, missing/ambiguous implementation, non-clear transition state, or unavailable resource prerequisites are reported in the impact rather than hidden by the preview path. Execution then fails closed until those blockers are resolved.
 
-Reset has no default destructive authority. The execution path requires an injected local authorization contract to verify an opaque operator approval receipt against the exact impact subject, declaration revision, and current implementation generation. The receipt is not persisted in the lifecycle journal. Remote issue text, model output, repository content, guest output, or an arbitrary string cannot become reset authority merely by reaching the generic lifecycle code.
+Reset has no default destructive authority. The execution path requires an injected local authorization contract to verify an opaque operator approval receipt against the exact impact subject, declaration revision, and current implementation generation. The receipt is not persisted in the lifecycle journal. Remote issue text, model output, repository content, guest output, or an arbitrary string cannot become reset authority merely by reaching the generic lifecycle code. Reset options use a closed schema: workspace-local targets, provider identities, paths, commands, and other foreign authority fields are rejected rather than ignored.
 
 After authorization, reset records the exact impact subject in the lifecycle journal, acquires the normal exclusive fence, and re-observes the impact immediately before mutation. If the current generation has not changed, any material impact drift invalidates the approval before construction. If a replacement effect already happened but its response was lost, the outer reset delegates reconciliation to the request-bound replacement owner instead of inventing another generation or requiring a second approval.
+
+As with rebuild, generic low-level startup reconciliation does not execute request-bound replacement effects. A resumed reset first reacquires the current outer lifecycle fence and then re-presents the same operation identity through the construction/materialization adapter. An old durable daemon pause cannot be assumed to protect a new daemon-lock generation.
 
 The persistent-environment owner exposes staged replacement for this path:
 
@@ -133,7 +137,7 @@ The persistent-environment owner exposes staged replacement for this path:
 5. only then retire the exact retained history generation;
 6. reconcile exact retirement if its response is lost.
 
-Retirement accepts only an exact superseded history identity belonging to the still-current logical environment. Foreign/unowned state, a non-history identity, a running superseded generation, or changed attachment authority fails closed before provider deletion. Historical direct reset behavior remains separate compatibility behavior; the #174 profile-reset path uses staged replacement so old state is not retired before the new clean baseline is verified.
+Retirement accepts only an exact superseded history identity belonging to the still-current logical environment. In the profile-reset composition, the retirement adapter additionally requires the active outer journal to remain the same `reset`, at the `verification` stage, with the same declaration revision, previous/current generations, and authorization subject. Foreign/unowned state, a non-history identity, a running superseded generation, changed journal evidence, or changed attachment authority fails closed before provider deletion. Historical direct reset behavior remains separate compatibility behavior; the #174 profile-reset path uses staged replacement so old state is not retired before the new clean baseline is verified.
 
 Workspace-local reset remains a separate narrower lifecycle contract. A workspace route/reset cannot authorize profile reset, and profile reset enumerates all sibling workspace identities before mutation.
 
