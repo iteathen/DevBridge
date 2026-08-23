@@ -15,10 +15,12 @@ function foundation() {
     observeEnvironment: async () => null,
     ensureEnvironment: async () => { throw new Error('not expected during composition'); },
     rebuildEnvironment: async () => { throw new Error('not expected during composition'); },
+    recreateEnvironment: async () => { throw new Error('not expected during composition'); },
+    retireSupersededEnvironment: async () => { throw new Error('not expected during composition'); },
   };
 }
 
-test('production construction composition exposes shared create, diagnosis, repair, and rebuild lifecycles without materializing on construction', async () => {
+test('production construction composition exposes shared create, diagnosis, repair, rebuild, and recreate lifecycles without materializing on construction', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'devbridge-construction-runtime-'));
   try {
     const runtime = await createEnvironmentConstructionRuntime({
@@ -37,6 +39,8 @@ test('production construction composition exposes shared create, diagnosis, repa
     assert.equal(typeof runtime.repair, 'function');
     assert.equal(typeof runtime.planRebuild, 'function');
     assert.equal(typeof runtime.rebuild, 'function');
+    assert.equal(typeof runtime.planRecreate, 'function');
+    assert.equal(typeof runtime.recreate, 'function');
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
