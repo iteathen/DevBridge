@@ -1,10 +1,10 @@
+import { createHash } from 'node:crypto';
 import { environmentObservationCondition, normalizeEnvironmentObservation } from './environment-observation.js';
 
 export const ENVIRONMENT_RECREATE_IMPACT_PROTOCOL = 'devbridge/environment-recreate-impact-v1';
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,159}$/u;
 const EVIDENCE_STATES = new Set(['ready', 'degraded', 'blocked', 'unknown']);
-const RECREATE_SUBJECT = 'provider-instance';
 
 function safeId(value, name) {
   if (typeof value !== 'string' || !SAFE_ID.test(value)) throw new TypeError(`${name} is invalid`);
@@ -18,6 +18,7 @@ function active(record) { return record != null && record.entries?.at(-1)?.stage
 function lastStage(record) { return record.entries.at(-1).stage; }
 function fenceEntry(record) { return record.entries.find((entry) => entry.stage === 'fenced-attempt') ?? null; }
 function preEntry(record) { return record.entries.find((entry) => entry.stage === 'pre-observation') ?? null; }
+function authorizationSubject(record) { return preEntry(record)?.subjects?.[0] ?? null; }
 function evidenceState(value) { return EVIDENCE_STATES.has(value) ? value : 'unknown'; }
 function normalizeEvidence(raw = {}) {
   return Object.freeze({
@@ -29,8 +30,8 @@ function normalizeEvidence(raw = {}) {
 function freezeList(values) { return Object.freeze([...values]); }
 function normalizeOptions(raw = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('environment recreate options must be an object');
-  for (const key of Object.keys(raw)) throw new TypeError(`environment recreate options.${key} is not allowed`);
-  return Object.freeze({});
+  for (const key of Object.keys(raw)) if (key !== 'approval') throw new TypeError(`environment recreate options.${key} is not allowed`);
+  return { approval: raw.approval };
 }
 
 function impactFor(record, observation, rawEvidence) {
@@ -49,7 +50,7 @@ function impactFor(record, observation, rawEvidence) {
     : previousProvider === 'missing'
       ? 'unavailable-provider-already-missing'
       : 'unavailable';
-  return Object.freeze({
+  const basis = Object.freeze({
     protocol: ENVIRONMENT_RECREATE_IMPACT_PROTOCOL,
     operation: 'recreate',
     destructive: true,
@@ -57,12 +58,22 @@ function impactFor(record, observation, rawEvidence) {
     declarationRevision: record.revision,
     currentImplementationGeneration: observation.implementationGeneration,
     currentMaterialization: observation.materialization,
+    currentSystemStorage: observation.systemStorage,
+    currentTransition: observation.transition,
     previousProvider,
     replacementStrategy: 'staged-provider-replacement',
+    sideBySideReplacement: previousProvider === 'present',
+    destructiveFallback: Object.freeze({
+      automatic: false,
+      rollback: 'unavailable-after-old-provider-retirement',
+    }),
     rollback,
-    preserves: freezeList(['logical-environment', 'desired-declaration', 'workspace-authority']),
+    affectedWorkspaces: workspaces,
+    affectedWorkspaceCount: workspaces.length,
+    preserves: freezeList(['logical-environment', 'desired-declaration', 'workspace-authority', 'lifecycle-provenance']),
+    replaces: freezeList(['provider-implementation', 'guest-system-storage', 'provider-attachment-generation', 'guest-machine-identity', 'guest-bridge-identity']),
     reseeds: workspaces,
-    discards: freezeList(['provider-implementation', 'guest-system-mutable-state', 'guest-dependencies', 'guest-build-products', 'guest-cache', 'guest-scratch', 'workspace-materialization']),
+    discards: freezeList(['guest-system-mutable-state', 'guest-dependencies', 'guest-build-products', 'guest-cache', 'guest-scratch', 'workspace-materialization']),
     protectedState,
     blocked: blockers.length > 0,
     blockers: freezeList(blockers),
@@ -70,6 +81,9 @@ function impactFor(record, observation, rawEvidence) {
       profile: record.declaration.profile,
       imageIdentity: record.declaration.image.identity,
       imageGeneration: record.declaration.image.generation,
+      bootRequirement: record.declaration.boot.requirement,
+      networkRequirement: record.declaration.network.requirement,
+      enrollmentRequirement: record.declaration.enrollment.requirement,
       bootstrapGeneration: record.declaration.bootstrap.generation,
       memoryBytes: record.declaration.resources.memoryBytes,
       processorCount: record.declaration.resources.processorCount,
@@ -78,21 +92,27 @@ function impactFor(record, observation, rawEvidence) {
       workspaces: evidence.workspaces,
     }),
   });
+  const digest = createHash('sha256').update(JSON.stringify(basis), 'utf8').digest('hex');
+  return Object.freeze({ ...basis, authorizationSubject: `recreate-${digest}` });
 }
 
 function assertRecreatable(impact) {
   if (impact.blockers.includes('provider-selection-unavailable')) throw new Error('environment recreate requires one exact logical provider generation; ambiguous or unavailable provider selection requires manual review');
   if (impact.blockers.includes('implementation-identity-unavailable')) throw new Error('environment recreate requires an exact previous implementation generation');
-  if (impact.blockers.includes('transition-not-clear')) throw new Error('environment recreate requires a clear lifecycle observation before replacement');
+  if (impact.blockers.includes('transition-not-clear')) throw new Error('environment recreate requires a clear lifecycle observation before destructive authorization');
   if (impact.blockers.includes('protected-state')) throw new Error(`environment recreate is blocked by protected state: ${impact.protectedState.join(', ')}`);
-  if (impact.blockers.includes('resource-prerequisite')) throw new Error('environment recreate resource prerequisites are not ready');
+  if (impact.blockers.includes('resource-prerequisite')) throw new Error('environment recreate resource prerequisites are not ready; automatic destructive fallback is not authorized');
   return impact;
 }
 
-export class EnvironmentRecreate {
-  #declarations; #journal; #observer; #fence; #construction; #retirement; #evidence;
+function unavailableAuthorization() {
+  return Object.freeze({ async verify() { throw new Error('environment recreate local destructive authorization is unavailable'); } });
+}
 
-  constructor({ declarations, journal, observer, fence, construction, retirement, evidence = null } = {}) {
+export class EnvironmentRecreate {
+  #declarations; #journal; #observer; #fence; #construction; #retirement; #evidence; #authorization;
+
+  constructor({ declarations, journal, observer, fence, construction, retirement, evidence = null, authorization = null } = {}) {
     this.#declarations = assertPort(declarations, ['get'], 'declaration');
     this.#journal = assertPort(journal, ['current', 'begin', 'advance'], 'journal');
     this.#observer = assertPort(observer, ['observe'], 'observation');
@@ -101,6 +121,7 @@ export class EnvironmentRecreate {
     this.#retirement = assertPort(retirement, ['ensure'], 'retirement');
     if (evidence != null && typeof evidence.inspect !== 'function') throw new TypeError('environment recreate evidence contract is incomplete');
     this.#evidence = evidence;
+    this.#authorization = authorization == null ? unavailableAuthorization() : assertPort(authorization, ['verify'], 'authorization');
   }
 
   async #observe(record) {
@@ -116,6 +137,21 @@ export class EnvironmentRecreate {
   async #impact(record, observation) {
     const evidence = this.#evidence ? await this.#evidence.inspect(Object.freeze({ record, observation })) : {};
     return impactFor(record, observation, evidence);
+  }
+
+  async #authorize(impact, approval) {
+    if (typeof approval !== 'string' || approval.length === 0 || approval.includes('\0') || Buffer.byteLength(approval, 'utf8') > 1024) {
+      throw new TypeError('environment recreate approval receipt is invalid');
+    }
+    const result = await this.#authorization.verify(Object.freeze({
+      operation: 'recreate',
+      approval,
+      subject: impact.authorizationSubject,
+      environmentIdentity: impact.environmentIdentity,
+      declarationRevision: impact.declarationRevision,
+      implementationGeneration: impact.currentImplementationGeneration,
+    }));
+    if (result?.approved !== true || result?.subject !== impact.authorizationSubject) throw new Error('environment recreate destructive authorization did not match the exact impact subject');
   }
 
   async #acquireFence(record) {
@@ -144,7 +180,8 @@ export class EnvironmentRecreate {
         environmentIdentity: identity,
         operationId: record.operationId,
         stage: lastStage(record),
-        instruction: 're-run recreate for the same logical environment; do not manually delete provider objects selected by the active lifecycle operation',
+        previousProvider: preEntry(record)?.observation?.materialization ?? 'unknown',
+        instruction: 're-run recreate for the same logical environment with the same approved impact; do not manually delete provider objects selected by the active lifecycle operation',
       });
       try { Object.defineProperty(error, 'recovery', { value: recovery, enumerable: true, configurable: true }); } catch {}
     }
@@ -160,27 +197,32 @@ export class EnvironmentRecreate {
   }
 
   async recreate(rawIdentity, rawOptions = {}) {
-    normalizeOptions(rawOptions);
+    const { approval } = normalizeOptions(rawOptions);
     const identity = safeId(rawIdentity, 'environment identity');
     const declaration = await this.#declarations.get(identity);
     if (!declaration) throw new Error('environment declaration is unavailable; setup re-entry is required');
     let record = await this.#journal.current(identity);
+    let authorized = null;
+    let authorizedObservation = null;
+
     if (active(record)) {
       if (record.operation !== 'recreate') throw new Error('another lifecycle operation is active for the environment');
       if (record.declarationRevision !== declaration.revision) throw new Error('active environment recreate no longer matches declaration authority');
     } else {
-      const before = await this.#observe(declaration);
-      assertRecreatable(await this.#impact(declaration, before));
+      authorizedObservation = await this.#observe(declaration);
+      authorized = assertRecreatable(await this.#impact(declaration, authorizedObservation));
+      await this.#authorize(authorized, approval);
       record = await this.#journal.begin({ environmentIdentity: identity, operation: 'recreate', declarationRevision: declaration.revision });
     }
 
     let held = null;
     try {
       if (lastStage(record) === 'intent') {
-        const before = await this.#observe(declaration);
-        assertRecreatable(await this.#impact(declaration, before));
+        const before = authorizedObservation ?? await this.#observe(declaration);
+        const impact = authorized ?? assertRecreatable(await this.#impact(declaration, before));
+        if (authorized == null) await this.#authorize(impact, approval);
         record = await this.#journal.advance(identity, record.operationId, {
-          stage: 'pre-observation', outcome: 'planned', subjects: [RECREATE_SUBJECT], observation: before,
+          stage: 'pre-observation', outcome: 'authorized', subjects: [impact.authorizationSubject], observation: before,
           implementationGeneration: before.implementationGeneration,
         });
       }
@@ -189,7 +231,7 @@ export class EnvironmentRecreate {
         const acquired = await this.#acquireFence(record);
         held = acquired.held;
         record = await this.#journal.advance(identity, record.operationId, {
-          stage: 'fenced-attempt', outcome: 'attempted', fence: acquired.subject, subjects: [RECREATE_SUBJECT],
+          stage: 'fenced-attempt', outcome: 'attempted', fence: acquired.subject, subjects: [authorizationSubject(record)],
           implementationGeneration: preEntry(record).implementationGeneration,
         });
       } else if (['fenced-attempt', 'post-observation', 'verification'].includes(lastStage(record))) {
@@ -198,9 +240,13 @@ export class EnvironmentRecreate {
 
       if (lastStage(record) === 'fenced-attempt') {
         const previousGeneration = preEntry(record)?.implementationGeneration ?? null;
-        if (previousGeneration == null) throw new Error('environment recreate previous implementation generation is unavailable');
+        const approvedSubject = authorizationSubject(record);
+        if (previousGeneration == null || approvedSubject == null) throw new Error('environment recreate authorized impact evidence is incomplete');
         const beforeAttempt = await this.#observe(declaration);
-        if (beforeAttempt.implementationGeneration === previousGeneration) assertRecreatable(await this.#impact(declaration, beforeAttempt));
+        if (beforeAttempt.implementationGeneration === previousGeneration) {
+          const currentImpact = assertRecreatable(await this.#impact(declaration, beforeAttempt));
+          if (currentImpact.authorizationSubject !== approvedSubject) throw new Error('environment recreate impact changed after destructive authorization');
+        }
         const result = await this.#construction.run({
           environmentIdentity: identity,
           operationId: record.operationId,
@@ -212,7 +258,7 @@ export class EnvironmentRecreate {
         if (after.implementationGeneration !== result.implementationGeneration) throw new Error('environment recreate post-observation generation changed');
         await this.#assertReady(after);
         record = await this.#journal.advance(identity, record.operationId, {
-          stage: 'post-observation', outcome: 'observed', subjects: [RECREATE_SUBJECT], observation: after,
+          stage: 'post-observation', outcome: 'observed', subjects: [approvedSubject], observation: after,
           implementationGeneration: result.implementationGeneration,
         });
       }
@@ -224,7 +270,7 @@ export class EnvironmentRecreate {
         await this.#assertReady(verified);
         record = await this.#journal.advance(identity, record.operationId, {
           stage: 'verification', outcome: 'verified', implementationGeneration: expectedGeneration,
-          subjects: [RECREATE_SUBJECT], observation: verified,
+          subjects: [authorizationSubject(record)], observation: verified,
         });
       }
 
@@ -237,18 +283,19 @@ export class EnvironmentRecreate {
           declarationRevision: declaration.revision,
           previousImplementationGeneration: previousGeneration,
           implementationGeneration: currentGeneration,
+          authorizationSubject: authorizationSubject(record),
         }));
         await this.#construction.clear(record.operationId);
         record = await this.#journal.advance(identity, record.operationId, {
           stage: 'cleanup-reconciliation', outcome: 'reconciled', implementationGeneration: currentGeneration,
-          subjects: [RECREATE_SUBJECT],
+          subjects: [authorizationSubject(record)],
         });
       }
 
       if (lastStage(record) === 'cleanup-reconciliation') {
         record = await this.#journal.advance(identity, record.operationId, {
           stage: 'terminal', outcome: 'complete', implementationGeneration: record.entries.at(-1).implementationGeneration,
-          subjects: [RECREATE_SUBJECT],
+          subjects: [authorizationSubject(record)],
         });
       }
 
@@ -260,7 +307,8 @@ export class EnvironmentRecreate {
         operationId: record.operationId,
         previousImplementationGeneration: preEntry(record)?.implementationGeneration ?? null,
         implementationGeneration: terminal.implementationGeneration,
-        rollback: previousMaterialization === 'present' ? 'superseded-generation-retained-until-verification' : 'unavailable-provider-already-missing',
+        authorizationSubject: authorizationSubject(record),
+        rollback: previousMaterialization === 'present' ? 'retired-after-verification' : 'unavailable-provider-already-missing',
       });
     } catch (error) {
       throw await this.#annotateRecovery(identity, error);
