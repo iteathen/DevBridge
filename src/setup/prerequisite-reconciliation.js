@@ -1,3 +1,5 @@
+import { reconcileWindowsSignatureVerifier } from './windows-signature-verifier-prerequisite.js';
+
 const PROTOCOL = 'devbridge/setup-prerequisites-v1';
 const OPENSSH_CLIENT_CAPABILITY = 'OpenSSH.Client~~~~0.0.1.0';
 const POWERSHELL = 'powershell.exe';
@@ -103,8 +105,8 @@ async function invokePowerShell(invoke, script, operation, environment) {
   return parseStructuredInvocation(result, operation);
 }
 
-function result({ platform, ready, blocker = null, changed = false, restartRequired = false, capabilities = {} }) {
-  return Object.freeze({
+function result({ platform, ready, blocker = null, changed = false, restartRequired = false, capabilities = {}, local = null }) {
+  const value = {
     protocol: PROTOCOL,
     platform,
     ready,
@@ -112,13 +114,12 @@ function result({ platform, ready, blocker = null, changed = false, restartRequi
     changed,
     restartRequired,
     capabilities: Object.freeze({ ...capabilities }),
-  });
+  };
+  if (local) value.local = Object.freeze({ ...local });
+  return Object.freeze(value);
 }
 
-function gpgvBlocker(platform) {
-  if (platform === 'win32') {
-    return 'GPG signature verification is unavailable because gpgv.exe is not usable. Install an approved GPG/GPGV system package, then re-run devbridge setup.';
-  }
+function gpgvBlocker() {
   return 'GPG signature verification is unavailable because gpgv is not usable. Install the platform gpgv package, then re-run devbridge setup.';
 }
 
@@ -159,7 +160,10 @@ async function establishWindowsOpenSsh(invoke, environment) {
 export async function reconcileSetupPrerequisites({
   platform = process.platform,
   invoke,
+  fetchImpl = globalThis.fetch,
   environment = process.env,
+} = {}, {
+  windowsSignatureVerifier = reconcileWindowsSignatureVerifier,
 } = {}) {
   if (typeof platform !== 'string' || platform.length === 0) {
     throw new TypeError('setup prerequisite platform is invalid');
@@ -168,22 +172,62 @@ export async function reconcileSetupPrerequisites({
     throw new TypeError('setup prerequisite invocation contract is invalid');
   }
 
-  const gpgvExecutable = platform === 'win32' ? 'gpgv.exe' : 'gpgv';
-  const gpgv = await usableExecutable(invoke, gpgvExecutable, environment);
-  if (!gpgv) {
-    return result({
-      platform,
-      ready: false,
-      blocker: gpgvBlocker(platform),
-      capabilities: { gpgv: false, opensshClient: platform === 'win32' ? null : 'not-applicable' },
-    });
+  let signatureChanged = false;
+  let signatureVerifierExecutable;
+
+  if (platform === 'win32') {
+    let signature;
+    try {
+      signature = await windowsSignatureVerifier({ invoke, fetchImpl, environment });
+    } catch (error) {
+      return result({
+        platform,
+        ready: false,
+        blocker: `Windows signature-verification prerequisite reconciliation failed: ${boundedReason(error?.message, 'unknown failure')}`,
+        capabilities: { gpgv: false, opensshClient: null },
+      });
+    }
+    signatureChanged = signature?.changed === true;
+    if (signature?.ready !== true) {
+      return result({
+        platform,
+        ready: false,
+        blocker: signature?.blocker ?? 'Windows signature-verification prerequisite is not ready; re-run devbridge setup after resolving the reported host boundary.',
+        changed: signatureChanged,
+        capabilities: { gpgv: false, opensshClient: null },
+      });
+    }
+    if (typeof signature.executable !== 'string' || signature.executable.length === 0 || signature.executable.includes('\0')) {
+      return result({
+        platform,
+        ready: false,
+        blocker: 'Windows signature-verification prerequisite reported readiness without a usable local executable binding.',
+        changed: signatureChanged,
+        capabilities: { gpgv: false, opensshClient: null },
+      });
+    }
+    signatureVerifierExecutable = signature.executable;
+  } else {
+    const gpgv = await usableExecutable(invoke, 'gpgv', environment);
+    if (!gpgv) {
+      return result({
+        platform,
+        ready: false,
+        blocker: gpgvBlocker(),
+        capabilities: { gpgv: false, opensshClient: 'not-applicable' },
+      });
+    }
+    signatureVerifierExecutable = 'gpgv';
   }
+
+  const local = { signatureVerifierExecutable };
 
   if (platform !== 'win32') {
     return result({
       platform,
       ready: true,
       capabilities: { gpgv: true, opensshClient: 'not-applicable' },
+      local,
     });
   }
 
@@ -195,7 +239,9 @@ export async function reconcileSetupPrerequisites({
       platform,
       ready: false,
       blocker: `${error.message}. Repair Windows servicing/PowerShell availability, then re-run devbridge setup.`,
+      changed: signatureChanged,
       capabilities: { gpgv: true, opensshClient: false },
+      local,
     });
   }
 
@@ -203,7 +249,9 @@ export async function reconcileSetupPrerequisites({
     return result({
       platform,
       ready: true,
+      changed: signatureChanged,
       capabilities: { gpgv: true, opensshClient: true },
+      local,
     });
   }
 
@@ -212,7 +260,9 @@ export async function reconcileSetupPrerequisites({
       platform,
       ready: false,
       blocker: `Windows OpenSSH Client is not usable. Re-run devbridge setup from an elevated PowerShell so DevBridge can inspect and, when safe, establish ${OPENSSH_CLIENT_CAPABILITY}.`,
+      changed: signatureChanged,
       capabilities: { gpgv: true, opensshClient: false },
+      local,
     });
   }
 
@@ -226,7 +276,9 @@ export async function reconcileSetupPrerequisites({
       blocker: restartRequired
         ? `Windows OpenSSH Client servicing is ${state}. Restart Windows if requested, then re-run devbridge setup.`
         : `Windows reports OpenSSH Client capability state ${state}, but ssh.exe and ssh-keygen.exe are not both usable. Repair the Windows capability, then re-run devbridge setup.`,
+      changed: signatureChanged,
       capabilities: { gpgv: true, opensshClient: false },
+      local,
     });
   }
 
@@ -238,7 +290,9 @@ export async function reconcileSetupPrerequisites({
       platform,
       ready: false,
       blocker: `${error.message}. Windows servicing policy or its feature source may require operator action; resolve that boundary, then re-run devbridge setup.`,
+      changed: signatureChanged,
       capabilities: { gpgv: true, opensshClient: false },
+      local,
     });
   }
 
@@ -250,6 +304,7 @@ export async function reconcileSetupPrerequisites({
       restartRequired: true,
       blocker: 'Windows OpenSSH Client was established, but Windows requires a restart before setup can verify readiness. Restart Windows, then re-run devbridge setup.',
       capabilities: { gpgv: true, opensshClient: false },
+      local,
     });
   }
 
@@ -263,6 +318,7 @@ export async function reconcileSetupPrerequisites({
       changed: true,
       blocker: `${error.message}. OpenSSH Client was established but readiness could not be verified; re-run devbridge setup after repairing Windows servicing/PowerShell.`,
       capabilities: { gpgv: true, opensshClient: false },
+      local,
     });
   }
 
@@ -273,14 +329,16 @@ export async function reconcileSetupPrerequisites({
       changed: true,
       blocker: 'Windows OpenSSH Client establishment completed, but ssh.exe and ssh-keygen.exe are not both usable. Repair the Windows capability, then re-run devbridge setup.',
       capabilities: { gpgv: true, opensshClient: false },
+      local,
     });
   }
 
   return result({
     platform,
     ready: true,
-    changed: true,
+    changed: signatureChanged || true,
     capabilities: { gpgv: true, opensshClient: true },
+    local,
   });
 }
 
