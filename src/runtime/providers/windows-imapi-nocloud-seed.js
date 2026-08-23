@@ -88,16 +88,16 @@ export class WindowsImapiNoCloudSeedWriter {
     this.#invoke = invoke;
   }
 
-  async create({ workspace, destination, userData, metaData }) {
-    if (typeof workspace !== 'string' || typeof destination !== 'string') throw new TypeError('seed workspace and destination are required');
-    const root = path.resolve(workspace);
-    await realDirectory(root, 'seed workspace');
+  async create({ root, destination, userData, metaData }) {
+    if (typeof root !== 'string' || typeof destination !== 'string') throw new TypeError('seed root and destination are required');
+    const ownedRoot = path.resolve(root);
+    await realDirectory(ownedRoot, 'seed root');
     const output = path.resolve(destination);
-    if (output === root || !output.startsWith(`${root}${path.sep}`)) throw new Error('seed destination must stay inside the owned workspace');
+    if (output === ownedRoot || !output.startsWith(`${ownedRoot}${path.sep}`)) throw new Error('seed destination must stay inside the owned root');
 
     const safeUserData = checkedSeed(userData, 'user-data');
     const safeMetaData = checkedSeed(metaData, 'meta-data');
-    const staging = path.join(root, `.seed-${randomUUID()}`);
+    const staging = path.join(ownedRoot, `.seed-${randomUUID()}`);
     await mkdir(staging, { mode: 0o700 });
     try {
       await writeFile(path.join(staging, 'user-data'), safeUserData, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
