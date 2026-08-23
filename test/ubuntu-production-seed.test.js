@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createGuestImagePayload } from '../src/guest/image-payload.js';
 import { UbuntuProductionSeedFactory } from '../src/runtime/image-builders/ubuntu-production-seed.js';
 
 const publicKey = `ssh-ed25519 ${'A'.repeat(44)} build-key`;
@@ -52,6 +53,10 @@ function embeddedContents(userData) {
   return [...userData.matchAll(/^\s+content: "([A-Za-z0-9+/=]+)"$/gmu)].map((match) => Buffer.from(match[1], 'base64').toString('utf8'));
 }
 
+function neutralPayload(payload, files = payload.files) {
+  return { generation: payload.generation, files };
+}
+
 test('Ubuntu production seed binds exact package and payload generations without latest-update authority', async () => {
   const result = await factory().create(request());
   assert.match(result.userData, /^#cloud-config\nautoinstall:/u);
@@ -68,6 +73,36 @@ test('Ubuntu production seed binds exact package and payload generations without
   assert.equal(JSON.stringify(result.evidence).includes('transient-private-material'), false);
   assert.equal(JSON.stringify(result.evidence).includes(publicKey), false);
   assert.match(result.metaData, /^instance-id: devbridge-image-/u);
+});
+
+test('Ubuntu production seed accepts the guest payload owner exact byte and digest evidence through the neutral seam', async () => {
+  const payload = await createGuestImagePayload();
+  const result = await factory({ payloadSet: async () => neutralPayload(payload) }).create(request());
+
+  assert.equal(result.evidence.payloadGeneration, payload.generation);
+  assert.deepEqual(
+    result.evidence.files,
+    payload.files.map(({ path, bytes, sha256 }) => ({ path, bytes, sha256 })),
+  );
+});
+
+test('Ubuntu production seed fails closed when guest payload byte or digest evidence is changed at the neutral seam', async () => {
+  const payload = await createGuestImagePayload();
+  const [first, ...rest] = payload.files;
+
+  await assert.rejects(
+    () => factory({
+      payloadSet: async () => neutralPayload(payload, [{ ...first, bytes: first.bytes + 1 }, ...rest]),
+    }).create(request()),
+    /payload file 0\.bytes does not match content/u,
+  );
+
+  await assert.rejects(
+    () => factory({
+      payloadSet: async () => neutralPayload(payload, [{ ...first, sha256: '0'.repeat(64) }, ...rest]),
+    }).create(request()),
+    /payload file 0\.sha256 does not match content/u,
+  );
 });
 
 test('Ubuntu production seed limits temporary privilege to one self-removing sanitizer that powers off only after cleanup', async () => {
