@@ -34,21 +34,31 @@ function impactFor(record, observation, rawEvidence) {
   const evidence = normalizeEvidence(rawEvidence);
   const protectedState = freezeList(record.declaration.protectedStateClasses);
   const workspaces = freezeList(record.declaration.workspaces.map((workspace) => workspace.identity));
+  const blockers = [];
+  if (observation.materialization !== 'present' || observation.implementationGeneration == null) blockers.push('implementation-unavailable');
+  if (observation.transition !== 'clear') blockers.push('transition-not-clear');
+  if (protectedState.length > 0) blockers.push('protected-state');
+  if (evidence.resources !== 'ready') blockers.push('resource-prerequisite');
   const basis = Object.freeze({
     protocol: ENVIRONMENT_RESET_IMPACT_PROTOCOL,
     environmentIdentity: record.identity,
     declarationRevision: record.revision,
     currentImplementationGeneration: observation.implementationGeneration,
+    currentMaterialization: observation.materialization,
     currentSystemStorage: observation.systemStorage,
+    currentTransition: observation.transition,
     target: Object.freeze({
       imageIdentity: record.declaration.image.identity,
       imageGeneration: record.declaration.image.generation,
       bootstrapGeneration: record.declaration.bootstrap.generation,
     }),
     affectedWorkspaces: workspaces,
+    affectedWorkspaceCount: workspaces.length,
     preserves: freezeList(['logical-environment', 'desired-declaration', 'workspace-authority']),
     discards: freezeList(['guest-system-mutable-state', 'guest-dependencies', 'guest-build-products', 'guest-cache', 'guest-scratch', 'workspace-materialization']),
     protectedState,
+    blocked: blockers.length > 0,
+    blockers: freezeList(blockers),
     implementationGenerationChanges: true,
     rollback: 'superseded-generation-retained-until-verification',
     prerequisites: Object.freeze({
@@ -154,7 +164,7 @@ export class EnvironmentReset {
     const declaration = await this.#declarations.get(identity);
     if (!declaration) throw new Error('environment declaration is unavailable; setup re-entry is required');
     const observation = await this.#observe(declaration);
-    return assertResettable(await this.#impact(declaration, observation), observation);
+    return this.#impact(declaration, observation);
   }
 
   async reset(rawIdentity, { approval } = {}) {
