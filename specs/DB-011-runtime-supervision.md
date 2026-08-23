@@ -2,7 +2,7 @@
 
 Status: active
 
-Implementation status: v0.1 separates alpha mutable-channel development updates from signed immutable production release subjects and preserves exact runtime artifact identity/rollback state. Stage 1 removed candidate-controlled host execution. Stage 6 restores candidate preflight/tests through the DB-020 repository/VM execution boundary, rechecks the exact artifact afterward, and still fails closed before drain/activation when no validation route is ready. Stage-0 compatibility protocol v1 now binds the standalone launcher to accepted-runtime selection and explicit recovery from pre-protocol installations.
+Implementation status: v0.1 separates alpha mutable-channel development updates from signed immutable production release subjects and preserves exact runtime artifact identity/rollback state. Stage 1 removed candidate-controlled host execution. Stage 6 restores candidate preflight/tests through the DB-020 repository/VM execution boundary, rechecks the exact artifact afterward, and still fails closed before drain/activation when no validation route is ready. Stage-0 compatibility protocol v1 now binds the standalone launcher to accepted-runtime selection and explicit recovery from pre-protocol installations. Issue #182 defines the narrow recovery-control composition used when both an accepted runtime and its DB-020 candidate-validation environment are absent.
 
 ## Goal
 
@@ -138,6 +138,104 @@ The supervisor MUST NOT overwrite files beneath a live daemon.
 
 If an existing daemon does not stop through the verified token-bound cooperative control path after the bounded grace window, the supervisor MUST fail closed. It MUST NOT force-kill an unverified process or delete ownership state as a shortcut.
 
+## Zero-state recovery control plane
+
+The ordinary update sequence assumes that a trusted accepted runtime exists to compose the DB-020 candidate-validation environment. Whole-stack recovery must also handle the case where both that runtime and its validation VM/image materialization are absent.
+
+That condition MUST NOT be resolved by executing the runtime candidate directly on the host and MUST NOT move provider-specific provisioning into the Permanent Entry or Runner.
+
+A narrowly scoped **Recovery Control Plane (RCP)** is the only supported bootstrap bridge for this class:
+
+```text
+Permanent Entry
+  -> verified Runner
+  -> verified Recovery Control Plane
+  -> reconstruct exact candidate-validation environment
+  -> DB-020 validate exact runtime candidate
+  -> activate exact Accepted Runtime
+  -> Recovery Control Plane exits
+```
+
+The RCP is a short-lived trusted composition, not another long-lived DevBridge runtime or provider implementation.
+
+### RCP admission
+
+The Runner MAY execute an RCP only when local/static recovery policy resolves one exact immutable recovery subject. Production RCP admission MUST bind at least recovery protocol/version, exact artifact identity, SHA-256, minimum Permanent Entry/Runner protocol, release/channel identity, and production signature/trusted-key identity.
+
+Remote task/feedback/decision text, repository content, model output, guest state/output, the runtime candidate, and mutable runtime branch movement MUST NOT select or alter RCP source, subject, executable identity, signing policy, provider, validation declaration, or recovery policy.
+
+The RCP's trust does not transfer to the runtime candidate. Before DB-020 validation succeeds, the RCP MUST NOT import candidate modules or execute candidate code on the host. Host-side candidate work remains limited to fixed/control-owned release parsing, signature/origin/head/version/compatibility checks, deterministic artifact hashing/materialization, transfer preparation, and neutral lifecycle orchestration.
+
+A production signature remains necessary release-integrity evidence but is not a substitute for DB-020 candidate validation.
+
+### RCP capability boundary
+
+The RCP MAY only:
+
+1. read bounded durable installation/recovery state through local trusted ports;
+2. resolve and statically verify one exact runtime candidate under DB-011 release policy;
+3. observe the host-authoritative candidate-validation declaration;
+4. ensure its exact immutable image through the shared image-availability lifecycle;
+5. invoke shared resource/provider preflight and the same neutral environment-construction lifecycle used by normal create;
+6. invoke the existing DB-020 candidate-validation capability for the exact candidate;
+7. re-check candidate artifact identity after validation;
+8. invoke existing DB-011 current/candidate/LKG activation capabilities;
+9. observe bounded post-activation health needed for ownership handoff; and
+10. terminate after a healthy Accepted Runtime becomes authoritative.
+
+The RCP MUST NOT poll/claim repository tasks, execute ordinary repository work, invoke coding/model adapters, expose arbitrary shell/argv authority, author/publish repository Git state, mutate GitHub task/decision/publication state, perform general-purpose setup, create arbitrary repository workspaces, accept raw provider object/path/command identities, implement another Hyper-V/libvirt lifecycle, or remain as a competing daemon after handoff.
+
+### Validation-environment reconstruction
+
+The candidate-validation environment is host-authoritative desired state. Its declaration, image subject, resource requirements, provider policy, bootstrap requirements, and route identity cannot come from the candidate runtime or remote task content.
+
+RCP reconstruction MUST use the same neutral lifecycle owned by #169/#178/#171:
+
+```text
+exact declaration
+  -> exact image availability
+  -> resource/provider preflight
+  -> shared construction
+  -> bridge/bootstrap readiness
+  -> DB-020 candidate-validation route
+```
+
+The construction core MUST remain caller-neutral. RCP use is temporary composition, not permission for lifecycle internals to name runtime-recovery concepts. Provider-specific Hyper-V/libvirt/QEMU/VHDX/qcow2/PowerShell/XML details remain inside provider adapters.
+
+If the validation declaration or provider/image authority is missing, contradictory, ambiguous, corrupt, or requires setup authority that cannot be inferred, recovery MUST stop with bounded setup/operator guidance instead of reconstructing authority from provider residue.
+
+### RCP entry, recovery, and handoff
+
+A healthy compatible Accepted Runtime remains the normal DB-011 update owner. RCP MUST NOT run merely because an update exists.
+
+RCP MAY be entered only for an exact locally classified recovery condition such as an absent/corrupt Accepted Runtime blocked by absent validation infrastructure, an accepted runtime too stale to implement the required compatibility transition, or an interrupted RCP journal requiring reconciliation.
+
+RCP effects follow DB-009. Durable recovery state MUST bind the exact RCP subject, runtime candidate subject, static verification evidence, validation declaration revision, image subject/acquisition state, construction action identities/implementation generation, candidate-validation evidence, activation predecessor/current/candidate identity, health/handoff state, and RCP terminal state.
+
+Restart MUST observe/reconcile those exact subjects before replay. Loss of the previous process does not prove image publication, provider creation, candidate execution, activation, or handoff did not occur.
+
+The RCP participates in the same installation-wide ownership/fencing model as DB-011 activation and DB-018 cooperative control. It MUST NOT race a healthy Accepted Runtime or another RCP for activation/provider lifecycle state. Unknown ownership or PID/token ambiguity fails closed.
+
+After exact DB-020 validation and post-validation artifact confirmation, activation uses the existing DB-011 sequence. The candidate becomes Accepted Runtime only after required health evidence. The RCP MUST then release recovery ownership and terminate.
+
+For a configured installation with Permanent Entry and durable local authority retained but Runner cache, Accepted Runtime, services, validation VM, normal profile VMs, and image cache absent, the supported sequence is:
+
+1. Permanent Entry reacquires/verifies Runner.
+2. Runner observes that normal DB-011 candidate validation cannot run.
+3. Runner resolves/acquires/verifies RCP.
+4. RCP statically verifies the exact candidate without importing it.
+5. RCP reconstructs the exact validation environment through shared image/construction lifecycle.
+6. RCP validates the exact candidate through DB-020.
+7. RCP rechecks candidate artifact identity.
+8. RCP invokes DB-011 activation/LKG transition.
+9. candidate becomes Accepted Runtime only after health succeeds.
+10. RCP terminates.
+11. Accepted Runtime recreates normal services and declared execution environments.
+
+If durable local recovery/runtime/provider/environment authority was intentionally purged, automatic recovery stops at the highest layer whose authority remains provable. Lost authority MUST NOT be inferred from VM/domain/disk names, paths, guest Git, provider residue, repository residue, issue/chat history, or mutable branches.
+
+See `docs/recovery-control-plane.md` and issue #182 for the detailed composition and real-host qualification matrix.
+
 ## Crash behavior
 
 A clean daemon exit without a pending supervisor-driven update is treated as an intentional stop and the supervisor exits.
@@ -194,4 +292,12 @@ Tests MUST cover at least:
 - clean daemon stop exits the supervisor;
 - operator stop outranks pending update/restart behavior;
 - remote task/feedback content cannot alter update source/channel/release policy or execution provider;
-- an unresponsive/unverified existing daemon fails closed rather than being force-terminated.
+- an unresponsive/unverified existing daemon fails closed rather than being force-terminated;
+- normal healthy runtime startup/update does not invoke RCP;
+- absent runtime plus absent validation environment invokes only an independently verified exact RCP;
+- RCP cannot execute candidate runtime code on the host before DB-020 validation;
+- RCP reconstruction uses the same exact-image and shared construction lifecycle as normal environment creation;
+- interrupted RCP recovery reconciles exact image/environment/validation/activation subjects without duplicate provider generations or blind candidate replay;
+- failed RCP candidate validation never activates the candidate;
+- RCP exits after healthy Accepted Runtime handoff;
+- real Windows and Linux zero-state canaries reach a DB-020-validated Accepted Runtime without direct-host candidate execution.
