@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { gzipSync } from 'node:zlib';
-import { createUbuntuSetupAuthority, defaultUbuntuPackageSnapshot, resolveUbuntuPackagePins } from '../src/setup/ubuntu-authority.js';
+import {
+  createUbuntuSetupAuthority,
+  defaultUbuntuPackageSnapshot,
+  resolveUbuntuPackagePins,
+  UBUNTU_SETUP_BOOT_STANZA,
+} from '../src/setup/ubuntu-authority.js';
 
 const SNAPSHOT = '20260821T200000Z';
 
@@ -47,7 +52,15 @@ test('setup authority binds source policy, exact snapshot and current payload ge
   assert.equal(authority.source.media.bytes, 2_918_598_656);
   assert.equal(authority.packages.snapshot, SNAPSHOT);
   assert.equal(authority.payload.generation, 'guest-image-current');
-  assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 2, before: 'install ---', after: 'auto    ---' }]);
+  assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 2, ...UBUNTU_SETUP_BOOT_STANZA }]);
+});
+
+test('setup uses the verified complete 126-byte Ubuntu boot stanza without changing ISO length', () => {
+  assert.equal(Buffer.byteLength(UBUNTU_SETUP_BOOT_STANZA.before, 'utf8'), 126);
+  assert.equal(Buffer.byteLength(UBUNTU_SETUP_BOOT_STANZA.after, 'utf8'), 126);
+  assert.match(UBUNTU_SETUP_BOOT_STANZA.before, /Try or Install Ubuntu Server/u);
+  assert.match(UBUNTU_SETUP_BOOT_STANZA.after, /Automated Install/u);
+  assert.match(UBUNTU_SETUP_BOOT_STANZA.after, /\/casper\/vmlinuz autoinstall ---/u);
 });
 
 test('setup package resolution fails closed when the snapshot is incomplete', async () => {
