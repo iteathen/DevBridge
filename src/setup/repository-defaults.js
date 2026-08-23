@@ -41,12 +41,26 @@ function normalizeRequested(requested) {
   return Object.freeze([...new Set(values)]);
 }
 
+function normalizeAccepted(accepted) {
+  if (!Array.isArray(accepted)) throw new TypeError('accepted repositories must be an array');
+  const ids = new Set();
+  return Object.freeze(accepted.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new TypeError('accepted repository entry is invalid');
+    if (!Number.isSafeInteger(entry.id) || entry.id < 1) throw new TypeError('accepted repository id is invalid');
+    if (ids.has(entry.id)) throw new Error('accepted repositories contain a duplicate stable identity');
+    ids.add(entry.id);
+    return Object.freeze({ id: entry.id, fullName: repositoryName(entry.fullName) });
+  }));
+}
+
 export function selectRepositoryDefaults(rawRepositories, {
   requested = null,
+  accepted = null,
   autoSelectLimit = DEFAULT_AUTO_SELECT_LIMIT,
 } = {}) {
   if (!Array.isArray(rawRepositories)) throw new TypeError('repository discovery result must be an array');
   if (!Number.isSafeInteger(autoSelectLimit) || autoSelectLimit < 0) throw new TypeError('repository auto-select limit is invalid');
+  if (requested != null && accepted != null) throw new TypeError('requested and accepted repository selections are mutually exclusive');
 
   const repositories = rawRepositories.map(normalizedRepository);
   const byId = new Set();
@@ -68,6 +82,7 @@ export function selectRepositoryDefaults(rawRepositories, {
   excluded.sort((left, right) => left.fullName.localeCompare(right.fullName));
 
   const explicit = normalizeRequested(requested);
+  const preserved = accepted == null ? null : normalizeAccepted(accepted);
   let selected = [];
   let needsSelection = false;
   let reason = null;
@@ -78,6 +93,15 @@ export function selectRepositoryDefaults(rawRepositories, {
     const missing = explicit.filter((name) => !eligibleByName.has(name));
     if (missing.length > 0) throw new Error(`requested repositories are not eligible: ${missing.join(', ')}`);
     selected = explicit.map((name) => eligibleByName.get(name));
+  } else if (preserved != null) {
+    const repositoriesById = new Map(repositories.map((repository) => [repository.id, repository]));
+    const missing = preserved.filter((entry) => !repositoriesById.has(entry.id));
+    if (missing.length > 0) throw new Error(`accepted repositories are unavailable: ${missing.map((entry) => entry.fullName).join(', ')}`);
+    const unavailable = preserved
+      .map((entry) => repositoriesById.get(entry.id))
+      .filter((repository) => classify(repository) != null);
+    if (unavailable.length > 0) throw new Error(`accepted repositories are not eligible: ${unavailable.map((repository) => repository.fullName).join(', ')}`);
+    selected = preserved.map((entry) => repositoriesById.get(entry.id));
   } else if (eligible.length <= autoSelectLimit) {
     selected = eligible;
   } else {

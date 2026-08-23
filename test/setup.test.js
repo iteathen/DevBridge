@@ -4,8 +4,25 @@ import path from 'node:path';
 import os from 'node:os';
 import { runDevBridgeSetup } from '../src/app/setup.js';
 
-function repository(index) {
-  return { id: index + 1, full_name: `owner/repo-${index}`, private: false, archived: false, disabled: false, permissions: { push: true } };
+function repository(index, overrides = {}) {
+  return {
+    id: index + 1,
+    full_name: `owner/repo-${index}`,
+    private: false,
+    archived: false,
+    disabled: false,
+    permissions: { push: true },
+    ...overrides,
+  };
+}
+
+function persistedState({ identity = { id: 42, login: 'owner' }, selected = [], snapshot = '20260820T170000Z' } = {}) {
+  return {
+    protocol: 'devbridge/setup-status-v1',
+    identity,
+    repositories: { selected },
+    ubuntu: { snapshot },
+  };
 }
 
 function memoryStore(initial = null) {
@@ -17,9 +34,10 @@ function memoryStore(initial = null) {
   };
 }
 
-function dependencies({ count = 2, physical = null, initialState = null } = {}) {
+function dependencies({ count = 2, repositories = null, identity = { id: 42, login: 'owner' }, physical = null, initialState = null } = {}) {
   const store = memoryStore(initialState);
   const calls = { authority: 0, canaryStatus: 0, canaryRun: 0 };
+  const discoveredRepositories = repositories ?? Array.from({ length: count }, (_, index) => repository(index));
   return {
     calls,
     store,
@@ -30,7 +48,7 @@ function dependencies({ count = 2, physical = null, initialState = null } = {}) 
       pathInstaller: async ({ home }) => ({ protocol: 'test/path', command: path.join(home, 'bin', 'devbridge.cmd'), persisted: true, changed: false, requiresNewShell: false, temporaryCommand: null }),
       tokenResolver: async () => 'test-token',
       clientFactory: () => ({}),
-      discover: async () => ({ identity: { id: 42, login: 'owner' }, repositories: Array.from({ length: count }, (_, index) => repository(index)) }),
+      discover: async () => ({ identity, repositories: discoveredRepositories }),
       releaseAuthority: async ({ home }) => ({ keyring: path.join(home, 'authority', 'ubuntu.gpg') }),
       authorityFactory: async ({ snapshot }) => { calls.authority += 1; return { protocol: 'test/authority', snapshot }; },
       canaryFactory: () => ({
@@ -81,4 +99,65 @@ test('setup re-entry reuses the exact persisted package snapshot', async () => {
   fixture.deps.authorityFactory = async ({ snapshot: value }) => { observed = value; return { protocol: 'test/authority', snapshot: value }; };
   await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-reentry') }, fixture.deps);
   assert.equal(observed, snapshot);
+});
+
+test('setup re-entry preserves accepted stable repository identities across discovery changes', async () => {
+  const fixture = dependencies({
+    repositories: [repository(0, { full_name: 'owner/renamed' }), repository(1)],
+    initialState: persistedState({ selected: [{ id: 1, fullName: 'owner/repo-0', private: false }] }),
+  });
+  const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-preserved-repository') }, fixture.deps);
+  assert.equal(result.readyForConstruction, true);
+  assert.equal(result.repositories.selectedCount, 1);
+  assert.equal(result.repositories.selected[0].id, 1);
+  assert.equal(result.repositories.selected[0].fullName, 'owner/renamed');
+  assert.deepEqual(fixture.store.value().repositories.selected.map((entry) => entry.id), [1]);
+  assert.equal(fixture.calls.canaryRun, 0);
+});
+
+test('setup re-entry preserves an accepted empty repository set', async () => {
+  const fixture = dependencies({ initialState: persistedState({ selected: [] }) });
+  const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-preserved-empty') }, fixture.deps);
+  assert.equal(result.readyForConstruction, true);
+  assert.equal(result.repositories.eligibleCount, 2);
+  assert.equal(result.repositories.selectedCount, 0);
+  assert.equal(fixture.calls.canaryRun, 0);
+});
+
+test('setup re-entry blocks if an accepted stable repository identity disappears', async () => {
+  const fixture = dependencies({
+    repositories: [repository(1)],
+    initialState: persistedState({ selected: [{ id: 1, fullName: 'owner/repo-0', private: false }] }),
+  });
+  const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-missing-accepted') }, fixture.deps);
+  assert.equal(result.blocked, true);
+  assert.match(result.blocker, /accepted repositories are unavailable/u);
+  assert.equal(fixture.calls.authority, 0);
+  assert.equal(fixture.calls.canaryStatus, 0);
+  assert.equal(fixture.calls.canaryRun, 0);
+});
+
+test('setup identity drift requires explicit repository selection before authority is rebound', async () => {
+  const fixture = dependencies({
+    identity: { id: 42, login: 'current-owner' },
+    repositories: [repository(0, { full_name: 'current-owner/repo-0' })],
+    initialState: persistedState({
+      identity: { id: 41, login: 'previous-owner' },
+      selected: [{ id: 1, fullName: 'previous-owner/repo-0', private: false }],
+    }),
+  });
+  const blocked = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-identity-drift') }, fixture.deps);
+  assert.equal(blocked.blocked, true);
+  assert.match(blocked.blocker, /GitHub setup identity changed/u);
+  assert.equal(fixture.calls.authority, 0);
+  assert.equal(fixture.calls.canaryStatus, 0);
+
+  const rebound = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-identity-drift'),
+    requestedRepositories: ['current-owner/repo-0'],
+  }, fixture.deps);
+  assert.equal(rebound.readyForConstruction, true);
+  assert.equal(rebound.repositories.selectedCount, 1);
+  assert.equal(fixture.store.value().identity.id, 42);
+  assert.equal(fixture.calls.canaryRun, 0);
 });
