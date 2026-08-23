@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DetachedSignatureVerifier } from '../src/runtime/detached-signature-verifier.js';
@@ -37,7 +37,7 @@ test('detached verifier accepts the exact signing fingerprint and binds manifest
     assert.deepEqual(result, { verified: true, signerFingerprint: fingerprint, manifestSha256: sha256('signed manifest\n') });
     assert.equal(calls.length, 1);
     assert.equal(calls[0].executable, 'gpgv-test');
-    assert.deepEqual(calls[0].arguments.slice(0, 3), ['--keyring', data.keyring, '--status-fd']);
+    assert.deepEqual(calls[0].arguments.slice(0, 3), ['--keyring', await realpath(data.keyring), '--status-fd']);
     assert.equal(calls[0].input, null);
   } finally { await rm(data.directory, { recursive: true, force: true }); }
 });
