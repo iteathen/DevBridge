@@ -176,9 +176,15 @@ $ProgressPreference = 'SilentlyContinue'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 Import-Module Hyper-V -ErrorAction Stop
 $item = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq [string]$data.name } | Select-Object -First 1
-if ($null -eq $item) { @{ exists = $false; owned = $false; state = 'absent'; diskPresent = (Test-Path -LiteralPath $data.diskPath -PathType Leaf) } | ConvertTo-Json -Compress; exit 0 }
+if ($null -eq $item) {
+  @{ exists = $false; owned = $false; state = 'absent'; diskPresent = (Test-Path -LiteralPath $data.diskPath -PathType Leaf); diskAttached = $false; mediaCount = 0 } | ConvertTo-Json -Compress
+  exit 0
+}
 $owned = [string]$item.Notes -eq [string]$data.marker
-@{ exists = $true; owned = $owned; state = ([string]$item.State).ToLowerInvariant(); providerIdentity = ([string]$item.Id).ToLowerInvariant(); diskPresent = (Test-Path -LiteralPath $data.diskPath -PathType Leaf) } | ConvertTo-Json -Compress
+$hard = @(Get-VMHardDiskDrive -VMName ([string]$data.name) -ErrorAction Stop)
+$diskAttached = $hard.Count -eq 1 -and [IO.Path]::GetFullPath([string]$hard[0].Path) -eq [IO.Path]::GetFullPath([string]$data.diskPath)
+$mediaCount = @(Get-VMDvdDrive -VMName ([string]$data.name) -ErrorAction Stop).Count
+@{ exists = $true; owned = $owned; state = ([string]$item.State).ToLowerInvariant(); providerIdentity = ([string]$item.Id).ToLowerInvariant(); diskPresent = (Test-Path -LiteralPath $data.diskPath -PathType Leaf); diskAttached = $diskAttached; mediaCount = [int]$mediaCount } | ConvertTo-Json -Compress
 `;
 
 const START_INSTALL_SCRIPT = String.raw`
@@ -233,14 +239,17 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 Import-Module Hyper-V -ErrorAction Stop
-$item = Get-VM -Name ([string]$data.name) -ErrorAction Stop
-if ([string]$item.Notes -ne [string]$data.marker) { throw 'construction machine ownership proof does not match' }
-if (([string]$item.Id).ToLowerInvariant() -ne ([string]$data.providerIdentity).ToLowerInvariant()) { throw 'construction provider identity changed' }
-if ([string]$item.State -ne 'Off') { throw 'construction machine must be stopped before image retention' }
+$item = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq [string]$data.name } | Select-Object -First 1
+if ($null -ne $item) {
+  if ([string]$item.Notes -ne [string]$data.marker) { throw 'construction machine ownership proof does not match' }
+  if (([string]$item.Id).ToLowerInvariant() -ne ([string]$data.providerIdentity).ToLowerInvariant()) { throw 'construction provider identity changed' }
+  if ([string]$item.State -ne 'Off') { throw 'construction machine must be stopped before image retention' }
+}
 if (-not (Test-VHD -Path ([string]$data.diskPath) -ErrorAction Stop)) { throw 'construction disk is unusable' }
 $disk = Get-VHD -Path ([string]$data.diskPath) -ErrorAction Stop
 if ([string]$disk.VhdType -ne 'Dynamic' -or -not [string]::IsNullOrWhiteSpace([string]$disk.ParentPath)) { throw 'construction disk is not a standalone image' }
-Remove-VM -Name ([string]$data.name) -Force -ErrorAction Stop
+if ($null -ne $item) { Remove-VM -Name ([string]$data.name) -Force -ErrorAction Stop }
+$disk = Get-VHD -Path ([string]$data.diskPath) -ErrorAction Stop
 @{ retained = $true; virtualBytes = [long]$disk.Size; allocatedBytes = [long]$disk.FileSize; diskIdentity = [string]$disk.DiskIdentifier } | ConvertTo-Json -Compress
 `;
 
@@ -392,10 +401,12 @@ export class HyperVImageConstruction {
     const identity = subject(rawIdentity);
     const state = await this.#load();
     const record = state.records[identity];
-    if (!record) return { identity, phase: 'absent', exists: false, owned: false, state: 'absent', diskPresent: false };
+    if (!record) return { identity, phase: 'absent', exists: false, owned: false, state: 'absent', diskPresent: false, diskAttached: false, mediaCount: 0 };
     const observed = await this.#run(OBSERVE_SCRIPT, this.#descriptor(record), 30_000);
     if (observed.exists === true && observed.owned !== true) throw new Error('construction provider object is not owned by this operation');
     if (record.providerIdentity && observed.exists === true && observed.providerIdentity !== record.providerIdentity) throw new Error('construction provider identity changed');
+    const mediaCount = Number(observed.mediaCount ?? 0);
+    if (!Number.isSafeInteger(mediaCount) || mediaCount < 0 || mediaCount > 16) throw new Error('construction media observation is invalid');
     return {
       identity,
       phase: record.phase,
@@ -403,6 +414,8 @@ export class HyperVImageConstruction {
       owned: observed.owned === true,
       state: String(observed.state ?? 'unknown'),
       diskPresent: observed.diskPresent === true,
+      diskAttached: observed.diskAttached === true,
+      mediaCount,
     };
   }
 
@@ -412,7 +425,9 @@ export class HyperVImageConstruction {
     const record = state.records[identity];
     if (!record || record.phase !== 'qualifying' || !record.providerIdentity) throw new Error('construction is not available for qualification');
     const observed = await this.status(identity);
-    if (!observed.exists || !observed.owned || observed.state !== 'running') throw new Error('construction is not running for qualification');
+    if (!observed.exists || !observed.owned || observed.state !== 'running' || !observed.diskAttached || observed.mediaCount !== 0) {
+      throw new Error('construction is not running from its installed disk for qualification');
+    }
     return Object.freeze({ reference: record.name, proof: record.marker });
   }
 
@@ -436,7 +451,14 @@ export class HyperVImageConstruction {
     const record = state.records[identity];
     if (!record || record.phase !== 'installing' || !record.providerIdentity) throw new Error('construction is not awaiting installed boot');
     const observed = await this.status(identity);
-    if (!observed.exists || observed.state !== 'off' || !observed.diskPresent) throw new Error('installer has not completed with a retained disk');
+    if (!observed.exists || !observed.diskPresent || !observed.diskAttached) throw new Error('installer has not completed with the exact retained disk');
+    if (observed.state === 'running' && observed.mediaCount === 0) {
+      record.phase = 'qualifying';
+      await this.#save(state);
+      return this.status(identity);
+    }
+    if (observed.state !== 'off') throw new Error('installer has not completed with a retained disk');
+    if (![0, 2].includes(observed.mediaCount)) throw new Error('construction media attachment state is ambiguous');
     const result = await this.#run(BOOT_INSTALLED_SCRIPT, this.#descriptor(record), 60_000);
     if (result.started !== true) throw new Error('installed construction did not start');
     record.phase = 'qualifying';
@@ -475,7 +497,7 @@ export class HyperVImageConstruction {
     const identity = subject(rawIdentity);
     const state = await this.#load();
     const record = state.records[identity];
-    if (!record || record.phase !== 'qualified' || !record.providerIdentity) throw new Error('construction is not qualified for retention');
+    if (!record || !['qualified', 'retained'].includes(record.phase) || !record.providerIdentity) throw new Error('construction is not qualified for retention');
     const result = await this.#run(RETAIN_SCRIPT, this.#descriptor(record), 60_000);
     if (result.retained !== true) throw new Error('construction disk was not retained');
     record.phase = 'retained';
