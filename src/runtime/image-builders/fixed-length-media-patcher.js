@@ -1,4 +1,4 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, constants as fsConstants } from 'node:fs';
 import { copyFile, lstat, open, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -77,6 +77,29 @@ function assertNoOverlap(ranges, candidate) {
   }
 }
 
+async function buildPatchPlan(source, size, normalized, chunkBytes) {
+  const handle = await open(source, 'r');
+  try {
+    const ranges = [];
+    const plan = [];
+    for (const patch of normalized) {
+      const offsets = await findOffsets(handle, size, patch.before, chunkBytes);
+      if (offsets.length !== patch.occurrences) {
+        throw new Error(`patch ${patch.id} expected ${patch.occurrences} occurrence(s) but found ${offsets.length}`);
+      }
+      for (const offset of offsets) {
+        const range = { id: patch.id, start: offset, end: offset + patch.before.length };
+        assertNoOverlap(ranges, range);
+        ranges.push(range);
+      }
+      plan.push({ patch, offsets });
+    }
+    return plan;
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function applyFixedLengthMediaPatches({ source, destination, patches, chunkBytes = DEFAULT_CHUNK_BYTES }) {
   if (typeof source !== 'string' || typeof destination !== 'string') throw new TypeError('source and destination are required');
   if (path.resolve(source) === path.resolve(destination)) throw new Error('source and destination must be distinct');
@@ -86,24 +109,15 @@ export async function applyFixedLengthMediaPatches({ source, destination, patche
   const normalized = patches.map(normalizePatch);
   const sourceInfo = await regularFile(source, 'source media');
   const sourceSha256 = await sha256File(source);
-  await copyFile(source, destination, 1);
+  const plan = await buildPatchPlan(source, sourceInfo.size, normalized, chunkBytes);
+  await copyFile(source, destination, fsConstants.COPYFILE_EXCL);
 
   try {
     await regularFile(destination, 'derived media');
     const handle = await open(destination, 'r+');
     try {
-      const ranges = [];
       const applied = [];
-      for (const patch of normalized) {
-        const offsets = await findOffsets(handle, sourceInfo.size, patch.before, chunkBytes);
-        if (offsets.length !== patch.occurrences) {
-          throw new Error(`patch ${patch.id} expected ${patch.occurrences} occurrence(s) but found ${offsets.length}`);
-        }
-        for (const offset of offsets) {
-          const range = { id: patch.id, start: offset, end: offset + patch.before.length };
-          assertNoOverlap(ranges, range);
-          ranges.push(range);
-        }
+      for (const { patch, offsets } of plan) {
         for (const offset of offsets) {
           const { bytesWritten } = await handle.write(patch.after, 0, patch.after.length, offset);
           if (bytesWritten !== patch.after.length) throw new Error(`patch ${patch.id} write was incomplete`);
