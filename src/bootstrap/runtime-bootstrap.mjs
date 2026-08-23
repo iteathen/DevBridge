@@ -16,7 +16,7 @@ import { pathToFileURL } from 'node:url';
 
 const SOURCE_REPOSITORY = 'https://github.com/iteathen/DevBridge.git';
 const MINIMUM_NODE = Object.freeze([22, 16, 0]);
-const COMMANDS = new Set(['doctor', 'poll-once', 'run-once', 'daemon', 'status', 'stop', 'restart']);
+const COMMANDS = new Set(['setup', 'doctor', 'poll-once', 'run-once', 'daemon', 'status', 'stop', 'restart']);
 const CHANNELS = Object.freeze({
   testing: Object.freeze(['main']),
   stable: Object.freeze(['main']),
@@ -45,6 +45,7 @@ function takeValue(argv, index, flag) {
 
 export function parseBootstrapArgs(argv) {
   const result = { command: 'daemon', channel: 'testing', home: null, config: null, update: true };
+  const repositories = [];
   let commandSeen = false;
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
@@ -57,10 +58,15 @@ export function parseBootstrapArgs(argv) {
     if (value === '--channel') { result.channel = takeValue(argv, index, value); index += 1; continue; }
     if (value === '--home') { result.home = takeValue(argv, index, value); index += 1; continue; }
     if (value === '--config') { result.config = takeValue(argv, index, value); index += 1; continue; }
+    if (value === '--repository') { repositories.push(takeValue(argv, index, value)); index += 1; continue; }
     if (value === '--no-update') { result.update = false; continue; }
     fail(`Unknown bootstrap argument: ${value}`);
   }
   if (!Object.hasOwn(CHANNELS, result.channel)) fail(`Unknown DevBridge channel: ${result.channel}`);
+  if (repositories.length > 0) {
+    if (result.command !== 'setup') fail('--repository is valid only with devbridge setup');
+    result.repositories = [...new Set(repositories)];
+  }
   return result;
 }
 
@@ -75,7 +81,15 @@ export function resolveBootstrapPaths(args, environment = process.env) {
   const home = path.resolve(expandHome(configuredHome || path.join(homedir(), '.devbridge')));
   const runtime = path.join(home, 'runtime');
   const config = path.resolve(expandHome(args.config || path.join(home, 'config.json')));
-  return { home, runtime, config, gitHome: path.join(home, 'bootstrap-git-home'), hooks: path.join(home, 'bootstrap-empty-hooks') };
+  return {
+    home,
+    runtime,
+    config,
+    command: args.command,
+    repositories: Object.freeze([...(args.repositories ?? [])]),
+    gitHome: path.join(home, 'bootstrap-git-home'),
+    hooks: path.join(home, 'bootstrap-empty-hooks'),
+  };
 }
 
 const SCRUBBED_GIT_ENVIRONMENT = Object.freeze([
@@ -183,6 +197,7 @@ export function ensureRuntime(args, paths, runner = defaultRunner) {
 }
 
 export function prepareLocalConfig(paths) {
+  if (paths.command === 'setup') return false;
   if (existsSync(paths.config)) return false;
   const example = path.join(paths.runtime, 'config', 'devbridge.example.json');
   if (!existsSync(example)) fail('Fetched runtime is missing the safe example configuration.');
@@ -191,9 +206,28 @@ export function prepareLocalConfig(paths) {
   return true;
 }
 
+function setupCliArguments(paths, runtime) {
+  const args = [runtime.cliPath, 'setup', '--home', paths.home];
+  for (const repository of paths.repositories ?? []) args.push('--repository', repository);
+  return args;
+}
+
+function setupEnvironment() {
+  const launcher = process.env.DEVBRIDGE_STAGE0_LAUNCHER ?? process.argv[1];
+  if (typeof launcher !== 'string' || launcher.length === 0 || launcher.includes('\0')) fail('Stage 0 launcher identity is unavailable for PATH installation.');
+  return { ...process.env, DEVBRIDGE_STAGE0_LAUNCHER: path.resolve(launcher) };
+}
+
 export function runDevBridgeCli(command, paths, runtime, runner = defaultRunner) {
-  const result = runner(process.execPath, [runtime.cliPath, command, '--config', paths.config], {
-    cwd: paths.runtime, env: process.env, stdio: 'inherit', shell: false, windowsHide: false,
+  if (paths.command === 'setup' && command === 'doctor') return 0;
+  const setup = command === 'setup';
+  const args = setup ? setupCliArguments(paths, runtime) : [runtime.cliPath, command, '--config', paths.config];
+  const result = runner(process.execPath, args, {
+    cwd: paths.runtime,
+    env: setup ? setupEnvironment() : process.env,
+    stdio: 'inherit',
+    shell: false,
+    windowsHide: false,
   });
   if (result.error) fail(`Could not start DevBridge ${command}: ${result.error.message}`);
   return result.status ?? 1;
