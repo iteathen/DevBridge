@@ -6,6 +6,7 @@ const CORE_PATHS = [
   new URL('../src/runtime/environment-declaration.js', import.meta.url),
   new URL('../src/runtime/environment-observation.js', import.meta.url),
   new URL('../src/runtime/environment-lifecycle-journal.js', import.meta.url),
+  new URL('../src/runtime/environment-recreate.js', import.meta.url),
 ];
 
 const FORBIDDEN_TERMS = [
