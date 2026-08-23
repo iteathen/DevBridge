@@ -23,6 +23,7 @@ import { createCoreOperationRegistry } from '../runtime/deterministic-operation-
 import { loadLocalOperationManifests } from '../runtime/local-operation-manifest.js';
 import { ToolOnboarding } from '../runtime/tool-onboarding.js';
 import { canonicalExternalDirectory } from '../runtime/external-directory.js';
+import { createSetupStatusOperation } from '../setup/status-operation.js';
 import { connectToolOnboarding } from './tool-onboarding-composition.js';
 import { composeWorkRunner } from './work-runner-composition.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
@@ -37,6 +38,7 @@ import { TaskLeaseManager } from '../run/task-lease-manager.js';
 import { HardGateController } from '../run/hard-gate-controller.js';
 import { DecisionGatedRunCoordinator, DecisionGatedWorkspaceManager } from '../run/decision-gated-coordinator.js';
 import { createRuntimeExecutionContext } from './runtime-execution.js';
+import { runDevBridgeSetup } from './setup.js';
 
 export { stateFileName } from '../state/state-file.js';
 
@@ -60,19 +62,9 @@ export async function createRuntime(config, {
   const workspacePolicy = new WorkspacePolicy(config.workspace);
   await workspacePolicy.ensureRoot();
   const stateStore = new JsonStateStore(path.join(config.state.directory, stateFileName(config.github.queueRepository)));
-  const chatHandoffStore = new ChatHandoffStore({
-    stateStore,
-    maxBytes: config.contextRollover.maxHandoffBytes,
-    maxRetained: config.contextRollover.maxRetained,
-  });
+  const chatHandoffStore = new ChatHandoffStore({ stateStore, maxBytes: config.contextRollover.maxHandoffBytes, maxRetained: config.contextRollover.maxRetained });
   const contextBudget = config.contextRollover.enabled
-    ? new ContextBudgetManager({
-        unit: config.contextRollover.unit,
-        capacityUnits: config.contextRollover.capacityUnits,
-        softRatio: config.contextRollover.softRatio,
-        preferredRatio: config.contextRollover.preferredRatio,
-        hardRatio: config.contextRollover.hardRatio,
-      })
+    ? new ContextBudgetManager({ unit: config.contextRollover.unit, capacityUnits: config.contextRollover.capacityUnits, softRatio: config.contextRollover.softRatio, preferredRatio: config.contextRollover.preferredRatio, hardRatio: config.contextRollover.hardRatio })
     : null;
   const rateBudget = new RateBudget(config.github.rateLimit);
   const credential = await resolveGitHubCredential(config.github.auth, { env });
@@ -83,36 +75,12 @@ export async function createRuntime(config, {
   const decisionSource = new IssueDecisionSource({ client, queueRepository: config.github.queueRepository });
   const secretValues = credential ? [credential.token] : [];
   let toolInventory = null;
-  const statusReporter = new IssueStatusReporter({
-    client,
-    stateStore,
-    queueRepository: config.github.queueRepository,
-    progressIntervalMs: config.status.progressIntervalMs,
-    maxCommentBytes: config.status.maxCommentBytes,
-    secretValues,
-    inventoryRefProvider: () => toolInventory?.reference() ?? null,
-  });
-  const chatHandoffProjector = new ChatHandoffProjector({
-    client,
-    stateStore,
-    queueRepository: config.github.queueRepository,
-    maxCommentBytes: config.status.maxCommentBytes,
-    secretValues,
-  });
-  const toolInventoryProjector = new ToolInventoryProjector({
-    client,
-    stateStore,
-    queueRepository: config.github.queueRepository,
-    maxCommentBytes: config.status.maxCommentBytes,
-    secretValues,
-  });
+  const statusReporter = new IssueStatusReporter({ client, stateStore, queueRepository: config.github.queueRepository, progressIntervalMs: config.status.progressIntervalMs, maxCommentBytes: config.status.maxCommentBytes, secretValues, inventoryRefProvider: () => toolInventory?.reference() ?? null });
+  const chatHandoffProjector = new ChatHandoffProjector({ client, stateStore, queueRepository: config.github.queueRepository, maxCommentBytes: config.status.maxCommentBytes, secretValues });
+  const toolInventoryProjector = new ToolInventoryProjector({ client, stateStore, queueRepository: config.github.queueRepository, maxCommentBytes: config.status.maxCommentBytes, secretValues });
   const coordination = coordinationDefaults(config);
-  const agentIdentity = coordination.enabled
-    ? await loadOrCreateAgentIdentity({ directory: config.state.directory, handle: coordination.handle })
-    : null;
-  const effectiveBranchPrefix = agentIdentity
-    ? `${config.publication.branchPrefix}/${agentIdentity.fingerprint}`
-    : config.publication.branchPrefix;
+  const agentIdentity = coordination.enabled ? await loadOrCreateAgentIdentity({ directory: config.state.directory, handle: coordination.handle }) : null;
+  const effectiveBranchPrefix = agentIdentity ? `${config.publication.branchPrefix}/${agentIdentity.fingerprint}` : config.publication.branchPrefix;
   const gitClient = new GitClient({ executable: config.git.executable, syntheticHome: path.join(config.state.directory, 'git-home'), defaultTimeoutMs: config.git.commandTimeoutMs });
   const workspaceManager = new GitWorkspaceManager({
     workspacePolicy,
@@ -133,112 +101,48 @@ export async function createRuntime(config, {
       if (peer.fingerprint !== peerConfig.fingerprint) throw new Error(`coordination peer ${peerConfig.handle} fingerprint changed after configuration validation`);
       trustedIdentities.set(peer.fingerprint, peer);
     }
-    taskLeaseStore = new GitTaskLeaseStore({
-      workspaceManager,
-      gitClient,
-      tokenProvider,
-      queueRepository: config.github.queueRepository,
-      fetchTimeoutMs: config.git.fetchTimeoutMs,
-    });
-    taskLeaseManager = new TaskLeaseManager({
-      identity: agentIdentity,
-      trustedIdentities,
-      store: taskLeaseStore,
-      leaseTtlMs: coordination.leaseTtlMs,
-      heartbeatIntervalMs: coordination.heartbeatIntervalMs,
-      clockSkewMs: coordination.clockSkewMs,
-      allowIdentityTakeover: coordinationExclusive,
-    });
+    taskLeaseStore = new GitTaskLeaseStore({ workspaceManager, gitClient, tokenProvider, queueRepository: config.github.queueRepository, fetchTimeoutMs: config.git.fetchTimeoutMs });
+    taskLeaseManager = new TaskLeaseManager({ identity: agentIdentity, trustedIdentities, store: taskLeaseStore, leaseTtlMs: coordination.leaseTtlMs, heartbeatIntervalMs: coordination.heartbeatIntervalMs, clockSkewMs: coordination.clockSkewMs, allowIdentityTakeover: coordinationExclusive });
   }
   const leaseExecutionContext = taskLeaseManager ? new LeaseExecutionContext({ taskLeaseManager }) : null;
-  const hardGateController = new HardGateController({
-    decisionSource,
-    decisionAuthorities: config.execution.decisionAuthorities,
-    approvalTtlMs: config.execution.decisionApprovalTtlMs,
-    architectureFileThreshold: config.execution.architectureGateFileThreshold,
-    architectureOwnerThreshold: config.execution.architectureGateOwnerThreshold,
-  });
-  const gatedWorkspaceManager = new DecisionGatedWorkspaceManager({
-    delegate: workspaceManager,
-    stateStore,
-    queueRepository: config.github.queueRepository,
-    gateController: hardGateController,
-  });
-  const executionWorkspaceManager = leaseExecutionContext
-    ? leaseExecutionContext.wrapWorkspaceManager(gatedWorkspaceManager)
-    : gatedWorkspaceManager;
-  const planWorkspaceManager = leaseExecutionContext
-    ? leaseExecutionContext.wrapWorkspaceManager(workspaceManager)
-    : workspaceManager;
+  const hardGateController = new HardGateController({ decisionSource, decisionAuthorities: config.execution.decisionAuthorities, approvalTtlMs: config.execution.decisionApprovalTtlMs, architectureFileThreshold: config.execution.architectureGateFileThreshold, architectureOwnerThreshold: config.execution.architectureGateOwnerThreshold });
+  const gatedWorkspaceManager = new DecisionGatedWorkspaceManager({ delegate: workspaceManager, stateStore, queueRepository: config.github.queueRepository, gateController: hardGateController });
+  const executionWorkspaceManager = leaseExecutionContext ? leaseExecutionContext.wrapWorkspaceManager(gatedWorkspaceManager) : gatedWorkspaceManager;
+  const planWorkspaceManager = leaseExecutionContext ? leaseExecutionContext.wrapWorkspaceManager(workspaceManager) : workspaceManager;
 
   const builtIns = builtInToolProfiles();
-  for (const name of Object.keys(builtIns)) {
-    if (Object.hasOwn(config.tools, name)) throw new Error(`local tool profile name ${name} is reserved by DevBridge`);
-  }
+  for (const name of Object.keys(builtIns)) if (Object.hasOwn(config.tools, name)) throw new Error(`local tool profile name ${name} is reserved by DevBridge`);
   const deterministicProfileNames = Object.keys(builtIns);
   const tools = { ...config.tools, ...builtIns };
 
   const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
-  const runtimeExecution = await createRuntimeExecutionContext({
-    config,
-    workspaceManager,
-    gitClient,
-    client,
-    toolProfiles: tools,
-    protectedValues: secretValues,
-    env,
-  });
+  const runtimeExecution = await createRuntimeExecutionContext({ config, workspaceManager, gitClient, client, toolProfiles: tools, protectedValues: secretValues, env });
   const repositoryExecution = runtimeExecution.repositoryExecution;
   const workerExchange = new WorkerExchange({ stateDirectory: config.state.directory });
   const processRunner = composeWorkRunner({ mailboxStore: workerExchange, activeExecution: repositoryExecution });
-  const leaseProcessRunner = leaseExecutionContext
-    ? leaseExecutionContext.wrapProcessRunner(processRunner)
-    : processRunner;
-  const deterministicProcessRunner = new DeterministicProcessRunner({
-    sourceEnv: env,
-    faultInjector,
-    repositoryExecution,
-  });
+  const leaseProcessRunner = leaseExecutionContext ? leaseExecutionContext.wrapProcessRunner(processRunner) : processRunner;
+  const deterministicProcessRunner = new DeterministicProcessRunner({ sourceEnv: env, faultInjector, repositoryExecution });
   const scopedDeterministicProcessRunner = runtimeExecution.scope(deterministicProcessRunner);
-  const leaseDeterministicProcessRunner = leaseExecutionContext
-    ? leaseExecutionContext.wrapProcessRunner(scopedDeterministicProcessRunner)
-    : scopedDeterministicProcessRunner;
+  const leaseDeterministicProcessRunner = leaseExecutionContext ? leaseExecutionContext.wrapProcessRunner(scopedDeterministicProcessRunner) : scopedDeterministicProcessRunner;
 
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
-  const onboardingConfig = config.execution.toolOnboarding ?? {
-    enabled: false,
-    manifestDirectory: null,
-    autoIntegrate: [],
-    maxHelpBytes: 262_144,
-    probeTimeoutMs: 15_000,
-  };
+  operationRegistry.register('setup.status', createSetupStatusOperation({
+    runSetup: () => runDevBridgeSetup({ env }, { fetchImpl }),
+  }));
+  const onboardingConfig = config.execution.toolOnboarding ?? { enabled: false, manifestDirectory: null, autoIntegrate: [], maxHelpBytes: 262_144, probeTimeoutMs: 15_000 };
   const manifestDirectory = await canonicalExternalDirectory(onboardingConfig.manifestDirectory, config.workspace.root);
-  const localOperationManifests = manifestDirectory
-    ? await loadLocalOperationManifests({ directory: manifestDirectory, registry: operationRegistry })
-    : [];
+  const localOperationManifests = manifestDirectory ? await loadLocalOperationManifests({ directory: manifestDirectory, registry: operationRegistry }) : [];
   const toolOnboarding = onboardingConfig.enabled
     ? connectToolOnboarding({
-        onboarding: new ToolOnboarding({
-          entries: onboardingConfig.autoIntegrate,
-          probeTimeoutMs: onboardingConfig.probeTimeoutMs,
-          maxHelpBytes: onboardingConfig.maxHelpBytes,
-        }),
+        onboarding: new ToolOnboarding({ entries: onboardingConfig.autoIntegrate, probeTimeoutMs: onboardingConfig.probeTimeoutMs, maxHelpBytes: onboardingConfig.maxHelpBytes }),
         directory: manifestDirectory,
         operationRegistry,
         activeExecution: repositoryExecution,
       })
     : null;
-  const deterministicControllerPlanExecutor = new ControllerPlanExecutor({
-    operationRegistry,
-    processRunner: leaseDeterministicProcessRunner,
-    workspaceManager: planWorkspaceManager,
-    faultInjector,
-  });
-  const controllerPlanExecutor = new LivenessProjectingPlanExecutor({
-    delegate: deterministicControllerPlanExecutor,
-    statusReporter,
-  });
+  const deterministicControllerPlanExecutor = new ControllerPlanExecutor({ operationRegistry, processRunner: leaseDeterministicProcessRunner, workspaceManager: planWorkspaceManager, faultInjector });
+  const controllerPlanExecutor = new LivenessProjectingPlanExecutor({ delegate: deterministicControllerPlanExecutor, statusReporter });
 
   toolInventory = new ToolInventoryService({
     operationRegistry,
@@ -271,14 +175,7 @@ export async function createRuntime(config, {
     autoPushTaskBranches: config.publication.autoPushTaskBranches,
     forceNoOpPublication: config.publication.forceNoOpPublication,
   });
-  const coordinator = new DecisionGatedRunCoordinator({
-    delegate: baseCoordinator,
-    stateStore,
-    statusReporter,
-    gateController: hardGateController,
-    queueRepository: config.github.queueRepository,
-    maxTurns: config.execution.maxTurns,
-  });
+  const coordinator = new DecisionGatedRunCoordinator({ delegate: baseCoordinator, stateStore, statusReporter, gateController: hardGateController, queueRepository: config.github.queueRepository, maxTurns: config.execution.maxTurns });
 
   return {
     config,
