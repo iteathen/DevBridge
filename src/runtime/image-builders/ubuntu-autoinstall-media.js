@@ -75,7 +75,7 @@ export class UbuntuAutoinstallMediaPreparer {
 
       const seed = validateSeed(await this.#seedFactory({ recipeRef, recipeGeneration: recipe.generation, sourceIdentity: structuredClone(source.identity) }));
       const seedResult = await this.#seedWriter.create({
-        workspace: destination,
+        root: destination,
         destination: path.join(destination, 'cidata.iso'),
         userData: seed.userData,
         metaData: seed.metaData,
