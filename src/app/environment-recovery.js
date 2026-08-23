@@ -1,5 +1,6 @@
 import { EnvironmentDiagnosisService } from '../runtime/environment-diagnosis.js';
 import { EnvironmentRebuild } from '../runtime/environment-rebuild.js';
+import { EnvironmentRecreate } from '../runtime/environment-recreate.js';
 import { EnvironmentRepair } from '../runtime/environment-repair.js';
 import { EnvironmentReset } from '../runtime/environment-reset.js';
 
@@ -109,6 +110,8 @@ export function createEnvironmentRecovery({
   preparation,
   workspaces,
   rebuildConstruction = null,
+  recreateConstruction = null,
+  recreateRetirement = null,
   resetConstruction = null,
   resetRetirement = null,
   resetAuthorization = null,
@@ -140,6 +143,15 @@ export function createEnvironmentRecovery({
     construction: assertPort(rebuildConstruction, ['run', 'clear'], 'rebuild construction'),
     evidence,
   });
+  const recreate = recreateConstruction == null || recreateRetirement == null ? null : new EnvironmentRecreate({
+    declarations: lifecycle.declarations,
+    journal: lifecycle.journal,
+    observer: localObserver,
+    fence: localFence,
+    construction: assertPort(recreateConstruction, ['run', 'clear'], 'recreate construction'),
+    retirement: assertPort(recreateRetirement, ['ensure'], 'recreate retirement'),
+    evidence,
+  });
   const reset = resetConstruction == null || resetRetirement == null ? null : new EnvironmentReset({
     declarations: lifecycle.declarations,
     journal: lifecycle.journal,
@@ -157,6 +169,8 @@ export function createEnvironmentRecovery({
     repair: (identity) => repair.repair(identity),
     planRebuild: rebuild == null ? null : (identity) => rebuild.plan(identity),
     rebuild: rebuild == null ? null : (identity) => rebuild.rebuild(identity),
+    planRecreate: recreate == null ? null : (identity) => recreate.plan(identity),
+    recreate: recreate == null ? null : (identity, options) => recreate.recreate(identity, options),
     planReset: reset == null ? null : (identity) => reset.plan(identity),
     reset: reset == null ? null : (identity, options) => reset.reset(identity, options),
   });
