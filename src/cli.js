@@ -7,15 +7,18 @@ import { pollOnce } from './app/poll-once.js';
 import { runOnce } from './app/run-once.js';
 import { runDaemon } from './app/daemon.js';
 import { createRuntime } from './app/runtime.js';
+import { createLocalEnvironmentOperator } from './app/environment-operator-runtime.js';
 import { chatHandoffSeed, chatHandoffStatus } from './app/chat-handoff.js';
 import { PolicyError } from './errors.js';
+import { logicalEnvironmentIdentity } from './runtime/environment-declaration.js';
 import { daemonStatus, pauseDaemon, resumeDaemon, stopDaemon } from './runtime/daemon-lock.js';
 
 const installationTag = process.env.DEVBRIDGE_INSTALLATION_TAG;
 if (/^DB-[0-9A-F]{12}$/u.test(installationTag ?? '')) process.title = `DevBridge[${installationTag}]`;
 
 function usage() {
-  console.error('Usage: devbridge <doctor|poll-once|run-once|daemon|status|pause|resume|stop|restart|handoff-status|handoff-seed|handoff-project> --config <path> [--repository owner/name] [--issue number]');
+  console.error('Usage: devbridge <doctor|poll-once|run-once|daemon|status|pause|resume|stop|restart|handoff-status|handoff-seed|handoff-project|environment> --config <path> [options]');
+  console.error('       devbridge environment <list|show|plan|create|repair|rebuild|reset|recreate|resume|setup-reentry> --config <path> [--identity id|--profile name] [--operation op] [--confirm subject]');
 }
 
 function optionValue(argv, name) {
@@ -40,6 +43,34 @@ function integerOption(argv, name) {
 
 function daemonLockPath(config) {
   return path.join(config.state.directory, 'daemon.lock');
+}
+
+function environmentIdentity(args) {
+  const explicit = optionValue(args, '--identity');
+  const profile = optionValue(args, '--profile');
+  if (explicit && profile) throw new PolicyError('use either --identity or --profile, not both');
+  return explicit ?? (profile ? logicalEnvironmentIdentity(profile) : null);
+}
+
+async function runEnvironmentCommand(config, args) {
+  const [action] = args;
+  if (!action) throw new PolicyError('environment command requires an action');
+  const operator = await createLocalEnvironmentOperator({ stateDirectory: config.state.directory });
+  const identity = environmentIdentity(args);
+  if (action === 'list') return operator.list();
+  if (action === 'setup-reentry') return operator.setupReentry(identity);
+  if (!identity) throw new PolicyError(`environment ${action} requires --identity or --profile`);
+  if (action === 'show') return operator.status(identity);
+  if (action === 'resume') return operator.resume(identity, { approval: optionValue(args, '--confirm') });
+  if (action === 'plan') {
+    const operation = optionValue(args, '--operation');
+    if (!operation) throw new PolicyError('environment plan requires --operation');
+    return operator.plan(operation, identity);
+  }
+  if (['create', 'repair', 'rebuild', 'reset', 'recreate'].includes(action)) {
+    return operator.run(action, identity, { approval: optionValue(args, '--confirm') });
+  }
+  throw new PolicyError(`unsupported environment action: ${action}`);
 }
 
 async function runDaemonCommand(config) {
@@ -69,6 +100,10 @@ async function main() {
 
   const config = await loadConfig(file);
   const repository = optionValue(args, '--repository') ?? config.github.queueRepository;
+  if (command === 'environment') {
+    console.log(JSON.stringify(await runEnvironmentCommand(config, args), null, 2));
+    return;
+  }
   if (command === 'handoff-status') {
     console.log(JSON.stringify(await chatHandoffStatus(config, repository), null, 2));
     return;
@@ -127,9 +162,11 @@ async function main() {
     return;
   }
   if (command === 'doctor') {
+    const environmentOperator = await createLocalEnvironmentOperator({ stateDirectory: config.state.directory });
     console.log(JSON.stringify(await doctor(config, {
       checkRepositoryAdmission: true,
       repositoryAdmissionTargets: [repository],
+      environmentOperator,
     }), null, 2));
     return;
   }

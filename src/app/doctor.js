@@ -41,10 +41,12 @@ export async function doctor(config, {
   environmentFoundation = null,
   probeEnvironmentFoundation = null,
   environmentDiagnosis = null,
+  environmentOperator = null,
 } = {}) {
   if (probeEnvironmentFoundation != null && typeof probeEnvironmentFoundation !== 'boolean') throw new TypeError('probeEnvironmentFoundation must be boolean or null');
   if (typeof checkRepositoryAdmission !== 'boolean') throw new TypeError('checkRepositoryAdmission must be boolean');
   if (environmentDiagnosis != null && typeof environmentDiagnosis.list !== 'function') throw new TypeError('environmentDiagnosis must expose a read-only list contract');
+  if (environmentOperator != null && typeof environmentOperator.inspect !== 'function') throw new TypeError('environmentOperator must expose a read-only inspect contract');
   const workspace = new WorkspacePolicy(config.workspace);
   const workspaceRoot = await workspace.ensureRoot();
   await mkdir(config.state.directory, { recursive: true, mode: 0o700 });
@@ -71,6 +73,8 @@ export async function doctor(config, {
   }
   const environmentDiagnostics = environmentDiagnosis == null ? null : await environmentDiagnosis.list();
   if (environmentDiagnostics != null && !Array.isArray(environmentDiagnostics)) throw new TypeError('environment diagnosis list must be an array');
+  const environmentLifecycle = environmentOperator == null ? null : await environmentOperator.inspect();
+  if (environmentLifecycle != null && (typeof environmentLifecycle !== 'object' || Array.isArray(environmentLifecycle))) throw new TypeError('environment operator inspection must be an object');
 
   const builtIns = builtInToolProfiles();
   for (const name of Object.keys(builtIns)) if (Object.hasOwn(config.tools, name)) throw new Error(`local tool profile name ${name} is reserved by DevBridge`);
@@ -151,6 +155,7 @@ export async function doctor(config, {
       repositoryExecution: repositoryExecutionStatus,
       environmentFoundation: environmentFoundationStatus,
       environmentDiagnostics,
+      environmentLifecycle,
       repositoryAdmission,
       core: {
         controllerPlans: { enabled: config.execution.controllerPlansEnabled, repositoryExecution: repositoryExecutionStatus, operations },

@@ -123,11 +123,19 @@ export function createEnvironmentConstructionWorkspaces({
     return { request, declaration, selected, policy, routing, scoped, changed };
   };
 
-  const verifyRoots = async (resolved) => {
+  const inspectRoots = async (resolved) => {
     for (const entry of resolved.selected) {
       const target = resolved.routing.targetForSubject(entry.subject);
       const health = await resolved.scoped.health(target);
       if (health?.ready !== true) throw new Error(health?.reason ?? 'environment workspace exchange is unavailable');
+    }
+    return Object.freeze({ ready: true, count: resolved.selected.length });
+  };
+
+  const verifyRoots = async (resolved) => {
+    await inspectRoots(resolved);
+    for (const entry of resolved.selected) {
+      const target = resolved.routing.targetForSubject(entry.subject);
       await resolved.scoped.put(target, sourceFor(READY_BYTES), { class: 'input', path: 'lifecycle/ready' }, { maxBytes: READY_BYTES.length });
       const outcome = await resolved.scoped.execute(target, {
         program: 'node',
@@ -158,7 +166,7 @@ export function createEnvironmentConstructionWorkspaces({
     async inspect(request) {
       try {
         const resolved = await resolve(request, { publish: false });
-        const status = await verifyRoots(resolved);
+        const status = await inspectRoots(resolved);
         return Object.freeze({ ...status, routeCount: resolved.policy.routes.length });
       } catch (error) {
         return Object.freeze({ ready: false, reason: String(error?.message ?? error).slice(0, 2048) });
