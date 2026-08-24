@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { invokeCommand } from '../src/runtime/command-invocation.js';
 import { HyperVImageConstruction } from '../src/runtime/providers/hyperv-image-construction.js';
 
 function sha256(value) { return createHash('sha256').update(value).digest('hex'); }
@@ -257,6 +258,105 @@ test('Hyper-V image construction binds an exact system-managed switch and resolv
 
     host.state.guestAddresses = ['10.0.0.2', '192.168.1.2'];
     await assert.rejects(() => construction.connectionAddress(data.request.identity), /ambiguous private IPv4/u);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('Windows Hyper-V construction reconciles only the exact default-adapter New-VM partial effect', { skip: process.platform !== 'win32' }, async () => {
+  const data = await fixture();
+  const networkId = 'c08cb7b8-9b3c-408e-8e30-5e16a3aeb444';
+  data.request.network = { control: 'system', reference: networkId, proof: networkId };
+  let prepareRequest;
+  const providerIdentity = '11111111-2222-3333-4444-555555555555';
+  try {
+    const construction = constructor(data, {
+      async invoke(request) {
+        const script = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
+        if (script.includes('construction media attachment count is incompatible')) {
+          prepareRequest = request;
+          return { exitCode: 0, stdout: JSON.stringify({ ready: true, providerIdentity }), stderr: '', timedOut: false, aborted: false, outputTruncated: false };
+        }
+        return { exitCode: 0, stdout: JSON.stringify({ exists: true, owned: true, state: 'off', providerIdentity, diskPresent: true, diskAttached: true, mediaCount: 2 }), stderr: '', timedOut: false, aborted: false, outputTruncated: false };
+      },
+    }, '2'.repeat(32));
+    await construction.prepare(data.request);
+    const prepareScript = Buffer.from(prepareRequest.arguments.at(-1), 'base64').toString('utf16le');
+    assert.match(prepareScript, /New-VM[^\r\n]+-SwitchName \(\[string\]\$switch\.Name\)/u);
+    assert.match(prepareScript, /ConfigurationLocation/u);
+
+    const mocks = ({ foreignConfig = false, foreignAdapter = false } = {}) => String.raw`
+function Import-Module { [CmdletBinding()] param([Parameter(Position=0)]$Name) }
+$script:item = $null
+$script:adapter = $null
+$script:hard = @()
+$script:dvd = @()
+function Get-VMSwitch { [CmdletBinding()] param([guid]$Id, [string]$Name) [pscustomobject]@{ Id = [guid]'${networkId}'; Name = 'Default Switch'; Notes = ''; SwitchType = 'Internal' } }
+function Get-VM {
+  [CmdletBinding()] param([string]$Name)
+  if ($null -eq $script:item) {
+    $location = if (${foreignConfig ? '$true' : '$false'}) { Join-Path ([string]$data.configPath) 'foreign' } else { Join-Path ([string]$data.configPath) ([string]$data.name) }
+    $script:item = [pscustomobject]@{ Name = [string]$data.name; Id = [guid]'${providerIdentity}'; Generation = 2; State = 'Off'; Notes = ''; MemoryStartup = [long]$data.memoryBytes; ConfigurationLocation = $location }
+  }
+  $script:item
+}
+function New-VM { [CmdletBinding()] param() throw 'existing exact partial was replaced' }
+function Get-VMHardDiskDrive { [CmdletBinding()] param([string]$VMName) $script:hard }
+function Get-VMDvdDrive {
+  [CmdletBinding()] param([string]$VMName, [int]$ControllerNumber, [int]$ControllerLocation)
+  if ($PSBoundParameters.ContainsKey('ControllerNumber') -and $PSBoundParameters.ContainsKey('ControllerLocation')) {
+    $script:dvd | Where-Object { $_.ControllerNumber -eq $ControllerNumber -and $_.ControllerLocation -eq $ControllerLocation }
+  } else { $script:dvd }
+}
+function Get-VMNetworkAdapter {
+  [CmdletBinding()] param([string]$VMName)
+  if ($null -eq $script:adapter) {
+    $script:adapter = [pscustomobject]@{
+      Name = 'Network Adapter'; IsLegacy = $false; DynamicMacAddressEnabled = $true
+      Connected = ${foreignAdapter ? '$true' : '$false'}; SwitchName = ${foreignAdapter ? "'foreign'" : '$null'}; SwitchId = ${foreignAdapter ? "[guid]'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'" : '$null'}
+    }
+  }
+  $script:adapter
+}
+function Set-VM {
+  [CmdletBinding()] param([string]$Name, [string]$Notes, [bool]$AutomaticCheckpointsEnabled, $AutomaticStartAction, $AutomaticStopAction, [long]$MemoryStartupBytes)
+  if ($PSBoundParameters.ContainsKey('Notes')) { $script:item.Notes = $Notes }
+}
+function Set-VMProcessor { [CmdletBinding()] param([string]$VMName, [long]$Count) }
+function Set-VMFirmware { [CmdletBinding()] param([string]$VMName, $EnableSecureBoot, $FirstBootDevice) }
+function Add-VMNetworkAdapter { [CmdletBinding()] param() throw 'the default adapter was not reconciled' }
+function Connect-VMNetworkAdapter {
+  [CmdletBinding()] param($VMNetworkAdapter, $VMSwitch)
+  if ([string]$script:item.Notes -ne [string]$data.marker) { throw 'network mutation preceded ownership proof' }
+  $VMNetworkAdapter.Connected = $true; $VMNetworkAdapter.SwitchName = [string]$VMSwitch.Name; $VMNetworkAdapter.SwitchId = [guid]$VMSwitch.Id
+}
+function New-VHD { [CmdletBinding()] param([string]$Path, [switch]$Dynamic, [long]$SizeBytes) }
+function Test-VHD { [CmdletBinding()] param([string]$Path) $true }
+function Get-VHD { [CmdletBinding()] param([string]$Path) [pscustomobject]@{ VhdType = 'Dynamic'; ParentPath = $null; Size = [long]$data.diskBytes } }
+function Add-VMHardDiskDrive {
+  [CmdletBinding()] param([string]$VMName, [string]$ControllerType, [int]$ControllerNumber, [int]$ControllerLocation, [string]$Path)
+  $script:hard = @([pscustomobject]@{ Path = $Path; ControllerNumber = $ControllerNumber; ControllerLocation = $ControllerLocation })
+}
+function Add-VMDvdDrive {
+  [CmdletBinding()] param([string]$VMName, [int]$ControllerNumber, [int]$ControllerLocation, [string]$Path)
+  $script:dvd += [pscustomobject]@{ Path = $Path; ControllerNumber = $ControllerNumber; ControllerLocation = $ControllerLocation }
+}
+`;
+    const run = (mockScript) => invokeCommand({
+      ...prepareRequest,
+      arguments: [...prepareRequest.arguments.slice(0, -1), Buffer.from(`${mockScript}\n${prepareScript}`, 'utf16le').toString('base64')],
+      timeoutMs: 20_000,
+    });
+
+    const exact = await run(mocks());
+    assert.equal(exact.exitCode, 0, exact.stderr);
+    assert.deepEqual(JSON.parse(exact.stdout), { ready: true, providerIdentity });
+
+    const foreignConfig = await run(mocks({ foreignConfig: true }));
+    assert.equal(foreignConfig.exitCode, 1);
+    assert.match(foreignConfig.stderr, /occupied without matching ownership evidence/u);
+
+    const foreignAdapter = await run(mocks({ foreignAdapter: true }));
+    assert.equal(foreignAdapter.exitCode, 1);
+    assert.match(foreignAdapter.stderr, /occupied without matching ownership evidence/u);
   } finally { await rm(data.directory, { recursive: true, force: true }); }
 });
 
