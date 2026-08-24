@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -39,6 +40,13 @@ function normalizedDevelopmentRef(value) {
     fail('development runner ref is invalid');
   }
   return ref;
+}
+
+function developmentStateRoot(stateRoot, ref) {
+  const selected = normalizedDevelopmentRef(ref);
+  if (selected === 'main') return stateRoot;
+  const identity = createHash('sha256').update('devbridge/development-runner-ref-v1\0').update(selected).digest('hex');
+  return path.join(stateRoot, 'development-ref', identity);
 }
 
 function expandHome(value, homeDirectory) {
@@ -183,9 +191,9 @@ export function stableEntryPaths(home) {
   });
 }
 
-export async function stableEntryStatus(home, { state = null } = {}) {
+export async function stableEntryStatus(home, { state = null, developmentRef = 'main' } = {}) {
   const paths = stableEntryPaths(home);
-  const stableState = state ?? new StableRunnerState({ stateRoot: paths.stateRoot });
+  const stableState = state ?? new StableRunnerState({ stateRoot: developmentStateRoot(paths.stateRoot, developmentRef) });
   return Object.freeze({
     protocol: ENTRY_STATUS_PROTOCOL,
     installationTag: await entryInstallationTag(home),
@@ -205,9 +213,15 @@ export async function runStableEntry(argv, {
 } = {}) {
   const args = parseStableEntryArgs(argv, { env, homeDirectory });
   const paths = stableEntryPaths(args.home);
-  const stableState = state ?? new StableRunnerState({ stateRoot: paths.stateRoot });
+  const stateRoot = args.releaseMode === 'development'
+    ? developmentStateRoot(paths.stateRoot, args.developmentRef)
+    : paths.stateRoot;
+  const stableState = state ?? new StableRunnerState({ stateRoot });
   if (args.command === 'entry-status') {
-    write(`${JSON.stringify(await stableEntryStatus(args.home, { state: stableState }))}\n`);
+    write(`${JSON.stringify(await stableEntryStatus(args.home, {
+      state: stableState,
+      developmentRef: args.developmentRef,
+    }))}\n`);
     return 0;
   }
 
