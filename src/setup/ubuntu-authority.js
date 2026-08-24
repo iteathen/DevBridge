@@ -119,7 +119,7 @@ export async function createUbuntuSetupAuthority({
     recipe: Object.freeze({
       protocol: 'devbridge/ubuntu-autoinstall-recipe-v1',
       sourceSha256: SOURCE.mediaSha256,
-      generation: 'ubuntu-2604-autoinstall-v3',
+      generation: 'ubuntu-2604-autoinstall-v4',
       patches: Object.freeze([Object.freeze({ id: 'boot-trigger', occurrences: 2, before: BOOT_PATCH.before, after: BOOT_PATCH.after })]),
     }),
     packages: Object.freeze({

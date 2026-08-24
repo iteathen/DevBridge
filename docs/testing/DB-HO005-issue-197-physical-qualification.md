@@ -290,6 +290,20 @@ Primary behavior references:
 
 The stopped physical frontier and its unchanged ownership/cache evidence were recorded immediately on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5392859014). No language selection, guest input, VM power action, construction re-entry, media rewrite, cache deletion, or disk cleanup occurred while this seed-format boundary was under diagnosis.
 
+PR [#277](https://github.com/iteathen/DevBridge/pull/277) merged the Joliet writer fix as `24c116ec52962d8c9883e4ef7cc48d0c8c8f7148` after exact head `d43baf1be875f8f9f031d68749e8f34e78c47b8b` passed CI run `32709028287` on Ubuntu and Windows smoke/test jobs.
+
+### 12. The corrected writer did not invalidate already-prepared media
+
+The post-merge recovery audit stopped before rebinding the physical installation. Although PR #277 changed the seed filesystem bytes, setup still advertised recipe generation `ubuntu-2604-autoinstall-v3`. Construction authority is content-addressed, so an unchanged source, patch recipe, package snapshot, payload, qualification, and output declaration derived the same subject as the running physical canary.
+
+That subject already had an exact preparation receipt containing the old ISO9660-only seed SHA, a `running` outer journal, and an `installing` Hyper-V construction record. Receipt loading correctly reverifies those old bytes, and an installer-owned running phase deliberately does not re-enter preparation. A direct tracked-runtime rebind would therefore run corrected code while continuing to observe the stale interactive VM and media indefinitely. Runtime identity alone cannot invalidate durable artifact evidence owned by a separate construction authority.
+
+Solution: advance the provider-neutral autoinstall media-preparation generation to `ubuntu-2604-autoinstall-v4`. The v3 83-byte title/kernel-prefix patch, its two exact occurrences, source authority, package pins, payload, and output declaration remain unchanged. Because recipe generation participates in the immutable construction authority, the v4 setup derives a new exact subject and cannot adopt or reuse the v3 preparation receipt, construction journal, VM, disk, or CIDATA bytes. The signed release-cache ISO remains reusable because its independent Canonical source digest is unchanged.
+
+Regression coverage now requires setup to advertise v4 and separately proves that changing only the media-preparation generation changes the immutable construction subject while the patch bytes remain identical. This keeps the migration in the construction authority owner and avoids leaking Windows/IMAPI/provider identity into the Ubuntu recipe contract.
+
+The recovery audit and unchanged host evidence are recorded on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5392979179). No runtime rebind, setup gate, VM action, or construction invocation occurred before the stale-media identity was classified.
+
 ## Preserved physical evidence
 
 After the latest stopped attempt:
