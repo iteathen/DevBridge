@@ -92,7 +92,7 @@ test('exact source acquisition child rejects unsafe topology and removes partial
   }
 });
 
-test('zero-state exact-subject install is Git-free and recovers the persisted subject after interruption', async () => {
+test('zero-state branch install is Git-free, resumes the exact subject, and preserves the moving selector', async () => {
   const home = mkdtempSync(path.join(tmpdir(), 'devbridge-zero-state-exact-'));
   let remoteHead = HEAD_A;
   let resolutions = 0;
@@ -151,7 +151,8 @@ test('zero-state exact-subject install is Git-free and recovers the persisted su
     assert.equal(result.subject.head, HEAD_A);
     assert.equal(result.subject.resumed, true);
     assert.equal(result.installed.componentHead, HEAD_A);
-    assert.equal(result.installed.pinnedRunnerHead, HEAD_A);
+    assert.equal(result.installed.selectedRunnerRef, 'cuda-target');
+    assert.equal(result.installed.pinnedRunnerHead, null);
     assert.equal(resolutions, 1);
     assert.equal(readBootstrapSelection(home), null);
     assert.equal(componentRequests.some((request) => request.head === HEAD_B), false);
