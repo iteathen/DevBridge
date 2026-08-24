@@ -163,6 +163,8 @@ Primary behavior references:
 
 Research and the construction/persistent-network ownership split were also recorded directly on GitHub in [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5392003796) and [issue #116](https://github.com/iteathen/DevBridge/issues/116#issuecomment-5392005457).
 
+PR [#273](https://github.com/iteathen/DevBridge/pull/273) implemented this boundary at head `c8f1ecc31f3913459e2180b485a25f203475ba0e`. CI run `32703439211` passed Ubuntu and Windows smoke/test jobs, and the change merged as `f962680422dd9f09ee3968327cab6655928e789b`. The supported installation then persisted and accepted that exact `cuda-target` subject. A separate plain public setup invocation returned the exact construction-gate message and the system-managed-connectivity disclosure before construction resumed.
+
 ### 7. A locally constructed image is not automatically authorized for public redistribution
 
 The production recipe installs snapshot-pinned build and guest-helper packages and preconfigures the resulting system. Canonical's published FAQ lists adding packages and preinstallation as modifications. Canonical's intellectual-property policy permits personal/internal modification, but says redistribution of modified Ubuntu associated with Ubuntu trademarks requires Canonical approval, certification, or provision; an alternative requires removing/replacing the trademarks and rebuilding subject to the component licenses.
@@ -176,11 +178,37 @@ Primary references:
 
 This is an engineering publication stop based on the cited policy, not legal advice. The licensing finding was first recorded on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5391915954).
 
+### 8. PowerShell could not late-bind IMAPI's returned `IStream`
+
+The first gated public construction invocation from exact runtime `f962680422dd9f09ee3968327cab6655928e789b` passed source admission and the non-elevated network boundary, then stopped while materializing the NoCloud seed ISO:
+
+```text
+Method invocation failed because [System.__ComObject] does not contain a method named 'Read'.
+At line:19 char:5
++     $stream.Read($buffer, $buffer.Length, $readPointer)
+```
+
+Microsoft documents `IFileSystemImageResult.ImageStream` as an `IStream` interface. The .NET `System.Runtime.InteropServices.ComTypes.IStream` definition is an `IUnknown` interface: it requires early-bound interface dispatch. PowerShell received the object as a late-bound `System.__ComObject`, whose exposed automation surface did not contain `Read`. Direct PowerShell invocation, an explicit PowerShell cast, and `Marshal.GetTypedObjectForIUnknown` all reproduced the same missing-member boundary on the physical host.
+
+Solution: keep IMAPI and interop details inside the Windows seed-media adapter, but cross the returned interface through a fixed C# bridge loaded into the isolated PowerShell process with `Add-Type`. The bridge casts the COM object to .NET's managed `ComTypes.IStream`, copies bounded chunks into a create-new `FileStream`, flushes through the operating-system buffers, and deletes only a partial file that the same call successfully created if copying fails. No raw COM pointer, PowerShell source, destination choice, or executable authority crosses the adapter's public contract.
+
+A Windows-only regression now executes the exact PowerShell/IMAPI path against the real COM object, requires a nonempty `CIDATA` image, and verifies that transient seed staging is removed. The previous fake-invocation test also asserts that the script uses the early-bound bridge and cannot regress to `$stream.Read` on the late-bound wrapper.
+
+Primary behavior references:
+
+- [Microsoft: `IFileSystemImageResult::get_ImageStream`](https://learn.microsoft.com/en-us/windows/win32/api/imapi2fs/nf-imapi2fs-ifilesystemimageresult-get_imagestream)
+- [Microsoft: .NET `ComTypes.IStream`](https://learn.microsoft.com/en-us/dotnet/api/system.runtime.interopservices.comtypes.istream)
+- [Microsoft: .NET `IStream.Read`](https://learn.microsoft.com/en-us/dotnet/api/system.runtime.interopservices.comtypes.istream.read)
+- [Microsoft: PowerShell `Add-Type`](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/add-type)
+- [Microsoft: .NET `FileStream.Flush`](https://learn.microsoft.com/en-us/dotnet/api/system.io.filestream.flush)
+
+The stopped physical evidence was recorded immediately on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5392294938). Construction did not resume while this adapter defect was under diagnosis.
+
 ## Preserved physical evidence
 
 After the latest stopped attempt:
 
-- the production-image canary journal remained unchanged at its previously recorded `planned` subjects;
+- the production-image canary journal preserved every previously recorded `planned` subject and added exact current subject `subject-99742e1c94397011d72b6c08523c09c5` at `planned`, revision 1;
 - the official Ubuntu ISO cache remained `2,918,598,656` bytes with SHA-256 `dec49008a71f6098d0bcfc822021f4d042d5f2db279e4d75bdd981304f1ca5d9` and its original cache timestamp;
 - the partially reconciled switch remained owned and recoverable through the provider's durable network plan;
 - no gateway address or NAT was admitted by the non-elevated retry;
@@ -188,6 +216,8 @@ After the latest stopped attempt:
 - read-only observation verified the Windows-managed Default Switch at exact provider ID `c08cb7b8-9b3c-408e-8e30-5e16a3aeb444` with compatible `Internal` type;
 - read-only physical preflight passed under the existing non-elevated Hyper-V operator token using system-managed automatic connectivity;
 - neither read-only check changed the journal, ISO cache, planned owned-switch evidence, VM inventory, or host networking.
+- the stopped IMAPI attempt created no VM and left no preparation, construction, source, or output file after its owned cleanup;
+- the stopped IMAPI attempt did not change the ISO cache or any host switch, gateway, NAT, or adapter state.
 
 The owned partial switch remains persistent provider-foundation evidence and may be reconciled only through the same Hyper-V environment adapter. It must not be manually adopted, renamed, or deleted merely to make the construction attempt appear clean. The construction-only adapter neither consumes nor changes it.
 
