@@ -37,6 +37,7 @@ test('physical canary preflight proves host capabilities without invoking a muta
     assert.match(script, /Get-Command/u);
     assert.match(script, /gpgv\.exe/u);
     assert.match(script, /Get-VMHost/u);
+    assert.match(script, /Get-NetIPInterface/u);
     assert.match(script, /MsftFileSystemImage/u);
     assert.doesNotMatch(script, /\b(?:Start-VM|Stop-VM|Remove-VM|New-VHD|New-VMSwitch|New-NetNat|New-NetIPAddress)\s+-/u);
   } finally {

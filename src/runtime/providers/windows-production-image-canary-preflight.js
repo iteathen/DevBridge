@@ -21,7 +21,7 @@ Import-Module Hyper-V -ErrorAction Stop
 $required = @(
   'Get-VMHost','Get-VM','New-VM','Remove-VM','Start-VM','Stop-VM','Set-VM','Set-VMProcessor','Set-VMFirmware',
   'Get-VHD','Test-VHD','New-VHD','Get-VMSwitch','New-VMSwitch','Set-VMSwitch','Remove-VMSwitch',
-  'Get-NetNat','New-NetNat','Remove-NetNat','Get-NetIPAddress','New-NetIPAddress','Remove-NetIPAddress','Get-NetRoute',
+  'Get-NetNat','New-NetNat','Remove-NetNat','Get-NetIPAddress','New-NetIPAddress','Remove-NetIPAddress','Get-NetIPInterface','Get-NetRoute',
   'Get-VMNetworkAdapter','Add-VMNetworkAdapter','Connect-VMNetworkAdapter','Get-VMDvdDrive','Add-VMDvdDrive','Remove-VMDvdDrive'
 )
 foreach ($name in $required) {

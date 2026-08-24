@@ -47,8 +47,8 @@ Plain `devbridge setup` never crosses this boundary. Remote task content, reposi
 The physical canary is restartable. A construction invocation can finish, return a durable waiting frontier, or report a blocker.
 
 - On completion, the canonical image has passed the canary's internal qualification boundary.
-- On a waiting frontier, preserve the existing DevBridge-owned state and re-run `devbridge setup --construct`; do not start a second independent construction path.
-- On a blocker, stop at that boundary, fix only the owning blocker, and re-run the same public command.
+- On a waiting frontier, preserve the existing DevBridge-owned state, re-run plain `devbridge setup`, require the explicit construction-gate message, and only then re-run `devbridge setup --construct`; do not start a second independent construction path.
+- On a blocker, stop at that boundary, fix only the owning blocker, re-run plain `devbridge setup`, and cross the mutation boundary again only after the explicit construction-gate message.
 - Do not delete `run.lock` merely to force progress. Remove it only after independently confirming no physical canary operation is active and diagnosing stale-lock ownership.
 
 The public setup surface deliberately does not expose the internal physical-canary `--config` entrypoint. That entry remains an implementation/testing boundary rather than a normal operator prerequisite.
