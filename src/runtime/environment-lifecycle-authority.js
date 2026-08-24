@@ -2,28 +2,15 @@ import { randomUUID } from 'node:crypto';
 
 const REQUEST_PROTOCOL = 'devbridge/environment-lifecycle-authority-request-v1';
 const RESULT_PROTOCOL = 'devbridge/environment-lifecycle-authority-result-v1';
-const ENVIRONMENT_ID = /^env-[a-f0-9]{32}$/u;
-const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,159}$/u;
 const MAX_SUBJECT_BYTES = 512;
 const MAX_ENVELOPE_BYTES = 16 * 1024;
-const MIN_MEMORY_BYTES = 256 * 1024 * 1024;
-const MAX_MEMORY_BYTES = 1024 * 1024 * 1024 * 1024;
-const MAX_PROCESSORS = 256;
-const OPERATIONS = new Set([
-  'ensure',
-  'list',
-  'observe',
-  'start',
-  'stop',
-  'reset',
-  'reseed',
-  'remove',
-  'reconcile',
-  'protected-source-identities',
-  'rebuild',
-  'replace',
-  'recreate',
-  'retire-superseded',
+const AUTHORITY_OPERATIONS = new Set(['inspect', 'list', 'status', 'plan', 'run', 'resume']);
+const LIFECYCLE_OPERATIONS = new Set(['create', 'repair', 'rebuild', 'reset', 'recreate']);
+const FORBIDDEN_RESULT_KEYS = new Set([
+  'path', 'location', 'executable', 'arguments', 'argv', 'command', 'script',
+  'provider', 'providerIdentity', 'providerName', 'domainName', 'vmName', 'diskName',
+  'xml', 'rawXml', 'socket', 'endpoint', 'credential', 'token',
 ]);
 
 function requireObject(value, name) {
@@ -40,92 +27,49 @@ function requireSafeId(value, name) {
   return value;
 }
 
-function requireEnvironmentId(value, name = 'environment identity') {
-  if (typeof value !== 'string' || !ENVIRONMENT_ID.test(value)) throw new TypeError(`${name} is invalid`);
+function requireRequestId(value) {
+  if (typeof value !== 'string' || !/^[0-9a-f-]{36}$/iu.test(value)) throw new TypeError('authority request identity is invalid');
   return value;
 }
 
-function requireRequestId(value, name = 'authority request identity') {
-  if (typeof value !== 'string' || !/^[0-9a-f-]{36}$/iu.test(value)) throw new TypeError(`${name} is invalid`);
-  return value;
-}
-
-function normalizeSubject(value) {
+function optionalApproval(value) {
+  if (value == null) return null;
   if (typeof value !== 'string' || value.length === 0 || value.includes('\0') || Buffer.byteLength(value, 'utf8') > MAX_SUBJECT_BYTES) {
-    throw new TypeError('environment subject must be a bounded opaque identity');
+    throw new TypeError('environment lifecycle approval is invalid');
   }
   return value;
 }
 
-function normalizeSettings(raw = {}) {
-  const value = requireObject(raw, 'environment settings');
-  onlyKeys(value, new Set(['memoryBytes', 'processorCount', 'firmware']), 'environment settings');
-  const memoryBytes = value.memoryBytes ?? 2 * 1024 * 1024 * 1024;
-  const processorCount = value.processorCount ?? 2;
-  const firmware = value.firmware ?? 'efi';
-  if (!Number.isSafeInteger(memoryBytes) || memoryBytes < MIN_MEMORY_BYTES || memoryBytes > MAX_MEMORY_BYTES) throw new TypeError('environment settings.memoryBytes is invalid');
-  if (!Number.isSafeInteger(processorCount) || processorCount < 1 || processorCount > MAX_PROCESSORS) throw new TypeError('environment settings.processorCount is invalid');
-  if (!['efi', 'bios'].includes(firmware)) throw new TypeError('environment settings.firmware is invalid');
-  return { memoryBytes, processorCount, firmware };
-}
-
-function normalizeEnsure(raw) {
-  const value = requireObject(raw, 'environment ensure request');
-  onlyKeys(value, new Set(['subject', 'profile', 'sourceIdentity', 'settings']), 'environment ensure request');
-  return {
-    subject: normalizeSubject(value.subject),
-    profile: requireSafeId(value.profile, 'environment profile'),
-    sourceIdentity: requireSafeId(value.sourceIdentity, 'environment source identity'),
-    settings: normalizeSettings(value.settings ?? {}),
-  };
-}
-
-function normalizeStop(raw) {
-  const value = requireObject(raw, 'environment stop request');
-  onlyKeys(value, new Set(['identity', 'force', 'timeoutMs']), 'environment stop request');
-  const force = value.force ?? false;
-  const timeoutMs = value.timeoutMs ?? 60_000;
-  if (typeof force !== 'boolean') throw new TypeError('environment stop force must be boolean');
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 300_000) throw new TypeError('environment stop timeoutMs is invalid');
-  return { identity: requireEnvironmentId(value.identity), force, timeoutMs };
-}
-
-function normalizeGenerationRequest(raw, kind) {
-  const value = requireObject(raw, `environment ${kind} request`);
-  onlyKeys(value, new Set(['identity', 'requestId', 'expectedPreviousIdentity']), `environment ${kind} request`);
-  return {
-    identity: requireEnvironmentId(value.identity),
-    requestId: requireSafeId(value.requestId, `environment ${kind} request identity`),
-    expectedPreviousIdentity: requireEnvironmentId(value.expectedPreviousIdentity, `environment ${kind} previous identity`),
-  };
+function requireLifecycleOperation(value) {
+  if (typeof value !== 'string' || !LIFECYCLE_OPERATIONS.has(value)) throw new TypeError('environment lifecycle operation is invalid');
+  return value;
 }
 
 function normalizePayload(operation, raw) {
   const value = requireObject(raw ?? {}, 'lifecycle authority payload');
-  if (operation === 'ensure') return normalizeEnsure(value);
-  if (['list', 'reconcile', 'protected-source-identities'].includes(operation)) {
+  if (operation === 'inspect' || operation === 'list') {
     onlyKeys(value, new Set(), 'lifecycle authority payload');
     return {};
   }
-  if (['observe', 'start', 'reset', 'remove'].includes(operation)) {
+  if (operation === 'status') {
     onlyKeys(value, new Set(['identity']), 'lifecycle authority payload');
-    return { identity: requireEnvironmentId(value.identity) };
+    return { identity: requireSafeId(value.identity, 'environment identity') };
   }
-  if (operation === 'stop') return normalizeStop(value);
-  if (operation === 'reseed') {
-    onlyKeys(value, new Set(['identity', 'sourceIdentity']), 'lifecycle authority payload');
+  if (operation === 'plan') {
+    onlyKeys(value, new Set(['operation', 'identity']), 'lifecycle authority payload');
+    return { operation: requireLifecycleOperation(value.operation), identity: requireSafeId(value.identity, 'environment identity') };
+  }
+  if (operation === 'run') {
+    onlyKeys(value, new Set(['operation', 'identity', 'approval']), 'lifecycle authority payload');
     return {
-      identity: requireEnvironmentId(value.identity),
-      sourceIdentity: requireSafeId(value.sourceIdentity, 'environment source identity'),
+      operation: requireLifecycleOperation(value.operation),
+      identity: requireSafeId(value.identity, 'environment identity'),
+      approval: optionalApproval(value.approval),
     };
   }
-  if (['rebuild', 'replace', 'recreate'].includes(operation)) return normalizeGenerationRequest(value, operation);
-  if (operation === 'retire-superseded') {
-    onlyKeys(value, new Set(['identity', 'supersededIdentity']), 'lifecycle authority payload');
-    return {
-      identity: requireEnvironmentId(value.identity),
-      supersededIdentity: requireEnvironmentId(value.supersededIdentity, 'superseded environment identity'),
-    };
+  if (operation === 'resume') {
+    onlyKeys(value, new Set(['identity', 'approval']), 'lifecycle authority payload');
+    return { identity: requireSafeId(value.identity, 'environment identity'), approval: optionalApproval(value.approval) };
   }
   throw new TypeError('lifecycle authority operation is not allowed');
 }
@@ -139,7 +83,7 @@ export function normalizeLifecycleAuthorityRequest(raw) {
   onlyKeys(value, new Set(['protocol', 'requestId', 'operation', 'payload']), 'lifecycle authority request');
   if (value.protocol !== REQUEST_PROTOCOL) throw new TypeError('lifecycle authority request protocol is invalid');
   const requestId = requireRequestId(value.requestId);
-  if (typeof value.operation !== 'string' || !OPERATIONS.has(value.operation)) throw new TypeError('lifecycle authority operation is not allowed');
+  if (typeof value.operation !== 'string' || !AUTHORITY_OPERATIONS.has(value.operation)) throw new TypeError('lifecycle authority operation is not allowed');
   const normalized = Object.freeze({
     protocol: REQUEST_PROTOCOL,
     requestId,
@@ -150,8 +94,19 @@ export function normalizeLifecycleAuthorityRequest(raw) {
   return normalized;
 }
 
+function looksLikeHostAuthorityString(value) {
+  return /^[A-Za-z]:[\\/]/u.test(value)
+    || /^\\\\/u.test(value)
+    || /^\/(?:var|etc|run|usr|opt|home|root|mnt|srv|dev|proc|sys)\//u.test(value)
+    || /\b(?:powershell(?:\.exe)?|virsh|Remove-VM|Remove-VMSwitch|rm\s+-rf)\b/iu.test(value);
+}
+
 function assertJsonValue(value, name = 'lifecycle authority result') {
-  if (value == null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (value == null || typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    if (looksLikeHostAuthorityString(value)) throw new TypeError(`${name} contains provider authority detail`);
+    return value;
+  }
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) throw new TypeError(`${name} contains a non-finite number`);
     return value;
@@ -160,9 +115,7 @@ function assertJsonValue(value, name = 'lifecycle authority result') {
   if (typeof value === 'object') {
     const copy = {};
     for (const [key, entry] of Object.entries(value)) {
-      if (/^(?:path|location|executable|arguments|argv|command|script|providerIdentity|providerName|domainName|vmName)$/iu.test(key)) {
-        throw new TypeError(`${name} contains provider authority detail`);
-      }
+      if (FORBIDDEN_RESULT_KEYS.has(key)) throw new TypeError(`${name} contains provider authority detail`);
       copy[key] = assertJsonValue(entry, `${name}.${key}`);
     }
     return copy;
@@ -192,35 +145,27 @@ export function normalizeLifecycleAuthorityResult(raw, expectedRequestId) {
   return Object.freeze({ protocol: RESULT_PROTOCOL, requestId: value.requestId, ok: false, error: Object.freeze({ code, message }) });
 }
 
-function assertLifecycle(value) {
-  const methods = ['ensure', 'list', 'observe', 'start', 'stop', 'reset', 'reseed', 'remove', 'reconcile', 'protectedSourceIdentities', 'rebuild', 'replace', 'recreate', 'retireSuperseded'];
-  if (!value || methods.some((name) => typeof value[name] !== 'function')) throw new TypeError('protected lifecycle authority contract is incomplete');
+function assertOperator(value) {
+  const methods = ['inspect', 'list', 'status', 'plan', 'run', 'resume'];
+  if (!value || methods.some((name) => typeof value[name] !== 'function')) throw new TypeError('protected environment operator contract is incomplete');
   return value;
 }
 
-async function invokeLifecycle(lifecycle, request) {
+async function invokeOperator(operator, request) {
   const p = request.payload;
   switch (request.operation) {
-    case 'ensure': return lifecycle.ensure(p);
-    case 'list': return lifecycle.list();
-    case 'observe': return lifecycle.observe(p.identity);
-    case 'start': return lifecycle.start(p.identity);
-    case 'stop': return lifecycle.stop(p.identity, { force: p.force, timeoutMs: p.timeoutMs });
-    case 'reset': return lifecycle.reset(p.identity);
-    case 'reseed': return lifecycle.reseed(p.identity, { sourceIdentity: p.sourceIdentity });
-    case 'remove': return lifecycle.remove(p.identity);
-    case 'reconcile': return lifecycle.reconcile();
-    case 'protected-source-identities': return lifecycle.protectedSourceIdentities();
-    case 'rebuild': return lifecycle.rebuild(p.identity, { requestId: p.requestId, expectedPreviousIdentity: p.expectedPreviousIdentity });
-    case 'replace': return lifecycle.replace(p.identity, { requestId: p.requestId, expectedPreviousIdentity: p.expectedPreviousIdentity });
-    case 'recreate': return lifecycle.recreate(p.identity, { requestId: p.requestId, expectedPreviousIdentity: p.expectedPreviousIdentity });
-    case 'retire-superseded': return lifecycle.retireSuperseded(p.identity, { supersededIdentity: p.supersededIdentity });
+    case 'inspect': return operator.inspect();
+    case 'list': return operator.list();
+    case 'status': return operator.status(p.identity);
+    case 'plan': return operator.plan(p.operation, p.identity);
+    case 'run': return operator.run(p.operation, p.identity, { approval: p.approval });
+    case 'resume': return operator.resume(p.identity, { approval: p.approval });
     default: throw new TypeError('lifecycle authority operation is not allowed');
   }
 }
 
-export function createLifecycleAuthorityHandler({ lifecycle }) {
-  const authority = assertLifecycle(lifecycle);
+export function createLifecycleAuthorityHandler({ operator }) {
+  const authority = assertOperator(operator);
   return async (raw) => {
     let request;
     try {
@@ -235,7 +180,7 @@ export function createLifecycleAuthorityHandler({ lifecycle }) {
       });
     }
     try {
-      const result = assertJsonValue(await invokeLifecycle(authority, request));
+      const result = assertJsonValue(await invokeOperator(authority, request));
       const response = Object.freeze({ protocol: RESULT_PROTOCOL, requestId: request.requestId, ok: true, value: result });
       if (encodedBytes(response) > MAX_ENVELOPE_BYTES) throw new TypeError('lifecycle authority result is too large');
       return response;
@@ -274,20 +219,12 @@ export class LifecycleAuthorityClient {
     return structuredClone(result.value);
   }
 
-  ensure(input) { return this.#request('ensure', input); }
+  inspect() { return this.#request('inspect'); }
   list() { return this.#request('list'); }
-  observe(identity) { return this.#request('observe', { identity }); }
-  start(identity) { return this.#request('start', { identity }); }
-  stop(identity, options = {}) { return this.#request('stop', { identity, ...options }); }
-  reset(identity) { return this.#request('reset', { identity }); }
-  reseed(identity, { sourceIdentity } = {}) { return this.#request('reseed', { identity, sourceIdentity }); }
-  remove(identity) { return this.#request('remove', { identity }); }
-  reconcile() { return this.#request('reconcile'); }
-  protectedSourceIdentities() { return this.#request('protected-source-identities'); }
-  rebuild(identity, options = {}) { return this.#request('rebuild', { identity, ...options }); }
-  replace(identity, options = {}) { return this.#request('replace', { identity, ...options }); }
-  recreate(identity, options = {}) { return this.#request('recreate', { identity, ...options }); }
-  retireSuperseded(identity, { supersededIdentity } = {}) { return this.#request('retire-superseded', { identity, supersededIdentity }); }
+  status(identity) { return this.#request('status', { identity }); }
+  plan(operation, identity) { return this.#request('plan', { operation, identity }); }
+  run(operation, identity, { approval = null } = {}) { return this.#request('run', { operation, identity, approval }); }
+  resume(identity, { approval = null } = {}) { return this.#request('resume', { identity, approval }); }
 }
 
 export {
