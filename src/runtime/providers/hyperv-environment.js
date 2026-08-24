@@ -91,7 +91,8 @@ function Prefix-Overlaps([string]$candidate, [string]$existing) {
   if ($candidate -notmatch '^([0-9.]+)/(\d+)$') { return $true }
   $candidateAddress = $Matches[1]; $candidateBits = [int]$Matches[2]
   $bits = [Math]::Min($candidateBits, $existingBits)
-  $mask = if ($bits -eq 0) { [uint32]0 } else { [uint32]([uint64]0xffffffff -shl (32 - $bits)) }
+  $hostBits = 32 - $bits
+  $mask = if ($bits -eq 0) { [uint32]0 } else { [uint32]([uint64][uint32]::MaxValue - (([uint64]1 -shl $hostBits) - [uint64]1)) }
   return ((Convert-IPv4ToUInt32 $candidateAddress) -band $mask) -eq ((Convert-IPv4ToUInt32 $existingAddress) -band $mask)
 }
 $switch = Get-VMSwitch -ErrorAction Stop | Where-Object { $_.Name -eq $data.name } | Select-Object -First 1
