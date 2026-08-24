@@ -80,6 +80,16 @@ test('Ubuntu construction authority binds package archive time into the immutabl
   assert.notEqual(ubuntuConstructionAuthoritySubject(first), ubuntuConstructionAuthoritySubject(changed));
 });
 
+test('Ubuntu construction authority binds media-preparation generation into the immutable subject', () => {
+  const first = authority();
+  const changed = {
+    ...first,
+    recipe: { ...first.recipe, generation: 'ubuntu-2604-autoinstall-v2' },
+  };
+  assert.deepEqual(changed.recipe.patches, first.recipe.patches);
+  assert.notEqual(ubuntuConstructionAuthoritySubject(first), ubuntuConstructionAuthoritySubject(changed));
+});
+
 test('Ubuntu construction authority binds recipe to exact admitted source bytes', () => {
   assert.throws(() => normalizeUbuntuConstructionAuthority(authority({
     recipe: { ...authority().recipe, sourceSha256: 'b'.repeat(64) },

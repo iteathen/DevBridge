@@ -55,7 +55,7 @@ test('setup authority binds source policy, exact snapshot and current payload ge
   assert.equal(authority.packages.generation, 'ubuntu-2604-tools-v2');
   assert.deepEqual(authority.qualification.commands, ['hv_kvp_daemon', 'make']);
   assert.equal(authority.payload.generation, 'guest-image-current');
-  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v3');
+  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v4');
   assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 2, ...UBUNTU_SETUP_BOOT_PATCH }]);
 });
 
