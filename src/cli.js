@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import process from 'node:process';
+import { trackInstalledRunnerRef } from '../install-devbridge.mjs';
 import { loadConfig } from './config.js';
 import { doctor } from './app/doctor.js';
 import { pollOnce } from './app/poll-once.js';
@@ -18,7 +19,7 @@ const installationTag = process.env.DEVBRIDGE_INSTALLATION_TAG;
 if (/^DB-[0-9A-F]{12}$/u.test(installationTag ?? '')) process.title = `DevBridge[${installationTag}]`;
 
 function usage() {
-  console.error('Usage: devbridge setup [--construct] [--home <path>] [--repository owner/name|all]...');
+  console.error('Usage: devbridge setup [--construct] [--track-ref <branch>] [--home <path>] [--repository owner/name|all]...');
   console.error('       devbridge <doctor|poll-once|run-once|daemon|status|pause|resume|stop|restart|handoff-status|handoff-seed|handoff-project|environment> --config <path> [options]');
   console.error('       devbridge environment <list|show|plan|create|repair|rebuild|reset|recreate|resume|setup-reentry> --config <path> [--identity id|--profile name] [--operation op] [--confirm subject]');
 }
@@ -32,6 +33,7 @@ function optionValue(argv, name) {
 function setupOptions(argv) {
   let home = null;
   let construct = false;
+  let trackRef = null;
   const repositories = [];
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index];
@@ -40,12 +42,15 @@ function setupOptions(argv) {
       construct = true;
       continue;
     }
-    if (option === '--home' || option === '--repository') {
+    if (option === '--home' || option === '--repository' || option === '--track-ref') {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new PolicyError(`${option} requires a value`);
       if (option === '--home') {
         if (home != null) throw new PolicyError('--home may be specified only once');
         home = value;
+      } else if (option === '--track-ref') {
+        if (trackRef != null) throw new PolicyError('--track-ref may be specified only once');
+        trackRef = value;
       } else {
         repositories.push(value);
       }
@@ -54,7 +59,7 @@ function setupOptions(argv) {
     }
     throw new PolicyError(`unsupported setup option: ${option}`);
   }
-  return Object.freeze({ home, construct, repositories: Object.freeze(repositories) });
+  return Object.freeze({ home, construct, trackRef, repositories: Object.freeze(repositories) });
 }
 
 function configPath(argv) {
@@ -129,8 +134,16 @@ async function main() {
 
   if (command === 'setup') {
     const selected = setupOptions(args);
+    let setupHome = selected.home;
+    if (selected.trackRef != null) {
+      try {
+        setupHome = trackInstalledRunnerRef({ home: selected.home, ref: selected.trackRef }).home;
+      } catch (error) {
+        throw new PolicyError(`could not persist setup runner ref: ${error.message}`);
+      }
+    }
     const result = await runDevBridgeSetup({
-      home: selected.home,
+      home: setupHome,
       requestedRepositories: selected.repositories.length > 0 ? selected.repositories : null,
       construct: selected.construct,
     });

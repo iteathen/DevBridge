@@ -349,7 +349,8 @@ export async function runZeroStateBootstrap(argv, {
       const installed = stage.installDevBridge({
         home: subject.home,
         selector: Object.freeze({ kind: 'exact', value: subject.head }),
-        pinSelectedRunner: options.explicitSelector,
+        selectedRunnerRef: options.explicitSelector ? options.selector.value : null,
+        pinSelectedRunner: options.explicitSelector && options.selector.kind === 'exact',
       }, {
         environment,
         preparedSource: Object.freeze({ head: subject.head, root: prepared.root }),

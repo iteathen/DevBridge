@@ -8,7 +8,7 @@ import { stage0InstallationTag } from '../devbridge.mjs';
 import { entryInstallationTag } from '../src/entry/installation-identity.mjs';
 import { RUNNER_SUBJECT_PROTOCOL } from '../src/entry/permanent-entry.mjs';
 import { StableRunnerState } from '../src/entry/stable-runner-state.mjs';
-import { parseStableEntryArgs, runStableEntry, stableEntryPaths } from '../src/entry/stable-entry.mjs';
+import { parseStableEntryArgs, runStableEntry, stableEntryPaths, stableEntryStatus } from '../src/entry/stable-entry.mjs';
 
 const HEAD = '1'.repeat(40);
 const BYTES = Buffer.from('stable runner\n', 'utf8');
@@ -25,7 +25,7 @@ test('entry-owned installation tag remains exactly compatible with the existing 
   assert.equal(await entryInstallationTag(home), stage0InstallationTag(home));
 });
 
-test('stable entry consumes only entry-local signing flags and preserves runtime arguments', async (t) => {
+test('stable entry consumes only entry-local authority flags and preserves runtime arguments', async (t) => {
   const home = await homeFixture(t);
   const manifest = path.join(home, 'runner-manifest.json');
   const publicKey = path.join(home, 'runner-key.pem');
@@ -39,19 +39,20 @@ test('stable entry consumes only entry-local signing flags and preserves runtime
 
   assert.equal(parsed.home, path.resolve(home));
   assert.equal(parsed.releaseMode, 'production');
+  assert.equal(parsed.developmentRef, 'main');
   assert.equal(parsed.manifest, path.resolve(manifest));
   assert.equal(parsed.publicKey, path.resolve(publicKey));
   assert.deepEqual(parsed.argv, ['--home', home, '--release-mode', 'production', 'doctor', '--config', 'local.json']);
 });
 
-test('development stable entry resolves exact runner, accepts it after preparation, and forwards runtime argv', async (t) => {
+test('tracked development ref is consumed locally and resolves through stable authority', async (t) => {
   const home = await homeFixture(t);
   const calls = [];
   const source = {
     async resolve(ref) { calls.push(['resolve', ref]); return HEAD; },
     async read(head) { calls.push(['read', head]); return BYTES; },
   };
-  const status = await runStableEntry(['--home', home, 'doctor'], {
+  const status = await runStableEntry(['--entry-development-ref', 'cuda-target', '--home', home, 'doctor'], {
     env: {},
     homeDirectory: home,
     source,
@@ -67,13 +68,32 @@ test('development stable entry resolves exact runner, accepts it after preparati
   });
 
   assert.equal(status, 31);
-  assert.equal(calls[0][0], 'resolve');
+  assert.deepEqual(calls[0], ['resolve', 'cuda-target']);
   assert.deepEqual(calls.at(-1), ['launch', ['--home', home, 'doctor']]);
-  const state = new StableRunnerState({ stateRoot: stableEntryPaths(home).stateRoot });
-  const accepted = await state.status();
+  const accepted = (await stableEntryStatus(home, { developmentRef: 'cuda-target' })).stable;
   assert.equal(accepted.current.mode, 'development');
   assert.equal(accepted.current.subject.head, HEAD);
   assert.equal(accepted.current.subject.sha256, DIGEST);
+});
+
+test('development stable entry defaults to main when no tracked ref is supplied', async (t) => {
+  const home = await homeFixture(t);
+  const calls = [];
+  const status = await runStableEntry(['--home', home, 'doctor'], {
+    env: {},
+    homeDirectory: home,
+    source: {
+      async resolve(ref) { calls.push(ref); return HEAD; },
+      async read() { return BYTES; },
+    },
+    runnerProvider: {
+      async prepare(subject) {
+        return { subject, async launch() { return 32; } };
+      },
+    },
+  });
+  assert.equal(status, 32);
+  assert.deepEqual(calls, ['main']);
 });
 
 test('--no-update uses only already accepted mode-matched authority', async (t) => {
@@ -97,7 +117,7 @@ test('--no-update uses only already accepted mode-matched authority', async (t) 
     acceptedAt: '2026-08-22T12:00:00.000Z',
   });
   let sourceCalls = 0;
-  const status = await runStableEntry(['--home', home, '--no-update', 'doctor'], {
+  const status = await runStableEntry(['--entry-development-ref', 'cuda-target', '--home', home, '--no-update', 'doctor'], {
     env: {},
     homeDirectory: home,
     state,
@@ -145,5 +165,17 @@ test('development mode rejects production signing inputs instead of silently ign
   assert.throws(
     () => parseStableEntryArgs(['--entry-runner-manifest', path.join(home, 'manifest.json')], { env: {}, homeDirectory: home }),
     /require --release-mode production/u,
+  );
+});
+
+test('tracked development ref rejects unsafe values and cannot be mixed into production authority', async (t) => {
+  const home = await homeFixture(t);
+  assert.throws(
+    () => parseStableEntryArgs(['--entry-development-ref', '../other'], { env: {}, homeDirectory: home }),
+    /development runner ref is invalid/u,
+  );
+  assert.throws(
+    () => parseStableEntryArgs(['--release-mode', 'production', '--entry-development-ref', 'cuda-target'], { env: {}, homeDirectory: home }),
+    /requires development release mode/u,
   );
 });
