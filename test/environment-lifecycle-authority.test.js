@@ -17,10 +17,11 @@ function operatorFixture(calls) {
     async status(identity) { calls.push(['status', identity]); return { environmentIdentity: identity, health: { state: 'ready' } }; },
     async plan(operation, identity) {
       calls.push(['plan', operation, identity]);
-      return { operation, environmentIdentity: identity, destructive: ['rebuild', 'reset', 'recreate'].includes(operation), authorizationSubject: `${operation}-subject` };
+      return { operation, environmentIdentity: identity, destructive: ['rebuild','reset','recreate'].includes(operation), authorizationSubject: `${operation}-subject` };
     },
     async run(operation, identity, options) { calls.push(['run', operation, identity, options]); return { state: 'complete', operation, environmentIdentity: identity }; },
     async resume(identity, options) { calls.push(['resume', identity, options]); return { state: 'complete', environmentIdentity: identity }; },
+    async setupReentry(identity) { calls.push(['setupReentry', identity]); return { action: 'setup-reentry', environmentIdentity: identity }; },
   };
 }
 
@@ -35,6 +36,7 @@ test('authority client routes only the existing neutral environment operator stu
   await client.inspect();
   await client.status(ENV);
   const plan = await client.plan('reset', ENV);
+  await client.setupReentry(ENV);
   await client.run('reset', ENV, { approval: plan.authorizationSubject });
   await client.resume(ENV, { approval: plan.authorizationSubject });
 
@@ -42,6 +44,7 @@ test('authority client routes only the existing neutral environment operator stu
     ['inspect'],
     ['status', ENV],
     ['plan', 'reset', ENV],
+    ['setupReentry', ENV],
     ['run', 'reset', ENV, { approval: 'reset-subject' }],
     ['resume', ENV, { approval: 'reset-subject' }],
   ]);
