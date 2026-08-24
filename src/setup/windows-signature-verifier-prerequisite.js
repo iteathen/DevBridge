@@ -15,10 +15,10 @@ const POWERSHELL_ARGS = Object.freeze([
 ]);
 
 export const WINDOWS_SIGNATURE_VERIFIER_SOURCE_POLICY = Object.freeze({
-  url: 'https://files.gpg4win.org/gpg4win-5.1.0.exe',
-  sha256: '9682f2825c70dc3e7efd8a3fcb9e676ccb9674bebbf6be1a30d5837f5b420a2e',
-  fileName: 'gpg4win-5.1.0.exe',
-  maxBytes: 64 * 1024 * 1024,
+  url: 'https://gnupg.org/ftp/gcrypt/binary/gnupg-w32-2.5.21_20260702.exe',
+  sha256: '6246c925a73167253444afc24a0deb83a3f43b7d636af84d6aaf48a98a62f024',
+  fileName: 'gnupg-w32-2.5.21_20260702.exe',
+  maxBytes: 8 * 1024 * 1024,
 });
 
 const WINDOWS_INSPECTION = String.raw`
@@ -37,6 +37,16 @@ try {
   $env:Path = ($parts -join ';')
   $command = Get-Command 'gpgv.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
   $executable = if ($null -eq $command) { $null } else { [string]$command.Source }
+  if ($null -eq $executable) {
+    $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+    foreach ($root in $roots) {
+      $candidate = Join-Path $root 'GnuPG\bin\gpgv.exe'
+      if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+        $executable = [string](Get-Item -LiteralPath $candidate -Force).FullName
+        break
+      }
+    }
+  }
 } finally {
   $env:Path = $priorPath
 }
