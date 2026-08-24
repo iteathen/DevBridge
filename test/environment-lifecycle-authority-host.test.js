@@ -26,27 +26,36 @@ function operatorFixture(calls) {
 test('protected host owns both endpoint capabilities around one EnvironmentOperator', async (t) => {
   if (!['linux', 'win32'].includes(process.platform)) return t.skip('local authority host supports Windows and Linux');
   const temp = await mkdtemp(path.join(os.tmpdir(), 'db-authority-host-'));
-  const stateDirectory = process.platform === 'win32'
-    ? path.win32.join('C:\\', 'DevBridge-Test', path.basename(temp), 'state')
-    : path.join(temp, 'state');
+  const endpointStateDirectory = process.platform === 'win32'
+    ? path.win32.join('C:\\', 'DevBridge-Test', path.basename(temp), 'ordinary-state')
+    : path.join(temp, 'ordinary-state');
+  const protectedStateDirectory = process.platform === 'win32'
+    ? path.win32.join('C:\\', 'ProgramData', 'DevBridge-Test', path.basename(temp), 'protected-state')
+    : path.join(temp, 'protected-state');
   const runDirectory = process.platform === 'linux' ? path.join(temp, 'run') : '/run/devbridge';
   if (process.platform === 'linux') {
-    const identity = environmentLifecycleAuthorityIdentity(stateDirectory);
+    const identity = environmentLifecycleAuthorityIdentity(endpointStateDirectory);
     await mkdir(path.join(runDirectory, identity, 'read'), { recursive: true });
     await mkdir(path.join(runDirectory, identity, 'mutation'), { recursive: true });
   }
   const calls = [];
   const host = await createEnvironmentLifecycleAuthorityHost({
-    stateDirectory,
+    stateDirectory: protectedStateDirectory,
+    endpointStateDirectory,
     platform: process.platform,
     runDirectory,
     operator: operatorFixture(calls),
   });
   try {
-    assert.equal(host.authorityIdentity, environmentLifecycleAuthorityIdentity(stateDirectory));
+    assert.equal(host.authorityIdentity, environmentLifecycleAuthorityIdentity(endpointStateDirectory));
+    assert.notEqual(
+      host.authorityIdentity,
+      environmentLifecycleAuthorityIdentity(protectedStateDirectory),
+      'protected storage location must not define the public endpoint identity',
+    );
     await host.start();
     const client = createConfiguredLifecycleAuthorityClient({
-      stateDirectory,
+      stateDirectory: endpointStateDirectory,
       platform: process.platform,
       runDirectory,
       connectTimeoutMs: 1000,
