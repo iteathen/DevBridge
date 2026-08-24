@@ -7,75 +7,87 @@ import {
   normalizeLifecycleAuthorityRequest,
 } from '../src/runtime/environment-lifecycle-authority.js';
 
-const ENV = `env-${'a'.repeat(32)}`;
-const NEXT = `env-${'b'.repeat(32)}`;
+const ENV = 'environment-test';
 
-function lifecycleFixture(calls) {
-  const methods = ['ensure', 'list', 'observe', 'start', 'stop', 'reset', 'reseed', 'remove', 'reconcile', 'protectedSourceIdentities', 'rebuild', 'replace', 'recreate', 'retireSuperseded'];
-  return Object.fromEntries(methods.map((name) => [name, async (...args) => {
-    calls.push([name, ...args]);
-    return name === 'protectedSourceIdentities' ? ['base-linux'] : { operation: name, identity: args[0]?.identity ?? args[0] ?? ENV };
-  }]));
+function operatorFixture(calls) {
+  return {
+    async inspect() { calls.push(['inspect']); return { state: 'ready' }; },
+    async list() { calls.push(['list']); return [{ environmentIdentity: ENV, recommendedAction: 'none' }]; },
+    async status(identity) { calls.push(['status', identity]); return { environmentIdentity: identity, health: { state: 'ready' } }; },
+    async plan(operation, identity) {
+      calls.push(['plan', operation, identity]);
+      return { operation, environmentIdentity: identity, destructive: ['rebuild', 'reset', 'recreate'].includes(operation), authorizationSubject: `${operation}-subject` };
+    },
+    async run(operation, identity, options) { calls.push(['run', operation, identity, options]); return { state: 'complete', operation, environmentIdentity: identity }; },
+    async resume(identity, options) { calls.push(['resume', identity, options]); return { state: 'complete', environmentIdentity: identity }; },
+  };
 }
 
-test('authority client routes the existing lifecycle stud without provider-native inputs', async () => {
+test('authority client routes only the existing neutral environment operator stud', async () => {
   const calls = [];
-  const handler = createLifecycleAuthorityHandler({ lifecycle: lifecycleFixture(calls) });
-  const client = new LifecycleAuthorityClient({ exchange: handler });
+  const client = new LifecycleAuthorityClient({ exchange: createLifecycleAuthorityHandler({ operator: operatorFixture(calls) }) });
 
-  await client.ensure({ subject: 'profile:linux', profile: 'linux', sourceIdentity: 'base-linux', settings: { memoryBytes: 1073741824, processorCount: 2, firmware: 'efi' } });
-  await client.stop(ENV, { force: true, timeoutMs: 12_000 });
-  await client.rebuild(ENV, { requestId: 'rebuild-1', expectedPreviousIdentity: ENV });
-  await client.retireSuperseded(NEXT, { supersededIdentity: ENV });
+  await client.inspect();
+  await client.status(ENV);
+  const plan = await client.plan('reset', ENV);
+  await client.run('reset', ENV, { approval: plan.authorizationSubject });
+  await client.resume(ENV, { approval: plan.authorizationSubject });
 
-  assert.deepEqual(calls[0], ['ensure', {
-    subject: 'profile:linux',
-    profile: 'linux',
-    sourceIdentity: 'base-linux',
-    settings: { memoryBytes: 1073741824, processorCount: 2, firmware: 'efi' },
-  }]);
-  assert.deepEqual(calls[1], ['stop', ENV, { force: true, timeoutMs: 12_000 }]);
-  assert.deepEqual(calls[2], ['rebuild', ENV, { requestId: 'rebuild-1', expectedPreviousIdentity: ENV }]);
-  assert.deepEqual(calls[3], ['retireSuperseded', NEXT, { supersededIdentity: ENV }]);
+  assert.deepEqual(calls, [
+    ['inspect'],
+    ['status', ENV],
+    ['plan', 'reset', ENV],
+    ['run', 'reset', ENV, { approval: 'reset-subject' }],
+    ['resume', ENV, { approval: 'reset-subject' }],
+  ]);
+});
+
+test('lower provider and PersistentEnvironments mutation methods are not remotely addressable', () => {
+  const base = { protocol: ENVIRONMENT_LIFECYCLE_AUTHORITY_REQUEST_PROTOCOL, requestId: '11111111-1111-4111-8111-111111111111' };
+  for (const operation of ['ensure', 'observe', 'start', 'stop', 'remove', 'reconcile', 'reseed', 'replace', 'retire-superseded', 'shell']) {
+    assert.throws(() => normalizeLifecycleAuthorityRequest({ ...base, operation, payload: {} }), /not allowed/u);
+  }
 });
 
 test('authority protocol rejects path, command, provider and arbitrary-field smuggling before dispatch', () => {
   const base = { protocol: ENVIRONMENT_LIFECYCLE_AUTHORITY_REQUEST_PROTOCOL, requestId: '11111111-1111-4111-8111-111111111111' };
   for (const [operation, payload] of [
-    ['observe', { identity: ENV, path: '/var/lib/libvirt/images/owned.qcow2' }],
-    ['start', { identity: ENV, vmName: 'db-env-dangerous' }],
-    ['stop', { identity: ENV, command: 'Remove-VM', force: false }],
-    ['ensure', { subject: 'profile:linux', profile: 'linux', sourceIdentity: 'base-linux', settings: {}, location: 'C:\\vm\\disk.vhdx' }],
-    ['rebuild', { identity: ENV, requestId: 'rebuild-1', expectedPreviousIdentity: ENV, argv: ['virsh', 'undefine'] }],
+    ['status', { identity: ENV, path: '/var/lib/libvirt/images/owned.qcow2' }],
+    ['plan', { operation: 'reset', identity: ENV, vmName: 'db-env-dangerous' }],
+    ['run', { operation: 'reset', identity: ENV, approval: 'reset-subject', command: 'Remove-VM' }],
+    ['resume', { identity: ENV, argv: ['virsh', 'undefine'] }],
   ]) {
     assert.throws(() => normalizeLifecycleAuthorityRequest({ ...base, operation, payload }), /not allowed/u);
   }
-  assert.throws(() => normalizeLifecycleAuthorityRequest({ ...base, operation: 'shell', payload: {} }), /not allowed/u);
+  assert.throws(() => normalizeLifecycleAuthorityRequest({ ...base, operation: 'run', payload: { operation: 'remove', identity: ENV } }), /lifecycle operation is invalid/u);
 });
 
-test('authority handler fails closed on malformed requests without invoking lifecycle', async () => {
+test('authority handler fails closed on malformed requests without invoking operator', async () => {
   const calls = [];
-  const handler = createLifecycleAuthorityHandler({ lifecycle: lifecycleFixture(calls) });
+  const handler = createLifecycleAuthorityHandler({ operator: operatorFixture(calls) });
   const result = await handler({
     protocol: ENVIRONMENT_LIFECYCLE_AUTHORITY_REQUEST_PROTOCOL,
     requestId: '11111111-1111-4111-8111-111111111111',
-    operation: 'remove',
-    payload: { identity: ENV, executable: 'powershell.exe' },
+    operation: 'run',
+    payload: { operation: 'reset', identity: ENV, executable: 'powershell.exe' },
   });
   assert.equal(result.ok, false);
   assert.equal(result.error.code, 'INVALID_REQUEST');
   assert.equal(calls.length, 0);
 });
 
-test('authority result refuses provider authority detail and does not return raw provider errors', async () => {
+test('authority result refuses host/provider detail and does not return raw provider failures', async () => {
   const calls = [];
-  const lifecycle = lifecycleFixture(calls);
-  lifecycle.observe = async () => ({ identity: ENV, exists: true, path: 'C:\\private\\state.vhdx' });
-  const client = new LifecycleAuthorityClient({ exchange: createLifecycleAuthorityHandler({ lifecycle }) });
-  await assert.rejects(client.observe(ENV), (error) => error.code === 'OPERATION_FAILED' && /authority operation failed/u.test(error.message));
+  const operator = operatorFixture(calls);
+  operator.status = async () => ({ environmentIdentity: ENV, path: 'C:\\private\\state.vhdx' });
+  const client = new LifecycleAuthorityClient({ exchange: createLifecycleAuthorityHandler({ operator }) });
+  await assert.rejects(client.status(ENV), (error) => error.code === 'OPERATION_FAILED');
 
-  lifecycle.observe = async () => { throw new Error('Remove-VM failed for C:\\private\\state.vhdx'); };
-  await assert.rejects(client.observe(ENV), (error) => {
+  operator.status = async () => ({ environmentIdentity: ENV, detail: '/var/lib/libvirt/images/owned.qcow2' });
+  await assert.rejects(client.status(ENV), (error) => error.code === 'OPERATION_FAILED');
+
+  operator.status = async () => { throw new Error('Remove-VM failed for C:\\private\\state.vhdx'); };
+  await assert.rejects(client.status(ENV), (error) => {
     assert.equal(error.code, 'OPERATION_FAILED');
     assert.equal(error.message.includes('C:\\private'), false);
     assert.equal(error.message.includes('Remove-VM'), false);
@@ -85,7 +97,7 @@ test('authority result refuses provider authority detail and does not return raw
 
 test('client treats exchange failure and response ownership mismatch as authority failure', async () => {
   const unavailable = new LifecycleAuthorityClient({ exchange: async () => { throw new Error('socket down'); } });
-  await assert.rejects(unavailable.observe(ENV), /authority is unavailable/u);
+  await assert.rejects(unavailable.status(ENV), /authority is unavailable/u);
 
   const mismatched = new LifecycleAuthorityClient({ exchange: async (request) => ({
     protocol: 'devbridge/environment-lifecycle-authority-result-v1',
@@ -93,5 +105,5 @@ test('client treats exchange failure and response ownership mismatch as authorit
     ok: true,
     value: {},
   }) });
-  await assert.rejects(mismatched.observe(ENV), /ownership proof is invalid/u);
+  await assert.rejects(mismatched.status(ENV), /ownership proof is invalid/u);
 });
