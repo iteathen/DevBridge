@@ -50,6 +50,8 @@ The operator does not provide a canary JSON file, keyring path, snapshot, packag
 
 The construction boundary is crossed only when that status is neither blocked nor already complete. Setup then invokes the physical canary `run()` contract. The canary retains its own run lock, exact authority checks, bounded advancement, fail-closed provider checks, and durable journal.
 
+The Windows seed-media adapter must preserve the NoCloud root contract as guest-visible filesystem semantics, not merely as host staging names. The image carries ISO9660 plus Joliet, retains volume identifier `CIDATA`, and exposes exact root names `user-data` and `meta-data`. ISO9660-only 8.3 aliases are not sufficient evidence because cloud-init does not treat those aliases as the required NoCloud files.
+
 Plain `devbridge setup` never crosses this boundary. Remote task content, repository issues, model output, or a pre-existing internal config file cannot turn a read-only setup invocation into construction authority.
 
 ## Re-entry and blockers

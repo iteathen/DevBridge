@@ -51,7 +51,7 @@ namespace DevBridge {
 }
 '@
 $image = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
-$image.FileSystemsToCreate = 1
+$image.FileSystemsToCreate = 3
 $image.VolumeName = 'CIDATA'
 $image.Root.AddTree([string]$data.source, $false)
 $result = $image.CreateResultImage()
