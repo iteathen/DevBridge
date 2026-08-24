@@ -20,6 +20,7 @@ function fakeHost() {
     mediaCount: 0,
     providerIdentity: '11111111-2222-3333-4444-555555555555',
     calls: [],
+    failPrepare: false,
     failAfterBootEffect: false,
     failAfterRetainEffect: false,
     guestAddresses: [],
@@ -32,6 +33,10 @@ function fakeHost() {
       state.calls.push({ script, payload });
       let body;
       if (script.includes('construction media attachment count is incompatible')) {
+        if (state.failPrepare) {
+          state.failPrepare = false;
+          return { exitCode: 1, stdout: '', stderr: 'simulated interruption before partial reconciliation', timedOut: false, aborted: false, outputTruncated: false };
+        }
         state.exists = true;
         state.owned = true;
         state.machineState = 'off';
@@ -382,6 +387,30 @@ test('Hyper-V image construction fails closed when observed provider ownership c
   try {
     const construction = constructor(data, host, 'f'.repeat(32));
     await construction.prepare(data.request);
+    host.state.owned = false;
+    await assert.rejects(() => construction.status(data.request.identity), /not owned/u);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('planned Hyper-V status reports an unowned partial without granting recovery authority', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const construction = constructor(data, host, '3'.repeat(32));
+    host.state.failPrepare = true;
+    await assert.rejects(() => construction.prepare(data.request), /interruption before partial reconciliation/u);
+
+    host.state.exists = true;
+    host.state.machineState = 'off';
+    host.state.owned = false;
+    const planned = await construction.status(data.request.identity);
+    assert.equal(planned.phase, 'planned');
+    assert.equal(planned.exists, true);
+    assert.equal(planned.owned, false);
+
+    const recovered = await construction.prepare(data.request);
+    assert.equal(recovered.phase, 'prepared');
+    assert.equal(recovered.owned, true);
     host.state.owned = false;
     await assert.rejects(() => construction.status(data.request.identity), /not owned/u);
   } finally { await rm(data.directory, { recursive: true, force: true }); }
