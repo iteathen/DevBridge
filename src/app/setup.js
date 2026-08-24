@@ -173,7 +173,7 @@ export async function runDevBridgeSetup({
 
   let prerequisites;
   try {
-    prerequisites = await prerequisiteReconciler({ platform, invoke, environment: env });
+    prerequisites = await prerequisiteReconciler({ platform, invoke, fetchImpl, environment: env });
   } catch (error) {
     return publicResult({
       home: root,
@@ -200,7 +200,12 @@ export async function runDevBridgeSetup({
   let authority;
   try {
     [release, authority] = await Promise.all([
-      releaseAuthority({ home: root, fetchImpl, invoke }),
+      releaseAuthority({
+        home: root,
+        fetchImpl,
+        invoke,
+        signatureVerifierExecutable: prerequisites?.local?.signatureVerifierExecutable ?? null,
+      }),
       authorityFactory({ snapshot, fetchImpl }),
     ]);
   } catch (error) {

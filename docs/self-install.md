@@ -102,10 +102,15 @@ Node.js 22.16.0 or newer is the only assumed zero-state runtime prerequisite.
 
 The direct standalone installer still has a managed Git compatibility path for explicit moving-ref/local-fixture qualification when it was invoked as an already-present file. The supported zero-state exact-subject path does not execute Git for component acquisition.
 
-Later setup paths own later system prerequisites instead of treating them as bootstrap assumptions:
+Later setup paths own later system prerequisites instead of treating them as bootstrap assumptions. Ownership continues until the prerequisite is verified usable or its adapter proves a genuine external-authority boundary. A missing dependency alone is not a reason to hand package installation to the operator.
+
+The current setup dependency behavior includes:
 
 - `gpgv`/`gpgv.exe` is executed as a usability probe before Ubuntu release-signature verification consumes it;
-- missing GPGV is a focused system-package blocker rather than authority to guess a third-party installer;
+- on Windows, an already-usable verifier is reused without package mutation;
+- when the verifier is absent and setup is already elevated, the owning Windows prerequisite adapter fetches only the exact runtime-pinned official GnuPG 2.5.21 Windows installer with bounded Node networking, verifies its pinned SHA-256 before execution, performs the Nullsoft silent installation, cleans the transient installer, and re-discovers `gpgv.exe` from the refreshed system/user PATH or the package-owned `GnuPG\bin` location under Program Files before executing it and claiming readiness;
+- the exact discovered verifier executable is carried only as a local binding into Ubuntu release verification, allowing the same setup invocation to continue even when the parent process cannot see a newly persisted PATH; that local path is not projected through remote `setup.status`;
+- a non-elevated missing verifier stops before download/mutation at the elevation boundary; digest disagreement, download/integrity failure, installer failure, or an unusable post-install verifier is a focused resumable blocker rather than an instruction to install a package manually;
 - on Windows, setup inspects OpenSSH Client readiness and may establish only the exact `OpenSSH.Client~~~~0.0.1.0` Windows capability when it is `NotPresent` and the current setup process is already elevated;
 - OpenSSH establishment is verified by re-inspecting `ssh.exe` and `ssh-keygen.exe` afterward;
 - non-elevated setup, pending servicing/restart state, servicing-policy/source failure, or inconsistent capability state stops with a resumable blocker;
@@ -178,7 +183,7 @@ Setup persists accepted GitHub identity/repository selection and the exact Ubunt
 
 After prerequisite reconciliation and Ubuntu authority verification, setup calls only the production-image canary `status()` surface. It never calls physical construction `run()` as part of install/setup recovery.
 
-A status result may report a provider/tool/elevation/storage/memory/keyring blocker or may report that the construction gate is ready. Neither outcome means setup constructed an image or VM. Physical construction remains a separate explicit gate.
+A status result may report a genuine external-authority/provider/tool/elevation/storage/memory/keyring blocker or may report that the construction gate is ready. Neither outcome means setup constructed an image or VM. Physical construction remains a separate explicit gate.
 
 ## Security boundary
 
@@ -192,6 +197,6 @@ The self-installer does not make the permanent-entry component responsible for V
 
 ## Qualification boundary
 
-Hosted qualification proves the zero-state exact-subject path on Windows and Linux without touching the physical development host. Focused tests cover durable branch binding, Git-unreachable component acquisition, partial acquisition cleanup, component/wrapper recovery, prerequisite establishment/verification, re-entry, and the `status()`-only setup gate.
+Hosted qualification proves the zero-state exact-subject path on Windows and Linux without touching the physical development host. Focused tests cover durable branch binding, Git-unreachable component acquisition, partial acquisition cleanup, component/wrapper recovery, setup-owned prerequisite acquisition and verification, same-invocation local binding, re-entry, bad-package fail-closed behavior, and the `status()`-only setup gate.
 
-Do not run the Node zero-state command on the live host merely because repository CI is green for one slice. #238 must be complete first. The first authorized real-host setup pass is read-only at the physical status gate; no installer/setup work in this issue authorizes image or VM construction automatically.
+The first real-host attempt exposed missing-GPGV handling as an incomplete #238 prerequisite contract, so #238 remains open until the corrected behavior is qualified and proved on the real Windows host. Do not manually preinstall that dependency to bypass the qualification case. The next authorized real-host setup pass must exercise setup-owned reconciliation and then stop at the read-only physical status gate; no installer/setup work here authorizes image or VM construction automatically.
