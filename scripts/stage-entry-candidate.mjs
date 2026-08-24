@@ -12,7 +12,9 @@ const MAX_COMPONENT_BYTES = 1024 * 1024;
 const COMPONENTS = Object.freeze([
   'devbridge-entry.mjs',
   'src/entry/content-addressed-runner-provider.mjs',
+  'src/entry/development-checkout-runner-provider.mjs',
   'src/entry/development-stable-subject-authority.mjs',
+  'src/entry/exact-checkout-runner-provider.mjs',
   'src/entry/experimental-checkout-runner-provider.mjs',
   'src/entry/experimental-entry.mjs',
   'src/entry/experimental-subject-authority.mjs',

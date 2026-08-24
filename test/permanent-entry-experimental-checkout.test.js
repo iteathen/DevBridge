@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { DevelopmentCheckoutRunnerProvider } from '../src/entry/development-checkout-runner-provider.mjs';
 import { ExperimentalCheckoutRunnerProvider } from '../src/entry/experimental-checkout-runner-provider.mjs';
 import { RUNNER_SUBJECT_PROTOCOL } from '../src/entry/permanent-entry.mjs';
 
@@ -225,6 +226,70 @@ test('experimental checkout provider cannot become stable runner authority', asy
     const git = fakeGit({ head, artifactBytes: bytes });
     const provider = new ExperimentalCheckoutRunnerProvider({ cacheRoot: root, run: git.run, launch() { return 0; } });
     await assert.rejects(() => provider.prepare(subject(head, bytes, { channel: 'stable' })), /refuses non-experimental authority/u);
+    assert.equal(git.calls.length, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('development checkout provider launches the exact stable development control-plane tree', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-entry-checkout-development-'));
+  try {
+    const head = '9'.repeat(40);
+    const bytes = Buffer.from('development-runner');
+    const exact = subject(head, bytes, {
+      channel: 'stable',
+      releaseId: `development-${head}`,
+    });
+    const git = fakeGit({ head, artifactBytes: bytes });
+    const launches = [];
+    const provider = new DevelopmentCheckoutRunnerProvider({
+      cacheRoot: root,
+      run: git.run,
+      launch(entry, argv) {
+        launches.push({ entry, argv });
+        return 47;
+      },
+    });
+
+    const prepared = await provider.prepare(exact);
+    assert.equal(await prepared.launch(['--home', root, 'setup']), 47);
+    assert.equal(fetchCalls(git.calls).length, 1);
+    assert.deepEqual(fetchCalls(git.calls)[0].args.slice(2), ['fetch', '--no-tags', '--depth', '1', 'origin', head]);
+    assert.match(launches[0].entry.replaceAll('\\', '/'), /\/src\/cli\.js$/u);
+    assert.deepEqual(launches[0].argv, ['--home', root, 'setup']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('development checkout provider refuses production-like subjects and disabled refresh cannot acquire a missing checkout', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-entry-checkout-development-denial-'));
+  try {
+    const head = '8'.repeat(40);
+    const bytes = Buffer.from('development-runner');
+    const git = fakeGit({ head, artifactBytes: bytes });
+    const provider = new DevelopmentCheckoutRunnerProvider({
+      cacheRoot: root,
+      run: git.run,
+      launch() { throw new Error('must not launch'); },
+    });
+    await assert.rejects(
+      () => provider.prepare(subject(head, bytes, { channel: 'stable', releaseId: 'signed-release-42' })),
+      /requires exact development authority/u,
+    );
+    assert.equal(git.calls.length, 0);
+
+    const offline = new DevelopmentCheckoutRunnerProvider({
+      cacheRoot: path.join(root, 'offline'),
+      allowFetch: false,
+      run: git.run,
+      launch() { throw new Error('must not launch'); },
+    });
+    await assert.rejects(
+      () => offline.prepare(subject(head, bytes, { channel: 'stable', releaseId: `development-${head}` })),
+      /runner refresh is disabled/u,
+    );
     assert.equal(git.calls.length, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
