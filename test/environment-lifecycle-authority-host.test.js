@@ -31,7 +31,9 @@ test('protected host owns both endpoint capabilities around one EnvironmentOpera
     : path.join(temp, 'state');
   const runDirectory = process.platform === 'linux' ? path.join(temp, 'run') : '/run/devbridge';
   if (process.platform === 'linux') {
-    await mkdir(path.join(runDirectory, environmentLifecycleAuthorityIdentity(stateDirectory)), { recursive: true });
+    const identity = environmentLifecycleAuthorityIdentity(stateDirectory);
+    await mkdir(path.join(runDirectory, identity, 'read'), { recursive: true });
+    await mkdir(path.join(runDirectory, identity, 'mutation'), { recursive: true });
   }
   const calls = [];
   const host = await createEnvironmentLifecycleAuthorityHost({
