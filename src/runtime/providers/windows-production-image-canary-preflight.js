@@ -17,6 +17,13 @@ function capabilityScript({ requireVerifierByName }) {
   return String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = New-Object Security.Principal.WindowsPrincipal($identity)
+$elevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $elevated) {
+  @{ ready = $true; elevated = $false } | ConvertTo-Json -Compress
+  exit 0
+}
 Import-Module Hyper-V -ErrorAction Stop
 $required = @(
   'Get-VMHost','Get-VM','New-VM','Remove-VM','Start-VM','Stop-VM','Set-VM','Set-VMProcessor','Set-VMFirmware',
@@ -32,7 +39,7 @@ foreach ($name in ${hostTools}) {
 }
 $null = Get-VMHost -ErrorAction Stop
 $null = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
-@{ ready = $true } | ConvertTo-Json -Compress
+@{ ready = $true; elevated = [bool]$elevated } | ConvertTo-Json -Compress
 `;
 }
 
@@ -105,6 +112,8 @@ function parseCapability(result) {
   let parsed;
   try { parsed = JSON.parse(String(result.stdout ?? '')); } catch { throw new Error('host capability preflight returned invalid structured output'); }
   if (parsed?.ready !== true) throw new Error('host capability preflight did not report readiness');
+  if (typeof parsed.elevated !== 'boolean') throw new Error('host capability preflight did not report elevation state');
+  if (!parsed.elevated) throw new Error('physical production image construction requires an elevated PowerShell. Re-run devbridge setup from an elevated PowerShell');
 }
 
 export class WindowsProductionImageCanaryPreflight {

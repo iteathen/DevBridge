@@ -14,6 +14,8 @@ DevBridge setup reached the construction gate.
 
 That result authorizes construction but does not construct an image or VM.
 
+On Windows, physical Hyper-V construction also requires the public command to run from an elevated PowerShell. The physical-provider preflight checks that local token authority read-only and refuses to advertise the construction gate when it is absent. Re-launch PowerShell with **Run as administrator**, run plain `devbridge setup` again, and require the exact gate message before invoking construction. Do not work around the preflight by manually creating the switch, gateway, or NAT.
+
 ## Development runner tracking
 
 A development or qualification installation may explicitly persist a moving local runner branch once through the setup surface:
