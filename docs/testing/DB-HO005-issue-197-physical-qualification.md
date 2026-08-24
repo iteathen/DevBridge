@@ -255,7 +255,7 @@ Read-only reconciliation proved that no provider recovery effect had run: the VM
 
 The generic canary deliberately observes inner construction before replaying preparation. That lets it reconcile a completed inner effect whose outer phase save was lost. The Hyper-V `status()` implementation, however, rejected any existing unmarked object before returning its durable `planned` phase. The exact `prepare()` recovery predicate added by PR #275 was therefore unreachable.
 
-Solution under qualification:
+Solution: PR [#276](https://github.com/iteathen/DevBridge/pull/276):
 
 - when and only when the provider-local durable record is still `planned` and has no provider identity, status reports the observed object as `exists: true, owned: false` while retaining phase `planned`;
 - this observation grants no ownership and performs no mutation; it allows the generic canary to call the provider-local `prepare()` owner, which applies the exact shape and path predicate before writing a marker;
