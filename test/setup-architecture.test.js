@@ -3,12 +3,22 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const SETUP_APP = new URL('../src/app/setup.js', import.meta.url);
+const CLI = new URL('../src/cli.js', import.meta.url);
 
-test('generic setup composes through the canary app instead of provider internals', async () => {
+test('generic setup composes status and explicit construction only through the canary app', async () => {
   const source = await readFile(SETUP_APP, 'utf8');
   assert.doesNotMatch(source, /runtime\/providers\//u);
   assert.doesNotMatch(source, /\b(?:New-VM|Remove-VM|Start-VM|Stop-VM|virsh|qemu-system)\b/u);
   assert.match(source, /createUbuntuProductionImagePhysicalCanary/u);
   assert.match(source, /physical = await canary\.status\(\)/u);
-  assert.doesNotMatch(source, /canary\.run\s*\(/u);
+  assert.match(source, /construct === true && physical\?\.blocked !== true && physical\?\.complete !== true/u);
+  assert.match(source, /physical = await canary\.run\(\)/u);
+});
+
+test('public construction is an explicit setup option without exposing physical config paths', async () => {
+  const source = await readFile(CLI, 'utf8');
+  assert.match(source, /devbridge setup \[--construct\]/u);
+  assert.match(source, /construct: selected\.construct/u);
+  assert.doesNotMatch(source, /ubuntu-production-image-canary-entry/u);
+  assert.doesNotMatch(source, /physical-canary-config/u);
 });
