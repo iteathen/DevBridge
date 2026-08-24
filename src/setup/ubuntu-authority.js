@@ -2,7 +2,7 @@ import { gunzipSync } from 'node:zlib';
 import { createGuestImagePayload } from '../guest/image-payload.js';
 
 const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
-const PACKAGE_NAMES = Object.freeze(['build-essential', 'cmake', 'git', 'nodejs', 'npm']);
+const PACKAGE_NAMES = Object.freeze(['build-essential', 'cmake', 'git', 'linux-cloud-tools-virtual', 'nodejs', 'npm']);
 const COMPONENTS = Object.freeze(['main', 'universe']);
 const MAX_COMPRESSED_BYTES = 64 * 1024 * 1024;
 const MAX_INDEX_BYTES = 256 * 1024 * 1024;
@@ -123,12 +123,12 @@ export async function createUbuntuSetupAuthority({
       patches: Object.freeze([Object.freeze({ id: 'boot-trigger', occurrences: 2, before: BOOT_PATCH.before, after: BOOT_PATCH.after })]),
     }),
     packages: Object.freeze({
-      generation: 'ubuntu-2604-tools-v1',
+      generation: 'ubuntu-2604-tools-v2',
       snapshot,
       packages,
     }),
     payload: Object.freeze({ generation: payload.generation }),
-    qualification: Object.freeze({ commands: Object.freeze(['make']) }),
+    qualification: Object.freeze({ commands: Object.freeze(['hv_kvp_daemon', 'make']) }),
     output: Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v1', bootstrap: 'guest-image-v1' }),
   });
 }

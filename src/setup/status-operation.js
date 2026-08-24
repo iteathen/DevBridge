@@ -65,9 +65,16 @@ function physicalProjection(value) {
         capabilities: value.preflight.capabilities && typeof value.preflight.capabilities === 'object'
           ? Object.freeze({
               provider: value.preflight.capabilities.provider === true,
+              connectivity: value.preflight.capabilities.connectivity === true,
               keyring: value.preflight.capabilities.keyring === true,
               memory: value.preflight.capabilities.memory === true,
               storage: value.preflight.capabilities.storage === true,
+            })
+          : null,
+        connectivity: value.preflight.connectivity && typeof value.preflight.connectivity === 'object'
+          ? Object.freeze({
+              control: value.preflight.connectivity.control === 'system' ? 'system' : null,
+              addressing: value.preflight.connectivity.addressing === 'automatic' ? 'automatic' : null,
             })
           : null,
       })

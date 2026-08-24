@@ -98,17 +98,22 @@ export function formatSetupHandoff(result) {
     const constructionStatus = physical?.state === 'absent'
       ? 'Physical image construction: authorized by status gate, not started'
       : `Physical image construction: authorized to resume from durable ${physical?.state ?? 'incomplete'} frontier`;
-    return [
+    const lines = [
       'DevBridge setup reached the construction gate.',
       '',
       'Linux execution profile: source/package/payload authority ready',
       `Repositories: ${result.repositories?.selectedCount ?? 0} configured`,
       constructionStatus,
-      '',
+    ];
+    if (physical?.preflight?.connectivity?.control === 'system' && physical.preflight.connectivity.addressing === 'automatic') {
+      lines.push('Physical construction connectivity: verified host-managed DHCP; not claimed as DevBridge-owned network state');
+    }
+    lines.push('',
       'The setup path performed no image or VM construction.',
       result.path?.requiresNewShell ? `Open a new shell for devbridge on PATH. Until then: ${result.path.temporaryCommand}` : 'The devbridge command is available on PATH.',
       '',
-    ].join('\n');
+    );
+    return lines.join('\n');
   }
   if (result.phase === 'image-complete') {
     return result.construction?.attempted

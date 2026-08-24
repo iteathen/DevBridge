@@ -63,19 +63,34 @@ function normalizePackages(raw) {
   return Object.freeze({ generation: raw.generation, snapshot: raw.snapshot, packages });
 }
 
+function normalizeNetwork(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('production seed network is invalid');
+  if (raw.method === 'automatic') {
+    for (const key of Object.keys(raw)) if (key !== 'method') throw new TypeError(`production seed network.${key} is not allowed`);
+    return Object.freeze({ method: 'automatic' });
+  }
+  if (raw.method !== 'static') throw new TypeError('production seed network.method is invalid');
+  const allowed = new Set(['method', 'address', 'prefixLength', 'gateway', 'dns']);
+  for (const key of Object.keys(raw)) if (!allowed.has(key)) throw new TypeError(`production seed network.${key} is not allowed`);
+  if (!Number.isInteger(raw.prefixLength) || raw.prefixLength < 8 || raw.prefixLength > 30) throw new TypeError('production seed network.prefixLength is invalid');
+  if (!Array.isArray(raw.dns) || raw.dns.length === 0 || raw.dns.length > 4) throw new TypeError('production seed network DNS set is invalid');
+  return Object.freeze({
+    method: 'static',
+    address: ipv4(raw.address, 'production seed network address'),
+    prefixLength: raw.prefixLength,
+    gateway: ipv4(raw.gateway, 'production seed network gateway'),
+    dns: [...new Set(raw.dns.map((entry) => ipv4(entry, 'production seed network DNS entry')))],
+  });
+}
+
 function normalizeRequest(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('production seed request is invalid');
-  const allowed = new Set(['identity', 'address', 'prefixLength', 'gateway', 'dns', 'authorizedKey', 'hostPrivateKey', 'hostPublicKey']);
+  const allowed = new Set(['identity', 'network', 'authorizedKey', 'hostPrivateKey', 'hostPublicKey']);
   for (const key of Object.keys(raw)) if (!allowed.has(key)) throw new TypeError(`production seed request.${key} is not allowed`);
   if (typeof raw.identity !== 'string' || !SUBJECT.test(raw.identity)) throw new TypeError('production seed identity is invalid');
-  if (!Number.isInteger(raw.prefixLength) || raw.prefixLength < 8 || raw.prefixLength > 30) throw new TypeError('production seed prefixLength is invalid');
-  if (!Array.isArray(raw.dns) || raw.dns.length === 0 || raw.dns.length > 4) throw new TypeError('production seed DNS set is invalid');
   return Object.freeze({
     identity: raw.identity,
-    address: ipv4(raw.address, 'production seed address'),
-    prefixLength: raw.prefixLength,
-    gateway: ipv4(raw.gateway, 'production seed gateway'),
-    dns: [...new Set(raw.dns.map((entry) => ipv4(entry, 'production seed DNS entry')))],
+    network: normalizeNetwork(raw.network),
     authorizedKey: publicKey(raw.authorizedKey, 'temporary authorized key'),
     hostPrivateKey: privateKey(raw.hostPrivateKey),
     hostPublicKey: publicKey(raw.hostPublicKey, 'temporary host public key'),
@@ -113,8 +128,13 @@ export class UbuntuProductionSeedFactory {
     const payload = normalizePayload(await this.#payloadSet());
     const packages = normalizePackages(await this.#packageSet());
     const packageSpecifications = packages.packages.map((entry) => entry.specification);
-    const lines = ['#cloud-config', 'autoinstall:', '  version: 1', '  locale: en_US.UTF-8', '  keyboard:', '    layout: us', '  storage:', '    layout:', '      name: direct', '  network:', '    version: 2', '    ethernets:', '      build:', '        match:', '          name: "e*"', '        dhcp4: false', '        addresses:', `          - ${yamlString(`${request.address}/${request.prefixLength}`)}`, '        routes:', '          - to: default', `            via: ${yamlString(request.gateway)}`, '        nameservers:', '          addresses:'];
-    for (const entry of request.dns) lines.push(`            - ${yamlString(entry)}`);
+    const lines = ['#cloud-config', 'autoinstall:', '  version: 1', '  locale: en_US.UTF-8', '  keyboard:', '    layout: us', '  storage:', '    layout:', '      name: direct', '  network:', '    version: 2', '    ethernets:', '      build:', '        match:', '          name: "e*"'];
+    if (request.network.method === 'automatic') {
+      lines.push('        dhcp4: true', '        dhcp6: false');
+    } else {
+      lines.push('        dhcp4: false', '        addresses:', `          - ${yamlString(`${request.network.address}/${request.network.prefixLength}`)}`, '        routes:', '          - to: default', `            via: ${yamlString(request.network.gateway)}`, '        nameservers:', '          addresses:');
+      for (const entry of request.network.dns) lines.push(`            - ${yamlString(entry)}`);
+    }
     lines.push('  ssh:', '    install-server: false', '    allow-pw: false', '  late-commands:', `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--snapshot', packages.snapshot, 'update'])}`, `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--snapshot', packages.snapshot, 'install', '-y', '--no-install-recommends', ...packageSpecifications])}`, '  shutdown: poweroff', '  user-data:', '    users:', '      - name: devbridge', '        gecos: DevBridge Image Builder', '        groups: [adm, sudo]', '        shell: /bin/bash', '        lock_passwd: true', '        ssh_authorized_keys:', `          - ${yamlString(request.authorizedKey)}`, '    write_files:');
     for (const file of payload.files) writeFileYaml(lines, file);
     writeFileYaml(lines, { path: '/etc/ssh/ssh_host_ed25519_key', content: `${request.hostPrivateKey.trimEnd()}\n`, permissions: '0600' });
@@ -137,6 +157,7 @@ export class UbuntuProductionSeedFactory {
         packageGeneration: packages.generation,
         packageSnapshot: packages.snapshot,
         packages: packages.packages.map(({ name, version }) => ({ name, version })),
+        networkMethod: request.network.method,
         userDataSha256: digest(userData),
       }),
     });

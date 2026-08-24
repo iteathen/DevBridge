@@ -58,7 +58,8 @@ function blockedResult() {
           ready: false,
           reason: 'required host tool is unavailable: gpgv.exe',
           platform: 'win32',
-          capabilities: { provider: true, keyring: true, memory: true, storage: true },
+          capabilities: { provider: true, connectivity: true, keyring: true, memory: true, storage: true },
+          connectivity: { control: 'system', addressing: 'automatic' },
           resources: { storage: { directory: 'C:\\Users\\operator\\private' } },
         },
       },
@@ -103,6 +104,8 @@ test('setup.status delegates with no remote arguments and returns blocked setup 
   assert.equal(projected.prerequisites.ready, false);
   assert.equal(projected.prerequisites.capabilities.opensshClient, false);
   assert.equal(projected.linuxProfile.physicalStatus.preflight.capabilities.provider, true);
+  assert.equal(projected.linuxProfile.physicalStatus.preflight.capabilities.connectivity, true);
+  assert.deepEqual(projected.linuxProfile.physicalStatus.preflight.connectivity, { control: 'system', addressing: 'automatic' });
 });
 
 test('setup status projection removes local paths and repository or identity details', () => {

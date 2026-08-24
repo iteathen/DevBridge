@@ -111,7 +111,7 @@ FullyQualifiedErrorId : Windows System Error 5,New-NetIPAddress
 
 A separate read-only identity check proved that the invoking Windows token was not in the built-in Administrator role. The physical preflight had checked command presence, Hyper-V module usability, and `Get-VMHost`, but it had not reported or required token elevation. It therefore advertised a construction gate that this invocation could not safely cross. Because the owned switch had already been durably admitted, discovering that missing authority inside network mutation also widened the partial-effect frontier unnecessarily.
 
-Solution in the same change set as this record:
+Temporary fail-closed solution in PR [#272](https://github.com/iteathen/DevBridge/pull/272):
 
 - inspect the current Windows identity and built-in Administrator role inside the existing read-only capability script;
 - return elevation as typed structured capability evidence;
@@ -121,7 +121,60 @@ Solution in the same change set as this record:
 
 Microsoft's supported Hyper-V NAT workflow requires an Administrator PowerShell before creating the internal switch, assigning its gateway with `New-NetIPAddress`, and creating the NAT. See [Set up a NAT network](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/setup-nat-network) and [Getting started with PowerShell](https://learn.microsoft.com/en-us/powershell/scripting/learn/ps101/01-getting-started#launching-powershell).
 
-The exact PR head, CI run, merge SHA, and elevated physical retry result for this change must be recorded on [issue #197](https://github.com/iteathen/DevBridge/issues/197) before construction resumes.
+PR #272 merged as `34d53ccf8ee38ddb1c43e688328d329fa59577ab` after CI run `32699786108` passed Ubuntu and Windows smoke/test jobs. This made the unsupported authority gap visible before mutation, but requiring elevation for the entire public construction command was deliberately treated as a temporary safety stop rather than the least-privilege target.
+
+### 6. Custom NAT was the wrong authority boundary for construction-only connectivity
+
+Installing custom NAT while elevated and then packaging the guest disk does not transfer NAT into the VHDX. The virtual switch, host gateway address, WinNAT object, and address-allocation policy are host state. A recipient would still need compatible host networking, so this approach neither removes the elevation dependency nor makes the disk self-contained.
+
+Primary-source research also found:
+
+- Microsoft's supported custom Hyper-V NAT procedure starts in an Administrator PowerShell and creates an internal switch, a host gateway address, and a WinNAT object.
+- WinNAT itself does not assign addresses to VMs; static guest address/gateway/DNS configuration or another allocation authority is still required.
+- Windows supports only one internal NAT prefix per host. Creating another application-owned NAT can conflict with Docker, Windows containers, or other host software and can place the host in an unknown state.
+- Hyper-V's Windows-managed Default Switch already provides construction-suitable automatic NAT/DHCP, while Hyper-V KVP can report guest metadata to the host over VMbus without making DevBridge own the switch.
+
+Alternatives were assessed and not adopted for this blocker:
+
+- an elevated one-time custom NAT installer still owns durable host networking, requires reconciliation/removal authority, and conflicts with the one-prefix constraint;
+- a scheduled task, service, JEA endpoint, bounded UAC helper, or sudo-style broker moves elevation behind another interface but still delegates privileged host mutation and therefore requires a separate installation/security design;
+- an external switch or Internet Connection Sharing remains privileged and changes host topology;
+- a fully offline package build would avoid runtime network dependence, but the admitted Ubuntu server ISO does not contain the complete required Node/CMake/compiler package closure, so doing this correctly requires a new signed archive-index verifier, dependency-closure resolver, package-byte cache/admission contract, and local repository/media builder;
+- Hyper-V sockets would require a registered host service and a preinstalled guest client, widening both host installation and image-bootstrap scope.
+
+Bounded solution under qualification:
+
+- add a Windows provider-local construction-network adapter that read-only selects the fixed Default Switch by exact provider ID and verifies its internal-switch type;
+- expose only neutral `control: system` and `addressing: automatic` contracts to the composition boundary;
+- attach only the exact DevBridge-owned disposable construction VM and never mutate, remove, rename, or claim ownership of the system switch;
+- generate DHCP Ubuntu autoinstall network data;
+- snapshot-pin `linux-cloud-tools-virtual`, qualify `hv_kvp_daemon`, and resolve exactly one private IPv4 reported for the exact VM/switch binding before the pinned SSH host-key proof;
+- treat absent addressing as resumable waiting and ambiguous addressing or identity drift as fail-closed;
+- report the system-managed construction-only dependency in the public setup handoff without representing it as persistent DevBridge-owned network readiness.
+
+The implementation keeps the Stage-2 persistent networking contract separate. The existing durable owned-switch plan remains evidence and is neither adopted nor deleted by the construction-only adapter. The broader choice between an owned persistent NAT, an operator-provided network, or a separately installed privileged networking service belongs to issue [#116](https://github.com/iteathen/DevBridge/issues/116), not this construction blocker.
+
+Primary behavior references:
+
+- [Microsoft: Set up a NAT network](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/setup-nat-network)
+- [Microsoft: Hyper-V integration services](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/integration-services)
+- [Microsoft: Hyper-V data exchange](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/integration-services-data-exchange)
+- [Canonical autoinstall reference](https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html)
+
+Research and the construction/persistent-network ownership split were also recorded directly on GitHub in [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5392003796) and [issue #116](https://github.com/iteathen/DevBridge/issues/116#issuecomment-5392005457).
+
+### 7. A locally constructed image is not automatically authorized for public redistribution
+
+The production recipe installs snapshot-pinned build and guest-helper packages and preconfigures the resulting system. Canonical's published FAQ lists adding packages and preinstallation as modifications. Canonical's intellectual-property policy permits personal/internal modification, but says redistribution of modified Ubuntu associated with Ubuntu trademarks requires Canonical approval, certification, or provision; an alternative requires removing/replacing the trademarks and rebuilding subject to the component licenses.
+
+Solution: fail closed at publication. Physical construction and local qualification may continue, but no constructed VHDX, compressed object, or chunk may be uploaded or advertised until the repository records a reviewed redistribution basis. Contacting Canonical for an applicable agreement is the smallest route that preserves issue #197's existing canonical Ubuntu image identity. An unmodified-installer-plus-local-reconstruction design remains possible, but it is a different acceptance contract and must not be substituted silently.
+
+Primary references:
+
+- [Canonical intellectual property rights policy](https://canonical.com/legal/intellectual-property-policy)
+- [Canonical embedding and redistribution FAQ](https://canonical.com/embedding/faqs)
+
+This is an engineering publication stop based on the cited policy, not legal advice. The licensing finding was first recorded on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5391915954).
 
 ## Preserved physical evidence
 
@@ -132,8 +185,11 @@ After the latest stopped attempt:
 - the partially reconciled switch remained owned and recoverable through the provider's durable network plan;
 - no gateway address or NAT was admitted by the non-elevated retry;
 - no manual switch, NAT, gateway, journal, cache, or canary cleanup was performed.
+- read-only observation verified the Windows-managed Default Switch at exact provider ID `c08cb7b8-9b3c-408e-8e30-5e16a3aeb444` with compatible `Internal` type;
+- read-only physical preflight passed under the existing non-elevated Hyper-V operator token using system-managed automatic connectivity;
+- neither read-only check changed the journal, ISO cache, planned owned-switch evidence, VM inventory, or host networking.
 
-The owned partial switch must be reconciled through the same Hyper-V provider adapter. It must not be manually adopted, renamed, or deleted merely to make the next attempt appear clean.
+The owned partial switch remains persistent provider-foundation evidence and may be reconciled only through the same Hyper-V environment adapter. It must not be manually adopted, renamed, or deleted merely to make the construction attempt appear clean. The construction-only adapter neither consumes nor changes it.
 
 ## Qualification discipline
 
@@ -147,4 +203,4 @@ Each accepted fix used a fresh exact head and required:
 - exact-head merge;
 - an issue #197 evidence comment before the next physical mutation.
 
-Issue #197 remains open after the first successful VHDX construction. Source provenance, guest toolchain and CMake/CTest qualification, sanitization, provider-native inspection, canonical artifact packaging, remote publication/reacquisition, exact reconstruction, and any claimed qcow2/KVM parity remain separate acceptance boundaries.
+Issue #197 remains open after the first successful VHDX construction. Source provenance, guest toolchain and CMake/CTest qualification, sanitization, and provider-native inspection remain separate local acceptance boundaries. Canonical artifact packaging may be tested locally, but remote publication/reacquisition is blocked pending documented redistribution authority. Exact reconstruction and any claimed qcow2/KVM parity also remain separate acceptance boundaries.

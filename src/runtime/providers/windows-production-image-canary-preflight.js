@@ -4,6 +4,7 @@ import {
   preflightExecutionProfileMemory,
   preflightExecutionProfileStorage,
 } from '../profile-resource-preflight.js';
+import { createWindowsManagedConstructionNetwork } from './windows-managed-construction-network.js';
 
 const PROTOCOL = 'devbridge/production-image-canary-preflight-v1';
 const POWERSHELL = 'powershell.exe';
@@ -17,18 +18,10 @@ function capabilityScript({ requireVerifierByName }) {
   return String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-$principal = New-Object Security.Principal.WindowsPrincipal($identity)
-$elevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $elevated) {
-  @{ ready = $true; elevated = $false } | ConvertTo-Json -Compress
-  exit 0
-}
 Import-Module Hyper-V -ErrorAction Stop
 $required = @(
   'Get-VMHost','Get-VM','New-VM','Remove-VM','Start-VM','Stop-VM','Set-VM','Set-VMProcessor','Set-VMFirmware',
-  'Get-VHD','Test-VHD','New-VHD','Get-VMSwitch','New-VMSwitch','Set-VMSwitch','Remove-VMSwitch',
-  'Get-NetNat','New-NetNat','Remove-NetNat','Get-NetIPAddress','New-NetIPAddress','Remove-NetIPAddress','Get-NetIPInterface','Get-NetRoute',
+  'Get-VHD','Test-VHD','New-VHD','Get-VMSwitch','Get-VMHardDiskDrive','Add-VMHardDiskDrive',
   'Get-VMNetworkAdapter','Add-VMNetworkAdapter','Connect-VMNetworkAdapter','Get-VMDvdDrive','Add-VMDvdDrive','Remove-VMDvdDrive'
 )
 foreach ($name in $required) {
@@ -39,7 +32,7 @@ foreach ($name in ${hostTools}) {
 }
 $null = Get-VMHost -ErrorAction Stop
 $null = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
-@{ ready = $true; elevated = [bool]$elevated } | ConvertTo-Json -Compress
+@{ ready = $true } | ConvertTo-Json -Compress
 `;
 }
 
@@ -112,21 +105,22 @@ function parseCapability(result) {
   let parsed;
   try { parsed = JSON.parse(String(result.stdout ?? '')); } catch { throw new Error('host capability preflight returned invalid structured output'); }
   if (parsed?.ready !== true) throw new Error('host capability preflight did not report readiness');
-  if (typeof parsed.elevated !== 'boolean') throw new Error('host capability preflight did not report elevation state');
-  if (!parsed.elevated) throw new Error('physical production image construction requires an elevated PowerShell. Re-run devbridge setup from an elevated PowerShell');
 }
 
 export class WindowsProductionImageCanaryPreflight {
   #invoke;
   #platform;
   #signatureVerifierExecutable;
+  #network;
 
-  constructor({ invoke, platform = process.platform, signatureVerifierExecutable = null } = {}) {
+  constructor({ invoke, platform = process.platform, signatureVerifierExecutable = null, network = null } = {}) {
     if (typeof invoke !== 'function') throw new TypeError('physical canary preflight invocation contract is invalid');
     if (typeof platform !== 'string' || platform.length === 0) throw new TypeError('physical canary preflight platform is invalid');
     this.#invoke = invoke;
     this.#platform = platform;
     this.#signatureVerifierExecutable = optionalVerifierExecutable(signatureVerifierExecutable);
+    this.#network = network ?? (platform === 'win32' ? createWindowsManagedConstructionNetwork({ invoke }) : null);
+    if (this.#network != null && typeof this.#network.inspect !== 'function') throw new TypeError('physical canary construction network contract is incomplete');
   }
 
   async inspect({ stateDirectory, keyring, memoryBytes, diskBytes, sourceBytes } = {}) {
@@ -138,6 +132,7 @@ export class WindowsProductionImageCanaryPreflight {
     let storage = null;
     let keyringReady = false;
     let providerReady = false;
+    let connectivity = null;
 
     try { memory = preflightExecutionProfileMemory({ memoryBytes: requestedMemory }); }
     catch (error) { reasons.push(error.message); }
@@ -165,6 +160,9 @@ export class WindowsProductionImageCanaryPreflight {
           timeoutMs: 30_000,
           maxOutputBytes: 256 * 1024,
         }));
+        providerReady = true;
+        connectivity = await this.#network.inspect();
+        if (connectivity?.ready !== true) throw new Error(connectivity?.reason ?? 'physical canary construction network is unavailable');
         if (this.#signatureVerifierExecutable != null) {
           const verified = await this.#invoke({
             executable: this.#signatureVerifierExecutable,
@@ -175,7 +173,6 @@ export class WindowsProductionImageCanaryPreflight {
           });
           if (!invocationSucceeded(verified)) throw new Error('physical canary signature verifier is not usable');
         }
-        providerReady = true;
       } catch (error) { reasons.push(error.message); }
     }
 
@@ -185,7 +182,10 @@ export class WindowsProductionImageCanaryPreflight {
       ready,
       reason: ready ? null : Object.freeze([...new Set(reasons)]).join('; '),
       platform: this.#platform,
-      capabilities: Object.freeze({ provider: providerReady, keyring: keyringReady, memory: memory != null, storage: storage != null }),
+      capabilities: Object.freeze({ provider: providerReady, connectivity: connectivity?.ready === true, keyring: keyringReady, memory: memory != null, storage: storage != null }),
+      connectivity: connectivity?.ready === true
+        ? Object.freeze({ control: connectivity.description.binding.control, addressing: connectivity.description.addressing.method })
+        : null,
       resources: Object.freeze({ memory, storage }),
     });
   }
