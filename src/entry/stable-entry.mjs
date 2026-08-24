@@ -16,7 +16,12 @@ export const ENTRY_STATUS_PROTOCOL = 'devbridge/entry-status-v1';
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_KEY_BYTES = 16 * 1024;
-const ENTRY_VALUE_FLAGS = new Set(['--entry-runner-manifest', '--entry-runner-public-key']);
+const SAFE_DEVELOPMENT_REF = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/u;
+const ENTRY_VALUE_FLAGS = new Set([
+  '--entry-runner-manifest',
+  '--entry-runner-public-key',
+  '--entry-development-ref',
+]);
 
 function fail(message) { throw new Error(message); }
 
@@ -24,6 +29,16 @@ function takeValue(argv, index, flag) {
   const value = argv[index + 1];
   if (typeof value !== 'string' || !value || value.startsWith('-')) fail(`${flag} requires a local value`);
   return value;
+}
+
+function normalizedDevelopmentRef(value) {
+  const ref = String(value ?? '');
+  const segments = ref.split('/');
+  if (!SAFE_DEVELOPMENT_REF.test(ref) || ref.startsWith('-') || ref.includes('\\') || ref.endsWith('/') || ref.endsWith('.lock') ||
+      segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
+    fail('development runner ref is invalid');
+  }
+  return ref;
 }
 
 function expandHome(value, homeDirectory) {
@@ -42,6 +57,8 @@ export function parseStableEntryArgs(argv, { env = process.env, homeDirectory = 
   let command = null;
   let manifest = env.DEVBRIDGE_ENTRY_RUNNER_MANIFEST ?? null;
   let publicKey = env.DEVBRIDGE_ENTRY_RUNNER_PUBLIC_KEY ?? null;
+  let developmentRef = normalizedDevelopmentRef(env.DEVBRIDGE_ENTRY_DEVELOPMENT_REF ?? 'main');
+  let developmentRefSeen = false;
   let home = null;
   let releaseMode = 'development';
   let releaseModeSeen = false;
@@ -59,9 +76,13 @@ export function parseStableEntryArgs(argv, { env = process.env, homeDirectory = 
       if (value === '--entry-runner-manifest') {
         if (manifest != null && manifest !== env.DEVBRIDGE_ENTRY_RUNNER_MANIFEST) fail('Only one entry runner manifest may be supplied.');
         manifest = selected;
-      } else {
+      } else if (value === '--entry-runner-public-key') {
         if (publicKey != null && publicKey !== env.DEVBRIDGE_ENTRY_RUNNER_PUBLIC_KEY) fail('Only one entry runner public key may be supplied.');
         publicKey = selected;
+      } else {
+        if (developmentRefSeen) fail('Only one --entry-development-ref value may be supplied.');
+        developmentRefSeen = true;
+        developmentRef = normalizedDevelopmentRef(selected);
       }
       index += 1;
       continue;
@@ -94,6 +115,9 @@ export function parseStableEntryArgs(argv, { env = process.env, homeDirectory = 
   if (releaseMode !== 'production' && (manifest != null || publicKey != null)) {
     fail('entry runner signing inputs require --release-mode production');
   }
+  if (releaseMode === 'production' && developmentRefSeen) {
+    fail('--entry-development-ref requires development release mode');
+  }
 
   return Object.freeze({
     command,
@@ -101,6 +125,7 @@ export function parseStableEntryArgs(argv, { env = process.env, homeDirectory = 
     home: resolvedHome,
     releaseMode,
     noUpdate,
+    developmentRef,
     manifest: manifest == null ? null : path.resolve(expandHome(String(manifest), homeDirectory)),
     publicKey: publicKey == null ? null : path.resolve(expandHome(String(publicKey), homeDirectory)),
   });
@@ -198,7 +223,11 @@ export async function runStableEntry(argv, {
         state: stableState,
       });
     } else {
-      authority = new DevelopmentStableSubjectAuthority({ source: fixedSource, state: stableState });
+      authority = new DevelopmentStableSubjectAuthority({
+        source: fixedSource,
+        state: stableState,
+        ref: args.developmentRef,
+      });
     }
   }
 
