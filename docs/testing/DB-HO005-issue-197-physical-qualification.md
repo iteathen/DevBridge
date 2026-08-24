@@ -264,6 +264,32 @@ Solution: PR [#276](https://github.com/iteathen/DevBridge/pull/276):
 
 The second stopped frontier and its unchanged physical evidence were recorded on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5392627890). No retry occurred while this admission-order defect was under diagnosis.
 
+### 11. ISO9660-only seed media silently changed the required NoCloud filenames
+
+After PR #276 merged, the installed tracked entry reported exact runtime `9d25f986b9eca4a350e3c1fc27c7b2f76cbaca42`, and a separate plain public setup invocation reached the exact construction gate. One public construction invocation then recovered the owned partial, prepared the VM, and returned the durable waiting reason `unattended installer is still running`.
+
+Read-only physical observation later proved that this was not an active unattended installation. The exact owned VM remained running but became CPU-idle, never wrote beyond the initial `4,194,304`-byte dynamic VHDX allocation, never established Hyper-V KVP contact, and reported no guest address. Microsoft Hyper-V's read-only thumbnail API showed Subiquity stopped at its interactive `Welcome` language picker. Bounded inspection of the prepared installer proved both expected GRUB entries contained the `autoinstall` kernel token, so the prior boot-trigger defect had not returned.
+
+The attached seed image had the correct `CIDATA` ISO9660 volume identifier but no Joliet supplementary descriptor. Its physical root directory records were:
+
+```text
+METADA~1.;1
+USERDA~1.;1
+```
+
+IMAPI had correctly applied ISO9660's restricted naming rules to the staged `meta-data` and `user-data` files. Cloud-init's NoCloud contract, however, requires those two exact names at the seed root. The old Windows regression checked only that the result was nonempty and contained the text `CIDATA`; it therefore proved the COM stream bridge but not the guest-visible seed contract.
+
+Solution: keep the provider-neutral seed-writer interface unchanged and fix only the Windows IMAPI adapter. It now asks IMAPI for the bridge combination ISO9660 + Joliet (`FsiFileSystemISO9660 | FsiFileSystemJoliet`, value `3`). ISO9660 compatibility and the `CIDATA` identity remain present, while Joliet preserves the long, lowercase, hyphenated NoCloud names. The Windows real-media regression now parses the actual Joliet supplementary volume descriptor and root directory and requires exact guest-visible `meta-data` and `user-data` names. The fake-invocation test also pins the IMAPI file-system mask so the adapter cannot silently return to ISO9660-only output.
+
+Primary behavior references:
+
+- [cloud-init NoCloud data source](https://docs.cloud-init.io/en/latest/reference/datasources/nocloud.html)
+- [Canonical autoinstall quick start](https://canonical-subiquity.readthedocs-hosted.com/en/latest/howto/autoinstall-quickstart.html)
+- [Microsoft IMAPI disc formats](https://learn.microsoft.com/en-us/windows/win32/imapi/disc-formats)
+- [Microsoft IMAPI `FsiFileSystems`](https://learn.microsoft.com/en-us/windows/win32/api/imapi2fs/ne-imapi2fs-fsifilesystems)
+
+The stopped physical frontier and its unchanged ownership/cache evidence were recorded immediately on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5392859014). No language selection, guest input, VM power action, construction re-entry, media rewrite, cache deletion, or disk cleanup occurred while this seed-format boundary was under diagnosis.
+
 ## Preserved physical evidence
 
 After the latest stopped attempt:
@@ -283,6 +309,7 @@ After the latest stopped attempt:
 - preparation and construction state remain durable at subject `subject-99742e1c94397011d72b6c08523c09c5`, phase `planned`, with exact installer and CIDATA identities recorded;
 - the release-cache ISO remains unchanged at `2,918,598,656` bytes, and no host switch, gateway, NAT, or unrelated VM was changed by this stopped attempt.
 - the first post-#275 retry did not reach recovery mutation: VM Notes, topology, configuration timestamps, construction state, journal state, and release-cache media all remained unchanged at the same planned partial frontier.
+- after PR #276, the exact owned VM advanced to the durable installer-running frontier; it remains at Subiquity's interactive language picker with both media attached, exact ownership/provider identity intact, and no installed-system writes; the release-cache ISO remains unchanged.
 
 The owned partial switch remains persistent provider-foundation evidence and may be reconciled only through the same Hyper-V environment adapter. It must not be manually adopted, renamed, or deleted merely to make the construction attempt appear clean. The construction-only adapter neither consumes nor changes it.
 
