@@ -145,7 +145,7 @@ Alternatives were assessed and not adopted for this blocker:
 
 The pre-provisioned external-switch and privileged-broker approaches remain legitimate issue #116 design candidates. They do not change the #197 conclusion: networking installed on the construction host cannot be packaged into the guest disk for another host. Microsoft requires administrative rights to create/configure a virtual switch; Windows service creation likewise requires Administrator access to the Service Control Manager, while JEA can subsequently expose a constrained delegated endpoint. Hyper-V sockets avoid the IP stack entirely but expose only a data stream and require both a registered host service and compatible guest support.
 
-Bounded solution under qualification:
+Solution: PR [#273](https://github.com/iteathen/DevBridge/pull/273):
 
 - add a Windows provider-local construction-network adapter that read-only selects the fixed Default Switch by exact provider ID and verifies its internal-switch type;
 - expose only neutral `control: system` and `addressing: automatic` contracts to the composition boundary;
@@ -225,7 +225,7 @@ Read-only host reconciliation found exact machine `db-image-build-7e82aa1f2870fc
 
 The recovery guard assumed the partial effect immediately after `New-VM -NoVHD` had zero network adapters. On this physical host, Hyper-V created the default disconnected adapter as part of that effect. The guard therefore rejected the exact object created by its own preceding command before it could write the ownership marker. This was a provider-effect/recovery mismatch, not foreign object occupation.
 
-Bounded solution under qualification:
+Solution: PR [#275](https://github.com/iteathen/DevBridge/pull/275):
 
 - future `New-VM` creation binds its default adapter to the already selected exact switch in the same provider command;
 - an unmarked partial is adoptable only when it is stopped, generation 2, has the exact requested startup memory, has the exact deterministic configuration location under the owned root, has no disk or DVD, and has exactly the nonlegacy dynamic default adapter;
