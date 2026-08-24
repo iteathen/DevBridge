@@ -195,6 +195,7 @@ export async function runDevBridgeSetup({
       blocker: prerequisites?.blocker ?? 'System prerequisites are not ready; resolve the reported host boundary and re-run devbridge setup',
     });
   }
+  const signatureVerifierExecutable = prerequisites?.local?.signatureVerifierExecutable ?? null;
 
   let release;
   let authority;
@@ -204,7 +205,7 @@ export async function runDevBridgeSetup({
         home: root,
         fetchImpl,
         invoke,
-        signatureVerifierExecutable: prerequisites?.local?.signatureVerifierExecutable ?? null,
+        signatureVerifierExecutable,
       }),
       authorityFactory({ snapshot, fetchImpl }),
     ]);
@@ -222,7 +223,7 @@ export async function runDevBridgeSetup({
 
   let physical;
   try {
-    const canary = canaryFactory(physicalConfig, { platform, invoke, fetchImpl });
+    const canary = canaryFactory(physicalConfig, { platform, invoke, fetchImpl, signatureVerifierExecutable });
     physical = await canary.status();
   } catch (error) {
     return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, blocker: `read-only production-image status gate failed: ${error.message}` });
