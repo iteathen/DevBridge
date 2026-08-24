@@ -125,7 +125,8 @@ export function parseInstallArgs(argv, { environment = process.env, homeDirector
     help,
     home: path.resolve(expandHome(String(home), homeDirectory)),
     selector: selector ?? Object.freeze({ kind: 'branch', value: 'main' }),
-    pinSelectedRunner: selector != null,
+    selectedRunnerRef: selector?.value ?? null,
+    pinSelectedRunner: selector?.kind === 'exact',
     runSetup,
   });
 }
@@ -505,23 +506,29 @@ function cleanupStagedFile(staged) {
   try { rmSync(staged.next, { force: true }); } catch {}
 }
 
-function javascriptWrapper(home, componentHead, pinnedRunnerHead) {
-  const pin = pinnedRunnerHead == null ? 'null' : JSON.stringify(pinnedRunnerHead);
+function javascriptWrapper(home, componentHead, selectedRunnerRef) {
+  const selected = selectedRunnerRef == null ? 'null' : JSON.stringify(selectedRunnerRef);
+  const pinned = selectedRunnerRef != null && EXACT_HEAD.test(String(selectedRunnerRef).toLowerCase())
+    ? JSON.stringify(String(selectedRunnerRef).toLowerCase())
+    : 'null';
   return `#!/usr/bin/env node
 import process from 'node:process';
 const home = ${JSON.stringify(home)};
 const componentHead = '${componentHead}';
 const componentUrl = new URL('../entry/components/${componentHead}/devbridge-entry.mjs', import.meta.url).href;
-const pinned = ${pin};
+const selected = ${selected};
+const pinned = ${pinned};
 const argv = [...process.argv.slice(2)];
 if (argv[0] === 'entry-install-status') {
   if (argv.length !== 1) throw new Error('entry-install-status accepts no additional arguments');
-  process.stdout.write(JSON.stringify({ protocol: '${INSTALL_STATUS_PROTOCOL}', home, componentHead, pinnedRunnerHead: pinned }) + '\\n');
+  process.stdout.write(JSON.stringify({ protocol: '${INSTALL_STATUS_PROTOCOL}', home, componentHead, selectedRunnerRef: selected, pinnedRunnerHead: pinned }) + '\\n');
 } else {
   const hasHome = argv.some((value) => value === '--home');
   const hasSelector = argv.some((value) => value === '--ref' || value === '--branch');
+  const hasDevelopmentRef = argv.some((value) => value === '--entry-development-ref');
   if (!hasHome) argv.push('--home', home);
   if (pinned && !hasSelector) argv.unshift('--ref', pinned);
+  else if (selected && !hasSelector && !hasDevelopmentRef) argv.unshift('--entry-development-ref', selected);
   try {
     const module = await import(componentUrl);
     if (typeof module?.runInstalledEntry !== 'function') throw new Error('installed permanent entry is unavailable');
@@ -535,7 +542,7 @@ if (argv[0] === 'entry-install-status') {
 `;
 }
 
-function installWrappers(home, componentHead, pinnedRunnerHead) {
+function installWrappers(home, componentHead, selectedRunnerRef) {
   const bin = ensureChildDirectory(home, 'bin');
   const javascript = path.join(bin, 'devbridge-entry.mjs');
   const previous = path.join(bin, 'devbridge-entry.previous.mjs');
@@ -558,7 +565,7 @@ function installWrappers(home, componentHead, pinnedRunnerHead) {
     });
     staged.push({
       role: 'javascript',
-      file: stageFile(javascript, javascriptWrapper(home, componentHead, pinnedRunnerHead), 0o700),
+      file: stageFile(javascript, javascriptWrapper(home, componentHead, selectedRunnerRef), 0o700),
     });
 
     for (const role of ['previous', 'command', 'shell']) {
@@ -591,11 +598,17 @@ export function installDevBridge(options, {
 
   try {
     const selector = normalizeInstallRef(options?.selector?.value ?? options?.selector ?? 'main');
-    const pinSelectedRunner = options?.pinSelectedRunner === true;
+    const requestedRunnerRef = options?.selectedRunnerRef == null
+      ? null
+      : normalizeInstallRef(options.selectedRunnerRef).value;
+    const legacyPinSelectedRunner = options?.pinSelectedRunner === true;
     const subject = resolveInstallSubject(selector, {
       sourceRepository, runner, allowLocalSource, environment,
     });
     const preparedRoot = preparedSourceRoot(subject, preparedSource);
+    const selectedRunnerRef = requestedRunnerRef ?? (legacyPinSelectedRunner ? subject.head : null);
+    const selectedRunnerSelector = selectedRunnerRef == null ? null : normalizeInstallRef(selectedRunnerRef);
+    const pinnedRunnerHead = selectedRunnerSelector?.kind === 'exact' ? selectedRunnerSelector.value : null;
 
     const components = ensureChildDirectory(entryRoot, 'components');
     const staging = ensureChildDirectory(entryRoot, 'staging');
@@ -635,17 +648,29 @@ export function installDevBridge(options, {
       fail('Installed permanent-entry component failed verification.');
     }
 
-    const wrappers = installWrappers(home, subject.head, pinSelectedRunner ? subject.head : null);
+    const wrappers = installWrappers(home, subject.head, selectedRunnerRef);
     return Object.freeze({
       protocol: INSTALL_PROTOCOL,
       home,
       componentHead: subject.head,
-      pinnedRunnerHead: pinSelectedRunner ? subject.head : null,
+      selectedRunnerRef,
+      pinnedRunnerHead,
       wrappers,
     });
   } finally {
     releaseLock();
   }
+}
+
+export function trackInstalledRunnerRef({ home = null, ref } = {}, dependencies = {}) {
+  const selector = normalizeInstallRef(ref);
+  if (selector.kind !== 'branch') fail('Tracked runner ref must be a branch selector.');
+  return installDevBridge({
+    home,
+    selector,
+    selectedRunnerRef: selector.value,
+    pinSelectedRunner: false,
+  }, dependencies);
 }
 
 export function runInstalledSetup(installed, {
@@ -656,7 +681,13 @@ export function runInstalledSetup(installed, {
   if (typeof installed?.home !== 'string' || !path.isAbsolute(installed.home) || typeof launcher !== 'string' || !path.isAbsolute(launcher)) {
     throw new TypeError('installed setup handoff requires one exact installed DevBridge launcher');
   }
-  const result = runner(process.execPath, [launcher, 'setup'], {
+  const selected = installed?.selectedRunnerRef ?? null;
+  const initialHead = String(installed?.componentHead ?? '').toLowerCase();
+  if (selected != null && !EXACT_HEAD.test(initialHead)) {
+    fail('selected runner setup handoff requires one exact installed component head');
+  }
+  const selectorArgs = selected == null ? [] : ['--ref', initialHead];
+  const result = runner(process.execPath, [launcher, ...selectorArgs, 'setup'], {
     cwd: installed.home,
     env: environment,
     stdio: 'inherit',
@@ -678,7 +709,8 @@ Usage:
 
 By default the installer establishes the permanent entry and immediately enters the installed runner's public DevBridge setup path.
 No selector installs the permanent entry from the exact current main head and leaves normal stable runner selection active.
-An explicit --ref/--branch is local qualification authority: it is resolved once and the generated entry wrapper pins that exact runner head by default.
+An explicit branch selector is persisted as local development-channel authority and is re-resolved to an exact verified runner on later invocations; an explicit exact head remains exact-pinned.
+The installer's first setup handoff remains bound to the exact subject resolved for that installation attempt.
 --install-only stops after permanent-entry installation for explicit qualification/recovery work.
 The installer writes devbridge-entry.* beside any existing devbridge.mjs Stage-0 launcher; it does not overwrite Stage 0.
 `;
