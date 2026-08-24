@@ -8,7 +8,7 @@ import { stage0InstallationTag } from '../devbridge.mjs';
 import { entryInstallationTag } from '../src/entry/installation-identity.mjs';
 import { RUNNER_SUBJECT_PROTOCOL } from '../src/entry/permanent-entry.mjs';
 import { StableRunnerState } from '../src/entry/stable-runner-state.mjs';
-import { parseStableEntryArgs, runStableEntry, stableEntryPaths } from '../src/entry/stable-entry.mjs';
+import { parseStableEntryArgs, runStableEntry, stableEntryPaths, stableEntryStatus } from '../src/entry/stable-entry.mjs';
 
 const HEAD = '1'.repeat(40);
 const BYTES = Buffer.from('stable runner\n', 'utf8');
@@ -70,8 +70,7 @@ test('tracked development ref is consumed locally and resolves through stable au
   assert.equal(status, 31);
   assert.deepEqual(calls[0], ['resolve', 'cuda-target']);
   assert.deepEqual(calls.at(-1), ['launch', ['--home', home, 'doctor']]);
-  const state = new StableRunnerState({ stateRoot: stableEntryPaths(home).stateRoot });
-  const accepted = await state.status();
+  const accepted = (await stableEntryStatus(home, { developmentRef: 'cuda-target' })).stable;
   assert.equal(accepted.current.mode, 'development');
   assert.equal(accepted.current.subject.head, HEAD);
   assert.equal(accepted.current.subject.sha256, DIGEST);
