@@ -10,6 +10,7 @@ import {
 import {
   createConfiguredLifecycleAuthorityClient,
   createLifecycleAuthoritySocketExchange,
+  createLifecycleAuthoritySocketServer,
   createLifecycleAuthoritySocketServers,
   environmentLifecycleAuthorityEndpoint,
   environmentLifecycleAuthorityIdentity,
@@ -38,7 +39,8 @@ async function withServers(fn) {
   const runDirectory = process.platform === 'linux' ? path.join(temp, 'run') : '/run/devbridge';
   if (process.platform === 'linux') {
     const identity = environmentLifecycleAuthorityIdentity(stateDirectory);
-    await mkdir(path.join(runDirectory, identity), { recursive: true });
+    await mkdir(path.join(runDirectory, identity, 'read'), { recursive: true });
+    await mkdir(path.join(runDirectory, identity, 'mutation'), { recursive: true });
   }
   const calls = [];
   const servers = createLifecycleAuthoritySocketServers({
@@ -78,7 +80,7 @@ test('authority endpoint is identity-derived and access-class separated', () => 
   );
   assert.equal(
     environmentLifecycleAuthorityEndpoint({ authorityIdentity: identity, access: 'mutation', platform: 'linux' }),
-    '/run/devbridge/00112233445566778899aabbccddeeff/environment-mutation-v1.sock',
+    '/run/devbridge/00112233445566778899aabbccddeeff/mutation/environment-v1.sock',
   );
   assert.throws(() => environmentLifecycleAuthorityEndpoint({ authorityIdentity: 'bad', access: 'read', platform: 'linux' }), /identity is invalid/u);
   assert.throws(() => environmentLifecycleAuthorityEndpoint({ authorityIdentity: identity, access: 'write', platform: 'linux' }), /access class is invalid/u);
@@ -137,7 +139,8 @@ test('connect timeout does not become an operation timeout', async (t) => {
   const runDirectory = process.platform === 'linux' ? path.join(temp, 'run') : '/run/devbridge';
   if (process.platform === 'linux') {
     const identity = environmentLifecycleAuthorityIdentity(stateDirectory);
-    await mkdir(path.join(runDirectory, identity), { recursive: true });
+    await mkdir(path.join(runDirectory, identity, 'read'), { recursive: true });
+    await mkdir(path.join(runDirectory, identity, 'mutation'), { recursive: true });
   }
   const calls = [];
   const operator = operatorFixture(calls);
@@ -197,4 +200,35 @@ test('server closes multi-frame requests without dispatch', async (t) => {
     });
     assert.equal(calls.length, 0);
   });
+});
+
+test('server bounds idle pre-request connections without dispatch', async (t) => {
+  if (!['linux', 'win32'].includes(process.platform)) return t.skip('local authority transport supports Windows and Linux');
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'db-authority-idle-'));
+  const stateDirectory = process.platform === 'win32'
+    ? path.win32.join('C:\\', 'DevBridge-Test', path.basename(temp), 'state')
+    : path.join(temp, 'state');
+  const runDirectory = process.platform === 'linux' ? path.join(temp, 'run') : '/run/devbridge';
+  const identity = environmentLifecycleAuthorityIdentity(stateDirectory);
+  if (process.platform === 'linux') await mkdir(path.join(runDirectory, identity, 'read'), { recursive: true });
+  const endpoint = environmentLifecycleAuthorityEndpoint({ authorityIdentity: identity, access: 'read', platform: process.platform, runDirectory });
+  let dispatched = 0;
+  const server = createLifecycleAuthoritySocketServer({
+    endpoint,
+    requestTimeoutMs: 100,
+    handler: async () => { dispatched += 1; return {}; },
+  });
+  await server.start();
+  try {
+    await new Promise((resolve, reject) => {
+      const socket = net.createConnection(endpoint);
+      socket.once('connect', () => socket.write('{"protocol":'));
+      socket.once('error', reject);
+      socket.once('close', resolve);
+    });
+    assert.equal(dispatched, 0);
+  } finally {
+    await server.close();
+    await rm(temp, { recursive: true, force: true });
+  }
 });
