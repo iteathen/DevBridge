@@ -65,15 +65,17 @@ The endpoint namespace is derived from the lifecycle state owner, not from calle
 The two endpoints are deterministic from that authority identity and capability class:
 
 - Windows: separate local named pipes for read and mutation;
-- Linux: separate UNIX-domain sockets under an authority-identity runtime directory.
+- Linux: separate `read/` and `mutation/` runtime directories under the authority identity, each containing its own UNIX-domain socket.
+
+The separate Linux parent directories are intentional. Setup can establish different ownership/mode policy **before** either socket is bound; the authority process does not have to expose a mutation socket under a directory that was created with read-side permissions.
 
 The client receives the configured state directory from local DevBridge configuration and derives both endpoints internally. Request payloads cannot choose an arbitrary socket, pipe, filesystem path, provider object, or privileged target.
 
-The wire is one bounded JSON request and one bounded JSON response per connection. Oversized data, malformed JSON, multiple frames, ambiguous close, response ownership mismatch, or unavailable endpoints fail closed.
+The wire is one bounded JSON request and one bounded JSON response per connection. Oversized data, malformed JSON, buffered multiple frames, ambiguous close, response ownership mismatch, or unavailable endpoints fail closed. Incomplete clients are closed after a bounded pre-request timeout so local processes cannot indefinitely occupy the authority connection budget without dispatching a request.
 
-The timeout is a **connect timeout only**. Once a request has reached the authority, the transport does not impose an arbitrary short lifecycle-operation timeout. Long reconstruction remains owned by the existing durable lifecycle journal/resume/reconciliation semantics.
+The client timeout is a **connect timeout only**. Once a complete request has reached the authority, the transport removes the pre-request timeout and does not impose an arbitrary short lifecycle-operation timeout. Long reconstruction remains owned by the existing durable lifecycle journal/resume/reconciliation semantics.
 
-The transport does not create Linux `/run` authority directories itself. Production setup/service ownership must provision the runtime directory and its permissions. This prevents an ordinary application process from silently claiming a parent directory that is supposed to represent OS authority.
+The transport does not create Linux `/run` authority directories itself. Production setup/service ownership must provision the authority, read, and mutation directories and their permissions. This prevents an ordinary application process from silently claiming a parent directory that is supposed to represent OS authority.
 
 ## Safety ownership
 
@@ -91,15 +93,19 @@ The protocol/transport/host are necessary but not sufficient for #177. The autho
 
 ### Windows / Hyper-V
 
-Production setup must use a dedicated protected local identity that can run the Node authority host without granting the ordinary coding-model identity the same NTFS/Hyper-V authority. Candidate Windows primitives include a purpose-built service identity/per-service SID or a hardened scheduled-task identity/Task SID where that produces the required process and endpoint isolation. The exact mechanism remains subject to real Hyper-V positive/negative canaries; it must not be selected merely because it is convenient.
+Production setup must use a dedicated protected local identity that can run the Node authority host without granting the ordinary coding-model identity the same NTFS/Hyper-V authority. Per-service SIDs are a preferred primitive because Windows can ACL exact resources to `NT SERVICE\<service>` without granting the caller the same access. A hardened scheduled-task identity remains a candidate only if real canaries prove an equivalent process and resource boundary.
 
-The selected identity must receive only the exact DevBridge-owned backing-store/provider rights required by the lifecycle authority, while preserving VMMS/platform service access. Ordinary coding/model processes must not inherit those rights. Named-pipe access policy must likewise distinguish bounded read/plan access from mutation authority as required by the final operating model.
+The selected identity must receive only the exact DevBridge-owned backing-store/provider rights required by the lifecycle authority, while preserving VMMS/platform service access. Ordinary coding/model processes must not inherit those rights.
+
+Named-pipe policy must also preserve the capability split. Node IPC defaults must not be widened with all-user read/write flags for the mutation endpoint. Final setup must prove that an ordinary filtered/unelevated coding-model token cannot connect to the mutation capability. If the local operator needs mutation access, use a bounded OS-authorized/elevated client path rather than placing a persistent mutation credential in the ordinary model-visible process. The exact Windows mechanism remains subject to real positive/negative canaries.
+
+Windows named-pipe DACL design must avoid granting clients rights that permit creation of another pipe instance; mutation authority cannot be reduced to a guessable pipe name.
 
 ### Linux / libvirt
 
 Production setup should host the authority under a dedicated local identity. That identity receives only the required protected storage access and local libvirt authorization. Fine-grained libvirt/polkit authorization should be used where available so the ordinary user/model identity does not inherit broad libvirt read-write authority.
 
-The setup/service owner must provision the `/run/devbridge/<authority-id>` runtime directory and socket permissions. Repository/model/guest processes must not receive the mutation socket, credentials, group membership, or provider-management capability as a side effect of normal execution.
+The setup/service owner must pre-provision `/run/devbridge/<authority-id>/read` and `/run/devbridge/<authority-id>/mutation` with the intended distinct access policy. Repository/model/guest processes must not receive the mutation socket, credentials, group membership, or provider-management capability as a side effect of normal execution. A bounded polkit-authorized local mutation client is preferable to granting the ordinary model-visible identity persistent write access to the mutation socket.
 
 ## Composition rule
 
@@ -119,17 +125,17 @@ The exact destructive impact/confirmation stud already exists in `EnvironmentOpe
 
 Implementation is staged by ownership boundary:
 
-1. **Protocol/transport/host brick:** closed operator-level request/result protocol; split read/mutation local capabilities; state-owned path-free endpoint namespace; protected host composition; adversarial tests proving lower provider/lifecycle mutation is not remotely addressable.
+1. **Protocol/transport/host brick:** closed operator-level request/result protocol; split read/mutation local capabilities; state-owned path-free endpoint namespace; pre-bound capability directories on Linux; bounded pre-request connections; protected host composition; adversarial tests proving lower provider/lifecycle mutation is not remotely addressable.
 2. **Composition brick:** move protected lifecycle observation/mutation behind the authority client and make ordinary production composition fail closed when the protected authority is unavailable. No parallel in-process provider mutation path may remain for production.
-3. **Windows authority brick:** protected identity, storage ACLs, bounded endpoint ACL, setup/recovery/uninstall behavior, and Hyper-V positive/negative canaries.
-4. **Linux authority brick:** protected identity, storage ownership/mode, bounded local endpoint, narrow libvirt/polkit authority, setup/recovery/uninstall behavior, and libvirt positive/negative canaries.
+3. **Windows authority brick:** protected identity, storage ACLs, bounded endpoint ACL/elevation path, setup/recovery/uninstall behavior, and Hyper-V positive/negative canaries.
+4. **Linux authority brick:** protected identity, pre-provisioned read/mutation runtime permissions, narrow libvirt/polkit authority, setup/recovery/uninstall behavior, and libvirt positive/negative canaries.
 5. **Setup/doctor migration brick:** detect legacy unprotected installations, report protection separately from provider readiness, migrate only exact DevBridge-owned state, and never seize foreign storage.
 
 These are implementation seams, not permission to claim application-convention-only protection between stages. Final acceptance requires the real OS/provider negative and positive canaries in #177.
 
 ## Required final evidence
 
-Repository tests must prove protocol bounds, forbidden-field rejection, explicit operator routing, lower-mutation unaddressability, split-capability enforcement, request/result ownership, fail-closed transport behavior, long-operation transport behavior, and preservation of the existing lifecycle safety owners.
+Repository tests must prove protocol bounds, forbidden-field rejection, explicit operator routing, lower-mutation unaddressability, split-capability enforcement, request/result ownership, fail-closed transport behavior, bounded idle connections, long-operation transport behavior, and preservation of the existing lifecycle safety owners.
 
 Real provider qualification must additionally prove:
 
