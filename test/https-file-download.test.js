@@ -7,9 +7,20 @@ import { HttpsFileDownload } from '../src/runtime/https-file-download.js';
 
 async function root() { return mkdtemp(path.join(os.tmpdir(), 'db-https-download-')); }
 function body(...chunks) { return { async *[Symbol.asyncIterator]() { for (const chunk of chunks) yield Buffer.from(chunk); } }; }
-function response(status, chunks = [], headers = {}) {
+function failedBody(error, ...chunks) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const chunk of chunks) yield Buffer.from(chunk);
+      throw error;
+    },
+  };
+}
+function responseWithBody(status, stream, headers = {}) {
   const values = new Map(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), String(value)]));
-  return { status, body: chunks === null ? null : body(...chunks), headers: { get: (name) => values.get(String(name).toLowerCase()) ?? null } };
+  return { status, body: stream, headers: { get: (name) => values.get(String(name).toLowerCase()) ?? null } };
+}
+function response(status, chunks = [], headers = {}) {
+  return responseWithBody(status, chunks === null ? null : body(...chunks), headers);
 }
 
 test('HTTPS downloader follows only approved redirect hops and reports final source', async () => {
@@ -33,6 +44,48 @@ test('HTTPS downloader follows only approved redirect hops and reports final sou
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test('HTTPS downloader retries a terminated body from clean output and accepts only a complete replacement', async () => {
+  const directory = await root();
+  try {
+    let calls = 0;
+    const adapter = new HttpsFileDownload({
+      allowedHosts: ['releases.example.test'],
+      fetchImpl: async () => {
+        calls += 1;
+        if (calls === 1) return responseWithBody(200, failedBody(new TypeError('terminated'), 'partial'), { 'content-length': '8' });
+        return response(200, ['complete'], { 'content-length': '8' });
+      },
+    });
+    const destination = path.join(directory, 'media.iso');
+    const result = await adapter.download({ url: 'https://releases.example.test/media.iso', destination });
+    assert.equal(calls, 2);
+    assert.equal(result.bytes, 8);
+    assert.equal(await readFile(destination, 'utf8'), 'complete');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('HTTPS downloader bounds repeated transient failures and removes every partial output', async () => {
+  const directory = await root();
+  try {
+    let calls = 0;
+    const adapter = new HttpsFileDownload({
+      allowedHosts: ['releases.example.test'],
+      maxAttempts: 2,
+      fetchImpl: async () => {
+        calls += 1;
+        return responseWithBody(200, failedBody(new TypeError('terminated'), 'partial'));
+      },
+    });
+    const destination = path.join(directory, 'media.iso');
+    await assert.rejects(
+      () => adapter.download({ url: 'https://releases.example.test/media.iso', destination }),
+      /download transport failed after 2 attempt\(s\): terminated/u,
+    );
+    assert.equal(calls, 2);
+    await assert.rejects(() => readFile(destination), /ENOENT/u);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test('HTTPS downloader rejects an unapproved redirect before requesting it', async () => {
   const directory = await root();
   try {
@@ -48,15 +101,17 @@ test('HTTPS downloader rejects an unapproved redirect before requesting it', asy
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('HTTPS downloader enforces a streaming byte bound and removes partial output', async () => {
+test('HTTPS downloader enforces a streaming byte bound without retry and removes partial output', async () => {
   const directory = await root();
   try {
+    let calls = 0;
     const adapter = new HttpsFileDownload({
       allowedHosts: ['releases.example.test'], maxBytes: 5,
-      fetchImpl: async () => response(200, ['abc', 'def']),
+      fetchImpl: async () => { calls += 1; return response(200, ['abc', 'def']); },
     });
     const destination = path.join(directory, 'media.iso');
     await assert.rejects(() => adapter.download({ url: 'https://releases.example.test/media.iso', destination }), /byte bound/u);
+    assert.equal(calls, 1);
     await assert.rejects(() => readFile(destination), /ENOENT/u);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
