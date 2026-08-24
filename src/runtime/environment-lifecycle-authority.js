@@ -5,7 +5,9 @@ const RESULT_PROTOCOL = 'devbridge/environment-lifecycle-authority-result-v1';
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,159}$/u;
 const MAX_SUBJECT_BYTES = 512;
 const MAX_ENVELOPE_BYTES = 16 * 1024;
-const AUTHORITY_OPERATIONS = new Set(['inspect', 'list', 'status', 'plan', 'run', 'resume']);
+const READ_AUTHORITY_OPERATIONS = new Set(['inspect', 'list', 'status', 'plan']);
+const MUTATION_AUTHORITY_OPERATIONS = new Set(['run', 'resume']);
+const AUTHORITY_OPERATIONS = new Set([...READ_AUTHORITY_OPERATIONS, ...MUTATION_AUTHORITY_OPERATIONS]);
 const LIFECYCLE_OPERATIONS = new Set(['create', 'repair', 'rebuild', 'reset', 'recreate']);
 const FORBIDDEN_RESULT_KEYS = new Set([
   'path', 'location', 'executable', 'arguments', 'argv', 'command', 'script',
@@ -164,8 +166,9 @@ async function invokeOperator(operator, request) {
   }
 }
 
-export function createLifecycleAuthorityHandler({ operator }) {
+function createAuthorityHandler({ operator, allowedOperations }) {
   const authority = assertOperator(operator);
+  const allowed = new Set(allowedOperations);
   return async (raw) => {
     let request;
     try {
@@ -177,6 +180,14 @@ export function createLifecycleAuthorityHandler({ operator }) {
         requestId,
         ok: false,
         error: Object.freeze({ code: 'INVALID_REQUEST', message: 'lifecycle authority request was rejected' }),
+      });
+    }
+    if (!allowed.has(request.operation)) {
+      return Object.freeze({
+        protocol: RESULT_PROTOCOL,
+        requestId: request.requestId,
+        ok: false,
+        error: Object.freeze({ code: 'OPERATION_NOT_ALLOWED', message: 'lifecycle authority operation is not available on this endpoint' }),
       });
     }
     try {
@@ -195,20 +206,33 @@ export function createLifecycleAuthorityHandler({ operator }) {
   };
 }
 
+export function createLifecycleAuthorityReadHandler({ operator }) {
+  return createAuthorityHandler({ operator, allowedOperations: READ_AUTHORITY_OPERATIONS });
+}
+
+export function createLifecycleAuthorityMutationHandler({ operator }) {
+  return createAuthorityHandler({ operator, allowedOperations: MUTATION_AUTHORITY_OPERATIONS });
+}
+
 function assertExchange(exchange) {
   if (typeof exchange !== 'function') throw new TypeError('lifecycle authority exchange must be a function');
   return exchange;
 }
 
 export class LifecycleAuthorityClient {
-  #exchange;
+  #readExchange;
+  #mutationExchange;
 
-  constructor({ exchange }) { this.#exchange = assertExchange(exchange); }
+  constructor({ readExchange, mutationExchange }) {
+    this.#readExchange = assertExchange(readExchange);
+    this.#mutationExchange = assertExchange(mutationExchange);
+  }
 
   async #request(operation, payload = {}) {
     const request = normalizeLifecycleAuthorityRequest({ protocol: REQUEST_PROTOCOL, requestId: randomUUID(), operation, payload });
+    const exchange = MUTATION_AUTHORITY_OPERATIONS.has(operation) ? this.#mutationExchange : this.#readExchange;
     let raw;
-    try { raw = await this.#exchange(request); }
+    try { raw = await exchange(request); }
     catch { throw new Error('environment lifecycle authority is unavailable'); }
     const result = normalizeLifecycleAuthorityResult(raw, request.requestId);
     if (!result.ok) {
