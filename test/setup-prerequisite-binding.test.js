@@ -15,9 +15,10 @@ function memoryStore() {
 
 const VERIFIER = 'C:\\Program Files\\GnuPG\\bin\\gpgv.exe';
 
-test('setup carries the local signature-verifier binding into release verification without remote projection', async () => {
+test('setup carries the local signature-verifier binding through release verification and physical status without remote projection', async () => {
   const store = memoryStore();
   let releaseBinding = null;
+  let canaryBinding = null;
   let canaryRun = 0;
 
   const result = await runDevBridgeSetup({
@@ -46,14 +47,18 @@ test('setup carries the local signature-verifier binding into release verificati
       return { keyring: path.join(os.tmpdir(), 'ubuntu-keyring.gpg') };
     },
     authorityFactory: async () => ({ protocol: 'test/authority' }),
-    canaryFactory: () => ({
-      async status() { return { state: 'absent', blocked: false, complete: false, reason: null, preflight: { ready: true } }; },
-      async run() { canaryRun += 1; throw new Error('setup must not construct'); },
-    }),
+    canaryFactory: (_config, { signatureVerifierExecutable }) => {
+      canaryBinding = signatureVerifierExecutable;
+      return {
+        async status() { return { state: 'absent', blocked: false, complete: false, reason: null, preflight: { ready: true } }; },
+        async run() { canaryRun += 1; throw new Error('setup must not construct'); },
+      };
+    },
   });
 
   assert.equal(result.readyForConstruction, true);
   assert.equal(releaseBinding, VERIFIER);
+  assert.equal(canaryBinding, VERIFIER);
   assert.equal(canaryRun, 0);
 
   const projected = projectSetupStatus(result);
