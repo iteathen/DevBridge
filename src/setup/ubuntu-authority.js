@@ -18,9 +18,9 @@ const SOURCE = Object.freeze({
   signerFingerprint: '843938DF228D22F7B3742BC0D94AA3F0EFE21092',
 });
 
-const BOOT_STANZA = Object.freeze({
-  before: 'menuentry "Try or Install Ubuntu Server" {\n    set gfxpayload=keep\n    linux  /casper/vmlinuz  ---\n    initrd /casper/initrd\n}\n',
-  after: 'menuentry "Automated Install" {\n    set gfxpayload=keep\n    linux  /casper/vmlinuz autoinstall ---\n    initrd /casper/initrd\n}\n',
+const BOOT_PATCH = Object.freeze({
+  before: 'Try or Install Ubuntu Server" {\n    set gfxpayload=keep\n    linux  /casper/vmlinuz ',
+  after: 'Automated Install" {\n    set gfxpayload=keep\n    linux  /casper/vmlinuz autoinstall',
 });
 
 function snapshotTimestamp(date) {
@@ -90,8 +90,8 @@ export async function createUbuntuSetupAuthority({
   payloadFactory = createGuestImagePayload,
 } = {}) {
   if (typeof payloadFactory !== 'function') throw new TypeError('Ubuntu setup payload factory is invalid');
-  if (Buffer.byteLength(BOOT_STANZA.before, 'utf8') !== 127 || Buffer.byteLength(BOOT_STANZA.after, 'utf8') !== 127) {
-    throw new Error('Ubuntu setup boot recipe no longer preserves the verified 127-byte stanza length');
+  if (Buffer.byteLength(BOOT_PATCH.before, 'utf8') !== 83 || Buffer.byteLength(BOOT_PATCH.after, 'utf8') !== 83) {
+    throw new Error('Ubuntu setup boot recipe no longer preserves the verified 83-byte patch length');
   }
   const [packages, payload] = await Promise.all([
     resolveUbuntuPackagePins({ snapshot, fetchImpl }),
@@ -119,8 +119,8 @@ export async function createUbuntuSetupAuthority({
     recipe: Object.freeze({
       protocol: 'devbridge/ubuntu-autoinstall-recipe-v1',
       sourceSha256: SOURCE.mediaSha256,
-      generation: 'ubuntu-2604-autoinstall-v2',
-      patches: Object.freeze([Object.freeze({ id: 'boot-trigger', occurrences: 1, before: BOOT_STANZA.before, after: BOOT_STANZA.after })]),
+      generation: 'ubuntu-2604-autoinstall-v3',
+      patches: Object.freeze([Object.freeze({ id: 'boot-trigger', occurrences: 2, before: BOOT_PATCH.before, after: BOOT_PATCH.after })]),
     }),
     packages: Object.freeze({
       generation: 'ubuntu-2604-tools-v1',
@@ -133,4 +133,4 @@ export async function createUbuntuSetupAuthority({
   });
 }
 
-export { BOOT_STANZA as UBUNTU_SETUP_BOOT_STANZA, SOURCE as UBUNTU_SETUP_SOURCE_POLICY };
+export { BOOT_PATCH as UBUNTU_SETUP_BOOT_PATCH, SOURCE as UBUNTU_SETUP_SOURCE_POLICY };
