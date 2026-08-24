@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { access } from 'node:fs/promises';
+import { invokeCommand } from '../src/runtime/command-invocation.js';
 import {
   reconcileWindowsSignatureVerifier,
+  WINDOWS_SIGNATURE_VERIFIER_PREREQUISITE_PROTOCOL,
   WINDOWS_SIGNATURE_VERIFIER_SOURCE_POLICY,
 } from '../src/setup/windows-signature-verifier-prerequisite.js';
 
@@ -67,6 +69,23 @@ test('inspection can find the verifier from PATH or the package-owned Program Fi
   assert.match(inspectionScript, /\$env:ProgramFiles/u);
   assert.match(inspectionScript, /ProgramFiles\(x86\)/u);
   assert.match(inspectionScript, /GnuPG\\bin\\gpgv\.exe/u);
+});
+
+test('Windows CI executes the read-only inspection script without package mutation', { skip: process.platform !== 'win32' }, async () => {
+  let fetchCalls = 0;
+  const result = await reconcileWindowsSignatureVerifier({
+    invoke: invokeCommand,
+    environment: process.env,
+    async fetchImpl() {
+      fetchCalls += 1;
+      throw new Error('CI intentionally blocks package acquisition');
+    },
+  });
+
+  assert.equal(result.protocol, WINDOWS_SIGNATURE_VERIFIER_PREREQUISITE_PROTOCOL);
+  assert.equal(typeof result.ready, 'boolean');
+  assert.doesNotMatch(result.blocker ?? '', /inspection (?:failed|returned invalid)|PowerShell availability/u);
+  if (fetchCalls > 0) assert.equal(result.ready, false);
 });
 
 test('existing Windows signature verifier is reused without package mutation', async () => {
