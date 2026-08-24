@@ -2,8 +2,8 @@ import process from 'node:process';
 import { createLocalEnvironmentOperator } from './environment-operator-runtime.js';
 import { createLifecycleAuthoritySocketServers } from '../runtime/environment-lifecycle-authority-transport.js';
 
-function requireStateDirectory(value) {
-  if (typeof value !== 'string' || value.length === 0) throw new TypeError('environment lifecycle authority host stateDirectory is required');
+function requireStateDirectory(value, name) {
+  if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) throw new TypeError(`${name} is required`);
   return value;
 }
 
@@ -17,21 +17,23 @@ function assertOperator(value) {
 
 export async function createEnvironmentLifecycleAuthorityHost({
   stateDirectory,
+  endpointStateDirectory = stateDirectory,
   platform = process.platform,
   runDirectory = '/run/devbridge',
   operator = null,
   operatorOptions = {},
 } = {}) {
-  const state = requireStateDirectory(stateDirectory);
+  const protectedState = requireStateDirectory(stateDirectory, 'environment lifecycle authority host protected stateDirectory');
+  const endpointState = requireStateDirectory(endpointStateDirectory, 'environment lifecycle authority host endpoint stateDirectory');
   if (!operatorOptions || typeof operatorOptions !== 'object' || Array.isArray(operatorOptions)) {
     throw new TypeError('environment lifecycle authority host operatorOptions must be an object');
   }
   const localOperator = operator == null
-    ? await createLocalEnvironmentOperator({ stateDirectory: state, platform, ...operatorOptions })
+    ? await createLocalEnvironmentOperator({ stateDirectory: protectedState, platform, ...operatorOptions })
     : assertOperator(operator);
   const servers = createLifecycleAuthoritySocketServers({
     operator: localOperator,
-    stateDirectory: state,
+    stateDirectory: endpointState,
     platform,
     runDirectory,
   });
