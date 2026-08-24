@@ -5,7 +5,7 @@ import {
   createUbuntuSetupAuthority,
   defaultUbuntuPackageSnapshot,
   resolveUbuntuPackagePins,
-  UBUNTU_SETUP_BOOT_STANZA,
+  UBUNTU_SETUP_BOOT_PATCH,
 } from '../src/setup/ubuntu-authority.js';
 
 const SNAPSHOT = '20260821T200000Z';
@@ -52,31 +52,40 @@ test('setup authority binds source policy, exact snapshot and current payload ge
   assert.equal(authority.source.media.bytes, 2_918_598_656);
   assert.equal(authority.packages.snapshot, SNAPSHOT);
   assert.equal(authority.payload.generation, 'guest-image-current');
-  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v2');
-  assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 1, ...UBUNTU_SETUP_BOOT_STANZA }]);
+  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v3');
+  assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 2, ...UBUNTU_SETUP_BOOT_PATCH }]);
 });
 
-test('setup uses the exact one-copy 127-byte Ubuntu boot stanza without changing ISO length', () => {
-  assert.equal(Buffer.byteLength(UBUNTU_SETUP_BOOT_STANZA.before, 'utf8'), 127);
-  assert.equal(Buffer.byteLength(UBUNTU_SETUP_BOOT_STANZA.after, 'utf8'), 127);
-  assert.match(UBUNTU_SETUP_BOOT_STANZA.before, /Try or Install Ubuntu Server/u);
-  assert.match(UBUNTU_SETUP_BOOT_STANZA.before, /linux  \/casper\/vmlinuz  ---/u);
-  assert.match(UBUNTU_SETUP_BOOT_STANZA.before, /initrd \/casper\/initrd/u);
-  assert.match(UBUNTU_SETUP_BOOT_STANZA.after, /Automated Install/u);
-  assert.match(UBUNTU_SETUP_BOOT_STANZA.after, /linux  \/casper\/vmlinuz autoinstall ---/u);
+test('setup uses an exact 83-byte invariant boot prefix without changing ISO length', () => {
+  assert.equal(Buffer.byteLength(UBUNTU_SETUP_BOOT_PATCH.before, 'utf8'), 83);
+  assert.equal(Buffer.byteLength(UBUNTU_SETUP_BOOT_PATCH.after, 'utf8'), 83);
+  assert.match(UBUNTU_SETUP_BOOT_PATCH.before, /^Try or Install Ubuntu Server/u);
+  assert.match(UBUNTU_SETUP_BOOT_PATCH.before, /linux  \/casper\/vmlinuz $/u);
+  assert.match(UBUNTU_SETUP_BOOT_PATCH.after, /^Automated Install/u);
+  assert.match(UBUNTU_SETUP_BOOT_PATCH.after, /linux  \/casper\/vmlinuz autoinstall$/u);
 });
 
-test('setup boot patch matches the admitted Ubuntu 26.04 extracted boot entry exactly once', () => {
-  const extractedEntry = [
+test('setup boot patch matches both admitted raw boot prefixes while ignoring divergent suffixes', () => {
+  const first = [
     'menuentry "Try or Install Ubuntu Server" {',
     '    set gfxpayload=keep',
-    '    linux  /casper/vmlinuz  ---',
+    '    linux  /casper/vmlinuz   ---',
     '    initrd /casper/initrd',
     '}',
-    '',
   ].join('\n');
-  assert.equal(extractedEntry, UBUNTU_SETUP_BOOT_STANZA.before);
-  assert.equal(extractedEntry.split(UBUNTU_SETUP_BOOT_STANZA.before).length - 1, 1);
+  const second = [
+    'menuentry "Try or Install Ubuntu Server" {',
+    '    set gfxpayload=keep',
+    '    linux  /casper/vmlinuz   quiet splash ---',
+    '    initrd    --no-floppy /casper/initrd',
+    '}',
+  ].join('\n');
+  const raw = `prefix\n${first}\nmiddle\n${second}\nsuffix`;
+  assert.equal(raw.split(UBUNTU_SETUP_BOOT_PATCH.before).length - 1, 2);
+  const patched = raw.split(UBUNTU_SETUP_BOOT_PATCH.before).join(UBUNTU_SETUP_BOOT_PATCH.after);
+  assert.equal(patched.length, raw.length);
+  assert.equal((patched.match(/Automated Install/gu) ?? []).length, 2);
+  assert.equal((patched.match(/\/casper\/vmlinuz autoinstall/gu) ?? []).length, 2);
 });
 
 test('setup package resolution fails closed when the snapshot is incomplete', async () => {
