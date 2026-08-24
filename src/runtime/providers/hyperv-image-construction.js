@@ -443,7 +443,11 @@ export class HyperVImageConstruction {
     const record = state.records[identity];
     if (!record) return { identity, phase: 'absent', exists: false, owned: false, state: 'absent', diskPresent: false, diskAttached: false, mediaCount: 0 };
     const observed = await this.#run(OBSERVE_SCRIPT, this.#descriptor(record), 30_000);
-    if (observed.exists === true && observed.owned !== true) throw new Error('construction provider object is not owned by this operation');
+    // A planned observation grants no ownership. It must leave exact partial
+    // admission to prepare(), while every post-admission ownership loss fails.
+    if (observed.exists === true && observed.owned !== true && (record.phase !== 'planned' || record.providerIdentity)) {
+      throw new Error('construction provider object is not owned by this operation');
+    }
     if (record.providerIdentity && observed.exists === true && observed.providerIdentity !== record.providerIdentity) throw new Error('construction provider identity changed');
     const mediaCount = Number(observed.mediaCount ?? 0);
     if (!Number.isSafeInteger(mediaCount) || mediaCount < 0 || mediaCount > 16) throw new Error('construction media observation is invalid');

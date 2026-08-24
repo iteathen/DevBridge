@@ -241,6 +241,29 @@ Primary behavior reference:
 
 The stopped physical frontier was recorded immediately on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5392426950). No cleanup or second construction attempt occurred while this recovery boundary was under diagnosis.
 
+PR #275 merged as `e4f1930947912cc8c4b4184120e66893e7beaae1` after exact head `facdfcf50f2c6ae6e71e8fc00f632fd43180c46d` passed CI run `32706151013` on Ubuntu and Windows smoke/test jobs. The installed entry then persisted and executed that exact `cuda-target` subject, and a separate plain public setup invocation returned the exact construction gate before one recovery attempt.
+
+### 10. Planned-phase observation blocked the provider recovery owner
+
+The public retry after PR #275 stopped immediately with:
+
+```text
+construction provider object is not owned by this operation
+```
+
+Read-only reconciliation proved that no provider recovery effect had run: the VM still had empty Notes, no disk or DVD, and the same unbound default adapter; its configuration timestamps had not changed; the construction record remained `planned` with a null provider identity; the canary journal remained `planned`; and the release-cache ISO was unchanged.
+
+The generic canary deliberately observes inner construction before replaying preparation. That lets it reconcile a completed inner effect whose outer phase save was lost. The Hyper-V `status()` implementation, however, rejected any existing unmarked object before returning its durable `planned` phase. The exact `prepare()` recovery predicate added by PR #275 was therefore unreachable.
+
+Solution: PR [#276](https://github.com/iteathen/DevBridge/pull/276):
+
+- when and only when the provider-local durable record is still `planned` and has no provider identity, status reports the observed object as `exists: true, owned: false` while retaining phase `planned`;
+- this observation grants no ownership and performs no mutation; it allows the generic canary to call the provider-local `prepare()` owner, which applies the exact shape and path predicate before writing a marker;
+- after preparation, or whenever a provider identity is already recorded, any observed loss of ownership continues to throw immediately;
+- regression coverage proves the planned unowned observation, successful delegation to preparation, and fail-closed ownership loss after preparation.
+
+The second stopped frontier and its unchanged physical evidence were recorded on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5392627890). No retry occurred while this admission-order defect was under diagnosis.
+
 ## Preserved physical evidence
 
 After the latest stopped attempt:
@@ -259,6 +282,7 @@ After the latest stopped attempt:
 - that partial VM has empty Notes, no disk or DVD, and one disconnected default dynamic network adapter; its exact shape is preserved for provider-owned recovery rather than manually deleted;
 - preparation and construction state remain durable at subject `subject-99742e1c94397011d72b6c08523c09c5`, phase `planned`, with exact installer and CIDATA identities recorded;
 - the release-cache ISO remains unchanged at `2,918,598,656` bytes, and no host switch, gateway, NAT, or unrelated VM was changed by this stopped attempt.
+- the first post-#275 retry did not reach recovery mutation: VM Notes, topology, configuration timestamps, construction state, journal state, and release-cache media all remained unchanged at the same planned partial frontier.
 
 The owned partial switch remains persistent provider-foundation evidence and may be reconciled only through the same Hyper-V environment adapter. It must not be manually adopted, renamed, or deleted merely to make the construction attempt appear clean. The construction-only adapter neither consumes nor changes it.
 
