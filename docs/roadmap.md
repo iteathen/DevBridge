@@ -170,17 +170,59 @@ GUI applications may be installed, launched, and used. DevBridge simply does not
 
 ## Current sequencing
 
-Do not let the new development-environment work displace the current blank-slate recovery gate.
+Do not let the new development-environment or GPU work displace the current blank-slate recovery gate.
 
 Current order is:
 
-1. finish the ordinary supported blank-slate/recovery chain: #197/#192 image construction and acquisition, #178/#200 publication/reacquisition, #173 missing-system-disk rebuild proof, and #201 final qualification;
+1. finish the ordinary supported blank-slate/recovery chain: #197/#192 image construction and acquisition, #178/#200 publication/reacquisition, #173 missing-system-disk rebuild proof, #177 provider/storage authority hardening, and #201 final qualification;
 2. implement and adversarially qualify #214 so a recovered persistent guest is genuinely self-preparable for arbitrary CLI-oriented development work;
 3. build #215 on the same guest-execution/bridge foundation for generic state packaging and external analysis;
-4. then proceed to the first real CUDA profile in #186;
-5. generalize compute capability routing in #162 only after #186 proves the real hardware/profile path.
+4. land only the small early #162 compute-validity contract needed to distinguish compile, emulated-functional, compatibility-device, native-device, hardware-specific, and performance evidence;
+5. prioritize #186 CUDA no-physical-GPU emulation feasibility and semantic qualification; if useful, then qualify CUDA-on-AMD compatibility before requiring native NVIDIA hardware;
+6. pursue #283 ROCm/HIP rocJITsu emulation and its emerging QEMU/vfio-user device path as a parallel specialized backend when recovery capacity permits;
+7. qualify native NVIDIA/AMD physical-device paths when the workload requires native-device/hardware/performance evidence;
+8. implement the full #162 repository detector and automatic compute router only after useful backend evidence exists.
 
 #214/#215 are not prerequisites for proving that #197 can construct an immutable base image or that #173 can reconstruct a deleted system disk. They are the high-priority usability/extensibility layer required before DevBridge should claim a broadly self-preparing general-purpose development workstation.
+
+The GPU plan correction changes **which compute proof is attempted first after the recovery gate**. It does not promote GPU work above recovery/installability.
+
+## GPU/compute follow-through — #162 / #186 / #283
+
+`docs/gpu-execution-profiles.md` is the normative architecture owner for specialized compute profiles.
+
+The earlier physical-CUDA-first assumption is superseded. Current research supports a layered evidence model:
+
+1. compile validity;
+2. emulated functional validity;
+3. compatibility/translated physical-device validity;
+4. native-device functional validity;
+5. hardware-specific validity;
+6. performance validity.
+
+A result must say what actually executed. Emulator success is useful functional evidence but is not physical-hardware/performance evidence. A CUDA compatibility layer executing on AMD hardware can prove its qualified CUDA semantic subset but is not native NVIDIA evidence.
+
+### CUDA — #186
+
+The first candidate for no-GPU CUDA functional validation is GPGPU-Sim, qualified against a versioned semantic matrix rather than one hello-world kernel. Current upstream documents CUDA/OpenCL simulation and features including CUDA Dynamic Parallelism, but DevBridge must prove every modern semantic it actually requires before exposing that capability.
+
+If physical AMD hardware is available, SCALE is the preferred first source-based CUDA compatibility candidate: current SCALE documentation describes a drop-in `nvcc`, CUDA runtime/driver/math implementations for AMD, and CUDA-X wrappers backed by ROCm. ZLUDA remains a secondary compatibility candidate. These are compatibility-device routes, not no-hardware emulation or native NVIDIA proof.
+
+Native NVIDIA qualification remains required when a requirement explicitly needs real CUDA-device behavior or performance.
+
+### AMD / ROCm — #283
+
+AMD's active rocJITsu work makes the ROCm route especially promising for reproducible functional testing. Current official ROCm development has demonstrated HIP kernel debugging under the emulator and is building `vfio-user` support to present an emulated MI350P/GFX950 PCIe device to QEMU so a real guest `amdgpu` driver can probe it.
+
+The vfio-user path is still a maturity gate, not a current readiness claim. DevBridge requires actual HIP compute through the guest-visible emulated device; PCI enumeration alone is insufficient.
+
+Gem5 Full System AMD GPU simulation is a heavier secondary/reference backend if rocJITsu lacks required semantics. Physical AMD hardware remains required for native-device/performance evidence.
+
+### Generalized routing — #162
+
+Only a small neutral truth-schema slice moves earlier. The broad detector/matcher remains later.
+
+Generic modules must never learn emulator paths, raw QEMU/libvirt arguments, provider-native GPU IDs, SCALE/ZLUDA invocation details, or repository-specific CUDA/HIP semantics. Backends and provider adapters remain independently replaceable LEGO components.
 
 ## Issue #138 implementation slices
 
@@ -199,16 +241,19 @@ The execution-profile correction is considered complete only when all of the fol
 
 ## Execution-profile evolution
 
-Profiles represent materially distinct platforms, not organizational grouping.
+Profiles represent materially distinct platforms/capabilities, not organizational grouping.
 
-Expected examples include:
+Expected examples may include:
 
 - `windows`;
 - `linux`;
-- `windows+cuda`;
-- `linux+cuda`.
+- `linux+cuda-emulated`;
+- `linux+cuda-compat-amd`;
+- `linux+cuda-native`;
+- `linux+rocm-emulated`;
+- `linux+rocm-native`.
 
-A new profile is justified only by actual compatibility/isolation/resource requirements such as OS, kernel, driver, GPU/device, licensing, architecture, or toolchain constraints.
+These are illustrative operator labels. A new profile is justified only by actual compatibility/isolation/resource requirements such as OS, kernel, driver, emulator/runtime, GPU/device, licensing, architecture, or toolchain constraints.
 
 Do not create profiles merely because repositories differ or because one repository installed another ordinary CLI package inside a compatible persistent profile.
 
@@ -238,6 +283,7 @@ Profile resource policy owns:
 - active-profile/warm-pool policy;
 - idle shutdown/suspend;
 - GPU/device exclusivity;
+- emulator/simulator CPU/memory/runtime cost where specialized profiles need explicit bounds;
 - operation timeout/cancel.
 
 Task/process limits inside a running profile may be separate. A raw repository count or `maxConcurrentTasks` value must not imply VM fleet size or a scheduler.
@@ -250,7 +296,7 @@ Cost-aware verification remains control-plane authority.
 
 Cheap checks should run before expensive provider qualification. Real VM/security claims require capable hardware; hosted CI unit/mocks are architecture evidence but do not substitute for real Hyper-V/KVM boundary qualification.
 
-Evidence should bind relevant candidate, provider, image, profile environment, workspace, bridge, and toolchain identities so still-valid expensive evidence can be reused safely.
+Compute evidence must bind the relevant backend class and exact simulator/model/compatibility/device/toolchain/profile generation. Still-valid expensive evidence may be reused only inside its exact validity domain.
 
 Guest-console output and #215 external analysis are useful evidence/input but do not by themselves replace deterministic verification acceptance. A statement such as "tests appear to pass" is not equivalent to DevBridge observing the exact admitted verification operation exit successfully.
 
@@ -276,13 +322,19 @@ Activation: not configured
 Private recovery artifact: not configured
 ```
 
-A resource-bearing change should be expressed in profile terms, for example:
+A future compute resource-bearing change should be expressed in profile terms, for example:
 
 ```text
-Create linux+cuda profile VM: 8 GiB RAM, 4 vCPU, GPU access
+Create linux+cuda-native profile: 8 GiB RAM, 4 vCPU, native GPU access
 ```
 
-rather than as fifteen repository VM decisions.
+or, where only functional emulation is required:
+
+```text
+Create linux+cuda-emulated profile: bounded CPU/RAM, no physical GPU required
+```
+
+rather than as repository-specific VM/device decisions.
 
 Setup should not ask the operator to approve every ordinary guest package/tool that an authorized agent installs through #214. Setup authority remains focused on host/profile/repository/credential/prepared-capability choices that genuinely cross DevBridge control boundaries.
 
@@ -290,13 +342,15 @@ Setup should not ask the operator to approve every ordinary guest package/tool t
 
 After the current recovery path and #214/#215 general development-environment follow-through:
 
-- first real CUDA execution profile (#186);
-- generalized compute-capability routing (#162);
+- early neutral compute-validity contract (#162 small slice);
+- CUDA emulation/compatibility/native track (#186), with no-GPU functional emulation attempted before requiring native NVIDIA hardware;
+- ROCm/AMD emulator/VM-device/native track (#283), taking advantage of rocJITsu where its exact upstream maturity supports the claimed semantics;
+- full generalized compute-capability detection/routing (#162 later slices);
 - richer profile compatibility/capability selection where materially needed;
 - workspace lifecycle/migration tooling;
 - resource-aware scheduling across profiles;
 - optional stronger per-workspace isolation mechanisms if a real threat model requires them;
-- additional providers only when justified, not for abstraction symmetry.
+- additional providers/backends only when justified, not for abstraction symmetry.
 
 Do not add bespoke per-tool acquisition/collector/GUI automation frameworks merely to increase nominal technology coverage. Prefer the generic guest console, ordinary ecosystem tooling, and generic observation packages; promote common difficult prerequisites into prepared images only when operational evidence warrants it.
 
@@ -307,12 +361,13 @@ Current active target documents are:
 - `specs/DB-020-vm-execution-boundary.md`;
 - `docs/execution-profile-environments.md`;
 - `docs/development-environment.md`;
+- `docs/gpu-execution-profiles.md`;
 - `docs/fresh-host-image-provisioning.md`;
 - `docs/image-artifact-recovery.md`;
 - `docs/architecture.md`;
 - `docs/setup.md`;
 - `docs/vm-migration.md`;
 - this roadmap;
-- active issues #103, #107, #115, #116, #117, #137, #138, #169–#180, #192, #197, #214, and #215.
+- active issues #103, #107, #115, #116, #117, #137, #138, #162, #169–#180, #186, #192, #197, #214, #215, and #283.
 
-Historical Stage 3 ownership language, old sandbox work, handoffs, tests, and PRs remain evidence but are non-normative where they conflict with the execution-profile correction, the fresh-host image/licensing plan, or the persistent development-environment approach.
+Historical Stage 3 ownership language, old sandbox work, handoffs, tests, PRs, and the former physical-CUDA-first roadmap remain evidence but are non-normative where they conflict with the execution-profile correction, the fresh-host image/licensing plan, the persistent development-environment approach, or the current compute-evidence architecture.
