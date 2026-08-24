@@ -38,7 +38,7 @@ try {
   $command = Get-Command 'gpgv.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
   $executable = if ($null -eq $command) { $null } else { [string]$command.Source }
   if ($null -eq $executable) {
-    $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+    $roots = @($env:ProgramFiles, [Environment]::GetEnvironmentVariable('ProgramFiles(x86)', 'Process')) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
     foreach ($root in $roots) {
       $candidate = Join-Path $root 'GnuPG\bin\gpgv.exe'
       if (Test-Path -LiteralPath $candidate -PathType Leaf) {
