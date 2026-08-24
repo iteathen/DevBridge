@@ -5,7 +5,7 @@ const RESULT_PROTOCOL = 'devbridge/environment-lifecycle-authority-result-v1';
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,159}$/u;
 const MAX_SUBJECT_BYTES = 512;
 const MAX_ENVELOPE_BYTES = 16 * 1024;
-const READ_AUTHORITY_OPERATIONS = new Set(['inspect', 'list', 'status', 'plan']);
+const READ_AUTHORITY_OPERATIONS = new Set(['inspect', 'list', 'status', 'plan', 'setup-reentry']);
 const MUTATION_AUTHORITY_OPERATIONS = new Set(['run', 'resume']);
 const AUTHORITY_OPERATIONS = new Set([...READ_AUTHORITY_OPERATIONS, ...MUTATION_AUTHORITY_OPERATIONS]);
 const LIFECYCLE_OPERATIONS = new Set(['create', 'repair', 'rebuild', 'reset', 'recreate']);
@@ -56,6 +56,10 @@ function normalizePayload(operation, raw) {
   if (operation === 'status') {
     onlyKeys(value, new Set(['identity']), 'lifecycle authority payload');
     return { identity: requireSafeId(value.identity, 'environment identity') };
+  }
+  if (operation === 'setup-reentry') {
+    onlyKeys(value, new Set(['identity']), 'lifecycle authority payload');
+    return { identity: value.identity == null ? null : requireSafeId(value.identity, 'environment identity') };
   }
   if (operation === 'plan') {
     onlyKeys(value, new Set(['operation', 'identity']), 'lifecycle authority payload');
@@ -148,7 +152,7 @@ export function normalizeLifecycleAuthorityResult(raw, expectedRequestId) {
 }
 
 function assertOperator(value) {
-  const methods = ['inspect', 'list', 'status', 'plan', 'run', 'resume'];
+  const methods = ['inspect', 'list', 'status', 'plan', 'run', 'resume', 'setupReentry'];
   if (!value || methods.some((name) => typeof value[name] !== 'function')) throw new TypeError('protected environment operator contract is incomplete');
   return value;
 }
@@ -160,6 +164,7 @@ async function invokeOperator(operator, request) {
     case 'list': return operator.list();
     case 'status': return operator.status(p.identity);
     case 'plan': return operator.plan(p.operation, p.identity);
+    case 'setup-reentry': return operator.setupReentry(p.identity);
     case 'run': return operator.run(p.operation, p.identity, { approval: p.approval });
     case 'resume': return operator.resume(p.identity, { approval: p.approval });
     default: throw new TypeError('lifecycle authority operation is not allowed');
@@ -247,6 +252,7 @@ export class LifecycleAuthorityClient {
   list() { return this.#request('list'); }
   status(identity) { return this.#request('status', { identity }); }
   plan(operation, identity) { return this.#request('plan', { operation, identity }); }
+  setupReentry(identity = null) { return this.#request('setup-reentry', { identity }); }
   run(operation, identity, { approval = null } = {}) { return this.#request('run', { operation, identity, approval }); }
   resume(identity, { approval = null } = {}) { return this.#request('resume', { identity, approval }); }
 }
