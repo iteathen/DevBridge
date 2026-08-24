@@ -14,6 +14,20 @@ DevBridge setup reached the construction gate.
 
 That result authorizes construction but does not construct an image or VM.
 
+## Development runner tracking
+
+A development or qualification installation may explicitly persist a moving local runner branch once through the setup surface:
+
+```text
+devbridge setup --track-ref <branch>
+```
+
+The tracked branch remains local installation authority. The stable entry resolves it to one exact runner subject on each refresh, verifies the runner bytes before launch, records accepted current/previous development subjects, and can fall back to previously accepted development evidence when a refresh fails. An explicit exact-head installation remains exact-pinned instead of becoming a moving channel.
+
+`--track-ref` changes only the installed control-plane runner selection. It does not grant VM/image construction authority. Setup continues through the same read-only physical status gate, and construction still requires the separate `--construct` option and a fresh unblocked status result.
+
+An older exact-pinned qualification installation can adopt a tracked branch without repeating zero-state bootstrap. The existing permanent entry may use one explicit outer `--ref <branch>` to reach a runner that supports `--track-ref`; that same setup invocation persists the branch for subsequent ordinary `devbridge` commands.
+
 ## Explicit construction
 
 After the read-only gate has been qualified on the physical host, the locally explicit construction surface is:
