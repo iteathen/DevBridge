@@ -54,7 +54,7 @@ export function environmentLifecycleAuthorityEndpoint({
   const selected = validateAccess(access);
   platformPath(platform);
   if (platform === 'win32') return `\\\\.\\pipe\\devbridge-environment-${identity}-${selected}-v1`;
-  return path.posix.join(runDirectory, identity, `environment-${selected}-v1.sock`);
+  return path.posix.join(runDirectory, identity, selected, 'environment-v1.sock');
 }
 
 function transportFailure(message = 'environment lifecycle authority transport is unavailable') {
@@ -140,10 +140,11 @@ function close(server) {
   });
 }
 
-export function createLifecycleAuthoritySocketServer({ endpoint, handler, maxConnections = 32 } = {}) {
+export function createLifecycleAuthoritySocketServer({ endpoint, handler, maxConnections = 32, requestTimeoutMs = 5000 } = {}) {
   if (typeof endpoint !== 'string' || endpoint.length === 0) throw new TypeError('lifecycle authority endpoint is required');
   if (typeof handler !== 'function') throw new TypeError('lifecycle authority handler is required');
   if (!Number.isSafeInteger(maxConnections) || maxConnections < 1 || maxConnections > 256) throw new TypeError('lifecycle authority maxConnections is invalid');
+  const requestTimeout = validateConnectTimeout(requestTimeoutMs);
 
   const server = net.createServer((socket) => {
     socket.setEncoding('utf8');
@@ -155,6 +156,7 @@ export function createLifecycleAuthoritySocketServer({ endpoint, handler, maxCon
       answered = true;
       socket.destroy();
     };
+    socket.setTimeout(requestTimeout, failClosed);
     const answer = (value) => {
       if (answered) return;
       let wire;
@@ -175,6 +177,7 @@ export function createLifecycleAuthoritySocketServer({ endpoint, handler, maxCon
       try { request = JSON.parse(buffer.slice(0, newline)); }
       catch { return failClosed(); }
       processing = true;
+      socket.setTimeout(0);
       socket.pause();
       try { answer(await handler(request)); }
       catch { failClosed(); }
