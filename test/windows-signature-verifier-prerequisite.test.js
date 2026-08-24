@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { access } from 'node:fs/promises';
-import { reconcileWindowsSignatureVerifier } from '../src/setup/windows-signature-verifier-prerequisite.js';
+import {
+  reconcileWindowsSignatureVerifier,
+  WINDOWS_SIGNATURE_VERIFIER_SOURCE_POLICY,
+} from '../src/setup/windows-signature-verifier-prerequisite.js';
 
 function success(value = '') {
   return {
@@ -26,7 +29,45 @@ function fixturePolicy(bytes, overrides = {}) {
   };
 }
 
+function decodeInspection(request) {
+  const encoded = request.arguments.at(-1);
+  return Buffer.from(encoded, 'base64').toString('utf16le');
+}
+
 const VERIFIER = 'C:\\Program Files\\GnuPG\\bin\\gpgv.exe';
+
+test('Windows signature verifier policy pins the narrow official GnuPG package', () => {
+  assert.deepEqual(WINDOWS_SIGNATURE_VERIFIER_SOURCE_POLICY, {
+    url: 'https://gnupg.org/ftp/gcrypt/binary/gnupg-w32-2.5.21_20260702.exe',
+    sha256: '6246c925a73167253444afc24a0deb83a3f43b7d636af84d6aaf48a98a62f024',
+    fileName: 'gnupg-w32-2.5.21_20260702.exe',
+    maxBytes: 8 * 1024 * 1024,
+  });
+});
+
+test('inspection can find the verifier from PATH or the package-owned Program Files location', async () => {
+  let inspectionScript = '';
+  const result = await reconcileWindowsSignatureVerifier({
+    environment: {},
+    async fetchImpl() {
+      throw new Error('package fetch must not run');
+    },
+    async invoke(request) {
+      if (request.executable === 'powershell.exe') {
+        inspectionScript = decodeInspection(request);
+        return success({ elevated: false, executable: VERIFIER });
+      }
+      if (request.executable === VERIFIER) return success('gpgv ready');
+      throw new Error('unexpected invocation');
+    },
+  });
+
+  assert.equal(result.ready, true);
+  assert.match(inspectionScript, /Get-Command 'gpgv\.exe'/u);
+  assert.match(inspectionScript, /\$env:ProgramFiles/u);
+  assert.match(inspectionScript, /ProgramFiles\(x86\)/u);
+  assert.match(inspectionScript, /GnuPG\\bin\\gpgv\.exe/u);
+});
 
 test('existing Windows signature verifier is reused without package mutation', async () => {
   let fetchCalls = 0;
