@@ -13,28 +13,49 @@ $ProgressPreference = 'SilentlyContinue'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 if (-not [System.IO.Directory]::Exists([string]$data.source)) { throw 'seed source directory is absent' }
 if ([System.IO.File]::Exists([string]$data.destination)) { throw 'seed destination already exists' }
+Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+
+namespace DevBridge {
+  public static class ImapiStreamCopy {
+    public static void ToFile(object source, string destination) {
+      IStream stream = (IStream)source;
+      bool created = false;
+      try {
+        using (FileStream file = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None)) {
+          created = true;
+          byte[] buffer = new byte[32768];
+          IntPtr readPointer = Marshal.AllocCoTaskMem(sizeof(int));
+          try {
+            while (true) {
+              Marshal.WriteInt32(readPointer, 0);
+              stream.Read(buffer, buffer.Length, readPointer);
+              int read = Marshal.ReadInt32(readPointer);
+              if (read <= 0) break;
+              file.Write(buffer, 0, read);
+            }
+            file.Flush(true);
+          } finally {
+            Marshal.FreeCoTaskMem(readPointer);
+          }
+        }
+      } catch {
+        if (created && File.Exists(destination)) File.Delete(destination);
+        throw;
+      }
+    }
+  }
+}
+'@
 $image = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
 $image.FileSystemsToCreate = 1
 $image.VolumeName = 'CIDATA'
 $image.Root.AddTree([string]$data.source, $false)
 $result = $image.CreateResultImage()
-$stream = $result.ImageStream
-$file = [System.IO.File]::Open([string]$data.destination, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-$readPointer = [System.Runtime.InteropServices.Marshal]::AllocCoTaskMem(4)
-try {
-  $buffer = New-Object byte[] 32768
-  while ($true) {
-    [System.Runtime.InteropServices.Marshal]::WriteInt32($readPointer, 0)
-    $stream.Read($buffer, $buffer.Length, $readPointer)
-    $read = [System.Runtime.InteropServices.Marshal]::ReadInt32($readPointer)
-    if ($read -le 0) { break }
-    $file.Write($buffer, 0, $read)
-  }
-  $file.Flush($true)
-} finally {
-  [System.Runtime.InteropServices.Marshal]::FreeCoTaskMem($readPointer)
-  $file.Dispose()
-}
+[DevBridge.ImapiStreamCopy]::ToFile($result.ImageStream, [string]$data.destination)
 @{ created = $true } | ConvertTo-Json -Compress
 `;
 
