@@ -21,6 +21,7 @@ import {
   normalizeInstallRef,
   parseInstallArgs,
   resolveInstallSubject,
+  trackInstalledRunnerRef,
   verifyInstalledComponent,
 } from '../install-devbridge.mjs';
 
@@ -168,7 +169,7 @@ test('installer Git acquisition ignores inherited Git authority and preserves on
   ]);
 });
 
-test('explicit branch install resolves once, installs the closed component, preserves Stage 0, and quarantines corruption', () => {
+test('explicit branch install resolves the component exactly while persisting the moving runner selector', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'devbridge-self-install-'));
   const fixture = fixtureRepository(root);
   const home = path.join(root, 'home');
@@ -178,10 +179,12 @@ test('explicit branch install resolves once, installs the closed component, pres
   writeFileSync(legacyLauncher, 'legacy-stage0-sentinel\n');
 
   const args = parseInstallArgs(['--ref', 'main', '--home', home], { environment: {}, homeDirectory: root });
-  assert.equal(args.pinSelectedRunner, true);
+  assert.equal(args.selectedRunnerRef, 'main');
+  assert.equal(args.pinSelectedRunner, false);
   const installed = installDevBridge(args, { sourceRepository: fixture.source, allowLocalSource: true });
   assert.equal(installed.componentHead, fixture.head);
-  assert.equal(installed.pinnedRunnerHead, fixture.head);
+  assert.equal(installed.selectedRunnerRef, 'main');
+  assert.equal(installed.pinnedRunnerHead, null);
   assert.equal(readFileSync(legacyLauncher, 'utf8'), 'legacy-stage0-sentinel\n');
 
   const component = path.join(home, 'entry', 'components', fixture.head);
@@ -189,14 +192,16 @@ test('explicit branch install resolves once, installs the closed component, pres
   assertInstalledClosure(component);
 
   const wrapperSource = readFileSync(installed.wrappers.javascript, 'utf8');
-  assert.match(wrapperSource, new RegExp(fixture.head, 'u'));
+  assert.match(wrapperSource, /const selected = "main"/u);
+  assert.match(wrapperSource, /--entry-development-ref/u);
   run(process.execPath, ['--check', installed.wrappers.javascript]);
 
   const installStatusResult = run(process.execPath, [installed.wrappers.javascript, 'entry-install-status']);
   const installStatus = JSON.parse(installStatusResult.stdout.trim());
   assert.equal(installStatus.protocol, INSTALL_STATUS_PROTOCOL);
   assert.equal(installStatus.componentHead, fixture.head);
-  assert.equal(installStatus.pinnedRunnerHead, fixture.head);
+  assert.equal(installStatus.selectedRunnerRef, 'main');
+  assert.equal(installStatus.pinnedRunnerHead, null);
   assert.equal(installStatus.home, installed.home);
 
   writeFileSync(path.join(component, 'devbridge-entry.mjs'), 'corrupt\n');
@@ -207,6 +212,7 @@ test('explicit branch install resolves once, installs the closed component, pres
 
   const repaired = installDevBridge(args, { sourceRepository: fixture.source, allowLocalSource: true });
   assert.equal(repaired.componentHead, fixture.head);
+  assert.equal(repaired.selectedRunnerRef, 'main');
   assert.equal(verifyInstalledComponent(component, fixture.head, fixture.source), true);
   assert.equal(readFileSync(legacyLauncher, 'utf8'), 'legacy-stage0-sentinel\n');
 
@@ -216,6 +222,37 @@ test('explicit branch install resolves once, installs the closed component, pres
   assert.equal(
     readFileSync(path.join(quarantine, retained[0], 'devbridge-entry.mjs'), 'utf8'),
     'corrupt\n',
+  );
+});
+
+test('explicit exact install remains exact-pinned and track migration accepts branches only', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'devbridge-exact-install-'));
+  const fixture = fixtureRepository(root);
+  const exactHome = path.join(root, 'exact-home');
+  const exactArgs = parseInstallArgs(['--ref', fixture.head, '--home', exactHome], { environment: {}, homeDirectory: root });
+  assert.equal(exactArgs.selectedRunnerRef, fixture.head);
+  assert.equal(exactArgs.pinSelectedRunner, true);
+  const exact = installDevBridge(exactArgs, { sourceRepository: fixture.source, allowLocalSource: true });
+  assert.equal(exact.selectedRunnerRef, fixture.head);
+  assert.equal(exact.pinnedRunnerHead, fixture.head);
+  const status = JSON.parse(run(process.execPath, [exact.wrappers.javascript, 'entry-install-status']).stdout.trim());
+  assert.equal(status.selectedRunnerRef, fixture.head);
+  assert.equal(status.pinnedRunnerHead, fixture.head);
+
+  const trackedHome = path.join(root, 'tracked-home');
+  const tracked = trackInstalledRunnerRef({ home: trackedHome, ref: 'main' }, {
+    sourceRepository: fixture.source,
+    allowLocalSource: true,
+  });
+  assert.equal(tracked.componentHead, fixture.head);
+  assert.equal(tracked.selectedRunnerRef, 'main');
+  assert.equal(tracked.pinnedRunnerHead, null);
+  assert.throws(
+    () => trackInstalledRunnerRef({ home: path.join(root, 'rejected-home'), ref: fixture.head }, {
+      sourceRepository: fixture.source,
+      allowLocalSource: true,
+    }),
+    /must be a branch selector/u,
   );
 });
 
@@ -255,6 +292,7 @@ test('wrapper activation preserves the prior authority before any replacement ca
   rmSync(previous, { recursive: true, force: true });
   const second = installDevBridge(args, { sourceRepository: fixture.source, allowLocalSource: true });
   assert.equal(second.componentHead, nextHead);
+  assert.equal(second.selectedRunnerRef, 'main');
   assert.notDeepEqual(readFileSync(second.wrappers.javascript), firstWrapper);
   assert.deepEqual(readFileSync(previous), firstWrapper);
 });
@@ -292,9 +330,10 @@ test('installer lock fails closed for a live owner and reclaims only a dead owne
   assert.equal(readdirSync(entry).includes('.install.lock'), false);
 });
 
-test('default install leaves stable selection active while pinning is opt-in', () => {
+test('default install leaves stable selection active while explicit exact pinning remains opt-in', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'devbridge-installer-args-'));
   const args = parseInstallArgs(['--home', path.join(root, 'home')], { environment: {}, homeDirectory: root });
   assert.deepEqual(args.selector, { kind: 'branch', value: 'main' });
+  assert.equal(args.selectedRunnerRef, null);
   assert.equal(args.pinSelectedRunner, false);
 });
