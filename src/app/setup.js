@@ -68,7 +68,7 @@ function acceptedRepositorySelection(previous, identity, requestedRepositories) 
 }
 
 function publicResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, physical = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
-  const readyForConstruction = constructionAttempted !== true && physical?.blocked === false && physical?.complete !== true && physical?.state === 'absent';
+  const readyForConstruction = constructionAttempted !== true && physical?.blocked === false && physical?.complete !== true;
   return Object.freeze({
     protocol: PROTOCOL,
     home,
@@ -94,12 +94,16 @@ export function formatSetupHandoff(result) {
     return `${lines.join('\n')}\n`;
   }
   if (result.readyForConstruction) {
+    const physical = result.linuxProfile?.physicalStatus;
+    const constructionStatus = physical?.state === 'absent'
+      ? 'Physical image construction: authorized by status gate, not started'
+      : `Physical image construction: authorized to resume from durable ${physical?.state ?? 'incomplete'} frontier`;
     return [
       'DevBridge setup reached the construction gate.',
       '',
       'Linux execution profile: source/package/payload authority ready',
       `Repositories: ${result.repositories?.selectedCount ?? 0} configured`,
-      'Physical image construction: authorized by status gate, not started',
+      constructionStatus,
       '',
       'The setup path performed no image or VM construction.',
       result.path?.requiresNewShell ? `Open a new shell for devbridge on PATH. Until then: ${result.path.temporaryCommand}` : 'The devbridge command is available on PATH.',

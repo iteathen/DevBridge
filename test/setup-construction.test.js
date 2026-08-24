@@ -60,6 +60,22 @@ test('plain setup remains read-only at the construction gate', async () => {
   assert.match(formatSetupHandoff(result), /authorized by status gate, not started/u);
 });
 
+test('plain setup reauthorizes a non-complete durable canary at the construction gate', async () => {
+  const selected = fixture({
+    status: { state: 'planned', phase: 'planned', blocked: false, complete: false, reason: null, preflight: { ready: true } },
+  });
+  const result = await runDevBridgeSetup({ home: home('db-setup-planned-construction-gate') }, selected.deps);
+  assert.equal(result.readyForConstruction, true);
+  assert.equal(result.phase, 'ready-for-construction');
+  assert.deepEqual(result.construction, { requested: false, attempted: false });
+  assert.equal(selected.calls.status, 1);
+  assert.equal(selected.calls.run, 0);
+  const handoff = formatSetupHandoff(result);
+  assert.match(handoff, /DevBridge setup reached the construction gate/u);
+  assert.match(handoff, /authorized to resume from durable planned frontier/u);
+  assert.match(handoff, /performed no image or VM construction/u);
+});
+
 test('explicit construction crosses the canary run boundary only after an unblocked status', async () => {
   const selected = fixture();
   const result = await runDevBridgeSetup({ home: home('db-setup-explicit-construction'), construct: true }, selected.deps);
