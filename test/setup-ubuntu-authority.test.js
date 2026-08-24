@@ -52,15 +52,31 @@ test('setup authority binds source policy, exact snapshot and current payload ge
   assert.equal(authority.source.media.bytes, 2_918_598_656);
   assert.equal(authority.packages.snapshot, SNAPSHOT);
   assert.equal(authority.payload.generation, 'guest-image-current');
-  assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 2, ...UBUNTU_SETUP_BOOT_STANZA }]);
+  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v2');
+  assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 1, ...UBUNTU_SETUP_BOOT_STANZA }]);
 });
 
-test('setup uses the verified complete 126-byte Ubuntu boot stanza without changing ISO length', () => {
-  assert.equal(Buffer.byteLength(UBUNTU_SETUP_BOOT_STANZA.before, 'utf8'), 126);
-  assert.equal(Buffer.byteLength(UBUNTU_SETUP_BOOT_STANZA.after, 'utf8'), 126);
+test('setup uses the exact one-copy 127-byte Ubuntu boot stanza without changing ISO length', () => {
+  assert.equal(Buffer.byteLength(UBUNTU_SETUP_BOOT_STANZA.before, 'utf8'), 127);
+  assert.equal(Buffer.byteLength(UBUNTU_SETUP_BOOT_STANZA.after, 'utf8'), 127);
   assert.match(UBUNTU_SETUP_BOOT_STANZA.before, /Try or Install Ubuntu Server/u);
+  assert.match(UBUNTU_SETUP_BOOT_STANZA.before, /linux  \/casper\/vmlinuz  ---/u);
+  assert.match(UBUNTU_SETUP_BOOT_STANZA.before, /initrd \/casper\/initrd/u);
   assert.match(UBUNTU_SETUP_BOOT_STANZA.after, /Automated Install/u);
-  assert.match(UBUNTU_SETUP_BOOT_STANZA.after, /\/casper\/vmlinuz autoinstall ---/u);
+  assert.match(UBUNTU_SETUP_BOOT_STANZA.after, /linux  \/casper\/vmlinuz autoinstall ---/u);
+});
+
+test('setup boot patch matches the admitted Ubuntu 26.04 extracted boot entry exactly once', () => {
+  const extractedEntry = [
+    'menuentry "Try or Install Ubuntu Server" {',
+    '    set gfxpayload=keep',
+    '    linux  /casper/vmlinuz  ---',
+    '    initrd /casper/initrd',
+    '}',
+    '',
+  ].join('\n');
+  assert.equal(extractedEntry, UBUNTU_SETUP_BOOT_STANZA.before);
+  assert.equal(extractedEntry.split(UBUNTU_SETUP_BOOT_STANZA.before).length - 1, 1);
 });
 
 test('setup package resolution fails closed when the snapshot is incomplete', async () => {
