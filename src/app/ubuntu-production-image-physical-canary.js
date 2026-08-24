@@ -299,7 +299,7 @@ async function cleanupCompletedState({ paths, subject, invoke }) {
   return reasons.length === 0 ? null : reasons.join('; ');
 }
 
-async function createPhysicalRuntime({ config, subject, payload, paths, invoke, fetchImpl, catalog, preparationStore }) {
+async function createPhysicalRuntime({ config, subject, payload, paths, invoke, fetchImpl, catalog, preparationStore, signatureVerifierExecutable }) {
   const localIdentity = await loadOrCreateLocalIdentity({ directory: paths.foundationRoot });
   const providerLocation = createHyperVEnvironmentLocation(localIdentity);
   const networkIdentity = providerLocation.network();
@@ -359,7 +359,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
     let lease = null;
     try {
       const download = createHttpsFileDownload({ fetchImpl, allowedHosts: SOURCE_HOSTS });
-      const verifyManifest = createDetachedSignatureVerifier({ invoke, keyring: config.keyring });
+      const verifyManifest = createDetachedSignatureVerifier({ invoke, keyring: config.keyring, executable: signatureVerifierExecutable ?? undefined });
       const source = createUbuntuReleaseMediaSource({
         authorityLookup: async (reference) => {
           if (reference !== subject) throw new Error('release authority subject changed');
@@ -488,18 +488,20 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
   payloadFactory = createGuestImagePayload,
   preflight = null,
   runtimeFactory = null,
+  signatureVerifierExecutable = null,
 } = {}) {
   const config = normalizeConfig(rawConfig);
   if (typeof invoke !== 'function') throw new TypeError('physical canary invocation contract is invalid');
   if (typeof payloadFactory !== 'function') throw new TypeError('physical canary payload factory is invalid');
   if (runtimeFactory != null && typeof runtimeFactory !== 'function') throw new TypeError('physical canary runtime factory is invalid');
+  if (signatureVerifierExecutable != null && (typeof signatureVerifierExecutable !== 'string' || signatureVerifierExecutable.length === 0 || signatureVerifierExecutable.includes('\0') || !path.win32.isAbsolute(signatureVerifierExecutable))) throw new TypeError('physical canary signature-verifier binding is invalid');
   const subject = ubuntuConstructionAuthoritySubject(config.authority);
   const paths = pathsFor(config, subject);
   const authorityStore = createUbuntuConstructionAuthorityStateStore(paths.authorityFile);
   const catalog = createUbuntuConstructionAuthorityCatalog({ store: authorityStore });
   const journal = createCanonicalImageCanaryStateStore(paths.journalFile);
   const preparationStore = new JsonStateStore(paths.preparationFile);
-  const selectedPreflight = preflight ?? createWindowsProductionImageCanaryPreflight({ invoke, platform });
+  const selectedPreflight = preflight ?? createWindowsProductionImageCanaryPreflight({ invoke, platform, signatureVerifierExecutable });
   if (!selectedPreflight || typeof selectedPreflight.inspect !== 'function') throw new TypeError('physical canary preflight contract is incomplete');
 
   const status = async () => {
@@ -556,8 +558,8 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
       const registration = await catalog.register(config.authority);
       if (registration.subjectRef !== subject) throw new Error('registered construction authority identity changed');
       const runtime = runtimeFactory
-        ? await runtimeFactory({ config, subject, payload, request, paths, catalog, preparationStore, invoke, fetchImpl })
-        : await createPhysicalRuntime({ config, subject, payload, paths, invoke, fetchImpl, catalog, preparationStore });
+        ? await runtimeFactory({ config, subject, payload, request, paths, catalog, preparationStore, invoke, fetchImpl, signatureVerifierExecutable })
+        : await createPhysicalRuntime({ config, subject, payload, paths, invoke, fetchImpl, catalog, preparationStore, signatureVerifierExecutable });
       if (!runtime?.canary || !runtime?.construction || !runtime?.accessProbe || typeof runtime.access !== 'function') throw new TypeError('physical canary runtime contract is incomplete');
 
       for (let index = 0; index < MAX_ADVANCES; index += 1) {

@@ -10,7 +10,11 @@ const POWERSHELL = 'powershell.exe';
 const POWERSHELL_ARGS = ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand'];
 const MAX_SAFE_BYTES = Number.MAX_SAFE_INTEGER;
 
-const CAPABILITY_SCRIPT = String.raw`
+function capabilityScript({ requireVerifierByName }) {
+  const hostTools = requireVerifierByName
+    ? "@('ssh.exe','ssh-keygen.exe','gpgv.exe')"
+    : "@('ssh.exe','ssh-keygen.exe')";
+  return String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Import-Module Hyper-V -ErrorAction Stop
@@ -23,13 +27,14 @@ $required = @(
 foreach ($name in $required) {
   if (-not (Get-Command $name -ErrorAction SilentlyContinue)) { throw "required management operation is unavailable: $name" }
 }
-foreach ($name in @('ssh.exe','ssh-keygen.exe','gpgv.exe')) {
+foreach ($name in ${hostTools}) {
   if (-not (Get-Command $name -ErrorAction SilentlyContinue)) { throw "required host tool is unavailable: $name" }
 }
 $null = Get-VMHost -ErrorAction Stop
 $null = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
 @{ ready = $true } | ConvertTo-Json -Compress
 `;
+}
 
 function encodedScript(script) { return Buffer.from(script, 'utf16le').toString('base64'); }
 
@@ -41,6 +46,12 @@ function safeBytes(value, name) {
 function checkedAdd(left, right, name) {
   const value = left + right;
   if (!Number.isSafeInteger(value) || value > MAX_SAFE_BYTES) throw new TypeError(`${name} is too large`);
+  return value;
+}
+
+function optionalVerifierExecutable(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string' || value.length === 0 || value.includes('\0') || !path.win32.isAbsolute(value)) throw new TypeError('physical canary signature-verifier binding is invalid');
   return value;
 }
 
@@ -83,8 +94,12 @@ function availableBytes(filesystem) {
   return bytes;
 }
 
+function invocationSucceeded(result) {
+  return result?.exitCode === 0 && result?.timedOut !== true && result?.aborted !== true && result?.outputTruncated !== true;
+}
+
 function parseCapability(result) {
-  if (!result || result.exitCode !== 0 || result.timedOut || result.aborted || result.outputTruncated) {
+  if (!invocationSucceeded(result)) {
     throw new Error(String(result?.stderr || result?.stdout || 'host capability preflight failed').trim().slice(0, 2048));
   }
   let parsed;
@@ -95,12 +110,14 @@ function parseCapability(result) {
 export class WindowsProductionImageCanaryPreflight {
   #invoke;
   #platform;
+  #signatureVerifierExecutable;
 
-  constructor({ invoke, platform = process.platform } = {}) {
+  constructor({ invoke, platform = process.platform, signatureVerifierExecutable = null } = {}) {
     if (typeof invoke !== 'function') throw new TypeError('physical canary preflight invocation contract is invalid');
     if (typeof platform !== 'string' || platform.length === 0) throw new TypeError('physical canary preflight platform is invalid');
     this.#invoke = invoke;
     this.#platform = platform;
+    this.#signatureVerifierExecutable = optionalVerifierExecutable(signatureVerifierExecutable);
   }
 
   async inspect({ stateDirectory, keyring, memoryBytes, diskBytes, sourceBytes } = {}) {
@@ -134,11 +151,21 @@ export class WindowsProductionImageCanaryPreflight {
       try {
         parseCapability(await this.#invoke({
           executable: POWERSHELL,
-          arguments: [...POWERSHELL_ARGS, encodedScript(CAPABILITY_SCRIPT)],
+          arguments: [...POWERSHELL_ARGS, encodedScript(capabilityScript({ requireVerifierByName: this.#signatureVerifierExecutable == null }))],
           input: null,
           timeoutMs: 30_000,
           maxOutputBytes: 256 * 1024,
         }));
+        if (this.#signatureVerifierExecutable != null) {
+          const verified = await this.#invoke({
+            executable: this.#signatureVerifierExecutable,
+            arguments: ['--version'],
+            input: null,
+            timeoutMs: 15_000,
+            maxOutputBytes: 64 * 1024,
+          });
+          if (!invocationSucceeded(verified)) throw new Error('physical canary signature verifier is not usable');
+        }
         providerReady = true;
       } catch (error) { reasons.push(error.message); }
     }
