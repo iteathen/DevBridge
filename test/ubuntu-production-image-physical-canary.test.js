@@ -276,6 +276,30 @@ test('physical canary run waits for exact SSH access before qualification', asyn
   }
 });
 
+test('physical canary run treats delayed provider-reported guest addressing as a resumable frontier', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-address-'));
+  try {
+    const data = await fixture(root);
+    let advances = 0;
+    const runtimeFactory = async ({ subject }) => ({
+      canary: {
+        async inspect() { return { ...status('active'), identity: subject }; },
+        async advance() { advances += 1; throw new Error('qualification must not start without an exact endpoint'); },
+      },
+      construction: { async status() { return { identity: subject, phase: 'qualifying', state: 'running', mediaCount: 0 }; } },
+      accessProbe: { async inspect() { throw new Error('SSH must not run without an endpoint'); } },
+      async access() { throw new Error('construction guest has not reported a private IPv4 address'); },
+    });
+    const canary = createUbuntuProductionImagePhysicalCanary(data.config, { platform: 'win32', preflight: readyPreflight, payloadFactory: async () => data.payload, runtimeFactory });
+    const result = await canary.run();
+    assert.equal(result.state, 'waiting');
+    assert.match(result.reason, /access endpoint is not ready.*has not reported a private IPv4/u);
+    assert.equal(advances, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('physical canary run waits for sanitizer shutdown before qualified acceptance', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-shutdown-'));
   try {

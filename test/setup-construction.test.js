@@ -34,7 +34,7 @@ function fixture({ status, runResult } = {}) {
       canaryFactory: () => ({
         async status() {
           calls.status += 1;
-          return status ?? { state: 'absent', blocked: false, complete: false, reason: null, preflight: { ready: true } };
+          return status ?? { state: 'absent', blocked: false, complete: false, reason: null, preflight: { ready: true, connectivity: { control: 'system', addressing: 'automatic' } } };
         },
         async run() {
           calls.run += 1;
@@ -57,7 +57,9 @@ test('plain setup remains read-only at the construction gate', async () => {
   assert.deepEqual(result.construction, { requested: false, attempted: false });
   assert.equal(selected.calls.status, 1);
   assert.equal(selected.calls.run, 0);
-  assert.match(formatSetupHandoff(result), /authorized by status gate, not started/u);
+  const handoff = formatSetupHandoff(result);
+  assert.match(handoff, /authorized by status gate, not started/u);
+  assert.match(handoff, /host-managed DHCP; not claimed as DevBridge-owned/u);
 });
 
 test('plain setup reauthorizes a non-complete durable canary at the construction gate', async () => {

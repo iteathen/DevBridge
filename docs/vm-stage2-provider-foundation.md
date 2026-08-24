@@ -69,6 +69,8 @@ Provider object names are generated from the opaque local installation identity.
 
 Windows uses an owned internal virtual switch plus an owned NAT/private gateway. The switch carries an installation-specific ownership marker. After switch creation, the adapter boundedly observes the exact host IPv4 interface before assigning its gateway; an interface that does not converge leaves the durable network plan incomplete. Reconciliation verifies switch type/marker, NAT prefix, and gateway state before declaring networking ready or removing anything.
 
+The Ubuntu production-image canary may use a separate construction-only connection to an exact, read-only verified system-managed switch. That transient composition does not mutate or claim the system switch, does not consume or complete the Stage-2 owned-network plan, and must not be reported as persistent environment networking readiness. Replacing the persistent owned-network topology requires its own provider-foundation authority decision and qualification.
+
 Linux uses an owned libvirt NAT network with a pre-recorded UUID, ownership metadata, generated bridge name, and collision-checked RFC1918 subnet. Storage is an owned libvirt directory pool targeting the managed image root with a pre-recorded UUID. Network/pool UUID, topology/target, and active state are re-observed before readiness or cleanup.
 
 Network/storage setup records the intended identity before provider effects. An interruption leaves a planned record. Reconciliation re-observes the exact owned object and resumes only compatible incomplete effects; permission/service errors are never reclassified as absence.

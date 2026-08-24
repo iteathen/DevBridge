@@ -3,11 +3,13 @@ import { createReadStream } from 'node:fs';
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const PROTOCOL = 'devbridge/hyperv-image-construction-v1';
+const PROTOCOL = 'devbridge/hyperv-image-construction-v2';
 const TOKEN = /^[a-f0-9]{32}$/u;
 const SUBJECT = /^subject-[a-f0-9]{32}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
+const GUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u;
+const IPV4 = /^(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/u;
 const POWERSHELL = 'powershell.exe';
 const POWERSHELL_ARGS = ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand'];
 const MIN_MEMORY_BYTES = 512 * 1024 * 1024;
@@ -44,10 +46,18 @@ function mediaIdentity(raw, name) {
 }
 
 function networkIdentity(raw) {
-  const value = onlyKeys(raw, new Set(['reference', 'proof']), 'construction network');
+  const value = onlyKeys(raw, new Set(['control', 'reference', 'proof']), 'construction network');
+  if (!['owned', 'system'].includes(value.control)) throw new TypeError('construction network.control is invalid');
   if (typeof value.reference !== 'string' || !REFERENCE.test(value.reference)) throw new TypeError('construction network.reference is invalid');
   if (typeof value.proof !== 'string' || value.proof.length === 0 || value.proof.length > 2048 || value.proof.includes('\0')) throw new TypeError('construction network.proof is invalid');
-  return { reference: value.reference, proof: value.proof };
+  if (value.control === 'system' && !GUID.test(value.reference)) throw new TypeError('system construction network.reference must be an exact provider identity');
+  if (value.control === 'system' && value.proof !== value.reference) throw new TypeError('system construction network.proof does not bind its exact provider identity');
+  return { control: value.control, reference: value.reference, proof: value.proof };
+}
+
+function privateIpv4(value) {
+  const [first, second] = value.split('.').map(Number);
+  return first === 10 || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168);
 }
 
 function normalizeRequest(raw) {
@@ -97,6 +107,7 @@ function sameRequest(record, request) {
     && record.memoryBytes === request.memoryBytes
     && record.processorCount === request.processorCount
     && record.diskBytes === request.diskBytes
+    && record.network.control === request.network.control
     && record.network.reference === request.network.reference
     && record.network.proof === request.network.proof;
 }
@@ -116,8 +127,13 @@ $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 Import-Module Hyper-V -ErrorAction Stop
 if (-not (Test-Path -LiteralPath $data.installerPath -PathType Leaf)) { throw 'installer media is absent' }
 if (-not (Test-Path -LiteralPath $data.seedPath -PathType Leaf)) { throw 'seed media is absent' }
-$switch = Get-VMSwitch -Name ([string]$data.networkReference) -ErrorAction Stop
-if ([string]$switch.Notes -ne [string]$data.networkProof) { throw 'construction network ownership proof does not match' }
+$switch = if ([string]$data.networkControl -eq 'owned') {
+  Get-VMSwitch -Name ([string]$data.networkReference) -ErrorAction Stop
+} elseif ([string]$data.networkControl -eq 'system') {
+  Get-VMSwitch -Id ([guid]$data.networkReference) -ErrorAction Stop
+} else { throw 'construction network control is invalid' }
+if ([string]$data.networkControl -eq 'owned' -and [string]$switch.Notes -ne [string]$data.networkProof) { throw 'construction network ownership proof does not match' }
+if ([string]$data.networkControl -eq 'system' -and ([string]$data.networkProof).ToLowerInvariant() -ne ([string]$switch.Id).ToLowerInvariant()) { throw 'construction system-network proof does not match' }
 if ([string]$switch.SwitchType -ne 'Internal') { throw 'construction network type is incompatible' }
 $null = New-Item -ItemType Directory -Path ([string]$data.configPath) -Force -ErrorAction Stop
 $item = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq [string]$data.name } | Select-Object -First 1
@@ -139,11 +155,12 @@ Set-VMProcessor -VMName ([string]$data.name) -Count ([long]$data.processorCount)
 Set-VMFirmware -VMName ([string]$data.name) -EnableSecureBoot Off -ErrorAction Stop
 $nets = @(Get-VMNetworkAdapter -VMName ([string]$data.name) -ErrorAction Stop)
 if ($nets.Count -eq 0) {
-  Add-VMNetworkAdapter -VMName ([string]$data.name) -Name 'Network Adapter' -SwitchName ([string]$data.networkReference) -ErrorAction Stop | Out-Null
+  Add-VMNetworkAdapter -VMName ([string]$data.name) -Name 'Network Adapter' -SwitchName ([string]$switch.Name) -ErrorAction Stop | Out-Null
   $nets = @(Get-VMNetworkAdapter -VMName ([string]$data.name) -ErrorAction Stop)
 }
 if ($nets.Count -ne 1) { throw 'construction network adapter count is incompatible' }
-if ([string]$nets[0].SwitchName -ne [string]$data.networkReference) { Connect-VMNetworkAdapter -VMNetworkAdapter $nets[0] -VMSwitch $switch -ErrorAction Stop }
+$networkMatches = if ([string]$data.networkControl -eq 'owned') { [string]$nets[0].SwitchName -eq [string]$data.networkReference } else { ([string]$nets[0].SwitchId).ToLowerInvariant() -eq ([string]$data.networkReference).ToLowerInvariant() }
+if (-not $networkMatches) { Connect-VMNetworkAdapter -VMNetworkAdapter $nets[0] -VMSwitch $switch -ErrorAction Stop }
 if (-not (Test-Path -LiteralPath $data.diskPath -PathType Leaf)) {
   $null = New-VHD -Path ([string]$data.diskPath) -Dynamic -SizeBytes ([long]$data.diskBytes) -ErrorAction Stop
 }
@@ -199,6 +216,22 @@ if ([string]$item.State -eq 'Off') { Start-VM -Name ([string]$data.name) -ErrorA
 elseif ([string]$item.State -ne 'Running') { throw 'construction machine is not startable' }
 $item = Get-VM -Name ([string]$data.name) -ErrorAction Stop
 @{ started = $true; state = ([string]$item.State).ToLowerInvariant() } | ConvertTo-Json -Compress
+`;
+
+const GUEST_ADDRESS_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$data = [Console]::In.ReadToEnd() | ConvertFrom-Json
+Import-Module Hyper-V -ErrorAction Stop
+$item = Get-VM -Name ([string]$data.name) -ErrorAction Stop
+if ([string]$item.Notes -ne [string]$data.marker) { throw 'construction machine ownership proof does not match' }
+if (([string]$item.Id).ToLowerInvariant() -ne ([string]$data.providerIdentity).ToLowerInvariant()) { throw 'construction provider identity changed' }
+if ([string]$item.State -ne 'Running') { @{ ready = $false; reason = 'construction machine is not running'; addresses = @() } | ConvertTo-Json -Compress; exit 0 }
+$adapters = @(Get-VMNetworkAdapter -VMName ([string]$data.name) -ErrorAction Stop)
+if ($adapters.Count -ne 1) { throw 'construction network adapter count is incompatible' }
+$matches = if ([string]$data.networkControl -eq 'owned') { [string]$adapters[0].SwitchName -eq [string]$data.networkReference } else { ([string]$adapters[0].SwitchId).ToLowerInvariant() -eq ([string]$data.networkReference).ToLowerInvariant() }
+if (-not $matches) { throw 'construction network binding changed' }
+@{ ready = $true; reason = $null; addresses = @($adapters[0].IPAddresses) } | ConvertTo-Json -Compress
 `;
 
 const BOOT_INSTALLED_SCRIPT = String.raw`
@@ -389,6 +422,7 @@ export class HyperVImageConstruction {
       diskBytes: record.diskBytes,
       networkReference: record.network.reference,
       networkProof: record.network.proof,
+      networkControl: record.network.control,
     }, 120_000);
     if (result.ready !== true || typeof result.providerIdentity !== 'string') throw new Error('construction preparation did not become ready');
     record.providerIdentity = result.providerIdentity;
@@ -429,6 +463,24 @@ export class HyperVImageConstruction {
       throw new Error('construction is not running from its installed disk for qualification');
     }
     return Object.freeze({ reference: record.name, proof: record.marker });
+  }
+
+  async connectionAddress(rawIdentity) {
+    const identity = subject(rawIdentity);
+    const state = await this.#load();
+    const record = state.records[identity];
+    if (!record || record.phase !== 'qualifying' || !record.providerIdentity) throw new Error('construction is not available for access');
+    const observed = await this.#run(GUEST_ADDRESS_SCRIPT, {
+      ...this.#descriptor(record),
+      networkControl: record.network.control,
+      networkReference: record.network.reference,
+    }, 30_000);
+    if (observed?.ready !== true) return Object.freeze({ ready: false, reason: String(observed?.reason ?? 'construction guest address is unavailable'), address: null });
+    if (!Array.isArray(observed.addresses)) throw new Error('construction guest address observation is invalid');
+    const addresses = [...new Set(observed.addresses.map(String).filter((entry) => IPV4.test(entry) && privateIpv4(entry)))];
+    if (addresses.length === 0) return Object.freeze({ ready: false, reason: 'construction guest has not reported a private IPv4 address', address: null });
+    if (addresses.length !== 1) throw new Error('construction guest reported ambiguous private IPv4 addresses');
+    return Object.freeze({ ready: true, reason: null, address: addresses[0] });
   }
 
   async startInstall(rawIdentity) {

@@ -21,6 +21,7 @@ function fakeHost() {
     calls: [],
     failAfterBootEffect: false,
     failAfterRetainEffect: false,
+    guestAddresses: [],
   };
   return {
     state,
@@ -50,6 +51,8 @@ function fakeHost() {
       } else if (script.includes('construction machine is not startable')) {
         state.machineState = 'running';
         body = { started: true, state: 'running' };
+      } else if (script.includes('addresses = @($adapters[0].IPAddresses)')) {
+        body = { ready: true, reason: null, addresses: [...state.guestAddresses] };
       } else if (script.includes('installer must finish and power off before installed boot')) {
         if (state.machineState !== 'off') return { exitCode: 1, stdout: '', stderr: 'installer must finish and power off before installed boot', timedOut: false, aborted: false, outputTruncated: false };
         state.mediaCount = 0;
@@ -112,7 +115,7 @@ async function fixture() {
       memoryBytes: 2 * 1024 * 1024 * 1024,
       processorCount: 2,
       diskBytes: 32 * 1024 * 1024 * 1024,
-      network: { reference: 'db-network-0123456789abcdef', proof: 'devbridge-owned:test-network:v1' },
+      network: { control: 'owned', reference: 'db-network-0123456789abcdef', proof: 'devbridge-owned:test-network:v1' },
     },
   };
 }
@@ -226,6 +229,34 @@ test('Hyper-V image construction refuses request drift and media mutation before
     await writeFile(data.request.installer.location, 'changed-media');
     await assert.rejects(() => construction.startInstall(data.request.identity), /byte count changed|digest changed/u);
     assert.equal(host.state.machineState, 'off');
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('Hyper-V image construction binds an exact system-managed switch and resolves one private guest address', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  const networkId = 'c08cb7b8-9b3c-408e-8e30-5e16a3aeb444';
+  data.request.network = { control: 'system', reference: networkId, proof: networkId };
+  try {
+    const construction = constructor(data, host, '1'.repeat(32));
+    await construction.prepare(data.request);
+    const prepare = host.state.calls.find((entry) => entry.script.includes('construction media attachment count is incompatible'));
+    assert.equal(prepare.payload.networkControl, 'system');
+    assert.equal(prepare.payload.networkReference, networkId);
+    assert.match(prepare.script, /Get-VMSwitch -Id/u);
+    assert.match(prepare.script, /SwitchId/u);
+
+    await construction.startInstall(data.request.identity);
+    host.state.machineState = 'off';
+    await construction.bootInstalled(data.request.identity);
+    host.state.guestAddresses = ['fe80::1', '169.254.10.2', '172.27.17.42'];
+    assert.deepEqual(await construction.connectionAddress(data.request.identity), { ready: true, reason: null, address: '172.27.17.42' });
+
+    host.state.guestAddresses = [];
+    assert.deepEqual(await construction.connectionAddress(data.request.identity), { ready: false, reason: 'construction guest has not reported a private IPv4 address', address: null });
+
+    host.state.guestAddresses = ['10.0.0.2', '192.168.1.2'];
+    await assert.rejects(() => construction.connectionAddress(data.request.identity), /ambiguous private IPv4/u);
   } finally { await rm(data.directory, { recursive: true, force: true }); }
 });
 

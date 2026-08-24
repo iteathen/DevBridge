@@ -20,9 +20,9 @@ import { createHttpsFileDownload } from '../runtime/https-file-download.js';
 import { loadOrCreateLocalIdentity } from '../runtime/local-identity.js';
 import { HyperVEnvironmentBootstrap } from '../runtime/providers/hyperv-environment-bootstrap.js';
 import { HyperVEnvironmentBridge } from '../runtime/providers/hyperv-environment-bridge.js';
-import { createHyperVEnvironmentLocation } from '../runtime/providers/hyperv-environment-location.js';
 import { createHyperVImageConstruction } from '../runtime/providers/hyperv-image-construction.js';
 import { createWindowsImapiNoCloudSeedWriter } from '../runtime/providers/windows-imapi-nocloud-seed.js';
+import { createWindowsManagedConstructionNetwork } from '../runtime/providers/windows-managed-construction-network.js';
 import { createWindowsProductionImageCanaryPreflight } from '../runtime/providers/windows-production-image-canary-preflight.js';
 import { createSshAccessMaterial } from '../runtime/ssh-access-material.js';
 import { createSshAccessProbe } from '../runtime/ssh-access-probe.js';
@@ -35,11 +35,10 @@ import { createEnvironmentFoundation } from './environment-foundation.js';
 
 const CONFIG_PROTOCOL = 'devbridge/ubuntu-production-image-physical-canary-config-v1';
 const STATUS_PROTOCOL = 'devbridge/ubuntu-production-image-physical-canary-status-v1';
-const PREPARATION_PROTOCOL = 'devbridge/ubuntu-production-image-physical-preparation-v1';
+const PREPARATION_PROTOCOL = 'devbridge/ubuntu-production-image-physical-preparation-v2';
 const SOURCE_HOSTS = Object.freeze(['releases.ubuntu.com', 'cdimage.ubuntu.com']);
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
-const IPV4 = /^(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/u;
 const MIN_MEMORY_BYTES = 512 * 1024 * 1024;
 const MAX_MEMORY_BYTES = 1024 * 1024 * 1024 * 1024;
 const MIN_DISK_BYTES = 8 * 1024 * 1024 * 1024;
@@ -137,17 +136,14 @@ function receiptMedia(raw, name) {
 }
 
 function receiptNetwork(raw) {
-  const value = onlyKeys(raw, new Set(['reference', 'proof', 'address', 'prefixLength', 'gateway', 'dns']), 'physical preparation network');
-  if (!Array.isArray(value.dns) || value.dns.length < 1 || value.dns.length > 4 || value.dns.some((entry) => typeof entry !== 'string' || !IPV4.test(entry))) throw new TypeError('physical preparation network.dns is invalid');
-  if (typeof value.address !== 'string' || !IPV4.test(value.address) || typeof value.gateway !== 'string' || !IPV4.test(value.gateway)) throw new TypeError('physical preparation network address is invalid');
-  if (!Number.isInteger(value.prefixLength) || value.prefixLength < 8 || value.prefixLength > 30) throw new TypeError('physical preparation network prefixLength is invalid');
+  const value = onlyKeys(raw, new Set(['control', 'reference', 'proof', 'addressing']), 'physical preparation network');
+  if (!['owned', 'system'].includes(value.control)) throw new TypeError('physical preparation network.control is invalid');
+  if (value.addressing !== 'automatic') throw new TypeError('physical preparation network.addressing is invalid');
   return Object.freeze({
+    control: value.control,
     reference: safeString(value.reference, 'physical preparation network.reference', 160),
     proof: safeString(value.proof, 'physical preparation network.proof', 2048),
-    address: value.address,
-    prefixLength: value.prefixLength,
-    gateway: value.gateway,
-    dns: Object.freeze([...value.dns]),
+    addressing: value.addressing,
   });
 }
 
@@ -302,9 +298,8 @@ async function cleanupCompletedState({ paths, subject, invoke }) {
 
 async function createPhysicalRuntime({ config, subject, payload, paths, invoke, fetchImpl, catalog, preparationStore, signatureVerifierExecutable }) {
   const localIdentity = await loadOrCreateLocalIdentity({ directory: paths.foundationRoot });
-  const providerLocation = createHyperVEnvironmentLocation(localIdentity);
-  const networkIdentity = providerLocation.network();
   const foundation = await createEnvironmentFoundation({ stateDirectory: config.stateDirectory, platform: 'win32', invoke });
+  const constructionNetwork = createWindowsManagedConstructionNetwork({ invoke });
   const construction = createHyperVImageConstruction({
     directory: paths.constructionDirectory,
     sourceRoot: paths.sourceRoot,
@@ -313,12 +308,6 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
     invoke,
   });
   const accessMaterial = createSshAccessMaterial({ directory: paths.accessRoot, invoke });
-  const addressOwner = new HyperVEnvironmentBootstrap({
-    directory: path.join(paths.foundationRoot, 'bootstrap', 'attachment'),
-    invoke,
-    locate: async (target) => Object.freeze({ ...providerLocation.environment(target), family: 'linux', network: networkIdentity }),
-    connection: async (target) => accessMaterial.connection(target),
-  });
 
   const preparationRequest = (receipt) => Object.freeze({
     identity: subject,
@@ -327,7 +316,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
     memoryBytes: config.resources.memoryBytes,
     processorCount: config.resources.processorCount,
     diskBytes: config.resources.diskBytes,
-    network: Object.freeze({ reference: receipt.network.reference, proof: receipt.network.proof }),
+    network: Object.freeze({ control: receipt.network.control, reference: receipt.network.reference, proof: receipt.network.proof }),
   });
 
   const loadReceipt = async () => {
@@ -338,14 +327,12 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
 
   const ensureNetworkReceipt = async (receipt) => {
     await foundation.ensureStorage();
-    await foundation.ensureNetwork();
-    const lease = await addressOwner.reserveAddress(subject, networkIdentity);
+    const selected = await constructionNetwork.require();
     if (
-      receipt.network.reference !== networkIdentity.reference
-      || receipt.network.proof !== networkIdentity.proof
-      || receipt.network.address !== lease.address
-      || receipt.network.prefixLength !== lease.prefixLength
-      || receipt.network.gateway !== lease.gateway
+      receipt.network.control !== selected.binding.control
+      || receipt.network.reference !== selected.binding.reference
+      || receipt.network.proof !== selected.binding.proof
+      || receipt.network.addressing !== selected.addressing.method
     ) throw new Error('physical preparation network identity changed');
     return receipt;
   };
@@ -355,9 +342,8 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
     if (observed.phase !== 'absent') throw new Error('construction state exists without its physical preparation receipt');
     await rm(paths.subjectRoot, { recursive: true, force: true });
     await mkdir(paths.subjectRoot, { recursive: false, mode: 0o700 });
-    let reserved = false;
     let preparedAccess = null;
-    let lease = null;
+    let selectedNetwork = null;
     try {
       const download = createHttpsFileDownload({ fetchImpl, allowedHosts: SOURCE_HOSTS });
       const verifyManifest = createDetachedSignatureVerifier({ invoke, keyring: config.keyring, executable: signatureVerifierExecutable ?? undefined });
@@ -386,17 +372,12 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
         seedFactory: async ({ recipeGeneration, sourceIdentity }) => {
           if (recipeGeneration !== authority.recipe.generation || sourceIdentity.sha256 !== authority.source.media.sha256) throw new Error('autoinstall seed basis changed');
           await foundation.ensureStorage();
-          await foundation.ensureNetwork();
-          lease = await addressOwner.reserveAddress(subject, networkIdentity);
-          reserved = true;
+          selectedNetwork = await constructionNetwork.require();
           preparedAccess = await accessMaterial.prepare(subject);
           const keyMaterial = await accessSeed(preparedAccess.seedFile, subject);
           return seedFactory.create({
             identity: subject,
-            address: lease.address,
-            prefixLength: lease.prefixLength,
-            gateway: lease.gateway,
-            dns: lease.dns,
+            network: selectedNetwork.addressing,
             authorizedKey: keyMaterial.authorizedKey,
             hostPrivateKey: keyMaterial.hostPrivateKey,
             hostPublicKey: keyMaterial.hostPublicKey,
@@ -406,11 +387,12 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
       });
       const admitted = await source.acquire({ authorityRef: subject, destination: paths.releaseDirectory });
       const prepared = await media.prepare({ source: admitted, recipeRef: subject, destination: paths.preparedDirectory });
-      if (!lease || !preparedAccess) throw new Error('physical preparation did not establish bounded host material');
+      if (!selectedNetwork || !preparedAccess) throw new Error('physical preparation did not establish bounded host material');
       if (
         prepared.evidence?.seed?.payloadGeneration !== payload.generation
         || prepared.evidence?.seed?.packageGeneration !== authority.packages.generation
         || prepared.evidence?.seed?.packageSnapshot !== authority.packages.snapshot
+        || prepared.evidence?.seed?.networkMethod !== selectedNetwork.addressing.method
       ) throw new Error('prepared seed evidence does not match construction authority');
       await rm(paths.releaseDirectory, { recursive: true, force: true });
       const baseAccess = preparedAccess.connection;
@@ -425,7 +407,12 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
         packageGeneration: authority.packages.generation,
         packageSnapshot: authority.packages.snapshot,
         resources: config.resources,
-        network: Object.freeze({ reference: networkIdentity.reference, proof: networkIdentity.proof, ...lease, dns: [...lease.dns] }),
+        network: Object.freeze({
+          control: selectedNetwork.binding.control,
+          reference: selectedNetwork.binding.reference,
+          proof: selectedNetwork.binding.proof,
+          addressing: selectedNetwork.addressing.method,
+        }),
         installer: Object.freeze({ ...prepared.installer }),
         seed: Object.freeze({ location: prepared.seed.location, bytes: prepared.seed.bytes, sha256: prepared.seed.sha256 }),
         access: Object.freeze({
@@ -440,7 +427,6 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
       await preparationStore.set(subject, receipt);
       return receipt;
     } catch (error) {
-      if (reserved) await addressOwner.releaseAddress(subject).catch(() => {});
       await accessMaterial.discard(subject).catch(() => {});
       await rm(paths.subjectRoot, { recursive: true, force: true }).catch(() => {});
       throw error;
@@ -466,7 +452,9 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
     if (target !== subject) throw new Error('physical canary access target changed');
     const receipt = await loadReceipt();
     if (!receipt) throw new Error('physical canary access is unavailable before preparation');
-    return Object.freeze({ family: 'linux', user: receipt.access.user, address: receipt.network.address, identityFile: receipt.access.identityFile, knownHostsFile: receipt.access.knownHostsFile });
+    const endpoint = await construction.connectionAddress(target);
+    if (endpoint?.ready !== true) throw new Error(endpoint?.reason ?? 'physical canary guest address is unavailable');
+    return Object.freeze({ family: 'linux', user: receipt.access.user, address: endpoint.address, identityFile: receipt.access.identityFile, knownHostsFile: receipt.access.knownHostsFile });
   };
   const bridge = new HyperVEnvironmentBridge({ invoke, access, locate: (target) => construction.locate(target) });
   const finalizer = createSshImageFinalization({ invoke, access });
@@ -478,7 +466,6 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
     construction,
     access,
     accessProbe: createSshAccessProbe({ invoke }),
-    addressOwner,
     accessMaterial,
   });
 }
@@ -600,7 +587,9 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
           if (observed.state !== 'running' || observed.mediaCount !== 0) {
             return publicResult(subject, current, { state: 'waiting', reason: 'installed image is not yet running from its retained disk', authorityRegistered: true, preflight: before.preflight });
           }
-          const access = await runtime.access(subject);
+          let access;
+          try { access = await runtime.access(subject); }
+          catch (error) { return publicResult(subject, current, { state: 'waiting', reason: `installed image access endpoint is not ready: ${error.message}`, authorityRegistered: true, preflight: before.preflight }); }
           const observedAccess = await runtime.accessProbe.inspect(access);
           if (observedAccess.ready !== true) return publicResult(subject, current, { state: 'waiting', reason: `installed image access is not ready: ${observedAccess.reason ?? 'unknown failure'}`, authorityRegistered: true, preflight: before.preflight });
         }

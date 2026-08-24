@@ -16,7 +16,7 @@ function index(entries) {
 
 function responseFor(url) {
   const body = url.includes('/main/')
-    ? index([['build-essential', '12.12ubuntu1'], ['cmake', '3.31.6-1'], ['git', '1:2.48.1-0ubuntu1']])
+    ? index([['build-essential', '12.12ubuntu1'], ['cmake', '3.31.6-1'], ['git', '1:2.48.1-0ubuntu1'], ['linux-cloud-tools-virtual', '7.0.0-14.14']])
     : index([['nodejs', '22.16.0+dfsg-1'], ['npm', '10.9.2+ds-1']]);
   return new Response(body, { status: 200, headers: { 'content-length': String(body.length) } });
 }
@@ -37,6 +37,7 @@ test('setup resolves every required package from the exact snapshot without fixt
     { name: 'build-essential', version: '12.12ubuntu1' },
     { name: 'cmake', version: '3.31.6-1' },
     { name: 'git', version: '1:2.48.1-0ubuntu1' },
+    { name: 'linux-cloud-tools-virtual', version: '7.0.0-14.14' },
     { name: 'nodejs', version: '22.16.0+dfsg-1' },
     { name: 'npm', version: '10.9.2+ds-1' },
   ]);
@@ -51,6 +52,8 @@ test('setup authority binds source policy, exact snapshot and current payload ge
   assert.equal(authority.source.media.sha256, 'dec49008a71f6098d0bcfc822021f4d042d5f2db279e4d75bdd981304f1ca5d9');
   assert.equal(authority.source.media.bytes, 2_918_598_656);
   assert.equal(authority.packages.snapshot, SNAPSHOT);
+  assert.equal(authority.packages.generation, 'ubuntu-2604-tools-v2');
+  assert.deepEqual(authority.qualification.commands, ['hv_kvp_daemon', 'make']);
   assert.equal(authority.payload.generation, 'guest-image-current');
   assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v3');
   assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 2, ...UBUNTU_SETUP_BOOT_PATCH }]);

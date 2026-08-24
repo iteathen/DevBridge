@@ -11,10 +11,7 @@ const snapshot = '20260823T100000Z';
 function request(overrides = {}) {
   return {
     identity: 'subject-0123456789abcdef0123456789abcdef',
-    address: '192.168.77.23',
-    prefixLength: 24,
-    gateway: '192.168.77.1',
-    dns: ['1.1.1.1', '8.8.8.8'],
+    network: { method: 'automatic' },
     authorizedKey: publicKey,
     hostPrivateKey,
     hostPublicKey,
@@ -64,6 +61,8 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.match(result.userData, /^#cloud-config\nautoinstall:/u);
   assert.match(result.userData, /"nodejs=22\.16\.0\+dfsg-1"/u);
   assert.match(result.userData, /"linux-cloud-tools-virtual=6\.14\.0\.29\.29"/u);
+  assert.match(result.userData, /dhcp4: true/u);
+  assert.doesNotMatch(result.userData, /192\.168\.77/u);
   assert.match(result.userData, new RegExp(`apt-get", "--snapshot", "${snapshot}", "update"`, 'u'));
   assert.match(result.userData, new RegExp(`apt-get", "--snapshot", "${snapshot}", "install", "-y", "--no-install-recommends"`, 'u'));
   assert.doesNotMatch(result.userData, /updates:\s+security/u);
@@ -71,12 +70,23 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.equal(result.evidence.payloadGeneration, 'guest-payload-v7');
   assert.equal(result.evidence.packageGeneration, 'ubuntu-tools-v4');
   assert.equal(result.evidence.packageSnapshot, snapshot);
+  assert.equal(result.evidence.networkMethod, 'automatic');
   assert.equal(result.evidence.packages.find((entry) => entry.name === 'git').version, '1:2.48.1-0ubuntu1');
   assert.equal(result.evidence.files.length, 3);
   assert.match(result.evidence.userDataSha256, /^[a-f0-9]{64}$/u);
   assert.equal(JSON.stringify(result.evidence).includes('transient-private-material'), false);
   assert.equal(JSON.stringify(result.evidence).includes(publicKey), false);
   assert.match(result.metaData, /^instance-id: devbridge-image-/u);
+});
+
+test('Ubuntu production seed retains a topology-neutral exact static addressing contract', async () => {
+  const result = await factory().create(request({
+    network: { method: 'static', address: '192.168.77.23', prefixLength: 24, gateway: '192.168.77.1', dns: ['1.1.1.1', '8.8.8.8'] },
+  }));
+  assert.match(result.userData, /dhcp4: false/u);
+  assert.match(result.userData, /192\.168\.77\.23\/24/u);
+  assert.match(result.userData, /via: "192\.168\.77\.1"/u);
+  assert.equal(result.evidence.networkMethod, 'static');
 });
 
 test('Ubuntu production seed accepts the guest payload owner exact byte and digest evidence through the neutral seam', async () => {
