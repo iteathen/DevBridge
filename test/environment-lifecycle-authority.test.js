@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {
   ENVIRONMENT_LIFECYCLE_AUTHORITY_REQUEST_PROTOCOL,
   LifecycleAuthorityClient,
-  createLifecycleAuthorityHandler,
+  createLifecycleAuthorityMutationHandler,
+  createLifecycleAuthorityReadHandler,
   normalizeLifecycleAuthorityRequest,
 } from '../src/runtime/environment-lifecycle-authority.js';
 
@@ -25,7 +26,11 @@ function operatorFixture(calls) {
 
 test('authority client routes only the existing neutral environment operator stud', async () => {
   const calls = [];
-  const client = new LifecycleAuthorityClient({ exchange: createLifecycleAuthorityHandler({ operator: operatorFixture(calls) }) });
+  const operator = operatorFixture(calls);
+  const client = new LifecycleAuthorityClient({
+    readExchange: createLifecycleAuthorityReadHandler({ operator }),
+    mutationExchange: createLifecycleAuthorityMutationHandler({ operator }),
+  });
 
   await client.inspect();
   await client.status(ENV);
@@ -40,6 +45,23 @@ test('authority client routes only the existing neutral environment operator stu
     ['run', 'reset', ENV, { approval: 'reset-subject' }],
     ['resume', ENV, { approval: 'reset-subject' }],
   ]);
+});
+
+test('read and mutation capabilities are separate authority endpoints', async () => {
+  const calls = [];
+  const operator = operatorFixture(calls);
+  const read = createLifecycleAuthorityReadHandler({ operator });
+  const mutation = createLifecycleAuthorityMutationHandler({ operator });
+  const base = { protocol: ENVIRONMENT_LIFECYCLE_AUTHORITY_REQUEST_PROTOCOL, requestId: '11111111-1111-4111-8111-111111111111' };
+
+  const deniedMutation = await read({ ...base, operation: 'run', payload: { operation: 'reset', identity: ENV, approval: 'reset-subject' } });
+  assert.equal(deniedMutation.ok, false);
+  assert.equal(deniedMutation.error.code, 'OPERATION_NOT_ALLOWED');
+
+  const deniedRead = await mutation({ ...base, operation: 'status', payload: { identity: ENV } });
+  assert.equal(deniedRead.ok, false);
+  assert.equal(deniedRead.error.code, 'OPERATION_NOT_ALLOWED');
+  assert.equal(calls.length, 0);
 });
 
 test('lower provider and PersistentEnvironments mutation methods are not remotely addressable', () => {
@@ -64,7 +86,7 @@ test('authority protocol rejects path, command, provider and arbitrary-field smu
 
 test('authority handler fails closed on malformed requests without invoking operator', async () => {
   const calls = [];
-  const handler = createLifecycleAuthorityHandler({ operator: operatorFixture(calls) });
+  const handler = createLifecycleAuthorityMutationHandler({ operator: operatorFixture(calls) });
   const result = await handler({
     protocol: ENVIRONMENT_LIFECYCLE_AUTHORITY_REQUEST_PROTOCOL,
     requestId: '11111111-1111-4111-8111-111111111111',
@@ -80,7 +102,10 @@ test('authority result refuses host/provider detail and does not return raw prov
   const calls = [];
   const operator = operatorFixture(calls);
   operator.status = async () => ({ environmentIdentity: ENV, path: 'C:\\private\\state.vhdx' });
-  const client = new LifecycleAuthorityClient({ exchange: createLifecycleAuthorityHandler({ operator }) });
+  const client = new LifecycleAuthorityClient({
+    readExchange: createLifecycleAuthorityReadHandler({ operator }),
+    mutationExchange: createLifecycleAuthorityMutationHandler({ operator }),
+  });
   await assert.rejects(client.status(ENV), (error) => error.code === 'OPERATION_FAILED');
 
   operator.status = async () => ({ environmentIdentity: ENV, detail: '/var/lib/libvirt/images/owned.qcow2' });
@@ -96,14 +121,18 @@ test('authority result refuses host/provider detail and does not return raw prov
 });
 
 test('client treats exchange failure and response ownership mismatch as authority failure', async () => {
-  const unavailable = new LifecycleAuthorityClient({ exchange: async () => { throw new Error('socket down'); } });
+  const unavailable = new LifecycleAuthorityClient({
+    readExchange: async () => { throw new Error('socket down'); },
+    mutationExchange: async () => { throw new Error('socket down'); },
+  });
   await assert.rejects(unavailable.status(ENV), /authority is unavailable/u);
 
-  const mismatched = new LifecycleAuthorityClient({ exchange: async (request) => ({
+  const mismatchedExchange = async (request) => ({
     protocol: 'devbridge/environment-lifecycle-authority-result-v1',
     requestId: request.requestId.replace(/^./u, request.requestId[0] === '0' ? '1' : '0'),
     ok: true,
     value: {},
-  }) });
+  });
+  const mismatched = new LifecycleAuthorityClient({ readExchange: mismatchedExchange, mutationExchange: mismatchedExchange });
   await assert.rejects(mismatched.status(ENV), /ownership proof is invalid/u);
 });
