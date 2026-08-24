@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { UbuntuReleaseMediaSource } from '../src/runtime/image-sources/ubuntu-release-media.js';
@@ -53,6 +53,51 @@ test('Ubuntu release source binds signed manifest, exact digest, size, and offic
     assert.equal(result.identity.release, '26.04');
     assert.equal(result.identity.checksumManifestSha256, sha256(manifest));
     assert.deepEqual(downloads, [approved.checksums.manifestUrl, approved.checksums.signatureUrl, approved.media.url]);
+  } finally { await rm(parent, { recursive: true, force: true }); }
+});
+
+test('Ubuntu release source reuses exact content-addressed media across construction subjects', async () => {
+  const parent = await root();
+  try {
+    const media = 'same-upstream-iso';
+    const approved = authority(media);
+    const manifest = `${approved.media.sha256}  ${approved.media.name}\n`;
+    const payloads = new Map([
+      [approved.checksums.manifestUrl, manifest],
+      [approved.checksums.signatureUrl, 'signature-bytes'],
+      [approved.media.url, media],
+    ]);
+    const cache = path.join(parent, 'source-cache');
+    let mediaDownloads = 0;
+    const resumeRequests = [];
+    const source = new UbuntuReleaseMediaSource({
+      authorityLookup: async () => approved,
+      mediaCacheDirectory: cache,
+      download: async ({ url, destination, resume }) => {
+        if (url === approved.media.url) {
+          mediaDownloads += 1;
+          resumeRequests.push(resume);
+        }
+        await writeFile(destination, payloads.get(url));
+        return { finalUrl: url };
+      },
+      verifyManifest: async ({ expectedFingerprint }) => ({ verified: true, signerFingerprint: expectedFingerprint, manifestSha256: sha256(manifest) }),
+    });
+
+    const first = await source.acquire({
+      authorityRef: 'subject-0123456789abcdef0123456789abcdef',
+      destination: path.join(parent, 'first'),
+    });
+    const second = await source.acquire({
+      authorityRef: 'subject-fedcba9876543210fedcba9876543210',
+      destination: path.join(parent, 'second'),
+    });
+    const cached = path.join(cache, `${approved.media.sha256}.iso`);
+    assert.equal(first.location, cached);
+    assert.equal(second.location, cached);
+    assert.equal(mediaDownloads, 1);
+    assert.deepEqual(resumeRequests, [{ bytes: approved.media.bytes, sha256: approved.media.sha256 }]);
+    assert.equal(await readFile(cached, 'utf8'), media);
   } finally { await rm(parent, { recursive: true, force: true }); }
 });
 
