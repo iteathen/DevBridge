@@ -18,7 +18,7 @@ const installationTag = process.env.DEVBRIDGE_INSTALLATION_TAG;
 if (/^DB-[0-9A-F]{12}$/u.test(installationTag ?? '')) process.title = `DevBridge[${installationTag}]`;
 
 function usage() {
-  console.error('Usage: devbridge setup [--home <path>] [--repository owner/name|all]...');
+  console.error('Usage: devbridge setup [--construct] [--home <path>] [--repository owner/name|all]...');
   console.error('       devbridge <doctor|poll-once|run-once|daemon|status|pause|resume|stop|restart|handoff-status|handoff-seed|handoff-project|environment> --config <path> [options]');
   console.error('       devbridge environment <list|show|plan|create|repair|rebuild|reset|recreate|resume|setup-reentry> --config <path> [--identity id|--profile name] [--operation op] [--confirm subject]');
 }
@@ -29,15 +29,32 @@ function optionValue(argv, name) {
   return argv[index + 1];
 }
 
-function optionValues(argv, name) {
-  const values = [];
+function setupOptions(argv) {
+  let home = null;
+  let construct = false;
+  const repositories = [];
   for (let index = 0; index < argv.length; index += 1) {
-    if (argv[index] !== name) continue;
-    if (!argv[index + 1]) throw new PolicyError(`${name} requires a value`);
-    values.push(argv[index + 1]);
-    index += 1;
+    const option = argv[index];
+    if (option === '--construct') {
+      if (construct) throw new PolicyError('--construct may be specified only once');
+      construct = true;
+      continue;
+    }
+    if (option === '--home' || option === '--repository') {
+      const value = argv[index + 1];
+      if (!value || value.startsWith('--')) throw new PolicyError(`${option} requires a value`);
+      if (option === '--home') {
+        if (home != null) throw new PolicyError('--home may be specified only once');
+        home = value;
+      } else {
+        repositories.push(value);
+      }
+      index += 1;
+      continue;
+    }
+    throw new PolicyError(`unsupported setup option: ${option}`);
   }
-  return values;
+  return Object.freeze({ home, construct, repositories: Object.freeze(repositories) });
 }
 
 function configPath(argv) {
@@ -111,10 +128,11 @@ async function main() {
   }
 
   if (command === 'setup') {
-    const requestedRepositories = optionValues(args, '--repository');
+    const selected = setupOptions(args);
     const result = await runDevBridgeSetup({
-      home: optionValue(args, '--home'),
-      requestedRepositories: requestedRepositories.length > 0 ? requestedRepositories : null,
+      home: selected.home,
+      requestedRepositories: selected.repositories.length > 0 ? selected.repositories : null,
+      construct: selected.construct,
     });
     process.stdout.write(formatSetupHandoff(result));
     if (result.blocked) process.exitCode = 3;

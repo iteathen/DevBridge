@@ -67,8 +67,8 @@ function acceptedRepositorySelection(previous, identity, requestedRepositories) 
   return previous.repositories.selected;
 }
 
-function publicResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, physical = null, blocker = null }) {
-  const readyForConstruction = physical?.blocked === false && physical?.complete !== true && physical?.state === 'absent';
+function publicResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, physical = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
+  const readyForConstruction = constructionAttempted !== true && physical?.blocked === false && physical?.complete !== true && physical?.state === 'absent';
   return Object.freeze({
     protocol: PROTOCOL,
     home,
@@ -76,6 +76,7 @@ function publicResult({ home, pathStatus, repositories = null, identity = null, 
     blocked: blocker != null || physical?.blocked === true,
     blocker: blocker ?? physical?.reason ?? null,
     readyForConstruction,
+    construction: Object.freeze({ requested: constructionRequested, attempted: constructionAttempted }),
     path: pathStatus,
     github: identity ? Object.freeze({ id: identity.id, login: identity.login }) : null,
     repositories,
@@ -87,7 +88,8 @@ function publicResult({ home, pathStatus, repositories = null, identity = null, 
 export function formatSetupHandoff(result) {
   if (!result || result.protocol !== PROTOCOL) throw new TypeError('setup handoff result is invalid');
   if (result.blocked) {
-    const lines = ['DevBridge setup is blocked.', '', `Reason: ${result.blocker ?? 'unknown blocker'}`];
+    const lines = [result.construction?.attempted ? 'DevBridge physical image construction is blocked.' : 'DevBridge setup is blocked.', '', `Reason: ${result.blocker ?? 'unknown blocker'}`];
+    if (result.construction?.attempted) lines.push('', 'Preserve the canary state; resolve only this blocker, then re-run devbridge setup --construct.');
     if (result.path?.requiresNewShell) lines.push('', `PATH is persisted; until a new shell is opened use: ${result.path.temporaryCommand}`);
     return `${lines.join('\n')}\n`;
   }
@@ -105,7 +107,21 @@ export function formatSetupHandoff(result) {
     ].join('\n');
   }
   if (result.phase === 'image-complete') {
-    return 'Welcome to DevBridge — the Linux production image is already complete.\n';
+    return result.construction?.attempted
+      ? 'DevBridge physical image construction canary completed.\n'
+      : 'Welcome to DevBridge — the Linux production image is already complete.\n';
+  }
+  if (result.construction?.attempted) {
+    const physical = result.linuxProfile?.physicalStatus;
+    const lines = [
+      'DevBridge physical image construction canary advanced to a durable frontier.',
+      '',
+      `State: ${physical?.state ?? result.phase ?? 'unknown'}`,
+    ];
+    if (physical?.phase) lines.push(`Phase: ${physical.phase}`);
+    if (physical?.reason) lines.push(`Reason: ${physical.reason}`);
+    lines.push('', 'Re-run devbridge setup --construct to continue from this durable frontier.', '');
+    return lines.join('\n');
   }
   return `DevBridge setup state: ${result.phase}\n`;
 }
@@ -113,6 +129,7 @@ export function formatSetupHandoff(result) {
 export async function runDevBridgeSetup({
   home = null,
   requestedRepositories = null,
+  construct = false,
   env = process.env,
 } = {}, {
   invoke = invokeCommand,
@@ -130,6 +147,7 @@ export async function runDevBridgeSetup({
   authorityFactory = createUbuntuSetupAuthority,
   canaryFactory = createUbuntuProductionImagePhysicalCanary,
 } = {}) {
+  if (typeof construct !== 'boolean') throw new TypeError('DevBridge setup construction option must be boolean');
   const root = absoluteHome(home);
   const store = storeFactory(path.join(root, 'state', 'setup.json'));
   const previous = await store.get(STATE_KEY);
@@ -144,17 +162,17 @@ export async function runDevBridgeSetup({
       invoke,
     });
   } catch (error) {
-    return publicResult({ home: root, pathStatus: null, blocker: error.message });
+    return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: error.message });
   }
 
   const token = await tokenResolver({ env, invoke });
-  if (!token) return publicResult({ home: root, pathStatus, blocker: 'GitHub authentication is unavailable; authenticate with GitHub CLI or provide GH_TOKEN/GITHUB_TOKEN and re-run devbridge setup' });
+  if (!token) return publicResult({ home: root, pathStatus, constructionRequested: construct, blocker: 'GitHub authentication is unavailable; authenticate with GitHub CLI or provide GH_TOKEN/GITHUB_TOKEN and re-run devbridge setup' });
 
   let scope;
   try {
     scope = await discover(clientFactory(token));
   } catch (error) {
-    return publicResult({ home: root, pathStatus, blocker: `GitHub discovery failed: ${error.message}` });
+    return publicResult({ home: root, pathStatus, constructionRequested: construct, blocker: `GitHub discovery failed: ${error.message}` });
   }
 
   let repositories;
@@ -162,10 +180,10 @@ export async function runDevBridgeSetup({
     const accepted = acceptedRepositorySelection(previous, scope.identity, requestedRepositories);
     repositories = selectRepositories(scope.repositories, { requested: requestedRepositories, accepted });
   } catch (error) {
-    return publicResult({ home: root, pathStatus, identity: scope.identity, blocker: error.message });
+    return publicResult({ home: root, pathStatus, identity: scope.identity, constructionRequested: construct, blocker: error.message });
   }
   if (repositories.needsSelection) {
-    return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, blocker: repositories.reason });
+    return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, constructionRequested: construct, blocker: repositories.reason });
   }
 
   const snapshot = previous?.ubuntu?.snapshot ?? defaultUbuntuPackageSnapshot(now());
@@ -181,6 +199,7 @@ export async function runDevBridgeSetup({
       identity: scope.identity,
       repositories,
       snapshot,
+      constructionRequested: construct,
       blocker: `System prerequisite reconciliation failed: ${error.message}`,
     });
   }
@@ -192,6 +211,7 @@ export async function runDevBridgeSetup({
       repositories,
       snapshot,
       prerequisites,
+      constructionRequested: construct,
       blocker: prerequisites?.blocker ?? 'System prerequisites are not ready; resolve the reported host boundary and re-run devbridge setup',
     });
   }
@@ -210,7 +230,7 @@ export async function runDevBridgeSetup({
       authorityFactory({ snapshot, fetchImpl }),
     ]);
   } catch (error) {
-    return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, blocker: `Ubuntu construction authority is unavailable: ${error.message}` });
+    return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, constructionRequested: construct, blocker: `Ubuntu construction authority is unavailable: ${error.message}` });
   }
 
   const physicalConfig = Object.freeze({
@@ -222,14 +242,40 @@ export async function runDevBridgeSetup({
   });
 
   let physical;
+  let constructionAttempted = false;
   try {
     const canary = canaryFactory(physicalConfig, { platform, invoke, fetchImpl, signatureVerifierExecutable });
     physical = await canary.status();
+    if (construct === true && physical?.blocked !== true && physical?.complete !== true) {
+      constructionAttempted = true;
+      physical = await canary.run();
+    }
   } catch (error) {
-    return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, blocker: `read-only production-image status gate failed: ${error.message}` });
+    const prefix = constructionAttempted ? 'physical production-image construction failed' : 'read-only production-image status gate failed';
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      prerequisites,
+      constructionRequested: construct,
+      constructionAttempted,
+      blocker: `${prefix}: ${error.message}`,
+    });
   }
 
-  return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, physical });
+  return publicResult({
+    home: root,
+    pathStatus,
+    identity: scope.identity,
+    repositories,
+    snapshot,
+    prerequisites,
+    physical,
+    constructionRequested: construct,
+    constructionAttempted,
+  });
 }
 
 export { PROTOCOL as SETUP_STATUS_PROTOCOL };
