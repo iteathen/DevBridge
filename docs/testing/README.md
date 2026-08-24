@@ -12,6 +12,8 @@ The core principle is that long tests are allowed when they provide required evi
 
 Other audit documents in this directory are **point-in-time test/audit records**. They preserve what was tested, observed, missing, or recommended at a particular repository state.
 
+`DB-HO005-issue-197-physical-qualification.md` records the physical Windows/Hyper-V problems, bounded solutions, exact accepted PR evidence, and preserved host state encountered while qualifying issue #197. It remains point-in-time evidence; issue #197 and exact current code/CI govern subsequent progress.
+
 They are useful for provenance and regression archaeology, but they are not a live feature-status matrix.
 
 For current implementation and remaining work, use:

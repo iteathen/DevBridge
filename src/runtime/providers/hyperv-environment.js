@@ -38,8 +38,9 @@ function emptyState() { return { protocol: STATE_PROTOCOL, network: null }; }
 
 const CAPABILITY_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 Import-Module Hyper-V -ErrorAction Stop
-$required = @('Get-VMHost','Get-VM','Start-VM','Stop-VM','Remove-VM','Get-VHD','Test-VHD','Get-VMSwitch','New-VMSwitch','Set-VMSwitch','Remove-VMSwitch','Get-NetNat','New-NetNat','Remove-NetNat','Get-NetIPAddress','New-NetIPAddress','Remove-NetIPAddress','Get-NetRoute')
+$required = @('Get-VMHost','Get-VM','Start-VM','Stop-VM','Remove-VM','Get-VHD','Test-VHD','Get-VMSwitch','New-VMSwitch','Set-VMSwitch','Remove-VMSwitch','Get-NetNat','New-NetNat','Remove-NetNat','Get-NetIPAddress','New-NetIPAddress','Remove-NetIPAddress','Get-NetIPInterface','Get-NetRoute')
 foreach ($name in $required) { if (-not (Get-Command $name -ErrorAction SilentlyContinue)) { throw "required management operation is unavailable: $name" } }
 $null = Get-VMHost -ErrorAction Stop
 @{ ready = $true } | ConvertTo-Json -Compress
@@ -78,6 +79,7 @@ if ($null -eq $address) { @{ ready = $false; reason = 'network gateway address i
 
 const NETWORK_ENSURE_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 Import-Module Hyper-V -ErrorAction Stop
 function Convert-IPv4ToUInt32([string]$value) {
@@ -111,8 +113,15 @@ if ($null -eq $switch) {
   throw 'owned network switch type does not match'
 }
 $alias = "vEthernet ($($data.name))"
+$interface = $null
+for ($attempt = 0; $attempt -lt 40; $attempt += 1) {
+  $interface = Get-NetIPInterface -AddressFamily IPv4 -InterfaceAlias $alias -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($null -ne $interface) { break }
+  Start-Sleep -Milliseconds 250
+}
+if ($null -eq $interface) { throw 'owned network interface did not become ready' }
 $address = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.IPAddress -eq $data.gateway -and $_.InterfaceAlias -eq $alias } | Select-Object -First 1
-if ($null -eq $address) { $null = New-NetIPAddress -InterfaceAlias $alias -IPAddress $data.gateway -PrefixLength 24 -ErrorAction Stop }
+if ($null -eq $address) { $null = New-NetIPAddress -InterfaceIndex ([uint32]$interface.InterfaceIndex) -IPAddress $data.gateway -PrefixLength 24 -ErrorAction Stop }
 $nat = Get-NetNat -ErrorAction Stop | Where-Object { $_.Name -eq $data.name } | Select-Object -First 1
 if ($null -eq $nat) { $nat = New-NetNat -Name $data.name -InternalIPInterfaceAddressPrefix $data.prefix -ErrorAction Stop }
 elseif ([string]$nat.InternalIPInterfaceAddressPrefix -ne [string]$data.prefix) { throw 'network translation name is occupied with different state' }

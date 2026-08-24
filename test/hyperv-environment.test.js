@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { HyperVEnvironment } from '../src/runtime/providers/hyperv-environment.js';
+import { invokeCommand } from '../src/runtime/command-invocation.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -100,5 +101,76 @@ if (Prefix-Overlaps '192.168.10.0/24' '192.168.11.0/24') { throw 'disjoint prefi
       '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded,
     ], { encoding: 'utf8', timeout: 20_000, windowsHide: true });
     assert.deepEqual(JSON.parse(stdout), { ready: true });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Windows network setup waits for the exact host interface and keeps progress out of diagnostics', { skip: process.platform !== 'win32' }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage2-hv-interface-'));
+  let request;
+  try {
+    const adapter = new HyperVEnvironment({
+      directory: path.join(root, 'control'), assetRoot: path.join(root, 'images'),
+      identity: '0123456789abcdef0123456789abcdef',
+      invoke: async (received) => { request = received; return success({ ready: true }); },
+    });
+    await adapter.ensureNetwork();
+    const networkScript = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
+    const mocks = String.raw`
+function Import-Module { [CmdletBinding()] param([Parameter(Position=0)]$Name) }
+$script:interfaceChecks = 0
+function Get-VMSwitch { [CmdletBinding()] param() @() }
+function Get-NetRoute { [CmdletBinding()] param([string]$AddressFamily) @() }
+function Get-NetNat { [CmdletBinding()] param([string]$Name) @() }
+function New-VMSwitch { [CmdletBinding()] param([string]$Name, [string]$SwitchType) Write-Progress -Activity 'Create a virtual switch' -PercentComplete 80; [pscustomobject]@{ Name = $Name; SwitchType = $SwitchType } }
+function Set-VMSwitch { [CmdletBinding()] param([string]$Name, [string]$Notes) }
+function Get-NetIPInterface { [CmdletBinding()] param([string]$AddressFamily, [string]$InterfaceAlias) $script:interfaceChecks += 1; if ($script:interfaceChecks -ge 3) { [pscustomobject]@{ InterfaceIndex = 54; InterfaceAlias = $InterfaceAlias } } }
+function Start-Sleep { [CmdletBinding()] param([int]$Milliseconds) }
+function Get-NetIPAddress { [CmdletBinding()] param([string]$AddressFamily) @() }
+function New-NetIPAddress { [CmdletBinding()] param([uint32]$InterfaceIndex, [string]$InterfaceAlias, [string]$IPAddress, [byte]$PrefixLength) if ($script:interfaceChecks -lt 3 -or $InterfaceIndex -ne 54 -or -not [string]::IsNullOrEmpty($InterfaceAlias)) { throw 'gateway creation ran before the exact interface was ready' } }
+function New-NetNat { [CmdletBinding()] param([string]$Name, [string]$InternalIPInterfaceAddressPrefix) [pscustomobject]@{ Name = $Name; InternalIPInterfaceAddressPrefix = $InternalIPInterfaceAddressPrefix } }
+`;
+    const result = await invokeCommand({
+      ...request,
+      arguments: [...request.arguments.slice(0, -1), Buffer.from(`${mocks}\n${networkScript}`, 'utf16le').toString('base64')],
+      timeoutMs: 20_000,
+    });
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.deepEqual(JSON.parse(result.stdout), { ready: true });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Windows network setup fails at a bounded interface frontier before gateway or NAT mutation', { skip: process.platform !== 'win32' }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage2-hv-interface-timeout-'));
+  let request;
+  try {
+    const adapter = new HyperVEnvironment({
+      directory: path.join(root, 'control'), assetRoot: path.join(root, 'images'),
+      identity: '0123456789abcdef0123456789abcdef',
+      invoke: async (received) => { request = received; return success({ ready: true }); },
+    });
+    await adapter.ensureNetwork();
+    const networkScript = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
+    const mocks = String.raw`
+function Import-Module { [CmdletBinding()] param([Parameter(Position=0)]$Name) }
+function Get-VMSwitch { [CmdletBinding()] param() @() }
+function Get-NetRoute { [CmdletBinding()] param([string]$AddressFamily) @() }
+function Get-NetNat { [CmdletBinding()] param([string]$Name) @() }
+function New-VMSwitch { [CmdletBinding()] param([string]$Name, [string]$SwitchType) [pscustomobject]@{ Name = $Name; SwitchType = $SwitchType } }
+function Set-VMSwitch { [CmdletBinding()] param([string]$Name, [string]$Notes) }
+function Get-NetIPInterface { [CmdletBinding()] param([string]$AddressFamily, [string]$InterfaceAlias) @() }
+function Start-Sleep { [CmdletBinding()] param([int]$Milliseconds) }
+function Get-NetIPAddress { [CmdletBinding()] param([string]$AddressFamily) throw 'gateway observation crossed the interface frontier' }
+function New-NetIPAddress { [CmdletBinding()] param() throw 'gateway mutation crossed the interface frontier' }
+function New-NetNat { [CmdletBinding()] param() throw 'NAT mutation crossed the interface frontier' }
+`;
+    const result = await invokeCommand({
+      ...request,
+      arguments: [...request.arguments.slice(0, -1), Buffer.from(`${mocks}\n${networkScript}`, 'utf16le').toString('base64')],
+      timeoutMs: 20_000,
+    });
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /owned network interface did not become ready/u);
+    assert.doesNotMatch(result.stderr, /crossed the interface frontier|<Obj S="progress"/u);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
