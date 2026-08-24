@@ -80,11 +80,32 @@ async function ensureDestination(directory) {
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('release media destination must be a real directory');
 }
 
-async function acquire(download, url, destination, allowedHosts, label) {
-  const result = await download({ url, destination });
+async function ensureCache(directory) {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const info = await lstat(directory);
+  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('release media cache must be a real directory');
+}
+
+async function acquire(download, url, destination, allowedHosts, label, extra = {}) {
+  const result = await download({ url, destination, ...extra });
   if (!result || typeof result.finalUrl !== 'string') throw new Error(`${label} download did not report its final source URL`);
   checkedUrl(result.finalUrl, allowedHosts, `${label} final source`);
   await regularFile(destination, label);
+}
+
+async function exactCachedMedia(location, expected) {
+  try {
+    const info = await regularFile(location, 'cached release media');
+    if (info.size !== expected.bytes || await sha256File(location) !== expected.sha256) {
+      await rm(location, { force: true });
+      await rm(`${location}.partial`, { force: true });
+      return false;
+    }
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 export class UbuntuReleaseMediaSource {
@@ -92,16 +113,19 @@ export class UbuntuReleaseMediaSource {
   #download;
   #verifyManifest;
   #allowedHosts;
+  #mediaCacheDirectory;
 
-  constructor({ authorityLookup, download, verifyManifest, allowedHosts = DEFAULT_ALLOWED_HOSTS } = {}) {
+  constructor({ authorityLookup, download, verifyManifest, allowedHosts = DEFAULT_ALLOWED_HOSTS, mediaCacheDirectory = null } = {}) {
     if (typeof authorityLookup !== 'function') throw new TypeError('authorityLookup must be a function');
     if (typeof download !== 'function') throw new TypeError('download must be a function');
     if (typeof verifyManifest !== 'function') throw new TypeError('verifyManifest must be a function');
     if (!Array.isArray(allowedHosts) || allowedHosts.length === 0 || allowedHosts.some((host) => typeof host !== 'string' || host.length === 0)) throw new TypeError('allowedHosts is invalid');
+    if (mediaCacheDirectory != null && (typeof mediaCacheDirectory !== 'string' || mediaCacheDirectory.length === 0 || mediaCacheDirectory.includes('\0') || !path.isAbsolute(mediaCacheDirectory))) throw new TypeError('mediaCacheDirectory must be an absolute local path');
     this.#authorityLookup = authorityLookup;
     this.#download = download;
     this.#verifyManifest = verifyManifest;
     this.#allowedHosts = new Set(allowedHosts.map((host) => host.toLowerCase()));
+    this.#mediaCacheDirectory = mediaCacheDirectory == null ? null : path.resolve(mediaCacheDirectory);
   }
 
   async acquire({ authorityRef, destination }) {
@@ -113,7 +137,6 @@ export class UbuntuReleaseMediaSource {
     try {
       const manifestLocation = path.join(destination, 'SHA256SUMS');
       const signatureLocation = path.join(destination, 'SHA256SUMS.gpg');
-      const mediaLocation = path.join(destination, authority.media.name);
       await acquire(this.#download, authority.checksums.manifestUrl, manifestLocation, this.#allowedHosts, 'checksum manifest');
       await acquire(this.#download, authority.checksums.signatureUrl, signatureLocation, this.#allowedHosts, 'checksum signature');
 
@@ -137,7 +160,21 @@ export class UbuntuReleaseMediaSource {
       const manifestText = await readFile(manifestLocation, 'utf8');
       if (digestFromManifest(manifestText, authority.media.name) !== authority.media.sha256) throw new Error('approved media digest does not match signed checksum manifest');
 
-      await acquire(this.#download, authority.media.url, mediaLocation, this.#allowedHosts, 'release media');
+      let mediaLocation = path.join(destination, authority.media.name);
+      if (this.#mediaCacheDirectory != null) {
+        await ensureCache(this.#mediaCacheDirectory);
+        mediaLocation = path.join(this.#mediaCacheDirectory, `${authority.media.sha256}.iso`);
+      }
+      if (!await exactCachedMedia(mediaLocation, authority.media)) {
+        await acquire(
+          this.#download,
+          authority.media.url,
+          mediaLocation,
+          this.#allowedHosts,
+          'release media',
+          { resume: { bytes: authority.media.bytes, sha256: authority.media.sha256 } },
+        );
+      }
       const info = await regularFile(mediaLocation, 'release media');
       if (info.size !== authority.media.bytes) throw new Error('release media byte count does not match authority');
       if (await sha256File(mediaLocation) !== authority.media.sha256) throw new Error('release media digest does not match authority');
