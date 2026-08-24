@@ -93,6 +93,7 @@ function pathsFor(config, subject) {
     preparationFile: path.join(root, 'preparation.json'),
     sourceRoot,
     subjectRoot,
+    releaseCacheDirectory: path.join(root, 'release-cache'),
     releaseDirectory: path.join(subjectRoot, 'release'),
     preparedDirectory: path.join(subjectRoot, 'prepared'),
     constructionDirectory: path.join(root, 'construction'),
@@ -369,6 +370,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
         },
         download,
         verifyManifest,
+        mediaCacheDirectory: paths.releaseCacheDirectory,
       });
       const seedFactory = createUbuntuProductionSeedFactory({
         payloadSet: async () => neutralPayload(payload),
