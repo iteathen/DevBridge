@@ -205,6 +205,8 @@ Normal startup should conceptually be:
 
 Fast normal startup should reuse already verified subjects and should not redownload/reinstall healthy layers on every invocation.
 
+For a moving development selector, the exact subject selected for an invocation also bounds the control-plane tree used for that invocation. If the selector resolves to exact head X, ordinary runtime CLI commands execute from X, or from an explicitly accepted exact fallback for that same selector when refresh cannot proceed. The runner must not hand those commands to unrelated accepted-runtime history. Stage 0 remains bootstrap/recovery authority rather than the ordinary runtime CLI.
+
 ## Normal update
 
 Normal application update should conceptually be:

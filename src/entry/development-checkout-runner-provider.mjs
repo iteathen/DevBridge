@@ -4,16 +4,18 @@ function fail(message) { throw new Error(message); }
 
 function providerOptions(options) {
   if (!options || typeof options !== 'object' || Array.isArray(options)) return options;
-  if (Object.hasOwn(options, 'admitSubject')) fail('experimental checkout admission is fixed locally');
+  if (Object.hasOwn(options, 'admitSubject')) fail('development checkout admission is fixed locally');
   return {
     ...options,
     admitSubject(subject) {
-      if (subject.channel !== 'experimental') fail('experimental checkout provider refuses non-experimental authority');
+      if (subject.channel !== 'stable' || subject.releaseId !== `development-${subject.head}`) {
+        fail('development checkout provider requires exact development authority');
+      }
     },
   };
 }
 
-export class ExperimentalCheckoutRunnerProvider {
+export class DevelopmentCheckoutRunnerProvider {
   #provider;
 
   constructor(options = {}) {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { stage0InstallationTag } from '../devbridge.mjs';
@@ -74,6 +74,58 @@ test('tracked development ref is consumed locally and resolves through stable au
   assert.equal(accepted.current.mode, 'development');
   assert.equal(accepted.current.subject.head, HEAD);
   assert.equal(accepted.current.subject.sha256, DIGEST);
+});
+
+test('tracked development ref launches its exact control-plane provider instead of Stage 0 accepted-runtime history', async (t) => {
+  const home = await homeFixture(t);
+  const oldRuntime = '7'.repeat(40);
+  const observedRuntime = path.join(home, 'stage0-selected-runtime.txt');
+  const runtimeRoot = path.join(home, 'runtime');
+  await mkdir(runtimeRoot, { recursive: true });
+  await writeFile(path.join(runtimeRoot, 'accepted-head.txt'), `${oldRuntime}\n`);
+
+  const stage0Bytes = Buffer.from([
+    "import { readFileSync, writeFileSync } from 'node:fs';",
+    "import path from 'node:path';",
+    "const homeIndex = process.argv.indexOf('--home');",
+    "const home = process.argv[homeIndex + 1];",
+    "const selected = readFileSync(path.join(home, 'runtime', 'accepted-head.txt'), 'utf8');",
+    "writeFileSync(path.join(home, 'stage0-selected-runtime.txt'), selected);",
+    'process.exitCode = 91;',
+    '',
+  ].join('\n'));
+  const selectedHead = '8'.repeat(40);
+  const calls = [];
+
+  const status = await runStableEntry(['--entry-development-ref', 'cuda-target', '--home', home, 'setup'], {
+    env: {},
+    homeDirectory: home,
+    source: {
+      async resolve(ref) { assert.equal(ref, 'cuda-target'); return selectedHead; },
+      async read(head) { assert.equal(head, selectedHead); return stage0Bytes; },
+    },
+    runnerProviders: {
+      development: {
+        async prepare(subject) {
+          calls.push(['prepare', subject.head]);
+          return {
+            subject,
+            async launch(argv) { calls.push(['launch', argv]); return 43; },
+          };
+        },
+      },
+      production: {
+        async prepare() { throw new Error('development invocation must not use production runner provider'); },
+      },
+    },
+  });
+
+  assert.equal(status, 43);
+  assert.deepEqual(calls, [
+    ['prepare', selectedHead],
+    ['launch', ['--home', home, 'setup']],
+  ]);
+  await assert.rejects(() => access(observedRuntime), { code: 'ENOENT' });
 });
 
 test('development stable entry defaults to main when no tracked ref is supplied', async (t) => {

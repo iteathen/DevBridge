@@ -40,7 +40,9 @@ test('qualification staging preserves rollback launcher bytes and creates a clos
   const required = new Set([
     'devbridge-entry.mjs',
     'src/entry/content-addressed-runner-provider.mjs',
+    'src/entry/development-checkout-runner-provider.mjs',
     'src/entry/development-stable-subject-authority.mjs',
+    'src/entry/exact-checkout-runner-provider.mjs',
     'src/entry/experimental-entry.mjs',
     'src/entry/github-runner-source.mjs',
     'src/entry/installation-identity.mjs',

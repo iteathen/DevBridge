@@ -6,6 +6,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import { ContentAddressedRunnerProvider } from './content-addressed-runner-provider.mjs';
+import { DevelopmentCheckoutRunnerProvider } from './development-checkout-runner-provider.mjs';
 import { DevelopmentStableSubjectAuthority } from './development-stable-subject-authority.mjs';
 import { GitHubRunnerSource } from './github-runner-source.mjs';
 import { entryInstallationTag } from './installation-identity.mjs';
@@ -209,6 +210,7 @@ export async function runStableEntry(argv, {
   state = null,
   subjectAuthority = null,
   runnerProvider = null,
+  runnerProviders = null,
   write = (text) => process.stdout.write(text),
 } = {}) {
   const args = parseStableEntryArgs(argv, { env, homeDirectory });
@@ -245,8 +247,27 @@ export async function runStableEntry(argv, {
     }
   }
 
-  const providerSource = args.noUpdate ? offlineSource() : fixedSource;
-  const provider = runnerProvider ?? new ContentAddressedRunnerProvider({ source: providerSource, cacheRoot: paths.cacheRoot });
+  if (runnerProvider != null && runnerProviders != null) fail('stable entry runner provider composition is ambiguous');
+  let provider = runnerProvider;
+  if (provider == null && runnerProviders != null) {
+    if (typeof runnerProviders !== 'object' || Array.isArray(runnerProviders)) fail('stable entry runner providers are invalid');
+    provider = runnerProviders[args.releaseMode] ?? null;
+    if (provider == null) fail(`stable entry ${args.releaseMode} runner provider is unavailable`);
+  }
+  if (provider == null) {
+    if (args.releaseMode === 'development') {
+      // A moving development selector authorizes the exact control-plane tree
+      // selected for this invocation. Its standalone artifact is Stage 0 and
+      // must not redirect ordinary CLI argv through unrelated activation state.
+      provider = new DevelopmentCheckoutRunnerProvider({
+        cacheRoot: paths.cacheRoot,
+        allowFetch: !args.noUpdate,
+      });
+    } else {
+      const providerSource = args.noUpdate ? offlineSource() : fixedSource;
+      provider = new ContentAddressedRunnerProvider({ source: providerSource, cacheRoot: paths.cacheRoot });
+    }
+  }
   return runPermanentEntry(args.argv, { subjectAuthority: authority, runnerProvider: provider });
 }
 
