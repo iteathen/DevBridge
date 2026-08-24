@@ -138,14 +138,20 @@ if ([string]$switch.SwitchType -ne 'Internal') { throw 'construction network typ
 $null = New-Item -ItemType Directory -Path ([string]$data.configPath) -Force -ErrorAction Stop
 $item = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq [string]$data.name } | Select-Object -First 1
 if ($null -eq $item) {
-  $item = New-VM -Name ([string]$data.name) -Generation 2 -NoVHD -MemoryStartupBytes ([long]$data.memoryBytes) -Path ([string]$data.configPath) -ErrorAction Stop
+  $item = New-VM -Name ([string]$data.name) -Generation 2 -NoVHD -MemoryStartupBytes ([long]$data.memoryBytes) -Path ([string]$data.configPath) -SwitchName ([string]$switch.Name) -ErrorAction Stop
 }
 if ([string]$item.State -ne 'Off') { throw 'construction machine must be stopped during preparation' }
 if ([string]$item.Notes -ne [string]$data.marker) {
   $hard = @(Get-VMHardDiskDrive -VMName ([string]$data.name) -ErrorAction Stop)
   $dvd = @(Get-VMDvdDrive -VMName ([string]$data.name) -ErrorAction Stop)
   $net = @(Get-VMNetworkAdapter -VMName ([string]$data.name) -ErrorAction Stop)
-  if (-not [string]::IsNullOrWhiteSpace([string]$item.Notes) -or $hard.Count -ne 0 -or $dvd.Count -ne 0 -or $net.Count -ne 0) {
+  $expectedConfig = [IO.Path]::GetFullPath((Join-Path ([string]$data.configPath) ([string]$data.name)))
+  $actualConfig = [IO.Path]::GetFullPath([string]$item.ConfigurationLocation)
+  $configMatches = [StringComparer]::OrdinalIgnoreCase.Equals($actualConfig, $expectedConfig)
+  $defaultAdapterMatches = $net.Count -eq 1 -and [string]$net[0].Name -eq 'Network Adapter' -and $net[0].IsLegacy -eq $false -and $net[0].DynamicMacAddressEnabled -eq $true
+  $adapterIsUnbound = $defaultAdapterMatches -and $net[0].Connected -eq $false -and [string]::IsNullOrWhiteSpace([string]$net[0].SwitchName) -and [string]::IsNullOrWhiteSpace([string]$net[0].SwitchId)
+  $adapterIsExpected = $defaultAdapterMatches -and -not [string]::IsNullOrWhiteSpace([string]$net[0].SwitchId) -and ([string]$net[0].SwitchId).ToLowerInvariant() -eq ([string]$switch.Id).ToLowerInvariant()
+  if (-not [string]::IsNullOrWhiteSpace([string]$item.Notes) -or [int]$item.Generation -ne 2 -or [long]$item.MemoryStartup -ne [long]$data.memoryBytes -or -not $configMatches -or $hard.Count -ne 0 -or $dvd.Count -ne 0 -or (-not $adapterIsUnbound -and -not $adapterIsExpected)) {
     throw 'construction machine name is occupied without matching ownership evidence'
   }
   Set-VM -Name ([string]$data.name) -Notes ([string]$data.marker) -ErrorAction Stop

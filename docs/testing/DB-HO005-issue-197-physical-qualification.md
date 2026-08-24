@@ -137,12 +137,15 @@ Primary-source research also found:
 Alternatives were assessed and not adopted for this blocker:
 
 - an elevated one-time custom NAT installer still owns durable host networking, requires reconciliation/removal authority, and conflicts with the one-prefix constraint;
-- a scheduled task, service, JEA endpoint, bounded UAC helper, or sudo-style broker moves elevation behind another interface but still delegates privileged host mutation and therefore requires a separate installation/security design;
-- an external switch or Internet Connection Sharing remains privileged and changes host topology;
+- a pre-provisioned external switch can avoid both custom NAT and per-invocation elevation after an administrator creates it, but it remains host state, exposes the guest to the physical network, and depends on recipient LAN/VLAN/DHCP policy;
+- a scheduled task, service, JEA endpoint, bounded UAC helper, or sudo-style broker can replace repeated elevation with a one-time elevated installation, but it still delegates privileged host mutation and therefore requires authenticated local IPC, exact registered operations, ACL/audit policy, durable effect reconciliation, and trusted update ownership;
+- Internet Connection Sharing remains privileged and changes host topology;
 - a fully offline package build would avoid runtime network dependence, but the admitted Ubuntu server ISO does not contain the complete required Node/CMake/compiler package closure, so doing this correctly requires a new signed archive-index verifier, dependency-closure resolver, package-byte cache/admission contract, and local repository/media builder;
 - Hyper-V sockets would require a registered host service and a preinstalled guest client, widening both host installation and image-bootstrap scope.
 
-Bounded solution under qualification:
+The pre-provisioned external-switch and privileged-broker approaches remain legitimate issue #116 design candidates. They do not change the #197 conclusion: networking installed on the construction host cannot be packaged into the guest disk for another host. Microsoft requires administrative rights to create/configure a virtual switch; Windows service creation likewise requires Administrator access to the Service Control Manager, while JEA can subsequently expose a constrained delegated endpoint. Hyper-V sockets avoid the IP stack entirely but expose only a data stream and require both a registered host service and compatible guest support.
+
+Solution: PR [#273](https://github.com/iteathen/DevBridge/pull/273):
 
 - add a Windows provider-local construction-network adapter that read-only selects the fixed Default Switch by exact provider ID and verifies its internal-switch type;
 - expose only neutral `control: system` and `addressing: automatic` contracts to the composition boundary;
@@ -157,11 +160,15 @@ The implementation keeps the Stage-2 persistent networking contract separate. Th
 Primary behavior references:
 
 - [Microsoft: Set up a NAT network](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/setup-nat-network)
+- [Microsoft: Create and configure a Hyper-V virtual switch](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/get-started/create-a-virtual-switch-for-hyper-v-virtual-machines)
+- [Microsoft: Service security and access rights](https://learn.microsoft.com/en-us/windows/win32/services/service-security-and-access-rights)
+- [Microsoft: JEA security considerations](https://learn.microsoft.com/en-us/powershell/scripting/security/remoting/jea/security-considerations)
+- [Microsoft: Make your own Hyper-V integration services](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/make-integration-service)
 - [Microsoft: Hyper-V integration services](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/integration-services)
 - [Microsoft: Hyper-V data exchange](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/integration-services-data-exchange)
 - [Canonical autoinstall reference](https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html)
 
-Research and the construction/persistent-network ownership split were also recorded directly on GitHub in [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5392003796) and [issue #116](https://github.com/iteathen/DevBridge/issues/116#issuecomment-5392005457).
+Research and the construction/persistent-network ownership split were also recorded directly on GitHub in [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5392003796) and [issue #116](https://github.com/iteathen/DevBridge/issues/116#issuecomment-5392005457). The additional external-switch, broker, offline-media, and Hyper-V-socket comparison is recorded in [issue #116](https://github.com/iteathen/DevBridge/issues/116#issuecomment-5392505984).
 
 PR [#273](https://github.com/iteathen/DevBridge/pull/273) implemented this boundary at head `c8f1ecc31f3913459e2180b485a25f203475ba0e`. CI run `32703439211` passed Ubuntu and Windows smoke/test jobs, and the change merged as `f962680422dd9f09ee3968327cab6655928e789b`. The supported installation then persisted and accepted that exact `cuda-target` subject. A separate plain public setup invocation returned the exact construction-gate message and the system-managed-connectivity disclosure before construction resumed.
 
@@ -204,6 +211,36 @@ Primary behavior references:
 
 The stopped physical evidence was recorded immediately on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5392294938). Construction did not resume while this adapter defect was under diagnosis.
 
+PR [#274](https://github.com/iteathen/DevBridge/pull/274) merged the fix as `56f3a9032e1ebcaae6764fb5f0e8a2f7dc890e30` after CI run `32704498685` passed Ubuntu and Windows smoke/test jobs. The installed entry then persisted and executed that exact `cuda-target` subject, and a separate plain public setup invocation returned the exact construction gate before the canary resumed.
+
+### 9. `New-VM -NoVHD` committed a default adapter before ownership marking
+
+The gated public retry from exact runtime `56f3a9032e1ebcaae6764fb5f0e8a2f7dc890e30` advanced through seed and installer-media preparation, created the disposable Hyper-V VM, and then stopped with:
+
+```text
+construction machine name is occupied without matching ownership evidence
+```
+
+Read-only host reconciliation found exact machine `db-image-build-7e82aa1f2870fcf3`, provider ID `5f0b3918-991c-42bd-986c-dd2647a03b9e`, `Off`, with an empty ownership note. Its configuration was below the pre-recorded owned output root, and it had no disk or DVD attachment. It did have one default generation-2 `Network Adapter`: dynamic MAC enabled, disconnected, and not bound to a switch. The durable construction record remained `planned` with a null provider identity.
+
+The recovery guard assumed the partial effect immediately after `New-VM -NoVHD` had zero network adapters. On this physical host, Hyper-V created the default disconnected adapter as part of that effect. The guard therefore rejected the exact object created by its own preceding command before it could write the ownership marker. This was a provider-effect/recovery mismatch, not foreign object occupation.
+
+Solution: PR [#275](https://github.com/iteathen/DevBridge/pull/275):
+
+- future `New-VM` creation binds its default adapter to the already selected exact switch in the same provider command;
+- an unmarked partial is adoptable only when it is stopped, generation 2, has the exact requested startup memory, has the exact deterministic configuration location under the owned root, has no disk or DVD, and has exactly the nonlegacy dynamic default adapter;
+- that adapter must be either still completely unbound, as in the preserved physical partial, or bound to the exact selected switch provider identity;
+- foreign configuration locations, foreign notes, changed VM shape, storage/media attachments, additional adapters, legacy/static adapters, and unrelated switch bindings remain fail-closed;
+- the adapter is not connected or otherwise configured until the ownership marker has been written.
+
+A Windows regression executes the exact embedded preparation script against mocked Hyper-V cmdlets with the physical one-default-adapter partial shape. It proves successful reconciliation and proves that a foreign configuration location or unrelated connected adapter remains non-adoptable.
+
+Primary behavior reference:
+
+- [Microsoft: `New-VM`](https://learn.microsoft.com/en-us/powershell/module/hyper-v/new-vm)
+
+The stopped physical frontier was recorded immediately on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5392426950). No cleanup or second construction attempt occurred while this recovery boundary was under diagnosis.
+
 ## Preserved physical evidence
 
 After the latest stopped attempt:
@@ -218,6 +255,10 @@ After the latest stopped attempt:
 - neither read-only check changed the journal, ISO cache, planned owned-switch evidence, VM inventory, or host networking.
 - the stopped IMAPI attempt created no VM and left no preparation, construction, source, or output file after its owned cleanup;
 - the stopped IMAPI attempt did not change the ISO cache or any host switch, gateway, NAT, or adapter state.
+- after the IMAPI fix merged, the next gated attempt created exact stopped VM `db-image-build-7e82aa1f2870fcf3` with provider ID `5f0b3918-991c-42bd-986c-dd2647a03b9e` below the owned canary output root;
+- that partial VM has empty Notes, no disk or DVD, and one disconnected default dynamic network adapter; its exact shape is preserved for provider-owned recovery rather than manually deleted;
+- preparation and construction state remain durable at subject `subject-99742e1c94397011d72b6c08523c09c5`, phase `planned`, with exact installer and CIDATA identities recorded;
+- the release-cache ISO remains unchanged at `2,918,598,656` bytes, and no host switch, gateway, NAT, or unrelated VM was changed by this stopped attempt.
 
 The owned partial switch remains persistent provider-foundation evidence and may be reconciled only through the same Hyper-V environment adapter. It must not be manually adopted, renamed, or deleted merely to make the construction attempt appear clean. The construction-only adapter neither consumes nor changes it.
 
