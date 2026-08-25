@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { lstat, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createEnvironmentBootstrap } from '../src/app/environment-bootstrap.js';
+import { createLocalEnvironmentAccess } from '../src/app/environment-construction-preparation.js';
 import { createEnvironmentConstructionRuntime } from '../src/app/environment-construction-runtime.js';
 import { ENVIRONMENT_DECLARATION_PROTOCOL } from '../src/runtime/environment-declaration.js';
 
@@ -33,13 +35,17 @@ async function exists(target) {
   }
 }
 
+const noProviderInvoke = async () => {
+  throw new Error('provider invocation is not expected during authority-state composition');
+};
+
 async function compose(stateDirectory, authorityDirectory = null) {
   return createEnvironmentConstructionRuntime({
     stateDirectory,
     ...(authorityDirectory == null ? {} : { authorityDirectory }),
     availability: { ensure: async () => ({ ready: true }) },
     resolveAuthority: async () => '42',
-    invoke: async () => { throw new Error('provider invocation is not expected during authority-state composition'); },
+    invoke: noProviderInvoke,
   });
 }
 
@@ -63,6 +69,34 @@ test('explicit authorityDirectory owns foundation, lifecycle, and construction c
     assert.equal(await exists(path.join(stateDirectory, 'environment-foundation')), false);
     assert.equal(await exists(path.join(stateDirectory, 'environment-lifecycle')), false);
     assert.equal(await exists(path.join(stateDirectory, 'environment-construction')), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Windows access and bootstrap reuse protected foundation identity without recreating it in ordinary state', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-authority-preparation-'));
+  const stateDirectory = path.join(root, 'ordinary');
+  const authorityDirectory = path.join(root, 'protected');
+  try {
+    await createLocalEnvironmentAccess({
+      stateDirectory,
+      authorityDirectory,
+      platform: 'win32',
+      invoke: noProviderInvoke,
+      guest: { family: 'ubuntu', generation: '24.04.4' },
+    });
+    await createEnvironmentBootstrap({
+      stateDirectory,
+      authorityDirectory,
+      platform: 'win32',
+      invoke: noProviderInvoke,
+      access: async () => ({ family: 'linux' }),
+      requirements: ['runtime-js'],
+    });
+
+    assert.equal(await exists(path.join(authorityDirectory, 'environment-foundation', 'identity.json')), true);
+    assert.equal(await exists(path.join(stateDirectory, 'environment-foundation')), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
