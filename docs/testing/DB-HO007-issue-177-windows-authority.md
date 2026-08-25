@@ -7,6 +7,13 @@
 **Parent issue:** #177  
 **Focused issue:** #288
 
+## Work session
+
+- resumed: **2026-08-24 17:06 PDT**
+- branch: `security/177-windows-authority`
+- draft PR: #289
+- physical #197 state: frozen; no VM/cache/operator-worktree mutation authorized by this branch
+
 ## Why this brick precedes client cutover
 
 Stopped #286 / PR #287 proved the neutral lifecycle authority protocol/client/transport/host foundation exists but production setup/runtime does not provision or start a protected authority process. Ordinary CLI/doctor still constructs the local operator directly.
@@ -66,7 +73,10 @@ The state layout also exposes a useful existing LEGO boundary:
 - `src/app/environment-foundation.js` keeps image/provider/persistent-environment authority below one `environment-foundation` subtree;
 - `src/app/environment-lifecycle.js` keeps durable declarations/journal under one `environment-lifecycle` subtree;
 - `src/app/environment-image-availability.js` owns image transfer/quarantine state;
+- `src/app/environment-construction.js` owns the durable `environment-construction/state.json` resume checkpoint;
 - `src/app/environment-lifecycle-fence.js`, preparation/workspace state, daemon coordination and run state are different responsibilities and should not be moved merely because the protected authority needs a different storage root.
+
+The construction checkpoint is authority state, not ordinary coordination. `EnvironmentConstructionPipeline` loads its completed-stage list and resumes from that position; an ordinary caller able to rewrite that file could otherwise influence which destructive preparation/materialization stages the protected owner skips. Therefore the checkpoint must move with the lifecycle authority state.
 
 A protected child directory below an ordinary-user-owned parent is not enough: parent directory deletion/ownership rights can defeat the intended deny boundary. Windows therefore needs a separate protected ProgramData-class authority root rather than trying to ACL selected children under ordinary `~/.devbridge` state.
 
@@ -75,12 +85,12 @@ A protected child directory below an ordinary-user-owned parent is not enough: p
 Before selecting/implementing the final Windows service host, add one provider-neutral composition seam:
 
 `stateDirectory` — ordinary DevBridge coordination/workspace/daemon/fence state  
-`authorityDirectory` — environment declaration/foundation/image-authority state that may later live under protected OS ownership
+`authorityDirectory` — environment declaration/foundation/image authority and lifecycle construction checkpoint state that may later live under protected OS ownership
 
 Rules:
 
 - `authorityDirectory` defaults exactly to `stateDirectory`, so existing installations and #197 behavior are byte/semantic compatible until setup explicitly opts into a protected root;
-- `EnvironmentFoundation`, `EnvironmentLifecycle`, and `EnvironmentImageAvailability` consume `authorityDirectory`;
+- `EnvironmentFoundation`, `EnvironmentLifecycle`, `EnvironmentImageAvailability`, and `EnvironmentConstructionPipeline` checkpoint state consume `authorityDirectory`;
 - lifecycle fencing, daemon/run coordination, preparation/workspace state and bridge coordination remain on `stateDirectory`;
 - no Windows/ProgramData/ACL/service identity enters these neutral modules;
 - no provider-native path/identity is added to the public lifecycle contract;
@@ -91,7 +101,7 @@ This is a LEGO seam, not security completion by itself. It creates one truthful 
 ### Focused falsifiers for the split
 
 - default `authorityDirectory` omitted -> all existing state resolves exactly as before;
-- explicit authority directory -> foundation/lifecycle/image-transfer state moves only to that root;
+- explicit authority directory -> foundation/lifecycle/image-transfer/construction-checkpoint state moves only to that root;
 - daemon/run lifecycle fence remains bound to ordinary `stateDirectory`;
 - preparation/workspace/bridge state remains bound to ordinary `stateDirectory`;
 - no Windows/provider identity appears in neutral APIs;
@@ -111,9 +121,10 @@ Issue #197 physical Ubuntu construction remains independently preserved at its v
 
 ## Current evidence status
 
-- Exact base observed and branch created cleanly from `4bea25e4358ad43ae9166f224235244b19eb8500`.
+- Exact base observed and branch created cleanly from `4bea25e4358ad43ae9166f224235244b19eb8500`; `cuda-target` was re-observed at the same exact head at the 17:06 PDT work-session start.
 - `AGENTS.md`, #177, stopped #286/#287 evidence, `docs/environment-lifecycle-authority.md`, DB-003/009/018/020, `docs/vm-migration.md`, and `docs/vm-lego-studs.md` were reviewed before implementation inspection.
 - Microsoft primary documentation was reviewed before implementation inspection.
 - Clean-checkout hosted preflight/full CI is green on both host families for the docs-only checkpoint.
 - The neutral authority-directory split is the first authorized production-code brick.
+- The complete `stateDirectory` consumer trace refined the authority-state classification to include the construction resume checkpoint before production code was edited.
 - No #197 physical state has been changed by this work.
