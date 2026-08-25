@@ -63,7 +63,13 @@ export async function createEnvironmentConstructionRuntime({
   const recreateAvailable = typeof localFoundation.recreateEnvironment === 'function' && typeof localFoundation.retireSupersededEnvironment === 'function';
   const recreateMaterialization = recreateAvailable ? createEnvironmentRecreateMaterialization({ state: localFoundation, subject: policy.subject, journal: localLifecycle.journal }) : null;
   const recreateRetirement = recreateAvailable ? createEnvironmentRecreateRetirement({ state: localFoundation, journal: localLifecycle.journal }) : null;
-  const preparation = createEnvironmentConstructionPreparation({ stateDirectory, platform, invoke, windowsAccess });
+  const preparation = createEnvironmentConstructionPreparation({
+    stateDirectory,
+    authorityDirectory: authorityStateDirectory,
+    platform,
+    invoke,
+    windowsAccess,
+  });
   const workspaces = createEnvironmentConstructionWorkspaces({
     stateDirectory,
     state: localFoundation,
