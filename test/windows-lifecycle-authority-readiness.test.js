@@ -38,10 +38,15 @@ function clientFactory(calls) {
   };
 }
 
+function portableMigration() {
+  return Object.freeze({ protocol: 'migration', ready: true, blocker: null, classification: 'portable' });
+}
+
 test('non-Windows readiness leaves the Windows protection composition unattached', async () => {
   const calls = [];
   const expected = Object.freeze({ protocol: 'service', platform: 'linux', ready: true });
   const result = await reconcileWindowsLifecycleAuthorityReadiness({ stateDirectory: '/tmp/state', platform: 'linux' }, {
+    migrationSafety: async () => { throw new Error('must remain unattached'); },
     serviceReconciler: async (options, dependencies) => {
       calls.push([options, dependencies]);
       return expected;
@@ -55,9 +60,30 @@ test('non-Windows readiness leaves the Windows protection composition unattached
   assert.equal(calls[0][1], undefined);
 });
 
+test('unsafe legacy path-bound state stops before service inspection or provisioning', async () => {
+  let serviceCalled = false;
+  const result = await reconcileWindowsLifecycleAuthorityReadiness({ stateDirectory: STATE, platform: 'win32', invoke: async () => {} }, {
+    migrationSafety: async () => Object.freeze({
+      ready: false,
+      classification: 'provider-aware-storage-migration-required',
+      blocker: 'provider-aware migration required',
+    }),
+    serviceReconciler: async () => { serviceCalled = true; return readyService(); },
+    inspectHost: async () => { throw new Error('must not inspect host after migration blocker'); },
+    clientFactory: () => { throw new Error('must not create authority client after migration blocker'); },
+    verifyProtection: async () => { throw new Error('must not verify protection after migration blocker'); },
+  });
+  assert.equal(serviceCalled, false);
+  assert.equal(result.ready, false);
+  assert.equal(result.service, 'migration-required');
+  assert.equal(result.protectedState, 'legacy-unprotected');
+  assert.equal(result.blocker, 'provider-aware migration required');
+});
+
 test('ordinary readiness requires read inspection plus negative-capability protection proof', async () => {
   const calls = [];
   const result = await reconcileWindowsLifecycleAuthorityReadiness({ stateDirectory: STATE, platform: 'win32', invoke: async () => {} }, {
+    migrationSafety: async () => portableMigration(),
     inspectHost: async () => { calls.push(['host']); return host(false); },
     clientFactory: clientFactory(calls),
     verifyProtection: async ({ plan, elevated }) => { calls.push(['protection', elevated, plan]); return { ready: true, mode: 'ordinary-negative' }; },
@@ -77,6 +103,7 @@ test('ordinary readiness requires read inspection plus negative-capability prote
 test('elevated structural proof never publishes final readiness before ordinary re-entry', async () => {
   const calls = [];
   const result = await reconcileWindowsLifecycleAuthorityReadiness({ stateDirectory: STATE, platform: 'win32', invoke: async () => {} }, {
+    migrationSafety: async () => portableMigration(),
     inspectHost: async () => host(true),
     clientFactory: clientFactory(calls),
     verifyProtection: async ({ elevated }) => { calls.push(['protection', elevated]); return { ready: true, mode: 'structural' }; },
@@ -95,6 +122,7 @@ test('elevated structural proof never publishes final readiness before ordinary 
 
 test('ordinary protection failure is a bounded elevation blocker rather than readiness', async () => {
   const result = await reconcileWindowsLifecycleAuthorityReadiness({ stateDirectory: STATE, platform: 'win32', invoke: async () => {} }, {
+    migrationSafety: async () => portableMigration(),
     inspectHost: async () => host(false),
     clientFactory: () => Object.freeze({ inspect: async () => ({ protocol: 'devbridge/environment-operator-v1' }) }),
     verifyProtection: async () => { throw new Error('sensitive ACL detail must not escape'); },
@@ -111,6 +139,7 @@ test('ordinary protection failure is a bounded elevation blocker rather than rea
 
 test('elevated protection failure remains on the service-owned failed-health path', async () => {
   const result = await reconcileWindowsLifecycleAuthorityReadiness({ stateDirectory: STATE, platform: 'win32', invoke: async () => {} }, {
+    migrationSafety: async () => portableMigration(),
     inspectHost: async () => host(true),
     clientFactory: () => Object.freeze({ inspect: async () => ({ protocol: 'devbridge/environment-operator-v1' }) }),
     verifyProtection: async () => { throw new Error('protection mismatch'); },
