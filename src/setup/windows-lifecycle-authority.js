@@ -8,7 +8,9 @@ const PROTOCOL = 'devbridge/windows-lifecycle-authority-plan-v1';
 const WINDOWS_SID = /^S-1-(?:\d+-)+\d+$/u;
 const WINDOWS_DRIVE_ROOT = /^[A-Za-z]:\\$/u;
 const WINDOWS_UNC_ROOT = /^\\\\[^\\]+\\[^\\]+\\$/u;
+const DIGEST = /^[0-9a-f]{64}$/u;
 const SERVICE_PREFIX = 'DevBridgeLifecycle-';
+const SERVICE_RUNTIME_PREFIX = 'DevBridge lifecycle authority runtime v1';
 
 export const WINDOWS_ADMINISTRATORS_SID = 'S-1-5-32-544';
 export const WINDOWS_HYPERV_ADMINISTRATORS_SID = 'S-1-5-32-578';
@@ -55,6 +57,11 @@ function quoteServiceArgument(value) {
 
 function serviceCommand(fields) {
   return fields.map(quoteServiceArgument).join(' ');
+}
+
+function runtimeDigest(value, name) {
+  if (typeof value !== 'string' || !DIGEST.test(value)) throw new TypeError(`${name} must be a sha256 digest`);
+  return value;
 }
 
 export function createWindowsLifecycleAuthorityPlan({
@@ -150,6 +157,22 @@ export function createWindowsLifecycleAuthorityPlan({
         servers: Object.freeze([serverAce(serviceAccount), serverAce(WINDOWS_SYSTEM_SID)]),
         clients: Object.freeze([clientAce(WINDOWS_ADMINISTRATORS_SID)]),
       }),
+    }),
+  });
+}
+
+export function bindWindowsLifecycleAuthorityRuntime(plan, { packageDigest, nodeDigest } = {}) {
+  if (!plan || typeof plan !== 'object' || plan.protocol !== PROTOCOL) throw new TypeError('Windows lifecycle authority plan is required');
+  if (plan.runtimeEvidence != null || plan?.service?.description != null) throw new Error('Windows lifecycle authority runtime evidence is already bound');
+  const packageIdentity = runtimeDigest(packageDigest, 'Windows lifecycle authority package digest');
+  const nodeIdentity = runtimeDigest(nodeDigest, 'Windows lifecycle authority Node digest');
+  const runtimeEvidence = Object.freeze({ packageDigest: packageIdentity, nodeDigest: nodeIdentity });
+  return Object.freeze({
+    ...plan,
+    runtimeEvidence,
+    service: Object.freeze({
+      ...plan.service,
+      description: `${SERVICE_RUNTIME_PREFIX} package=${packageIdentity} node=${nodeIdentity}`,
     }),
   });
 }
