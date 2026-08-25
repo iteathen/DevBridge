@@ -49,6 +49,14 @@ function serverAce(principal) {
   return Object.freeze({ principal, rights: 'full-control' });
 }
 
+function quoteServiceArgument(value) {
+  return `"${String(value).replaceAll('"', '\\"')}"`;
+}
+
+function serviceCommand(fields) {
+  return fields.map(quoteServiceArgument).join(' ');
+}
+
 export function createWindowsLifecycleAuthorityPlan({
   stateDirectory,
   programDataDirectory,
@@ -73,6 +81,20 @@ export function createWindowsLifecycleAuthorityPlan({
   const ownershipManifest = under(protectedRoot, 'ownership.json');
   const readEndpoint = environmentLifecycleAuthorityEndpoint({ authorityIdentity, access: 'read', platform: 'win32' });
   const mutationEndpoint = environmentLifecycleAuthorityEndpoint({ authorityIdentity, access: 'mutation', platform: 'win32' });
+  const readPipeName = path.win32.basename(readEndpoint);
+  const mutationPipeName = path.win32.basename(mutationEndpoint);
+  const serviceCommandLine = serviceCommand([
+    serviceHostExecutable,
+    '--service-name', serviceName,
+    '--protected-root', protectedRoot,
+    '--node', nodeExecutable,
+    '--worker', workerEntry,
+    '--state-directory', state,
+    '--authority-directory', authorityDirectory,
+    '--operator-sid', operator,
+    '--read-pipe', readPipeName,
+    '--mutation-pipe', mutationPipeName,
+  ]);
 
   return Object.freeze({
     protocol: PROTOCOL,
@@ -81,6 +103,7 @@ export function createWindowsLifecycleAuthorityPlan({
     protectedRoot,
     authorityDirectory,
     ownershipManifest,
+    serviceCommand: serviceCommandLine,
     runtime: Object.freeze({
       binDirectory,
       runtimeDirectory,
@@ -101,8 +124,8 @@ export function createWindowsLifecycleAuthorityPlan({
       hyperVGroupSid: WINDOWS_HYPERV_ADMINISTRATORS_SID,
     }),
     endpoints: Object.freeze({
-      read: Object.freeze({ endpoint: readEndpoint, pipeName: path.win32.basename(readEndpoint) }),
-      mutation: Object.freeze({ endpoint: mutationEndpoint, pipeName: path.win32.basename(mutationEndpoint) }),
+      read: Object.freeze({ endpoint: readEndpoint, pipeName: readPipeName }),
+      mutation: Object.freeze({ endpoint: mutationEndpoint, pipeName: mutationPipeName }),
     }),
     acl: Object.freeze({
       protectedRoot: Object.freeze({
