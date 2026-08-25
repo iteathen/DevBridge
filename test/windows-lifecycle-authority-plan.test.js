@@ -54,6 +54,15 @@ test('Windows authority plan derives one deterministic service and protected roo
   }
 });
 
+test('Windows authority plan owns the exact SCM command as one closed formula', () => {
+  const value = plan();
+  assert.match(value.serviceCommand, /^"C:\\ProgramData\\DevBridge\\lifecycle-authority\\[0-9a-f]{32}\\bin\\devbridge-lifecycle-authority-host\.exe"/u);
+  assert.match(value.serviceCommand, new RegExp(`"--service-name" "${value.service.name}"`, 'u'));
+  assert.match(value.serviceCommand, /"--operator-sid" "S-1-5-21-111111111-222222222-333333333-1001"/u);
+  assert.match(value.serviceCommand, new RegExp(`"--read-pipe" "${value.endpoints.read.pipeName}"`, 'u'));
+  assert.match(value.serviceCommand, new RegExp(`"--mutation-pipe" "${value.endpoints.mutation.pipeName}"$`, 'u'));
+});
+
 test('Windows authority plan preserves existing neutral endpoint namespace', () => {
   const value = plan();
   assert.equal(value.endpoints.read.endpoint, environmentLifecycleAuthorityEndpoint({
@@ -94,6 +103,7 @@ test('operator SID does not change protected authority identity or service owner
   assert.equal(second.authorityIdentity, first.authorityIdentity);
   assert.equal(second.protectedRoot, first.protectedRoot);
   assert.deepEqual(second.service, first.service);
+  assert.notEqual(second.serviceCommand, first.serviceCommand);
   assert.notDeepEqual(second.acl.readPipe.clients, first.acl.readPipe.clients);
   assert.deepEqual(second.acl.mutationPipe.clients, first.acl.mutationPipe.clients);
 });
