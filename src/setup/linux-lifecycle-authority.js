@@ -36,7 +36,7 @@ function systemdQuote(value) {
   return `"${String(value).replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('%', '%%')}"`;
 }
 
-function systemdUnit({ description, user, readGroup, coordinationGroup, providerGroup, nodeExecutable, serviceEntry, stateDirectory, authorityDirectory, protectedRoot, runRoot, coordinationDirectory }) {
+function systemdUnit({ description, user, readGroup, coordinationGroup, providerGroup, nodeExecutable, serviceEntry, stateDirectory, authorityDirectory, runRoot, coordinationDirectory }) {
   const execStart = [
     nodeExecutable,
     serviceEntry,
@@ -66,7 +66,7 @@ function systemdUnit({ description, user, readGroup, coordinationGroup, provider
     'ProtectControlGroups=true',
     'RestrictSUIDSGID=true',
     'LockPersonality=true',
-    `ReadWritePaths=${systemdQuote(protectedRoot)} ${systemdQuote(coordinationDirectory)} ${systemdQuote(runRoot)}`,
+    `ReadWritePaths=${systemdQuote(authorityDirectory)} ${systemdQuote(coordinationDirectory)} ${systemdQuote(runRoot)}`,
     '',
     '[Install]',
     'WantedBy=multi-user.target',
@@ -121,7 +121,6 @@ export function createLinuxLifecycleAuthorityPlan({
     serviceEntry,
     stateDirectory: state,
     authorityDirectory,
-    protectedRoot,
     runRoot,
     coordinationDirectory,
   });
@@ -142,6 +141,7 @@ export function createLinuxLifecycleAuthorityPlan({
       coordinationGroup,
       providerGroup: provider,
       operator,
+      account: Object.freeze({ home: '/nonexistent', shell: '/usr/sbin/nologin', system: true }),
       unit,
       restart: 'on-failure',
     }),
@@ -161,11 +161,13 @@ export function createLinuxLifecycleAuthorityPlan({
     endpoints: Object.freeze({
       runRoot,
       read: Object.freeze({ endpoint: readEndpoint, directory: readDirectory, owner: serviceUser, group: readGroup, mode: 0o770 }),
-      mutation: Object.freeze({ endpoint: mutationEndpoint, directory: mutationDirectory, owner: serviceUser, group: readGroup, mode: 0o700 }),
+      mutation: Object.freeze({ endpoint: mutationEndpoint, directory: mutationDirectory, owner: serviceUser, group: 'root', mode: 0o700 }),
     }),
     access: Object.freeze({
-      protectedRoot: Object.freeze({ owner: serviceUser, group: readGroup, mode: 0o700, ordinaryUserWrite: false }),
-      authorityState: Object.freeze({ owner: serviceUser, group: readGroup, mode: 0o700, ordinaryUserWrite: false }),
+      protectedRoot: Object.freeze({ owner: 'root', group: 'root', mode: 0o755, serviceWrite: false, ordinaryUserWrite: false }),
+      protectedRuntime: Object.freeze({ owner: 'root', group: 'root', directoryMode: 0o755, fileMode: 0o444, executableMode: 0o555, serviceWrite: false, ordinaryUserWrite: false }),
+      authorityState: Object.freeze({ owner: serviceUser, group: 'root', mode: 0o700, serviceWrite: true, ordinaryUserWrite: false }),
+      ownershipManifest: Object.freeze({ owner: 'root', group: 'root', mode: 0o444, serviceWrite: false, ordinaryUserWrite: false }),
       readCapability: Object.freeze({ group: readGroup, members: Object.freeze([serviceUser, operator]) }),
       coordination: Object.freeze({ group: coordinationGroup, members: Object.freeze([serviceUser, operator]) }),
       providerManagement: Object.freeze({ group: provider, members: Object.freeze([serviceUser]), ordinaryUserMember: false }),
