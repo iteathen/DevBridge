@@ -598,6 +598,7 @@ async function materializeProtectedRuntime(plan, ownership, invoke, environment,
 
 async function provisionWindowsLifecycleAuthority({ plan, operatorSid, invoke, environment, packageRoot, nodeExecutable, candidate }) {
   let ownership = await initializeProtectedRoot(plan, operatorSid, invoke, environment);
+  const initialProtectionSeal = ownership.serviceConfigured !== true;
   const service = await inspectService(plan, invoke, environment);
   validateOwnedService(service, plan);
   await quiesceOwnedService(service, plan, invoke, environment);
@@ -616,14 +617,16 @@ async function provisionWindowsLifecycleAuthority({ plan, operatorSid, invoke, e
 
   const configured = await configureService(service, plan, invoke, environment);
   changed ||= configured.changed;
-  ownership = await writeOwnership(plan, Object.freeze({ ...ownership, serviceConfigured: true }), invoke, environment);
 
-  await invokePowerShell(invoke, SEAL_ACL_SCRIPT, {
-    protectedRoot: plan.protectedRoot,
-    authorityDirectory: plan.authorityDirectory,
-    stateDirectory: plan.stateDirectory,
-    serviceAccount: plan.service.account,
-  }, 'Windows lifecycle authority ACL sealing', environment);
+  if (initialProtectionSeal) {
+    await invokePowerShell(invoke, SEAL_ACL_SCRIPT, {
+      protectedRoot: plan.protectedRoot,
+      authorityDirectory: plan.authorityDirectory,
+      stateDirectory: plan.stateDirectory,
+      serviceAccount: plan.service.account,
+    }, 'Windows lifecycle authority ACL sealing', environment);
+  }
+  ownership = await writeOwnership(plan, Object.freeze({ ...ownership, serviceConfigured: true }), invoke, environment);
   await invokePowerShell(invoke, START_SERVICE_SCRIPT, { name: plan.service.name }, 'Windows lifecycle authority service start', environment);
   return Object.freeze({ ownership, changed: true });
 }
