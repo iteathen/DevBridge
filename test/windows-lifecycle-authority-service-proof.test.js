@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { createWindowsLifecycleAuthorityPlan } from '../src/setup/windows-lifecycle-authority.js';
+import {
+  bindWindowsLifecycleAuthorityRuntime,
+  createWindowsLifecycleAuthorityPlan,
+} from '../src/setup/windows-lifecycle-authority.js';
 import {
   verifyWindowsLifecycleAuthorityService,
   WINDOWS_LIFECYCLE_AUTHORITY_SERVICE_PROOF_PROTOCOL,
@@ -11,17 +14,21 @@ import {
 const OPERATOR_SID = 'S-1-5-21-111111111-222222222-333333333-1001';
 const STATE = 'C:\\Users\\Operator\\.devbridge\\state';
 const PROGRAM_DATA = 'C:\\ProgramData';
-const plan = createWindowsLifecycleAuthorityPlan({
+const basePlan = createWindowsLifecycleAuthorityPlan({
   stateDirectory: STATE,
   programDataDirectory: PROGRAM_DATA,
   operatorSid: OPERATOR_SID,
+});
+const plan = bindWindowsLifecycleAuthorityRuntime(basePlan, {
+  packageDigest: 'a'.repeat(64),
+  nodeDigest: 'b'.repeat(64),
 });
 
 function success(stdout = '{"ready":true}\n') {
   return Promise.resolve({ exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout, stderr: '' });
 }
 
-test('service proof requires the exact deterministic SCM command and virtual account', async () => {
+test('service proof requires exact SCM command, virtual account, and runtime description', async () => {
   let request = null;
   const result = await verifyWindowsLifecycleAuthorityService({
     plan,
@@ -35,12 +42,14 @@ test('service proof requires the exact deterministic SCM command and virtual acc
   assert.equal(input.name, plan.service.name);
   assert.equal(input.account, plan.service.account);
   assert.equal(input.command, plan.serviceCommand);
+  assert.equal(input.description, plan.service.description);
   assert.match(input.command, /devbridge-lifecycle-authority-host\.exe" "--service-name" "DevBridgeLifecycle-/u);
   assert.match(input.command, /"--operator-sid" "S-1-5-21-111111111-222222222-333333333-1001"/u);
   assert.match(input.command, /"--mutation-pipe" "devbridge-environment-[0-9a-f]{32}-mutation-v1"$/u);
+  assert.match(input.description, /package=a{64} node=b{64}$/u);
 });
 
-test('service proof rejects a service account that is not derived from the exact service name', async () => {
+test('service proof rejects an unbound or mismatched service identity plan', async () => {
   const wrongName = Object.freeze({
     ...plan,
     service: Object.freeze({ ...plan.service, name: 'DevBridgeLifecycle-fedcba9876543210fedcba9876543210' }),
@@ -49,10 +58,10 @@ test('service proof rejects a service account that is not derived from the exact
     ...plan,
     service: Object.freeze({ ...plan.service, account: 'NT SERVICE\\DevBridgeLifecycle-fedcba9876543210fedcba9876543210' }),
   });
-  for (const candidate of [wrongName, wrongAccount]) {
+  for (const candidate of [basePlan, wrongName, wrongAccount]) {
     await assert.rejects(
       () => verifyWindowsLifecycleAuthorityService({ plan: candidate, operatorSid: OPERATOR_SID, invoke: async () => success() }),
-      /service proof identity is invalid/u,
+      /service proof (?:runtime evidence|identity) is invalid/u,
     );
   }
 });
@@ -102,4 +111,5 @@ test('service proof implementation is observation-only', async () => {
     'Remove-Item',
   ]) assert.equal(source.includes(forbidden), false, `service proof gained mutation authority through ${forbidden}`);
   assert.equal(source.includes('Get-CimInstance Win32_Service'), true);
+  assert.equal(source.includes('$service.Description'), true);
 });
