@@ -358,9 +358,9 @@ namespace DevBridge.WindowsLifecycleAuthority
                 while (output.Length <= MaxWireBytes)
                 {
                     int remaining = PreRequestTimeoutMs - (int)elapsed.ElapsedMilliseconds;
-                    if (remaining <= 0) throw new TimeoutException("lifecycle authority request timed out");
+                    if (remaining <= 0) throw new System.TimeoutException("lifecycle authority request timed out");
                     Task<int> read = pipe.ReadAsync(buffer, 0, buffer.Length);
-                    if (!read.Wait(remaining)) throw new TimeoutException("lifecycle authority request timed out");
+                    if (!read.Wait(remaining)) throw new System.TimeoutException("lifecycle authority request timed out");
                     int count = read.Result;
                     if (count <= 0) return null;
                     output.Write(buffer, 0, count);
