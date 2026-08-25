@@ -10,6 +10,7 @@
 ## Work session
 
 - resumed: **2026-08-24 17:06 PDT**
+- continued: **2026-08-24 18:42 PDT** after exact-head CI failure classification
 - branch: `security/177-windows-authority`
 - draft PR: #289
 - physical #197 state: frozen; no VM/cache/operator-worktree mutation authorized by this branch
@@ -119,6 +120,19 @@ Do not grant ordinary coding/model processes administrator or Hyper-V management
 
 Issue #197 physical Ubuntu construction remains independently preserved at its v4 public read-only gate. This Windows authority branch must not modify Ubuntu construction/canary/media code or mutate the physical VM/cache state.
 
+## 18:42 PDT exact-head failure classification and correction
+
+Hosted run `32793619497` checked out exact head `78b4f1265da07ae7bce0eb5ce85f83e17cebdfe6`. Both Ubuntu and Windows smoke/preflight jobs passed, but both full test jobs failed on the same focused authority tests. The failures were classified before any setup/service-installation effect was added.
+
+Three assertions failed for two causes:
+
+1. `environment-authority-state-separation.test.js` proved `createEnvironmentBridge` recreated `environment-foundation/identity.json` below ordinary `stateDirectory` even though bootstrap had already loaded the same foundation identity from protected authority state. The bridge needs the identity to derive its provider-neutral location proof, but it does not own protected storage. Correction: `createEnvironmentBootstrap` now injects the already-owned 32-hex foundation identity as data into `createEnvironmentBridge`; the bridge retains its legacy local-identity fallback only for callers that do not inject an identity. It does not learn `authorityDirectory`.
+2. The Windows plan and protected worker used `path.win32.isAbsolute()` as if it implied a fully qualified Windows volume path. Node correctly treats `/tmp/...` as a rooted Windows path using the current drive, so the fail-closed tests did not throw. Correction: both independent trust boundaries now require a drive-qualified root or a complete UNC root and reject Win32 device namespaces before normalization is accepted. This keeps validation local to each authority boundary rather than creating a cross-layer setup/entry dependency.
+
+Correction commit: `7f418c6670f751dd38cef555b25479246140b032` (`fix: preserve protected lifecycle authority boundaries`).
+
+The correction changes no lifecycle semantics, no provider command vocabulary, no endpoint access class, and no setup/service installation behavior. Exact-head hosted Ubuntu/Windows CI is required again before the next Windows authority brick may begin.
+
 ## Current evidence status
 
 - Exact base observed and branch created cleanly from `4bea25e4358ad43ae9166f224235244b19eb8500`; `cuda-target` was re-observed at the same exact head at the 17:06 PDT work-session start.
@@ -127,4 +141,7 @@ Issue #197 physical Ubuntu construction remains independently preserved at its v
 - Clean-checkout hosted preflight/full CI is green on both host families for the docs-only checkpoint.
 - The neutral authority-directory split is the first authorized production-code brick.
 - The complete `stateDirectory` consumer trace refined the authority-state classification to include the construction resume checkpoint before production code was edited.
+- Exact head `78b4f1265da07ae7bce0eb5ce85f83e17cebdfe6` failed only the three focused authority tests described above; smoke/preflight remained green on both host families.
+- The two classified causes are corrected at `7f418c6670f751dd38cef555b25479246140b032`; clean-checkout CI on the resulting documented head is pending.
+- No setup/service installation effect has been added after the failed gate.
 - No #197 physical state has been changed by this work.
