@@ -34,8 +34,15 @@ test('Linux authority plan derives one protected service identity and split loca
   assert.equal(value.endpoints.mutation.endpoint, `/run/devbridge/${value.authorityIdentity}/mutation/environment-v1.sock`);
   assert.equal(value.endpoints.read.mode, 0o770);
   assert.equal(value.endpoints.mutation.mode, 0o700);
+  assert.equal(value.endpoints.mutation.group, 'root');
+  assert.equal(value.access.protectedRoot.owner, 'root');
+  assert.equal(value.access.protectedRoot.serviceWrite, false);
+  assert.equal(value.access.protectedRuntime.owner, 'root');
+  assert.equal(value.access.protectedRuntime.serviceWrite, false);
+  assert.equal(value.access.authorityState.serviceWrite, true);
   assert.equal(value.access.protectedRoot.ordinaryUserWrite, false);
   assert.equal(value.access.authorityState.ordinaryUserWrite, false);
+  assert.equal(value.service.account.shell, '/usr/sbin/nologin');
 });
 
 test('ordinary operator receives only installation read and coordination groups, never provider management', () => {
@@ -61,6 +68,8 @@ test('systemd unit executes only the protected Node/package runtime with bounded
   assert.match(unit, new RegExp(value.runtime.serviceEntry.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
   assert.match(unit, /--state-directory/u);
   assert.match(unit, /--authority-directory/u);
+  assert.match(unit, new RegExp(`ReadWritePaths="${value.authorityDirectory}" "${value.coordination.directory}" "${value.endpoints.runRoot}"`, 'u'));
+  assert.equal(unit.includes(`ReadWritePaths="${value.protectedRoot}"`), false);
   assert.equal(unit.includes('/home/alice/.devbridge/src'), false);
   assert.equal(unit.includes('sudo'), false);
   assert.equal(unit.includes('sh -c'), false);
