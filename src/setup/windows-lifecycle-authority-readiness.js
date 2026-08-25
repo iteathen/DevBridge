@@ -2,6 +2,7 @@ import process from 'node:process';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment-lifecycle-authority-transport.js';
 import { inspectWindowsLifecycleAuthorityMigrationSafety } from './windows-lifecycle-authority-migration-safety.js';
+import { verifyWindowsLifecycleAuthorityService } from './windows-lifecycle-authority-service-proof.js';
 import { reconcileWindowsLifecycleAuthorityService } from './windows-lifecycle-authority-service.js';
 import { verifyWindowsLifecycleAuthorityProtection } from './windows-lifecycle-authority-protection.js';
 
@@ -87,6 +88,7 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
   serviceReconciler = reconcileWindowsLifecycleAuthorityService,
   inspectHost = inspectWindowsLifecycleAuthorityReadinessHost,
   clientFactory = createConfiguredLifecycleAuthorityClient,
+  verifyService = verifyWindowsLifecycleAuthorityService,
   verifyProtection = verifyWindowsLifecycleAuthorityProtection,
 } = {}) {
   if (platform !== 'win32') {
@@ -94,7 +96,7 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
   }
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('Windows lifecycle authority readiness stateDirectory is required');
   if (typeof invoke !== 'function') throw new TypeError('Windows lifecycle authority readiness invocation contract is invalid');
-  if (typeof migrationSafety !== 'function' || typeof serviceReconciler !== 'function' || typeof inspectHost !== 'function' || typeof clientFactory !== 'function' || typeof verifyProtection !== 'function') {
+  if (typeof migrationSafety !== 'function' || typeof serviceReconciler !== 'function' || typeof inspectHost !== 'function' || typeof clientFactory !== 'function' || typeof verifyService !== 'function' || typeof verifyProtection !== 'function') {
     throw new TypeError('Windows lifecycle authority readiness composition is invalid');
   }
 
@@ -108,6 +110,7 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
     return host;
   };
   const protectedProbe = async (plan) => {
+    await verifyService({ plan, operatorSid: host?.operatorSid, invoke, environment });
     const client = clientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
     const inspection = verifiedInspection(await client.inspect());
     try {
