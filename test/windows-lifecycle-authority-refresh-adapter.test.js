@@ -148,7 +148,7 @@ test('Windows refresh adapter preserves exact previous generation and restores i
   assert.deepEqual(values.state.retainedGenerations, [B]);
   assert.deepEqual(values.calls, {
     materialize: 1,
-    verify: 1,
+    verify: 2,
     stop: 1,
     configure: 1,
     start: 2,
