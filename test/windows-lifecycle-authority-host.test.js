@@ -54,7 +54,7 @@ test('Windows lifecycle endpoints keep one first-instance server alive across re
   assert.match(source, /if \(!stopping && pipe\.IsConnected\) pipe\.Disconnect\(\);/u);
   assert.equal((source.match(/CreatePipe\(name, access\)/gu) ?? []).length, 1);
   assert.doesNotMatch(source, /while \(!stopping\)[\s\S]{0,300}pipe = CreatePipe/u);
-  assert.match(source, /if \(!read\.Wait\(remaining\)\) throw new TimeoutException/u);
+  assert.match(source, /if \(!read\.Wait\(remaining\)\) throw new System\.TimeoutException/u);
   assert.doesNotMatch(source, /if \(!read\.Wait\(remaining\)\)[\s\S]{0,160}pipe\.Dispose/u);
 });
 
