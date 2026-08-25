@@ -34,26 +34,6 @@ function invocationSucceeded(result) {
   return result?.exitCode === 0 && result?.timedOut !== true && result?.aborted !== true && result?.outputTruncated !== true;
 }
 
-function quoted(value) {
-  return `"${String(value).replaceAll('"', '\\"')}"`;
-}
-
-function expectedServiceCommand(plan, operatorSid) {
-  const fields = [
-    plan.runtime.serviceHostExecutable,
-    '--service-name', plan.service.name,
-    '--protected-root', plan.protectedRoot,
-    '--node', plan.runtime.nodeExecutable,
-    '--worker', plan.runtime.workerEntry,
-    '--state-directory', plan.stateDirectory,
-    '--authority-directory', plan.authorityDirectory,
-    '--operator-sid', operatorSid,
-    '--read-pipe', plan.endpoints.read.pipeName,
-    '--mutation-pipe', plan.endpoints.mutation.pipeName,
-  ];
-  return fields.map(quoted).join(' ');
-}
-
 function requirePlan(plan, operatorSid) {
   if (!plan || typeof plan !== 'object' || Array.isArray(plan)) throw new TypeError('Windows lifecycle authority service proof plan is required');
   if (typeof operatorSid !== 'string' || !WINDOWS_SID.test(operatorSid)) throw new TypeError('Windows lifecycle authority service proof operator SID is invalid');
@@ -62,6 +42,9 @@ function requirePlan(plan, operatorSid) {
   }
   if (plan?.service?.account !== `NT SERVICE\\${plan.service.name}`) {
     throw new TypeError('Windows lifecycle authority service proof identity is invalid');
+  }
+  if (typeof plan.serviceCommand !== 'string' || plan.serviceCommand.length === 0 || plan.serviceCommand.includes('\0')) {
+    throw new TypeError('Windows lifecycle authority service proof plan is incomplete');
   }
   for (const value of [
     plan.protectedRoot,
@@ -95,7 +78,7 @@ export async function verifyWindowsLifecycleAuthorityService({
       input: JSON.stringify({
         name: selected.service.name,
         account: selected.service.account,
-        command: expectedServiceCommand(selected, operatorSid),
+        command: selected.serviceCommand,
       }),
       timeoutMs: 30_000,
       maxOutputBytes: 64 * 1024,
