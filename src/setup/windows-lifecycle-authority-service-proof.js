@@ -22,7 +22,8 @@ $stateReady = [String]::Equals([string]$service.State, 'Running', [StringCompari
 $startReady = [String]::Equals([string]$service.StartMode, 'Auto', [StringComparison]::OrdinalIgnoreCase)
 $accountReady = [String]::Equals([string]$service.StartName, [string]$data.account, [StringComparison]::OrdinalIgnoreCase)
 $commandReady = [String]::Equals([string]$service.PathName, [string]$data.command, [StringComparison]::OrdinalIgnoreCase)
-$ready = $stateReady -and $startReady -and $accountReady -and $commandReady
+$descriptionReady = [String]::Equals([string]$service.Description, [string]$data.description, [StringComparison]::Ordinal)
+$ready = $stateReady -and $startReady -and $accountReady -and $commandReady -and $descriptionReady
 @{ ready = [bool]$ready } | ConvertTo-Json -Compress
 `;
 
@@ -45,6 +46,9 @@ function requirePlan(plan, operatorSid) {
   }
   if (typeof plan.serviceCommand !== 'string' || plan.serviceCommand.length === 0 || plan.serviceCommand.includes('\0')) {
     throw new TypeError('Windows lifecycle authority service proof plan is incomplete');
+  }
+  if (typeof plan?.service?.description !== 'string' || !/^DevBridge lifecycle authority runtime v1 package=[0-9a-f]{64} node=[0-9a-f]{64}$/u.test(plan.service.description)) {
+    throw new TypeError('Windows lifecycle authority service proof runtime evidence is invalid');
   }
   for (const value of [
     plan.protectedRoot,
@@ -79,6 +83,7 @@ export async function verifyWindowsLifecycleAuthorityService({
         name: selected.service.name,
         account: selected.service.account,
         command: selected.serviceCommand,
+        description: selected.service.description,
       }),
       timeoutMs: 30_000,
       maxOutputBytes: 64 * 1024,
