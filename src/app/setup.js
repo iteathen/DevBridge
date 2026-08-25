@@ -10,7 +10,7 @@ import { reconcileSetupPrerequisites } from '../setup/prerequisite-reconciliatio
 import { selectRepositoryDefaults } from '../setup/repository-defaults.js';
 import { createUbuntuSetupAuthority, defaultUbuntuPackageSnapshot } from '../setup/ubuntu-authority.js';
 import { establishUbuntuReleaseAuthority } from '../setup/ubuntu-release-authority.js';
-import { reconcileWindowsLifecycleAuthorityService } from '../setup/windows-lifecycle-authority-service.js';
+import { reconcileWindowsLifecycleAuthorityReadiness } from '../setup/windows-lifecycle-authority-readiness.js';
 
 const PROTOCOL = 'devbridge/setup-status-v1';
 const STATE_KEY = 'setup:v1';
@@ -165,7 +165,7 @@ export async function runDevBridgeSetup({
   discover = discoverGitHubSetupScope,
   selectRepositories = selectRepositoryDefaults,
   prerequisiteReconciler = reconcileSetupPrerequisites,
-  lifecycleAuthorityReconciler = reconcileWindowsLifecycleAuthorityService,
+  lifecycleAuthorityReconciler = reconcileWindowsLifecycleAuthorityReadiness,
   releaseAuthority = establishUbuntuReleaseAuthority,
   authorityFactory = createUbuntuSetupAuthority,
   canaryFactory = createUbuntuProductionImagePhysicalCanary,
