@@ -9,6 +9,21 @@ import {
 
 const PROTOCOL = 'devbridge/linux-lifecycle-authority-protection-v1';
 const DENIED_CODES = new Set(['EACCES', 'EPERM']);
+const SHA256 = /^[0-9a-f]{64}$/u;
+const FILESYSTEM_EVIDENCE = Object.freeze([
+  'protectedRoot',
+  'authorityState',
+  'binDirectory',
+  'runtimeDirectory',
+  'packageDirectory',
+  'nodeExecutable',
+  'packageManifest',
+  'serviceEntry',
+  'ownershipManifest',
+  'runRoot',
+  'readDirectory',
+  'mutationDirectory',
+]);
 
 function allTrue(record, keys) {
   return record != null && keys.every((key) => record[key] === true);
@@ -34,11 +49,12 @@ function requireStructuralEvidence(plan, inspection) {
     throw new Error('Linux lifecycle authority service protection mismatch');
   }
   if (!allTrue(service.unitFile, ['exists', 'real', 'rootOwned', 'mode', 'exact'])) throw new Error('Linux lifecycle authority unit protection mismatch');
-  if (!inspection.filesystem || Object.values(inspection.filesystem).length === 0 || Object.values(inspection.filesystem).some((entry) => !allTrue(entry, ['exists', 'kind', 'owner', 'group', 'mode']))) {
+  if (!inspection.filesystem || FILESYSTEM_EVIDENCE.some((key) => !allTrue(inspection.filesystem[key], ['exists', 'kind', 'owner', 'group', 'mode']))) {
     throw new Error('Linux lifecycle authority filesystem protection mismatch');
   }
   const ownership = inspection.ownership;
-  if (ownership?.exists !== true || ownership.valid !== true || ownership.record?.stateMigrationComplete !== true || ownership.record?.serviceConfigured !== true || ownership.record?.serviceReady !== true || ownership.record?.runtime == null) {
+  const runtime = ownership?.record?.runtime;
+  if (ownership?.exists !== true || ownership.valid !== true || ownership.record?.stateMigrationComplete !== true || ownership.record?.serviceConfigured !== true || ownership.record?.serviceReady !== true || !SHA256.test(runtime?.packageDigest ?? '') || !SHA256.test(runtime?.nodeDigest ?? '')) {
     throw new Error('Linux lifecycle authority ownership protection mismatch');
   }
   if (inspection.provider?.group !== plan.service.providerGroup || inspection.provider?.serviceMember !== true || inspection.provider?.operatorMember !== false || typeof inspection.provider?.socket !== 'string' || inspection.provider.socket.length === 0) {
