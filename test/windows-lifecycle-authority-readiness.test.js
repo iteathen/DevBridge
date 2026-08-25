@@ -53,6 +53,7 @@ test('non-Windows readiness leaves the Windows protection composition unattached
     },
     inspectHost: async () => { throw new Error('must remain unattached'); },
     clientFactory: () => { throw new Error('must remain unattached'); },
+    verifyService: async () => { throw new Error('must remain unattached'); },
     verifyProtection: async () => { throw new Error('must remain unattached'); },
   });
   assert.equal(result, expected);
@@ -71,6 +72,7 @@ test('unsafe legacy path-bound state stops before service inspection or provisio
     serviceReconciler: async () => { serviceCalled = true; return readyService(); },
     inspectHost: async () => { throw new Error('must not inspect host after migration blocker'); },
     clientFactory: () => { throw new Error('must not create authority client after migration blocker'); },
+    verifyService: async () => { throw new Error('must not verify service after migration blocker'); },
     verifyProtection: async () => { throw new Error('must not verify protection after migration blocker'); },
   });
   assert.equal(serviceCalled, false);
@@ -80,12 +82,13 @@ test('unsafe legacy path-bound state stops before service inspection or provisio
   assert.equal(result.blocker, 'provider-aware migration required');
 });
 
-test('ordinary readiness requires read inspection plus negative-capability protection proof', async () => {
+test('ordinary readiness requires SCM identity, read inspection, and negative-capability proof in that order', async () => {
   const calls = [];
   const result = await reconcileWindowsLifecycleAuthorityReadiness({ stateDirectory: STATE, platform: 'win32', invoke: async () => {} }, {
     migrationSafety: async () => portableMigration(),
     inspectHost: async () => { calls.push(['host']); return host(false); },
     clientFactory: clientFactory(calls),
+    verifyService: async ({ operatorSid }) => { calls.push(['service-proof', operatorSid]); return { ready: true }; },
     verifyProtection: async ({ plan, elevated }) => { calls.push(['protection', elevated, plan]); return { ready: true, mode: 'ordinary-negative' }; },
     serviceReconciler: async (options, dependencies) => {
       assert.equal(options.stateDirectory, STATE);
@@ -96,8 +99,28 @@ test('ordinary readiness requires read inspection plus negative-capability prote
   });
   assert.equal(result.ready, true);
   assert.equal(result.service, 'ready');
-  assert.deepEqual(calls.map((entry) => entry[0]), ['host', 'client', 'inspect', 'protection']);
+  assert.deepEqual(calls.map((entry) => entry[0]), ['host', 'service-proof', 'client', 'inspect', 'protection']);
+  assert.equal(calls[1][1], host(false).operatorSid);
   assert.equal(calls.at(-1)[1], false);
+});
+
+test('SCM identity failure blocks before any same-named read pipe can be trusted', async () => {
+  const calls = [];
+  const result = await reconcileWindowsLifecycleAuthorityReadiness({ stateDirectory: STATE, platform: 'win32', invoke: async () => {} }, {
+    migrationSafety: async () => portableMigration(),
+    inspectHost: async () => host(false),
+    verifyService: async () => { calls.push('service-proof'); throw new Error('service mismatch'); },
+    clientFactory: () => { calls.push('client'); throw new Error('fake pipe must not be consulted'); },
+    verifyProtection: async () => { calls.push('protection'); throw new Error('must not run'); },
+    serviceReconciler: async (_options, dependencies) => {
+      await dependencies.inspectHost({});
+      try { await dependencies.probe(PLAN); } catch {}
+      return Object.freeze({ ...readyService(), ready: false, service: 'unavailable', protectedState: 'unknown', blocker: 'generic elevation boundary' });
+    },
+  });
+  assert.equal(result.ready, false);
+  assert.equal(result.blocker, 'generic elevation boundary');
+  assert.deepEqual(calls, ['service-proof']);
 });
 
 test('elevated structural proof never publishes final readiness before ordinary re-entry', async () => {
@@ -106,6 +129,7 @@ test('elevated structural proof never publishes final readiness before ordinary 
     migrationSafety: async () => portableMigration(),
     inspectHost: async () => host(true),
     clientFactory: clientFactory(calls),
+    verifyService: async () => { calls.push(['service-proof']); return { ready: true }; },
     verifyProtection: async ({ elevated }) => { calls.push(['protection', elevated]); return { ready: true, mode: 'structural' }; },
     serviceReconciler: async (_options, dependencies) => {
       await dependencies.inspectHost({});
@@ -117,6 +141,7 @@ test('elevated structural proof never publishes final readiness before ordinary 
   assert.equal(result.changed, true);
   assert.equal(result.service, 'ready');
   assert.match(result.blocker, /non-elevated PowerShell/u);
+  assert.deepEqual(calls.map((entry) => entry[0]), ['service-proof', 'client', 'inspect', 'protection']);
   assert.equal(calls.at(-1)[1], true);
 });
 
@@ -125,6 +150,7 @@ test('ordinary protection failure is a bounded elevation blocker rather than rea
     migrationSafety: async () => portableMigration(),
     inspectHost: async () => host(false),
     clientFactory: () => Object.freeze({ inspect: async () => ({ protocol: 'devbridge/environment-operator-v1' }) }),
+    verifyService: async () => ({ ready: true }),
     verifyProtection: async () => { throw new Error('sensitive ACL detail must not escape'); },
     serviceReconciler: async (_options, dependencies) => {
       await dependencies.inspectHost({});
@@ -142,6 +168,7 @@ test('elevated protection failure remains on the service-owned failed-health pat
     migrationSafety: async () => portableMigration(),
     inspectHost: async () => host(true),
     clientFactory: () => Object.freeze({ inspect: async () => ({ protocol: 'devbridge/environment-operator-v1' }) }),
+    verifyService: async () => ({ ready: true }),
     verifyProtection: async () => { throw new Error('protection mismatch'); },
     serviceReconciler: async (_options, dependencies) => {
       await dependencies.inspectHost({});
