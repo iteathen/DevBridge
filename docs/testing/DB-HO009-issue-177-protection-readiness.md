@@ -22,7 +22,7 @@ The load-sensitive Windows CI concern is separated as #290. #288 does not widen 
 
 ## Protection-readiness LEGO
 
-The standalone protection verifier remains read-only. Final setup composition now injects protection verification through the protected service reconciler's existing `probe` dependency rather than adding another service-management path.
+The standalone protection verifier remains read-only. Final setup composition injects protection verification through the protected service reconciler's existing `probe` dependency rather than adding another service-management path.
 
 This preserves one service/provisioning owner:
 
@@ -46,6 +46,24 @@ Only the ordinary negative-capability pass may return lifecycle-authority `ready
 
 This deliberately prevents an elevated token from being used as evidence that the ordinary/model-visible token is denied.
 
+## Legacy migration stop condition
+
+Pre-host review found that generic byte-for-byte copying is not safe for every existing deployment:
+
+- `BaseImageLibrary` binds published objects to filesystem identity, which changes under ordinary copy;
+- the Hyper-V persistent adapter stores absolute `diskPath`, `parentPath`, and `configPath` values inside provider records;
+- leaving those old files in the user-owned tree would leave the real legacy backing store directly writable even if a new ProgramData copy looked protected.
+
+Therefore setup now performs a read-only migration-safety preflight **before** SCM, ACL, service, or provider mutation. It fails closed when it observes:
+
+- a non-empty published/staged image library;
+- path-bound persistent Hyper-V provider records or backing objects;
+- active image-recovery working state.
+
+Empty/path-independent authority state may still cross the existing generic copy seam. Path-bound state must go through a separate provider-aware migration LEGO. Microsoft `Move-VMStorage` is the supported Hyper-V primitive for explicitly moving VM configuration and individual VHD source/destination paths; the future migration adapter must bind that primitive to exact DevBridge ownership rather than expose it generically.
+
+This stop condition exists to prevent setup from claiming protection while the actual legacy VHDX or provider configuration remains in the ordinary-user tree.
+
 ## Scope exclusions
 
 This LEGO does not:
@@ -54,13 +72,16 @@ This LEGO does not:
 - expose a persistent mutation credential;
 - add a generic privileged shell;
 - change Hyper-V/provider lifecycle semantics;
+- perform provider-aware migration of existing path-bound legacy state;
 - alter #197 VM, image, network, media, or cache state;
 - touch the operator's existing checkout/worktree.
 
 ## Remaining gate before client cutover
 
 1. Hosted Ubuntu + Windows smoke/full CI on the exact integrated head.
-2. On the real Windows host, run the setup-owned authority reconciliation without image/VM construction.
-3. Re-enter from the ordinary token and require the real negative-capability proof to pass.
-4. Verify foreign Hyper-V state remains untouched.
-5. Only after those #288 canaries pass may #177 proceed to ordinary client cutover.
+2. Run setup migration-safety observation on the real Windows installation.
+3. If it reports path-bound legacy state, stop and implement only the provider-aware migration LEGO before provisioning the service.
+4. Otherwise run the setup-owned authority reconciliation without image/VM construction.
+5. Re-enter from the ordinary token and require the real negative-capability proof to pass.
+6. Verify foreign Hyper-V state remains untouched.
+7. Only after those #288 canaries pass may #177 proceed to ordinary client cutover.
