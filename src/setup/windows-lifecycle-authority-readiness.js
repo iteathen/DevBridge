@@ -1,6 +1,7 @@
 import process from 'node:process';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment-lifecycle-authority-transport.js';
+import { inspectWindowsLifecycleAuthorityMigrationSafety } from './windows-lifecycle-authority-migration-safety.js';
 import { reconcileWindowsLifecycleAuthorityService } from './windows-lifecycle-authority-service.js';
 import { verifyWindowsLifecycleAuthorityProtection } from './windows-lifecycle-authority-protection.js';
 
@@ -63,12 +64,26 @@ function withBlocker(result, blocker) {
   return Object.freeze({ ...result, ready: false, blocker });
 }
 
+function migrationBlocker(value) {
+  return Object.freeze({
+    protocol: 'devbridge/windows-lifecycle-authority-service-v1',
+    platform: 'win32',
+    ready: false,
+    blocker: value.blocker,
+    changed: false,
+    authorityIdentity: null,
+    service: 'migration-required',
+    protectedState: 'legacy-unprotected',
+  });
+}
+
 export async function reconcileWindowsLifecycleAuthorityReadiness({
   stateDirectory,
   platform = process.platform,
   invoke = invokeCommand,
   environment = process.env,
 } = {}, {
+  migrationSafety = inspectWindowsLifecycleAuthorityMigrationSafety,
   serviceReconciler = reconcileWindowsLifecycleAuthorityService,
   inspectHost = inspectWindowsLifecycleAuthorityReadinessHost,
   clientFactory = createConfiguredLifecycleAuthorityClient,
@@ -79,9 +94,12 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
   }
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('Windows lifecycle authority readiness stateDirectory is required');
   if (typeof invoke !== 'function') throw new TypeError('Windows lifecycle authority readiness invocation contract is invalid');
-  if (typeof serviceReconciler !== 'function' || typeof inspectHost !== 'function' || typeof clientFactory !== 'function' || typeof verifyProtection !== 'function') {
+  if (typeof migrationSafety !== 'function' || typeof serviceReconciler !== 'function' || typeof inspectHost !== 'function' || typeof clientFactory !== 'function' || typeof verifyProtection !== 'function') {
     throw new TypeError('Windows lifecycle authority readiness composition is invalid');
   }
+
+  const migration = await migrationSafety({ stateDirectory, platform });
+  if (migration?.ready !== true) return migrationBlocker(migration ?? { blocker: 'Legacy Windows lifecycle authority cannot be migrated safely by the generic protected-state copy path.' });
 
   let host = null;
   let protectionFailure = false;
