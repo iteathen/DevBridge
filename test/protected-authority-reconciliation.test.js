@@ -24,6 +24,7 @@ function fixture({
   retainedGenerations = [],
   health = {},
   failObservationAt = null,
+  failJournalSaveWhen = null,
 } = {}) {
   const state = {
     ownership: activeGeneration == null && stagedGeneration == null ? 'absent' : 'owned',
@@ -55,6 +56,7 @@ function fixture({
     journal: {
       async load() { events.push('journal:load'); return clone(journal); },
       async save(value) {
+        if (typeof failJournalSaveWhen === 'function' && failJournalSaveWhen(value)) throw new Error('injected journal interruption');
         journal = clone(value);
         const pending = value.pending == null ? '-' : `${value.pending.effect}:${value.pending.status}:${value.pending.attempt}`;
         events.push(`journal:save:${value.phase}:${pending}`);
@@ -122,6 +124,7 @@ function fixture({
     journal: () => clone(journal),
     setFailObservationAt(value) { failObservationAt = value; },
     resetObservationCount() { observationCount = 0; },
+    setFailJournalSaveWhen(value) { failJournalSaveWhen = value; },
   };
 }
 
@@ -237,6 +240,34 @@ test('unexpected state after an interrupted effect is checkpointed as ambiguous 
   assert.equal(values.calls.stage, 1, 'ambiguous observation must never trigger a blind replay');
   assert.equal(values.journal().outcome, 'blocked');
   assert.equal(values.journal().reason, 'ambiguous-effect');
+});
+
+test('resume refuses to complete a promoted generation after exact rollback evidence disappears', async () => {
+  const values = fixture({ activeGeneration: A, running: true });
+  values.setFailJournalSaveWhen((record) => record.outcome === 'complete');
+  await assert.rejects(
+    reconcileProtectedAuthority({ candidate: { generation: B }, ports: values.ports }),
+    /injected journal interruption/u,
+  );
+
+  assert.equal(values.state.activeGeneration, B);
+  assert.equal(values.state.running, true);
+  assert.deepEqual(values.state.retainedGenerations, [A]);
+  assert.equal(values.journal().outcome, 'in-progress');
+  assert.equal(values.journal().candidateGeneration, B);
+  assert.equal(values.journal().previousGeneration, A);
+  const effectsBefore = Object.fromEntries(Object.entries(values.calls).filter(([name]) => ['stage', 'quiesce', 'promote', 'start', 'restore'].includes(name)));
+
+  values.state.retainedGenerations = [];
+  values.setFailJournalSaveWhen(null);
+  await assert.rejects(
+    reconcileProtectedAuthority({ candidate: { generation: B }, ports: values.ports }),
+    /did not retain the exact previous generation/u,
+  );
+  assert.equal(values.journal().outcome, 'blocked');
+  assert.equal(values.journal().reason, 'ambiguous-effect');
+  const effectsAfter = Object.fromEntries(Object.entries(values.calls).filter(([name]) => ['stage', 'quiesce', 'promote', 'start', 'restore'].includes(name)));
+  assert.deepEqual(effectsAfter, effectsBefore, 'missing rollback evidence must block before another external effect');
 });
 
 test('shared reconciler rejects authority-shaped adapter data and contains no platform implementation identity', async () => {

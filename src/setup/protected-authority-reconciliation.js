@@ -325,6 +325,10 @@ export async function reconcileProtectedAuthority({ candidate, ports } = {}) {
   if (exactCurrent(observation, selected.generation) && await health(local, selected.generation)) {
     if (record?.outcome === 'in-progress' && record.candidateGeneration === selected.generation) {
       assertCompatibleObservation(observation, record);
+      if (!previousRetained(observation, record)) {
+        await save(local.journal, withJournal(record, { phase: 'blocked', pending: null, outcome: 'blocked', reason: 'ambiguous-effect' }));
+        throw new Error('protected authority promotion did not retain the exact previous generation');
+      }
       record = await save(local.journal, withJournal(record, { phase: 'complete', pending: null, outcome: 'complete', reason: null }));
       return Object.freeze({ protocol: PROTOCOL, ready: true, changed: false, generation: selected.generation, recovered: false, blocker: null, transactionId: record.transactionId });
     }
