@@ -36,13 +36,18 @@ function safeReason(error) {
 
 export async function createLocalEnvironmentAccess({
   stateDirectory,
+  authorityDirectory = null,
   platform = process.platform,
   invoke = invokeCommand,
   guest,
   windowsAccess = null,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('environment access stateDirectory is required');
+  if (authorityDirectory != null && (typeof authorityDirectory !== 'string' || authorityDirectory.length === 0)) {
+    throw new TypeError('environment access authorityDirectory must be a non-empty string when provided');
+  }
   if (typeof invoke !== 'function') throw new TypeError('environment access invocation contract is invalid');
+  const authorityStateDirectory = authorityDirectory ?? stateDirectory;
   const family = guestKind(guest);
   if (family === 'linux' && platform === 'linux') {
     return Object.freeze({
@@ -51,7 +56,7 @@ export async function createLocalEnvironmentAccess({
     });
   }
   if (family === 'linux' && platform === 'win32') {
-    const root = path.join(path.resolve(stateDirectory), 'environment-foundation');
+    const root = path.join(path.resolve(authorityStateDirectory), 'environment-foundation');
     const identity = await loadOrCreateLocalIdentity({ directory: root });
     const material = new SshAccessMaterial({ directory: path.join(root, 'access', 'ssh'), invoke });
     const delivery = new HyperVGuestFileDelivery({ identity, invoke });
@@ -70,6 +75,7 @@ export async function createLocalEnvironmentAccess({
 
 export function createEnvironmentConstructionPreparation({
   stateDirectory,
+  authorityDirectory = null,
   platform = process.platform,
   invoke = invokeCommand,
   createBootstrap = createEnvironmentBootstrap,
@@ -77,8 +83,12 @@ export function createEnvironmentConstructionPreparation({
   windowsAccess = null,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('environment preparation stateDirectory is required');
+  if (authorityDirectory != null && (typeof authorityDirectory !== 'string' || authorityDirectory.length === 0)) {
+    throw new TypeError('environment preparation authorityDirectory must be a non-empty string when provided');
+  }
   if (typeof invoke !== 'function') throw new TypeError('environment preparation invocation contract is invalid');
   if (typeof createBootstrap !== 'function' || typeof createAccess !== 'function') throw new TypeError('environment preparation composition contract is incomplete');
+  const authorityStateDirectory = authorityDirectory ?? stateDirectory;
   const values = new Map();
 
   const resolve = async (rawRequest) => {
@@ -90,10 +100,11 @@ export function createEnvironmentConstructionPreparation({
     const target = executionProfileSubject(declaration.profile);
     const key = JSON.stringify([declaration.profile, declaration.guest, declaration.bootstrap, declaration.enrollment]);
     if (!values.has(key)) {
-      const access = await createAccess({ stateDirectory, platform, invoke, guest: declaration.guest, windowsAccess });
+      const access = await createAccess({ stateDirectory, authorityDirectory: authorityStateDirectory, platform, invoke, guest: declaration.guest, windowsAccess });
       if (!access || typeof access.connection !== 'function' || (access.prepare != null && typeof access.prepare !== 'function')) throw new TypeError('environment access composition contract is incomplete');
       const bootstrap = await createBootstrap({
         stateDirectory,
+        authorityDirectory: authorityStateDirectory,
         platform,
         invoke,
         access: (selected) => access.connection(selected),
