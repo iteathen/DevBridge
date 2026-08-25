@@ -19,7 +19,6 @@ import { createWindowsLifecycleAuthorityPlan } from './windows-lifecycle-authori
 const PROTOCOL = 'devbridge/windows-lifecycle-authority-service-v1';
 const OWNERSHIP_PROTOCOL = 'devbridge/windows-lifecycle-authority-ownership-v1';
 const PACKAGE_ROOT = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
-const HOST_SOURCE = path.join(PACKAGE_ROOT, 'src', 'setup', 'windows-lifecycle-authority-host.cs');
 const MAX_PACKAGE_FILES = 2_048;
 const MAX_PACKAGE_BYTES = 64 * 1024 * 1024;
 const MAX_PACKAGE_FILE_BYTES = 8 * 1024 * 1024;
@@ -258,22 +257,6 @@ async function inspectWindowsLifecycleAuthorityHost({ invoke, environment }) {
   return Object.freeze({ elevated: value.elevated, operatorSid: value.operatorSid, programData: value.programData });
 }
 
-function serviceCommand(plan, operatorSid = plan.acl.readPipe.clients[0].principal) {
-  const fields = [
-    plan.runtime.serviceHostExecutable,
-    '--service-name', plan.service.name,
-    '--protected-root', plan.protectedRoot,
-    '--node', plan.runtime.nodeExecutable,
-    '--worker', plan.runtime.workerEntry,
-    '--state-directory', plan.stateDirectory,
-    '--authority-directory', plan.authorityDirectory,
-    '--operator-sid', operatorSid,
-    '--read-pipe', plan.endpoints.read.pipeName,
-    '--mutation-pipe', plan.endpoints.mutation.pipeName,
-  ];
-  return fields.map((value) => `"${String(value).replaceAll('"', '\\"')}"`).join(' ');
-}
-
 function normalizeOwnership(raw, plan) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('protected lifecycle authority ownership record is invalid');
   const allowed = new Set(['protocol', 'authorityIdentity', 'serviceName', 'operatorSid', 'stateMigrationComplete', 'runtime', 'serviceConfigured', 'serviceReady']);
@@ -348,6 +331,9 @@ async function initializeProtectedRoot(plan, operatorSid, invoke, environment) {
     }
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
+  }
+  if (existing && existing.operatorSid !== operatorSid) {
+    throw new Error('protected lifecycle authority operator identity does not match this installation');
   }
   await invokePowerShell(invoke, INITIALIZE_ROOT_SCRIPT, {
     protectedRoot: plan.protectedRoot,
@@ -487,10 +473,9 @@ function sameWindowsText(left, right) {
   return String(left).toLowerCase() === String(right).toLowerCase();
 }
 
-function validateOwnedService(service, plan, ownership) {
+function validateOwnedService(service, plan) {
   if (!service.exists) return;
-  const expected = serviceCommand(plan, ownership.operatorSid);
-  if (!sameWindowsText(service.startName, plan.service.account) || service.pathName !== expected) {
+  if (!sameWindowsText(service.startName, plan.service.account) || !sameWindowsText(service.pathName, plan.serviceCommand)) {
     throw new Error('existing Windows lifecycle authority service does not match protected DevBridge ownership');
   }
 }
@@ -513,8 +498,8 @@ async function quiesceOwnedService(service, plan, invoke, environment) {
   await invokePowerShell(invoke, STOP_SERVICE_SCRIPT, { name: plan.service.name }, 'Windows lifecycle authority service stop', environment);
 }
 
-async function configureService(service, plan, operatorSid, invoke, environment) {
-  const command = serviceCommand(plan, operatorSid);
+async function configureService(service, plan, invoke, environment) {
+  const command = plan.serviceCommand;
   let changed = false;
   if (!service.exists) {
     await invokeSc(invoke, [
@@ -562,7 +547,8 @@ async function materializeProtectedRuntime(plan, ownership, invoke, environment,
 
   await copyPackageSnapshot(sourceSnapshot, packageRoot, plan.runtime.packageDirectory);
   const nodeDigest = await copyBoundedFile(nodeExecutable, plan.runtime.nodeExecutable, MAX_NODE_BYTES);
-  const hostSourceDigest = await copyBoundedFile(HOST_SOURCE, plan.runtime.serviceHostSource, MAX_PACKAGE_FILE_BYTES);
+  const hostSource = path.join(packageRoot, 'src', 'setup', 'windows-lifecycle-authority-host.cs');
+  const hostSourceDigest = await copyBoundedFile(hostSource, plan.runtime.serviceHostSource, MAX_PACKAGE_FILE_BYTES);
   await invokePowerShell(invoke, COMPILE_HOST_SCRIPT, {
     source: plan.runtime.serviceHostSource,
     output: plan.runtime.serviceHostExecutable,
@@ -586,7 +572,7 @@ async function materializeProtectedRuntime(plan, ownership, invoke, environment,
 async function provisionWindowsLifecycleAuthority({ plan, operatorSid, invoke, environment, packageRoot, nodeExecutable }) {
   let ownership = await initializeProtectedRoot(plan, operatorSid, invoke, environment);
   const service = await inspectService(plan, invoke, environment);
-  validateOwnedService(service, plan, ownership);
+  validateOwnedService(service, plan);
   await quiesceOwnedService(service, plan, invoke, environment);
   let changed = service.exists === true;
 
@@ -601,7 +587,7 @@ async function provisionWindowsLifecycleAuthority({ plan, operatorSid, invoke, e
   changed ||= runtime.changed;
   ownership = await writeOwnership(plan, Object.freeze({ ...ownership, operatorSid, serviceReady: false }), invoke, environment);
 
-  const configured = await configureService(service, plan, operatorSid, invoke, environment);
+  const configured = await configureService(service, plan, invoke, environment);
   changed ||= configured.changed;
   ownership = await writeOwnership(plan, Object.freeze({ ...ownership, serviceConfigured: true }), invoke, environment);
 
@@ -612,7 +598,7 @@ async function provisionWindowsLifecycleAuthority({ plan, operatorSid, invoke, e
     serviceAccount: plan.service.account,
   }, 'Windows lifecycle authority ACL sealing', environment);
   await invokePowerShell(invoke, START_SERVICE_SCRIPT, { name: plan.service.name }, 'Windows lifecycle authority service start', environment);
-  return Object.freeze({ ownership, changed: true || changed });
+  return Object.freeze({ ownership, changed: true });
 }
 
 async function stopWindowsLifecycleAuthority(plan, invoke, environment) {
