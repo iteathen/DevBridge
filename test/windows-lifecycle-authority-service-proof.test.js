@@ -50,6 +50,23 @@ test('service proof requires the exact deterministic SCM command and virtual acc
   assert.match(input.command, /"--mutation-pipe" "devbridge-environment-0123456789abcdef0123456789abcdef-mutation-v1"$/u);
 });
 
+test('service proof rejects a service account that is not derived from the exact service name', async () => {
+  const wrongName = Object.freeze({
+    ...plan,
+    service: Object.freeze({ ...plan.service, name: 'DevBridgeLifecycle-fedcba9876543210fedcba9876543210' }),
+  });
+  const wrongAccount = Object.freeze({
+    ...plan,
+    service: Object.freeze({ ...plan.service, account: 'NT SERVICE\\DevBridgeLifecycle-fedcba9876543210fedcba9876543210' }),
+  });
+  for (const candidate of [wrongName, wrongAccount]) {
+    await assert.rejects(
+      () => verifyWindowsLifecycleAuthorityService({ plan: candidate, operatorSid: OPERATOR_SID, invoke: async () => success() }),
+      /service proof identity is invalid/u,
+    );
+  }
+});
+
 test('service proof fails closed on missing, mismatched, or malformed SCM evidence', async () => {
   for (const stdout of ['{"ready":false}\n', '{}\n', '{"ready":true,"detail":"leak"}\n', 'not-json\n']) {
     await assert.rejects(
