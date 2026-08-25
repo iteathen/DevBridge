@@ -9,15 +9,10 @@ const SYSTEMCTL = '/usr/bin/systemctl';
 const PASSWD = '/etc/passwd';
 const GROUP = '/etc/group';
 const PROVIDER_SOCKETS = Object.freeze([
-  '/run/libvirt/libvirt-sock',
-  '/run/libvirt/virtproxyd-sock',
   '/run/libvirt/virtqemud-sock',
+  '/run/libvirt/libvirt-sock',
 ]);
 const SHA256 = /^[0-9a-f]{64}$/u;
-
-function boundedText(value, max = 1024) {
-  return String(value ?? '').replace(/[\r\n]+/gu, ' ').trim().slice(0, max);
-}
 
 function numeric(value, name) {
   const parsed = Number(value);
@@ -59,6 +54,11 @@ function parseGroup(text) {
 
 function memberOf(account, group) {
   return account != null && group != null && (account.gid === group.gid || group.members.includes(account.name));
+}
+
+function groupsFor(account, groups) {
+  if (!account) return Object.freeze([]);
+  return Object.freeze([...groups.byName.values()].filter((group) => memberOf(account, group)).map((group) => group.name).sort());
 }
 
 async function optionalLstat(file, stat = lstat) {
@@ -174,14 +174,15 @@ function normalizeOwnership(raw, plan) {
 
 async function inspectOwnership(plan, stat = lstat, load = readFile) {
   const info = await optionalLstat(plan.ownershipManifest, stat);
-  if (info == null) return Object.freeze({ exists: false, valid: false, record: null });
+  if (info == null) return Object.freeze({ exists: false, valid: false, record: null, info: null });
   if (!realFile(info) || info.size < 2 || info.size > 32 * 1024) throw new Error('Linux lifecycle authority ownership record is not a bounded real file');
-  const record = normalizeOwnership(JSON.parse(await load(plan.ownershipManifest, 'utf8')), plan);
-  return Object.freeze({ exists: true, valid: true, record });
+  let raw;
+  try { raw = JSON.parse(await load(plan.ownershipManifest, 'utf8')); }
+  catch { throw new Error('Linux lifecycle authority ownership record is invalid JSON'); }
+  return Object.freeze({ exists: true, valid: true, record: normalizeOwnership(raw, plan), info });
 }
 
 async function inspectProviderSocket(groups, stat = lstat) {
-  const observed = [];
   for (const candidate of PROVIDER_SOCKETS) {
     const info = await optionalLstat(candidate, stat);
     if (info == null) continue;
@@ -192,18 +193,12 @@ async function inspectProviderSocket(groups, stat = lstat) {
     if (info.gid === 0 || group.name === 'root' || (permissions & 0o060) !== 0o060 || (permissions & 0o006) !== 0) {
       throw new Error('Linux provider management endpoint does not expose a bounded group-only capability');
     }
-    observed.push(Object.freeze({ path: candidate, gid: info.gid, group: group.name, mode: permissions }));
+    return Object.freeze({ available: true, socket: candidate, group: group.name, mode: permissions });
   }
-  if (observed.length === 0) return Object.freeze({ available: false, socket: null, group: null, mode: null });
-  const groupsObserved = new Set(observed.map((entry) => entry.gid));
-  if (groupsObserved.size !== 1) throw new Error('Linux provider management endpoints disagree on access group');
-  return Object.freeze({ available: true, socket: observed[0].path, group: observed[0].group, mode: observed[0].mode });
+  return Object.freeze({ available: false, socket: null, group: null, mode: null });
 }
 
-export async function inspectLinuxLifecycleAuthorityHost({
-  platform = process.platform,
-  environment = process.env,
-} = {}, {
+export async function inspectLinuxLifecycleAuthorityHost({ platform = process.platform } = {}, {
   stat = lstat,
   load = readFile,
   userInfo = os.userInfo,
@@ -228,7 +223,6 @@ export async function inspectLinuxLifecycleAuthorityHost({
     ordinaryProviderMember: providerGroup == null ? false : memberOf(operator, providerGroup),
     accounts,
     groups,
-    environmentObserved: environment != null,
   });
 }
 
@@ -254,7 +248,7 @@ export async function inspectLinuxLifecycleAuthorityState({
   const coordinationGroup = host.groups.byName.get(plan.service.coordinationGroup) ?? null;
   const providerGroup = host.groups.byName.get(plan.service.providerGroup) ?? null;
   const rootGroup = host.groups.byName.get('root') ?? null;
-  if (!operatorAccount || !providerGroup || !rootGroup) throw new Error('Linux lifecycle authority account/group observation is incomplete');
+  if (!operatorAccount || !providerGroup || !rootGroup || rootGroup.gid !== 0) throw new Error('Linux lifecycle authority account/group observation is incomplete');
 
   const [
     unitInfo,
@@ -295,6 +289,10 @@ export async function inspectLinuxLifecycleAuthorityState({
   const coordinationGid = coordinationGroup?.gid ?? -1;
   const unitExact = unitText === plan.service.unit;
   const supplementary = new Set(service.supplementaryGroups ?? []);
+  const expectedSupplementary = new Set([plan.service.coordinationGroup, plan.service.providerGroup]);
+  const configuredGroupsExact = supplementary.size === expectedSupplementary.size && [...supplementary].every((entry) => expectedSupplementary.has(entry));
+  const allowedServiceGroups = new Set([plan.service.readGroup, plan.service.coordinationGroup, plan.service.providerGroup]);
+  const unexpectedServiceGroups = groupsFor(serviceAccount, host.groups).filter((entry) => !allowedServiceGroups.has(entry));
 
   return Object.freeze({
     protocol: PROTOCOL,
@@ -308,6 +306,7 @@ export async function inspectLinuxLifecycleAuthorityState({
         home: serviceAccount?.home === plan.service.account.home,
         shell: serviceAccount?.shell === plan.service.account.shell,
         primaryReadGroup: serviceAccount != null && readGroup != null && serviceAccount.gid === readGroup.gid,
+        unexpectedGroups: Object.freeze(unexpectedServiceGroups),
       }),
       readGroup: Object.freeze({ exists: readGroup != null, service: memberOf(serviceAccount, readGroup), operator: memberOf(operatorAccount, readGroup) }),
       coordinationGroup: Object.freeze({ exists: coordinationGroup != null, service: memberOf(serviceAccount, coordinationGroup), operator: memberOf(operatorAccount, coordinationGroup) }),
@@ -317,7 +316,7 @@ export async function inspectLinuxLifecycleAuthorityState({
       ...service,
       unitFile: Object.freeze({ exists: unitInfo != null, real: realFile(unitInfo), rootOwned: unitInfo?.uid === 0 && unitInfo?.gid === 0, mode: unitInfo == null ? false : mode(unitInfo) === 0o644, exact: unitExact }),
       identity: service.exists === true && service.user === plan.service.user && service.group === plan.service.readGroup,
-      groups: service.exists === true && supplementary.has(plan.service.coordinationGroup) && supplementary.has(plan.service.providerGroup),
+      groups: service.exists === true && configuredGroupsExact,
       fragment: service.exists === true && service.fragmentPath === plan.service.unitPath,
     }),
     filesystem: Object.freeze({
@@ -329,11 +328,12 @@ export async function inspectLinuxLifecycleAuthorityState({
       nodeExecutable: filePolicy(nodeInfo, { uid: 0, gid: 0, mode: plan.access.protectedRuntime.executableMode, kind: 'file' }),
       packageManifest: filePolicy(packageManifestInfo, { uid: 0, gid: 0, mode: plan.access.protectedRuntime.fileMode, kind: 'file' }),
       serviceEntry: filePolicy(serviceEntryInfo, { uid: 0, gid: 0, mode: plan.access.protectedRuntime.fileMode, kind: 'file' }),
+      ownershipManifest: filePolicy(ownership.info, { uid: 0, gid: 0, mode: plan.access.ownershipManifest.mode, kind: 'file' }),
       runRoot: filePolicy(runRootInfo, { uid: 0, gid: 0, mode: 0o755, kind: 'directory' }),
       readDirectory: filePolicy(readDirectoryInfo, { uid: serviceUid, gid: readGid, mode: plan.endpoints.read.mode, kind: 'directory' }),
       mutationDirectory: filePolicy(mutationDirectoryInfo, { uid: serviceUid, gid: 0, mode: plan.endpoints.mutation.mode, kind: 'directory' }),
     }),
-    ownership,
+    ownership: Object.freeze({ exists: ownership.exists, valid: ownership.valid, record: ownership.record }),
     provider: Object.freeze({ socket: host.provider.socket, group: host.provider.group, operatorMember: memberOf(operatorAccount, providerGroup), serviceMember: memberOf(serviceAccount, providerGroup) }),
     coordination: Object.freeze({ group: plan.service.coordinationGroup, gid: coordinationGid }),
   });
