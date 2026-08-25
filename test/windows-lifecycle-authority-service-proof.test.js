@@ -2,30 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { createWindowsLifecycleAuthorityPlan } from '../src/setup/windows-lifecycle-authority.js';
 import {
   verifyWindowsLifecycleAuthorityService,
   WINDOWS_LIFECYCLE_AUTHORITY_SERVICE_PROOF_PROTOCOL,
 } from '../src/setup/windows-lifecycle-authority-service-proof.js';
 
 const OPERATOR_SID = 'S-1-5-21-111111111-222222222-333333333-1001';
-const SERVICE = 'DevBridgeLifecycle-0123456789abcdef0123456789abcdef';
-const plan = Object.freeze({
-  protectedRoot: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\0123456789abcdef0123456789abcdef',
-  stateDirectory: 'C:\\Users\\Operator\\.devbridge\\state',
-  authorityDirectory: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\0123456789abcdef0123456789abcdef\\state',
-  service: Object.freeze({
-    name: SERVICE,
-    account: `NT SERVICE\\${SERVICE}`,
-  }),
-  runtime: Object.freeze({
-    serviceHostExecutable: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\0123456789abcdef0123456789abcdef\\bin\\devbridge-lifecycle-authority-host.exe',
-    nodeExecutable: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\0123456789abcdef0123456789abcdef\\bin\\node.exe',
-    workerEntry: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\0123456789abcdef0123456789abcdef\\runtime\\package\\src\\entry\\windows-lifecycle-authority-worker.mjs',
-  }),
-  endpoints: Object.freeze({
-    read: Object.freeze({ pipeName: 'devbridge-environment-0123456789abcdef0123456789abcdef-read-v1' }),
-    mutation: Object.freeze({ pipeName: 'devbridge-environment-0123456789abcdef0123456789abcdef-mutation-v1' }),
-  }),
+const STATE = 'C:\\Users\\Operator\\.devbridge\\state';
+const PROGRAM_DATA = 'C:\\ProgramData';
+const plan = createWindowsLifecycleAuthorityPlan({
+  stateDirectory: STATE,
+  programDataDirectory: PROGRAM_DATA,
+  operatorSid: OPERATOR_SID,
 });
 
 function success(stdout = '{"ready":true}\n') {
@@ -43,11 +32,12 @@ test('service proof requires the exact deterministic SCM command and virtual acc
   assert.equal(result.ready, true);
   assert.equal(request.executable, 'powershell.exe');
   const input = JSON.parse(request.input);
-  assert.equal(input.name, SERVICE);
-  assert.equal(input.account, `NT SERVICE\\${SERVICE}`);
+  assert.equal(input.name, plan.service.name);
+  assert.equal(input.account, plan.service.account);
+  assert.equal(input.command, plan.serviceCommand);
   assert.match(input.command, /devbridge-lifecycle-authority-host\.exe" "--service-name" "DevBridgeLifecycle-/u);
   assert.match(input.command, /"--operator-sid" "S-1-5-21-111111111-222222222-333333333-1001"/u);
-  assert.match(input.command, /"--mutation-pipe" "devbridge-environment-0123456789abcdef0123456789abcdef-mutation-v1"$/u);
+  assert.match(input.command, /"--mutation-pipe" "devbridge-environment-[0-9a-f]{32}-mutation-v1"$/u);
 });
 
 test('service proof rejects a service account that is not derived from the exact service name', async () => {
