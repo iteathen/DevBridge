@@ -14,9 +14,11 @@ test('Windows lifecycle service host is only an SCM, IPC, and bounded process ad
     'ServiceBase.Run',
     'NamedPipeServerStream',
     'PipeAccessRights.ReadWrite',
+    'PipeOptions.FirstPipeInstance',
     'JobObjectLimitKillOnJobClose',
     'UseShellExecute = false',
-    'NODE_OPTIONS',
+    'Environment.FailFast',
+    'ScrubbedWorkerEnvironment',
   ]) assert.equal(source.includes(required), true, `service host lost ${required}`);
 
   for (const forbidden of [
@@ -30,12 +32,45 @@ test('Windows lifecycle service host is only an SCM, IPC, and bounded process ad
     'cmd.exe',
     'powershell.exe',
     'virsh',
+    'PipeAccessRights.CreateNewInstance',
   ]) assert.equal(source.includes(forbidden), false, `service host leaked ${forbidden}`);
 
   assert.match(source, /administrators, PipeAccessRights\.ReadWrite/u);
   assert.doesNotMatch(source, /administrators, PipeAccessRights\.FullControl/u);
   assert.match(source, /operatorIdentity, PipeAccessRights\.ReadWrite/u);
   assert.equal(source.includes('operatorIdentity, PipeAccessRights.FullControl'), false);
+});
+
+test('Windows lifecycle endpoints keep one first-instance server alive across requests', async () => {
+  const source = await readFile(SOURCE, 'utf8');
+  assert.match(
+    source,
+    /PipeDirection\.InOut,\s*1,\s*PipeTransmissionMode\.Byte,\s*PipeOptions\.Asynchronous \| PipeOptions\.FirstPipeInstance/su,
+  );
+  assert.match(source, /pipe = CreatePipe\(name, access\);\s*lock \(activeLock\) activePipes\.Add\(pipe\);\s*while \(!stopping\)/su);
+  assert.match(source, /if \(!stopping && pipe\.IsConnected\) pipe\.Disconnect\(\);/u);
+  assert.equal((source.match(/CreatePipe\(name, access\)/gu) ?? []).length, 1);
+  assert.doesNotMatch(source, /while \(!stopping\)[\s\S]{0,300}pipe = CreatePipe/u);
+  assert.match(source, /if \(!read\.Wait\(remaining\)\) throw new TimeoutException/u);
+  assert.doesNotMatch(source, /if \(!read\.Wait\(remaining\)\)[\s\S]{0,160}pipe\.Dispose/u);
+});
+
+test('Windows lifecycle worker cannot inherit common operator credential channels', async () => {
+  const source = await readFile(SOURCE, 'utf8');
+  for (const name of [
+    'NODE_OPTIONS',
+    'NODE_PATH',
+    'GH_TOKEN',
+    'GITHUB_TOKEN',
+    'DEVBRIDGE_GITHUB_TOKEN',
+    'GIT_ASKPASS',
+    'SSH_ASKPASS',
+    'SSH_AUTH_SOCK',
+    'DEVBRIDGE_COORDINATION_PRIVATE_KEY',
+    'DEVBRIDGE_RELEASE_PRIVATE_KEY',
+    'DEVBRIDGE_SIGNING_KEY',
+  ]) assert.equal(source.includes(`\"${name}\"`), true, `worker scrub list lost ${name}`);
+  assert.match(source, /foreach \(string name in ScrubbedWorkerEnvironment\) start\.EnvironmentVariables\.Remove\(name\);/u);
 });
 
 test('Windows PowerShell 5.1 can compile the service-aware host without a third-party build tool', async (t) => {
