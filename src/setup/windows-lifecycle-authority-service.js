@@ -14,7 +14,10 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment-lifecycle-authority-transport.js';
-import { createWindowsLifecycleAuthorityPlan } from './windows-lifecycle-authority.js';
+import {
+  bindWindowsLifecycleAuthorityRuntime,
+  createWindowsLifecycleAuthorityPlan,
+} from './windows-lifecycle-authority.js';
 
 const PROTOCOL = 'devbridge/windows-lifecycle-authority-service-v1';
 const OWNERSHIP_PROTOCOL = 'devbridge/windows-lifecycle-authority-ownership-v1';
@@ -111,6 +114,7 @@ if ($null -eq $service) {
     startMode = [string]$service.StartMode
     startName = [string]$service.StartName
     pathName = [string]$service.PathName
+    description = [string]$service.Description
   } | ConvertTo-Json -Compress
 }
 `;
@@ -401,6 +405,21 @@ async function packageSnapshot(root) {
   return Object.freeze({ digest: digest.digest('hex'), files: Object.freeze(manifest) });
 }
 
+export async function measureWindowsLifecycleAuthorityCandidate({ packageRoot, nodeExecutable } = {}) {
+  if (typeof packageRoot !== 'string' || packageRoot.length === 0 || typeof nodeExecutable !== 'string' || nodeExecutable.length === 0) {
+    throw new TypeError('Windows lifecycle authority runtime candidate paths are required');
+  }
+  const [sourceSnapshot, node] = await Promise.all([
+    packageSnapshot(packageRoot),
+    hashFile(nodeExecutable, MAX_NODE_BYTES),
+  ]);
+  return Object.freeze({
+    sourceSnapshot,
+    node,
+    evidence: Object.freeze({ packageDigest: sourceSnapshot.digest, nodeDigest: node.digest }),
+  });
+}
+
 async function copyPackageSnapshot(snapshot, sourceRoot, destinationRoot) {
   const staging = `${destinationRoot}.staging`;
   await rm(staging, { recursive: true, force: true });
@@ -466,7 +485,14 @@ async function inspectService(plan, invoke, environment) {
   if (value.exists !== true || typeof value.state !== 'string' || typeof value.startName !== 'string' || typeof value.pathName !== 'string') {
     throw new Error('Windows lifecycle authority service inspection returned an invalid record');
   }
-  return Object.freeze({ exists: true, state: value.state, startMode: String(value.startMode ?? ''), startName: value.startName, pathName: value.pathName });
+  return Object.freeze({
+    exists: true,
+    state: value.state,
+    startMode: String(value.startMode ?? ''),
+    startName: value.startName,
+    pathName: value.pathName,
+    description: String(value.description ?? ''),
+  });
 }
 
 function sameWindowsText(left, right) {
@@ -514,6 +540,7 @@ async function configureService(service, plan, invoke, environment) {
   await invokeSc(invoke, ['config', plan.service.name, 'binPath=', command, 'start=', 'auto', 'obj=', plan.service.account], 'Windows lifecycle authority service configuration', environment);
   await invokeSc(invoke, ['sidtype', plan.service.name, plan.service.sidType], 'Windows lifecycle authority service SID configuration', environment);
   await invokeSc(invoke, ['failure', plan.service.name, 'reset=', '86400', 'actions=', 'restart/5000'], 'Windows lifecycle authority service failure policy', environment);
+  await invokeSc(invoke, ['description', plan.service.name, plan.service.description], 'Windows lifecycle authority runtime evidence configuration', environment);
   const group = await invokePowerShell(invoke, ADD_HYPERV_GROUP_SCRIPT, {
     serviceAccount: plan.service.account,
     groupSid: plan.service.hyperVGroupSid,
@@ -540,9 +567,9 @@ async function protectedRuntimeCurrent(plan, ownership, sourceSnapshot, nodeDige
   }
 }
 
-async function materializeProtectedRuntime(plan, ownership, invoke, environment, { packageRoot, nodeExecutable }) {
-  const sourceSnapshot = await packageSnapshot(packageRoot);
-  const node = await hashFile(nodeExecutable, MAX_NODE_BYTES);
+async function materializeProtectedRuntime(plan, ownership, invoke, environment, { packageRoot, nodeExecutable, candidate }) {
+  const sourceSnapshot = candidate?.sourceSnapshot ?? await packageSnapshot(packageRoot);
+  const node = candidate?.node ?? await hashFile(nodeExecutable, MAX_NODE_BYTES);
   if (await protectedRuntimeCurrent(plan, ownership, sourceSnapshot, node.digest)) return Object.freeze({ ownership, changed: false });
 
   await copyPackageSnapshot(sourceSnapshot, packageRoot, plan.runtime.packageDirectory);
@@ -569,7 +596,7 @@ async function materializeProtectedRuntime(plan, ownership, invoke, environment,
   });
 }
 
-async function provisionWindowsLifecycleAuthority({ plan, operatorSid, invoke, environment, packageRoot, nodeExecutable }) {
+async function provisionWindowsLifecycleAuthority({ plan, operatorSid, invoke, environment, packageRoot, nodeExecutable, candidate }) {
   let ownership = await initializeProtectedRoot(plan, operatorSid, invoke, environment);
   const service = await inspectService(plan, invoke, environment);
   validateOwnedService(service, plan);
@@ -582,7 +609,7 @@ async function provisionWindowsLifecycleAuthority({ plan, operatorSid, invoke, e
     changed = true;
   }
 
-  const runtime = await materializeProtectedRuntime(plan, ownership, invoke, environment, { packageRoot, nodeExecutable });
+  const runtime = await materializeProtectedRuntime(plan, ownership, invoke, environment, { packageRoot, nodeExecutable, candidate });
   ownership = runtime.ownership;
   changed ||= runtime.changed;
   ownership = await writeOwnership(plan, Object.freeze({ ...ownership, operatorSid, serviceReady: false }), invoke, environment);
@@ -629,6 +656,7 @@ export async function reconcileWindowsLifecycleAuthorityService({
   nodeExecutable = process.execPath,
 } = {}, {
   inspectHost = inspectWindowsLifecycleAuthorityHost,
+  measureCandidate = measureWindowsLifecycleAuthorityCandidate,
   probe = probeWindowsLifecycleAuthority,
   provision = provisionWindowsLifecycleAuthority,
   stop = stopWindowsLifecycleAuthority,
@@ -636,6 +664,7 @@ export async function reconcileWindowsLifecycleAuthorityService({
   if (typeof platform !== 'string' || platform.length === 0) throw new TypeError('Windows lifecycle authority setup platform is invalid');
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('Windows lifecycle authority setup stateDirectory is required');
   if (typeof invoke !== 'function') throw new TypeError('Windows lifecycle authority setup invocation contract is invalid');
+  if (typeof measureCandidate !== 'function') throw new TypeError('Windows lifecycle authority runtime measurement contract is invalid');
   if (platform !== 'win32') return serviceResult({ platform, ready: true, service: 'not-applicable', protectedState: 'not-applicable' });
 
   let host;
@@ -644,9 +673,23 @@ export async function reconcileWindowsLifecycleAuthorityService({
     return serviceResult({ platform, ready: false, blocker: `Windows lifecycle authority host inspection failed: ${boundedReason(error?.message, 'unknown failure')}`, service: 'unavailable', protectedState: 'unknown' });
   }
 
+  let candidate;
+  try {
+    candidate = await measureCandidate({ packageRoot, nodeExecutable });
+  } catch {
+    return serviceResult({
+      platform,
+      ready: false,
+      blocker: 'Windows lifecycle authority runtime candidate could not be verified from the exact local package and Node executable.',
+      service: 'unavailable',
+      protectedState: 'unknown',
+    });
+  }
+
   let plan;
   try {
-    plan = createWindowsLifecycleAuthorityPlan({ stateDirectory, programDataDirectory: host.programData, operatorSid: host.operatorSid });
+    const basePlan = createWindowsLifecycleAuthorityPlan({ stateDirectory, programDataDirectory: host.programData, operatorSid: host.operatorSid });
+    plan = bindWindowsLifecycleAuthorityRuntime(basePlan, candidate.evidence);
   } catch (error) {
     return serviceResult({ platform, ready: false, blocker: `Windows lifecycle authority plan is invalid: ${boundedReason(error?.message, 'unknown failure')}`, service: 'unavailable', protectedState: 'unknown' });
   }
@@ -655,7 +698,7 @@ export async function reconcileWindowsLifecycleAuthorityService({
     await probe(plan);
     return serviceResult({ platform, ready: true, authorityIdentity: plan.authorityIdentity, service: 'ready', protectedState: 'ready' });
   } catch {
-    // Missing/unhealthy authority is a setup concern below; ordinary callers still get a bounded elevation boundary.
+    // Missing, stale, or unhealthy authority is a setup concern below; ordinary callers still get a bounded elevation boundary.
   }
 
   if (host.elevated !== true) {
@@ -671,7 +714,7 @@ export async function reconcileWindowsLifecycleAuthorityService({
 
   let provisioned;
   try {
-    provisioned = await provision({ plan, operatorSid: host.operatorSid, invoke, environment, packageRoot, nodeExecutable });
+    provisioned = await provision({ plan, operatorSid: host.operatorSid, invoke, environment, packageRoot, nodeExecutable, candidate });
   } catch (error) {
     return serviceResult({
       platform,
