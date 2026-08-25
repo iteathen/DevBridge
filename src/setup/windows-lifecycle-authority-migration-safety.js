@@ -5,6 +5,10 @@ import process from 'node:process';
 const PROTOCOL = 'devbridge/windows-lifecycle-authority-migration-safety-v1';
 const MAX_JSON_BYTES = 4 * 1024 * 1024;
 
+function plainObject(value) {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
 async function realFile(file) {
   try {
     const info = await lstat(file);
@@ -29,9 +33,18 @@ async function realDirectory(directory) {
   }
 }
 
-async function nonEmptyDirectory(directory) {
+async function hasMaterializedEntries(directory) {
   if (!await realDirectory(directory)) return false;
-  return (await readdir(directory)).length > 0;
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const candidate = path.join(directory, entry.name);
+    const info = await lstat(candidate);
+    if (info.isSymbolicLink()) throw new Error('legacy authority migration encountered filesystem indirection');
+    if (info.isFile()) return true;
+    if (!info.isDirectory()) throw new Error('legacy authority migration state contains an unsupported entry');
+    if (await hasMaterializedEntries(candidate)) return true;
+  }
+  return false;
 }
 
 async function readBoundedJson(file, expectedProtocol) {
@@ -43,7 +56,7 @@ async function readBoundedJson(file, expectedProtocol) {
   let value;
   try { value = JSON.parse(await readFile(file, 'utf8')); }
   catch { throw new Error('legacy authority migration state is invalid JSON'); }
-  if (!value || typeof value !== 'object' || Array.isArray(value) || value.protocol !== expectedProtocol) {
+  if (!plainObject(value) || value.protocol !== expectedProtocol) {
     throw new Error('legacy authority migration state protocol is invalid');
   }
   return value;
@@ -69,14 +82,17 @@ export async function inspectWindowsLifecycleAuthorityMigrationSafety({
   const recovery = path.join(foundation, 'image-recovery');
 
   const catalog = await readBoundedJson(path.join(images, 'catalog.json'), 'devbridge/base-image-library-v1');
-  if (catalog && (Object.keys(catalog.images ?? {}).length > 0 || Object.keys(catalog.operations ?? {}).length > 0)) {
+  if (catalog && (!plainObject(catalog.images) || !plainObject(catalog.operations))) {
+    throw new Error('legacy image-library catalog shape is invalid for migration');
+  }
+  if (catalog && (Object.keys(catalog.images).length > 0 || Object.keys(catalog.operations).length > 0)) {
     return result({
       ready: false,
       classification: 'provider-aware-image-migration-required',
       blocker: 'Legacy Windows lifecycle authority contains image-library state whose filesystem identity cannot be preserved by generic protected-state copying. Provider-aware image migration is required before the protected authority can be established.',
     });
   }
-  if (await nonEmptyDirectory(path.join(images, 'objects')) || await nonEmptyDirectory(path.join(images, 'staging'))) {
+  if (await hasMaterializedEntries(path.join(images, 'objects')) || await hasMaterializedEntries(path.join(images, 'staging'))) {
     return result({
       ready: false,
       classification: 'provider-aware-image-migration-required',
@@ -85,14 +101,17 @@ export async function inspectWindowsLifecycleAuthorityMigrationSafety({
   }
 
   const operations = await readBoundedJson(path.join(persistentOperations, 'state.json'), 'devbridge/hyperv-persistent-environment-v1');
-  if (operations && Object.keys(operations.records ?? {}).length > 0) {
+  if (operations && !plainObject(operations.records)) {
+    throw new Error('legacy persistent-provider registry shape is invalid for migration');
+  }
+  if (operations && Object.keys(operations.records).length > 0) {
     return result({
       ready: false,
       classification: 'provider-aware-storage-migration-required',
       blocker: 'Legacy Windows lifecycle authority contains persistent Hyper-V backing storage with path-bound provider records. Provider-aware storage migration is required before the protected authority can be established.',
     });
   }
-  if (await nonEmptyDirectory(path.join(persistentOperations, 'objects'))) {
+  if (await hasMaterializedEntries(path.join(persistentOperations, 'objects'))) {
     return result({
       ready: false,
       classification: 'provider-aware-storage-migration-required',
@@ -100,7 +119,7 @@ export async function inspectWindowsLifecycleAuthorityMigrationSafety({
     });
   }
 
-  if (await nonEmptyDirectory(recovery)) {
+  if (await hasMaterializedEntries(recovery)) {
     return result({
       ready: false,
       classification: 'provider-aware-recovery-migration-required',
