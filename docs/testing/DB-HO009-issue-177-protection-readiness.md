@@ -30,7 +30,7 @@ This preserves one service/provisioning owner:
 
 The composed Windows readiness probe now requires independent evidence in this order:
 
-1. exact SCM service identity/state/command proof;
+1. exact SCM service identity/state/command/runtime proof;
 2. read-endpoint inspection through the neutral lifecycle-authority client;
 3. token-appropriate protection proof.
 
@@ -80,7 +80,7 @@ The worker therefore receives fixed protected runtime arguments without inheriti
 
 ### Independent SCM identity proof
 
-Readiness now observes `Win32_Service` before trusting the read pipe and requires:
+Readiness observes `Win32_Service` before trusting the read pipe and requires:
 
 - exact deterministic service name;
 - exact `NT SERVICE\<service-name>` virtual account;
@@ -91,6 +91,31 @@ Readiness now observes `Win32_Service` before trusting the read pipe and require
 The deterministic Windows authority plan is the single owner of that command formula. Provisioning and verification consume the same `serviceCommand` value rather than reconstructing it separately.
 
 An existing protected installation also rejects a different operator SID before protected-root initialization, preventing setup re-entry from silently rebinding read capability to another Windows identity.
+
+### Exact protected-runtime freshness
+
+A later audit found that identity/ACL/pipe health alone was insufficient for setup re-entry: a healthy service installed from an older accepted head could otherwise satisfy the fast path indefinitely after service-host or worker hardening changed in source.
+
+Setup now measures the exact local authority candidate before probing:
+
+- SHA-256 aggregate of `package.json` plus the complete `src/` package snapshot copied into protected runtime;
+- SHA-256 of the exact Node executable copied into protected runtime.
+
+The Windows authority plan binds those two digests into a bounded SCM-owned service description:
+
+`DevBridge lifecycle authority runtime v1 package=<sha256> node=<sha256>`
+
+Provisioning publishes that description through the existing SCM owner. The observation-only service proof requires the exact description together with service name/account/state/command before trusting the read endpoint.
+
+Consequences:
+
+- a stale protected service no longer reports ready merely because its pipe and ACLs remain healthy;
+- ordinary setup sees stale/missing runtime evidence as the existing elevation boundary and cannot update the protected runtime itself;
+- elevated setup reconciles the measured package, Node runtime, host executable, SCM description, ACLs, and service state through the existing provisioning owner;
+- candidate measurement failure is bounded/redacted and stops before authority probing;
+- no protected-file read permission, RPC version field, credential, or second runtime-version owner is added to the ordinary process.
+
+The service description carries only content digests, not host paths or secrets. Package/runtime sensitivity is covered by focused tests that alter source bytes and Node bytes independently.
 
 ## Legacy migration stop condition
 
