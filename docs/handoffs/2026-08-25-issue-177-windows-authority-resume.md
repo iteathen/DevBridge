@@ -8,11 +8,13 @@
 **Parent issue:** #177  
 **Focused issue:** #288  
 **Draft PR:** #289  
-**Current exact head at handoff:** `1a7cff987deb3c619071f573af2afda3969ba3e2`
+**Last code/test head before this handoff document:** `1a7cff987deb3c619071f573af2afda3969ba3e2`
+
+The handoff document itself is a docs-only descendant of that code/test head, so the next chat must read the live PR head before doing work. Do not expect the branch ref itself to remain exactly `1a7cff...` after this file was committed.
 
 ## Stop point
 
-Stop with the Windows protected lifecycle-authority brick physically proven on an earlier exact head, then hardened further off-host. The branch is **not ready to merge yet** because the current exact head has one unclassified Windows full-suite CI failure.
+Stop with the Windows protected lifecycle-authority brick physically proven on an earlier exact head, then hardened further off-host. The branch is **not ready to merge yet** because the last code/test head has one unclassified Windows full-suite CI failure.
 
 Do not begin another physical-host sequence until the current branch is final and a host canary is genuinely unavoidable.
 
@@ -261,9 +263,9 @@ Consequences:
 - parent #177 cannot honestly claim that the operator/model-visible identity lacks all direct Hyper-V provider authority if that host identity independently holds Hyper-V Administrators membership;
 - do not auto-remove that membership as a "fix".
 
-## Current exact branch state
+## Last code/test branch state before this handoff doc
 
-Current branch head at handoff:
+Last code/test head:
 
 `1a7cff987deb3c619071f573af2afda3969ba3e2`
 
@@ -273,11 +275,13 @@ Relevant recent commits include:
 - `030828e9de8ca67fdb251797d593fde802973860` — split Windows authority timeout coverage;
 - `1a7cff987deb3c619071f573af2afda3969ba3e2` — isolate Windows authority client timeout recovery cases.
 
-From `a10f...` to current `1a7cff...`, the changes are test-only.
+From `a10f...` to `1a7cff...`, the changes are test-only.
 
-## Current CI blocker — classify before editing
+Committing this handoff moves the branch to a docs-only descendant. Always fetch PR #289's live head first in the next chat and distinguish documentation-only commits from the last code/test candidate.
 
-Current exact-head workflow:
+## CI blocker on last code/test head — classify before editing
+
+Workflow for `1a7cff...`:
 
 - run: `32815703962`
 - Ubuntu smoke: success
@@ -288,7 +292,7 @@ Current exact-head workflow:
 
 The exact failing test/error text was **not successfully recovered in the prior chat transcript** despite requesting the job logs.
 
-Therefore the current failure is **unclassified**.
+Therefore the failure is **unclassified**.
 
 Do not:
 
@@ -296,14 +300,14 @@ Do not:
 - automatically call it #290's known load/concurrency flake;
 - change product code or timeouts before inspecting evidence.
 
-#290 exists because earlier Windows hosted-runner failures were falsified by exact-head reruns with no source changes, but that history is not sufficient to classify this new exact-head failure.
+#290 exists because earlier Windows hosted-runner failures were falsified by exact-head reruns with no source changes, but that history is not sufficient to classify this failure.
 
 ## Remaining #288/#177 work
 
 ### Before #289 can honestly merge
 
 1. Recover job `97703398656` logs from run `32815703962` and identify the exact Windows failure.
-2. Fix only the owning defect, or rerun the exact head without source changes if evidence supports a hosted-runner flake.
+2. Fix only the owning defect, or rerun the exact code head without source changes if evidence supports a hosted-runner flake.
 3. Obtain a fully green Ubuntu/Windows smoke + full/doctor matrix on one exact candidate.
 4. Update PR #289 body/docs to the exact candidate and qualification state.
 5. Decide whether a **single** final physical requalification of the hardened service binary is strictly necessary before merge. Do not request repeated host commands.
@@ -356,7 +360,7 @@ Throughout this continuation:
 ## Resume sequence for the next chat
 
 1. Read this file, #288, #289, and the relevant #177 acceptance criteria.
-2. Confirm current PR head has not moved from `1a7cff987deb3c619071f573af2afda3969ba3e2`.
+2. Fetch PR #289's live head. Expect a docs-only descendant of `1a7cff...` unless more work occurred after this handoff; do not treat a changed ref as a code change without comparing commits.
 3. Fetch the exact failure details for CI run `32815703962`, Windows job `97703398656`.
 4. Classify before editing: product defect, test defect, or hosted-runner flake with falsification evidence.
 5. Resolve only that owner and get one exact head fully green.
