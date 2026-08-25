@@ -56,10 +56,13 @@ export function createWindowsLifecycleAuthorityPlan({
   const authorityDirectory = under(protectedRoot, 'state');
   const binDirectory = under(protectedRoot, 'bin');
   const runtimeDirectory = under(protectedRoot, 'runtime');
+  const packageDirectory = under(runtimeDirectory, 'package');
   const serviceHostSource = under(runtimeDirectory, 'windows-lifecycle-authority-host.cs');
   const serviceHostExecutable = under(binDirectory, 'devbridge-lifecycle-authority-host.exe');
   const nodeExecutable = under(binDirectory, 'node.exe');
-  const workerEntry = under(runtimeDirectory, 'environment-lifecycle-authority-worker.mjs');
+  const workerEntry = under(packageDirectory, 'src', 'entry', 'windows-lifecycle-authority-worker.mjs');
+  const packageManifest = under(packageDirectory, 'package.json');
+  const ownershipManifest = under(protectedRoot, 'ownership.json');
   const readEndpoint = environmentLifecycleAuthorityEndpoint({ authorityIdentity, access: 'read', platform: 'win32' });
   const mutationEndpoint = environmentLifecycleAuthorityEndpoint({ authorityIdentity, access: 'mutation', platform: 'win32' });
 
@@ -69,9 +72,12 @@ export function createWindowsLifecycleAuthorityPlan({
     stateDirectory: state,
     protectedRoot,
     authorityDirectory,
+    ownershipManifest,
     runtime: Object.freeze({
       binDirectory,
       runtimeDirectory,
+      packageDirectory,
+      packageManifest,
       serviceHostSource,
       serviceHostExecutable,
       nodeExecutable,
