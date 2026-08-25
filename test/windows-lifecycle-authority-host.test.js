@@ -14,7 +14,8 @@ test('Windows lifecycle service host is only an SCM, IPC, and bounded process ad
     'ServiceBase.Run',
     'NamedPipeServerStream',
     'PipeAccessRights.ReadWrite',
-    'PipeOptions.FirstPipeInstance',
+    'ExclusivePipeServerInstances = 1',
+    'FILE_FLAG_FIRST_PIPE_INSTANCE',
     'JobObjectLimitKillOnJobClose',
     'UseShellExecute = false',
     'Environment.FailFast',
@@ -43,10 +44,12 @@ test('Windows lifecycle service host is only an SCM, IPC, and bounded process ad
 
 test('Windows lifecycle endpoints keep one first-instance server alive across requests', async () => {
   const source = await readFile(SOURCE, 'utf8');
+  assert.match(source, /private const int ExclusivePipeServerInstances = 1;/u);
   assert.match(
     source,
-    /PipeDirection\.InOut,\s*1,\s*PipeTransmissionMode\.Byte,\s*PipeOptions\.Asynchronous \| PipeOptions\.FirstPipeInstance/su,
+    /PipeDirection\.InOut,\s*ExclusivePipeServerInstances,\s*PipeTransmissionMode\.Byte,\s*PipeOptions\.Asynchronous,/su,
   );
+  assert.doesNotMatch(source, /PipeOptions\.FirstPipeInstance/u);
   assert.match(source, /pipe = CreatePipe\(name, access\);\s*lock \(activeLock\) activePipes\.Add\(pipe\);\s*while \(!stopping\)/su);
   assert.match(source, /if \(!stopping && pipe\.IsConnected\) pipe\.Disconnect\(\);/u);
   assert.equal((source.match(/CreatePipe\(name, access\)/gu) ?? []).length, 1);
@@ -71,6 +74,37 @@ test('Windows lifecycle worker cannot inherit common operator credential channel
     'DEVBRIDGE_SIGNING_KEY',
   ]) assert.equal(source.includes(`\"${name}\"`), true, `worker scrub list lost ${name}`);
   assert.match(source, /foreach \(string name in ScrubbedWorkerEnvironment\) start\.EnvironmentVariables\.Remove\(name\);/u);
+});
+
+test('Windows PowerShell 5.1 one-instance pipe rejects a competing server namespace', async (t) => {
+  if (process.platform !== 'win32') return t.skip('Windows pipe exclusivity qualification runs on Windows CI');
+  const pipeName = `devbridge-ci-first-instance-${process.pid}-${Date.now()}`;
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    '$first = $null',
+    '$second = $null',
+    'try {',
+    "  $first = New-Object System.IO.Pipes.NamedPipeServerStream($env:DB_PIPE_NAME, [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous, 4096, 4096)",
+    '  try {',
+    "    $second = New-Object System.IO.Pipes.NamedPipeServerStream($env:DB_PIPE_NAME, [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous, 4096, 4096)",
+    "    throw 'competing named-pipe server was admitted'",
+    '  } catch [System.IO.IOException] {',
+    '  }',
+    '} finally {',
+    '  if ($second -ne $null) { $second.Dispose() }',
+    '  if ($first -ne $null) { $first.Dispose() }',
+    '}',
+  ].join('; ');
+  const result = spawnSync('powershell.exe', [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script,
+  ], {
+    encoding: 'utf8',
+    timeout: 60_000,
+    windowsHide: true,
+    env: { ...process.env, DB_PIPE_NAME: pipeName },
+  });
+  assert.equal(result.error, undefined, result.error?.message);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
 
 test('Windows PowerShell 5.1 can compile the service-aware host without a third-party build tool', async (t) => {
