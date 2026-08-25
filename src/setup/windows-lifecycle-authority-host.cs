@@ -294,9 +294,9 @@ namespace DevBridge.WindowsLifecycleAuthority
 
         private NamedPipeServerStream CreatePipe(string name, string access)
         {
-            // On the Windows PowerShell 5.1 .NET Framework surface, one server instance is
-            // the supported way NamedPipeServerStream requests FILE_FLAG_FIRST_PIPE_INSTANCE.
-            // Keep this count at one so another server cannot join an existing pipe namespace.
+            // On the legacy .NET Framework surface, one server instance is the supported way
+            // NamedPipeServerStream requests FILE_FLAG_FIRST_PIPE_INSTANCE. Keep this count
+            // at one so another server cannot join an existing pipe namespace.
             return new NamedPipeServerStream(
                 name,
                 PipeDirection.InOut,
