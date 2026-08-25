@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {
+  bindWindowsLifecycleAuthorityRuntime,
   createWindowsLifecycleAuthorityPlan,
   WINDOWS_ADMINISTRATORS_SID,
   WINDOWS_HYPERV_ADMINISTRATORS_SID,
@@ -61,6 +62,21 @@ test('Windows authority plan owns the exact SCM command as one closed formula', 
   assert.match(value.serviceCommand, /"--operator-sid" "S-1-5-21-111111111-222222222-333333333-1001"/u);
   assert.match(value.serviceCommand, new RegExp(`"--read-pipe" "${value.endpoints.read.pipeName}"`, 'u'));
   assert.match(value.serviceCommand, new RegExp(`"--mutation-pipe" "${value.endpoints.mutation.pipeName}"$`, 'u'));
+});
+
+test('runtime evidence binds source freshness to SCM-owned service description without changing service identity', () => {
+  const base = plan();
+  const packageDigest = 'a'.repeat(64);
+  const nodeDigest = 'b'.repeat(64);
+  const bound = bindWindowsLifecycleAuthorityRuntime(base, { packageDigest, nodeDigest });
+  assert.equal(bound.authorityIdentity, base.authorityIdentity);
+  assert.equal(bound.service.name, base.service.name);
+  assert.equal(bound.service.account, base.service.account);
+  assert.equal(bound.serviceCommand, base.serviceCommand);
+  assert.deepEqual(bound.runtimeEvidence, { packageDigest, nodeDigest });
+  assert.equal(bound.service.description, `DevBridge lifecycle authority runtime v1 package=${packageDigest} node=${nodeDigest}`);
+  assert.throws(() => bindWindowsLifecycleAuthorityRuntime(bound, { packageDigest, nodeDigest }), /already bound/u);
+  assert.throws(() => bindWindowsLifecycleAuthorityRuntime(base, { packageDigest: 'x', nodeDigest }), /sha256 digest/u);
 });
 
 test('Windows authority plan preserves existing neutral endpoint namespace', () => {
