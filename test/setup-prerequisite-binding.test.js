@@ -42,6 +42,19 @@ test('setup carries the local signature-verifier binding through release verific
       capabilities: { gpgv: true, opensshClient: true },
       local: { signatureVerifierExecutable: VERIFIER },
     }),
+    lifecycleAuthorityReconciler: async ({ homeDirectory, stateDirectory, elevated }) => ({
+      ok: true,
+      changed: false,
+      platform: 'win32',
+      ready: true,
+      elevationRequired: false,
+      restartRequired: false,
+      homeDirectory,
+      stateDirectory,
+      elevated,
+      blocker: null,
+      steps: [],
+    }),
     releaseAuthority: async ({ signatureVerifierExecutable }) => {
       releaseBinding = signatureVerifierExecutable;
       return { keyring: path.join(os.tmpdir(), 'ubuntu-keyring.gpg') };
