@@ -188,6 +188,19 @@ namespace DevBridge.WindowsLifecycleAuthority
     {
         private const int MaxWireBytes = 17408;
         private const int PreRequestTimeoutMs = 5000;
+        private static readonly string[] ScrubbedWorkerEnvironment = new string[] {
+            "NODE_OPTIONS",
+            "NODE_PATH",
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+            "DEVBRIDGE_GITHUB_TOKEN",
+            "GIT_ASKPASS",
+            "SSH_ASKPASS",
+            "SSH_AUTH_SOCK",
+            "DEVBRIDGE_COORDINATION_PRIVATE_KEY",
+            "DEVBRIDGE_RELEASE_PRIVATE_KEY",
+            "DEVBRIDGE_SIGNING_KEY"
+        };
         private readonly HostOptions options;
         private readonly object activeLock = new object();
         private readonly object workerLock = new object();
@@ -283,9 +296,9 @@ namespace DevBridge.WindowsLifecycleAuthority
             return new NamedPipeServerStream(
                 name,
                 PipeDirection.InOut,
-                4,
+                1,
                 PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous,
+                PipeOptions.Asynchronous | PipeOptions.FirstPipeInstance,
                 4096,
                 MaxWireBytes,
                 PipePolicy(access));
@@ -293,33 +306,40 @@ namespace DevBridge.WindowsLifecycleAuthority
 
         private void Serve(string name, string access)
         {
-            while (!stopping)
+            NamedPipeServerStream pipe = null;
+            try
             {
-                NamedPipeServerStream pipe = null;
-                try
+                pipe = CreatePipe(name, access);
+                lock (activeLock) activePipes.Add(pipe);
+                while (!stopping)
                 {
-                    pipe = CreatePipe(name, access);
-                    lock (activeLock) activePipes.Add(pipe);
                     pipe.WaitForConnection();
                     if (stopping) return;
-                    byte[] request = ReadRequest(pipe);
-                    if (request == null) continue;
-                    byte[] response = InvokeWorker(access, request);
-                    if (response == null || response.Length == 0 || response.Length > MaxWireBytes) continue;
-                    pipe.Write(response, 0, response.Length);
-                    pipe.Flush();
-                }
-                catch
-                {
-                    if (stopping) return;
-                }
-                finally
-                {
-                    if (pipe != null)
+                    try
                     {
-                        lock (activeLock) activePipes.Remove(pipe);
-                        try { pipe.Dispose(); } catch { }
+                        byte[] request = ReadRequest(pipe);
+                        if (request == null) continue;
+                        byte[] response = InvokeWorker(access, request);
+                        if (response == null || response.Length == 0 || response.Length > MaxWireBytes) continue;
+                        pipe.Write(response, 0, response.Length);
+                        pipe.Flush();
                     }
+                    finally
+                    {
+                        if (!stopping && pipe.IsConnected) pipe.Disconnect();
+                    }
+                }
+            }
+            catch
+            {
+                if (!stopping) Environment.FailFast("DevBridge lifecycle authority endpoint failed closed");
+            }
+            finally
+            {
+                if (pipe != null)
+                {
+                    lock (activeLock) activePipes.Remove(pipe);
+                    try { pipe.Dispose(); } catch { }
                 }
             }
         }
@@ -334,13 +354,9 @@ namespace DevBridge.WindowsLifecycleAuthority
                 while (output.Length <= MaxWireBytes)
                 {
                     int remaining = PreRequestTimeoutMs - (int)elapsed.ElapsedMilliseconds;
-                    if (remaining <= 0) return null;
+                    if (remaining <= 0) throw new TimeoutException("lifecycle authority request timed out");
                     Task<int> read = pipe.ReadAsync(buffer, 0, buffer.Length);
-                    if (!read.Wait(remaining))
-                    {
-                        try { pipe.Dispose(); } catch { }
-                        return null;
-                    }
+                    if (!read.Wait(remaining)) throw new TimeoutException("lifecycle authority request timed out");
                     int count = read.Result;
                     if (count <= 0) return null;
                     output.Write(buffer, 0, count);
@@ -415,8 +431,7 @@ namespace DevBridge.WindowsLifecycleAuthority
                 start.RedirectStandardError = true;
                 start.StandardOutputEncoding = Encoding.UTF8;
                 start.StandardErrorEncoding = Encoding.UTF8;
-                start.EnvironmentVariables.Remove("NODE_OPTIONS");
-                start.EnvironmentVariables.Remove("NODE_PATH");
+                foreach (string name in ScrubbedWorkerEnvironment) start.EnvironmentVariables.Remove(name);
 
                 Process worker = new Process();
                 worker.StartInfo = start;
