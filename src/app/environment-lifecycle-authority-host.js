@@ -7,6 +7,12 @@ function requireStateDirectory(value) {
   return value;
 }
 
+function requireAuthorityDirectory(value, fallback) {
+  if (value == null) return fallback;
+  if (typeof value !== 'string' || value.length === 0) throw new TypeError('environment lifecycle authority host authorityDirectory must be a non-empty string when provided');
+  return value;
+}
+
 function assertOperator(value) {
   const methods = ['inspect', 'list', 'status', 'plan', 'run', 'resume', 'setupReentry'];
   if (!value || methods.some((name) => typeof value[name] !== 'function')) {
@@ -17,17 +23,19 @@ function assertOperator(value) {
 
 export async function createEnvironmentLifecycleAuthorityHost({
   stateDirectory,
+  authorityDirectory = null,
   platform = process.platform,
   runDirectory = '/run/devbridge',
   operator = null,
   operatorOptions = {},
 } = {}) {
   const state = requireStateDirectory(stateDirectory);
+  const authority = requireAuthorityDirectory(authorityDirectory, state);
   if (!operatorOptions || typeof operatorOptions !== 'object' || Array.isArray(operatorOptions)) {
     throw new TypeError('environment lifecycle authority host operatorOptions must be an object');
   }
   const localOperator = operator == null
-    ? await createLocalEnvironmentOperator({ stateDirectory: state, platform, ...operatorOptions })
+    ? await createLocalEnvironmentOperator({ ...operatorOptions, stateDirectory: state, authorityDirectory: authority, platform })
     : assertOperator(operator);
   const servers = createLifecycleAuthoritySocketServers({
     operator: localOperator,
