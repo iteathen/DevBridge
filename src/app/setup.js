@@ -10,6 +10,7 @@ import { reconcileSetupPrerequisites } from '../setup/prerequisite-reconciliatio
 import { selectRepositoryDefaults } from '../setup/repository-defaults.js';
 import { createUbuntuSetupAuthority, defaultUbuntuPackageSnapshot } from '../setup/ubuntu-authority.js';
 import { establishUbuntuReleaseAuthority } from '../setup/ubuntu-release-authority.js';
+import { reconcileWindowsLifecycleAuthorityService } from '../setup/windows-lifecycle-authority-service.js';
 
 const PROTOCOL = 'devbridge/setup-status-v1';
 const STATE_KEY = 'setup:v1';
@@ -67,7 +68,17 @@ function acceptedRepositorySelection(previous, identity, requestedRepositories) 
   return previous.repositories.selected;
 }
 
-function publicResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, physical = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
+function publicLifecycleAuthority(value) {
+  if (!value) return null;
+  return Object.freeze({
+    ready: value.ready === true,
+    changed: value.changed === true,
+    service: typeof value.service === 'string' ? value.service : 'unknown',
+    protectedState: typeof value.protectedState === 'string' ? value.protectedState : 'unknown',
+  });
+}
+
+function publicResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
   const readyForConstruction = constructionAttempted !== true && physical?.blocked === false && physical?.complete !== true;
   return Object.freeze({
     protocol: PROTOCOL,
@@ -81,6 +92,7 @@ function publicResult({ home, pathStatus, repositories = null, identity = null, 
     github: identity ? Object.freeze({ id: identity.id, login: identity.login }) : null,
     repositories,
     prerequisites,
+    lifecycleAuthority: publicLifecycleAuthority(lifecycleAuthority),
     linuxProfile: Object.freeze({ profile: 'linux-development', snapshot, physicalStatus: physical }),
   });
 }
@@ -105,6 +117,7 @@ export function formatSetupHandoff(result) {
       `Repositories: ${result.repositories?.selectedCount ?? 0} configured`,
       constructionStatus,
     ];
+    if (result.lifecycleAuthority?.service === 'ready') lines.push('Windows lifecycle authority: protected service/state ready');
     if (physical?.preflight?.connectivity?.control === 'system' && physical.preflight.connectivity.addressing === 'automatic') {
       lines.push('Physical construction connectivity: verified host-managed DHCP; not claimed as DevBridge-owned network state');
     }
@@ -152,6 +165,7 @@ export async function runDevBridgeSetup({
   discover = discoverGitHubSetupScope,
   selectRepositories = selectRepositoryDefaults,
   prerequisiteReconciler = reconcileSetupPrerequisites,
+  lifecycleAuthorityReconciler = reconcileWindowsLifecycleAuthorityService,
   releaseAuthority = establishUbuntuReleaseAuthority,
   authorityFactory = createUbuntuSetupAuthority,
   canaryFactory = createUbuntuProductionImagePhysicalCanary,
@@ -226,6 +240,40 @@ export async function runDevBridgeSetup({
   }
   const signatureVerifierExecutable = prerequisites?.local?.signatureVerifierExecutable ?? null;
 
+  let lifecycleAuthority;
+  try {
+    lifecycleAuthority = await lifecycleAuthorityReconciler({
+      stateDirectory: path.join(root, 'state'),
+      platform,
+      invoke,
+      environment: env,
+    });
+  } catch (error) {
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      prerequisites,
+      constructionRequested: construct,
+      blocker: `Lifecycle authority reconciliation failed: ${error.message}`,
+    });
+  }
+  if (lifecycleAuthority?.ready !== true) {
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      prerequisites,
+      lifecycleAuthority,
+      constructionRequested: construct,
+      blocker: lifecycleAuthority?.blocker ?? 'Protected lifecycle authority is not ready; resolve the reported host boundary and re-run devbridge setup',
+    });
+  }
+
   let release;
   let authority;
   try {
@@ -239,7 +287,7 @@ export async function runDevBridgeSetup({
       authorityFactory({ snapshot, fetchImpl }),
     ]);
   } catch (error) {
-    return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, constructionRequested: construct, blocker: `Ubuntu construction authority is unavailable: ${error.message}` });
+    return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, lifecycleAuthority, constructionRequested: construct, blocker: `Ubuntu construction authority is unavailable: ${error.message}` });
   }
 
   const physicalConfig = Object.freeze({
@@ -268,6 +316,7 @@ export async function runDevBridgeSetup({
       repositories,
       snapshot,
       prerequisites,
+      lifecycleAuthority,
       constructionRequested: construct,
       constructionAttempted,
       blocker: `${prefix}: ${error.message}`,
@@ -281,6 +330,7 @@ export async function runDevBridgeSetup({
     repositories,
     snapshot,
     prerequisites,
+    lifecycleAuthority,
     physical,
     constructionRequested: construct,
     constructionAttempted,

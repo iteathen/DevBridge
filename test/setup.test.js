@@ -40,10 +40,11 @@ function dependencies({
   identity = { id: 42, login: 'owner' },
   physical = null,
   prerequisite = null,
+  lifecycleAuthority = null,
   initialState = null,
 } = {}) {
   const store = memoryStore(initialState);
-  const calls = { prerequisite: 0, authority: 0, canaryStatus: 0, canaryRun: 0 };
+  const calls = { prerequisite: 0, lifecycleAuthority: 0, authority: 0, canaryStatus: 0, canaryRun: 0 };
   const discoveredRepositories = repositories ?? Array.from({ length: count }, (_, index) => repository(index));
   return {
     calls,
@@ -59,6 +60,10 @@ function dependencies({
       prerequisiteReconciler: async () => {
         calls.prerequisite += 1;
         return prerequisite ?? { protocol: 'test/prerequisites', ready: true, blocker: null, changed: false, restartRequired: false, capabilities: {} };
+      },
+      lifecycleAuthorityReconciler: async () => {
+        calls.lifecycleAuthority += 1;
+        return lifecycleAuthority ?? { protocol: 'test/lifecycle-authority', ready: true, blocker: null, changed: false, service: 'ready', protectedState: 'ready' };
       },
       releaseAuthority: async ({ home }) => ({ keyring: path.join(home, 'authority', 'ubuntu.gpg') }),
       authorityFactory: async ({ snapshot }) => { calls.authority += 1; return { protocol: 'test/authority', snapshot }; },
@@ -79,7 +84,9 @@ test('setup reaches the physical status gate without invoking construction', asy
   assert.equal(result.readyForConstruction, true);
   assert.equal(result.phase, 'ready-for-construction');
   assert.equal(result.repositories.selectedCount, 2);
+  assert.equal(result.lifecycleAuthority.service, 'ready');
   assert.equal(fixture.calls.prerequisite, 1);
+  assert.equal(fixture.calls.lifecycleAuthority, 1);
   assert.equal(fixture.calls.canaryStatus, 1);
   assert.equal(fixture.calls.canaryRun, 0);
 });
@@ -90,6 +97,7 @@ test('setup preserves the repository selection boundary before prerequisite or i
   assert.equal(result.blocked, true);
   assert.match(result.blocker, /31 eligible repositories/u);
   assert.equal(fixture.calls.prerequisite, 0);
+  assert.equal(fixture.calls.lifecycleAuthority, 0);
   assert.equal(fixture.calls.authority, 0);
   assert.equal(fixture.calls.canaryStatus, 0);
   assert.equal(fixture.calls.canaryRun, 0);
@@ -114,6 +122,29 @@ test('setup persists accepted authority before returning a focused prerequisite 
   assert.equal(fixture.store.value().identity.id, 42);
   assert.equal(fixture.store.value().repositories.selected.length, 2);
   assert.equal(fixture.calls.prerequisite, 1);
+  assert.equal(fixture.calls.lifecycleAuthority, 0);
+  assert.equal(fixture.calls.authority, 0);
+  assert.equal(fixture.calls.canaryStatus, 0);
+  assert.equal(fixture.calls.canaryRun, 0);
+});
+
+test('setup stops at the protected lifecycle authority boundary before release or physical work', async () => {
+  const fixture = dependencies({
+    lifecycleAuthority: {
+      protocol: 'test/lifecycle-authority',
+      ready: false,
+      blocker: 'Windows protected lifecycle authority requires elevation',
+      changed: false,
+      service: 'unavailable',
+      protectedState: 'unknown',
+    },
+  });
+  const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-lifecycle-authority-blocked') }, fixture.deps);
+  assert.equal(result.blocked, true);
+  assert.match(result.blocker, /protected lifecycle authority requires elevation/u);
+  assert.equal(result.lifecycleAuthority.ready, false);
+  assert.equal(fixture.calls.prerequisite, 1);
+  assert.equal(fixture.calls.lifecycleAuthority, 1);
   assert.equal(fixture.calls.authority, 0);
   assert.equal(fixture.calls.canaryStatus, 0);
   assert.equal(fixture.calls.canaryRun, 0);
@@ -126,6 +157,7 @@ test('setup reports physical preflight blockers without crossing the status gate
   assert.equal(result.readyForConstruction, false);
   assert.match(result.blocker, /Hyper-V/u);
   assert.equal(fixture.calls.prerequisite, 1);
+  assert.equal(fixture.calls.lifecycleAuthority, 1);
   assert.equal(fixture.calls.canaryStatus, 1);
   assert.equal(fixture.calls.canaryRun, 0);
 });
@@ -156,6 +188,7 @@ test('setup re-entry after a later authority failure returns through prerequisit
   const resumed = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-post-prerequisite') }, fixture.deps);
   assert.equal(resumed.readyForConstruction, true);
   assert.equal(fixture.calls.prerequisite, 2);
+  assert.equal(fixture.calls.lifecycleAuthority, 2);
   assert.equal(fixture.calls.canaryStatus, 1);
   assert.equal(fixture.calls.canaryRun, 0);
 });
@@ -192,6 +225,7 @@ test('setup re-entry blocks if an accepted stable repository identity disappears
   assert.equal(result.blocked, true);
   assert.match(result.blocker, /accepted repositories are unavailable/u);
   assert.equal(fixture.calls.prerequisite, 0);
+  assert.equal(fixture.calls.lifecycleAuthority, 0);
   assert.equal(fixture.calls.authority, 0);
   assert.equal(fixture.calls.canaryStatus, 0);
   assert.equal(fixture.calls.canaryRun, 0);
@@ -210,6 +244,7 @@ test('setup identity drift requires explicit repository selection before authori
   assert.equal(blocked.blocked, true);
   assert.match(blocked.blocker, /GitHub setup identity changed/u);
   assert.equal(fixture.calls.prerequisite, 0);
+  assert.equal(fixture.calls.lifecycleAuthority, 0);
   assert.equal(fixture.calls.authority, 0);
   assert.equal(fixture.calls.canaryStatus, 0);
 
@@ -221,5 +256,6 @@ test('setup identity drift requires explicit repository selection before authori
   assert.equal(rebound.repositories.selectedCount, 1);
   assert.equal(fixture.store.value().identity.id, 42);
   assert.equal(fixture.calls.prerequisite, 1);
+  assert.equal(fixture.calls.lifecycleAuthority, 1);
   assert.equal(fixture.calls.canaryRun, 0);
 });
