@@ -6,7 +6,7 @@ const POWERSHELL = 'powershell.exe';
 const POWERSHELL_ARGS = Object.freeze([
   '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand',
 ]);
-const SERVICE_ACCOUNT = /^NT SERVICE\\DevBridgeLifecycle-[0-9a-f]{32}$/u;
+const SERVICE_NAME = /^DevBridgeLifecycle-[0-9a-f]{32}$/u;
 const WINDOWS_SID = /^S-1-(?:\d+-)+\d+$/u;
 
 const VERIFY_SERVICE_SCRIPT = String.raw`
@@ -18,10 +18,11 @@ if ($null -eq $service) {
   @{ ready = $false } | ConvertTo-Json -Compress
   exit 0
 }
-$ready = ([String]::Equals([string]$service.State, 'Running', [StringComparison]::OrdinalIgnoreCase)) -and
-  ([String]::Equals([string]$service.StartMode, 'Auto', [StringComparison]::OrdinalIgnoreCase)) -and
-  ([String]::Equals([string]$service.StartName, [string]$data.account, [StringComparison]::OrdinalIgnoreCase)) -and
-  ([String]::Equals([string]$service.PathName, [string]$data.command, [StringComparison]::OrdinalIgnoreCase))
+$stateReady = [String]::Equals([string]$service.State, 'Running', [StringComparison]::OrdinalIgnoreCase)
+$startReady = [String]::Equals([string]$service.StartMode, 'Auto', [StringComparison]::OrdinalIgnoreCase)
+$accountReady = [String]::Equals([string]$service.StartName, [string]$data.account, [StringComparison]::OrdinalIgnoreCase)
+$commandReady = [String]::Equals([string]$service.PathName, [string]$data.command, [StringComparison]::OrdinalIgnoreCase)
+$ready = $stateReady -and $startReady -and $accountReady -and $commandReady
 @{ ready = [bool]$ready } | ConvertTo-Json -Compress
 `;
 
@@ -56,7 +57,10 @@ function expectedServiceCommand(plan, operatorSid) {
 function requirePlan(plan, operatorSid) {
   if (!plan || typeof plan !== 'object' || Array.isArray(plan)) throw new TypeError('Windows lifecycle authority service proof plan is required');
   if (typeof operatorSid !== 'string' || !WINDOWS_SID.test(operatorSid)) throw new TypeError('Windows lifecycle authority service proof operator SID is invalid');
-  if (typeof plan?.service?.name !== 'string' || typeof plan?.service?.account !== 'string' || !SERVICE_ACCOUNT.test(plan.service.account)) {
+  if (typeof plan?.service?.name !== 'string' || !SERVICE_NAME.test(plan.service.name)) {
+    throw new TypeError('Windows lifecycle authority service proof identity is invalid');
+  }
+  if (plan?.service?.account !== `NT SERVICE\\${plan.service.name}`) {
     throw new TypeError('Windows lifecycle authority service proof identity is invalid');
   }
   for (const value of [
