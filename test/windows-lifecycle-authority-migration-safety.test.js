@@ -34,9 +34,34 @@ test('empty legacy authority state is portable through the generic copy seam', a
   try {
     await imageCatalog(root);
     await persistentState(root);
+    const recovery = path.join(root, 'environment-foundation', 'image-recovery');
+    await mkdir(path.join(recovery, 'transfer'), { recursive: true });
+    await mkdir(path.join(recovery, 'quarantine'), { recursive: true });
     const result = await inspectWindowsLifecycleAuthorityMigrationSafety({ stateDirectory: root, platform: 'win32' });
     assert.equal(result.ready, true);
     assert.equal(result.classification, 'portable');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('malformed catalog and provider registries fail closed rather than appearing empty', async () => {
+  const root = await fixture();
+  try {
+    const images = path.join(root, 'environment-foundation', 'images');
+    await mkdir(images, { recursive: true });
+    await writeFile(path.join(images, 'catalog.json'), `${JSON.stringify({ protocol: 'devbridge/base-image-library-v1', revision: 1 })}\n`);
+    await assert.rejects(
+      () => inspectWindowsLifecycleAuthorityMigrationSafety({ stateDirectory: root, platform: 'win32' }),
+      /catalog shape is invalid/u,
+    );
+
+    await rm(images, { recursive: true, force: true });
+    const operations = path.join(root, 'environment-foundation', 'persistent', 'operations');
+    await mkdir(operations, { recursive: true });
+    await writeFile(path.join(operations, 'state.json'), `${JSON.stringify({ protocol: 'devbridge/hyperv-persistent-environment-v1' })}\n`);
+    await assert.rejects(
+      () => inspectWindowsLifecycleAuthorityMigrationSafety({ stateDirectory: root, platform: 'win32' }),
+      /registry shape is invalid/u,
+    );
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -92,8 +117,9 @@ test('active image recovery blocks migration instead of copying an ambiguous rec
   const root = await fixture();
   try {
     const recovery = path.join(root, 'environment-foundation', 'image-recovery');
-    await mkdir(recovery, { recursive: true });
-    await writeFile(path.join(recovery, 'state.json'), '{}\n');
+    await mkdir(path.join(recovery, 'transfer'), { recursive: true });
+    await mkdir(path.join(recovery, 'quarantine'), { recursive: true });
+    await writeFile(path.join(recovery, 'transfer', 'state.json'), '{}\n');
     const result = await inspectWindowsLifecycleAuthorityMigrationSafety({ stateDirectory: root, platform: 'win32' });
     assert.equal(result.ready, false);
     assert.equal(result.classification, 'provider-aware-recovery-migration-required');
