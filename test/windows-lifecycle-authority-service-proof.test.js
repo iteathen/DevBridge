@@ -75,6 +75,14 @@ test('service proof fails closed on missing, mismatched, or malformed SCM eviden
   }
 });
 
+test('hosted Windows PowerShell parses the read-only SCM proof without creating a service', async (t) => {
+  if (process.platform !== 'win32') return t.skip('Windows PowerShell qualification runs on Windows CI');
+  await assert.rejects(
+    () => verifyWindowsLifecycleAuthorityService({ plan, operatorSid: OPERATOR_SID }),
+    /did not verify the exact protected service/u,
+  );
+});
+
 test('service proof diagnostics do not propagate raw SCM path or account evidence', async () => {
   await assert.rejects(
     () => verifyWindowsLifecycleAuthorityService({
