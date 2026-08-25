@@ -188,6 +188,7 @@ namespace DevBridge.WindowsLifecycleAuthority
     {
         private const int MaxWireBytes = 17408;
         private const int PreRequestTimeoutMs = 5000;
+        private const int ExclusivePipeServerInstances = 1;
         private static readonly string[] ScrubbedWorkerEnvironment = new string[] {
             "NODE_OPTIONS",
             "NODE_PATH",
@@ -293,12 +294,15 @@ namespace DevBridge.WindowsLifecycleAuthority
 
         private NamedPipeServerStream CreatePipe(string name, string access)
         {
+            // On the Windows PowerShell 5.1 .NET Framework surface, one server instance is
+            // the supported way NamedPipeServerStream requests FILE_FLAG_FIRST_PIPE_INSTANCE.
+            // Keep this count at one so another server cannot join an existing pipe namespace.
             return new NamedPipeServerStream(
                 name,
                 PipeDirection.InOut,
-                1,
+                ExclusivePipeServerInstances,
                 PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous | PipeOptions.FirstPipeInstance,
+                PipeOptions.Asynchronous,
                 4096,
                 MaxWireBytes,
                 PipePolicy(access));
