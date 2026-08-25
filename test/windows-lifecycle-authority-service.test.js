@@ -12,6 +12,8 @@ import {
 
 const OPERATOR_SID = 'S-1-5-21-111111111-222222222-333333333-1001';
 const STATE = 'C:\\Users\\Operator\\.devbridge\\state';
+const PACKAGE_DIGEST = 'a'.repeat(64);
+const NODE_DIGEST = 'b'.repeat(64);
 
 function successfulInvoke() {
   return Promise.resolve({
@@ -24,7 +26,15 @@ function successfulInvoke() {
   });
 }
 
-function deps({ elevated = true, firstProbe = false, finalProbe = true, provisionError = null } = {}) {
+function candidate() {
+  return Object.freeze({
+    sourceSnapshot: Object.freeze({ digest: PACKAGE_DIGEST, files: Object.freeze([]) }),
+    node: Object.freeze({ digest: NODE_DIGEST, size: 1 }),
+    evidence: Object.freeze({ packageDigest: PACKAGE_DIGEST, nodeDigest: NODE_DIGEST }),
+  });
+}
+
+function deps({ elevated = true, firstProbe = false, finalProbe = true, provisionError = null, measureError = null } = {}) {
   const calls = [];
   let probes = 0;
   return {
@@ -34,14 +44,23 @@ function deps({ elevated = true, firstProbe = false, finalProbe = true, provisio
         calls.push('inspect-host');
         return { elevated, operatorSid: OPERATOR_SID, programData: 'C:\\ProgramData' };
       },
-      probe: async () => {
+      measureCandidate: async () => {
+        calls.push('measure-candidate');
+        if (measureError) throw new Error(measureError);
+        return candidate();
+      },
+      probe: async (plan) => {
         probes += 1;
         calls.push(`probe-${probes}`);
+        assert.deepEqual(plan.runtimeEvidence, { packageDigest: PACKAGE_DIGEST, nodeDigest: NODE_DIGEST });
+        assert.equal(plan.service.description, `DevBridge lifecycle authority runtime v1 package=${PACKAGE_DIGEST} node=${NODE_DIGEST}`);
         if ((probes === 1 && !firstProbe) || (probes > 1 && !finalProbe)) throw new Error('unavailable');
         return { protocol: 'devbridge/environment-operator-v1' };
       },
-      provision: async ({ plan }) => {
+      provision: async ({ plan, candidate: measured }) => {
         calls.push('provision');
+        assert.deepEqual(measured.evidence, candidate().evidence);
+        assert.deepEqual(plan.runtimeEvidence, measured.evidence);
         if (provisionError) throw new Error(provisionError);
         return {
           changed: true,
@@ -71,30 +90,39 @@ test('non-Windows setup leaves the Windows authority LEGO unattached', async () 
   assert.deepEqual(fixture.calls, []);
 });
 
-test('existing healthy protected authority is observation-only and requires no elevation or mutation', async () => {
+test('existing healthy exact protected authority is observation-only and requires no elevation or mutation', async () => {
   const fixture = deps({ elevated: false, firstProbe: true });
   const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
   assert.equal(result.ready, true);
   assert.equal(result.changed, false);
   assert.equal(result.service, 'ready');
-  assert.deepEqual(fixture.calls, ['inspect-host', 'probe-1']);
+  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'probe-1']);
 });
 
-test('missing protected authority stops at an explicit elevation boundary before provisioning', async () => {
+test('missing or stale protected authority stops at an explicit elevation boundary before provisioning', async () => {
   const fixture = deps({ elevated: false });
   const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
   assert.equal(result.ready, false);
   assert.match(result.blocker, /elevated PowerShell/u);
-  assert.deepEqual(fixture.calls, ['inspect-host', 'probe-1']);
+  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'probe-1']);
 });
 
-test('elevated setup provisions one protected owner then requires exact post-start health', async () => {
+test('candidate measurement failure is bounded and stops before authority probing', async () => {
+  const fixture = deps({ elevated: false, measureError: 'C:\\sensitive\\candidate-path' });
+  const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
+  assert.equal(result.ready, false);
+  assert.match(result.blocker, /runtime candidate could not be verified/u);
+  assert.doesNotMatch(result.blocker, /sensitive|candidate-path/iu);
+  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate']);
+});
+
+test('elevated setup provisions one exact runtime owner then requires exact post-start health', async () => {
   const fixture = deps({ elevated: true });
   const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
   assert.equal(result.ready, true);
   assert.equal(result.changed, true);
   assert.equal(result.service, 'ready');
-  assert.deepEqual(fixture.calls, ['inspect-host', 'probe-1', 'provision', 'probe-2']);
+  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'probe-1', 'provision', 'probe-2']);
 });
 
 test('failed post-start health stops the service rather than leaving partial authority active', async () => {
@@ -103,7 +131,7 @@ test('failed post-start health stops the service rather than leaving partial aut
   assert.equal(result.ready, false);
   assert.equal(result.service, 'stopped-after-failed-health');
   assert.match(result.blocker, /post-start health proof/u);
-  assert.deepEqual(fixture.calls, ['inspect-host', 'probe-1', 'provision', 'probe-2', 'stop']);
+  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'probe-1', 'provision', 'probe-2', 'stop']);
 });
 
 test('authority migration copies only closed protected state and leaves execution routes ordinary', async () => {
