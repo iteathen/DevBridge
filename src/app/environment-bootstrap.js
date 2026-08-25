@@ -91,7 +91,7 @@ export async function createEnvironmentBootstrap({
   }
 
   const resolvedAccess = async (target) => attachment.connection(target);
-  const bridge = await createEnvironmentBridge({ stateDirectory, platform, invoke, access: resolvedAccess });
+  const bridge = await createEnvironmentBridge({ stateDirectory, foundationIdentity: identity, platform, invoke, access: resolvedAccess });
 
   const prepareResolvedAccess = async (target) => {
     if (!prepareAccess) return;

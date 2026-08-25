@@ -6,6 +6,8 @@ import {
 
 const PROTOCOL = 'devbridge/windows-lifecycle-authority-plan-v1';
 const WINDOWS_SID = /^S-1-(?:\d+-)+\d+$/u;
+const WINDOWS_DRIVE_ROOT = /^[A-Za-z]:\\$/u;
+const WINDOWS_UNC_ROOT = /^\\\\[^\\]+\\[^\\]+\\$/u;
 const SERVICE_PREFIX = 'DevBridgeLifecycle-';
 
 export const WINDOWS_ADMINISTRATORS_SID = 'S-1-5-32-544';
@@ -13,10 +15,16 @@ export const WINDOWS_HYPERV_ADMINISTRATORS_SID = 'S-1-5-32-578';
 export const WINDOWS_SYSTEM_SID = 'S-1-5-18';
 
 function absoluteWindowsPath(value, name) {
-  if (typeof value !== 'string' || value.length === 0 || value.includes('\0') || !path.win32.isAbsolute(value)) {
+  if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) {
     throw new TypeError(`${name} must be an absolute Windows path`);
   }
-  return path.win32.resolve(value);
+  const normalized = path.win32.normalize(value);
+  const root = path.win32.parse(normalized).root;
+  const deviceNamespace = normalized.startsWith('\\\\?\\') || normalized.startsWith('\\\\.\\');
+  if (!path.win32.isAbsolute(normalized) || deviceNamespace || (!WINDOWS_DRIVE_ROOT.test(root) && !WINDOWS_UNC_ROOT.test(root))) {
+    throw new TypeError(`${name} must be an absolute Windows path`);
+  }
+  return path.win32.resolve(normalized);
 }
 
 function windowsSid(value, name) {

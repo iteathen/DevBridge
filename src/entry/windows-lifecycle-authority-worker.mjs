@@ -11,12 +11,20 @@ import {
 const MAX_WIRE_BYTES = ENVIRONMENT_LIFECYCLE_AUTHORITY_MAX_ENVELOPE_BYTES + 1024;
 const ACCESS = new Set(['read', 'mutation']);
 const ARGUMENTS = new Set(['--access', '--state-directory', '--authority-directory']);
+const WINDOWS_DRIVE_ROOT = /^[A-Za-z]:\\$/u;
+const WINDOWS_UNC_ROOT = /^\\\\[^\\]+\\[^\\]+\\$/u;
 
 function absoluteWindowsPath(value, name) {
-  if (typeof value !== 'string' || value.length === 0 || value.includes('\0') || !path.win32.isAbsolute(value)) {
+  if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) {
     throw new TypeError(`${name} must be an absolute Windows path`);
   }
-  return path.win32.resolve(value);
+  const normalized = path.win32.normalize(value);
+  const root = path.win32.parse(normalized).root;
+  const deviceNamespace = normalized.startsWith('\\\\?\\') || normalized.startsWith('\\\\.\\');
+  if (!path.win32.isAbsolute(normalized) || deviceNamespace || (!WINDOWS_DRIVE_ROOT.test(root) && !WINDOWS_UNC_ROOT.test(root))) {
+    throw new TypeError(`${name} must be an absolute Windows path`);
+  }
+  return path.win32.resolve(normalized);
 }
 
 export function parseWindowsLifecycleAuthorityWorkerArguments(argv) {

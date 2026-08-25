@@ -6,6 +6,8 @@ import { loadOrCreateLocalIdentity } from '../runtime/local-identity.js';
 import { HyperVEnvironmentBridge } from '../runtime/providers/hyperv-environment-bridge.js';
 import { LibvirtEnvironmentBridge } from '../runtime/providers/libvirt-environment-bridge.js';
 
+const FOUNDATION_IDENTITY = /^[a-f0-9]{32}$/u;
+
 function environmentReference(identity, target) {
   return `db-env-${createHash('sha256').update(`${identity}:persistent:${target}`).digest('hex').slice(0, 16)}`;
 }
@@ -32,16 +34,23 @@ function currentLocation(identity, platform) {
   return null;
 }
 
+function foundationIdentity(value) {
+  if (typeof value !== 'string' || !FOUNDATION_IDENTITY.test(value)) throw new TypeError('bridge foundationIdentity is invalid');
+  return value;
+}
+
 export async function createEnvironmentBridge({
   stateDirectory,
+  foundationIdentity: injectedFoundationIdentity = null,
   platform = process.platform,
   invoke = invokeCommand,
   access,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('stateDirectory is required');
   if (typeof access !== 'function') throw new TypeError('bridge access must be a function');
-  const root = path.join(path.resolve(stateDirectory), 'environment-foundation');
-  const identity = await loadOrCreateLocalIdentity({ directory: root });
+  const identity = injectedFoundationIdentity == null
+    ? await loadOrCreateLocalIdentity({ directory: path.join(path.resolve(stateDirectory), 'environment-foundation') })
+    : foundationIdentity(injectedFoundationIdentity);
   const locate = currentLocation(identity, platform);
   let attachment;
   if (platform === 'win32') attachment = new HyperVEnvironmentBridge({ invoke, access, locate });
