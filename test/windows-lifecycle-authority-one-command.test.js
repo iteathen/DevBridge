@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lstat, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { requestWindowsLifecycleAuthorityElevation } from '../src/setup/windows-lifecycle-authority-elevation.js';
@@ -326,13 +326,16 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
         invoked += 1;
         assert.equal(request.executable, 'powershell.exe');
         assert.equal(request.timeoutMs, 5 * 60_000);
-        const input = JSON.parse(request.input);
+        const outer = JSON.parse(request.input);
+        assert.equal(typeof outer.brokerTemplate, 'string');
+        assert.ok(outer.brokerTemplate.length > 0);
+        const input = JSON.parse(await readFile(outer.inputFile, 'utf8'));
+        const resultFile = path.join(path.dirname(outer.inputFile), 'result.json');
         assert.equal(input.home, path.resolve(root));
         assert.equal(input.launcher, path.resolve(launcher));
         assert.equal(input.node, path.resolve(node));
         assert.equal(input.runnerHead, runnerHead);
-        assert.equal(path.basename(input.resultFile), 'result.json');
-        await writeFile(input.resultFile, `${JSON.stringify({
+        await writeFile(resultFile, `${JSON.stringify({
           protocol: 'devbridge/windows-lifecycle-authority-elevation-broker-v1',
           requestedHead: runnerHead,
           started: true,
@@ -379,9 +382,14 @@ test('elevation adapter returns the bounded child blocker and cleans its result 
       nodeExecutable: node,
       platform: 'win32',
       invoke: async (request) => {
-        const input = JSON.parse(request.input);
-        resultDirectory = path.dirname(input.resultFile);
-        await writeFile(input.resultFile, `${JSON.stringify({
+        const outer = JSON.parse(request.input);
+        assert.equal(typeof outer.brokerTemplate, 'string');
+        assert.ok(outer.brokerTemplate.length > 0);
+        const input = JSON.parse(await readFile(outer.inputFile, 'utf8'));
+        const resultFile = path.join(path.dirname(outer.inputFile), 'result.json');
+        resultDirectory = path.dirname(resultFile);
+        assert.equal(input.runnerHead, 'b'.repeat(40));
+        await writeFile(resultFile, `${JSON.stringify({
           protocol: 'devbridge/windows-lifecycle-authority-elevation-broker-v1',
           requestedHead: 'b'.repeat(40),
           started: true,
@@ -428,8 +436,13 @@ test('elevation adapter returns a bounded broker error when the lifecycle child 
       nodeExecutable: node,
       platform: 'win32',
       invoke: async (request) => {
-        const input = JSON.parse(request.input);
-        await writeFile(input.resultFile, `${JSON.stringify({
+        const outer = JSON.parse(request.input);
+        assert.equal(typeof outer.brokerTemplate, 'string');
+        assert.ok(outer.brokerTemplate.length > 0);
+        const input = JSON.parse(await readFile(outer.inputFile, 'utf8'));
+        const resultFile = path.join(path.dirname(outer.inputFile), 'result.json');
+        assert.equal(input.runnerHead, runnerHead);
+        await writeFile(resultFile, `${JSON.stringify({
           protocol: 'devbridge/windows-lifecycle-authority-elevation-broker-v1',
           requestedHead: runnerHead,
           started: false,

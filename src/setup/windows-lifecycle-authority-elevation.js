@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -20,13 +20,14 @@ const MAX_BROKER_RESULT_BYTES = 80 * 1024;
 const BROKER_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $limit = 32KB
-$resultFile = [string]$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_BROKER_RESULT
-$directory = [IO.Path]::GetDirectoryName($resultFile)
+$inputFile = '__INPUT_FILE__'
+$directory = [IO.Path]::GetDirectoryName($inputFile)
+$resultFile = [IO.Path]::Combine($directory, 'result.json')
 $stdoutFile = [IO.Path]::Combine($directory, 'stdout.txt')
 $stderrFile = [IO.Path]::Combine($directory, 'stderr.txt')
 $record = [ordered]@{
   protocol = 'devbridge/windows-lifecycle-authority-elevation-broker-v1'
-  requestedHead = [string]$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_RUNNER_HEAD
+  requestedHead = ''
   started = $false
   exitCode = $null
   stdout = ''
@@ -43,12 +44,20 @@ function Read-BoundedText([string]$file) {
   return [IO.File]::ReadAllText($file)
 }
 try {
-  $node = [string]$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_NODE
-  $launcherPath = [string]$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_LAUNCHER
-  $head = [string]$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_RUNNER_HEAD
+  $inputItem = Get-Item -LiteralPath $inputFile -Force
+  if (($inputItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $inputItem.Length -lt 2 -or $inputItem.Length -gt 8KB) { throw 'broker input is not one bounded real file' }
+  $data = [IO.File]::ReadAllText($inputFile) | ConvertFrom-Json
+  $node = [string]$data.node
+  $launcherPath = [string]$data.launcher
+  $head = [string]$data.runnerHead
+  $home = [string]$data.home
+  $record.requestedHead = $head
   if (-not [IO.Path]::IsPathRooted($node) -or -not [IO.Path]::IsPathRooted($launcherPath)) { throw 'broker executable identity is not absolute' }
+  if (-not [IO.Path]::IsPathRooted($home)) { throw 'broker DevBridge home is not absolute' }
   if ($head -notmatch '^[0-9a-f]{40}$') { throw 'broker runner identity is not exact' }
   if (-not (Test-Path -LiteralPath $node -PathType Leaf) -or -not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) { throw 'broker executable identity is unavailable' }
+  $env:DEVBRIDGE_HOME = $home
+  $env:DEVBRIDGE_LIFECYCLE_AUTHORITY_ELEVATED_CHILD = '1'
   $launcher = '"' + $launcherPath.Replace('"', '') + '"'
   $child = Start-Process -FilePath $node -ArgumentList @(
     $launcher,
@@ -84,16 +93,14 @@ exit $brokerExit
 const ELEVATE_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
-$env:DEVBRIDGE_HOME = [string]$data.home
-$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_ELEVATED_CHILD = '1'
-$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_BROKER_RESULT = [string]$data.resultFile
-$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_NODE = [string]$data.node
-$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_LAUNCHER = [string]$data.launcher
-$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_RUNNER_HEAD = [string]$data.runnerHead
 try {
+  $template = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String([string]$data.brokerTemplate))
+  $inputLiteral = ([string]$data.inputFile).Replace("'", "''")
+  $brokerScript = $template.Replace('__INPUT_FILE__', $inputLiteral)
+  $brokerCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($brokerScript))
   $broker = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-EncodedCommand', [string]$data.brokerCommand
+    '-EncodedCommand', $brokerCommand
   ) -Verb RunAs -Wait -PassThru
   @{ started = $true; exitCode = [int]$broker.ExitCode } | ConvertTo-Json -Compress
 } catch {
@@ -143,7 +150,7 @@ async function childResultTarget(home) {
   }
   const directory = path.join(state, `.lifecycle-authority-elevation-${randomUUID()}`);
   await mkdir(directory, { mode: 0o700 });
-  return Object.freeze({ state, directory, file: path.join(directory, 'result.json') });
+  return Object.freeze({ state, directory, input: path.join(directory, 'input.json'), file: path.join(directory, 'result.json') });
 }
 
 async function cleanupChildResultTarget(target) {
@@ -151,6 +158,7 @@ async function cleanupChildResultTarget(target) {
     const info = await lstat(target.directory);
     if (!info.isDirectory() || info.isSymbolicLink() || path.dirname(target.directory) !== target.state
         || !CHILD_RESULT_DIRECTORY.test(path.basename(target.directory))
+        || path.dirname(target.input) !== target.directory || path.basename(target.input) !== 'input.json'
         || path.dirname(target.file) !== target.directory || path.basename(target.file) !== 'result.json') return;
     await rm(target.directory, { recursive: true, force: true });
   } catch {}
@@ -302,13 +310,14 @@ export async function requestWindowsLifecycleAuthorityElevation({
   }
 
   const childTarget = await childResultTarget(root);
+  await writeFile(childTarget.input, `${JSON.stringify({ home: root, launcher: selectedLauncher, node, runnerHead })}\n`, { flag: 'wx', mode: 0o600 });
 
   let result;
   try {
     result = await invoke({
       executable: POWERSHELL,
       arguments: [...POWERSHELL_ARGS, encodedScript(ELEVATE_SCRIPT)],
-      input: JSON.stringify({ home: root, launcher: selectedLauncher, node, runnerHead, resultFile: childTarget.file, brokerCommand: encodedScript(BROKER_SCRIPT) }),
+      input: JSON.stringify({ inputFile: childTarget.input, brokerTemplate: encodedScript(BROKER_SCRIPT) }),
       timeoutMs: 5 * 60_000,
       maxOutputBytes: 64 * 1024,
       environment,
