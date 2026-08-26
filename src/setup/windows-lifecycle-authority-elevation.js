@@ -13,30 +13,89 @@ const POWERSHELL_ARGS = Object.freeze([
 const ALLOWED_LAUNCHERS = new Set(['devbridge-entry.mjs', 'devbridge-stage0.mjs']);
 const EXACT_HEAD = /^[0-9a-f]{40}$/u;
 const PACKAGE_ROOT = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
-const CHILD_RESULT_PROTOCOL = 'devbridge/windows-lifecycle-authority-elevated-child-v1';
+const BROKER_RESULT_PROTOCOL = 'devbridge/windows-lifecycle-authority-elevation-broker-v1';
 const CHILD_RESULT_DIRECTORY = /^\.lifecycle-authority-elevation-[0-9a-f-]{36}$/u;
-const MAX_CHILD_RESULT_BYTES = 8 * 1024;
+const MAX_BROKER_RESULT_BYTES = 80 * 1024;
+
+const BROKER_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$limit = 32KB
+$resultFile = [string]$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_BROKER_RESULT
+$directory = [IO.Path]::GetDirectoryName($resultFile)
+$stdoutFile = [IO.Path]::Combine($directory, 'stdout.txt')
+$stderrFile = [IO.Path]::Combine($directory, 'stderr.txt')
+$record = [ordered]@{
+  protocol = 'devbridge/windows-lifecycle-authority-elevation-broker-v1'
+  requestedHead = [string]$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_RUNNER_HEAD
+  started = $false
+  exitCode = $null
+  stdout = ''
+  stderr = ''
+  error = $null
+  outputTruncated = $false
+}
+$brokerExit = 1
+function Read-BoundedText([string]$file) {
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return '' }
+  $item = Get-Item -LiteralPath $file -Force
+  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'broker output used filesystem indirection' }
+  if ($item.Length -gt $limit) { $script:record.outputTruncated = $true; return '' }
+  return [IO.File]::ReadAllText($file)
+}
+try {
+  $node = [string]$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_NODE
+  $launcherPath = [string]$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_LAUNCHER
+  $head = [string]$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_RUNNER_HEAD
+  if (-not [IO.Path]::IsPathRooted($node) -or -not [IO.Path]::IsPathRooted($launcherPath)) { throw 'broker executable identity is not absolute' }
+  if ($head -notmatch '^[0-9a-f]{40}$') { throw 'broker runner identity is not exact' }
+  if (-not (Test-Path -LiteralPath $node -PathType Leaf) -or -not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) { throw 'broker executable identity is unavailable' }
+  $launcher = '"' + $launcherPath.Replace('"', '') + '"'
+  $child = Start-Process -FilePath $node -ArgumentList @(
+    $launcher,
+    '--ref',
+    $head,
+    'setup',
+    '--lifecycle-authority-child',
+    '--no-update'
+  ) -Wait -PassThru -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
+  $record.started = $true
+  $record.exitCode = [int]$child.ExitCode
+  $record.stdout = Read-BoundedText $stdoutFile
+  $record.stderr = Read-BoundedText $stderrFile
+  $brokerExit = [int]$child.ExitCode
+} catch {
+  $record.exitCode = $brokerExit
+  try { $record.stdout = Read-BoundedText $stdoutFile } catch {}
+  try { $record.stderr = Read-BoundedText $stderrFile } catch {}
+  $message = [string]$_.Exception.Message
+  $record.error = ($message -replace '[\r\n]+', ' ').Trim()
+  if ($record.error.Length -gt 2048) { $record.error = $record.error.Substring(0, 2048) }
+} finally {
+  Remove-Item -LiteralPath $stdoutFile -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $stderrFile -Force -ErrorAction SilentlyContinue
+  $json = $record | ConvertTo-Json -Compress
+  $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json + [Environment]::NewLine)
+  $stream = [IO.File]::Open($resultFile, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+  try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
+}
+exit $brokerExit
+`;
 
 const ELEVATE_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 $env:DEVBRIDGE_HOME = [string]$data.home
 $env:DEVBRIDGE_LIFECYCLE_AUTHORITY_ELEVATED_CHILD = '1'
-$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_CHILD_RESULT = [string]$data.resultFile
+$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_BROKER_RESULT = [string]$data.resultFile
+$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_NODE = [string]$data.node
+$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_LAUNCHER = [string]$data.launcher
+$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_RUNNER_HEAD = [string]$data.runnerHead
 try {
-  $launcher = '"' + ([string]$data.launcher).Replace('"', '') + '"'
-  $arguments = @(
-    $launcher,
-    '--ref',
-    [string]$data.runnerHead,
-    'setup',
-    '--lifecycle-authority-child',
-    '--no-update'
-  )
-  $child = Start-Process -FilePath ([string]$data.node) -ArgumentList @(
-    $arguments
+  $broker = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-EncodedCommand', [string]$data.brokerCommand
   ) -Verb RunAs -Wait -PassThru
-  @{ started = $true; exitCode = [int]$child.ExitCode } | ConvertTo-Json -Compress
+  @{ started = $true; exitCode = [int]$broker.ExitCode } | ConvertTo-Json -Compress
 } catch {
   @{ started = $false; exitCode = $null } | ConvertTo-Json -Compress
 }
@@ -97,24 +156,41 @@ async function cleanupChildResultTarget(target) {
   } catch {}
 }
 
-function boundedChildBlocker(value) {
+function boundedBrokerText(value) {
   const text = String(value ?? '').replace(/[\r\n]+/gu, ' ').trim();
   return text.length > 0 ? text.slice(0, 2048) : null;
 }
 
-async function readChildResult(target) {
+async function readBrokerResult(target) {
   const info = await lstat(target.file);
-  if (!info.isFile() || info.isSymbolicLink() || info.size < 2 || info.size > MAX_CHILD_RESULT_BYTES) {
-    throw new Error('Windows lifecycle authority elevated child result is not a bounded real file');
+  if (!info.isFile() || info.isSymbolicLink() || info.size < 2 || info.size > MAX_BROKER_RESULT_BYTES) {
+    throw new Error('Windows lifecycle authority elevation broker result is not a bounded real file');
   }
   const value = JSON.parse(await readFile(target.file, 'utf8'));
   if (!value || typeof value !== 'object' || Array.isArray(value)
-      || value.protocol !== CHILD_RESULT_PROTOCOL || typeof value.ready !== 'boolean'
-      || typeof value.changed !== 'boolean' || typeof value.service !== 'string'
-      || typeof value.protectedState !== 'string' || (value.blocker != null && typeof value.blocker !== 'string')) {
-    throw new Error('Windows lifecycle authority elevated child result is invalid');
+      || value.protocol !== BROKER_RESULT_PROTOCOL || !EXACT_HEAD.test(value.requestedHead ?? '')
+      || typeof value.started !== 'boolean' || (value.exitCode != null && (!Number.isSafeInteger(value.exitCode) || value.exitCode < 0 || value.exitCode > 255))
+      || typeof value.stdout !== 'string' || typeof value.stderr !== 'string'
+      || (value.error != null && typeof value.error !== 'string') || typeof value.outputTruncated !== 'boolean'
+      || Buffer.byteLength(value.stdout, 'utf8') > 32 * 1024 || Buffer.byteLength(value.stderr, 'utf8') > 32 * 1024) {
+    throw new Error('Windows lifecycle authority elevation broker result is invalid');
   }
-  return Object.freeze({ ...value, blocker: boundedChildBlocker(value.blocker) });
+  return Object.freeze({
+    ...value,
+    stdout: boundedBrokerText(value.stdout) ?? '',
+    stderr: boundedBrokerText(value.stderr) ?? '',
+    error: boundedBrokerText(value.error),
+  });
+}
+
+function childBlocker(broker) {
+  try {
+    const value = JSON.parse(String(broker?.stdout ?? '').trim());
+    if (value?.protocol === 'devbridge/windows-lifecycle-authority-elevated-child-v1' && typeof value.blocker === 'string') {
+      return boundedBrokerText(value.blocker);
+    }
+  } catch {}
+  return broker?.error || broker?.stderr || null;
 }
 
 export async function resolveWindowsLifecycleAuthorityElevationRunnerHead({ packageRoot = PACKAGE_ROOT } = {}) {
@@ -232,7 +308,7 @@ export async function requestWindowsLifecycleAuthorityElevation({
     result = await invoke({
       executable: POWERSHELL,
       arguments: [...POWERSHELL_ARGS, encodedScript(ELEVATE_SCRIPT)],
-      input: JSON.stringify({ home: root, launcher: selectedLauncher, node, runnerHead, resultFile: childTarget.file }),
+      input: JSON.stringify({ home: root, launcher: selectedLauncher, node, runnerHead, resultFile: childTarget.file, brokerCommand: encodedScript(BROKER_SCRIPT) }),
       timeoutMs: 5 * 60_000,
       maxOutputBytes: 64 * 1024,
       environment,
@@ -248,8 +324,8 @@ export async function requestWindowsLifecycleAuthorityElevation({
     });
   }
 
-  let childResult = null;
-  try { childResult = await readChildResult(childTarget); }
+  let brokerResult = null;
+  try { brokerResult = await readBrokerResult(childTarget); }
   catch {}
   await cleanupChildResultTarget(childTarget);
 
@@ -285,18 +361,32 @@ export async function requestWindowsLifecycleAuthorityElevation({
       blocker: 'Windows lifecycle authority elevation was cancelled or refused. No second elevation will be attempted by this setup invocation.',
     });
   }
-  if (value.exitCode !== 0) {
+  if (!brokerResult || brokerResult.requestedHead !== runnerHead || brokerResult.outputTruncated
+      || brokerResult.exitCode !== value.exitCode) {
     return Object.freeze({
       protocol: PROTOCOL,
       attempted: true,
       completed: false,
       exitCode: value.exitCode,
-      blocker: childResult?.blocker
-        ? `Windows lifecycle authority elevated child reported: ${childResult.blocker}`
-        : 'The elevated Windows lifecycle authority child did not return bounded failure evidence. Re-run setup only after repairing the parent-child evidence boundary.',
+      blocker: 'Windows lifecycle authority elevation broker did not return exact bounded completion evidence.',
     });
   }
-  if (childResult?.ready !== true) {
+  if (value.exitCode !== 0) {
+    const blocker = childBlocker(brokerResult);
+    return Object.freeze({
+      protocol: PROTOCOL,
+      attempted: true,
+      completed: false,
+      exitCode: value.exitCode,
+      blocker: blocker
+        ? `Windows lifecycle authority elevated broker reported: ${blocker}`
+        : 'Windows lifecycle authority elevated broker failed without bounded detail.',
+    });
+  }
+  let childResult = null;
+  try { childResult = JSON.parse(brokerResult.stdout.trim()); }
+  catch {}
+  if (brokerResult.started !== true || childResult?.protocol !== 'devbridge/windows-lifecycle-authority-elevated-child-v1' || childResult.ready !== true) {
     return Object.freeze({
       protocol: PROTOCOL,
       attempted: true,

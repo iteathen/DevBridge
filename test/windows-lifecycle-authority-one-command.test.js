@@ -333,12 +333,21 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
         assert.equal(input.runnerHead, runnerHead);
         assert.equal(path.basename(input.resultFile), 'result.json');
         await writeFile(input.resultFile, `${JSON.stringify({
-          protocol: 'devbridge/windows-lifecycle-authority-elevated-child-v1',
-          ready: true,
-          changed: true,
-          service: 'ready',
-          protectedState: 'ready',
-          blocker: null,
+          protocol: 'devbridge/windows-lifecycle-authority-elevation-broker-v1',
+          requestedHead: runnerHead,
+          started: true,
+          exitCode: 0,
+          stdout: JSON.stringify({
+            protocol: 'devbridge/windows-lifecycle-authority-elevated-child-v1',
+            ready: true,
+            changed: true,
+            service: 'ready',
+            protectedState: 'ready',
+            blocker: null,
+          }),
+          stderr: '',
+          error: null,
+          outputTruncated: false,
         })}\n`);
         return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":0}' };
       },
@@ -373,12 +382,21 @@ test('elevation adapter returns the bounded child blocker and cleans its result 
         const input = JSON.parse(request.input);
         resultDirectory = path.dirname(input.resultFile);
         await writeFile(input.resultFile, `${JSON.stringify({
-          protocol: 'devbridge/windows-lifecycle-authority-elevated-child-v1',
-          ready: false,
-          changed: false,
-          service: 'blocked',
-          protectedState: 'unknown',
-          blocker: 'exact protected blocker',
+          protocol: 'devbridge/windows-lifecycle-authority-elevation-broker-v1',
+          requestedHead: 'b'.repeat(40),
+          started: true,
+          exitCode: 3,
+          stdout: JSON.stringify({
+            protocol: 'devbridge/windows-lifecycle-authority-elevated-child-v1',
+            ready: false,
+            changed: false,
+            service: 'blocked',
+            protectedState: 'unknown',
+            blocker: 'exact protected blocker',
+          }),
+          stderr: '',
+          error: null,
+          outputTruncated: false,
         })}\n`);
         return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":3}' };
       },
@@ -389,6 +407,46 @@ test('elevation adapter returns the bounded child blocker and cleans its result 
     assert.equal(result.exitCode, 3);
     assert.match(result.blocker, /exact protected blocker/u);
     await assert.rejects(lstat(resultDirectory), { code: 'ENOENT' });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+test('elevation adapter returns a bounded broker error when the lifecycle child never starts', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
+  try {
+    const bin = path.join(root, 'bin');
+    await mkdir(bin);
+    await mkdir(path.join(root, 'state'));
+    const launcher = path.join(bin, 'devbridge-entry.mjs');
+    const node = path.join(root, 'node.exe');
+    await writeFile(launcher, 'export {};\n');
+    await writeFile(node, 'node');
+    const runnerHead = 'c'.repeat(40);
+    const result = await requestWindowsLifecycleAuthorityElevation({
+      home: root,
+      launcher,
+      nodeExecutable: node,
+      platform: 'win32',
+      invoke: async (request) => {
+        const input = JSON.parse(request.input);
+        await writeFile(input.resultFile, `${JSON.stringify({
+          protocol: 'devbridge/windows-lifecycle-authority-elevation-broker-v1',
+          requestedHead: runnerHead,
+          started: false,
+          exitCode: 1,
+          stdout: '',
+          stderr: '',
+          error: 'exact launcher startup failure',
+          outputTruncated: false,
+        })}\n`);
+        return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":1}' };
+      },
+    }, {
+      resolveRunnerHead: async () => runnerHead,
+    });
+    assert.equal(result.completed, false);
+    assert.equal(result.exitCode, 1);
+    assert.match(result.blocker, /exact launcher startup failure/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -451,7 +509,6 @@ test('elevated child entry requires the parent marker and accepts no constructio
     /bounded UAC parent contract/u,
   );
   let request = null;
-  let emitted = null;
   const result = await runWindowsLifecycleAuthoritySetupChild({
     env: {
       DEVBRIDGE_HOME: 'C:\\Users\\Operator\\.devbridge',
@@ -465,10 +522,8 @@ test('elevated child entry requires the parent marker and accepts no constructio
       request = value;
       return { ready: true, changed: true, service: 'ready', protectedState: 'ready' };
     },
-    resultWriter: async (root, env, value) => { emitted = { root, env, value }; },
   });
   assert.equal(result.ready, true);
-  assert.equal(emitted.value, result);
   assert.equal(request.mode, 'elevated-child');
   assert.equal(request.requestElevation, null);
   assert.equal(Object.hasOwn(request, 'construct'), false);
