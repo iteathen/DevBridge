@@ -98,10 +98,30 @@ function publicResult({ home, pathStatus, repositories = null, identity = null, 
   });
 }
 
+function appendConstructionLiveness(lines, physical) {
+  const liveness = physical?.liveness;
+  if (!liveness) {
+    lines.push('Installer liveness: not proven');
+    return;
+  }
+  lines.push(
+    `Installer liveness: ${liveness.classification}`,
+    `Elapsed: ${Math.floor(liveness.elapsedMilliseconds / 60_000)} minute(s)`,
+    `Last progress: ${liveness.lastProgressAt} (${Math.floor(liveness.noProgressMilliseconds / 60_000)} minute(s) without observed progress)`,
+    `VHDX allocation: ${liveness.diskAllocatedBytes} byte(s); latest observed growth: ${liveness.diskGrowthBytes} byte(s)`,
+    `Hyper-V CPU usage: ${liveness.cpuUsagePercent}%`,
+    `Hyper-V status: ${liveness.providerStatus}`,
+    `Expected completion: ${liveness.expectedCompletionAt}`,
+    `Hard deadline: ${liveness.hardDeadlineAt}`,
+  );
+  if (liveness.nextObservationAt) lines.push(`Next bounded observation: ${liveness.nextObservationAt}`);
+}
+
 export function formatSetupHandoff(result) {
   if (!result || result.protocol !== PROTOCOL) throw new TypeError('setup handoff result is invalid');
   if (result.blocked) {
     const lines = [result.construction?.attempted ? 'DevBridge physical image construction is blocked.' : 'DevBridge setup is blocked.', '', `Reason: ${result.blocker ?? 'unknown blocker'}`];
+    if (result.construction?.attempted) appendConstructionLiveness(lines, result.linuxProfile?.physicalStatus);
     if (result.construction?.attempted) lines.push('', 'Preserve the canary state; resolve only this blocker, then re-run devbridge setup --construct.');
     if (result.path?.requiresNewShell) lines.push('', `PATH is persisted; until a new shell is opened use: ${result.path.temporaryCommand}`);
     return `${lines.join('\n')}\n`;
@@ -143,7 +163,9 @@ export function formatSetupHandoff(result) {
     ];
     if (physical?.phase) lines.push(`Phase: ${physical.phase}`);
     if (physical?.reason) lines.push(`Reason: ${physical.reason}`);
-    lines.push('', 'Re-run devbridge setup --construct to continue from this durable frontier.', '');
+    appendConstructionLiveness(lines, physical);
+    if (physical?.liveness?.nextObservationAt) lines.push('', `Re-run devbridge setup --construct at or after ${physical.liveness.nextObservationAt} to record the next bounded observation.`, '');
+    else lines.push('', 'Do not retry construction automatically; resolve the reported bounded frontier first.', '');
     return lines.join('\n');
   }
   return `DevBridge setup state: ${result.phase}\n`;

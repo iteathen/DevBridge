@@ -18,6 +18,10 @@ function fakeHost() {
     diskPresent: false,
     diskAttached: false,
     mediaCount: 0,
+    uptimeMilliseconds: 0,
+    cpuUsagePercent: 0,
+    providerStatus: 'Operating normally',
+    diskAllocatedBytes: 4 * 1024 * 1024,
     providerIdentity: '11111111-2222-3333-4444-555555555555',
     calls: [],
     failPrepare: false,
@@ -53,6 +57,10 @@ function fakeHost() {
           diskAttached: state.exists && state.diskAttached,
           mediaCount: state.exists ? state.mediaCount : 0,
           providerIdentity: state.providerIdentity,
+          uptimeMilliseconds: state.uptimeMilliseconds,
+          cpuUsagePercent: state.cpuUsagePercent,
+          providerStatus: state.providerStatus,
+          diskAllocatedBytes: state.diskAllocatedBytes,
         };
       } else if (script.includes('construction machine is not startable')) {
         state.machineState = 'running';
@@ -126,8 +134,8 @@ async function fixture() {
   };
 }
 
-function constructor(data, host, identity = 'a'.repeat(32)) {
-  return new HyperVImageConstruction({ directory: data.stateRoot, sourceRoot: data.sourceRoot, outputRoot: data.outputRoot, identity, invoke: host.invoke });
+function constructor(data, host, identity = 'a'.repeat(32), options = {}) {
+  return new HyperVImageConstruction({ directory: data.stateRoot, sourceRoot: data.sourceRoot, outputRoot: data.outputRoot, identity, invoke: host.invoke, ...options });
 }
 
 test('Hyper-V image construction resumes exact intent through install, qualification, and retained disk', async () => {
@@ -170,6 +178,40 @@ test('Hyper-V image construction resumes exact intent through install, qualifica
     assert.equal(location.reference, preparePayload.name);
     assert.equal(location.proof, preparePayload.marker);
     assert.equal(preparePayload.diskPath, retained.location);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('Hyper-V image construction checkpoints bounded install progress, stall, and deadline evidence without VM repair', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  let timestamp = Date.parse('2026-08-26T18:00:00.000Z');
+  const now = () => new Date(timestamp);
+  try {
+    const construction = constructor(data, host, '4'.repeat(32), { now });
+    await construction.prepare(data.request);
+    const initial = await construction.startInstall(data.request.identity);
+    assert.equal(initial.liveness.classification, 'observing');
+    assert.equal(initial.liveness.nextObservationAt, '2026-08-26T18:02:00.000Z');
+
+    timestamp += 2 * 60 * 1000;
+    host.state.uptimeMilliseconds += 2 * 60 * 1000;
+    host.state.diskAllocatedBytes += 8 * 1024 * 1024;
+    const progressing = await construction.observeInstall(data.request.identity);
+    assert.equal(progressing.liveness.classification, 'progressing');
+    assert.equal(progressing.liveness.diskGrowthBytes, 8 * 1024 * 1024);
+
+    timestamp += 21 * 60 * 1000;
+    host.state.uptimeMilliseconds += 21 * 60 * 1000;
+    const stalled = await construction.observeInstall(data.request.identity);
+    assert.equal(stalled.liveness.classification, 'stalled');
+    assert.equal(stalled.liveness.nextObservationAt, null);
+    assert.equal(host.state.machineState, 'running');
+
+    timestamp += 100 * 60 * 1000;
+    host.state.uptimeMilliseconds += 100 * 60 * 1000;
+    const overdue = await construction.observeInstall(data.request.identity);
+    assert.equal(overdue.liveness.classification, 'overdue');
+    assert.equal(host.state.machineState, 'running');
   } finally { await rm(data.directory, { recursive: true, force: true }); }
 });
 
