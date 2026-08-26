@@ -259,9 +259,16 @@ function assertCompatibleObservation(observation, record) {
   owned(observation);
   const allowed = new Set([record.candidateGeneration]);
   if (record.previousGeneration != null) allowed.add(record.previousGeneration);
-  for (const value of [observation.activeGeneration, observation.stagedGeneration, ...observation.retainedGenerations]) {
+  for (const value of [observation.activeGeneration, observation.stagedGeneration]) {
     if (value != null && !allowed.has(value)) throw new Error('protected authority observation contains an unexpected generation');
   }
+}
+
+function canReplacePreEffectTransaction(observation, record) {
+  return record.phase === 'observed'
+    && record.pending == null
+    && observation.activeGeneration === record.previousGeneration
+    && observation.stagedGeneration == null;
 }
 
 function previousRetained(observation, record) {
@@ -341,7 +348,10 @@ export async function reconcileProtectedAuthority({ candidate, ports } = {}) {
   }
 
   if (record?.outcome === 'in-progress' && record.candidateGeneration !== selected.generation) {
-    throw new Error('protected authority candidate changed while reconciliation is active');
+    if (!canReplacePreEffectTransaction(observation, record)) {
+      throw new Error('protected authority candidate changed while reconciliation is active');
+    }
+    record = await save(local.journal, initialJournal(selected.generation, observation.activeGeneration));
   }
 
   if (exactCurrent(observation, selected.generation) && await health(local, selected.generation)) {

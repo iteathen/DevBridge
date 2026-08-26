@@ -169,6 +169,39 @@ test('exact current healthy generation is a true privileged no-op with no journa
   assert.equal(values.events.some((event) => event.startsWith('effect:')), false);
 });
 
+test('historical retained generations remain inert during an exact later replacement', async () => {
+  const values = fixture({ activeGeneration: A, running: true, retainedGenerations: [C] });
+  const result = await reconcileProtectedAuthority({ candidate: { generation: B }, ports: values.ports });
+
+  assert.equal(result.ready, true);
+  assert.equal(result.generation, B);
+  assert.equal(values.state.activeGeneration, B);
+  assert.equal(values.state.running, true);
+  assert.deepEqual(values.state.retainedGenerations, [C, A]);
+  assert.equal(values.journal().previousGeneration, A);
+  assert.equal(values.journal().outcome, 'complete');
+});
+
+test('a changed candidate replaces only a proven pre-effect transaction', async () => {
+  const values = fixture({ activeGeneration: A, running: true });
+  values.setFailJournalSaveWhen((record) => record.pending?.effect === 'stage');
+  await assert.rejects(
+    reconcileProtectedAuthority({ candidate: { generation: B }, ports: values.ports }),
+    /injected journal interruption/u,
+  );
+  assert.equal(values.journal().candidateGeneration, B);
+  assert.equal(values.journal().phase, 'observed');
+  assert.equal(values.journal().pending, null);
+  assert.equal(values.calls.stage, 0);
+
+  values.setFailJournalSaveWhen(null);
+  const result = await reconcileProtectedAuthority({ candidate: { generation: C }, ports: values.ports });
+  assert.equal(result.ready, true);
+  assert.equal(result.generation, C);
+  assert.equal(values.journal().candidateGeneration, C);
+  assert.equal(values.journal().outcome, 'complete');
+});
+
 test('restart observes a completed staged effect before replay and does not repeat it', async () => {
   const values = fixture({ failObservationAt: 2 });
   await assert.rejects(
