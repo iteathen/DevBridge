@@ -316,7 +316,7 @@ test('parent acceptance verifier reports each primary composition stage without 
     }),
     waitForRetry: async () => {},
   }), (error) => {
-    assert.deepEqual(error.acceptanceStages, ['exercise']);
+    assert.deepEqual(error.acceptanceStages, ['exercise-request']);
     assert.doesNotMatch(error.message, /raw exercise detail/u);
     return true;
   });
@@ -377,6 +377,43 @@ test('parent acceptance verifier retries only the fixed idempotent cleanup opera
   assert.equal(result.ready, true);
   assert.deepEqual(calls, ['exercise', 'deny', 'cleanup:1', 'cleanup:2', 'cleanup:3']);
   assert.deepEqual(delays, [100, 250]);
+});
+
+test('parent acceptance verifier retries only transport-level exercise failures', async () => {
+  let exerciseAttempts = 0;
+  const delays = [];
+  const result = await verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => ({
+      async exercise() {
+        exerciseAttempts += 1;
+        if (exerciseAttempts < 3) throw new Error('acceptance transport unavailable');
+        return { ready: true, generation: `acceptance-${'1'.repeat(32)}` };
+      },
+      async cleanup() { return { cleaned: true }; },
+    }),
+    diskPathFor: () => '/derived/fixture.vhdx',
+    directMutationDenied: async () => {},
+    waitForRetry: async (delay) => { delays.push(delay); },
+  });
+  assert.equal(result.ready, true);
+  assert.equal(exerciseAttempts, 3);
+  assert.deepEqual(delays, [100, 250]);
+});
+
+test('parent acceptance verifier does not retry explicit protected exercise failures', async () => {
+  let exerciseAttempts = 0;
+  const failure = Object.assign(new Error('bounded protected failure'), { acceptanceStages: ['recreate-run'] });
+  await assert.rejects(verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => ({
+      async exercise() { exerciseAttempts += 1; throw failure; },
+      async cleanup() { return { cleaned: true }; },
+    }),
+    waitForRetry: async () => { throw new Error('must not wait'); },
+  }), (error) => {
+    assert.deepEqual(error.acceptanceStages, ['recreate-run']);
+    return true;
+  });
+  assert.equal(exerciseAttempts, 1);
 });
 
 test('parent acceptance verifier preserves bounded stages after cleanup retry exhaustion', async () => {

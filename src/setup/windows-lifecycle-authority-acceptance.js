@@ -28,6 +28,7 @@ const DENIED_CODES = new Set(['EACCES', 'EPERM']);
 const TRANSIENT_REMOVAL_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
 const REMOVAL_RETRY_DELAYS_MS = Object.freeze([25, 50, 100, 200, 400]);
 const CLEANUP_RETRY_DELAYS_MS = Object.freeze([100, 250, 500, 1_000]);
+const EXERCISE_REQUEST_RETRY_DELAYS_MS = Object.freeze([100, 250, 500, 1_000]);
 const OPERATIONS = new Set(['exercise', 'cleanup']);
 const ACCEPTANCE_STAGES = new Set([
   'request', 'composition', 'exercise', 'fixture-state-load', 'generation-inspect',
@@ -36,7 +37,7 @@ const ACCEPTANCE_STAGES = new Set([
   'disk-path', 'direct-mutation-proof',
   'create-journal-read', 'create-observe', 'create-run',
   'recreate-journal-read', 'recreate-plan', 'recreate-run',
-  'final-observe', 'final-verify',
+  'final-observe', 'final-verify', 'exercise-request',
 ]);
 
 const ENSURE_VHDX_SCRIPT = String.raw`
@@ -652,6 +653,17 @@ async function cleanupAcceptance(client, waitForRetry) {
   }
 }
 
+async function requestAcceptanceExercise(client, waitForRetry) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await client.exercise();
+    } catch (error) {
+      if (Array.isArray(error?.acceptanceStages) || attempt >= EXERCISE_REQUEST_RETRY_DELAYS_MS.length) throw error;
+      await waitForRetry(EXERCISE_REQUEST_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+}
+
 export async function verifyWindowsLifecycleAuthorityAcceptance({
   authorityDirectory,
   endpoint,
@@ -671,8 +683,8 @@ export async function verifyWindowsLifecycleAuthorityAcceptance({
   let value = null;
   let primaryFailure = null;
   try {
-    try { exercise = await client.exercise(); }
-    catch (error) { throw acceptanceFailure(failureStages(error, 'exercise')); }
+    try { exercise = await requestAcceptanceExercise(client, waitForRetry); }
+    catch (error) { throw acceptanceFailure(failureStages(error, 'exercise-request')); }
     let diskPath;
     try { diskPath = diskPathFor({ authorityDirectory, generation: exercise.generation }); }
     catch { throw acceptanceFailure(['disk-path']); }
