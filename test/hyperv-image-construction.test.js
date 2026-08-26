@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { invokeCommand } from '../src/runtime/command-invocation.js';
@@ -62,6 +62,10 @@ function fakeHost() {
           providerStatus: state.providerStatus,
           diskAllocatedBytes: state.diskAllocatedBytes,
         };
+      } else if (script.includes('GetVirtualSystemThumbnailImage')) {
+        const pixels = Buffer.alloc(320 * 240 * 2);
+        pixels.writeUInt16LE(0xf800, 0);
+        body = { available: true, width: 320, height: 240, imageData: pixels.toString('base64') };
       } else if (script.includes('construction machine is not startable')) {
         state.machineState = 'running';
         body = { started: true, state: 'running' };
@@ -212,6 +216,27 @@ test('Hyper-V image construction checkpoints bounded install progress, stall, an
     const overdue = await construction.observeInstall(data.request.identity);
     assert.equal(overdue.liveness.classification, 'overdue');
     assert.equal(host.state.machineState, 'running');
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('Hyper-V image construction captures bounded provider-owned console evidence without changing VM state', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const construction = constructor(data, host, '5'.repeat(32), { now: () => new Date('2026-08-26T21:10:00.000Z') });
+    await construction.prepare(data.request);
+    await construction.startInstall(data.request.identity);
+    const evidence = await construction.captureInstallConsole(data.request.identity);
+    assert.equal(evidence.available, true);
+    assert.equal(evidence.width, 320);
+    assert.equal(evidence.height, 240);
+    assert.equal(evidence.bytes, 54 + 320 * 240 * 3);
+    assert.match(evidence.sha256, /^[a-f0-9]{64}$/u);
+    const bmp = await readFile(evidence.location);
+    assert.equal(bmp.subarray(0, 2).toString('ascii'), 'BM');
+    assert.equal(bmp.readInt32LE(22), -240);
+    assert.equal(host.state.machineState, 'running');
+    assert.equal(host.state.mediaCount, 2);
   } finally { await rm(data.directory, { recursive: true, force: true }); }
 });
 

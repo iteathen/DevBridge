@@ -71,6 +71,12 @@ function fixture({ status, runResult } = {}) {
               hardDeadlineAt: '2026-08-23T22:00:00.000Z',
               nextObservationAt: '2026-08-23T20:02:00.000Z',
             },
+            diagnostics: {
+              available: true,
+              location: 'C:\\ProgramData\\DevBridge\\evidence\\install-console.bmp',
+              sha256: 'a'.repeat(64),
+              capturedAt: '2026-08-23T20:00:30.000Z',
+            },
             preflight: { ready: true },
           };
         },
@@ -125,6 +131,8 @@ test('explicit construction crosses the canary run boundary only after an unbloc
   assert.match(handoff, /Installer liveness: observing/u);
   assert.match(handoff, /Next bounded observation: 2026-08-23T20:02:00.000Z/u);
   assert.match(handoff, /Hard deadline: 2026-08-23T22:00:00.000Z/u);
+  assert.match(handoff, /Installer console evidence: C:\\ProgramData\\DevBridge\\evidence\\install-console\.bmp/u);
+  assert.match(handoff, /Installer console SHA-256: a{64}/u);
   assert.match(handoff, /at or after 2026-08-23T20:02:00.000Z/u);
   assert.doesNotMatch(handoff, /not started/u);
 });

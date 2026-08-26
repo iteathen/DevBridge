@@ -262,7 +262,10 @@ test('physical canary blocks a stalled installer without repairing or advancing 
         async inspect() { return { ...status('running'), identity: subject }; },
         async advance() { advances += 1; throw new Error('stalled frontier must not advance'); },
       },
-      construction: { async observeInstall() { return { identity: subject, phase: 'installing', state: 'running', mediaCount: 2, liveness: { classification: 'stalled', nextObservationAt: null } }; } },
+      construction: {
+        async observeInstall() { return { identity: subject, phase: 'installing', state: 'running', mediaCount: 2, liveness: { classification: 'stalled', nextObservationAt: null } }; },
+        async captureInstallConsole() { return { available: true, location: 'owned-console.bmp', sha256: 'a'.repeat(64), capturedAt: '2026-08-26T21:10:00.000Z' }; },
+      },
       accessProbe: { async inspect() { throw new Error('access must not be probed during installation'); } },
       async access() { throw new Error('access must not be resolved during installation'); },
     });
@@ -271,6 +274,7 @@ test('physical canary blocks a stalled installer without repairing or advancing 
     assert.equal(result.state, 'blocked');
     assert.match(result.reason, /stalled.*no automatic VM repair/u);
     assert.equal(result.liveness.classification, 'stalled');
+    assert.equal(result.diagnostics.location, 'owned-console.bmp');
     assert.equal(advances, 0);
   } finally {
     await rm(root, { recursive: true, force: true });

@@ -117,11 +117,26 @@ function appendConstructionLiveness(lines, physical) {
   if (liveness.nextObservationAt) lines.push(`Next bounded observation: ${liveness.nextObservationAt}`);
 }
 
+function appendConstructionDiagnostics(lines, physical) {
+  const diagnostics = physical?.diagnostics;
+  if (!diagnostics) return;
+  if (diagnostics.available !== true) {
+    lines.push(`Installer console evidence: unavailable (${diagnostics.reason ?? 'unknown reason'})`);
+    return;
+  }
+  lines.push(
+    `Installer console evidence: ${diagnostics.location}`,
+    `Installer console SHA-256: ${diagnostics.sha256}`,
+    `Installer console captured: ${diagnostics.capturedAt}`,
+  );
+}
+
 export function formatSetupHandoff(result) {
   if (!result || result.protocol !== PROTOCOL) throw new TypeError('setup handoff result is invalid');
   if (result.blocked) {
     const lines = [result.construction?.attempted ? 'DevBridge physical image construction is blocked.' : 'DevBridge setup is blocked.', '', `Reason: ${result.blocker ?? 'unknown blocker'}`];
     if (result.construction?.attempted) appendConstructionLiveness(lines, result.linuxProfile?.physicalStatus);
+    if (result.construction?.attempted) appendConstructionDiagnostics(lines, result.linuxProfile?.physicalStatus);
     if (result.construction?.attempted) lines.push('', 'Preserve the canary state; resolve only this blocker, then re-run devbridge setup --construct.');
     if (result.path?.requiresNewShell) lines.push('', `PATH is persisted; until a new shell is opened use: ${result.path.temporaryCommand}`);
     return `${lines.join('\n')}\n`;
@@ -164,6 +179,7 @@ export function formatSetupHandoff(result) {
     if (physical?.phase) lines.push(`Phase: ${physical.phase}`);
     if (physical?.reason) lines.push(`Reason: ${physical.reason}`);
     appendConstructionLiveness(lines, physical);
+    appendConstructionDiagnostics(lines, physical);
     if (physical?.liveness?.nextObservationAt) lines.push('', `Re-run devbridge setup --construct at or after ${physical.liveness.nextObservationAt} to record the next bounded observation.`, '');
     else lines.push('', 'Do not retry construction automatically; resolve the reported bounded frontier first.', '');
     return lines.join('\n');

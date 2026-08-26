@@ -21,6 +21,9 @@ const INSTALL_EXPECTED_MILLISECONDS = 45 * 60 * 1000;
 const INSTALL_STALL_MILLISECONDS = 20 * 60 * 1000;
 const INSTALL_DEADLINE_MILLISECONDS = 2 * 60 * 60 * 1000;
 const INSTALL_RECHECK_MILLISECONDS = 2 * 60 * 1000;
+const CONSOLE_WIDTH = 320;
+const CONSOLE_HEIGHT = 240;
+const CONSOLE_RAW_BYTES = CONSOLE_WIDTH * CONSOLE_HEIGHT * 2;
 
 function encodeScript(script) { return Buffer.from(script, 'utf16le').toString('base64'); }
 function emptyState() { return { protocol: PROTOCOL, records: {} }; }
@@ -218,6 +221,34 @@ if ($diskPresent) {
   $diskAllocatedBytes = [long]$disk.FileSize
 }
 @{ exists = $true; owned = $owned; state = ([string]$item.State).ToLowerInvariant(); providerIdentity = ([string]$item.Id).ToLowerInvariant(); diskPresent = $diskPresent; diskAttached = $diskAttached; mediaCount = [int]$mediaCount; uptimeMilliseconds = [long][Math]::Floor($item.Uptime.TotalMilliseconds); cpuUsagePercent = [int]$item.CPUUsage; providerStatus = [string]$item.Status; diskAllocatedBytes = $diskAllocatedBytes } | ConvertTo-Json -Compress
+`;
+
+const INSTALL_CONSOLE_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$data = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$vm = Get-CimInstance -Namespace 'root/virtualization/v2' -ClassName Msvm_ComputerSystem -ErrorAction Stop |
+  Where-Object { ([string]$_.Name).Trim('{}').ToLowerInvariant() -eq ([string]$data.providerIdentity).Trim('{}').ToLowerInvariant() } |
+  Select-Object -First 1
+if ($null -eq $vm) { throw 'construction console provider identity is absent' }
+if ([string]$vm.ElementName -ne [string]$data.name) { throw 'construction console provider name changed' }
+$settings = Get-CimAssociatedInstance -InputObject $vm -Association Msvm_SettingsDefineState -ResultClassName Msvm_VirtualSystemSettingData -ErrorAction Stop |
+  Where-Object { [string]$_.VirtualSystemType -eq 'Microsoft:Hyper-V:System:Realized' } |
+  Select-Object -First 1
+if ($null -eq $settings) { throw 'construction console realized settings are absent' }
+$service = Get-CimInstance -Namespace 'root/virtualization/v2' -ClassName Msvm_VirtualSystemManagementService -ErrorAction Stop | Select-Object -First 1
+if ($null -eq $service) { throw 'construction console management service is absent' }
+$result = Invoke-CimMethod -InputObject $service -MethodName GetVirtualSystemThumbnailImage -Arguments @{
+  TargetSystem = $settings
+  WidthPixels = [uint16]320
+  HeightPixels = [uint16]240
+} -ErrorAction Stop
+if ([uint32]$result.ReturnValue -ne 0) {
+  @{ available = $false; reason = "Hyper-V thumbnail returned $([uint32]$result.ReturnValue)" } | ConvertTo-Json -Compress
+  exit 0
+}
+$bytes = [byte[]]$result.ImageData
+@{ available = $true; width = 320; height = 240; imageData = [Convert]::ToBase64String($bytes) } | ConvertTo-Json -Compress
 `;
 
 const START_INSTALL_SCRIPT = String.raw`
@@ -539,6 +570,57 @@ export class HyperVImageConstruction {
     record.installLiveness = liveness;
     await this.#save(state);
     return { ...observed, liveness: Object.freeze({ ...liveness }) };
+  }
+
+  async captureInstallConsole(rawIdentity) {
+    const identity = subject(rawIdentity);
+    const state = await this.#load();
+    const record = state.records[identity];
+    if (!record || record.phase !== 'installing' || !record.providerIdentity) throw new Error('construction is not awaiting installation completion');
+    const observed = await this.status(identity);
+    if (!observed.exists || !observed.owned || observed.state !== 'running' || observed.mediaCount < 1) {
+      throw new Error('construction console is unavailable outside the running installer frontier');
+    }
+    const result = await this.#run(INSTALL_CONSOLE_SCRIPT, this.#descriptor(record), 30_000);
+    if (result?.available !== true) {
+      const reason = String(result?.reason ?? 'Hyper-V thumbnail evidence is unavailable').slice(0, 512);
+      return Object.freeze({ available: false, reason });
+    }
+    if (result.width !== CONSOLE_WIDTH || result.height !== CONSOLE_HEIGHT || typeof result.imageData !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/u.test(result.imageData)) {
+      throw new Error('construction console evidence contract is invalid');
+    }
+    const raw = Buffer.from(result.imageData, 'base64');
+    if (raw.length !== CONSOLE_RAW_BYTES || raw.toString('base64') !== result.imageData) throw new Error('construction console evidence size is invalid');
+    const rowBytes = CONSOLE_WIDTH * 3;
+    const bmp = Buffer.alloc(54 + rowBytes * CONSOLE_HEIGHT);
+    bmp.write('BM', 0, 'ascii');
+    bmp.writeUInt32LE(bmp.length, 2);
+    bmp.writeUInt32LE(54, 10);
+    bmp.writeUInt32LE(40, 14);
+    bmp.writeInt32LE(CONSOLE_WIDTH, 18);
+    bmp.writeInt32LE(-CONSOLE_HEIGHT, 22);
+    bmp.writeUInt16LE(1, 26);
+    bmp.writeUInt16LE(24, 28);
+    bmp.writeUInt32LE(rowBytes * CONSOLE_HEIGHT, 34);
+    for (let pixel = 0; pixel < CONSOLE_WIDTH * CONSOLE_HEIGHT; pixel += 1) {
+      const packed = raw.readUInt16LE(pixel * 2);
+      const target = 54 + pixel * 3;
+      bmp[target] = Math.round((packed & 0x1f) * 255 / 31);
+      bmp[target + 1] = Math.round(((packed >> 5) & 0x3f) * 255 / 63);
+      bmp[target + 2] = Math.round(((packed >> 11) & 0x1f) * 255 / 31);
+    }
+    const sha256 = createHash('sha256').update(bmp).digest('hex');
+    const location = path.join(this.#directory, `${identity}-install-console.bmp`);
+    const temporary = `${location}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, bmp, { mode: 0o600, flag: 'wx' });
+      await rename(temporary, location);
+    } finally {
+      await rm(temporary, { force: true }).catch(() => {});
+    }
+    const captured = this.#now();
+    if (!(captured instanceof Date) || !Number.isFinite(captured.getTime())) throw new Error('construction clock returned an invalid time');
+    return Object.freeze({ available: true, capturedAt: captured.toISOString(), location, bytes: bmp.length, sha256, width: CONSOLE_WIDTH, height: CONSOLE_HEIGHT });
   }
 
   async locate(rawIdentity) {
