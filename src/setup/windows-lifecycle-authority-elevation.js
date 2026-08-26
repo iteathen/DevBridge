@@ -44,12 +44,71 @@ function absoluteLocalPath(value, name) {
   return path.resolve(value);
 }
 
+function pathIsWithin(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
 async function boundedRealFile(file, name) {
-  const info = await lstat(file);
-  if (!info.isFile() || info.isSymbolicLink()) throw new Error(`${name} must be a real regular file`);
-  const actual = await realpath(file);
-  if (path.resolve(actual) !== path.resolve(file)) throw new Error(`${name} must not use filesystem indirection`);
-  return actual;
+  const resolved = path.resolve(file);
+  const filesystemRoot = path.parse(resolved).root;
+  const relative = path.relative(filesystemRoot, resolved);
+  const segments = relative.split(path.sep).filter(Boolean);
+  if (segments.length === 0) {
+    const info = await lstat(resolved);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error(`${name} must be a real regular file`);
+    return resolved;
+  }
+  let current = filesystemRoot;
+
+  for (let index = 0; index < segments.length; index += 1) {
+    current = path.join(current, segments[index]);
+    const info = await lstat(current);
+    if (info.isSymbolicLink()) throw new Error(`${name} must not use filesystem indirection`);
+    if (index < segments.length - 1 && !info.isDirectory()) {
+      throw new Error(`${name} must not traverse a non-directory path`);
+    }
+    if (index === segments.length - 1 && !info.isFile()) {
+      throw new Error(`${name} must be a real regular file`);
+    }
+  }
+
+  return resolved;
+}
+
+async function boundedManagedFile(root, file, name) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedFile = path.resolve(file);
+  if (!pathIsWithin(resolvedRoot, resolvedFile)) {
+    throw new Error(`${name} escaped the managed DevBridge home`);
+  }
+
+  const rootInfo = await lstat(resolvedRoot);
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
+    throw new Error(`${name} managed root must be a real directory`);
+  }
+  const canonicalRoot = await realpath(resolvedRoot);
+  const relative = path.relative(resolvedRoot, resolvedFile);
+  const segments = relative.split(path.sep).filter(Boolean);
+  let current = resolvedRoot;
+
+  for (let index = 0; index < segments.length; index += 1) {
+    current = path.join(current, segments[index]);
+    const info = await lstat(current);
+    if (info.isSymbolicLink()) throw new Error(`${name} must not use filesystem indirection`);
+    if (index < segments.length - 1 && !info.isDirectory()) {
+      throw new Error(`${name} must not traverse a non-directory path`);
+    }
+    if (index === segments.length - 1 && !info.isFile()) {
+      throw new Error(`${name} must be a real regular file`);
+    }
+    const canonical = await realpath(current);
+    if (!pathIsWithin(canonicalRoot, canonical)) {
+      throw new Error(`${name} escaped the managed DevBridge home`);
+    }
+  }
+
+  return resolvedFile;
 }
 
 function samePath(left, right, platform) {
@@ -76,7 +135,7 @@ export async function requestWindowsLifecycleAuthorityElevation({
     throw new Error('Windows lifecycle authority elevation launcher is outside the managed DevBridge entry boundary');
   }
   await Promise.all([
-    boundedRealFile(selectedLauncher, 'Windows lifecycle authority elevation launcher'),
+    boundedManagedFile(root, selectedLauncher, 'Windows lifecycle authority elevation launcher'),
     boundedRealFile(node, 'Windows lifecycle authority elevation Node executable'),
   ]);
 
