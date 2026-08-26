@@ -1156,6 +1156,18 @@ export async function reconcileWindowsLifecycleAuthorityService({
   }
 
   let refreshed;
+  let candidateHealthReason = null;
+  const captureRefreshDiagnostic = (event) => {
+    if (event?.phase === 'refresh-health'
+        && event?.state === 'completed'
+        && event?.detail?.generation === plan.runtime.generation
+        && event?.detail?.ready === false
+        && typeof event?.detail?.reason === 'string'
+        && event.detail.reason.length > 0) {
+      candidateHealthReason = boundedReason(event.detail.reason, 'health probe failed');
+    }
+    onDiagnostic?.(event);
+  };
   try {
     const mechanics = createRefreshMechanics({
       basePlan,
@@ -1168,7 +1180,7 @@ export async function reconcileWindowsLifecycleAuthorityService({
       candidate,
       probe,
     });
-    refreshed = await refresh({ candidateGeneration: plan.runtime.generation, mechanics, onDiagnostic });
+    refreshed = await refresh({ candidateGeneration: plan.runtime.generation, mechanics, onDiagnostic: captureRefreshDiagnostic });
   } catch {
     return serviceResult({
       platform,
@@ -1189,7 +1201,7 @@ export async function reconcileWindowsLifecycleAuthorityService({
       service: refreshed?.recovered === true ? 'recovered-previous' : 'blocked',
       protectedState: refreshed?.recovered === true ? 'ready' : 'blocked',
       blocker: refreshed?.blocker === 'candidate-health'
-        ? 'Windows protected lifecycle authority candidate failed health and the exact previous generation was restored.'
+        ? `Windows protected lifecycle authority candidate failed health and the exact previous generation was restored.${candidateHealthReason == null ? '' : ` Candidate health: ${candidateHealthReason}`}`
         : 'Windows protected lifecycle authority candidate was rejected before activation completed.',
     });
   }

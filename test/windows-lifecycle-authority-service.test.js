@@ -41,6 +41,8 @@ function deps({
   exactService = false,
   probeReady = true,
   refreshResult = Object.freeze({ ready: true, changed: true, recovered: false, blocker: null }),
+  refreshHealthReason = null,
+  refreshHealthGeneration = 'candidate',
   refreshError = null,
   measureError = null,
 } = {}) {
@@ -92,10 +94,21 @@ function deps({
         assert.equal(typeof input.probe, 'function');
         return mechanics;
       },
-      refresh: async ({ candidateGeneration, mechanics: received }) => {
+      refresh: async ({ candidateGeneration, mechanics: received, onDiagnostic }) => {
         calls.push('refresh');
         assert.equal(candidateGeneration.length, 64);
         assert.equal(received, mechanics);
+        if (refreshHealthReason != null) {
+          onDiagnostic({
+            phase: 'refresh-health',
+            state: 'completed',
+            detail: {
+              generation: refreshHealthGeneration === 'candidate' ? candidateGeneration : 'c'.repeat(64),
+              ready: false,
+              reason: refreshHealthReason,
+            },
+          });
+        }
         if (refreshError) throw new Error(refreshError);
         return refreshResult;
       },
@@ -160,6 +173,31 @@ test('candidate health rejection reports the shared exact rollback instead of st
   assert.equal(result.protectedState, 'ready');
   assert.match(result.blocker, /previous generation was restored/u);
   assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'inspect-service', 'create-refresh-mechanics', 'refresh']);
+});
+
+test('candidate health rejection preserves the exact bounded candidate failure reason', async () => {
+  const fixture = deps({
+    elevated: true,
+    exactService: false,
+    refreshResult: Object.freeze({ ready: false, changed: true, recovered: true, blocker: 'candidate-health' }),
+    refreshHealthReason: 'Windows lifecycle authority structural protection proof failed: generations-directory:inheritance-enabled',
+  });
+  const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
+  assert.match(result.blocker, /previous generation was restored/u);
+  assert.match(result.blocker, /Candidate health: Windows lifecycle authority structural protection proof failed: generations-directory:inheritance-enabled/u);
+});
+
+test('candidate health rejection does not misattribute another generation health reason', async () => {
+  const fixture = deps({
+    elevated: true,
+    exactService: false,
+    refreshResult: Object.freeze({ ready: false, changed: true, recovered: true, blocker: 'candidate-health' }),
+    refreshHealthReason: 'unrelated recovery generation failed',
+    refreshHealthGeneration: 'other',
+  });
+  const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
+  assert.match(result.blocker, /previous generation was restored/u);
+  assert.doesNotMatch(result.blocker, /unrelated recovery generation/u);
 });
 
 test('shared refresh failure is bounded without leaking local platform detail', async () => {
