@@ -17,6 +17,7 @@ import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment
 import {
   bindWindowsLifecycleAuthorityRuntime,
   createWindowsLifecycleAuthorityPlan,
+  WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1,
   windowsLifecycleAuthorityRuntimeGeneration,
 } from './windows-lifecycle-authority.js';
 import {
@@ -385,11 +386,11 @@ async function exactLegacyEvidence(fixed, ownership, measureCandidate) {
   return Object.freeze({ candidate, hostSource, hostExecutable, generation });
 }
 
-async function verifyGenerationDirectory(targetPlan, ownership, measureCandidate) {
+async function verifyGenerationDirectory(targetPlan, ownership, measureCandidate, { allowUnversioned = false } = {}) {
   let manifest;
   try { manifest = await readBoundedJson(path.win32.join(targetPlan.runtime.generationDirectory, 'generation.json'), MAX_CONTROL_BYTES, 'legacy generation manifest'); }
   catch (error) { if (error?.code === 'ENOENT') return false; throw error; }
-  const manifestAllowed = new Set(['protocol', 'generation', 'packageDigest', 'nodeDigest', 'hostSourceDigest', 'hostExecutableDigest']);
+  const manifestAllowed = new Set(['protocol', 'generation', 'packageDigest', 'nodeDigest', 'hostSourceDigest', 'hostExecutableDigest', 'hostCommandProtocol']);
   for (const key of Object.keys(manifest)) if (!manifestAllowed.has(key)) return false;
   const expectedGeneration = windowsLifecycleAuthorityRuntimeGeneration(ownership.runtime);
   if (manifest.protocol !== WINDOWS_LIFECYCLE_AUTHORITY_GENERATION_PROTOCOL
@@ -397,7 +398,9 @@ async function verifyGenerationDirectory(targetPlan, ownership, measureCandidate
       || manifest.packageDigest !== ownership.runtime.packageDigest
       || manifest.nodeDigest !== ownership.runtime.nodeDigest
       || manifest.hostSourceDigest !== ownership.runtime.hostSourceDigest
-      || manifest.hostExecutableDigest !== ownership.runtime.hostExecutableDigest) return false;
+      || manifest.hostExecutableDigest !== ownership.runtime.hostExecutableDigest
+      || (manifest.hostCommandProtocol !== WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1
+        && !(allowUnversioned && manifest.hostCommandProtocol == null))) return false;
   const candidate = await measureCandidate({
     packageRoot: targetPlan.runtime.packageDirectory,
     nodeExecutable: targetPlan.runtime.nodeExecutable,
@@ -427,6 +430,15 @@ async function copySnapshotFiles(snapshot, sourceRoot, destinationRoot) {
 async function stageLegacyGeneration(context) {
   const { basePlan, targetPlan, fixed, ownership, measureCandidate } = context;
   if (await verifyGenerationDirectory(targetPlan, ownership, measureCandidate)) return false;
+  if (await verifyGenerationDirectory(targetPlan, ownership, measureCandidate, { allowUnversioned: true })) {
+    const manifestPath = path.win32.join(targetPlan.runtime.generationDirectory, 'generation.json');
+    const manifest = await readBoundedJson(manifestPath, MAX_CONTROL_BYTES, 'unversioned legacy generation manifest');
+    const temporary = `${manifestPath}.protocol.tmp`;
+    await rm(temporary, { force: true });
+    await writeFile(temporary, `${JSON.stringify({ ...manifest, hostCommandProtocol: WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1 })}\n`, { encoding: 'utf8', flag: 'wx' });
+    await rename(temporary, manifestPath);
+    return true;
+  }
   try {
     await boundedRealDirectory(targetPlan.runtime.generationDirectory, 'legacy generation directory');
     throw new Error('legacy generation directory exists with invalid evidence');
@@ -474,6 +486,7 @@ async function stageLegacyGeneration(context) {
     nodeDigest: ownership.runtime.nodeDigest,
     hostSourceDigest: ownership.runtime.hostSourceDigest,
     hostExecutableDigest: ownership.runtime.hostExecutableDigest,
+    hostCommandProtocol: WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1,
   });
   await writeFile(path.join(staging, 'generation.json'), `${JSON.stringify(manifest)}\n`, { encoding: 'utf8', flag: 'wx' });
   await rename(staging, targetPlan.runtime.generationDirectory);
@@ -637,7 +650,10 @@ export async function createWindowsLifecycleAuthorityLegacyRuntimeMechanics({
 
   const ownership = normalizeOwnership(ownershipRecord, basePlan, host.operatorSid);
   const fixed = fixedRuntimePlan(basePlan, ownership.runtime);
-  const targetPlan = bindWindowsLifecycleAuthorityRuntime(basePlan, ownership.runtime);
+  const targetPlan = bindWindowsLifecycleAuthorityRuntime(basePlan, {
+    ...ownership.runtime,
+    hostCommandProtocol: WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1,
+  });
   const service = await inspectServicePort(targetPlan, invoke, environment);
   const mode = classifyWindowsLifecycleAuthorityLegacyService(service, fixed, targetPlan);
   const generationVerified = (mode === 'generation-running' || mode === 'generation-stopped')
@@ -719,6 +735,29 @@ export async function createWindowsLifecycleAuthorityLegacyRuntimeMechanics({
           return Object.freeze({ protocol: value?.protocol ?? null });
         }),
       ]);
+    },
+    async commandContract() {
+      const manifest = await readBoundedJson(
+        path.win32.join(targetPlan.runtime.generationDirectory, 'generation.json'),
+        MAX_CONTROL_BYTES,
+        'legacy generation manifest',
+      );
+      const hostSource = await readFile(targetPlan.runtime.serviceHostSource, 'utf8');
+      const commandHasAcceptancePipe = targetPlan.serviceCommand.includes('"--acceptance-pipe"');
+      const hostSourceHasAcceptancePipe = hostSource.includes('--acceptance-pipe');
+      if (manifest.hostCommandProtocol !== WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1
+          || targetPlan.hostCommandProtocol !== WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1
+          || commandHasAcceptancePipe
+          || hostSourceHasAcceptancePipe) {
+        throw new Error('legacy generation host command contract is inconsistent');
+      }
+      return Object.freeze({
+        manifestProtocol: manifest.hostCommandProtocol,
+        planProtocol: targetPlan.hostCommandProtocol,
+        commandHasAcceptancePipe,
+        hostSourceHasAcceptancePipe,
+        compatible: true,
+      });
     },
     stage: () => stageLegacyGeneration(context),
     async quiesce() {
@@ -833,6 +872,10 @@ export async function reconcileWindowsLifecycleAuthorityLegacyRuntime(options = 
     }
     if (!observation.staged) throw new Error('legacy generation did not become exact after staging');
     await mechanics.checkpoint({ phase: 'staged' });
+    reporter.emit('command-contract', 'attempted');
+    if (typeof mechanics.commandContract !== 'function') throw new Error('legacy generation command contract proof is unavailable');
+    const commandContract = await mechanics.commandContract();
+    reporter.emit('command-contract', 'completed', commandContract);
 
     if (observation.mode === 'fixed-running') {
       changed = (await checkpointEffect(mechanics, 'staged', 'quiesce', mechanics.quiesce, reporter)) || changed;

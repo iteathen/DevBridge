@@ -23,6 +23,8 @@ import {
 import {
   bindWindowsLifecycleAuthorityRuntime,
   createWindowsLifecycleAuthorityPlan,
+  WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1,
+  WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1,
 } from './windows-lifecycle-authority.js';
 
 const PROTOCOL = 'devbridge/windows-lifecycle-authority-service-v1';
@@ -296,10 +298,16 @@ function normalizeOwnership(raw, plan) {
     throw new Error('protected lifecycle authority ownership state is invalid');
   }
   if (raw.runtime != null) {
-    const runtimeAllowed = new Set(['packageDigest', 'nodeDigest', 'hostSourceDigest', 'hostExecutableDigest']);
+    const runtimeAllowed = new Set(['packageDigest', 'nodeDigest', 'hostSourceDigest', 'hostExecutableDigest', 'hostCommandProtocol']);
     if (!raw.runtime || typeof raw.runtime !== 'object' || Array.isArray(raw.runtime)) throw new Error('protected lifecycle authority runtime record is invalid');
     for (const key of Object.keys(raw.runtime)) if (!runtimeAllowed.has(key)) throw new Error('protected lifecycle authority runtime record is invalid');
-    for (const key of runtimeAllowed) if (typeof raw.runtime[key] !== 'string' || !GENERATION.test(raw.runtime[key])) throw new Error('protected lifecycle authority runtime digest is invalid');
+    for (const key of ['packageDigest', 'nodeDigest', 'hostSourceDigest', 'hostExecutableDigest']) {
+      if (typeof raw.runtime[key] !== 'string' || !GENERATION.test(raw.runtime[key])) throw new Error('protected lifecycle authority runtime digest is invalid');
+    }
+    if (raw.runtime.hostCommandProtocol != null
+        && ![WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1].includes(raw.runtime.hostCommandProtocol)) {
+      throw new Error('protected lifecycle authority runtime host command protocol is invalid');
+    }
   }
   return Object.freeze({
     protocol: OWNERSHIP_PROTOCOL,
@@ -617,13 +625,20 @@ function generationManifestPath(basePlan, generation) {
 }
 
 function normalizeGenerationManifest(raw, basePlan, generation) {
-  exactObject(raw, new Set(['protocol', 'generation', 'packageDigest', 'nodeDigest', 'hostSourceDigest', 'hostExecutableDigest']), 'Windows lifecycle authority generation manifest');
+  exactObject(raw, new Set(['protocol', 'generation', 'packageDigest', 'nodeDigest', 'hostSourceDigest', 'hostExecutableDigest', 'hostCommandProtocol']), 'Windows lifecycle authority generation manifest');
   const identity = exactGeneration(generation, 'Windows lifecycle authority generation manifest identity');
   if (raw.protocol !== GENERATION_PROTOCOL || raw.generation !== identity) throw new Error('Windows lifecycle authority generation manifest identity is invalid');
   for (const key of ['packageDigest', 'nodeDigest', 'hostSourceDigest', 'hostExecutableDigest']) {
     if (typeof raw[key] !== 'string' || !GENERATION.test(raw[key])) throw new Error('Windows lifecycle authority generation manifest digest is invalid');
   }
-  const plan = bindWindowsLifecycleAuthorityRuntime(basePlan, { packageDigest: raw.packageDigest, nodeDigest: raw.nodeDigest });
+  if (![WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1].includes(raw.hostCommandProtocol)) {
+    throw new Error('Windows lifecycle authority generation manifest host command protocol is invalid');
+  }
+  const plan = bindWindowsLifecycleAuthorityRuntime(basePlan, {
+    packageDigest: raw.packageDigest,
+    nodeDigest: raw.nodeDigest,
+    hostCommandProtocol: raw.hostCommandProtocol,
+  });
   if (plan.runtime.generation !== identity) throw new Error('Windows lifecycle authority generation manifest does not bind its directory identity');
   return Object.freeze({
     protocol: GENERATION_PROTOCOL,
@@ -632,6 +647,7 @@ function normalizeGenerationManifest(raw, basePlan, generation) {
     nodeDigest: raw.nodeDigest,
     hostSourceDigest: raw.hostSourceDigest,
     hostExecutableDigest: raw.hostExecutableDigest,
+    hostCommandProtocol: raw.hostCommandProtocol,
   });
 }
 
@@ -670,12 +686,16 @@ function runtimeRecord(manifest) {
     nodeDigest: manifest.nodeDigest,
     hostSourceDigest: manifest.hostSourceDigest,
     hostExecutableDigest: manifest.hostExecutableDigest,
+    hostCommandProtocol: manifest.hostCommandProtocol,
   });
 }
 
 function generationFromOwnership(basePlan, ownership) {
   if (ownership?.runtime == null) return null;
-  return bindWindowsLifecycleAuthorityRuntime(basePlan, ownership.runtime).runtime.generation;
+  return bindWindowsLifecycleAuthorityRuntime(basePlan, {
+    ...ownership.runtime,
+    hostCommandProtocol: ownership.runtime.hostCommandProtocol ?? WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1,
+  }).runtime.generation;
 }
 
 async function verifyGenerationManifest(basePlan, manifest) {
@@ -767,7 +787,9 @@ async function materializeGeneration({ generation }, context) {
   }
 
   const existing = await loadGenerationManifest(basePlan, identity);
-  if (existing && await verifyGenerationManifest(basePlan, existing)) return;
+  if (existing
+      && existing.hostCommandProtocol === candidatePlan.hostCommandProtocol
+      && await verifyGenerationManifest(basePlan, existing)) return;
   if (existing) throw new Error('Windows lifecycle authority candidate generation exists with invalid protected bytes');
 
   await rm(candidatePlan.runtime.generationDirectory, { recursive: true, force: true });
@@ -789,6 +811,7 @@ async function materializeGeneration({ generation }, context) {
     nodeDigest,
     hostSourceDigest,
     hostExecutableDigest: hostExecutable.digest,
+    hostCommandProtocol: WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1,
   }), invoke, environment);
 }
 
@@ -843,7 +866,8 @@ async function readRefreshInstallation(context) {
     if (active.manifest.packageDigest !== ownership.runtime.packageDigest
         || active.manifest.nodeDigest !== ownership.runtime.nodeDigest
         || active.manifest.hostSourceDigest !== ownership.runtime.hostSourceDigest
-        || active.manifest.hostExecutableDigest !== ownership.runtime.hostExecutableDigest) {
+        || active.manifest.hostExecutableDigest !== ownership.runtime.hostExecutableDigest
+        || active.manifest.hostCommandProtocol !== (ownership.runtime.hostCommandProtocol ?? WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1)) {
       throw new Error('Windows lifecycle authority ownership and generation manifest disagree');
     }
     activePlan = active.plan;

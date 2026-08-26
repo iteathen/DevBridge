@@ -16,6 +16,13 @@ import { reconcileWindowsLifecycleAuthorityReadiness } from '../src/setup/window
 import { runWindowsLifecycleAuthoritySetupChild } from '../src/app/windows-lifecycle-authority-setup-child.js';
 
 const STATE = 'C:\\Users\\Operator\\.devbridge\\state';
+const LEGACY_COMMAND_CONTRACT = Object.freeze({
+  manifestProtocol: 'legacy-read-mutation-v1',
+  planProtocol: 'legacy-read-mutation-v1',
+  commandHasAcceptancePipe: false,
+  hostSourceHasAcceptancePipe: false,
+  compatible: true,
+});
 const PLAN = Object.freeze({
   stateDirectory: STATE,
   ownershipManifest: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\owner\\ownership.json',
@@ -255,6 +262,7 @@ test('legacy migration observes each durable frontier before repeating an effect
     notRequired: false,
     generation: 'b'.repeat(64),
     observe: async () => ({ ...state }),
+    commandContract: async () => { calls.push(['command-contract']); return LEGACY_COMMAND_CONTRACT; },
     checkpoint: async (record) => { calls.push(['checkpoint', record]); },
     stage: async () => { calls.push(['stage']); state.staged = true; return true; },
     quiesce: async () => { calls.push(['quiesce']); state.mode = 'fixed-stopped'; return true; },
@@ -268,7 +276,7 @@ test('legacy migration observes each durable frontier before repeating an effect
   });
   assert.equal(result.ready, true);
   assert.equal(result.changed, true);
-  assert.deepEqual(calls.filter((entry) => entry[0] !== 'checkpoint').map((entry) => entry[0]), ['stage', 'quiesce', 'promote', 'start', 'health']);
+  assert.deepEqual(calls.filter((entry) => entry[0] !== 'checkpoint').map((entry) => entry[0]), ['stage', 'command-contract', 'quiesce', 'promote', 'start', 'health']);
   for (const effect of ['stage', 'quiesce', 'promote', 'start']) {
     const planned = calls.findIndex((entry) => entry[0] === 'checkpoint' && entry[1].effect === effect && entry[1].state === 'planned');
     const attempted = calls.findIndex((entry) => entry[0] === 'checkpoint' && entry[1].effect === effect && entry[1].state === 'attempted');
@@ -284,6 +292,7 @@ test('legacy migration resumes after promotion without replaying stage, quiesce,
     notRequired: false,
     generation: 'c'.repeat(64),
     observe: async () => ({ ...state }),
+    commandContract: async () => LEGACY_COMMAND_CONTRACT,
     checkpoint: async () => {},
     stage: async () => { calls.push('stage'); return false; },
     quiesce: async () => { calls.push('quiesce'); return false; },
@@ -303,6 +312,7 @@ test('legacy generation health failure restores the exact fixed authority and re
     notRequired: false,
     generation: 'd'.repeat(64),
     observe: async () => ({ staged: true, mode: 'generation-running' }),
+    commandContract: async () => LEGACY_COMMAND_CONTRACT,
     checkpoint: async () => {},
     stage: async () => false,
     quiesce: async () => false,
@@ -396,6 +406,7 @@ test('legacy migration completes read-only diagnostics before and after exact ro
       notRequired: false,
       generation: 'e'.repeat(64),
       observe: async () => ({ staged: true, mode: 'generation-running', journal: { phase: 'started', pending: null } }),
+      commandContract: async () => LEGACY_COMMAND_CONTRACT,
       checkpoint: async () => {},
       stage: async () => false,
       quiesce: async () => false,
@@ -433,6 +444,7 @@ test('legacy generation start failure preserves its first error and still comple
       notRequired: false,
       generation: 'f'.repeat(64),
       observe: async () => ({ staged: true, mode: 'generation-stopped', journal: { phase: 'promoted', pending: null } }),
+      commandContract: async () => LEGACY_COMMAND_CONTRACT,
       checkpoint: async () => {},
       stage: async () => false,
       quiesce: async () => false,
@@ -452,6 +464,8 @@ test('legacy generation start failure preserves its first error and still comple
   assert.match(result.blocker, /Rollback restored: true/u);
   assert.ok(emitted.some((event) => event.phase === 'start' && event.state === 'failed'
     && event.detail.error === 'exact SCM generation start failure'));
+  assert.ok(emitted.some((event) => event.phase === 'command-contract' && event.state === 'completed'
+    && event.detail.compatible === true));
   assert.ok(emitted.some((event) => event.phase === 'diagnose-after-rollback' && event.state === 'completed'));
 });
 

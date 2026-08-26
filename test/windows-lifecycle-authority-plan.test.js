@@ -4,6 +4,8 @@ import path from 'node:path';
 import {
   bindWindowsLifecycleAuthorityRuntime,
   createWindowsLifecycleAuthorityPlan,
+  WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1,
+  WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1,
   windowsLifecycleAuthorityRuntimeGeneration,
   WINDOWS_ADMINISTRATORS_SID,
   WINDOWS_HYPERV_ADMINISTRATORS_SID,
@@ -100,6 +102,25 @@ test('runtime evidence deterministically binds source freshness without changing
   assert.equal(first.service.description, `DevBridge lifecycle authority runtime v1 package=${PACKAGE_DIGEST} node=${NODE_DIGEST}`);
   assert.throws(() => bindWindowsLifecycleAuthorityRuntime(first, { packageDigest: PACKAGE_DIGEST, nodeDigest: NODE_DIGEST }), /already bound/u);
   assert.throws(() => bindWindowsLifecycleAuthorityRuntime(base, { packageDigest: 'x', nodeDigest: NODE_DIGEST }), /sha256 digest/u);
+});
+
+test('host command protocol is explicit and legacy relocation does not invent acceptance capability', () => {
+  const current = bound();
+  const legacy = bindWindowsLifecycleAuthorityRuntime(plan(), {
+    packageDigest: PACKAGE_DIGEST,
+    nodeDigest: NODE_DIGEST,
+    hostCommandProtocol: WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1,
+  });
+  assert.equal(current.hostCommandProtocol, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1);
+  assert.equal(legacy.hostCommandProtocol, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1);
+  assert.match(current.serviceCommand, /"--acceptance-pipe"/u);
+  assert.doesNotMatch(legacy.serviceCommand, /"--acceptance-pipe"/u);
+  assert.equal(legacy.runtime.generation, current.runtime.generation);
+  assert.throws(() => bindWindowsLifecycleAuthorityRuntime(plan(), {
+    packageDigest: PACKAGE_DIGEST,
+    nodeDigest: NODE_DIGEST,
+    hostCommandProtocol: 'unknown',
+  }), /host command protocol/u);
 });
 
 test('different runtime evidence cannot alias one protected generation', () => {

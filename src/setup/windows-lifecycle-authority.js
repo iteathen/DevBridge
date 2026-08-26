@@ -14,6 +14,13 @@ const SERVICE_PREFIX = 'DevBridgeLifecycle-';
 const SERVICE_RUNTIME_PREFIX = 'DevBridge lifecycle authority runtime v1';
 const RUNTIME_GENERATION_DOMAIN = 'devbridge/windows-lifecycle-authority-runtime-generation-v1';
 
+export const WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1 = 'legacy-read-mutation-v1';
+export const WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1 = 'read-mutation-acceptance-v1';
+const HOST_COMMAND_PROTOCOLS = new Set([
+  WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1,
+  WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1,
+]);
+
 export const WINDOWS_ADMINISTRATORS_SID = 'S-1-5-32-544';
 export const WINDOWS_HYPERV_ADMINISTRATORS_SID = 'S-1-5-32-578';
 export const WINDOWS_SYSTEM_SID = 'S-1-5-18';
@@ -102,8 +109,13 @@ function runtimeLayout(plan, generation) {
   });
 }
 
-function commandForRuntime(plan, runtime) {
-  return serviceCommand([
+function hostCommandProtocol(value) {
+  if (!HOST_COMMAND_PROTOCOLS.has(value)) throw new TypeError('Windows lifecycle authority host command protocol is invalid');
+  return value;
+}
+
+function commandForRuntime(plan, runtime, protocol) {
+  const fields = [
     runtime.serviceHostExecutable,
     '--service-name', plan.service.name,
     '--protected-root', plan.protectedRoot,
@@ -114,8 +126,11 @@ function commandForRuntime(plan, runtime) {
     '--operator-sid', plan.operatorSid,
     '--read-pipe', plan.endpoints.read.pipeName,
     '--mutation-pipe', plan.endpoints.mutation.pipeName,
-    '--acceptance-pipe', plan.endpoints.acceptance.pipeName,
-  ]);
+  ];
+  if (protocol === WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1) {
+    fields.push('--acceptance-pipe', plan.endpoints.acceptance.pipeName);
+  }
+  return serviceCommand(fields);
 }
 
 export function createWindowsLifecycleAuthorityPlan({
@@ -197,19 +212,25 @@ export function createWindowsLifecycleAuthorityPlan({
   });
 }
 
-export function bindWindowsLifecycleAuthorityRuntime(plan, { packageDigest, nodeDigest } = {}) {
+export function bindWindowsLifecycleAuthorityRuntime(plan, {
+  packageDigest,
+  nodeDigest,
+  hostCommandProtocol: requestedHostCommandProtocol = WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1,
+} = {}) {
   if (!plan || typeof plan !== 'object' || plan.protocol !== PROTOCOL) throw new TypeError('Windows lifecycle authority plan is required');
   if (plan.runtimeEvidence != null || plan.serviceCommand != null || plan?.runtime?.generation != null || plan?.service?.description != null) {
     throw new Error('Windows lifecycle authority runtime evidence is already bound');
   }
   const packageIdentity = runtimeDigest(packageDigest, 'Windows lifecycle authority package digest');
   const nodeIdentity = runtimeDigest(nodeDigest, 'Windows lifecycle authority Node digest');
+  const selectedHostCommandProtocol = hostCommandProtocol(requestedHostCommandProtocol);
   const generation = windowsLifecycleAuthorityRuntimeGeneration({ packageDigest: packageIdentity, nodeDigest: nodeIdentity });
   const runtime = runtimeLayout(plan, generation);
   const runtimeEvidence = Object.freeze({ packageDigest: packageIdentity, nodeDigest: nodeIdentity });
   return Object.freeze({
     ...plan,
-    serviceCommand: commandForRuntime(plan, runtime),
+    hostCommandProtocol: selectedHostCommandProtocol,
+    serviceCommand: commandForRuntime(plan, runtime, selectedHostCommandProtocol),
     runtimeEvidence,
     runtime,
     service: Object.freeze({
