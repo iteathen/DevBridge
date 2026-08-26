@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { setTimeout as wait } from 'node:timers/promises';
 import { createEnvironmentConstructionPipeline } from '../app/environment-construction.js';
 import { createEnvironmentLifecycle } from '../app/environment-lifecycle.js';
 import { createEnvironmentLifecycleFence } from '../app/environment-lifecycle-fence.js';
@@ -24,6 +25,8 @@ const POWERSHELL_ARGS = Object.freeze([
 ]);
 const SAFE_GENERATION = /^acceptance-[0-9a-f]{32}$/u;
 const DENIED_CODES = new Set(['EACCES', 'EPERM']);
+const TRANSIENT_REMOVAL_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
+const REMOVAL_RETRY_DELAYS_MS = Object.freeze([25, 50, 100, 200, 400]);
 const OPERATIONS = new Set(['exercise', 'cleanup']);
 
 const ENSURE_VHDX_SCRIPT = String.raw`
@@ -149,14 +152,25 @@ export class WindowsLifecycleAuthorityAcceptanceFixture {
   #manifest;
   #invoke;
   #environment;
+  #removeFile;
+  #wait;
 
-  constructor({ root, invoke = invokeCommand, environment = process.env } = {}) {
+  constructor({
+    root,
+    invoke = invokeCommand,
+    environment = process.env,
+    removeFile = (target) => rm(target, { force: false }),
+    waitForRetry = wait,
+  } = {}) {
     this.#root = requireDirectory(root, 'Windows lifecycle authority acceptance root');
     if (typeof invoke !== 'function') throw new TypeError('Windows lifecycle authority acceptance invocation contract is invalid');
+    if (typeof removeFile !== 'function' || typeof waitForRetry !== 'function') throw new TypeError('Windows lifecycle authority acceptance cleanup contract is invalid');
     this.#generations = path.join(this.#root, 'generations');
     this.#manifest = path.join(this.#root, 'fixture.json');
     this.#invoke = invoke;
     this.#environment = environment;
+    this.#removeFile = removeFile;
+    this.#wait = waitForRetry;
   }
 
   get root() { return this.#root; }
@@ -190,6 +204,18 @@ export class WindowsLifecycleAuthorityAcceptanceFixture {
     validateFixtureState(state);
     await this.#ensureRoot();
     await writeJsonAtomic(this.#manifest, state);
+  }
+
+  async #removeOwnedFile(target) {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await this.#removeFile(target);
+        return;
+      } catch (error) {
+        if (!TRANSIENT_REMOVAL_CODES.has(error?.code) || attempt >= REMOVAL_RETRY_DELAYS_MS.length) throw error;
+        await this.#wait(REMOVAL_RETRY_DELAYS_MS[attempt]);
+      }
+    }
   }
 
   async #inspectDisk(generation, record) {
@@ -278,7 +304,7 @@ export class WindowsLifecycleAuthorityAcceptanceFixture {
     validateGenerationRecord(previousImplementationGeneration, record);
     const observed = await this.#inspectDisk(previousImplementationGeneration, record);
     if (observed.exists && !observed.ready) throw new Error('Windows lifecycle authority acceptance retirement refused mismatched VHDX');
-    if (observed.exists) await rm(observed.diskPath, { force: false });
+    if (observed.exists) await this.#removeOwnedFile(observed.diskPath);
     delete state.generations[previousImplementationGeneration];
     await this.#save(state);
     return Object.freeze({ ready: true, retired: observed.exists });
@@ -291,14 +317,14 @@ export class WindowsLifecycleAuthorityAcceptanceFixture {
       const observed = await this.#inspectDisk(generation, record);
       const probe = `${this.diskPath(generation)}.ordinary-replace-probe`;
       if (observed.exists && !observed.ready) throw new Error('Windows lifecycle authority acceptance cleanup refused mismatched VHDX');
-      if (observed.exists) await rm(observed.diskPath, { force: false });
+      if (observed.exists) await this.#removeOwnedFile(observed.diskPath);
       let probeInfo = null;
       try { probeInfo = await lstat(probe, { bigint: true }); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
       if (probeInfo) {
         if (!probeInfo.isFile() || probeInfo.isSymbolicLink() || !record.fileIdentity || !sameFileIdentity(record.fileIdentity, fileIdentity(probeInfo))) {
           throw new Error('Windows lifecycle authority acceptance cleanup refused mismatched probe file');
         }
-        await rm(probe, { force: false });
+        await this.#removeOwnedFile(probe);
       }
     }
     await rm(this.#manifest, { force: true });

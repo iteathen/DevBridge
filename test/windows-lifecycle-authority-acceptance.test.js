@@ -159,9 +159,11 @@ test('acceptance cleanup removes only the dedicated fixture and exact lifecycle 
   await assert.rejects(access(path.join(root, 'environment-construction', 'state.json')));
 }));
 
-test('acceptance VHDX adapter observes before repeating a planned New-VHD effect', async () => withTempDirectory(async (root) => {
+test('acceptance VHDX adapter observes before replay and retries bounded owned cleanup', async () => withTempDirectory(async (root) => {
   let createCalls = 0;
   let failFirstCreate = true;
+  let failFirstRemoval = true;
+  const removalDelays = [];
   const invoke = async (call) => {
     const script = Buffer.from(call.arguments.at(-1), 'base64').toString('utf16le');
     const input = JSON.parse(call.input);
@@ -176,7 +178,19 @@ test('acceptance VHDX adapter observes before repeating a planned New-VHD effect
     }
     return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"exists":true,"ready":true,"diskIdentity":"disk-1"}\n', stderr: '' };
   };
-  const fixture = new WindowsLifecycleAuthorityAcceptanceFixture({ root, invoke, environment: {} });
+  const fixture = new WindowsLifecycleAuthorityAcceptanceFixture({
+    root,
+    invoke,
+    environment: {},
+    removeFile: async (target) => {
+      if (failFirstRemoval) {
+        failFirstRemoval = false;
+        throw Object.assign(new Error('sharing violation'), { code: 'EBUSY' });
+      }
+      await rm(target, { force: false });
+    },
+    waitForRetry: async (delay) => { removalDelays.push(delay); },
+  });
   await assert.rejects(fixture.ensure({ operationId: 'operation-a' }), /creation failed/u);
   const resumed = await fixture.ensure({ operationId: 'operation-a' });
   assert.equal(resumed.ready, true);
@@ -184,6 +198,8 @@ test('acceptance VHDX adapter observes before repeating a planned New-VHD effect
   const observed = await fixture.observe();
   assert.equal(observed.state, 'ready');
   assert.equal(observed.generation, resumed.implementationGeneration);
+  assert.deepEqual(await fixture.clear(), { cleaned: true });
+  assert.deepEqual(removalDelays, [25]);
 }));
 
 test('ordinary direct acceptance probes require access-denied results for replace and delete', async () => {
