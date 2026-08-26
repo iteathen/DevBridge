@@ -20,6 +20,7 @@ function boundedBlocker(value) {
 export async function runWindowsLifecycleAuthoritySetupChild({
   home = null,
   env = process.env,
+  output = null,
 } = {}, {
   platform = process.platform,
   homeDirectory = os.homedir(),
@@ -39,6 +40,9 @@ export async function runWindowsLifecycleAuthoritySetupChild({
     environment: env,
     mode: 'elevated-child',
     requestElevation: null,
+    onDiagnostic: output && typeof output.write === 'function'
+      ? (event) => output.write(`${JSON.stringify(event)}\n`)
+      : null,
   });
   return Object.freeze({
     protocol: PROTOCOL,

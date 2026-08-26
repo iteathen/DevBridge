@@ -112,6 +112,7 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
   environment = process.env,
   mode = 'ordinary',
   requestElevation = null,
+  onDiagnostic = null,
 } = {}, {
   migrationSafety = inspectWindowsLifecycleAuthorityMigrationSafety,
   legacyRuntimeMigration = reconcileWindowsLifecycleAuthorityLegacyRuntime,
@@ -137,7 +138,7 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
   if (migration?.ready !== true) return migrationBlocker(migration ?? { blocker: 'Legacy Windows lifecycle authority cannot be migrated safely by the generic protected-state copy path.' });
 
   if (mode === 'elevated-child') {
-    const legacy = await legacyRuntimeMigration({ stateDirectory, platform, invoke, environment });
+    const legacy = await legacyRuntimeMigration({ stateDirectory, platform, invoke, environment, onDiagnostic });
     if (legacy?.ready !== true) return legacyRuntimeBlocker(legacy ?? {});
   }
 

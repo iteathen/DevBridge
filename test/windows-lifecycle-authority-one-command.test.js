@@ -156,13 +156,19 @@ test('post-child uncertainty never causes a second elevation in the same readine
 
 test('elevated child migrates qualifying legacy runtime before service reconciliation and returns structural success', async () => {
   const calls = [];
+  const onDiagnostic = () => {};
   const result = await reconcileWindowsLifecycleAuthorityReadiness({
     stateDirectory: STATE,
     platform: 'win32',
     mode: 'elevated-child',
+    onDiagnostic,
   }, readinessDeps({
     elevated: true,
-    legacyRuntimeMigration: async () => { calls.push('legacy'); return { ready: true, required: true, changed: true }; },
+    legacyRuntimeMigration: async (options) => {
+      assert.equal(options.onDiagnostic, onDiagnostic);
+      calls.push('legacy');
+      return { ready: true, required: true, changed: true };
+    },
     serviceReconciler: async (_options, dependencies) => {
       calls.push('service');
       await dependencies.inspectHost({});
@@ -379,6 +385,76 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
   }
 });
 
+test('legacy migration completes read-only diagnostics before and after exact rollback', async () => {
+  const emitted = [];
+  let diagnoses = 0;
+  const result = await reconcileWindowsLifecycleAuthorityLegacyRuntime({
+    platform: 'win32',
+    onDiagnostic: (event) => emitted.push(event),
+  }, {
+    createMechanics: async () => ({
+      notRequired: false,
+      generation: 'e'.repeat(64),
+      observe: async () => ({ staged: true, mode: 'generation-running', journal: { phase: 'started', pending: null } }),
+      checkpoint: async () => {},
+      stage: async () => false,
+      quiesce: async () => false,
+      promote: async () => false,
+      start: async () => false,
+      health: async () => false,
+      restore: async () => true,
+      diagnose: async () => {
+        diagnoses += 1;
+        return [
+          { name: 'service', ok: true, value: { state: diagnoses === 1 ? 'Stopped' : 'Running' } },
+          { name: 'read-endpoint', ok: false, error: diagnoses === 1 ? 'pipe unavailable' : 'unexpected' },
+        ];
+      },
+    }),
+  });
+  assert.equal(result.ready, false);
+  assert.equal(diagnoses, 2);
+  assert.match(result.blocker, /health proof failed/u);
+  assert.match(result.blocker, /Rollback restored: true/u);
+  assert.deepEqual(result.diagnostics, emitted);
+  assert.ok(emitted.some((event) => event.phase === 'diagnose-before-rollback' && event.state === 'completed'));
+  assert.ok(emitted.some((event) => event.phase === 'restore' && event.state === 'completed'));
+  assert.ok(emitted.some((event) => event.phase === 'diagnose-after-rollback' && event.state === 'completed'));
+});
+
+test('legacy generation start failure preserves its first error and still completes diagnostics', async () => {
+  const emitted = [];
+  let diagnoses = 0;
+  const result = await reconcileWindowsLifecycleAuthorityLegacyRuntime({
+    platform: 'win32',
+    onDiagnostic: (event) => emitted.push(event),
+  }, {
+    createMechanics: async () => ({
+      notRequired: false,
+      generation: 'f'.repeat(64),
+      observe: async () => ({ staged: true, mode: 'generation-stopped', journal: { phase: 'promoted', pending: null } }),
+      checkpoint: async () => {},
+      stage: async () => false,
+      quiesce: async () => false,
+      promote: async () => false,
+      start: async () => { throw new Error('exact SCM generation start failure'); },
+      health: async () => { throw new Error('health must not run after start failure'); },
+      restore: async () => true,
+      diagnose: async () => {
+        diagnoses += 1;
+        return [{ name: 'service', ok: true, value: { state: diagnoses === 1 ? 'Stopped' : 'Running' } }];
+      },
+    }),
+  });
+  assert.equal(result.ready, false);
+  assert.equal(diagnoses, 2);
+  assert.match(result.blocker, /exact SCM generation start failure/u);
+  assert.match(result.blocker, /Rollback restored: true/u);
+  assert.ok(emitted.some((event) => event.phase === 'start' && event.state === 'failed'
+    && event.detail.error === 'exact SCM generation start failure'));
+  assert.ok(emitted.some((event) => event.phase === 'diagnose-after-rollback' && event.state === 'completed'));
+});
+
 test('legacy generation health proof tolerates bounded delayed pipe readiness', async () => {
   let clock = 0;
   let attempts = 0;
@@ -501,14 +577,20 @@ test('elevation adapter returns the bounded child blocker and cleans its result 
           requestedHead: 'b'.repeat(40),
           started: true,
           exitCode: 3,
-          stdout: JSON.stringify({
+          stdout: `${JSON.stringify({
+            protocol: 'devbridge/windows-lifecycle-authority-migration-diagnostic-v1',
+            sequence: 1,
+            phase: 'start',
+            state: 'failed',
+            detail: { error: 'exact service start failure' },
+          })}\n${JSON.stringify({
             protocol: 'devbridge/windows-lifecycle-authority-elevated-child-v1',
             ready: false,
             changed: false,
             service: 'blocked',
             protectedState: 'unknown',
             blocker: 'exact protected blocker',
-          }),
+          })}`,
           stderr: '',
           error: null,
           outputTruncated: false,
@@ -521,6 +603,7 @@ test('elevation adapter returns the bounded child blocker and cleans its result 
     assert.equal(result.completed, false);
     assert.equal(result.exitCode, 3);
     assert.match(result.blocker, /exact protected blocker/u);
+    assert.match(result.blocker, /start:failed:exact service start failure/u);
     await assert.rejects(lstat(resultDirectory), { code: 'ENOENT' });
   } finally {
     await rm(root, { recursive: true, force: true });

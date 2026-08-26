@@ -191,20 +191,36 @@ async function readBrokerResult(target) {
   }
   return Object.freeze({
     ...value,
-    stdout: boundedBrokerText(value.stdout) ?? '',
-    stderr: boundedBrokerText(value.stderr) ?? '',
+    stdout: String(value.stdout).trim(),
+    stderr: String(value.stderr).trim(),
     error: boundedBrokerText(value.error),
   });
 }
 
 function childBlocker(broker) {
-  try {
-    const value = JSON.parse(String(broker?.stdout ?? '').trim());
-    if (value?.protocol === 'devbridge/windows-lifecycle-authority-elevated-child-v1' && typeof value.blocker === 'string') {
-      return boundedBrokerText(value.blocker);
-    }
-  } catch {}
+  const parsed = parseChildOutput(broker?.stdout);
+  if (parsed.result && typeof parsed.result.blocker === 'string') {
+    const checkpoints = parsed.diagnostics.map((event) => {
+      const error = event?.detail?.error ? `:${String(event.detail.error).replace(/[\r\n;]+/gu, ' ').slice(0, 256)}` : '';
+      return `${event.sequence}:${event.phase}:${event.state}${error}`;
+    }).join(';');
+    return boundedBrokerText(checkpoints ? `${parsed.result.blocker} Checkpoints: ${checkpoints}` : parsed.result.blocker);
+  }
   return broker?.error || broker?.stderr || null;
+}
+
+function parseChildOutput(output) {
+  const lines = String(output ?? '').split(/\r?\n/gu).map((line) => line.trim()).filter(Boolean);
+  const diagnostics = [];
+  let result = null;
+  for (const line of lines) {
+    try {
+      const value = JSON.parse(line);
+      if (value?.protocol === 'devbridge/windows-lifecycle-authority-migration-diagnostic-v1') diagnostics.push(value);
+      if (value?.protocol === 'devbridge/windows-lifecycle-authority-elevated-child-v1') result = value;
+    } catch {}
+  }
+  return Object.freeze({ diagnostics: Object.freeze(diagnostics), result });
 }
 
 export async function resolveWindowsLifecycleAuthorityElevationRunnerHead({ packageRoot = PACKAGE_ROOT } = {}) {
@@ -399,9 +415,7 @@ export async function requestWindowsLifecycleAuthorityElevation({
         : 'Windows lifecycle authority elevated broker failed without bounded detail.',
     });
   }
-  let childResult = null;
-  try { childResult = JSON.parse(brokerResult.stdout.trim()); }
-  catch {}
+  const childResult = parseChildOutput(brokerResult.stdout).result;
   if (brokerResult.started !== true || childResult?.protocol !== 'devbridge/windows-lifecycle-authority-elevated-child-v1' || childResult.ready !== true) {
     return Object.freeze({
       protocol: PROTOCOL,

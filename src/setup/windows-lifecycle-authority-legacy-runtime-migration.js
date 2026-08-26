@@ -40,6 +40,7 @@ const POWERSHELL_ARGS = Object.freeze([
 const EFFECTS = new Set(['stage', 'quiesce', 'promote', 'start', 'restore']);
 const EFFECT_STATES = new Set(['planned', 'attempted']);
 const PHASES = new Set(['observed', 'staged', 'quiesced', 'promoted', 'started', 'restored', 'complete']);
+const DIAGNOSTIC_PROTOCOL = 'devbridge/windows-lifecycle-authority-migration-diagnostic-v1';
 const HEALTH_PROBE_DEADLINE_MS = 15_000;
 const HEALTH_PROBE_ATTEMPT_MS = 1_000;
 const HEALTH_PROBE_RETRY_MS = 250;
@@ -480,6 +481,40 @@ export async function probeWindowsLifecycleAuthorityLegacyRuntime(plan, clientFa
   }
 }
 
+function boundedDiagnosticError(error) {
+  const text = String(error?.message ?? error ?? 'unknown failure').replace(/[\r\n]+/gu, ' ').trim();
+  return text.slice(0, 1024) || 'unknown failure';
+}
+
+function diagnosticReporter(onDiagnostic) {
+  const events = [];
+  let sequence = 0;
+  return Object.freeze({
+    emit(phase, state, detail = null) {
+      const event = Object.freeze({
+        protocol: DIAGNOSTIC_PROTOCOL,
+        sequence: sequence += 1,
+        phase,
+        state,
+        detail,
+      });
+      events.push(event);
+      try { onDiagnostic?.(event); } catch {}
+      return event;
+    },
+    events: () => Object.freeze([...events]),
+  });
+}
+
+function observationDetail(observation) {
+  return Object.freeze({
+    mode: observation?.mode ?? 'unknown',
+    staged: observation?.staged === true,
+    journalPhase: observation?.journal?.phase ?? null,
+    pending: observation?.journal?.pending ?? null,
+  });
+}
+
 export function classifyWindowsLifecycleAuthorityLegacyService(service, fixed, targetPlan) {
   if (!service.exists) return 'missing';
   if (serviceMatches(service, fixed.serviceCommand, fixed.service, { allowMissingDescription: true })) return running(service) ? 'fixed-running' : 'fixed-stopped';
@@ -616,6 +651,38 @@ export async function createWindowsLifecycleAuthorityLegacyRuntimeMechanics({
         pending,
       }));
     },
+    async diagnose() {
+      async function capture(name, operation) {
+        try { return Object.freeze({ name, ok: true, value: await operation() }); }
+        catch (error) { return Object.freeze({ name, ok: false, error: boundedDiagnosticError(error) }); }
+      }
+      return Promise.all([
+        capture('service', async () => {
+          const currentService = await inspectServicePort(targetPlan, invoke, environment);
+          return Object.freeze({
+            mode: classifyWindowsLifecycleAuthorityLegacyService(currentService, fixed, targetPlan),
+            state: currentService.state,
+            startMode: currentService.startMode,
+            startName: currentService.startName,
+            pathName: currentService.pathName,
+            description: currentService.description,
+          });
+        }),
+        capture('generation', async () => Object.freeze({
+          generation: targetPlan.runtime.generation,
+          verified: await verifyGenerationDirectory(targetPlan, ownership, measureCandidate),
+        })),
+        capture('journal', async () => {
+          const current = await loadJournal(basePlan);
+          return Object.freeze({ phase: current?.phase ?? null, pending: current?.pending ?? null });
+        }),
+        capture('read-endpoint', async () => {
+          const client = clientFactory({ stateDirectory: targetPlan.stateDirectory, platform: 'win32', connectTimeoutMs: 1_000 });
+          const value = await client.inspect();
+          return Object.freeze({ protocol: value?.protocol ?? null });
+        }),
+      ]);
+    },
     stage: () => stageLegacyGeneration(context),
     async quiesce() {
       const currentService = await inspectServicePort(targetPlan, invoke, environment);
@@ -663,78 +730,125 @@ export async function createWindowsLifecycleAuthorityLegacyRuntimeMechanics({
   });
 }
 
-function result({ ready, required, changed = false, generation = null, blocker = null }) {
-  return Object.freeze({ protocol: PROTOCOL, ready, required, changed, generation, blocker });
+function result({ ready, required, changed = false, generation = null, blocker = null, diagnostics = Object.freeze([]) }) {
+  return Object.freeze({ protocol: PROTOCOL, ready, required, changed, generation, blocker, diagnostics });
 }
 
-async function checkpointEffect(mechanics, phase, effect, operation) {
+async function checkpointEffect(mechanics, phase, effect, operation, reporter) {
+  reporter.emit(effect, 'planned', Object.freeze({ phase }));
   await mechanics.checkpoint({ phase, effect, state: 'planned' });
+  reporter.emit(effect, 'attempted', Object.freeze({ phase }));
   await mechanics.checkpoint({ phase, effect, state: 'attempted' });
-  const changed = await operation();
-  return changed === true;
+  try {
+    const changed = await operation();
+    reporter.emit(effect, 'completed', Object.freeze({ phase, changed: changed === true }));
+    return changed === true;
+  } catch (error) {
+    reporter.emit(effect, 'failed', Object.freeze({ phase, error: boundedDiagnosticError(error) }));
+    throw error;
+  }
+}
+
+async function runDiagnosticFanout(mechanics, reporter, phase) {
+  reporter.emit(phase, 'attempted');
+  if (typeof mechanics.diagnose !== 'function') {
+    reporter.emit(phase, 'completed', Object.freeze({ checks: Object.freeze([]) }));
+    return;
+  }
+  try {
+    const checks = await mechanics.diagnose();
+    reporter.emit(phase, 'completed', Object.freeze({ checks: Object.freeze(checks) }));
+  } catch (error) {
+    reporter.emit(phase, 'failed', Object.freeze({ error: boundedDiagnosticError(error) }));
+  }
 }
 
 export async function reconcileWindowsLifecycleAuthorityLegacyRuntime(options = {}, {
   createMechanics = createWindowsLifecycleAuthorityLegacyRuntimeMechanics,
 } = {}) {
+  const reporter = diagnosticReporter(options.onDiagnostic);
   if (typeof createMechanics !== 'function') throw new TypeError('legacy runtime migration mechanics factory is invalid');
-  if (options.platform != null && options.platform !== 'win32') return result({ ready: true, required: false });
+  if (options.platform != null && options.platform !== 'win32') return result({ ready: true, required: false, diagnostics: reporter.events() });
   let mechanics;
   try { mechanics = await createMechanics(options); }
-  catch {
+  catch (error) {
+    reporter.emit('admission', 'failed', Object.freeze({ error: boundedDiagnosticError(error) }));
     return result({
       ready: false,
       required: true,
-      blocker: 'Legacy Windows protected authority evidence is incomplete or inconsistent. DevBridge will not seize or rewrite it.',
+      blocker: `Legacy Windows protected authority evidence is incomplete or inconsistent. DevBridge will not seize or rewrite it. Primary failure: ${boundedDiagnosticError(error)}`,
+      diagnostics: reporter.events(),
     });
   }
-  if (mechanics?.notRequired === true) return result({ ready: true, required: false });
+  if (mechanics?.notRequired === true) return result({ ready: true, required: false, diagnostics: reporter.events() });
   if (!mechanics || typeof mechanics.observe !== 'function' || typeof mechanics.checkpoint !== 'function') throw new TypeError('legacy runtime migration mechanics are invalid');
 
   let changed = false;
+  let primaryFailure = null;
+  reporter.emit('migration', 'started', Object.freeze({ generation: mechanics.generation ?? null }));
   try {
     let observation = await mechanics.observe();
+    reporter.emit('observe', 'completed', observationDetail(observation));
     if (!observation.staged) {
-      changed = (await checkpointEffect(mechanics, 'observed', 'stage', mechanics.stage)) || changed;
+      changed = (await checkpointEffect(mechanics, 'observed', 'stage', mechanics.stage, reporter)) || changed;
       observation = await mechanics.observe();
+      reporter.emit('observe', 'completed', observationDetail(observation));
     }
     if (!observation.staged) throw new Error('legacy generation did not become exact after staging');
     await mechanics.checkpoint({ phase: 'staged' });
 
     if (observation.mode === 'fixed-running') {
-      changed = (await checkpointEffect(mechanics, 'staged', 'quiesce', mechanics.quiesce)) || changed;
+      changed = (await checkpointEffect(mechanics, 'staged', 'quiesce', mechanics.quiesce, reporter)) || changed;
       observation = await mechanics.observe();
+      reporter.emit('observe', 'completed', observationDetail(observation));
     }
     if (observation.mode === 'fixed-stopped') {
       await mechanics.checkpoint({ phase: 'quiesced' });
-      changed = (await checkpointEffect(mechanics, 'quiesced', 'promote', mechanics.promote)) || changed;
+      changed = (await checkpointEffect(mechanics, 'quiesced', 'promote', mechanics.promote, reporter)) || changed;
       observation = await mechanics.observe();
+      reporter.emit('observe', 'completed', observationDetail(observation));
     }
     if (observation.mode === 'generation-stopped') {
       await mechanics.checkpoint({ phase: 'promoted' });
-      changed = (await checkpointEffect(mechanics, 'promoted', 'start', mechanics.start)) || changed;
+      changed = (await checkpointEffect(mechanics, 'promoted', 'start', mechanics.start, reporter)) || changed;
       observation = await mechanics.observe();
+      reporter.emit('observe', 'completed', observationDetail(observation));
     }
     if (observation.mode !== 'generation-running') throw new Error('legacy migration did not reach the exact generation service');
     await mechanics.checkpoint({ phase: 'started' });
-    if (!await mechanics.health()) throw new Error('legacy generation health proof failed');
-    await mechanics.checkpoint({ phase: 'complete' });
-    return result({ ready: true, required: true, changed, generation: mechanics.generation });
-  } catch {
-    try {
-      await mechanics.checkpoint({ phase: 'started', effect: 'restore', state: 'planned' });
-      await mechanics.checkpoint({ phase: 'started', effect: 'restore', state: 'attempted' });
-      const restored = await mechanics.restore();
-      if (restored === true) await mechanics.checkpoint({ phase: 'restored' });
-    } catch {
-      // Closed state and exact protected evidence are reported by the bounded blocker below.
+    reporter.emit('health', 'attempted');
+    if (!await mechanics.health()) {
+      reporter.emit('health', 'failed', Object.freeze({ error: 'legacy generation health proof failed' }));
+      throw new Error('legacy generation health proof failed');
     }
+    reporter.emit('health', 'completed');
+    await mechanics.checkpoint({ phase: 'complete' });
+    reporter.emit('migration', 'completed', Object.freeze({ generation: mechanics.generation }));
+    return result({ ready: true, required: true, changed, generation: mechanics.generation, diagnostics: reporter.events() });
+  } catch (error) {
+    primaryFailure = boundedDiagnosticError(error);
+    reporter.emit('migration', 'failed', Object.freeze({ error: primaryFailure }));
+    await runDiagnosticFanout(mechanics, reporter, 'diagnose-before-rollback');
+    let restored = false;
+    try {
+      reporter.emit('restore', 'planned');
+      await mechanics.checkpoint({ phase: 'started', effect: 'restore', state: 'planned' });
+      reporter.emit('restore', 'attempted');
+      await mechanics.checkpoint({ phase: 'started', effect: 'restore', state: 'attempted' });
+      restored = await mechanics.restore() === true;
+      if (restored) await mechanics.checkpoint({ phase: 'restored' });
+      reporter.emit('restore', restored ? 'completed' : 'failed', restored ? null : Object.freeze({ error: 'exact rollback health proof failed' }));
+    } catch (restoreError) {
+      reporter.emit('restore', 'failed', Object.freeze({ error: boundedDiagnosticError(restoreError) }));
+    }
+    await runDiagnosticFanout(mechanics, reporter, 'diagnose-after-rollback');
     return result({
       ready: false,
       required: true,
       changed,
       generation: mechanics.generation ?? null,
-      blocker: 'Legacy Windows protected authority migration did not complete. Re-run devbridge setup to resume from protected evidence.',
+      blocker: `Legacy Windows protected authority migration did not complete. Primary failure: ${primaryFailure}. Rollback restored: ${restored}.`,
+      diagnostics: reporter.events(),
     });
   }
 }

@@ -105,7 +105,7 @@ async function main() {
   if (command === 'setup') {
     const selected = parseSetupCommandOptions(args, { authorityHome: process.env.DEVBRIDGE_HOME });
     if (selected.lifecycleAuthorityChild) {
-      const result = await runWindowsLifecycleAuthoritySetupChild({ env: process.env });
+      const result = await runWindowsLifecycleAuthoritySetupChild({ env: process.env, output: process.stdout });
       process.stdout.write(`${JSON.stringify(result)}\n`);
       if (!result.ready) process.exitCode = 3;
       return;
