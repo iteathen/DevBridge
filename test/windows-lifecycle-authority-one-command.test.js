@@ -531,7 +531,9 @@ test('legacy generation health proof stops at its exact deadline', async () => {
   assert.equal(attempts, 3);
 });
 
-test('rendered elevation broker reads its bounded input and returns exact child evidence', async () => {
+test('rendered elevation broker reads its bounded input and returns exact child evidence', {
+  skip: os.platform() !== 'win32',
+}, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
   try {
     const bin = path.join(root, 'bin');

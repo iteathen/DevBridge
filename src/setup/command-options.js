@@ -3,8 +3,9 @@ import process from 'node:process';
 import { PolicyError } from '../errors.js';
 
 function sameLocalPath(left, right, platform) {
-  const a = path.resolve(left);
-  const b = path.resolve(right);
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  const a = pathApi.resolve(left);
+  const b = pathApi.resolve(right);
   return platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
@@ -59,7 +60,9 @@ export function parseSetupCommandOptions(argv, {
     throw new PolicyError('lifecycle-authority child accepts no setup capability arguments');
   }
   if (lifecycleAuthorityChild && home != null
-      && (typeof authorityHome !== 'string' || !path.isAbsolute(home) || !path.isAbsolute(authorityHome)
+      && (typeof authorityHome !== 'string'
+        || !(platform === 'win32' ? path.win32 : path.posix).isAbsolute(home)
+        || !(platform === 'win32' ? path.win32 : path.posix).isAbsolute(authorityHome)
         || !sameLocalPath(home, authorityHome, platform))) {
     throw new PolicyError('lifecycle-authority child accepts only its exact broker-bound setup home');
   }
