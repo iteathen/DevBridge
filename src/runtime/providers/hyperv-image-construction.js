@@ -257,6 +257,16 @@ if ($pixelValues.Count -eq 320 * 240) {
   }
 } elseif ($pixelValues.Count -eq 320 * 240 * 2) {
   $bytes = [byte[]]$pixelValues
+} elseif ($pixelValues.Count -eq 320 * 240 * 2 + 4) {
+  $framed = [byte[]]$pixelValues
+  $reportedWidth = [BitConverter]::ToUInt16($framed, 0)
+  $reportedHeight = [BitConverter]::ToUInt16($framed, 2)
+  if ($reportedWidth -ne 320 -or $reportedHeight -ne 240) {
+    @{ available = $false; reason = "Hyper-V thumbnail dimensions are invalid: $($reportedWidth)x$($reportedHeight)" } | ConvertTo-Json -Compress
+    exit 0
+  }
+  $bytes = [byte[]]::new(320 * 240 * 2)
+  [Buffer]::BlockCopy($framed, 4, $bytes, 0, $bytes.Length)
 } else {
   @{ available = $false; reason = "Hyper-V thumbnail pixel count is invalid: $($pixelValues.Count)" } | ConvertTo-Json -Compress
   exit 0
