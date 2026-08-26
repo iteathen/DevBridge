@@ -19,6 +19,8 @@ function plan() {
       hyperVGroupSid: 'S-1-5-32-578',
     },
     runtime: {
+      generationsDirectory: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\0123456789abcdef0123456789abcdef\\generations',
+      generationDirectory: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\0123456789abcdef0123456789abcdef\\generations\\' + 'a'.repeat(64),
       binDirectory: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\0123456789abcdef0123456789abcdef\\bin',
       runtimeDirectory: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\0123456789abcdef0123456789abcdef\\runtime',
       packageDirectory: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\0123456789abcdef0123456789abcdef\\runtime\\package',
@@ -97,7 +99,7 @@ test('structural proof is read-only and checks exact protected ACL and Hyper-V s
   const script = Buffer.from(encoded, 'base64').toString('utf16le');
   for (const required of [
     'AreAccessRulesProtected',
-    'GetAccessRules',
+    'GetAccessRules($true, $true',
     'Get-LocalGroupMember',
     'ReadAndExecute',
     'Modify',
@@ -108,6 +110,8 @@ test('structural proof is read-only and checks exact protected ACL and Hyper-V s
   assert.deepEqual(input, {
     protectedRoot: selected.protectedRoot,
     authorityDirectory: selected.authorityDirectory,
+    generationsDirectory: selected.runtime.generationsDirectory,
+    generationDirectory: selected.runtime.generationDirectory,
     binDirectory: selected.runtime.binDirectory,
     runtimeDirectory: selected.runtime.runtimeDirectory,
     packageDirectory: selected.runtime.packageDirectory,

@@ -242,6 +242,25 @@ test('unexpected state after an interrupted effect is checkpointed as ambiguous 
   assert.equal(values.journal().reason, 'ambiguous-effect');
 });
 
+test('blocked recovery health fences a new candidate and reconciles only by read-only health plus journal', async () => {
+  const health = { [A]: false, [B]: false };
+  const values = fixture({ activeGeneration: A, running: true, health });
+  await assert.rejects(
+    reconcileProtectedAuthority({ candidate: { generation: B }, ports: values.ports }),
+    /previous generation failed recovery health/u,
+  );
+  const effectsBefore = Object.fromEntries(Object.entries(values.calls).filter(([name]) => ['stage', 'quiesce', 'promote', 'start', 'restore'].includes(name)));
+  health[A] = true;
+  const recovered = await reconcileProtectedAuthority({ candidate: { generation: C }, ports: values.ports });
+  assert.equal(recovered.ready, false);
+  assert.equal(recovered.recovered, true);
+  assert.equal(recovered.generation, A);
+  assert.equal(values.journal().outcome, 'rejected');
+  assert.equal(values.journal().candidateGeneration, B);
+  const effectsAfter = Object.fromEntries(Object.entries(values.calls).filter(([name]) => ['stage', 'quiesce', 'promote', 'start', 'restore'].includes(name)));
+  assert.deepEqual(effectsAfter, effectsBefore);
+});
+
 test('resume refuses to complete a promoted generation after exact rollback evidence disappears', async () => {
   const values = fixture({ activeGeneration: A, running: true });
   values.setFailJournalSaveWhen((record) => record.outcome === 'complete');

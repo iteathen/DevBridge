@@ -318,6 +318,28 @@ export async function reconcileProtectedAuthority({ candidate, ports } = {}) {
   let observation = await observe(local);
   owned(observation);
 
+  if (record?.outcome === 'blocked') {
+    if (record.reason === 'recovery-health'
+        && record.previousGeneration != null
+        && observation.activeGeneration === record.previousGeneration
+        && observation.running === true) {
+      assertCompatibleObservation(observation, record);
+      if (await health(local, record.previousGeneration)) {
+        record = await save(local.journal, withJournal(record, { phase: 'rejected', pending: null, outcome: 'rejected', reason: 'candidate-health' }));
+        return Object.freeze({
+          protocol: PROTOCOL,
+          ready: false,
+          changed: false,
+          generation: record.previousGeneration,
+          recovered: true,
+          blocker: 'candidate-health',
+          transactionId: record.transactionId,
+        });
+      }
+    }
+    throw new Error(`protected authority reconciliation is blocked at transaction ${record.transactionId}`);
+  }
+
   if (record?.outcome === 'in-progress' && record.candidateGeneration !== selected.generation) {
     throw new Error('protected authority candidate changed while reconciliation is active');
   }
@@ -341,10 +363,6 @@ export async function reconcileProtectedAuthority({ candidate, ports } = {}) {
     }
     throw new Error('protected authority rejected candidate no longer has its verified recovery state');
   }
-  if (record?.outcome === 'blocked' && record.candidateGeneration === selected.generation) {
-    throw new Error(`protected authority reconciliation is blocked at transaction ${record.transactionId}`);
-  }
-
   if (record == null || record.outcome !== 'in-progress') {
     if (observation.ownership === 'owned' && observation.activeGeneration === selected.generation) {
       throw new Error('protected authority exact current generation is unhealthy and requires an activation repair contract');
