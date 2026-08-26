@@ -1,4 +1,5 @@
-import { lstat, readFile, realpath } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { lstat, mkdir, readFile, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -12,12 +13,16 @@ const POWERSHELL_ARGS = Object.freeze([
 const ALLOWED_LAUNCHERS = new Set(['devbridge-entry.mjs', 'devbridge-stage0.mjs']);
 const EXACT_HEAD = /^[0-9a-f]{40}$/u;
 const PACKAGE_ROOT = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
+const CHILD_RESULT_PROTOCOL = 'devbridge/windows-lifecycle-authority-elevated-child-v1';
+const CHILD_RESULT_DIRECTORY = /^\.lifecycle-authority-elevation-[0-9a-f-]{36}$/u;
+const MAX_CHILD_RESULT_BYTES = 8 * 1024;
 
 const ELEVATE_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 $env:DEVBRIDGE_HOME = [string]$data.home
 $env:DEVBRIDGE_LIFECYCLE_AUTHORITY_ELEVATED_CHILD = '1'
+$env:DEVBRIDGE_LIFECYCLE_AUTHORITY_CHILD_RESULT = [string]$data.resultFile
 try {
   $launcher = '"' + ([string]$data.launcher).Replace('"', '') + '"'
   $arguments = @(
@@ -64,6 +69,52 @@ async function boundedRealFile(file, name) {
     throw new Error(`${name} must be a real regular file`);
   }
   return resolved;
+}
+
+async function childResultTarget(home) {
+  const state = path.join(home, 'state');
+  const stateInfo = await lstat(state);
+  if (!stateInfo.isDirectory() || stateInfo.isSymbolicLink()) {
+    throw new Error('Windows lifecycle authority elevation state root must be a real directory');
+  }
+  const canonicalHome = await realpath(home);
+  const canonicalState = await realpath(state);
+  if (!pathIsWithin(canonicalHome, canonicalState)) {
+    throw new Error('Windows lifecycle authority elevation state root escaped the managed DevBridge home');
+  }
+  const directory = path.join(state, `.lifecycle-authority-elevation-${randomUUID()}`);
+  await mkdir(directory, { mode: 0o700 });
+  return Object.freeze({ state, directory, file: path.join(directory, 'result.json') });
+}
+
+async function cleanupChildResultTarget(target) {
+  try {
+    const info = await lstat(target.directory);
+    if (!info.isDirectory() || info.isSymbolicLink() || path.dirname(target.directory) !== target.state
+        || !CHILD_RESULT_DIRECTORY.test(path.basename(target.directory))
+        || path.dirname(target.file) !== target.directory || path.basename(target.file) !== 'result.json') return;
+    await rm(target.directory, { recursive: true, force: true });
+  } catch {}
+}
+
+function boundedChildBlocker(value) {
+  const text = String(value ?? '').replace(/[\r\n]+/gu, ' ').trim();
+  return text.length > 0 ? text.slice(0, 2048) : null;
+}
+
+async function readChildResult(target) {
+  const info = await lstat(target.file);
+  if (!info.isFile() || info.isSymbolicLink() || info.size < 2 || info.size > MAX_CHILD_RESULT_BYTES) {
+    throw new Error('Windows lifecycle authority elevated child result is not a bounded real file');
+  }
+  const value = JSON.parse(await readFile(target.file, 'utf8'));
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || value.protocol !== CHILD_RESULT_PROTOCOL || typeof value.ready !== 'boolean'
+      || typeof value.changed !== 'boolean' || typeof value.service !== 'string'
+      || typeof value.protectedState !== 'string' || (value.blocker != null && typeof value.blocker !== 'string')) {
+    throw new Error('Windows lifecycle authority elevated child result is invalid');
+  }
+  return Object.freeze({ ...value, blocker: boundedChildBlocker(value.blocker) });
 }
 
 export async function resolveWindowsLifecycleAuthorityElevationRunnerHead({ packageRoot = PACKAGE_ROOT } = {}) {
@@ -174,17 +225,20 @@ export async function requestWindowsLifecycleAuthorityElevation({
     });
   }
 
+  const childTarget = await childResultTarget(root);
+
   let result;
   try {
     result = await invoke({
       executable: POWERSHELL,
       arguments: [...POWERSHELL_ARGS, encodedScript(ELEVATE_SCRIPT)],
-      input: JSON.stringify({ home: root, launcher: selectedLauncher, node, runnerHead }),
+      input: JSON.stringify({ home: root, launcher: selectedLauncher, node, runnerHead, resultFile: childTarget.file }),
       timeoutMs: 5 * 60_000,
       maxOutputBytes: 64 * 1024,
       environment,
     });
   } catch {
+    await cleanupChildResultTarget(childTarget);
     return Object.freeze({
       protocol: PROTOCOL,
       attempted: true,
@@ -193,6 +247,11 @@ export async function requestWindowsLifecycleAuthorityElevation({
       blocker: 'Windows lifecycle authority elevation could not be started. Re-run devbridge setup to retry the same protected reconciliation.',
     });
   }
+
+  let childResult = null;
+  try { childResult = await readChildResult(childTarget); }
+  catch {}
+  await cleanupChildResultTarget(childTarget);
 
   if (!invocationSucceeded(result)) {
     return Object.freeze({
@@ -232,7 +291,18 @@ export async function requestWindowsLifecycleAuthorityElevation({
       attempted: true,
       completed: false,
       exitCode: value.exitCode,
-      blocker: 'The elevated Windows lifecycle authority child did not complete successfully. Re-run devbridge setup to resume from protected evidence.',
+      blocker: childResult?.blocker
+        ? `Windows lifecycle authority elevated child reported: ${childResult.blocker}`
+        : 'The elevated Windows lifecycle authority child did not return bounded failure evidence. Re-run setup only after repairing the parent-child evidence boundary.',
+    });
+  }
+  if (childResult?.ready !== true) {
+    return Object.freeze({
+      protocol: PROTOCOL,
+      attempted: true,
+      completed: false,
+      exitCode: value.exitCode,
+      blocker: 'The elevated Windows lifecycle authority child exited successfully without exact bounded readiness evidence.',
     });
   }
   return Object.freeze({ protocol: PROTOCOL, attempted: true, completed: true, exitCode: 0, blocker: null });

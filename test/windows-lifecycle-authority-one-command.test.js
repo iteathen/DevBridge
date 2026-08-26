@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { requestWindowsLifecycleAuthorityElevation } from '../src/setup/windows-lifecycle-authority-elevation.js';
@@ -310,6 +310,7 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
   try {
     const bin = path.join(root, 'bin');
     await mkdir(bin);
+    await mkdir(path.join(root, 'state'));
     const launcher = path.join(bin, 'devbridge-entry.mjs');
     const node = path.join(root, 'node.exe');
     await writeFile(launcher, 'export {};\n');
@@ -325,7 +326,20 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
         invoked += 1;
         assert.equal(request.executable, 'powershell.exe');
         assert.equal(request.timeoutMs, 5 * 60_000);
-        assert.deepEqual(JSON.parse(request.input), { home: path.resolve(root), launcher: path.resolve(launcher), node: path.resolve(node), runnerHead });
+        const input = JSON.parse(request.input);
+        assert.equal(input.home, path.resolve(root));
+        assert.equal(input.launcher, path.resolve(launcher));
+        assert.equal(input.node, path.resolve(node));
+        assert.equal(input.runnerHead, runnerHead);
+        assert.equal(path.basename(input.resultFile), 'result.json');
+        await writeFile(input.resultFile, `${JSON.stringify({
+          protocol: 'devbridge/windows-lifecycle-authority-elevated-child-v1',
+          ready: true,
+          changed: true,
+          service: 'ready',
+          protectedState: 'ready',
+          blocker: null,
+        })}\n`);
         return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":0}' };
       },
     }, {
@@ -339,6 +353,46 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
   }
 });
 
+test('elevation adapter returns the bounded child blocker and cleans its result channel', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
+  try {
+    const bin = path.join(root, 'bin');
+    await mkdir(bin);
+    await mkdir(path.join(root, 'state'));
+    const launcher = path.join(bin, 'devbridge-entry.mjs');
+    const node = path.join(root, 'node.exe');
+    await writeFile(launcher, 'export {};\n');
+    await writeFile(node, 'node');
+    let resultDirectory = null;
+    const result = await requestWindowsLifecycleAuthorityElevation({
+      home: root,
+      launcher,
+      nodeExecutable: node,
+      platform: 'win32',
+      invoke: async (request) => {
+        const input = JSON.parse(request.input);
+        resultDirectory = path.dirname(input.resultFile);
+        await writeFile(input.resultFile, `${JSON.stringify({
+          protocol: 'devbridge/windows-lifecycle-authority-elevated-child-v1',
+          ready: false,
+          changed: false,
+          service: 'blocked',
+          protectedState: 'unknown',
+          blocker: 'exact protected blocker',
+        })}\n`);
+        return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":3}' };
+      },
+    }, {
+      resolveRunnerHead: async () => 'b'.repeat(40),
+    });
+    assert.equal(result.completed, false);
+    assert.equal(result.exitCode, 3);
+    assert.match(result.blocker, /exact protected blocker/u);
+    await assert.rejects(lstat(resultDirectory), { code: 'ENOENT' });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 test('elevation adapter fails before UAC when the current runner identity is not exact', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
   try {
@@ -397,6 +451,7 @@ test('elevated child entry requires the parent marker and accepts no constructio
     /bounded UAC parent contract/u,
   );
   let request = null;
+  let emitted = null;
   const result = await runWindowsLifecycleAuthoritySetupChild({
     env: {
       DEVBRIDGE_HOME: 'C:\\Users\\Operator\\.devbridge',
@@ -410,8 +465,10 @@ test('elevated child entry requires the parent marker and accepts no constructio
       request = value;
       return { ready: true, changed: true, service: 'ready', protectedState: 'ready' };
     },
+    resultWriter: async (root, env, value) => { emitted = { root, env, value }; },
   });
   assert.equal(result.ready, true);
+  assert.equal(emitted.value, result);
   assert.equal(request.mode, 'elevated-child');
   assert.equal(request.requestElevation, null);
   assert.equal(Object.hasOwn(request, 'construct'), false);
