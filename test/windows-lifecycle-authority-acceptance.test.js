@@ -299,6 +299,24 @@ test('parent acceptance verifier retries only the fixed idempotent cleanup opera
   assert.deepEqual(delays, [100, 250]);
 });
 
+test('parent acceptance verifier preserves bounded stages after cleanup retry exhaustion', async () => {
+  let cleanupAttempts = 0;
+  const failure = Object.assign(new Error('bounded cleanup failure'), { acceptanceStages: ['vhdx-remove'] });
+  await assert.rejects(verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => ({
+      async exercise() { return { ready: true, generation: `acceptance-${'d'.repeat(32)}` }; },
+      async cleanup() { cleanupAttempts += 1; throw failure; },
+    }),
+    diskPathFor: () => '/derived/fixture.vhdx',
+    directMutationDenied: async () => {},
+    waitForRetry: async () => {},
+  }), (error) => {
+    assert.deepEqual(error.acceptanceStages, ['vhdx-remove']);
+    return true;
+  });
+  assert.equal(cleanupAttempts, 5);
+});
+
 test('acceptance client wire contract has only operation identity and no caller-selected subject', async () => {
   let captured = null;
   const client = createWindowsLifecycleAuthorityAcceptanceClient({ endpoint: 'pipe' }, {

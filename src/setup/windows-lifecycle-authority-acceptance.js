@@ -669,8 +669,8 @@ export async function verifyWindowsLifecycleAuthorityAcceptance({
   } finally {
     if (exercise != null || failureValue != null) {
       try { await cleanupAcceptance(client, waitForRetry); }
-      catch {
-        if (failureValue == null) throw new Error('Windows lifecycle authority acceptance cleanup failed');
+      catch (error) {
+        if (failureValue == null) throw error;
       }
     }
   }
