@@ -1,11 +1,15 @@
 import process from 'node:process';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment-lifecycle-authority-transport.js';
+import {
+  verifyWindowsLifecycleAuthorityAcceptance,
+} from './windows-lifecycle-authority-acceptance.js';
 import { inspectWindowsLifecycleAuthorityMigrationSafety } from './windows-lifecycle-authority-migration-safety.js';
 import { reconcileWindowsLifecycleAuthorityLegacyRuntime } from './windows-lifecycle-authority-legacy-runtime-migration.js';
 import { verifyWindowsLifecycleAuthorityService } from './windows-lifecycle-authority-service-proof.js';
 import { reconcileWindowsLifecycleAuthorityService } from './windows-lifecycle-authority-service.js';
 import { verifyWindowsLifecycleAuthorityProtection } from './windows-lifecycle-authority-protection.js';
+import { WINDOWS_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL } from './windows-lifecycle-authority.js';
 
 const POWERSHELL = 'powershell.exe';
 const POWERSHELL_ARGS = Object.freeze([
@@ -116,6 +120,7 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
   clientFactory = createConfiguredLifecycleAuthorityClient,
   verifyService = verifyWindowsLifecycleAuthorityService,
   verifyProtection = verifyWindowsLifecycleAuthorityProtection,
+  verifyAcceptance = verifyWindowsLifecycleAuthorityAcceptance,
 } = {}) {
   if (!MODES.has(mode)) throw new TypeError('Windows lifecycle authority readiness mode is invalid');
   if (requestElevation != null && typeof requestElevation !== 'function') throw new TypeError('Windows lifecycle authority readiness elevation port is invalid');
@@ -124,7 +129,7 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
   }
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('Windows lifecycle authority readiness stateDirectory is required');
   if (typeof invoke !== 'function') throw new TypeError('Windows lifecycle authority readiness invocation contract is invalid');
-  if (typeof migrationSafety !== 'function' || typeof legacyRuntimeMigration !== 'function' || typeof serviceReconciler !== 'function' || typeof inspectHost !== 'function' || typeof clientFactory !== 'function' || typeof verifyService !== 'function' || typeof verifyProtection !== 'function') {
+  if (typeof migrationSafety !== 'function' || typeof legacyRuntimeMigration !== 'function' || typeof serviceReconciler !== 'function' || typeof inspectHost !== 'function' || typeof clientFactory !== 'function' || typeof verifyService !== 'function' || typeof verifyProtection !== 'function' || typeof verifyAcceptance !== 'function') {
     throw new TypeError('Windows lifecycle authority readiness composition is invalid');
   }
 
@@ -138,9 +143,11 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
 
   let host = null;
   let protectionFailure = false;
+  let verifiedPlan = null;
   const runService = async () => {
     host = null;
     protectionFailure = false;
+    verifiedPlan = null;
     const composedHostInspection = async (request) => {
       host = await inspectHost(request);
       return host;
@@ -155,12 +162,31 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
         protectionFailure = true;
         throw error;
       }
+      verifiedPlan = plan;
       return inspection;
     };
     return serviceReconciler({ stateDirectory, platform, invoke, environment }, {
       inspectHost: composedHostInspection,
       probe: protectedProbe,
     });
+  };
+
+  const finalizeOrdinaryReadiness = async (value) => {
+    if (value?.ready !== true || host?.elevated !== false) return value;
+    if (verifiedPlan?.protocol !== WINDOWS_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL) return value;
+    try {
+      const acceptance = await verifyAcceptance({
+        authorityDirectory: verifiedPlan.authorityDirectory,
+        endpoint: verifiedPlan.endpoints?.acceptance?.endpoint,
+      });
+      if (acceptance?.ready !== true) throw new Error('acceptance not ready');
+      return value;
+    } catch {
+      return withBlocker(
+        value,
+        'Windows protected lifecycle authority failed its ordinary operational acceptance proof. The construction gate remains closed; re-run devbridge setup after correcting the protected authority boundary.',
+      );
+    }
   };
 
   let result = await runService();
@@ -172,6 +198,8 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
     }
     return result;
   }
+
+  if (result?.ready === true && host?.elevated === false) return finalizeOrdinaryReadiness(result);
 
   if (result?.ready === true && host?.elevated === true) {
     return withBlocker(
@@ -190,7 +218,7 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
       return withBlocker(result, elevation?.blocker ?? 'Windows lifecycle authority elevation did not complete. Re-run devbridge setup to retry the same protected reconciliation.');
     }
     result = await runService();
-    if (result?.ready === true && host?.elevated === false) return result;
+    if (result?.ready === true && host?.elevated === false) return finalizeOrdinaryReadiness(result);
     if (result?.ready === true && host?.elevated === true) {
       return withBlocker(result, 'Windows lifecycle authority ordinary parent unexpectedly became elevated; final readiness was not accepted.');
     }
