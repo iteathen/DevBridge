@@ -270,9 +270,68 @@ test('parent acceptance verifier always cleans the disposable fixture and expose
       diskPathFor: () => '/derived/fixture.vhdx',
       directMutationDenied: async () => { throw new Error('ordinary write allowed'); },
     }),
-    /ordinary write allowed/u,
+    (error) => {
+      assert.deepEqual(error.acceptanceStages, ['direct-mutation-proof']);
+      assert.doesNotMatch(error.message, /ordinary write allowed/u);
+      return true;
+    },
   );
   assert.deepEqual(calls, ['exercise', 'cleanup']);
+});
+
+test('parent acceptance verifier reports each primary composition stage without raw errors', async () => {
+  await assert.rejects(verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => { throw new Error('raw composition detail'); },
+  }), (error) => {
+    assert.deepEqual(error.acceptanceStages, ['composition']);
+    assert.doesNotMatch(error.message, /raw composition detail/u);
+    return true;
+  });
+
+  await assert.rejects(verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => ({
+      async exercise() { throw new Error('raw exercise detail'); },
+      async cleanup() { return { cleaned: true }; },
+    }),
+    waitForRetry: async () => {},
+  }), (error) => {
+    assert.deepEqual(error.acceptanceStages, ['exercise']);
+    assert.doesNotMatch(error.message, /raw exercise detail/u);
+    return true;
+  });
+
+  await assert.rejects(verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => ({
+      async exercise() { return { ready: true, generation: `acceptance-${'e'.repeat(32)}` }; },
+      async cleanup() { return { cleaned: true }; },
+    }),
+    diskPathFor: () => { throw new Error('raw path detail'); },
+  }), (error) => {
+    assert.deepEqual(error.acceptanceStages, ['disk-path']);
+    assert.doesNotMatch(error.message, /raw path detail/u);
+    return true;
+  });
+});
+
+test('parent acceptance verifier preserves primary and cleanup stage evidence together', async () => {
+  let cleanupAttempts = 0;
+  await assert.rejects(verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => ({
+      async exercise() { return { ready: true, generation: `acceptance-${'f'.repeat(32)}` }; },
+      async cleanup() {
+        cleanupAttempts += 1;
+        throw Object.assign(new Error('raw cleanup detail'), { acceptanceStages: ['vhdx-remove', 'construction-state-remove'] });
+      },
+    }),
+    diskPathFor: () => '/derived/fixture.vhdx',
+    directMutationDenied: async () => { throw new Error('raw denial detail'); },
+    waitForRetry: async () => {},
+  }), (error) => {
+    assert.deepEqual(error.acceptanceStages, ['direct-mutation-proof', 'vhdx-remove', 'construction-state-remove']);
+    assert.doesNotMatch(error.message, /raw cleanup detail|raw denial detail/u);
+    return true;
+  });
+  assert.equal(cleanupAttempts, 5);
 });
 
 test('parent acceptance verifier retries only the fixed idempotent cleanup operation', async () => {
