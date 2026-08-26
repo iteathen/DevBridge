@@ -51,28 +51,10 @@ function pathIsWithin(root, candidate) {
 
 async function boundedRealFile(file, name) {
   const resolved = path.resolve(file);
-  const filesystemRoot = path.parse(resolved).root;
-  const relative = path.relative(filesystemRoot, resolved);
-  const segments = relative.split(path.sep).filter(Boolean);
-  if (segments.length === 0) {
-    const info = await lstat(resolved);
-    if (!info.isFile() || info.isSymbolicLink()) throw new Error(`${name} must be a real regular file`);
-    return resolved;
+  const info = await lstat(resolved);
+  if (!info.isFile() || info.isSymbolicLink()) {
+    throw new Error(`${name} must be a real regular file`);
   }
-  let current = filesystemRoot;
-
-  for (let index = 0; index < segments.length; index += 1) {
-    current = path.join(current, segments[index]);
-    const info = await lstat(current);
-    if (info.isSymbolicLink()) throw new Error(`${name} must not use filesystem indirection`);
-    if (index < segments.length - 1 && !info.isDirectory()) {
-      throw new Error(`${name} must not traverse a non-directory path`);
-    }
-    if (index === segments.length - 1 && !info.isFile()) {
-      throw new Error(`${name} must be a real regular file`);
-    }
-  }
-
   return resolved;
 }
 
