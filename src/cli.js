@@ -11,6 +11,7 @@ import { createRuntime } from './app/runtime.js';
 import { createLocalEnvironmentOperator } from './app/environment-operator-runtime.js';
 import { chatHandoffSeed, chatHandoffStatus } from './app/chat-handoff.js';
 import { formatSetupHandoff, runDevBridgeSetup } from './app/setup.js';
+import { runWindowsLifecycleAuthoritySetupChild } from './app/windows-lifecycle-authority-setup-child.js';
 import { PolicyError } from './errors.js';
 import { logicalEnvironmentIdentity } from './runtime/environment-declaration.js';
 import { daemonStatus, pauseDaemon, resumeDaemon, stopDaemon } from './runtime/daemon-lock.js';
@@ -34,12 +35,24 @@ function setupOptions(argv) {
   let home = null;
   let construct = false;
   let trackRef = null;
+  let lifecycleAuthorityChild = false;
+  let entryNoUpdate = false;
   const repositories = [];
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index];
     if (option === '--construct') {
       if (construct) throw new PolicyError('--construct may be specified only once');
       construct = true;
+      continue;
+    }
+    if (option === '--lifecycle-authority-child') {
+      if (lifecycleAuthorityChild) throw new PolicyError('--lifecycle-authority-child may be specified only once');
+      lifecycleAuthorityChild = true;
+      continue;
+    }
+    if (option === '--no-update') {
+      if (entryNoUpdate) throw new PolicyError('--no-update may be specified only once');
+      entryNoUpdate = true;
       continue;
     }
     if (option === '--home' || option === '--repository' || option === '--track-ref') {
@@ -59,7 +72,20 @@ function setupOptions(argv) {
     }
     throw new PolicyError(`unsupported setup option: ${option}`);
   }
-  return Object.freeze({ home, construct, trackRef, repositories: Object.freeze(repositories) });
+  if (entryNoUpdate && !lifecycleAuthorityChild) {
+    throw new PolicyError('--no-update is reserved for the lifecycle-authority child');
+  }
+  if (lifecycleAuthorityChild && (construct || home != null || trackRef != null || repositories.length > 0)) {
+    throw new PolicyError('lifecycle-authority child accepts no setup capability arguments');
+  }
+  return Object.freeze({
+    home,
+    construct,
+    trackRef,
+    repositories: Object.freeze(repositories),
+    lifecycleAuthorityChild,
+    entryNoUpdate,
+  });
 }
 
 function configPath(argv) {
@@ -134,6 +160,12 @@ async function main() {
 
   if (command === 'setup') {
     const selected = setupOptions(args);
+    if (selected.lifecycleAuthorityChild) {
+      const result = await runWindowsLifecycleAuthoritySetupChild({ env: process.env });
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      if (!result.ready) process.exitCode = 3;
+      return;
+    }
     let setupHome = selected.home;
     if (selected.trackRef != null) {
       try {

@@ -2,6 +2,7 @@ import process from 'node:process';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment-lifecycle-authority-transport.js';
 import { inspectWindowsLifecycleAuthorityMigrationSafety } from './windows-lifecycle-authority-migration-safety.js';
+import { reconcileWindowsLifecycleAuthorityLegacyRuntime } from './windows-lifecycle-authority-legacy-runtime-migration.js';
 import { verifyWindowsLifecycleAuthorityService } from './windows-lifecycle-authority-service-proof.js';
 import { reconcileWindowsLifecycleAuthorityService } from './windows-lifecycle-authority-service.js';
 import { verifyWindowsLifecycleAuthorityProtection } from './windows-lifecycle-authority-protection.js';
@@ -10,6 +11,7 @@ const POWERSHELL = 'powershell.exe';
 const POWERSHELL_ARGS = Object.freeze([
   '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand',
 ]);
+const MODES = new Set(['ordinary', 'elevated-child']);
 
 const HOST_INSPECTION_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
@@ -78,61 +80,132 @@ function migrationBlocker(value) {
   });
 }
 
+function legacyRuntimeBlocker(value) {
+  return Object.freeze({
+    protocol: 'devbridge/windows-lifecycle-authority-service-v1',
+    platform: 'win32',
+    ready: false,
+    blocker: value.blocker ?? 'Legacy Windows protected authority migration did not complete.',
+    changed: value.changed === true,
+    authorityIdentity: null,
+    service: 'legacy-migration-blocked',
+    protectedState: 'protected-legacy',
+  });
+}
+
+function needsElevation(result, host) {
+  return host?.elevated === false
+    && result?.ready !== true
+    && typeof result?.authorityIdentity === 'string'
+    && result.service === 'unavailable'
+    && result.protectedState === 'unknown';
+}
+
 export async function reconcileWindowsLifecycleAuthorityReadiness({
   stateDirectory,
   platform = process.platform,
   invoke = invokeCommand,
   environment = process.env,
+  mode = 'ordinary',
+  requestElevation = null,
 } = {}, {
   migrationSafety = inspectWindowsLifecycleAuthorityMigrationSafety,
+  legacyRuntimeMigration = reconcileWindowsLifecycleAuthorityLegacyRuntime,
   serviceReconciler = reconcileWindowsLifecycleAuthorityService,
   inspectHost = inspectWindowsLifecycleAuthorityReadinessHost,
   clientFactory = createConfiguredLifecycleAuthorityClient,
   verifyService = verifyWindowsLifecycleAuthorityService,
   verifyProtection = verifyWindowsLifecycleAuthorityProtection,
 } = {}) {
+  if (!MODES.has(mode)) throw new TypeError('Windows lifecycle authority readiness mode is invalid');
+  if (requestElevation != null && typeof requestElevation !== 'function') throw new TypeError('Windows lifecycle authority readiness elevation port is invalid');
   if (platform !== 'win32') {
     return serviceReconciler({ stateDirectory, platform, invoke, environment });
   }
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('Windows lifecycle authority readiness stateDirectory is required');
   if (typeof invoke !== 'function') throw new TypeError('Windows lifecycle authority readiness invocation contract is invalid');
-  if (typeof migrationSafety !== 'function' || typeof serviceReconciler !== 'function' || typeof inspectHost !== 'function' || typeof clientFactory !== 'function' || typeof verifyService !== 'function' || typeof verifyProtection !== 'function') {
+  if (typeof migrationSafety !== 'function' || typeof legacyRuntimeMigration !== 'function' || typeof serviceReconciler !== 'function' || typeof inspectHost !== 'function' || typeof clientFactory !== 'function' || typeof verifyService !== 'function' || typeof verifyProtection !== 'function') {
     throw new TypeError('Windows lifecycle authority readiness composition is invalid');
   }
 
   const migration = await migrationSafety({ stateDirectory, platform });
   if (migration?.ready !== true) return migrationBlocker(migration ?? { blocker: 'Legacy Windows lifecycle authority cannot be migrated safely by the generic protected-state copy path.' });
 
+  if (mode === 'elevated-child') {
+    const legacy = await legacyRuntimeMigration({ stateDirectory, platform, invoke, environment });
+    if (legacy?.ready !== true) return legacyRuntimeBlocker(legacy ?? {});
+  }
+
   let host = null;
   let protectionFailure = false;
-  const composedHostInspection = async (request) => {
-    host = await inspectHost(request);
-    return host;
-  };
-  const protectedProbe = async (plan) => {
-    await verifyService({ plan, operatorSid: host?.operatorSid, invoke, environment });
-    const client = clientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
-    const inspection = verifiedInspection(await client.inspect());
-    try {
-      await verifyProtection({ plan, elevated: host?.elevated, invoke, environment });
-    } catch (error) {
-      protectionFailure = true;
-      throw error;
-    }
-    return inspection;
+  const runService = async () => {
+    host = null;
+    protectionFailure = false;
+    const composedHostInspection = async (request) => {
+      host = await inspectHost(request);
+      return host;
+    };
+    const protectedProbe = async (plan) => {
+      await verifyService({ plan, operatorSid: host?.operatorSid, invoke, environment });
+      const client = clientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
+      const inspection = verifiedInspection(await client.inspect());
+      try {
+        await verifyProtection({ plan, elevated: host?.elevated, invoke, environment });
+      } catch (error) {
+        protectionFailure = true;
+        throw error;
+      }
+      return inspection;
+    };
+    return serviceReconciler({ stateDirectory, platform, invoke, environment }, {
+      inspectHost: composedHostInspection,
+      probe: protectedProbe,
+    });
   };
 
-  const result = await serviceReconciler({ stateDirectory, platform, invoke, environment }, {
-    inspectHost: composedHostInspection,
-    probe: protectedProbe,
-  });
+  let result = await runService();
+
+  if (mode === 'elevated-child') {
+    if (result?.ready === true && host?.elevated === true) return result;
+    if (host?.elevated !== true) {
+      return withBlocker(result, 'Windows lifecycle authority elevated child did not receive an Administrator token.');
+    }
+    return result;
+  }
 
   if (result?.ready === true && host?.elevated === true) {
     return withBlocker(
       result,
-      'Windows protected lifecycle authority is structurally verified. Re-run devbridge setup from a non-elevated PowerShell to prove ordinary protected-state and mutation-endpoint denial before construction can continue.',
+      'Windows protected lifecycle authority is structurally verified, but final readiness requires the ordinary parent identity. Run devbridge setup from a non-elevated PowerShell.',
     );
   }
+
+  if (needsElevation(result, host) && requestElevation != null) {
+    let elevation;
+    try { elevation = await requestElevation(); }
+    catch {
+      return withBlocker(result, 'Windows lifecycle authority elevation could not be started. Re-run devbridge setup to retry the same protected reconciliation.');
+    }
+    if (elevation?.completed !== true) {
+      return withBlocker(result, elevation?.blocker ?? 'Windows lifecycle authority elevation did not complete. Re-run devbridge setup to retry the same protected reconciliation.');
+    }
+    result = await runService();
+    if (result?.ready === true && host?.elevated === false) return result;
+    if (result?.ready === true && host?.elevated === true) {
+      return withBlocker(result, 'Windows lifecycle authority ordinary parent unexpectedly became elevated; final readiness was not accepted.');
+    }
+    if (host?.elevated === false && protectionFailure) {
+      return withBlocker(
+        result,
+        'Windows protected lifecycle authority failed its ordinary negative-capability proof after the elevated child returned. The protected state remains closed; re-run devbridge setup after correcting the reported authority boundary.',
+      );
+    }
+    return withBlocker(
+      result,
+      result?.blocker ?? 'Windows protected lifecycle authority remains not ready after the single elevated child transaction. Re-run devbridge setup to resume from protected evidence.',
+    );
+  }
+
   if (result?.ready !== true && host?.elevated === false && protectionFailure) {
     return withBlocker(
       result,
