@@ -40,6 +40,9 @@ const POWERSHELL_ARGS = Object.freeze([
 const EFFECTS = new Set(['stage', 'quiesce', 'promote', 'start', 'restore']);
 const EFFECT_STATES = new Set(['planned', 'attempted']);
 const PHASES = new Set(['observed', 'staged', 'quiesced', 'promoted', 'started', 'restored', 'complete']);
+const HEALTH_PROBE_DEADLINE_MS = 15_000;
+const HEALTH_PROBE_ATTEMPT_MS = 1_000;
+const HEALTH_PROBE_RETRY_MS = 250;
 
 const HOST_INSPECTION_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
@@ -445,10 +448,36 @@ async function configureServiceCommand(plan, command, invoke, environment) {
   await invokeSc(invoke, ['description', plan.service.name, plan.service.description], 'Windows lifecycle authority legacy service evidence configuration', environment);
 }
 
-async function probe(plan, clientFactory) {
-  const client = clientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
-  const value = await client.inspect();
-  return value?.protocol === 'devbridge/environment-operator-v1';
+export async function probeWindowsLifecycleAuthorityLegacyRuntime(plan, clientFactory, {
+  now = () => Date.now(),
+  wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  deadlineMs = HEALTH_PROBE_DEADLINE_MS,
+  attemptMs = HEALTH_PROBE_ATTEMPT_MS,
+  retryMs = HEALTH_PROBE_RETRY_MS,
+} = {}) {
+  if (typeof clientFactory !== 'function' || typeof now !== 'function' || typeof wait !== 'function') {
+    throw new TypeError('legacy runtime health probe composition is invalid');
+  }
+  for (const [name, value] of Object.entries({ deadlineMs, attemptMs, retryMs })) {
+    if (!Number.isSafeInteger(value) || value < 1) throw new TypeError(`legacy runtime health probe ${name} is invalid`);
+  }
+  const deadline = now() + deadlineMs;
+  while (true) {
+    const remaining = deadline - now();
+    if (remaining <= 0) return false;
+    try {
+      const client = clientFactory({
+        stateDirectory: plan.stateDirectory,
+        platform: 'win32',
+        connectTimeoutMs: Math.min(attemptMs, remaining),
+      });
+      const value = await client.inspect();
+      if (value?.protocol === 'devbridge/environment-operator-v1') return true;
+    } catch {}
+    const afterAttempt = deadline - now();
+    if (afterAttempt <= 0) return false;
+    await wait(Math.min(retryMs, afterAttempt));
+  }
 }
 
 export function classifyWindowsLifecycleAuthorityLegacyService(service, fixed, targetPlan) {
@@ -613,11 +642,11 @@ export async function createWindowsLifecycleAuthorityLegacyRuntimeMechanics({
       await invokePowerShell(invoke, START_SERVICE_SCRIPT, { name: targetPlan.service.name }, 'Windows lifecycle authority legacy generation start', environment);
       return true;
     },
-    health: () => probe(targetPlan, clientFactory),
+    health: () => probeWindowsLifecycleAuthorityLegacyRuntime(targetPlan, clientFactory),
     async restore() {
       let currentService = await inspectServicePort(targetPlan, invoke, environment);
       let modeNow = classifyWindowsLifecycleAuthorityLegacyService(currentService, fixed, targetPlan);
-      if (modeNow === 'fixed-running') return probe({ ...targetPlan, serviceCommand: fixed.serviceCommand }, clientFactory);
+      if (modeNow === 'fixed-running') return probeWindowsLifecycleAuthorityLegacyRuntime({ ...targetPlan, serviceCommand: fixed.serviceCommand }, clientFactory);
       if (modeNow === 'generation-running') {
         await invokePowerShell(invoke, STOP_SERVICE_SCRIPT, { name: targetPlan.service.name }, 'Windows lifecycle authority legacy rollback stop', environment);
         currentService = await inspectServicePort(targetPlan, invoke, environment);
@@ -629,7 +658,7 @@ export async function createWindowsLifecycleAuthorityLegacyRuntimeMechanics({
       }
       if (modeNow !== 'fixed-stopped') throw new Error('legacy runtime rollback cannot prove the exact fixed service identity');
       await invokePowerShell(invoke, START_SERVICE_SCRIPT, { name: targetPlan.service.name }, 'Windows lifecycle authority legacy rollback start', environment);
-      return probe({ ...targetPlan, serviceCommand: fixed.serviceCommand }, clientFactory);
+      return probeWindowsLifecycleAuthorityLegacyRuntime({ ...targetPlan, serviceCommand: fixed.serviceCommand }, clientFactory);
     },
   });
 }

@@ -9,6 +9,7 @@ import { parseSetupCommandOptions } from '../src/setup/command-options.js';
 import {
   classifyWindowsLifecycleAuthorityLegacyService,
   classifyWindowsLifecycleAuthorityRuntimeLayout,
+  probeWindowsLifecycleAuthorityLegacyRuntime,
   reconcileWindowsLifecycleAuthorityLegacyRuntime,
 } from '../src/setup/windows-lifecycle-authority-legacy-runtime-migration.js';
 import { reconcileWindowsLifecycleAuthorityReadiness } from '../src/setup/windows-lifecycle-authority-readiness.js';
@@ -376,6 +377,51 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('legacy generation health proof tolerates bounded delayed pipe readiness', async () => {
+  let clock = 0;
+  let attempts = 0;
+  const timeouts = [];
+  const ready = await probeWindowsLifecycleAuthorityLegacyRuntime({ stateDirectory: STATE }, (options) => {
+    timeouts.push(options.connectTimeoutMs);
+    return Object.freeze({
+      async inspect() {
+        attempts += 1;
+        if (attempts < 3) throw new Error('pipe is not ready');
+        return Object.freeze({ protocol: 'devbridge/environment-operator-v1' });
+      },
+    });
+  }, {
+    now: () => clock,
+    wait: async (milliseconds) => { clock += milliseconds; },
+    deadlineMs: 1_000,
+    attemptMs: 200,
+    retryMs: 100,
+  });
+  assert.equal(ready, true);
+  assert.equal(attempts, 3);
+  assert.deepEqual(timeouts, [200, 200, 200]);
+});
+
+test('legacy generation health proof stops at its exact deadline', async () => {
+  let clock = 0;
+  let attempts = 0;
+  const ready = await probeWindowsLifecycleAuthorityLegacyRuntime({ stateDirectory: STATE }, () => Object.freeze({
+    async inspect() {
+      attempts += 1;
+      return Object.freeze({ protocol: 'untrusted/wrong-protocol' });
+    },
+  }), {
+    now: () => clock,
+    wait: async (milliseconds) => { clock += milliseconds; },
+    deadlineMs: 300,
+    attemptMs: 100,
+    retryMs: 100,
+  });
+  assert.equal(ready, false);
+  assert.equal(clock, 300);
+  assert.equal(attempts, 3);
 });
 
 test('rendered elevation broker reads its bounded input and returns exact child evidence', async () => {
