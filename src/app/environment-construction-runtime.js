@@ -25,6 +25,7 @@ function assertAvailability(value) {
 
 export async function createEnvironmentConstructionRuntime({
   stateDirectory,
+  authorityDirectory = null,
   availability = null,
   source = null,
   codec = null,
@@ -41,14 +42,18 @@ export async function createEnvironmentConstructionRuntime({
   now,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('environment construction runtime stateDirectory is required');
+  if (authorityDirectory != null && (typeof authorityDirectory !== 'string' || authorityDirectory.length === 0)) {
+    throw new TypeError('environment construction runtime authorityDirectory must be a non-empty string when provided');
+  }
   if (typeof resolveAuthority !== 'function') throw new TypeError('environment construction runtime authority resolver is required');
   if (typeof invoke !== 'function') throw new TypeError('environment construction runtime invocation contract is invalid');
 
-  const localFoundation = foundation ?? await createEnvironmentFoundation({ stateDirectory, platform, invoke });
+  const authorityStateDirectory = authorityDirectory ?? stateDirectory;
+  const localFoundation = foundation ?? await createEnvironmentFoundation({ stateDirectory: authorityStateDirectory, platform, invoke });
   const localAvailability = availability == null
-    ? createEnvironmentImageAvailability({ stateDirectory, foundation: localFoundation, source, codec, capacity })
+    ? createEnvironmentImageAvailability({ stateDirectory: authorityStateDirectory, foundation: localFoundation, source, codec, capacity })
     : assertAvailability(availability);
-  const localLifecycle = lifecycle ?? createEnvironmentLifecycle({ stateDirectory, ...(now ? { now } : {}) });
+  const localLifecycle = lifecycle ?? createEnvironmentLifecycle({ stateDirectory: authorityStateDirectory, ...(now ? { now } : {}) });
   const policy = createEnvironmentMaterializationPolicy();
   const materialization = createEnvironmentMaterialization({ state: localFoundation, subject: policy.subject, settings: policy.settings });
   const rebuildMaterialization = createEnvironmentRebuildMaterialization({ state: localFoundation, subject: policy.subject, journal: localLifecycle.journal });
@@ -58,7 +63,13 @@ export async function createEnvironmentConstructionRuntime({
   const recreateAvailable = typeof localFoundation.recreateEnvironment === 'function' && typeof localFoundation.retireSupersededEnvironment === 'function';
   const recreateMaterialization = recreateAvailable ? createEnvironmentRecreateMaterialization({ state: localFoundation, subject: policy.subject, journal: localLifecycle.journal }) : null;
   const recreateRetirement = recreateAvailable ? createEnvironmentRecreateRetirement({ state: localFoundation, journal: localLifecycle.journal }) : null;
-  const preparation = createEnvironmentConstructionPreparation({ stateDirectory, platform, invoke, windowsAccess });
+  const preparation = createEnvironmentConstructionPreparation({
+    stateDirectory,
+    authorityDirectory: authorityStateDirectory,
+    platform,
+    invoke,
+    windowsAccess,
+  });
   const workspaces = createEnvironmentConstructionWorkspaces({
     stateDirectory,
     state: localFoundation,
@@ -76,19 +87,19 @@ export async function createEnvironmentConstructionRuntime({
   const resources = createEnvironmentResourcePort({ state: localFoundation, settings: policy.settings });
   const image = createEnvironmentImagePort({ availability: localAvailability });
   const construction = createEnvironmentConstruction({
-    stateDirectory, lifecycle: localLifecycle, observer: observation, fence: localFence, image, resources,
+    stateDirectory: authorityStateDirectory, lifecycle: localLifecycle, observer: observation, fence: localFence, image, resources,
     materialization, preparation, workspaces, readiness: observation.readiness, ...(now ? { now } : {}),
   });
   const rebuildConstruction = createEnvironmentConstructionPipeline({
-    stateDirectory, image, resources, materialization: rebuildMaterialization, preparation, workspaces,
+    stateDirectory: authorityStateDirectory, image, resources, materialization: rebuildMaterialization, preparation, workspaces,
     readiness: observation.readiness, ...(now ? { now } : {}),
   });
   const resetConstruction = resetAvailable ? createEnvironmentConstructionPipeline({
-    stateDirectory, image, resources, materialization: resetMaterialization, preparation, workspaces,
+    stateDirectory: authorityStateDirectory, image, resources, materialization: resetMaterialization, preparation, workspaces,
     readiness: observation.readiness, ...(now ? { now } : {}),
   }) : null;
   const recreateConstruction = recreateAvailable ? createEnvironmentConstructionPipeline({
-    stateDirectory, image, resources, materialization: recreateMaterialization, preparation, workspaces,
+    stateDirectory: authorityStateDirectory, image, resources, materialization: recreateMaterialization, preparation, workspaces,
     readiness: observation.readiness, ...(now ? { now } : {}),
   }) : null;
   const recovery = createEnvironmentRecovery({

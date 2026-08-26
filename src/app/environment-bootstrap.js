@@ -45,6 +45,7 @@ async function parseBootstrapOutput(outcome) {
 
 export async function createEnvironmentBootstrap({
   stateDirectory,
+  authorityDirectory = null,
   platform = process.platform,
   invoke = invokeCommand,
   access,
@@ -54,12 +55,16 @@ export async function createEnvironmentBootstrap({
   revision = 'stage5-base-v1',
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('stateDirectory is required');
+  if (authorityDirectory != null && (typeof authorityDirectory !== 'string' || authorityDirectory.length === 0)) {
+    throw new TypeError('authorityDirectory must be a non-empty string when provided');
+  }
   if (typeof access !== 'function') throw new TypeError('bootstrap access must be a function');
   if (prepareAccess != null && typeof prepareAccess !== 'function') throw new TypeError('bootstrap access preparation must be a function');
   if (!Array.isArray(requirements) || !Array.isArray(protectedNames)) throw new TypeError('bootstrap policy lists are invalid');
-  const root = path.join(path.resolve(stateDirectory), 'environment-foundation');
+  const authorityStateDirectory = authorityDirectory ?? stateDirectory;
+  const root = path.join(path.resolve(authorityStateDirectory), 'environment-foundation');
   const identity = await loadOrCreateLocalIdentity({ directory: root });
-  const foundation = await createEnvironmentFoundation({ stateDirectory, platform, invoke });
+  const foundation = await createEnvironmentFoundation({ stateDirectory: authorityStateDirectory, platform, invoke });
   const providerLocation = platform === 'win32'
     ? createHyperVEnvironmentLocation(identity)
     : platform === 'linux'
@@ -86,7 +91,7 @@ export async function createEnvironmentBootstrap({
   }
 
   const resolvedAccess = async (target) => attachment.connection(target);
-  const bridge = await createEnvironmentBridge({ stateDirectory, platform, invoke, access: resolvedAccess });
+  const bridge = await createEnvironmentBridge({ stateDirectory, foundationIdentity: identity, platform, invoke, access: resolvedAccess });
 
   const prepareResolvedAccess = async (target) => {
     if (!prepareAccess) return;

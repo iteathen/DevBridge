@@ -57,6 +57,7 @@ function stableAuthority(value) {
 
 export async function createLocalEnvironmentOperator({
   stateDirectory,
+  authorityDirectory = null,
   platform = process.platform,
   invoke = invokeCommand,
   windowsAccess = null,
@@ -68,11 +69,16 @@ export async function createLocalEnvironmentOperator({
   now,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('local environment operator stateDirectory is required');
+  if (authorityDirectory != null && (typeof authorityDirectory !== 'string' || authorityDirectory.length === 0)) {
+    throw new TypeError('local environment operator authorityDirectory must be a non-empty string when provided');
+  }
   if (typeof resolveAuthority !== 'function') throw new TypeError('local environment operator authority resolver is required');
-  const localFoundation = foundation ?? await createEnvironmentFoundation({ stateDirectory, platform, invoke });
+  const authorityStateDirectory = authorityDirectory ?? stateDirectory;
+  const localFoundation = foundation ?? await createEnvironmentFoundation({ stateDirectory: authorityStateDirectory, platform, invoke });
   const localAvailability = availability ?? localImageAvailability(localFoundation);
   const runtime = await createEnvironmentConstructionRuntime({
     stateDirectory,
+    authorityDirectory: authorityStateDirectory,
     platform,
     invoke,
     windowsAccess,
