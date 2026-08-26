@@ -34,6 +34,9 @@ const ACCEPTANCE_STAGES = new Set([
   'generation-verify', 'vhdx-remove', 'probe-inspect', 'probe-verify', 'probe-remove',
   'fixture-manifest-remove', 'lifecycle-state-remove', 'construction-state-remove',
   'disk-path', 'direct-mutation-proof',
+  'create-journal-read', 'create-observe', 'create-run',
+  'recreate-journal-read', 'recreate-plan', 'recreate-run',
+  'final-observe', 'final-verify',
 ]);
 
 const ENSURE_VHDX_SCRIPT = String.raw`
@@ -135,6 +138,11 @@ function failureStages(error, fallback) {
     ? error.acceptanceStages.filter((stage) => ACCEPTANCE_STAGES.has(stage))
     : [];
   return stages.length > 0 ? stages : [fallback];
+}
+
+async function acceptanceStage(stage, operation) {
+  try { return await operation(); }
+  catch (error) { throw acceptanceFailure(failureStages(error, stage)); }
 }
 
 function validateGenerationRecord(generation, raw) {
@@ -481,30 +489,30 @@ function stage(record) {
 }
 
 async function exerciseAcceptance({ operator, lifecycle, fixture, environmentIdentity }) {
-  let current = await lifecycle.journal.current(environmentIdentity);
+  let current = await acceptanceStage('create-journal-read', () => lifecycle.journal.current(environmentIdentity));
   if (active(current) && current.operation === 'create') {
-    await operator.run('create', environmentIdentity);
+    await acceptanceStage('create-run', () => operator.run('create', environmentIdentity));
   } else {
-    const observed = await fixture.observe();
-    if (observed.state === 'absent') await operator.run('create', environmentIdentity);
+    const observed = await acceptanceStage('create-observe', () => fixture.observe());
+    if (observed.state === 'absent') await acceptanceStage('create-run', () => operator.run('create', environmentIdentity));
   }
 
-  current = await lifecycle.journal.current(environmentIdentity);
+  current = await acceptanceStage('recreate-journal-read', () => lifecycle.journal.current(environmentIdentity));
   if (active(current) && current.operation === 'recreate') {
     if (stage(current) === 'intent') {
-      const impact = await operator.plan('recreate', environmentIdentity);
-      await operator.run('recreate', environmentIdentity, { approval: impact.authorizationSubject });
+      const impact = await acceptanceStage('recreate-plan', () => operator.plan('recreate', environmentIdentity));
+      await acceptanceStage('recreate-run', () => operator.run('recreate', environmentIdentity, { approval: impact.authorizationSubject }));
     } else {
-      await operator.run('recreate', environmentIdentity, { approval: null });
+      await acceptanceStage('recreate-run', () => operator.run('recreate', environmentIdentity, { approval: null }));
     }
   } else {
-    const impact = await operator.plan('recreate', environmentIdentity);
-    if (impact.blocked === true || !impact.authorizationSubject) throw new Error('Windows lifecycle authority acceptance recreate impact is blocked');
-    await operator.run('recreate', environmentIdentity, { approval: impact.authorizationSubject });
+    const impact = await acceptanceStage('recreate-plan', () => operator.plan('recreate', environmentIdentity));
+    if (impact.blocked === true || !impact.authorizationSubject) throw acceptanceFailure(['recreate-plan']);
+    await acceptanceStage('recreate-run', () => operator.run('recreate', environmentIdentity, { approval: impact.authorizationSubject }));
   }
 
-  const final = await fixture.observe();
-  if (final.state !== 'ready' || !SAFE_GENERATION.test(final.generation)) throw new Error('Windows lifecycle authority acceptance fixture did not finish ready');
+  const final = await acceptanceStage('final-observe', () => fixture.observe());
+  if (final.state !== 'ready' || !SAFE_GENERATION.test(final.generation)) throw acceptanceFailure(['final-verify']);
   return Object.freeze({ ready: true, generation: final.generation });
 }
 
@@ -550,7 +558,7 @@ export async function handleWindowsLifecycleAuthorityAcceptanceRequest({
   catch { return failure(selected.requestId, ['composition']); }
   if (selected.operation === 'exercise') {
     try { return result(selected.requestId, await exerciseAcceptance(composition)); }
-    catch { return failure(selected.requestId, ['exercise']); }
+    catch (error) { return failure(selected.requestId, failureStages(error, 'exercise')); }
   }
   const failures = [];
   try { await composition.fixture.clear(); }

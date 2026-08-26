@@ -113,6 +113,7 @@ test('acceptance exercise resumes after an effect committed but its result was l
     operatorFactory: operatorFactoryFor(fixture),
   });
   assert.equal(first.ok, false);
+  assert.deepEqual(first.error.stages, ['create-run']);
   assert.equal(fixture.effects.length, 1);
 
   const second = await handleWindowsLifecycleAuthorityAcceptanceRequest({ request: request('exercise'), authorityDirectory }, {
@@ -158,6 +159,26 @@ test('acceptance cleanup removes only the dedicated fixture and exact lifecycle 
   await assert.rejects(access(path.join(root, 'environment-lifecycle', 'state.json')));
   await assert.rejects(access(path.join(root, 'environment-construction', 'state.json')));
 }));
+
+test('acceptance exercise exposes the exact bounded recreate stage', async () => {
+  const response = await handleWindowsLifecycleAuthorityAcceptanceRequest({
+    request: request('exercise'),
+    authorityDirectory: 'C:\\ProgramData\\DevBridge\\authority',
+  }, {
+    operatorFactory: async () => ({
+      environmentIdentity: 'environment',
+      lifecycle: { journal: { async current() { return null; } } },
+      fixture: { async observe() { return { state: 'ready', generation: `acceptance-${'a'.repeat(32)}` }; } },
+      operator: {
+        async plan() { throw new Error('raw plan detail'); },
+        async run() { throw new Error('unexpected run'); },
+      },
+    }),
+  });
+  assert.equal(response.ok, false);
+  assert.deepEqual(response.error.stages, ['recreate-plan']);
+  assert.doesNotMatch(JSON.stringify(response), /raw plan detail/u);
+});
 
 test('acceptance cleanup attempts independent stages and returns only bounded failure codes', async () => withTempDirectory(async (authorityDirectory) => {
   const fixture = new FakeFixture();
