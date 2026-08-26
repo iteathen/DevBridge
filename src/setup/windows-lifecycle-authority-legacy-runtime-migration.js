@@ -635,6 +635,7 @@ export async function createWindowsLifecycleAuthorityLegacyRuntimeMechanics({
   if (!rootExists) return Object.freeze({ notRequired: true });
 
   const journal = await loadJournal(basePlan);
+  if (journal?.phase === 'complete') return Object.freeze({ notRequired: true });
   let generationsExist = true;
   try { await boundedRealDirectory(basePlan.runtime.generationsDirectory, 'protected generation container'); }
   catch (error) { if (error?.code === 'ENOENT') generationsExist = false; else throw error; }

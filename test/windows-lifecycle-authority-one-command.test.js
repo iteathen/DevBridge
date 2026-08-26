@@ -395,6 +395,23 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
   }
 });
 
+test('completed legacy migration is a terminal handoff to current reconciliation', async () => {
+  let effects = 0;
+  const result = await reconcileWindowsLifecycleAuthorityLegacyRuntime({ platform: 'win32' }, {
+    createMechanics: async () => Object.freeze({
+      notRequired: true,
+      stage: async () => { effects += 1; },
+      quiesce: async () => { effects += 1; },
+      promote: async () => { effects += 1; },
+      start: async () => { effects += 1; },
+      restore: async () => { effects += 1; },
+    }),
+  });
+  assert.equal(result.ready, true);
+  assert.equal(result.required, false);
+  assert.equal(effects, 0);
+});
+
 test('legacy migration completes read-only diagnostics before and after exact rollback', async () => {
   const emitted = [];
   let diagnoses = 0;
