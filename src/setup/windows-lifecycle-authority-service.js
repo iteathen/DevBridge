@@ -1091,6 +1091,7 @@ export async function reconcileWindowsLifecycleAuthorityService({
   environment = process.env,
   packageRoot = PACKAGE_ROOT,
   nodeExecutable = process.execPath,
+  onDiagnostic = null,
 } = {}, {
   inspectHost = inspectWindowsLifecycleAuthorityHost,
   inspectServiceState = inspectService,
@@ -1167,7 +1168,7 @@ export async function reconcileWindowsLifecycleAuthorityService({
       candidate,
       probe,
     });
-    refreshed = await refresh({ candidateGeneration: plan.runtime.generation, mechanics });
+    refreshed = await refresh({ candidateGeneration: plan.runtime.generation, mechanics, onDiagnostic });
   } catch {
     return serviceResult({
       platform,

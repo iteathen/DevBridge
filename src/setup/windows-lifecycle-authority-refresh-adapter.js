@@ -4,6 +4,7 @@ import {
 } from './protected-authority-reconciliation.js';
 
 const GENERATION = /^[0-9a-f]{64}$/u;
+const DIAGNOSTIC_PROTOCOL = 'devbridge/windows-lifecycle-authority-migration-diagnostic-v1';
 const OWNERS = new Set(['absent', 'devbridge', 'foreign', 'ambiguous']);
 const MECHANIC_KEYS = new Set([
   'journal',
@@ -50,6 +51,51 @@ function requireMechanics(mechanics) {
     'restoreServiceGeneration',
   ]) requireFunction(mechanics[name], `Windows lifecycle authority refresh ${name}`);
   return mechanics;
+}
+
+function boundedError(error) {
+  const text = String(error?.message ?? error ?? 'unknown failure').replace(/[\r\n;]+/gu, ' ').trim();
+  return text.slice(0, 1024) || 'unknown failure';
+}
+
+function diagnosticReporter(onDiagnostic) {
+  if (onDiagnostic != null && typeof onDiagnostic !== 'function') throw new TypeError('Windows lifecycle authority refresh diagnostic port is invalid');
+  let sequence = 0;
+  return Object.freeze({
+    emit(phase, state, detail = null) {
+      const event = Object.freeze({
+        protocol: DIAGNOSTIC_PROTOCOL,
+        sequence: sequence += 1,
+        phase,
+        state,
+        detail,
+      });
+      try { onDiagnostic?.(event); } catch {}
+      return event;
+    },
+  });
+}
+
+async function reported(reporter, phase, detail, operation, project = () => null) {
+  reporter.emit(phase, 'attempted', detail);
+  try {
+    const value = await operation();
+    reporter.emit(phase, 'completed', project(value));
+    return value;
+  } catch (error) {
+    reporter.emit(phase, 'failed', Object.freeze({ error: boundedError(error) }));
+    throw error;
+  }
+}
+
+function generationDetail(value) {
+  return Object.freeze({ generation: value.generation });
+}
+
+function journalDetail(value) {
+  return value == null
+    ? Object.freeze({ phase: null, outcome: null, pending: null })
+    : Object.freeze({ phase: value.phase, outcome: value.outcome, pending: value.pending == null ? null : Object.freeze({ ...value.pending }) });
 }
 
 function normalizedInspection(value) {
@@ -132,54 +178,80 @@ function healthEvidence(value, generation) {
   return Object.freeze({ generation, ready: value.ready });
 }
 
-export function createWindowsLifecycleAuthorityRefreshPorts({ mechanics } = {}) {
-  const local = requireMechanics(mechanics);
+function createPorts(local, reporter) {
   return Object.freeze({
     journal: Object.freeze({
-      load: () => local.journal.load(),
-      save: (value) => local.journal.save(value),
+      load: () => reported(reporter, 'refresh-journal-load', null, () => local.journal.load(), journalDetail),
+      save: (value) => reported(reporter, 'refresh-journal-save', journalDetail(value), () => local.journal.save(value), () => journalDetail(value)),
     }),
     async observe() {
-      const value = normalizedInspection(await local.readInstallation());
-      return Object.freeze({
-        protocol: PROTECTED_AUTHORITY_OBSERVATION_PROTOCOL,
-        ownership: ownerProjection(value.owner),
-        activeGeneration: value.serviceGeneration,
-        stagedGeneration: value.preparedGeneration,
-        running: value.serviceRunning,
+      return reported(reporter, 'refresh-observe', null, async () => {
+        const value = normalizedInspection(await local.readInstallation());
+        return Object.freeze({
+          protocol: PROTECTED_AUTHORITY_OBSERVATION_PROTOCOL,
+          ownership: ownerProjection(value.owner),
+          activeGeneration: value.serviceGeneration,
+          stagedGeneration: value.preparedGeneration,
+          running: value.serviceRunning,
+          retainedGenerations: value.retainedGenerations,
+        });
+      }, (value) => Object.freeze({
+        ownership: value.ownership,
+        activeGeneration: value.activeGeneration,
+        stagedGeneration: value.stagedGeneration,
+        running: value.running,
         retainedGenerations: value.retainedGenerations,
-      });
+      }));
     },
     async stage(value) {
-      return local.materializeGeneration(oneGenerationRequest(value, 'Windows lifecycle authority materialization request'));
+      const request = oneGenerationRequest(value, 'Windows lifecycle authority materialization request');
+      return reported(reporter, 'refresh-stage', generationDetail(request), () => local.materializeGeneration(request));
     },
     async verify(value) {
       const request = oneGenerationRequest(value, 'Windows lifecycle authority verification request');
-      return verificationEvidence(await local.verifyGeneration(request), request.generation);
+      return reported(reporter, 'refresh-verify', generationDetail(request), async () => verificationEvidence(await local.verifyGeneration(request), request.generation), (result) => result);
     },
     async quiesce(value) {
-      return local.stopServiceGeneration(oneGenerationRequest(value, 'Windows lifecycle authority service stop request'));
+      const request = oneGenerationRequest(value, 'Windows lifecycle authority service stop request');
+      return reported(reporter, 'refresh-quiesce', generationDetail(request), () => local.stopServiceGeneration(request));
     },
     async promote(value) {
-      return local.configureServiceGeneration(promotionRequest(value));
+      const request = promotionRequest(value);
+      return reported(reporter, 'refresh-promote', request, () => local.configureServiceGeneration(request));
     },
     async start(value) {
-      return local.startServiceGeneration(oneGenerationRequest(value, 'Windows lifecycle authority service start request'));
+      const request = oneGenerationRequest(value, 'Windows lifecycle authority service start request');
+      return reported(reporter, 'refresh-start', generationDetail(request), () => local.startServiceGeneration(request));
     },
     async health(value) {
       const request = oneGenerationRequest(value, 'Windows lifecycle authority health request');
-      return healthEvidence(await local.probeServiceGeneration(request), request.generation);
+      return reported(reporter, 'refresh-health', generationDetail(request), async () => healthEvidence(await local.probeServiceGeneration(request), request.generation), (result) => result);
     },
     async restore(value) {
-      return local.restoreServiceGeneration(restorationRequest(value));
+      const request = restorationRequest(value);
+      return reported(reporter, 'refresh-restore', request, () => local.restoreServiceGeneration(request));
     },
   });
 }
 
-export async function reconcileWindowsLifecycleAuthorityRefresh({ candidateGeneration, mechanics } = {}) {
+export function createWindowsLifecycleAuthorityRefreshPorts({ mechanics, onDiagnostic = null } = {}) {
+  const local = requireMechanics(mechanics);
+  return createPorts(local, diagnosticReporter(onDiagnostic));
+}
+
+export async function reconcileWindowsLifecycleAuthorityRefresh({ candidateGeneration, mechanics, onDiagnostic = null } = {}) {
   const generation = exactGeneration(candidateGeneration, 'Windows lifecycle authority refresh candidate generation');
-  return reconcileProtectedAuthority({
-    candidate: Object.freeze({ generation }),
-    ports: createWindowsLifecycleAuthorityRefreshPorts({ mechanics }),
-  });
+  const reporter = diagnosticReporter(onDiagnostic);
+  reporter.emit('refresh', 'started', Object.freeze({ generation }));
+  try {
+    const result = await reconcileProtectedAuthority({
+      candidate: Object.freeze({ generation }),
+      ports: createPorts(requireMechanics(mechanics), reporter),
+    });
+    reporter.emit('refresh', 'completed', Object.freeze({ ready: result.ready, changed: result.changed, recovered: result.recovered, blocker: result.blocker }));
+    return result;
+  } catch (error) {
+    reporter.emit('refresh', 'failed', Object.freeze({ error: boundedError(error) }));
+    throw error;
+  }
 }

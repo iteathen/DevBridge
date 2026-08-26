@@ -115,7 +115,8 @@ function fixture({
 
 test('Windows refresh adapter drives fresh materialization through the shared reconciliation LEGO', async () => {
   const values = fixture();
-  const result = await reconcileWindowsLifecycleAuthorityRefresh({ candidateGeneration: A, mechanics: values.mechanics });
+  const diagnostics = [];
+  const result = await reconcileWindowsLifecycleAuthorityRefresh({ candidateGeneration: A, mechanics: values.mechanics, onDiagnostic: (event) => diagnostics.push(event) });
 
   assert.equal(result.ready, true);
   assert.equal(result.changed, true);
@@ -133,6 +134,29 @@ test('Windows refresh adapter drives fresh materialization through the shared re
   });
   assert.equal(values.journal().outcome, 'complete');
   assert.ok(values.events.indexOf(`materialize:${A}`) < values.events.indexOf(`configure:${A}:absent`));
+  assert.deepEqual(diagnostics.map((event) => [event.phase, event.state]).filter(([phase]) => ['refresh-stage', 'refresh-verify', 'refresh-promote', 'refresh-start', 'refresh-health'].includes(phase)), [
+    ['refresh-stage', 'attempted'], ['refresh-stage', 'completed'],
+    ['refresh-verify', 'attempted'], ['refresh-verify', 'completed'],
+    ['refresh-promote', 'attempted'], ['refresh-promote', 'completed'],
+    ['refresh-start', 'attempted'], ['refresh-start', 'completed'],
+    ['refresh-health', 'attempted'], ['refresh-health', 'completed'],
+  ]);
+  assert.equal(diagnostics.at(0).phase, 'refresh');
+  assert.equal(diagnostics.at(-1).state, 'completed');
+});
+
+test('Windows refresh diagnostics preserve the first exact failing port and stop before later effects', async () => {
+  const values = fixture();
+  const diagnostics = [];
+  values.mechanics.materializeGeneration = async () => { throw new Error('exact materialization failure'); };
+  await assert.rejects(() => reconcileWindowsLifecycleAuthorityRefresh({
+    candidateGeneration: A,
+    mechanics: values.mechanics,
+    onDiagnostic: (event) => diagnostics.push(event),
+  }), /exact materialization failure/u);
+  assert.ok(diagnostics.some((event) => event.phase === 'refresh-stage' && event.state === 'failed' && event.detail.error === 'exact materialization failure'));
+  assert.ok(diagnostics.some((event) => event.phase === 'refresh' && event.state === 'failed' && event.detail.error === 'exact materialization failure'));
+  assert.equal(diagnostics.some((event) => ['refresh-promote', 'refresh-start', 'refresh-health'].includes(event.phase)), false);
 });
 
 test('Windows refresh adapter preserves exact previous generation and restores it after failed candidate health', async () => {

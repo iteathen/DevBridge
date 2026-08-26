@@ -137,8 +137,10 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
   const migration = await migrationSafety({ stateDirectory, platform });
   if (migration?.ready !== true) return migrationBlocker(migration ?? { blocker: 'Legacy Windows lifecycle authority cannot be migrated safely by the generic protected-state copy path.' });
 
+  let diagnosticOffset = 0;
   if (mode === 'elevated-child') {
     const legacy = await legacyRuntimeMigration({ stateDirectory, platform, invoke, environment, onDiagnostic });
+    diagnosticOffset = Array.isArray(legacy?.diagnostics) ? legacy.diagnostics.length : 0;
     if (legacy?.ready !== true) return legacyRuntimeBlocker(legacy ?? {});
   }
 
@@ -166,7 +168,11 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
       verifiedPlan = plan;
       return inspection;
     };
-    return serviceReconciler({ stateDirectory, platform, invoke, environment }, {
+    const refreshDiagnostic = onDiagnostic == null ? null : (event) => onDiagnostic(Object.freeze({
+      ...event,
+      sequence: diagnosticOffset + event.sequence,
+    }));
+    return serviceReconciler({ stateDirectory, platform, invoke, environment, onDiagnostic: refreshDiagnostic }, {
       inspectHost: composedHostInspection,
       probe: protectedProbe,
     });
