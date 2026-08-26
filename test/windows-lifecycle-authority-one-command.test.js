@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lstat, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { invokeCommand } from '../src/runtime/command-invocation.js';
 import { requestWindowsLifecycleAuthorityElevation } from '../src/setup/windows-lifecycle-authority-elevation.js';
 import {
   classifyWindowsLifecycleAuthorityLegacyService,
@@ -43,6 +44,16 @@ function unavailable() {
 
 function host(elevated) {
   return Object.freeze({ elevated, operatorSid: 'S-1-5-21-1-2-3-1001', programData: 'C:\\ProgramData' });
+}
+
+async function elevationChannel(root) {
+  const entries = await readdir(path.join(root, 'state'));
+  assert.equal(entries.length, 1);
+  const directory = path.join(root, 'state', entries[0]);
+  return Object.freeze({
+    inputFile: path.join(directory, 'input.json'),
+    resultFile: path.join(directory, 'result.json'),
+  });
 }
 
 function readinessDeps({ elevated = false, serviceReconciler, legacyRuntimeMigration = async () => ({ ready: true }) } = {}) {
@@ -327,10 +338,11 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
         assert.equal(request.executable, 'powershell.exe');
         assert.equal(request.timeoutMs, 5 * 60_000);
         const outer = JSON.parse(request.input);
-        assert.equal(typeof outer.brokerTemplate, 'string');
-        assert.ok(outer.brokerTemplate.length > 0);
-        const input = JSON.parse(await readFile(outer.inputFile, 'utf8'));
-        const resultFile = path.join(path.dirname(outer.inputFile), 'result.json');
+        assert.equal(typeof outer.brokerCommand, 'string');
+        assert.ok(outer.brokerCommand.length > 0);
+        const channel = await elevationChannel(root);
+        const input = JSON.parse(await readFile(channel.inputFile, 'utf8'));
+        const { resultFile } = channel;
         assert.equal(input.home, path.resolve(root));
         assert.equal(input.launcher, path.resolve(launcher));
         assert.equal(input.node, path.resolve(node));
@@ -365,6 +377,53 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
   }
 });
 
+test('rendered elevation broker reads its bounded input and returns exact child evidence', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
+  try {
+    const bin = path.join(root, 'bin');
+    await mkdir(bin);
+    await mkdir(path.join(root, 'state'));
+    const launcher = path.join(bin, 'devbridge-entry.mjs');
+    const runnerHead = 'd'.repeat(40);
+    await writeFile(launcher, `process.stdout.write(JSON.stringify({
+      protocol: 'devbridge/windows-lifecycle-authority-elevated-child-v1',
+      ready: true,
+      changed: false,
+      service: 'ready',
+      protectedState: 'ready',
+      blocker: null,
+    }));\n`);
+    const result = await requestWindowsLifecycleAuthorityElevation({
+      home: root,
+      launcher,
+      nodeExecutable: process.execPath,
+      platform: 'win32',
+      invoke: async (request) => {
+        const outer = JSON.parse(request.input);
+        const broker = await invokeCommand({
+          executable: 'powershell.exe',
+          arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', outer.brokerCommand],
+          timeoutMs: 30_000,
+          maxOutputBytes: 64 * 1024,
+          environment: process.env,
+        });
+        return {
+          ...broker,
+          exitCode: 0,
+          stdout: JSON.stringify({ started: true, exitCode: broker.exitCode }),
+        };
+      },
+    }, {
+      resolveRunnerHead: async () => runnerHead,
+    });
+    assert.equal(result.completed, true, JSON.stringify(result));
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(await readdir(path.join(root, 'state')), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('elevation adapter returns the bounded child blocker and cleans its result channel', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
   try {
@@ -383,10 +442,11 @@ test('elevation adapter returns the bounded child blocker and cleans its result 
       platform: 'win32',
       invoke: async (request) => {
         const outer = JSON.parse(request.input);
-        assert.equal(typeof outer.brokerTemplate, 'string');
-        assert.ok(outer.brokerTemplate.length > 0);
-        const input = JSON.parse(await readFile(outer.inputFile, 'utf8'));
-        const resultFile = path.join(path.dirname(outer.inputFile), 'result.json');
+        assert.equal(typeof outer.brokerCommand, 'string');
+        assert.ok(outer.brokerCommand.length > 0);
+        const channel = await elevationChannel(root);
+        const input = JSON.parse(await readFile(channel.inputFile, 'utf8'));
+        const { resultFile } = channel;
         resultDirectory = path.dirname(resultFile);
         assert.equal(input.runnerHead, 'b'.repeat(40));
         await writeFile(resultFile, `${JSON.stringify({
@@ -437,10 +497,11 @@ test('elevation adapter returns a bounded broker error when the lifecycle child 
       platform: 'win32',
       invoke: async (request) => {
         const outer = JSON.parse(request.input);
-        assert.equal(typeof outer.brokerTemplate, 'string');
-        assert.ok(outer.brokerTemplate.length > 0);
-        const input = JSON.parse(await readFile(outer.inputFile, 'utf8'));
-        const resultFile = path.join(path.dirname(outer.inputFile), 'result.json');
+        assert.equal(typeof outer.brokerCommand, 'string');
+        assert.ok(outer.brokerCommand.length > 0);
+        const channel = await elevationChannel(root);
+        const input = JSON.parse(await readFile(channel.inputFile, 'utf8'));
+        const { resultFile } = channel;
         assert.equal(input.runnerHead, runnerHead);
         await writeFile(resultFile, `${JSON.stringify({
           protocol: 'devbridge/windows-lifecycle-authority-elevation-broker-v1',

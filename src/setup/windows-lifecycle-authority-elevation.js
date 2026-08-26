@@ -21,13 +21,14 @@ const BROKER_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $limit = 32KB
 $inputFile = '__INPUT_FILE__'
+$expectedHead = '__EXPECTED_HEAD__'
 $directory = [IO.Path]::GetDirectoryName($inputFile)
 $resultFile = [IO.Path]::Combine($directory, 'result.json')
 $stdoutFile = [IO.Path]::Combine($directory, 'stdout.txt')
 $stderrFile = [IO.Path]::Combine($directory, 'stderr.txt')
 $record = [ordered]@{
   protocol = 'devbridge/windows-lifecycle-authority-elevation-broker-v1'
-  requestedHead = ''
+  requestedHead = $expectedHead
   started = $false
   exitCode = $null
   stdout = ''
@@ -50,13 +51,13 @@ try {
   $node = [string]$data.node
   $launcherPath = [string]$data.launcher
   $head = [string]$data.runnerHead
-  $home = [string]$data.home
-  $record.requestedHead = $head
+  $devBridgeHome = [string]$data.home
+  if ($head -ne $expectedHead) { throw 'broker input runner identity does not match its encoded authority' }
   if (-not [IO.Path]::IsPathRooted($node) -or -not [IO.Path]::IsPathRooted($launcherPath)) { throw 'broker executable identity is not absolute' }
-  if (-not [IO.Path]::IsPathRooted($home)) { throw 'broker DevBridge home is not absolute' }
+  if (-not [IO.Path]::IsPathRooted($devBridgeHome)) { throw 'broker DevBridge home is not absolute' }
   if ($head -notmatch '^[0-9a-f]{40}$') { throw 'broker runner identity is not exact' }
   if (-not (Test-Path -LiteralPath $node -PathType Leaf) -or -not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) { throw 'broker executable identity is unavailable' }
-  $env:DEVBRIDGE_HOME = $home
+  $env:DEVBRIDGE_HOME = $devBridgeHome
   $env:DEVBRIDGE_LIFECYCLE_AUTHORITY_ELEVATED_CHILD = '1'
   $launcher = '"' + $launcherPath.Replace('"', '') + '"'
   $child = Start-Process -FilePath $node -ArgumentList @(
@@ -94,10 +95,8 @@ const ELEVATE_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 try {
-  $template = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String([string]$data.brokerTemplate))
-  $inputLiteral = ([string]$data.inputFile).Replace("'", "''")
-  $brokerScript = $template.Replace('__INPUT_FILE__', $inputLiteral)
-  $brokerCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($brokerScript))
+  $brokerCommand = [string]$data.brokerCommand
+  if ($brokerCommand.Length -lt 2 -or $brokerCommand.Length -gt 128KB -or $brokerCommand -notmatch '^[A-Za-z0-9+/]+={0,2}$') { throw 'encoded elevation broker command is invalid' }
   $broker = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-EncodedCommand', $brokerCommand
@@ -110,6 +109,13 @@ try {
 
 function encodedScript(script) {
   return Buffer.from(script, 'utf16le').toString('base64');
+}
+
+function renderedBrokerScript(inputFile, runnerHead) {
+  const inputLiteral = inputFile.replaceAll("'", "''");
+  return BROKER_SCRIPT
+    .replace('__INPUT_FILE__', inputLiteral)
+    .replace('__EXPECTED_HEAD__', runnerHead);
 }
 
 function invocationSucceeded(result) {
@@ -311,13 +317,14 @@ export async function requestWindowsLifecycleAuthorityElevation({
 
   const childTarget = await childResultTarget(root);
   await writeFile(childTarget.input, `${JSON.stringify({ home: root, launcher: selectedLauncher, node, runnerHead })}\n`, { flag: 'wx', mode: 0o600 });
+  const brokerCommand = encodedScript(renderedBrokerScript(childTarget.input, runnerHead));
 
   let result;
   try {
     result = await invoke({
       executable: POWERSHELL,
       arguments: [...POWERSHELL_ARGS, encodedScript(ELEVATE_SCRIPT)],
-      input: JSON.stringify({ inputFile: childTarget.input, brokerTemplate: encodedScript(BROKER_SCRIPT) }),
+      input: JSON.stringify({ brokerCommand }),
       timeoutMs: 5 * 60_000,
       maxOutputBytes: 64 * 1024,
       environment,
