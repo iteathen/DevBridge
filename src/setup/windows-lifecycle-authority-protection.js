@@ -70,7 +70,7 @@ $script:current = 'admission'
 try {
   Assert-ProtectedAcl ([string]$data.protectedRoot) 'read' $true 'protected-root'; $checks += 'protected-root'
   Assert-ProtectedAcl ([string]$data.authorityDirectory) 'modify' $true 'authority-directory'; $checks += 'authority-directory'
-  Assert-ProtectedAcl ([string]$data.generationsDirectory) 'read' $true 'generations-directory'; $checks += 'generations-directory'
+  Assert-ProtectedAcl ([string]$data.generationsDirectory) 'read' $false 'generations-directory'; $checks += 'generations-directory'
   Assert-ProtectedAcl ([string]$data.generationDirectory) 'read' $false 'generation-directory'; $checks += 'generation-directory'
   Assert-ProtectedAcl ([string]$data.binDirectory) 'read' $false 'bin-directory'; $checks += 'bin-directory'
   Assert-ProtectedAcl ([string]$data.runtimeDirectory) 'read' $false 'runtime-directory'; $checks += 'runtime-directory'

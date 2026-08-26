@@ -100,6 +100,7 @@ test('structural proof is read-only and checks exact protected ACL and Hyper-V s
   for (const required of [
     'AreAccessRulesProtected',
     'GetAccessRules($true, $true',
+    "'read' $false 'generations-directory'",
     'Get-LocalGroupMember',
     'ReadAndExecute',
     'Modify',
