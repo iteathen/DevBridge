@@ -247,7 +247,20 @@ if ([uint32]$result.ReturnValue -ne 0) {
   @{ available = $false; reason = "Hyper-V thumbnail returned $([uint32]$result.ReturnValue)" } | ConvertTo-Json -Compress
   exit 0
 }
-$bytes = [byte[]]$result.ImageData
+$pixelValues = @($result.ImageData)
+if ($pixelValues.Count -eq 320 * 240) {
+  $bytes = [byte[]]::new(320 * 240 * 2)
+  for ($index = 0; $index -lt $pixelValues.Count; $index++) {
+    $pixel = [uint16]$pixelValues[$index]
+    $bytes[$index * 2] = [byte]($pixel -band 0xff)
+    $bytes[$index * 2 + 1] = [byte](($pixel -shr 8) -band 0xff)
+  }
+} elseif ($pixelValues.Count -eq 320 * 240 * 2) {
+  $bytes = [byte[]]$pixelValues
+} else {
+  @{ available = $false; reason = "Hyper-V thumbnail pixel count is invalid: $($pixelValues.Count)" } | ConvertTo-Json -Compress
+  exit 0
+}
 @{ available = $true; width = 320; height = 240; imageData = [Convert]::ToBase64String($bytes) } | ConvertTo-Json -Compress
 `;
 

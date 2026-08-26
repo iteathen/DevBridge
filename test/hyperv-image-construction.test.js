@@ -235,6 +235,9 @@ test('Hyper-V image construction captures bounded provider-owned console evidenc
     const bmp = await readFile(evidence.location);
     assert.equal(bmp.subarray(0, 2).toString('ascii'), 'BM');
     assert.equal(bmp.readInt32LE(22), -240);
+    const captureCall = host.state.calls.find((entry) => entry.script.includes('GetVirtualSystemThumbnailImage'));
+    assert.match(captureCall.script, /pixelValues\.Count -eq 320 \* 240/u);
+    assert.match(captureCall.script, /pixel count is invalid/u);
     assert.equal(host.state.machineState, 'running');
     assert.equal(host.state.mediaCount, 2);
   } finally { await rm(data.directory, { recursive: true, force: true }); }
