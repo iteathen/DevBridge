@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { invokeCommand } from '../src/runtime/command-invocation.js';
 import { requestWindowsLifecycleAuthorityElevation } from '../src/setup/windows-lifecycle-authority-elevation.js';
+import { parseSetupCommandOptions } from '../src/setup/command-options.js';
 import {
   classifyWindowsLifecycleAuthorityLegacyService,
   classifyWindowsLifecycleAuthorityRuntimeLayout,
@@ -601,4 +602,30 @@ test('elevated child entry requires the parent marker and accepts no constructio
   assert.equal(request.mode, 'elevated-child');
   assert.equal(request.requestElevation, null);
   assert.equal(Object.hasOwn(request, 'construct'), false);
+});
+
+test('lifecycle child admits only an exact entry-injected broker home', () => {
+  const authorityHome = 'C:\\Users\\Operator\\.devbridge';
+  const selected = parseSetupCommandOptions([
+    '--lifecycle-authority-child',
+    '--no-update',
+    '--home',
+    'c:\\users\\operator\\.devbridge',
+  ], { authorityHome, platform: 'win32' });
+  assert.equal(selected.home, 'c:\\users\\operator\\.devbridge');
+  assert.equal(selected.lifecycleAuthorityChild, true);
+  assert.equal(selected.entryNoUpdate, true);
+
+  assert.throws(() => parseSetupCommandOptions([
+    '--lifecycle-authority-child', '--no-update', '--home', 'C:\\Users\\Other\\.devbridge',
+  ], { authorityHome, platform: 'win32' }), /exact broker-bound setup home/u);
+  for (const capability of [
+    ['--construct'],
+    ['--track-ref', 'main'],
+    ['--repository', 'owner/repository'],
+  ]) {
+    assert.throws(() => parseSetupCommandOptions([
+      '--lifecycle-authority-child', '--no-update', ...capability,
+    ], { authorityHome, platform: 'win32' }), /accepts no setup capability arguments/u);
+  }
 });
