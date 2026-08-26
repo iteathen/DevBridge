@@ -457,6 +457,40 @@ function serviceMode(service, fixed, targetPlan) {
   return 'foreign';
 }
 
+export function classifyWindowsLifecycleAuthorityRuntimeLayout({
+  generationsExist,
+  journalPresent,
+  mode,
+  generationVerified = false,
+} = {}) {
+  if (typeof generationsExist !== 'boolean' || typeof journalPresent !== 'boolean' || typeof generationVerified !== 'boolean') {
+    throw new TypeError('Windows lifecycle authority runtime layout evidence is invalid');
+  }
+  if (!['fixed-running', 'fixed-stopped', 'generation-running', 'generation-stopped', 'missing', 'foreign'].includes(mode)) {
+    throw new TypeError('Windows lifecycle authority runtime service mode is invalid');
+  }
+  if (mode === 'missing' || mode === 'foreign') {
+    throw new Error('legacy protected runtime service evidence is missing or foreign');
+  }
+  if (journalPresent || mode === 'fixed-running' || mode === 'fixed-stopped') return 'legacy';
+  if (!generationsExist || !generationVerified) {
+    throw new Error('generation-addressed protected runtime evidence is incomplete or inconsistent');
+  }
+  return 'generation';
+}
+
+async function initializerResidueIsSafe(basePlan) {
+  const entries = await readdir(basePlan.protectedRoot);
+  if (entries.length === 0) return true;
+  if (entries.length !== 1 || entries[0] !== path.win32.basename(basePlan.runtime.generationsDirectory)) return false;
+  try {
+    await boundedRealDirectory(basePlan.runtime.generationsDirectory, 'protected generation container');
+    return (await readdir(basePlan.runtime.generationsDirectory)).length === 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function createWindowsLifecycleAuthorityLegacyRuntimeMechanics({
   stateDirectory,
   platform = process.platform,
@@ -489,17 +523,35 @@ export async function createWindowsLifecycleAuthorityLegacyRuntimeMechanics({
   let generationsExist = true;
   try { await boundedRealDirectory(basePlan.runtime.generationsDirectory, 'protected generation container'); }
   catch (error) { if (error?.code === 'ENOENT') generationsExist = false; else throw error; }
-  if (generationsExist && journal == null) return Object.freeze({ notRequired: true });
+  let ownershipRecord;
+  try {
+    ownershipRecord = await readBoundedJson(basePlan.ownershipManifest, MAX_CONTROL_BYTES, 'legacy protected runtime ownership');
+  } catch (error) {
+    if (error?.code === 'ENOENT' && journal == null && await initializerResidueIsSafe(basePlan)) {
+      return Object.freeze({ notRequired: true });
+    }
+    throw error;
+  }
 
-  const ownership = normalizeOwnership(await readBoundedJson(basePlan.ownershipManifest, MAX_CONTROL_BYTES, 'legacy protected runtime ownership'), basePlan, host.operatorSid);
+  const ownership = normalizeOwnership(ownershipRecord, basePlan, host.operatorSid);
   const fixed = fixedRuntimePlan(basePlan, ownership.runtime);
-  const exact = await exactLegacyEvidence(fixed, ownership, measureCandidate);
   const targetPlan = bindWindowsLifecycleAuthorityRuntime(basePlan, ownership.runtime);
-  if (targetPlan.runtime.generation !== exact.generation) throw new Error('legacy protected runtime generation derivation is inconsistent');
-  if (journal != null && journal.generation !== exact.generation) throw new Error('legacy protected runtime journal generation is stale');
   const service = await inspectServicePort(targetPlan, invoke, environment);
   const mode = serviceMode(service, fixed, targetPlan);
-  if (mode === 'missing' || mode === 'foreign') throw new Error('legacy protected runtime service evidence is missing or foreign');
+  const generationVerified = (mode === 'generation-running' || mode === 'generation-stopped')
+    && generationsExist
+    && await verifyGenerationDirectory(targetPlan, ownership, measureCandidate);
+  const layout = classifyWindowsLifecycleAuthorityRuntimeLayout({
+    generationsExist,
+    journalPresent: journal != null,
+    mode,
+    generationVerified,
+  });
+  if (layout === 'generation') return Object.freeze({ notRequired: true });
+
+  const exact = await exactLegacyEvidence(fixed, ownership, measureCandidate);
+  if (targetPlan.runtime.generation !== exact.generation) throw new Error('legacy protected runtime generation derivation is inconsistent');
+  if (journal != null && journal.generation !== exact.generation) throw new Error('legacy protected runtime journal generation is stale');
   if (host.elevated !== true) throw new Error('legacy protected runtime migration requires the bounded elevated child');
 
   const initialJournal = journal ?? await saveJournal(basePlan, Object.freeze({

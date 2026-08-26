@@ -4,7 +4,10 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { requestWindowsLifecycleAuthorityElevation } from '../src/setup/windows-lifecycle-authority-elevation.js';
-import { reconcileWindowsLifecycleAuthorityLegacyRuntime } from '../src/setup/windows-lifecycle-authority-legacy-runtime-migration.js';
+import {
+  classifyWindowsLifecycleAuthorityRuntimeLayout,
+  reconcileWindowsLifecycleAuthorityLegacyRuntime,
+} from '../src/setup/windows-lifecycle-authority-legacy-runtime-migration.js';
 import { reconcileWindowsLifecycleAuthorityReadiness } from '../src/setup/windows-lifecycle-authority-readiness.js';
 import { runWindowsLifecycleAuthoritySetupChild } from '../src/app/windows-lifecycle-authority-setup-child.js';
 
@@ -171,6 +174,30 @@ test('non-qualifying legacy runtime stops the elevated child before service muta
   assert.equal(result.ready, false);
   assert.equal(result.blocker, 'legacy mismatch');
   assert.equal(serviceCalled, false);
+});
+
+test('empty generation container does not suppress exact fixed-runtime migration', () => {
+  assert.equal(classifyWindowsLifecycleAuthorityRuntimeLayout({
+    generationsExist: true,
+    journalPresent: false,
+    mode: 'fixed-running',
+    generationVerified: false,
+  }), 'legacy');
+});
+
+test('only an exact verified generation-addressed service suppresses legacy migration', () => {
+  assert.equal(classifyWindowsLifecycleAuthorityRuntimeLayout({
+    generationsExist: true,
+    journalPresent: false,
+    mode: 'generation-running',
+    generationVerified: true,
+  }), 'generation');
+  assert.throws(() => classifyWindowsLifecycleAuthorityRuntimeLayout({
+    generationsExist: true,
+    journalPresent: false,
+    mode: 'generation-running',
+    generationVerified: false,
+  }), /generation-addressed protected runtime evidence is incomplete/u);
 });
 
 test('legacy migration observes each durable frontier before repeating an effect', async () => {
