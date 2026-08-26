@@ -603,12 +603,19 @@ test('elevation adapter returns the bounded child blocker and cleans its result 
         const { resultFile } = channel;
         resultDirectory = path.dirname(resultFile);
         assert.equal(input.runnerHead, 'b'.repeat(40));
+        const noisyDiagnostics = Array.from({ length: 80 }, (_, index) => JSON.stringify({
+          protocol: 'devbridge/windows-lifecycle-authority-migration-diagnostic-v1',
+          sequence: index + 10,
+          phase: 'refresh-journal-save',
+          state: 'completed',
+          detail: null,
+        })).join('\n');
         await writeFile(resultFile, `${JSON.stringify({
           protocol: 'devbridge/windows-lifecycle-authority-elevation-broker-v1',
           requestedHead: 'b'.repeat(40),
           started: true,
           exitCode: 3,
-          stdout: `${JSON.stringify({
+          stdout: `${noisyDiagnostics}\n${JSON.stringify({
             protocol: 'devbridge/windows-lifecycle-authority-migration-diagnostic-v1',
             sequence: 1,
             phase: 'start',

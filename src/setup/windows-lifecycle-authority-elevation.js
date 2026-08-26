@@ -200,7 +200,7 @@ async function readBrokerResult(target) {
 function childBlocker(broker) {
   const parsed = parseChildOutput(broker?.stdout);
   if (parsed.result && typeof parsed.result.blocker === 'string') {
-    const checkpoints = parsed.diagnostics.map((event) => {
+    const rendered = parsed.diagnostics.map((event) => {
       let detail = '';
       if (event?.detail?.error) detail = `:${String(event.detail.error).replace(/[\r\n;]+/gu, ' ').slice(0, 512)}`;
       else if (Array.isArray(event?.detail?.checks)) {
@@ -214,8 +214,15 @@ function childBlocker(broker) {
         }).join(',')}`;
       }
       return `${event.sequence}:${event.phase}:${event.state}${detail}`;
-    }).join(';');
-    return boundedBrokerText(checkpoints ? `${parsed.result.blocker} Checkpoints: ${checkpoints}` : parsed.result.blocker);
+    });
+    const failures = rendered.filter((_, index) => parsed.diagnostics[index]?.state === 'failed').join(';');
+    const evidence = rendered.filter((_, index) => Array.isArray(parsed.diagnostics[index]?.detail?.checks)).join(';');
+    const tail = rendered.slice(-12).join(';');
+    const checkpoints = rendered.join(';');
+    const failureIndex = failures ? ` Failures: ${failures}.` : '';
+    const evidenceIndex = evidence ? ` Evidence: ${evidence}.` : '';
+    const tailIndex = tail ? ` Tail: ${tail}.` : '';
+    return boundedBrokerText(checkpoints ? `${parsed.result.blocker}${failureIndex}${evidenceIndex}${tailIndex} Checkpoints: ${checkpoints}` : parsed.result.blocker);
   }
   return broker?.error || broker?.stderr || null;
 }
