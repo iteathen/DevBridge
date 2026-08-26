@@ -613,24 +613,24 @@ export async function reconcileWindowsLifecycleAuthorityLegacyRuntime(options = 
   try {
     let observation = await mechanics.observe();
     if (!observation.staged) {
-      changed ||= await checkpointEffect(mechanics, 'observed', 'stage', mechanics.stage);
+      changed = (await checkpointEffect(mechanics, 'observed', 'stage', mechanics.stage)) || changed;
       observation = await mechanics.observe();
     }
     if (!observation.staged) throw new Error('legacy generation did not become exact after staging');
     await mechanics.checkpoint({ phase: 'staged' });
 
     if (observation.mode === 'fixed-running') {
-      changed ||= await checkpointEffect(mechanics, 'staged', 'quiesce', mechanics.quiesce);
+      changed = (await checkpointEffect(mechanics, 'staged', 'quiesce', mechanics.quiesce)) || changed;
       observation = await mechanics.observe();
     }
     if (observation.mode === 'fixed-stopped') {
       await mechanics.checkpoint({ phase: 'quiesced' });
-      changed ||= await checkpointEffect(mechanics, 'quiesced', 'promote', mechanics.promote);
+      changed = (await checkpointEffect(mechanics, 'quiesced', 'promote', mechanics.promote)) || changed;
       observation = await mechanics.observe();
     }
     if (observation.mode === 'generation-stopped') {
       await mechanics.checkpoint({ phase: 'promoted' });
-      changed ||= await checkpointEffect(mechanics, 'promoted', 'start', mechanics.start);
+      changed = (await checkpointEffect(mechanics, 'promoted', 'start', mechanics.start)) || changed;
       observation = await mechanics.observe();
     }
     if (observation.mode !== 'generation-running') throw new Error('legacy migration did not reach the exact generation service');
