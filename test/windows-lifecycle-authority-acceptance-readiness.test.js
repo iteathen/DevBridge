@@ -110,6 +110,25 @@ test('ordinary acceptance failure closes the construction gate without requestin
   assert.equal(elevations, 0);
 });
 
+test('ordinary acceptance failure reports only bounded cleanup stages', async () => {
+  const error = Object.assign(new Error('raw protected path'), {
+    acceptanceStages: ['generation-inspect', 'vhdx-remove'],
+  });
+  const result = await reconcileWindowsLifecycleAuthorityReadiness({
+    stateDirectory: STATE,
+    platform: 'win32',
+  }, dependencies({
+    serviceReconciler: async (_options, deps) => {
+      await deps.inspectHost({});
+      await deps.probe(PLAN);
+      return serviceResult({ ready: true });
+    },
+    verifyAcceptance: async () => { throw error; },
+  }));
+  assert.match(result.blocker, /Failed stages: generation-inspect,vhdx-remove/u);
+  assert.doesNotMatch(result.blocker, /raw protected path/u);
+});
+
 test('stale ordinary authority accepts only after the one elevated child returns and parent re-proves service', async () => {
   let services = 0;
   let elevations = 0;

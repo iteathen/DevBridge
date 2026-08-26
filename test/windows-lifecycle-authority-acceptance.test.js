@@ -159,6 +159,31 @@ test('acceptance cleanup removes only the dedicated fixture and exact lifecycle 
   await assert.rejects(access(path.join(root, 'environment-construction', 'state.json')));
 }));
 
+test('acceptance cleanup attempts independent stages and returns only bounded failure codes', async () => withTempDirectory(async (authorityDirectory) => {
+  const fixture = new FakeFixture();
+  fixture.clear = async () => {
+    throw Object.assign(new Error('raw fixture detail'), {
+      acceptanceStages: ['generation-inspect', 'vhdx-remove', 'probe-inspect', 'probe-remove'],
+    });
+  };
+  const removed = [];
+  const selected = request('cleanup');
+  const response = await handleWindowsLifecycleAuthorityAcceptanceRequest({ request: selected, authorityDirectory }, {
+    operatorFactory: operatorFactoryFor(fixture),
+    removeState: async (target) => {
+      removed.push(target);
+      throw new Error('raw state detail');
+    },
+  });
+  assert.equal(response.ok, false);
+  assert.deepEqual(response.error.stages, [
+    'generation-inspect', 'vhdx-remove', 'probe-inspect', 'probe-remove',
+    'lifecycle-state-remove', 'construction-state-remove',
+  ]);
+  assert.equal(removed.length, 2);
+  assert.doesNotMatch(JSON.stringify(response), /raw fixture detail|raw state detail/u);
+}));
+
 test('acceptance VHDX adapter observes before replay and retries bounded owned cleanup', async () => withTempDirectory(async (root) => {
   let createCalls = 0;
   let failFirstCreate = true;
@@ -291,6 +316,26 @@ test('acceptance client wire contract has only operation identity and no caller-
   assert.equal(value.ready, true);
   assert.deepEqual(Object.keys(captured).sort(), ['operation', 'protocol', 'requestId']);
   assert.equal(captured.operation, 'exercise');
+});
+
+test('acceptance client preserves only fixed server failure stages', async () => {
+  const client = createWindowsLifecycleAuthorityAcceptanceClient({ endpoint: 'pipe' }, {
+    exchangeFactory: () => async (requestValue) => ({
+      protocol: WINDOWS_LIFECYCLE_AUTHORITY_ACCEPTANCE_RESULT_PROTOCOL,
+      requestId: requestValue.requestId,
+      ok: false,
+      error: {
+        code: 'ACCEPTANCE_FAILED',
+        message: 'bounded',
+        stages: ['vhdx-remove', 'construction-state-remove'],
+      },
+    }),
+  });
+  await assert.rejects(client.cleanup(), (error) => {
+    assert.deepEqual(error.acceptanceStages, ['vhdx-remove', 'construction-state-remove']);
+    assert.doesNotMatch(error.message, /path|bounded/u);
+    return true;
+  });
 });
 
 test('acceptance provider is VHDX-only and contains no VM or production construction primitive', async () => {

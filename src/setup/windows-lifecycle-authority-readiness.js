@@ -188,10 +188,14 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
       });
       if (acceptance?.ready !== true) throw new Error('acceptance not ready');
       return value;
-    } catch {
+    } catch (error) {
+      const stages = Array.isArray(error?.acceptanceStages)
+        ? error.acceptanceStages.filter((stage) => typeof stage === 'string').slice(0, 8)
+        : [];
+      const stageEvidence = stages.length > 0 ? ` Failed stages: ${stages.join(',')}.` : '';
       return withBlocker(
         value,
-        'Windows protected lifecycle authority failed its ordinary operational acceptance proof. The construction gate remains closed; re-run devbridge setup after correcting the protected authority boundary.',
+        `Windows protected lifecycle authority failed its ordinary operational acceptance proof.${stageEvidence} The construction gate remains closed; re-run devbridge setup after correcting the protected authority boundary.`,
       );
     }
   };

@@ -29,6 +29,11 @@ const TRANSIENT_REMOVAL_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
 const REMOVAL_RETRY_DELAYS_MS = Object.freeze([25, 50, 100, 200, 400]);
 const CLEANUP_RETRY_DELAYS_MS = Object.freeze([100, 250, 500, 1_000]);
 const OPERATIONS = new Set(['exercise', 'cleanup']);
+const CLEANUP_STAGES = new Set([
+  'request', 'composition', 'exercise', 'fixture-state-load', 'generation-inspect',
+  'generation-verify', 'vhdx-remove', 'probe-inspect', 'probe-verify', 'probe-remove',
+  'fixture-manifest-remove', 'lifecycle-state-remove', 'construction-state-remove',
+]);
 
 const ENSURE_VHDX_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
@@ -115,6 +120,20 @@ function sameFileIdentity(left, right) {
 
 function emptyFixtureState() {
   return { protocol: FIXTURE_PROTOCOL, currentGeneration: null, generations: {} };
+}
+
+function cleanupFailure(stages) {
+  const selected = [...new Set(stages)].filter((stage) => CLEANUP_STAGES.has(stage));
+  const error = new Error('Windows lifecycle authority acceptance cleanup failed');
+  Object.defineProperty(error, 'acceptanceStages', { value: Object.freeze(selected.length > 0 ? selected : ['composition']) });
+  return error;
+}
+
+function failureStages(error, fallback) {
+  const stages = Array.isArray(error?.acceptanceStages)
+    ? error.acceptanceStages.filter((stage) => CLEANUP_STAGES.has(stage))
+    : [];
+  return stages.length > 0 ? stages : [fallback];
 }
 
 function validateGenerationRecord(generation, raw) {
@@ -312,23 +331,38 @@ export class WindowsLifecycleAuthorityAcceptanceFixture {
   }
 
   async clear() {
-    const state = await this.#load();
+    let state;
+    try { state = await this.#load(); }
+    catch { throw cleanupFailure(['fixture-state-load']); }
+    const failures = [];
     for (const [generation, raw] of Object.entries(state.generations)) {
       const record = validateGenerationRecord(generation, raw);
-      const observed = await this.#inspectDisk(generation, record);
+      let observed;
+      try { observed = await this.#inspectDisk(generation, record); }
+      catch { failures.push('generation-inspect'); continue; }
       const probe = `${this.diskPath(generation)}.ordinary-replace-probe`;
-      if (observed.exists && !observed.ready) throw new Error('Windows lifecycle authority acceptance cleanup refused mismatched VHDX');
-      if (observed.exists) await this.#removeOwnedFile(observed.diskPath);
+      if (observed.exists && !observed.ready) failures.push('generation-verify');
+      else if (observed.exists) {
+        try { await this.#removeOwnedFile(observed.diskPath); }
+        catch { failures.push('vhdx-remove'); }
+      }
       let probeInfo = null;
-      try { probeInfo = await lstat(probe, { bigint: true }); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+      try { probeInfo = await lstat(probe, { bigint: true }); }
+      catch (error) { if (error?.code !== 'ENOENT') failures.push('probe-inspect'); }
       if (probeInfo) {
         if (!probeInfo.isFile() || probeInfo.isSymbolicLink() || !record.fileIdentity || !sameFileIdentity(record.fileIdentity, fileIdentity(probeInfo))) {
-          throw new Error('Windows lifecycle authority acceptance cleanup refused mismatched probe file');
+          failures.push('probe-verify');
+        } else {
+          try { await this.#removeOwnedFile(probe); }
+          catch { failures.push('probe-remove'); }
         }
-        await this.#removeOwnedFile(probe);
       }
     }
-    await rm(this.#manifest, { force: true });
+    if (failures.length === 0) {
+      try { await rm(this.#manifest, { force: true }); }
+      catch { failures.push('fixture-manifest-remove'); }
+    }
+    if (failures.length > 0) throw cleanupFailure(failures);
     return Object.freeze({ cleaned: true });
   }
 }
@@ -486,8 +520,12 @@ function result(requestId, value) {
   return Object.freeze({ protocol: RESULT_PROTOCOL, requestId, ok: true, value: Object.freeze(value) });
 }
 
-function failure(requestId) {
-  return Object.freeze({ protocol: RESULT_PROTOCOL, requestId, ok: false, error: Object.freeze({ code: 'ACCEPTANCE_FAILED', message: 'Windows lifecycle authority acceptance operation failed' }) });
+function failure(requestId, stages) {
+  return Object.freeze({ protocol: RESULT_PROTOCOL, requestId, ok: false, error: Object.freeze({
+    code: 'ACCEPTANCE_FAILED',
+    message: 'Windows lifecycle authority acceptance operation failed',
+    stages: Object.freeze([...new Set(stages)]),
+  }) });
 }
 
 export async function handleWindowsLifecycleAuthorityAcceptanceRequest({
@@ -497,31 +535,47 @@ export async function handleWindowsLifecycleAuthorityAcceptanceRequest({
   environment = process.env,
 } = {}, {
   operatorFactory = createWindowsLifecycleAuthorityAcceptanceOperator,
+  removeState = (target) => rm(target, { force: true }),
 } = {}) {
   let selected;
   try { selected = normalizeRequest(request); }
   catch {
     const requestId = typeof request?.requestId === 'string' && /^[0-9a-f-]{36}$/iu.test(request.requestId) ? request.requestId : randomUUID();
-    return failure(requestId);
+    return failure(requestId, ['request']);
   }
   const root = path.join(requireDirectory(authorityDirectory, 'Windows lifecycle authority acceptance authorityDirectory'), 'acceptance');
-  try {
-    const composition = await operatorFactory({ root, invoke, environment });
-    if (selected.operation === 'exercise') return result(selected.requestId, await exerciseAcceptance(composition));
-    await composition.fixture.clear();
-    await rm(path.join(root, 'environment-lifecycle', 'state.json'), { force: true });
-    await rm(path.join(root, 'environment-construction', 'state.json'), { force: true });
-    return result(selected.requestId, { cleaned: true });
-  } catch {
-    return failure(selected.requestId);
+  let composition;
+  try { composition = await operatorFactory({ root, invoke, environment }); }
+  catch { return failure(selected.requestId, ['composition']); }
+  if (selected.operation === 'exercise') {
+    try { return result(selected.requestId, await exerciseAcceptance(composition)); }
+    catch { return failure(selected.requestId, ['exercise']); }
   }
+  const failures = [];
+  try { await composition.fixture.clear(); }
+  catch (error) { failures.push(...failureStages(error, 'composition')); }
+  try { await removeState(path.join(root, 'environment-lifecycle', 'state.json')); }
+  catch { failures.push('lifecycle-state-remove'); }
+  try { await removeState(path.join(root, 'environment-construction', 'state.json')); }
+  catch { failures.push('construction-state-remove'); }
+  if (failures.length > 0) return failure(selected.requestId, failures);
+  return result(selected.requestId, { cleaned: true });
 }
 
 function normalizeResponse(raw, requestId) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.protocol !== RESULT_PROTOCOL || raw.requestId !== requestId || typeof raw.ok !== 'boolean') {
     throw new Error('Windows lifecycle authority acceptance returned invalid bounded status');
   }
-  if (raw.ok !== true) throw new Error('Windows lifecycle authority acceptance operation failed');
+  if (raw.ok !== true) {
+    const stages = raw.error?.stages;
+    if (raw.error?.code !== 'ACCEPTANCE_FAILED' || !Array.isArray(stages) || stages.length < 1 || stages.length > CLEANUP_STAGES.size
+        || stages.some((stage) => !CLEANUP_STAGES.has(stage)) || new Set(stages).size !== stages.length) {
+      throw new Error('Windows lifecycle authority acceptance returned invalid bounded status');
+    }
+    const error = new Error(`Windows lifecycle authority acceptance operation failed at stages: ${stages.join(',')}`);
+    Object.defineProperty(error, 'acceptanceStages', { value: Object.freeze([...stages]) });
+    throw error;
+  }
   if (!raw.value || typeof raw.value !== 'object' || Array.isArray(raw.value)) throw new Error('Windows lifecycle authority acceptance returned invalid bounded status');
   return raw.value;
 }
