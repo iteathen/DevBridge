@@ -171,11 +171,14 @@ function verificationEvidence(value, generation) {
 }
 
 function healthEvidence(value, generation) {
-  exactKeys(value, new Set(['generation', 'ready']), 'Windows lifecycle authority generation health');
+  exactKeys(value, new Set(['generation', 'ready', 'reason']), 'Windows lifecycle authority generation health');
   if (exactGeneration(value.generation, 'Windows lifecycle authority health generation') !== generation || typeof value.ready !== 'boolean') {
     throw new TypeError('Windows lifecycle authority generation health is invalid');
   }
-  return Object.freeze({ generation, ready: value.ready });
+  if (value.reason != null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 1024)) {
+    throw new TypeError('Windows lifecycle authority generation health reason is invalid');
+  }
+  return Object.freeze({ generation, ready: value.ready, reason: value.reason ?? null });
 }
 
 function createPorts(local, reporter) {
@@ -225,7 +228,15 @@ function createPorts(local, reporter) {
     },
     async health(value) {
       const request = oneGenerationRequest(value, 'Windows lifecycle authority health request');
-      return reported(reporter, 'refresh-health', generationDetail(request), async () => healthEvidence(await local.probeServiceGeneration(request), request.generation), (result) => result);
+      reporter.emit('refresh-health', 'attempted', generationDetail(request));
+      try {
+        const evidence = healthEvidence(await local.probeServiceGeneration(request), request.generation);
+        reporter.emit('refresh-health', 'completed', evidence);
+        return Object.freeze({ generation: evidence.generation, ready: evidence.ready });
+      } catch (error) {
+        reporter.emit('refresh-health', 'failed', Object.freeze({ error: boundedError(error) }));
+        throw error;
+      }
     },
     async restore(value) {
       const request = restorationRequest(value);
@@ -242,15 +253,31 @@ export function createWindowsLifecycleAuthorityRefreshPorts({ mechanics, onDiagn
 export async function reconcileWindowsLifecycleAuthorityRefresh({ candidateGeneration, mechanics, onDiagnostic = null } = {}) {
   const generation = exactGeneration(candidateGeneration, 'Windows lifecycle authority refresh candidate generation');
   const reporter = diagnosticReporter(onDiagnostic);
+  const local = requireMechanics(mechanics);
   reporter.emit('refresh', 'started', Object.freeze({ generation }));
   try {
     const result = await reconcileProtectedAuthority({
       candidate: Object.freeze({ generation }),
-      ports: createPorts(requireMechanics(mechanics), reporter),
+      ports: createPorts(local, reporter),
     });
     reporter.emit('refresh', 'completed', Object.freeze({ ready: result.ready, changed: result.changed, recovered: result.recovered, blocker: result.blocker }));
     return result;
   } catch (error) {
+    reporter.emit('refresh-diagnose', 'attempted');
+    try {
+      const inspection = normalizedInspection(await local.readInstallation());
+      reporter.emit('refresh-diagnose-observe', 'completed', inspection);
+      if (inspection.serviceGeneration != null) {
+        const evidence = healthEvidence(
+          await local.probeServiceGeneration(Object.freeze({ generation: inspection.serviceGeneration })),
+          inspection.serviceGeneration,
+        );
+        reporter.emit('refresh-diagnose-health', 'completed', evidence);
+      }
+      reporter.emit('refresh-diagnose', 'completed');
+    } catch (diagnosticError) {
+      reporter.emit('refresh-diagnose', 'failed', Object.freeze({ error: boundedError(diagnosticError) }));
+    }
     reporter.emit('refresh', 'failed', Object.freeze({ error: boundedError(error) }));
     throw error;
   }

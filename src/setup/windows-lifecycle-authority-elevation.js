@@ -203,6 +203,7 @@ function childBlocker(broker) {
     const rendered = parsed.diagnostics.map((event) => {
       let detail = '';
       if (event?.detail?.error) detail = `:${String(event.detail.error).replace(/[\r\n;]+/gu, ' ').slice(0, 512)}`;
+      else if (event?.detail?.ready === false && event?.detail?.reason) detail = `:ready=false reason=${String(event.detail.reason).replace(/[\r\n;]+/gu, ' ').slice(0, 512)}`;
       else if (Array.isArray(event?.detail?.checks)) {
         detail = `:${event.detail.checks.map((check) => {
           if (check?.ok !== true) return `${check?.name ?? 'unknown'}=error(${String(check?.error ?? 'unknown').slice(0, 128)})`;

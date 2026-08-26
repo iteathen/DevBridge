@@ -96,7 +96,8 @@ function fixture({
       calls.probe += 1;
       events.push(`probe:${generation}`);
       assert.equal(state.serviceGeneration, generation);
-      return { generation, ready: health[generation] ?? true };
+      const ready = health[generation] ?? true;
+      return { generation, ready, reason: ready ? null : `generation ${generation} probe failed` };
     },
     async restoreServiceGeneration({ generation, failedGeneration }) {
       calls.restore += 1;
@@ -157,6 +158,21 @@ test('Windows refresh diagnostics preserve the first exact failing port and stop
   assert.ok(diagnostics.some((event) => event.phase === 'refresh-stage' && event.state === 'failed' && event.detail.error === 'exact materialization failure'));
   assert.ok(diagnostics.some((event) => event.phase === 'refresh' && event.state === 'failed' && event.detail.error === 'exact materialization failure'));
   assert.equal(diagnostics.some((event) => ['refresh-promote', 'refresh-start', 'refresh-health'].includes(event.phase)), false);
+});
+
+test('Windows refresh failure fanout preserves recovery health reason without another effect', async () => {
+  const values = fixture({ serviceGeneration: A, serviceRunning: true, health: { [A]: false, [B]: false } });
+  const diagnostics = [];
+  await assert.rejects(() => reconcileWindowsLifecycleAuthorityRefresh({
+    candidateGeneration: B,
+    mechanics: values.mechanics,
+    onDiagnostic: (event) => diagnostics.push(event),
+  }), /previous generation failed recovery health/u);
+  const health = diagnostics.find((event) => event.phase === 'refresh-diagnose-health' && event.state === 'completed');
+  assert.equal(health.detail.ready, false);
+  assert.match(health.detail.reason, new RegExp(`generation ${A} probe failed`, 'u'));
+  assert.equal(diagnostics.at(-1).phase, 'refresh');
+  assert.equal(diagnostics.at(-1).state, 'failed');
 });
 
 test('Windows refresh adapter preserves exact previous generation and restores it after failed candidate health', async () => {

@@ -998,16 +998,16 @@ async function startServiceGeneration({ generation }, context) {
 async function probeServiceGeneration({ generation }, context) {
   const identity = exactGeneration(generation, 'Windows lifecycle authority health generation');
   const target = await manifestPlan(context.basePlan, identity);
-  if (!await verifyGenerationManifest(context.basePlan, target.manifest)) return Object.freeze({ generation: identity, ready: false });
+  if (!await verifyGenerationManifest(context.basePlan, target.manifest)) return Object.freeze({ generation: identity, ready: false, reason: 'generation verification failed' });
   const ownership = await loadOwnership(target.plan);
-  if (!ownership || generationFromOwnership(context.basePlan, ownership) !== identity) return Object.freeze({ generation: identity, ready: false });
+  if (!ownership || generationFromOwnership(context.basePlan, ownership) !== identity) return Object.freeze({ generation: identity, ready: false, reason: 'generation ownership is not exact' });
   const service = await inspectService(target.plan, context.invoke, context.environment);
-  if (!serviceMatches(service, target.plan) || !serviceRunning(service)) return Object.freeze({ generation: identity, ready: false });
+  if (!serviceMatches(service, target.plan) || !serviceRunning(service)) return Object.freeze({ generation: identity, ready: false, reason: 'service identity or running state is not exact' });
   try {
     await context.probe(target.plan);
-    return Object.freeze({ generation: identity, ready: true });
-  } catch {
-    return Object.freeze({ generation: identity, ready: false });
+    return Object.freeze({ generation: identity, ready: true, reason: null });
+  } catch (error) {
+    return Object.freeze({ generation: identity, ready: false, reason: boundedReason(error?.message, 'health probe failed') });
   }
 }
 
