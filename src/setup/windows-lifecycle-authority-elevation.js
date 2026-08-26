@@ -127,7 +127,7 @@ export async function requestWindowsLifecycleAuthorityElevation({
       executable: POWERSHELL,
       arguments: [...POWERSHELL_ARGS, encodedScript(ELEVATE_SCRIPT)],
       input: JSON.stringify({ home: root, launcher: selectedLauncher, node }),
-      timeoutMs: 15 * 60_000,
+      timeoutMs: 5 * 60_000,
       maxOutputBytes: 64 * 1024,
       environment,
     });

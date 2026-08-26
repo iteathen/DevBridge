@@ -294,6 +294,7 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
       invoke: async (request) => {
         invoked += 1;
         assert.equal(request.executable, 'powershell.exe');
+        assert.equal(request.timeoutMs, 5 * 60_000);
         assert.deepEqual(JSON.parse(request.input), { home: path.resolve(root), launcher: path.resolve(launcher), node: path.resolve(node) });
         return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":0}' };
       },
