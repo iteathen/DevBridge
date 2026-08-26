@@ -1,6 +1,7 @@
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import { invokeCommand } from '../runtime/command-invocation.js';
 
 const PROTOCOL = 'devbridge/windows-lifecycle-authority-elevation-v1';
@@ -9,6 +10,8 @@ const POWERSHELL_ARGS = Object.freeze([
   '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand',
 ]);
 const ALLOWED_LAUNCHERS = new Set(['devbridge-entry.mjs', 'devbridge-stage0.mjs']);
+const EXACT_HEAD = /^[0-9a-f]{40}$/u;
+const PACKAGE_ROOT = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
 
 const ELEVATE_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
@@ -17,11 +20,16 @@ $env:DEVBRIDGE_HOME = [string]$data.home
 $env:DEVBRIDGE_LIFECYCLE_AUTHORITY_ELEVATED_CHILD = '1'
 try {
   $launcher = '"' + ([string]$data.launcher).Replace('"', '') + '"'
-  $child = Start-Process -FilePath ([string]$data.node) -ArgumentList @(
+  $arguments = @(
     $launcher,
+    '--ref',
+    [string]$data.runnerHead,
     'setup',
     '--lifecycle-authority-child',
     '--no-update'
+  )
+  $child = Start-Process -FilePath ([string]$data.node) -ArgumentList @(
+    $arguments
   ) -Verb RunAs -Wait -PassThru
   @{ started = $true; exitCode = [int]$child.ExitCode } | ConvertTo-Json -Compress
 } catch {
@@ -56,6 +64,28 @@ async function boundedRealFile(file, name) {
     throw new Error(`${name} must be a real regular file`);
   }
   return resolved;
+}
+
+export async function resolveWindowsLifecycleAuthorityElevationRunnerHead({ packageRoot = PACKAGE_ROOT } = {}) {
+  const root = path.resolve(packageRoot);
+  const git = path.join(root, '.git');
+  const headFile = path.join(git, 'HEAD');
+  let rootInfo;
+  let gitInfo;
+  let headInfo;
+  try {
+    [rootInfo, gitInfo, headInfo] = await Promise.all([lstat(root), lstat(git), lstat(headFile)]);
+  } catch (error) {
+    if (error?.code === 'ENOENT') throw new Error('Windows lifecycle authority elevation requires an exact checkout identity');
+    throw error;
+  }
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink() || !gitInfo.isDirectory() || gitInfo.isSymbolicLink()
+      || !headInfo.isFile() || headInfo.isSymbolicLink() || headInfo.size < 40 || headInfo.size > 128) {
+    throw new Error('Windows lifecycle authority elevation checkout identity is not a bounded real file');
+  }
+  const head = String(await readFile(headFile, 'utf8')).trim().toLowerCase();
+  if (!EXACT_HEAD.test(head)) throw new Error('Windows lifecycle authority elevation requires one detached exact checkout head');
+  return head;
 }
 
 async function boundedManagedFile(root, file, name) {
@@ -106,9 +136,11 @@ export async function requestWindowsLifecycleAuthorityElevation({
   nodeExecutable = process.execPath,
   invoke = invokeCommand,
   environment = process.env,
+} = {}, {
+  resolveRunnerHead = resolveWindowsLifecycleAuthorityElevationRunnerHead,
 } = {}) {
   if (platform !== 'win32') return Object.freeze({ protocol: PROTOCOL, attempted: false, completed: true, exitCode: 0, blocker: null });
-  if (typeof invoke !== 'function') throw new TypeError('Windows lifecycle authority elevation invocation contract is invalid');
+  if (typeof invoke !== 'function' || typeof resolveRunnerHead !== 'function') throw new TypeError('Windows lifecycle authority elevation invocation contract is invalid');
   const root = absoluteLocalPath(home, 'DevBridge elevation home');
   const selectedLauncher = absoluteLocalPath(launcher, 'DevBridge elevation launcher');
   const node = absoluteLocalPath(nodeExecutable, 'DevBridge elevation Node executable');
@@ -121,12 +153,33 @@ export async function requestWindowsLifecycleAuthorityElevation({
     boundedRealFile(node, 'Windows lifecycle authority elevation Node executable'),
   ]);
 
+  let runnerHead;
+  try { runnerHead = String(await resolveRunnerHead()).trim().toLowerCase(); }
+  catch {
+    return Object.freeze({
+      protocol: PROTOCOL,
+      attempted: false,
+      completed: false,
+      exitCode: null,
+      blocker: 'Windows lifecycle authority elevation requires the exact current DevBridge runner identity. Re-enter setup through an exact installed selector.',
+    });
+  }
+  if (!EXACT_HEAD.test(runnerHead)) {
+    return Object.freeze({
+      protocol: PROTOCOL,
+      attempted: false,
+      completed: false,
+      exitCode: null,
+      blocker: 'Windows lifecycle authority elevation requires the exact current DevBridge runner identity. Re-enter setup through an exact installed selector.',
+    });
+  }
+
   let result;
   try {
     result = await invoke({
       executable: POWERSHELL,
       arguments: [...POWERSHELL_ARGS, encodedScript(ELEVATE_SCRIPT)],
-      input: JSON.stringify({ home: root, launcher: selectedLauncher, node }),
+      input: JSON.stringify({ home: root, launcher: selectedLauncher, node, runnerHead }),
       timeoutMs: 5 * 60_000,
       maxOutputBytes: 64 * 1024,
       environment,

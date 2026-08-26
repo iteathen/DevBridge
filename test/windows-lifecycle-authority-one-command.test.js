@@ -315,6 +315,7 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
     await writeFile(launcher, 'export {};\n');
     await writeFile(node, 'node');
     let invoked = 0;
+    const runnerHead = 'a'.repeat(40);
     const result = await requestWindowsLifecycleAuthorityElevation({
       home: root,
       launcher,
@@ -324,13 +325,43 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
         invoked += 1;
         assert.equal(request.executable, 'powershell.exe');
         assert.equal(request.timeoutMs, 5 * 60_000);
-        assert.deepEqual(JSON.parse(request.input), { home: path.resolve(root), launcher: path.resolve(launcher), node: path.resolve(node) });
+        assert.deepEqual(JSON.parse(request.input), { home: path.resolve(root), launcher: path.resolve(launcher), node: path.resolve(node), runnerHead });
         return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":0}' };
       },
+    }, {
+      resolveRunnerHead: async () => runnerHead,
     });
     assert.equal(invoked, 1);
     assert.equal(result.completed, true);
     assert.equal(result.exitCode, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('elevation adapter fails before UAC when the current runner identity is not exact', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
+  try {
+    const bin = path.join(root, 'bin');
+    await mkdir(bin);
+    const launcher = path.join(bin, 'devbridge-entry.mjs');
+    const node = path.join(root, 'node.exe');
+    await writeFile(launcher, 'export {};\n');
+    await writeFile(node, 'node');
+    let invoked = false;
+    const result = await requestWindowsLifecycleAuthorityElevation({
+      home: root,
+      launcher,
+      nodeExecutable: node,
+      platform: 'win32',
+      invoke: async () => { invoked = true; return null; },
+    }, {
+      resolveRunnerHead: async () => 'cuda-target',
+    });
+    assert.equal(invoked, false);
+    assert.equal(result.attempted, false);
+    assert.equal(result.completed, false);
+    assert.match(result.blocker, /exact current DevBridge runner identity/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
