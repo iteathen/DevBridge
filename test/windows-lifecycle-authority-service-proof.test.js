@@ -45,7 +45,8 @@ test('service proof requires exact SCM command, virtual account, and runtime des
   assert.equal(input.description, plan.service.description);
   assert.match(input.command, /devbridge-lifecycle-authority-host\.exe" "--service-name" "DevBridgeLifecycle-/u);
   assert.match(input.command, /"--operator-sid" "S-1-5-21-111111111-222222222-333333333-1001"/u);
-  assert.match(input.command, /"--mutation-pipe" "devbridge-environment-[0-9a-f]{32}-mutation-v1"$/u);
+  assert.match(input.command, /"--mutation-pipe" "devbridge-environment-[0-9a-f]{32}-mutation-v1"/u);
+  assert.match(input.command, /"--acceptance-pipe" "devbridge-environment-[0-9a-f]{32}-acceptance-v1"$/u);
   assert.match(input.description, /package=a{64} node=b{64}$/u);
 });
 
