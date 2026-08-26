@@ -17,7 +17,7 @@ namespace DevBridge.WindowsLifecycleAuthority
     internal sealed class HostOptions
     {
         private static readonly Regex ServiceNamePattern = new Regex("^DevBridgeLifecycle-[0-9a-f]{32}$", RegexOptions.CultureInvariant);
-        private static readonly Regex PipeNamePattern = new Regex("^devbridge-environment-[0-9a-f]{32}-(read|mutation)-v1$", RegexOptions.CultureInvariant);
+        private static readonly Regex PipeNamePattern = new Regex("^devbridge-environment-[0-9a-f]{32}-(read|mutation|acceptance)-v1$", RegexOptions.CultureInvariant);
 
         internal string ServiceName;
         internal string ProtectedRoot;
@@ -28,6 +28,7 @@ namespace DevBridge.WindowsLifecycleAuthority
         internal string OperatorSid;
         internal string ReadPipe;
         internal string MutationPipe;
+        internal string AcceptancePipe;
 
         private static string Required(IDictionary<string, string> values, string name)
         {
@@ -63,7 +64,7 @@ namespace DevBridge.WindowsLifecycleAuthority
             }
             string[] allowed = new string[] {
                 "--service-name", "--protected-root", "--node", "--worker", "--state-directory",
-                "--authority-directory", "--operator-sid", "--read-pipe", "--mutation-pipe"
+                "--authority-directory", "--operator-sid", "--read-pipe", "--mutation-pipe", "--acceptance-pipe"
             };
             if (values.Count != allowed.Length) throw new ArgumentException("host arguments are incomplete");
             foreach (string key in values.Keys)
@@ -81,11 +82,16 @@ namespace DevBridge.WindowsLifecycleAuthority
             options.OperatorSid = Required(values, "--operator-sid");
             options.ReadPipe = Required(values, "--read-pipe");
             options.MutationPipe = Required(values, "--mutation-pipe");
+            options.AcceptancePipe = Required(values, "--acceptance-pipe");
 
             if (!ServiceNamePattern.IsMatch(options.ServiceName)) throw new ArgumentException("service name is invalid");
             if (!PipeNamePattern.IsMatch(options.ReadPipe) || !options.ReadPipe.EndsWith("-read-v1", StringComparison.Ordinal)) throw new ArgumentException("read pipe is invalid");
             if (!PipeNamePattern.IsMatch(options.MutationPipe) || !options.MutationPipe.EndsWith("-mutation-v1", StringComparison.Ordinal)) throw new ArgumentException("mutation pipe is invalid");
-            if (String.Equals(options.ReadPipe, options.MutationPipe, StringComparison.Ordinal)) throw new ArgumentException("pipe capabilities must be distinct");
+            if (!PipeNamePattern.IsMatch(options.AcceptancePipe) || !options.AcceptancePipe.EndsWith("-acceptance-v1", StringComparison.Ordinal)) throw new ArgumentException("acceptance pipe is invalid");
+            if (String.Equals(options.ReadPipe, options.MutationPipe, StringComparison.Ordinal) ||
+                String.Equals(options.ReadPipe, options.AcceptancePipe, StringComparison.Ordinal) ||
+                String.Equals(options.MutationPipe, options.AcceptancePipe, StringComparison.Ordinal))
+                throw new ArgumentException("pipe capabilities must be distinct");
             new SecurityIdentifier(options.OperatorSid);
             if (!IsUnder(options.ProtectedRoot, options.NodeExecutable) ||
                 !IsUnder(options.ProtectedRoot, options.WorkerEntry) ||
@@ -210,6 +216,7 @@ namespace DevBridge.WindowsLifecycleAuthority
         private volatile bool stopping;
         private Thread readThread;
         private Thread mutationThread;
+        private Thread acceptanceThread;
         private Process activeWorker;
         private WorkerJob activeWorkerJob;
 
@@ -227,12 +234,16 @@ namespace DevBridge.WindowsLifecycleAuthority
             stopping = false;
             readThread = new Thread(delegate() { Serve(options.ReadPipe, "read"); });
             mutationThread = new Thread(delegate() { Serve(options.MutationPipe, "mutation"); });
+            acceptanceThread = new Thread(delegate() { Serve(options.AcceptancePipe, "acceptance"); });
             readThread.IsBackground = true;
             mutationThread.IsBackground = true;
+            acceptanceThread.IsBackground = true;
             readThread.Name = "DevBridge lifecycle read endpoint";
             mutationThread.Name = "DevBridge lifecycle mutation endpoint";
+            acceptanceThread.Name = "DevBridge lifecycle acceptance endpoint";
             readThread.Start();
             mutationThread.Start();
+            acceptanceThread.Start();
         }
 
         protected override void OnStop()
@@ -273,6 +284,7 @@ namespace DevBridge.WindowsLifecycleAuthority
             }
             if (readThread != null && readThread.IsAlive) readThread.Join(5000);
             if (mutationThread != null && mutationThread.IsAlive) mutationThread.Join(5000);
+            if (acceptanceThread != null && acceptanceThread.IsAlive) acceptanceThread.Join(5000);
         }
 
         private PipeSecurity PipePolicy(string access)
@@ -287,7 +299,7 @@ namespace DevBridge.WindowsLifecycleAuthority
             policy.AddAccessRule(new PipeAccessRule(service, PipeAccessRights.FullControl, AccessControlType.Allow));
             policy.AddAccessRule(new PipeAccessRule(system, PipeAccessRights.FullControl, AccessControlType.Allow));
             policy.AddAccessRule(new PipeAccessRule(administrators, PipeAccessRights.ReadWrite, AccessControlType.Allow));
-            if (String.Equals(access, "read", StringComparison.Ordinal))
+            if (String.Equals(access, "read", StringComparison.Ordinal) || String.Equals(access, "acceptance", StringComparison.Ordinal))
                 policy.AddAccessRule(new PipeAccessRule(operatorIdentity, PipeAccessRights.ReadWrite, AccessControlType.Allow));
             return policy;
         }

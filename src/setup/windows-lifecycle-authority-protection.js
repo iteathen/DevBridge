@@ -31,52 +31,62 @@ $writeOrDelete = [Security.AccessControl.FileSystemRights]::WriteData -bor
   [Security.AccessControl.FileSystemRights]::TakeOwnership
 $administrative = [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
 
-function Assert-ProtectedAcl([string]$target, [string]$mode) {
+function Assert-ProtectedAcl([string]$target, [string]$mode, [bool]$requireProtected, [string]$label) {
+  $script:current = $label
   $item = Get-Item -LiteralPath $target -Force -ErrorAction Stop
-  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'protection mismatch' }
+  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'reparse-point' }
   $acl = Get-Acl -LiteralPath $target -ErrorAction Stop
-  if (-not $acl.AreAccessRulesProtected) { throw 'protection mismatch' }
-  if (-not $acl.GetOwner([Security.Principal.SecurityIdentifier]).Equals($admin)) { throw 'protection mismatch' }
-  $rules = @($acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]))
-  if ($rules.Count -ne 3) { throw 'protection mismatch' }
+  if ($requireProtected -and -not $acl.AreAccessRulesProtected) { throw 'inheritance-enabled' }
+  if (-not $acl.GetOwner([Security.Principal.SecurityIdentifier]).Equals($admin)) { throw 'owner' }
+  $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+  if ($rules.Count -ne 3) { throw 'ace-count' }
   $adminSeen = $false
   $systemSeen = $false
   $serviceSeen = $false
   foreach ($rule in $rules) {
-    if ($rule.AccessControlType -ne $allow -or $rule.IsInherited) { throw 'protection mismatch' }
+    if ($rule.AccessControlType -ne $allow) { throw 'ace-type' }
     $sid = $rule.IdentityReference
     $rights = $rule.FileSystemRights
     if ($sid.Equals($admin)) {
-      if (($rights -band $full) -ne $full) { throw 'protection mismatch' }
+      if (($rights -band $full) -ne $full) { throw 'administrators-rights' }
       $adminSeen = $true
     } elseif ($sid.Equals($system)) {
-      if (($rights -band $full) -ne $full) { throw 'protection mismatch' }
+      if (($rights -band $full) -ne $full) { throw 'system-rights' }
       $systemSeen = $true
     } elseif ($sid.Equals($service)) {
       if ($mode -eq 'read') {
-        if (($rights -band $read) -ne $read -or ($rights -band $writeOrDelete) -ne 0) { throw 'protection mismatch' }
+        if (($rights -band $read) -ne $read -or ($rights -band $writeOrDelete) -ne 0) { throw 'service-read-rights' }
       } elseif ($mode -eq 'modify') {
-        if (($rights -band $modify) -ne $modify -or ($rights -band $administrative) -ne 0) { throw 'protection mismatch' }
-      } else { throw 'protection mismatch' }
+        if (($rights -band $modify) -ne $modify -or ($rights -band $administrative) -ne 0) { throw 'service-modify-rights' }
+      } else { throw 'mode' }
       $serviceSeen = $true
-    } else { throw 'protection mismatch' }
+    } else { throw 'unexpected-principal' }
   }
-  if (-not $adminSeen -or -not $systemSeen -or -not $serviceSeen) { throw 'protection mismatch' }
+  if (-not $adminSeen -or -not $systemSeen -or -not $serviceSeen) { throw 'required-principal' }
 }
 
-Assert-ProtectedAcl ([string]$data.protectedRoot) 'read'
-Assert-ProtectedAcl ([string]$data.authorityDirectory) 'modify'
-Assert-ProtectedAcl ([string]$data.binDirectory) 'read'
-Assert-ProtectedAcl ([string]$data.runtimeDirectory) 'read'
-Assert-ProtectedAcl ([string]$data.packageDirectory) 'read'
-Assert-ProtectedAcl ([string]$data.nodeExecutable) 'read'
-Assert-ProtectedAcl ([string]$data.serviceHostExecutable) 'read'
-Assert-ProtectedAcl ([string]$data.workerEntry) 'read'
-
-$members = @(Get-LocalGroupMember -SID ([string]$data.hyperVGroupSid) -ErrorAction Stop)
-$serviceMember = @($members | Where-Object { $_.SID -and $_.SID.Value -eq $service.Value }).Count -eq 1
-if (-not $serviceMember) { throw 'protection mismatch' }
-@{ ready = $true } | ConvertTo-Json -Compress
+$checks = @()
+$script:current = 'admission'
+try {
+  Assert-ProtectedAcl ([string]$data.protectedRoot) 'read' $true 'protected-root'; $checks += 'protected-root'
+  Assert-ProtectedAcl ([string]$data.authorityDirectory) 'modify' $true 'authority-directory'; $checks += 'authority-directory'
+  Assert-ProtectedAcl ([string]$data.generationsDirectory) 'read' $false 'generations-directory'; $checks += 'generations-directory'
+  Assert-ProtectedAcl ([string]$data.generationDirectory) 'read' $false 'generation-directory'; $checks += 'generation-directory'
+  Assert-ProtectedAcl ([string]$data.binDirectory) 'read' $false 'bin-directory'; $checks += 'bin-directory'
+  Assert-ProtectedAcl ([string]$data.runtimeDirectory) 'read' $false 'runtime-directory'; $checks += 'runtime-directory'
+  Assert-ProtectedAcl ([string]$data.packageDirectory) 'read' $false 'package-directory'; $checks += 'package-directory'
+  Assert-ProtectedAcl ([string]$data.nodeExecutable) 'read' $false 'node-executable'; $checks += 'node-executable'
+  Assert-ProtectedAcl ([string]$data.serviceHostExecutable) 'read' $false 'service-host-executable'; $checks += 'service-host-executable'
+  Assert-ProtectedAcl ([string]$data.workerEntry) 'read' $false 'worker-entry'; $checks += 'worker-entry'
+  $script:current = 'hyperv-membership'
+  $members = @(Get-LocalGroupMember -SID ([string]$data.hyperVGroupSid) -ErrorAction Stop)
+  $serviceMember = @($members | Where-Object { $_.SID -and $_.SID.Value -eq $service.Value }).Count -eq 1
+  if (-not $serviceMember) { throw 'missing-service-member' }
+  $checks += 'hyperv-membership'
+  @{ ready = $true; checks = $checks } | ConvertTo-Json -Compress
+} catch {
+  @{ ready = $false; checks = $checks; failed = $script:current; reason = [string]$_.Exception.Message } | ConvertTo-Json -Compress
+}
 `;
 
 function encodedScript(script) {
@@ -95,6 +105,8 @@ function requirePlan(plan) {
     plan.protectedRoot,
     plan.authorityDirectory,
     plan.ownershipManifest,
+    plan?.runtime?.generationsDirectory,
+    plan?.runtime?.generationDirectory,
     plan?.runtime?.binDirectory,
     plan?.runtime?.runtimeDirectory,
     plan?.runtime?.packageDirectory,
@@ -117,6 +129,8 @@ async function verifyStructuralProtection(plan, invoke, environment) {
       input: JSON.stringify({
         protectedRoot: plan.protectedRoot,
         authorityDirectory: plan.authorityDirectory,
+        generationsDirectory: plan.runtime.generationsDirectory,
+        generationDirectory: plan.runtime.generationDirectory,
         binDirectory: plan.runtime.binDirectory,
         runtimeDirectory: plan.runtime.runtimeDirectory,
         packageDirectory: plan.runtime.packageDirectory,
@@ -136,8 +150,18 @@ async function verifyStructuralProtection(plan, invoke, environment) {
   if (!invocationSucceeded(result)) throw new Error('Windows lifecycle authority structural protection proof failed');
   try {
     const value = JSON.parse(String(result.stdout ?? '').trim());
-    if (value?.ready !== true || Object.keys(value).some((key) => key !== 'ready')) throw new Error('invalid evidence');
-  } catch {
+    const allowed = new Set(['ready', 'checks', 'failed', 'reason']);
+    if (!value || typeof value.ready !== 'boolean' || Object.keys(value).some((key) => !allowed.has(key))) throw new Error('invalid evidence');
+    if (value.ready !== true) {
+      const failed = String(value.failed ?? 'unknown');
+      const reason = String(value.reason ?? 'unknown');
+      if (!/^[a-z0-9-]{1,64}$/u.test(failed) || !/^[a-z0-9-]{1,64}$/u.test(reason)) throw new Error('invalid evidence');
+      throw new Error(`proof mismatch ${failed}:${reason}`);
+    }
+  } catch (error) {
+    if (String(error?.message ?? '').startsWith('proof mismatch ')) {
+      throw new Error(`Windows lifecycle authority structural protection proof failed: ${error.message.slice('proof mismatch '.length)}`);
+    }
     throw new Error('Windows lifecycle authority structural protection proof returned invalid evidence');
   }
 }

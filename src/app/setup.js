@@ -10,6 +10,7 @@ import { reconcileSetupPrerequisites } from '../setup/prerequisite-reconciliatio
 import { selectRepositoryDefaults } from '../setup/repository-defaults.js';
 import { createUbuntuSetupAuthority, defaultUbuntuPackageSnapshot } from '../setup/ubuntu-authority.js';
 import { establishUbuntuReleaseAuthority } from '../setup/ubuntu-release-authority.js';
+import { requestWindowsLifecycleAuthorityElevation } from '../setup/windows-lifecycle-authority-elevation.js';
 import { reconcileWindowsLifecycleAuthorityReadiness } from '../setup/windows-lifecycle-authority-readiness.js';
 
 const PROTOCOL = 'devbridge/setup-status-v1';
@@ -166,6 +167,7 @@ export async function runDevBridgeSetup({
   selectRepositories = selectRepositoryDefaults,
   prerequisiteReconciler = reconcileSetupPrerequisites,
   lifecycleAuthorityReconciler = reconcileWindowsLifecycleAuthorityReadiness,
+  elevationRequester = requestWindowsLifecycleAuthorityElevation,
   releaseAuthority = establishUbuntuReleaseAuthority,
   authorityFactory = createUbuntuSetupAuthority,
   canaryFactory = createUbuntuProductionImagePhysicalCanary,
@@ -247,6 +249,15 @@ export async function runDevBridgeSetup({
       platform,
       invoke,
       environment: env,
+      requestElevation: platform === 'win32'
+        ? () => elevationRequester({
+          home: root,
+          launcher: pathStatus.launcher,
+          platform,
+          invoke,
+          environment: env,
+        })
+        : null,
     });
   } catch (error) {
     return publicResult({

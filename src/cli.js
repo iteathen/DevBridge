@@ -11,7 +11,9 @@ import { createRuntime } from './app/runtime.js';
 import { createLocalEnvironmentOperator } from './app/environment-operator-runtime.js';
 import { chatHandoffSeed, chatHandoffStatus } from './app/chat-handoff.js';
 import { formatSetupHandoff, runDevBridgeSetup } from './app/setup.js';
+import { runWindowsLifecycleAuthoritySetupChild } from './app/windows-lifecycle-authority-setup-child.js';
 import { PolicyError } from './errors.js';
+import { parseSetupCommandOptions } from './setup/command-options.js';
 import { logicalEnvironmentIdentity } from './runtime/environment-declaration.js';
 import { daemonStatus, pauseDaemon, resumeDaemon, stopDaemon } from './runtime/daemon-lock.js';
 
@@ -28,38 +30,6 @@ function optionValue(argv, name) {
   const index = argv.indexOf(name);
   if (index < 0 || !argv[index + 1]) return null;
   return argv[index + 1];
-}
-
-function setupOptions(argv) {
-  let home = null;
-  let construct = false;
-  let trackRef = null;
-  const repositories = [];
-  for (let index = 0; index < argv.length; index += 1) {
-    const option = argv[index];
-    if (option === '--construct') {
-      if (construct) throw new PolicyError('--construct may be specified only once');
-      construct = true;
-      continue;
-    }
-    if (option === '--home' || option === '--repository' || option === '--track-ref') {
-      const value = argv[index + 1];
-      if (!value || value.startsWith('--')) throw new PolicyError(`${option} requires a value`);
-      if (option === '--home') {
-        if (home != null) throw new PolicyError('--home may be specified only once');
-        home = value;
-      } else if (option === '--track-ref') {
-        if (trackRef != null) throw new PolicyError('--track-ref may be specified only once');
-        trackRef = value;
-      } else {
-        repositories.push(value);
-      }
-      index += 1;
-      continue;
-    }
-    throw new PolicyError(`unsupported setup option: ${option}`);
-  }
-  return Object.freeze({ home, construct, trackRef, repositories: Object.freeze(repositories) });
 }
 
 function configPath(argv) {
@@ -133,7 +103,13 @@ async function main() {
   }
 
   if (command === 'setup') {
-    const selected = setupOptions(args);
+    const selected = parseSetupCommandOptions(args, { authorityHome: process.env.DEVBRIDGE_HOME });
+    if (selected.lifecycleAuthorityChild) {
+      const result = await runWindowsLifecycleAuthoritySetupChild({ env: process.env, output: process.stdout });
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      if (!result.ready) process.exitCode = 3;
+      return;
+    }
     let setupHome = selected.home;
     if (selected.trackRef != null) {
       try {

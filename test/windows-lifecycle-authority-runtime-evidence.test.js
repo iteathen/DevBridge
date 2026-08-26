@@ -45,10 +45,10 @@ test('runtime evidence changes when the Node executable changes', async () => {
   }
 });
 
-test('service provisioning publishes runtime freshness only through the SCM description owner', async () => {
+test('SCM runtime evidence is both configured and observed by the Windows service owner', async () => {
   const source = await readFile(SERVICE_SOURCE, 'utf8');
   assert.match(source, /\['description', plan\.service\.name, plan\.service\.description\]/u);
+  assert.match(source, /service\.description === plan\.service\.description/u);
   assert.match(source, /Windows lifecycle authority runtime evidence configuration/u);
-  assert.equal((source.match(/plan\.service\.description/gu) ?? []).length, 1);
   assert.doesNotMatch(source, /Set-Service/u);
 });

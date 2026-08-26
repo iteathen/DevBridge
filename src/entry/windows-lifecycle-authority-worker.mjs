@@ -7,9 +7,10 @@ import {
   createLifecycleAuthorityReadHandler,
   ENVIRONMENT_LIFECYCLE_AUTHORITY_MAX_ENVELOPE_BYTES,
 } from '../runtime/environment-lifecycle-authority.js';
+import { handleWindowsLifecycleAuthorityAcceptanceRequest } from '../setup/windows-lifecycle-authority-acceptance.js';
 
 const MAX_WIRE_BYTES = ENVIRONMENT_LIFECYCLE_AUTHORITY_MAX_ENVELOPE_BYTES + 1024;
-const ACCESS = new Set(['read', 'mutation']);
+const ACCESS = new Set(['read', 'mutation', 'acceptance']);
 const ARGUMENTS = new Set(['--access', '--state-directory', '--authority-directory']);
 const WINDOWS_DRIVE_ROOT = /^[A-Za-z]:\\$/u;
 const WINDOWS_UNC_ROOT = /^\\\\[^\\]+\\[^\\]+\\$/u;
@@ -48,8 +49,19 @@ export function parseWindowsLifecycleAuthorityWorkerArguments(argv) {
   });
 }
 
-export async function handleWindowsLifecycleAuthorityWorkerRequest({ access, operator, request } = {}) {
+export async function handleWindowsLifecycleAuthorityWorkerRequest({
+  access,
+  operator = null,
+  request,
+  authorityDirectory = null,
+} = {}, {
+  acceptanceHandler = handleWindowsLifecycleAuthorityAcceptanceRequest,
+} = {}) {
   if (!ACCESS.has(access)) throw new TypeError('Windows lifecycle authority worker access class is invalid');
+  if (access === 'acceptance') {
+    if (typeof acceptanceHandler !== 'function') throw new TypeError('Windows lifecycle authority acceptance handler is invalid');
+    return acceptanceHandler({ request, authorityDirectory });
+  }
   const handler = access === 'read'
     ? createLifecycleAuthorityReadHandler({ operator })
     : createLifecycleAuthorityMutationHandler({ operator });
@@ -71,12 +83,21 @@ async function readSingleRequest(input) {
 export async function runWindowsLifecycleAuthorityWorker({ argv = process.argv.slice(2), input = process.stdin, output = process.stdout } = {}) {
   const options = parseWindowsLifecycleAuthorityWorkerArguments(argv);
   const request = await readSingleRequest(input);
-  const operator = await createLocalEnvironmentOperator({
-    stateDirectory: options.stateDirectory,
-    authorityDirectory: options.authorityDirectory,
-    platform: 'win32',
-  });
-  const response = await handleWindowsLifecycleAuthorityWorkerRequest({ access: options.access, operator, request });
+  let response;
+  if (options.access === 'acceptance') {
+    response = await handleWindowsLifecycleAuthorityWorkerRequest({
+      access: options.access,
+      request,
+      authorityDirectory: options.authorityDirectory,
+    });
+  } else {
+    const operator = await createLocalEnvironmentOperator({
+      stateDirectory: options.stateDirectory,
+      authorityDirectory: options.authorityDirectory,
+      platform: 'win32',
+    });
+    response = await handleWindowsLifecycleAuthorityWorkerRequest({ access: options.access, operator, request });
+  }
   const wire = `${JSON.stringify(response)}\n`;
   if (Buffer.byteLength(wire, 'utf8') > MAX_WIRE_BYTES) throw new Error('Windows lifecycle authority worker response exceeded the transport bound');
   output.write(wire);

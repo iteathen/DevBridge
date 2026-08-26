@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   migrateWindowsLifecycleAuthorityState,
   reconcileWindowsLifecycleAuthorityService,
@@ -10,6 +11,7 @@ import {
   WINDOWS_LIFECYCLE_AUTHORITY_STATE_PATHS,
 } from '../src/setup/windows-lifecycle-authority-service.js';
 
+const SERVICE_SOURCE = fileURLToPath(new URL('../src/setup/windows-lifecycle-authority-service.js', import.meta.url));
 const OPERATOR_SID = 'S-1-5-21-111111111-222222222-333333333-1001';
 const STATE = 'C:\\Users\\Operator\\.devbridge\\state';
 const PACKAGE_DIGEST = 'a'.repeat(64);
@@ -34,9 +36,16 @@ function candidate() {
   });
 }
 
-function deps({ elevated = true, firstProbe = false, finalProbe = true, provisionError = null, measureError = null } = {}) {
+function deps({
+  elevated = true,
+  exactService = false,
+  probeReady = true,
+  refreshResult = Object.freeze({ ready: true, changed: true, recovered: false, blocker: null }),
+  refreshError = null,
+  measureError = null,
+} = {}) {
   const calls = [];
-  let probes = 0;
+  const mechanics = Object.freeze({ fixture: true });
   return {
     calls,
     value: {
@@ -49,34 +58,47 @@ function deps({ elevated = true, firstProbe = false, finalProbe = true, provisio
         if (measureError) throw new Error(measureError);
         return candidate();
       },
+      inspectServiceState: async (plan) => {
+        calls.push('inspect-service');
+        return exactService
+          ? {
+              exists: true,
+              state: 'Running',
+              startMode: 'Auto',
+              startName: plan.service.account,
+              pathName: plan.serviceCommand,
+              description: plan.service.description,
+            }
+          : {
+              exists: true,
+              state: 'Running',
+              startMode: 'Auto',
+              startName: plan.service.account,
+              pathName: 'C:\\stale\\authority.exe',
+              description: 'stale generation',
+            };
+      },
       probe: async (plan) => {
-        probes += 1;
-        calls.push(`probe-${probes}`);
+        calls.push('probe');
         assert.deepEqual(plan.runtimeEvidence, { packageDigest: PACKAGE_DIGEST, nodeDigest: NODE_DIGEST });
-        assert.equal(plan.service.description, `DevBridge lifecycle authority runtime v1 package=${PACKAGE_DIGEST} node=${NODE_DIGEST}`);
-        if ((probes === 1 && !firstProbe) || (probes > 1 && !finalProbe)) throw new Error('unavailable');
+        if (!probeReady) throw new Error('unavailable');
         return { protocol: 'devbridge/environment-operator-v1' };
       },
-      provision: async ({ plan, candidate: measured }) => {
-        calls.push('provision');
-        assert.deepEqual(measured.evidence, candidate().evidence);
-        assert.deepEqual(plan.runtimeEvidence, measured.evidence);
-        if (provisionError) throw new Error(provisionError);
-        return {
-          changed: true,
-          ownership: {
-            protocol: 'devbridge/windows-lifecycle-authority-ownership-v1',
-            authorityIdentity: plan.authorityIdentity,
-            serviceName: plan.service.name,
-            operatorSid: OPERATOR_SID,
-            stateMigrationComplete: true,
-            runtime: null,
-            serviceConfigured: true,
-            serviceReady: false,
-          },
-        };
+      createRefreshMechanics: (input) => {
+        calls.push('create-refresh-mechanics');
+        assert.equal(input.candidatePlan.runtime.generation.length, 64);
+        assert.deepEqual(input.candidate.evidence, candidate().evidence);
+        assert.equal(input.basePlan.runtimeEvidence, null);
+        assert.equal(typeof input.probe, 'function');
+        return mechanics;
       },
-      stop: async () => { calls.push('stop'); },
+      refresh: async ({ candidateGeneration, mechanics: received }) => {
+        calls.push('refresh');
+        assert.equal(candidateGeneration.length, 64);
+        assert.equal(received, mechanics);
+        if (refreshError) throw new Error(refreshError);
+        return refreshResult;
+      },
     },
   };
 }
@@ -90,24 +112,24 @@ test('non-Windows setup leaves the Windows authority LEGO unattached', async () 
   assert.deepEqual(fixture.calls, []);
 });
 
-test('existing healthy exact protected authority is observation-only and requires no elevation or mutation', async () => {
-  const fixture = deps({ elevated: false, firstProbe: true });
+test('existing healthy exact protected authority requires exact SCM generation before trusting the read endpoint', async () => {
+  const fixture = deps({ elevated: false, exactService: true, probeReady: true });
   const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
   assert.equal(result.ready, true);
   assert.equal(result.changed, false);
   assert.equal(result.service, 'ready');
-  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'probe-1']);
+  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'inspect-service', 'probe']);
 });
 
-test('missing or stale protected authority stops at an explicit elevation boundary before provisioning', async () => {
-  const fixture = deps({ elevated: false });
+test('ordinary setup never trusts a healthy stale-generation pipe and stops at elevation before refresh', async () => {
+  const fixture = deps({ elevated: false, exactService: false, probeReady: true });
   const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
   assert.equal(result.ready, false);
   assert.match(result.blocker, /elevated PowerShell/u);
-  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'probe-1']);
+  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'inspect-service']);
 });
 
-test('candidate measurement failure is bounded and stops before authority probing', async () => {
+test('candidate measurement failure is bounded and stops before service or authority probing', async () => {
   const fixture = deps({ elevated: false, measureError: 'C:\\sensitive\\candidate-path' });
   const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
   assert.equal(result.ready, false);
@@ -116,22 +138,46 @@ test('candidate measurement failure is bounded and stops before authority probin
   assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate']);
 });
 
-test('elevated setup provisions one exact runtime owner then requires exact post-start health', async () => {
-  const fixture = deps({ elevated: true });
+test('elevated setup delegates the exact measured generation to the shared refresh transaction', async () => {
+  const fixture = deps({ elevated: true, exactService: false });
   const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
   assert.equal(result.ready, true);
   assert.equal(result.changed, true);
   assert.equal(result.service, 'ready');
-  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'probe-1', 'provision', 'probe-2']);
+  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'inspect-service', 'create-refresh-mechanics', 'refresh']);
 });
 
-test('failed post-start health stops the service rather than leaving partial authority active', async () => {
-  const fixture = deps({ elevated: true, finalProbe: false });
+test('candidate health rejection reports the shared exact rollback instead of stopping the recovered service', async () => {
+  const fixture = deps({
+    elevated: true,
+    exactService: false,
+    refreshResult: Object.freeze({ ready: false, changed: true, recovered: true, blocker: 'candidate-health' }),
+  });
   const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
   assert.equal(result.ready, false);
-  assert.equal(result.service, 'stopped-after-failed-health');
-  assert.match(result.blocker, /post-start health proof/u);
-  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'probe-1', 'provision', 'probe-2', 'stop']);
+  assert.equal(result.changed, true);
+  assert.equal(result.service, 'recovered-previous');
+  assert.equal(result.protectedState, 'ready');
+  assert.match(result.blocker, /previous generation was restored/u);
+  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'inspect-service', 'create-refresh-mechanics', 'refresh']);
+});
+
+test('shared refresh failure is bounded without leaking local platform detail', async () => {
+  const fixture = deps({ elevated: true, exactService: false, refreshError: 'C:\\protected\\secret\\runtime' });
+  const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
+  assert.equal(result.ready, false);
+  assert.equal(result.service, 'blocked');
+  assert.match(result.blocker, /reconciliation failed/u);
+  assert.doesNotMatch(result.blocker, /secret|C:\\protected/iu);
+  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'inspect-service', 'create-refresh-mechanics', 'refresh']);
+});
+
+test('production elevated reconciliation no longer owns a monolithic provision or post-health stop path', async () => {
+  const source = await readFile(SERVICE_SOURCE, 'utf8');
+  assert.match(source, /reconcileWindowsLifecycleAuthorityRefresh/u);
+  assert.match(source, /createWindowsLifecycleAuthorityRefreshMechanics/u);
+  assert.doesNotMatch(source, /provisionWindowsLifecycleAuthority/u);
+  assert.doesNotMatch(source, /stopped-after-failed-health/u);
 });
 
 test('authority migration copies only closed protected state and leaves execution routes ordinary', async () => {

@@ -45,11 +45,12 @@ test('service proof requires exact SCM command, virtual account, and runtime des
   assert.equal(input.description, plan.service.description);
   assert.match(input.command, /devbridge-lifecycle-authority-host\.exe" "--service-name" "DevBridgeLifecycle-/u);
   assert.match(input.command, /"--operator-sid" "S-1-5-21-111111111-222222222-333333333-1001"/u);
-  assert.match(input.command, /"--mutation-pipe" "devbridge-environment-[0-9a-f]{32}-mutation-v1"$/u);
+  assert.match(input.command, /"--mutation-pipe" "devbridge-environment-[0-9a-f]{32}-mutation-v1"/u);
+  assert.match(input.command, /"--acceptance-pipe" "devbridge-environment-[0-9a-f]{32}-acceptance-v1"$/u);
   assert.match(input.description, /package=a{64} node=b{64}$/u);
 });
 
-test('service proof rejects an unbound or mismatched service identity plan', async () => {
+test('service proof rejects an unbound plan or mismatched service identity/runtime evidence', async () => {
   const wrongName = Object.freeze({
     ...plan,
     service: Object.freeze({ ...plan.service, name: 'DevBridgeLifecycle-fedcba9876543210fedcba9876543210' }),
@@ -58,7 +59,16 @@ test('service proof rejects an unbound or mismatched service identity plan', asy
     ...plan,
     service: Object.freeze({ ...plan.service, account: 'NT SERVICE\\DevBridgeLifecycle-fedcba9876543210fedcba9876543210' }),
   });
-  for (const candidate of [basePlan, wrongName, wrongAccount]) {
+  const wrongRuntimeEvidence = Object.freeze({
+    ...plan,
+    service: Object.freeze({ ...plan.service, description: 'DevBridge lifecycle authority runtime v1' }),
+  });
+
+  await assert.rejects(
+    () => verifyWindowsLifecycleAuthorityService({ plan: basePlan, operatorSid: OPERATOR_SID, invoke: async () => success() }),
+    /service proof plan is incomplete/u,
+  );
+  for (const candidate of [wrongRuntimeEvidence, wrongName, wrongAccount]) {
     await assert.rejects(
       () => verifyWindowsLifecycleAuthorityService({ plan: candidate, operatorSid: OPERATOR_SID, invoke: async () => success() }),
       /service proof (?:runtime evidence|identity) is invalid/u,

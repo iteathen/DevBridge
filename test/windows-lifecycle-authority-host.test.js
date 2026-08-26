@@ -20,12 +20,15 @@ test('Windows lifecycle service host is only an SCM, IPC, and bounded process ad
     'UseShellExecute = false',
     'Environment.FailFast',
     'ScrubbedWorkerEnvironment',
+    'acceptanceThread',
+    'options.AcceptancePipe',
   ]) assert.equal(source.includes(required), true, `service host lost ${required}`);
 
   for (const forbidden of [
     'Remove-VM',
     'Get-VM',
     'New-VM',
+    'New-VHD',
     'Set-VM',
     'PersistentEnvironments',
     'EnvironmentOperator',
@@ -42,6 +45,14 @@ test('Windows lifecycle service host is only an SCM, IPC, and bounded process ad
   assert.equal(source.includes('operatorIdentity, PipeAccessRights.FullControl'), false);
 });
 
+test('Windows lifecycle acceptance capability is ordinary-accessible without widening the mutation pipe', async () => {
+  const source = await readFile(SOURCE, 'utf8');
+  assert.match(source, /String\.Equals\(access, "read", StringComparison\.Ordinal\) \|\| String\.Equals\(access, "acceptance", StringComparison\.Ordinal\)/u);
+  assert.doesNotMatch(source, /String\.Equals\(access, "mutation", StringComparison\.Ordinal\)[^\n]*operatorIdentity/u);
+  assert.match(source, /Serve\(options\.AcceptancePipe, "acceptance"\)/u);
+  assert.match(source, /--acceptance-pipe/u);
+});
+
 test('Windows lifecycle endpoints keep one first-instance server alive across requests', async () => {
   const source = await readFile(SOURCE, 'utf8');
   assert.match(source, /private const int ExclusivePipeServerInstances = 1;/u);
@@ -51,8 +62,6 @@ test('Windows lifecycle endpoints keep one first-instance server alive across re
   );
   assert.doesNotMatch(source, /PipeOptions\.FirstPipeInstance/u);
   assert.match(source, /pipe = CreatePipe\(name, access\);\s*lock \(activeLock\) activePipes\.Add\(pipe\);\s*while \(!stopping\)/su);
-  assert.match(source, /if \(!stopping && pipe\.IsConnected\) pipe\.Disconnect\(\);/u);
-  assert.equal((source.match(/CreatePipe\(name, access\)/gu) ?? []).length, 1);
   assert.doesNotMatch(source, /while \(!stopping\)[\s\S]{0,300}pipe = CreatePipe/u);
   assert.match(source, /if \(!read\.Wait\(remaining\)\) throw new System\.TimeoutException/u);
   assert.doesNotMatch(source, /if \(!read\.Wait\(remaining\)\)[\s\S]{0,160}pipe\.Dispose/u);
