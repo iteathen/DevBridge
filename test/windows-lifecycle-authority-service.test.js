@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   migrateWindowsLifecycleAuthorityState,
+  probeWindowsLifecycleAuthority,
   reconcileWindowsLifecycleAuthorityService,
   WINDOWS_LIFECYCLE_AUTHORITY_SERVICE_PROTOCOL,
   WINDOWS_LIFECYCLE_AUTHORITY_STATE_PATHS,
@@ -173,6 +174,40 @@ test('candidate health rejection reports the shared exact rollback instead of st
   assert.equal(result.protectedState, 'ready');
   assert.match(result.blocker, /previous generation was restored/u);
   assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'inspect-service', 'create-refresh-mechanics', 'refresh']);
+});
+
+test('Windows lifecycle authority health uses one bounded startup-readiness window', async () => {
+  let attempts = 0;
+  const delays = [];
+  const result = await probeWindowsLifecycleAuthority({ stateDirectory: STATE }, {
+    clientFactory: () => ({
+      async inspect() {
+        attempts += 1;
+        if (attempts < 3) throw new Error('environment lifecycle authority is unavailable');
+        return { protocol: 'devbridge/environment-operator-v1' };
+      },
+    }),
+    waitForRetry: async (delay) => { delays.push(delay); },
+  });
+  assert.equal(result.protocol, 'devbridge/environment-operator-v1');
+  assert.equal(attempts, 3);
+  assert.deepEqual(delays, [100, 250]);
+});
+
+test('Windows lifecycle authority health stops at its bounded readiness deadline', async () => {
+  let attempts = 0;
+  const delays = [];
+  await assert.rejects(probeWindowsLifecycleAuthority({ stateDirectory: STATE }, {
+    clientFactory: () => ({
+      async inspect() {
+        attempts += 1;
+        throw new Error(`unavailable-${attempts}`);
+      },
+    }),
+    waitForRetry: async (delay) => { delays.push(delay); },
+  }), /unavailable-6/u);
+  assert.equal(attempts, 6);
+  assert.deepEqual(delays, [100, 250, 500, 1_000, 2_000]);
 });
 
 test('candidate health rejection preserves the exact bounded candidate failure reason', async () => {

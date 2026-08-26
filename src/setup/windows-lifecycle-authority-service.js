@@ -11,6 +11,7 @@ import {
 import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment-lifecycle-authority-transport.js';
@@ -33,6 +34,7 @@ const GENERATION_PROTOCOL = 'devbridge/windows-lifecycle-authority-generation-v1
 const PACKAGE_ROOT = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
 const MAX_PACKAGE_FILES = 2_048;
 const MAX_PACKAGE_BYTES = 64 * 1024 * 1024;
+const HEALTH_PROBE_RETRY_DELAYS_MS = Object.freeze([100, 250, 500, 1_000, 2_000]);
 const MAX_PACKAGE_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_NODE_BYTES = 256 * 1024 * 1024;
 const MAX_CONTROL_RECORD_BYTES = 32 * 1024;
@@ -1073,11 +1075,24 @@ export function createWindowsLifecycleAuthorityRefreshMechanics({
   });
 }
 
-async function probeWindowsLifecycleAuthority(plan) {
-  const client = createConfiguredLifecycleAuthorityClient({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
-  const result = await client.inspect();
-  if (!result || result.protocol !== 'devbridge/environment-operator-v1') throw new Error('protected lifecycle authority returned invalid inspection evidence');
-  return result;
+export async function probeWindowsLifecycleAuthority(plan, {
+  clientFactory = createConfiguredLifecycleAuthorityClient,
+  waitForRetry = wait,
+} = {}) {
+  if (typeof clientFactory !== 'function' || typeof waitForRetry !== 'function') throw new TypeError('Windows lifecycle authority health probe composition is invalid');
+  let lastError = null;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const client = clientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
+      const result = await client.inspect();
+      if (!result || result.protocol !== 'devbridge/environment-operator-v1') throw new Error('protected lifecycle authority returned invalid inspection evidence');
+      return result;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= HEALTH_PROBE_RETRY_DELAYS_MS.length) throw lastError;
+      await waitForRetry(HEALTH_PROBE_RETRY_DELAYS_MS[attempt]);
+    }
+  }
 }
 
 function serviceResult({ platform, ready, blocker = null, changed = false, authorityIdentity = null, service = null, protectedState = null }) {
