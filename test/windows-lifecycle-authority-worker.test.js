@@ -1,10 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Readable } from 'node:stream';
 import {
   handleWindowsLifecycleAuthorityWorkerRequest,
   parseWindowsLifecycleAuthorityWorkerArguments,
+  runWindowsLifecycleAuthorityWorker,
 } from '../src/entry/windows-lifecycle-authority-worker.mjs';
-import { ENVIRONMENT_LIFECYCLE_AUTHORITY_REQUEST_PROTOCOL } from '../src/runtime/environment-lifecycle-authority.js';
+import {
+  ENVIRONMENT_LIFECYCLE_AUTHORITY_REQUEST_PROTOCOL,
+  ENVIRONMENT_LIFECYCLE_AUTHORITY_RESULT_PROTOCOL,
+} from '../src/runtime/environment-lifecycle-authority.js';
 import {
   WINDOWS_LIFECYCLE_AUTHORITY_ACCEPTANCE_REQUEST_PROTOCOL,
   WINDOWS_LIFECYCLE_AUTHORITY_ACCEPTANCE_RESULT_PROTOCOL,
@@ -34,6 +39,26 @@ function operator(calls) {
     async setupReentry(identity) { calls.push(['setupReentry', identity]); return { action: 'setup-reentry' }; },
   };
 }
+
+test('worker returns request-bound path-free initialization failure evidence instead of dropping the pipe response', async () => {
+  const selected = request('inspect');
+  let wire = '';
+  const failure = new Error('access denied at C:\\protected\\secret');
+  failure.code = 'EACCES';
+  await runWindowsLifecycleAuthorityWorker({
+    argv: ['--access', 'read', '--state-directory', STATE, '--authority-directory', AUTHORITY],
+    input: Readable.from([`${JSON.stringify(selected)}\n`]),
+    output: { write(value) { wire += String(value); } },
+    operatorFactory: async () => { throw failure; },
+  });
+  const response = JSON.parse(wire);
+  assert.equal(response.protocol, ENVIRONMENT_LIFECYCLE_AUTHORITY_RESULT_PROTOCOL);
+  assert.equal(response.requestId, selected.requestId);
+  assert.equal(response.ok, false);
+  assert.equal(response.error.code, 'WORKER_INITIALIZATION_FAILED');
+  assert.equal(response.error.message, 'environment lifecycle authority worker initialization failed (EACCES)');
+  assert.doesNotMatch(wire, /protected|secret|C:\\/iu);
+});
 
 test('worker accepts only fixed access and protected state arguments', () => {
   assert.deepEqual(parseWindowsLifecycleAuthorityWorkerArguments([
