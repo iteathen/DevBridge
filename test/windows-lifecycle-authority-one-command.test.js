@@ -584,6 +584,17 @@ test('elevation adapter returns the bounded child blocker and cleans its result 
             state: 'failed',
             detail: { error: 'exact service start failure' },
           })}\n${JSON.stringify({
+            protocol: 'devbridge/windows-lifecycle-authority-migration-diagnostic-v1',
+            sequence: 2,
+            phase: 'diagnose-after-rollback',
+            state: 'completed',
+            detail: { checks: [
+              { name: 'service', ok: true, value: { mode: 'fixed-running', state: 'Running' } },
+              { name: 'generation', ok: true, value: { verified: true } },
+              { name: 'journal', ok: true, value: { phase: 'restored' } },
+              { name: 'read-endpoint', ok: true, value: { protocol: 'devbridge/environment-operator-v1' } },
+            ] },
+          })}\n${JSON.stringify({
             protocol: 'devbridge/windows-lifecycle-authority-elevated-child-v1',
             ready: false,
             changed: false,
@@ -604,6 +615,8 @@ test('elevation adapter returns the bounded child blocker and cleans its result 
     assert.equal(result.exitCode, 3);
     assert.match(result.blocker, /exact protected blocker/u);
     assert.match(result.blocker, /start:failed:exact service start failure/u);
+    assert.match(result.blocker, /service=ok\(fixed-running\/Running\)/u);
+    assert.match(result.blocker, /journal=ok\(restored\)/u);
     await assert.rejects(lstat(resultDirectory), { code: 'ENOENT' });
   } finally {
     await rm(root, { recursive: true, force: true });

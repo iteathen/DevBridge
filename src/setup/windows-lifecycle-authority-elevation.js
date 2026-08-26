@@ -201,8 +201,19 @@ function childBlocker(broker) {
   const parsed = parseChildOutput(broker?.stdout);
   if (parsed.result && typeof parsed.result.blocker === 'string') {
     const checkpoints = parsed.diagnostics.map((event) => {
-      const error = event?.detail?.error ? `:${String(event.detail.error).replace(/[\r\n;]+/gu, ' ').slice(0, 256)}` : '';
-      return `${event.sequence}:${event.phase}:${event.state}${error}`;
+      let detail = '';
+      if (event?.detail?.error) detail = `:${String(event.detail.error).replace(/[\r\n;]+/gu, ' ').slice(0, 512)}`;
+      else if (Array.isArray(event?.detail?.checks)) {
+        detail = `:${event.detail.checks.map((check) => {
+          if (check?.ok !== true) return `${check?.name ?? 'unknown'}=error(${String(check?.error ?? 'unknown').slice(0, 128)})`;
+          if (check.name === 'service') return `service=ok(${check.value?.mode ?? 'unknown'}/${check.value?.state ?? 'unknown'})`;
+          if (check.name === 'generation') return `generation=ok(${check.value?.verified === true})`;
+          if (check.name === 'journal') return `journal=ok(${check.value?.phase ?? 'none'})`;
+          if (check.name === 'read-endpoint') return `read-endpoint=ok(${check.value?.protocol ?? 'none'})`;
+          return `${check?.name ?? 'unknown'}=ok`;
+        }).join(',')}`;
+      }
+      return `${event.sequence}:${event.phase}:${event.state}${detail}`;
     }).join(';');
     return boundedBrokerText(checkpoints ? `${parsed.result.blocker} Checkpoints: ${checkpoints}` : parsed.result.blocker);
   }

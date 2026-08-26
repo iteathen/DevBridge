@@ -87,12 +87,43 @@ if ($service.Status -ne [ServiceProcess.ServiceControllerStatus]::Stopped) {
 const START_SERVICE_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
-$service = Get-Service -Name ([string]$data.name) -ErrorAction Stop
-if ($service.Status -ne [ServiceProcess.ServiceControllerStatus]::Running) {
-  Start-Service -Name ([string]$data.name) -ErrorAction Stop
-  $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(30))
+$name = [string]$data.name
+try {
+  $service = Get-Service -Name $name -ErrorAction Stop
+  if ($service.Status -ne [ServiceProcess.ServiceControllerStatus]::Running) {
+    Start-Service -Name $name -ErrorAction Stop
+    $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(30))
+  }
+  @{ running = $true } | ConvertTo-Json -Compress
+} catch {
+  $failure = [string]$_.Exception.Message
+  $observed = Get-CimInstance Win32_Service -Filter ("Name='" + $name.Replace("'", "''") + "'") -ErrorAction SilentlyContinue
+  $events = @()
+  try {
+    $events = @(Get-WinEvent -FilterHashtable @{
+      LogName = 'System'
+      ProviderName = 'Service Control Manager'
+      StartTime = (Get-Date).AddMinutes(-2)
+    } -ErrorAction Stop | Where-Object { $_.Message -like ("*" + $name + "*") } | Select-Object -First 4 | ForEach-Object {
+      @{
+        id = [int]$_.Id
+        level = [string]$_.LevelDisplayName
+        message = (([string]$_.Message -replace '[\r\n]+', ' ').Trim())
+      }
+    })
+  } catch {}
+  @{
+    running = $false
+    error = (($failure -replace '[\r\n]+', ' ').Trim())
+    state = if ($null -eq $observed) { $null } else { [string]$observed.State }
+    status = if ($null -eq $observed) { $null } else { [string]$observed.Status }
+    exitCode = if ($null -eq $observed) { $null } else { [int]$observed.ExitCode }
+    serviceSpecificExitCode = if ($null -eq $observed) { $null } else { [int]$observed.ServiceSpecificExitCode }
+    processId = if ($null -eq $observed) { $null } else { [int]$observed.ProcessId }
+    events = $events
+  } | ConvertTo-Json -Compress -Depth 5
+  exit 3
 }
-@{ running = $true } | ConvertTo-Json -Compress
 `;
 
 function encodedScript(script) {
@@ -122,7 +153,10 @@ async function invokePowerShell(invoke, script, input, operation, environment) {
   } catch (error) {
     throw new Error(`${operation} could not execute: ${boundedReason(error?.message, 'PowerShell is unavailable')}`);
   }
-  if (!invocationSucceeded(result)) throw new Error(`${operation} failed`);
+  if (!invocationSucceeded(result)) {
+    const evidence = boundedReason(result?.stdout || result?.stderr, 'no bounded process evidence');
+    throw new Error(`${operation} failed: exit=${result?.exitCode ?? 'unknown'} timeout=${result?.timedOut === true} aborted=${result?.aborted === true} evidence=${evidence}`);
+  }
   let value;
   try { value = JSON.parse(String(result.stdout ?? '').trim()); }
   catch { value = null; }
@@ -167,7 +201,10 @@ async function invokeSc(invoke, args, operation, environment) {
   } catch (error) {
     throw new Error(`${operation} could not execute: ${boundedReason(error?.message, 'sc.exe is unavailable')}`);
   }
-  if (!invocationSucceeded(result)) throw new Error(`${operation} failed`);
+  if (!invocationSucceeded(result)) {
+    const evidence = boundedReason(result?.stdout || result?.stderr, 'no bounded process evidence');
+    throw new Error(`${operation} failed: exit=${result?.exitCode ?? 'unknown'} timeout=${result?.timedOut === true} aborted=${result?.aborted === true} evidence=${evidence}`);
+  }
 }
 
 function exactDigest(value, name) {
