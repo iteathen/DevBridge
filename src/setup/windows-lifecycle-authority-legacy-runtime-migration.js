@@ -221,11 +221,12 @@ function running(service) {
   return service.exists === true && sameWindowsText(service.state, 'Running');
 }
 
-function serviceMatches(service, command, servicePlan) {
+function serviceMatches(service, command, servicePlan, { allowMissingDescription = false } = {}) {
+  const description = String(service.description ?? '');
   return service.exists === true
     && sameWindowsText(service.startName, servicePlan.account)
     && sameWindowsText(service.pathName, command)
-    && service.description === servicePlan.description;
+    && (description === servicePlan.description || (allowMissingDescription && description === ''));
 }
 
 async function boundedRealDirectory(directory, name) {
@@ -450,9 +451,9 @@ async function probe(plan, clientFactory) {
   return value?.protocol === 'devbridge/environment-operator-v1';
 }
 
-function serviceMode(service, fixed, targetPlan) {
+export function classifyWindowsLifecycleAuthorityLegacyService(service, fixed, targetPlan) {
   if (!service.exists) return 'missing';
-  if (serviceMatches(service, fixed.serviceCommand, fixed.service)) return running(service) ? 'fixed-running' : 'fixed-stopped';
+  if (serviceMatches(service, fixed.serviceCommand, fixed.service, { allowMissingDescription: true })) return running(service) ? 'fixed-running' : 'fixed-stopped';
   if (serviceMatches(service, targetPlan.serviceCommand, targetPlan.service)) return running(service) ? 'generation-running' : 'generation-stopped';
   return 'foreign';
 }
@@ -537,7 +538,7 @@ export async function createWindowsLifecycleAuthorityLegacyRuntimeMechanics({
   const fixed = fixedRuntimePlan(basePlan, ownership.runtime);
   const targetPlan = bindWindowsLifecycleAuthorityRuntime(basePlan, ownership.runtime);
   const service = await inspectServicePort(targetPlan, invoke, environment);
-  const mode = serviceMode(service, fixed, targetPlan);
+  const mode = classifyWindowsLifecycleAuthorityLegacyService(service, fixed, targetPlan);
   const generationVerified = (mode === 'generation-running' || mode === 'generation-stopped')
     && generationsExist
     && await verifyGenerationDirectory(targetPlan, ownership, measureCandidate);
@@ -570,7 +571,7 @@ export async function createWindowsLifecycleAuthorityLegacyRuntimeMechanics({
     async observe() {
       const currentService = await inspectServicePort(targetPlan, invoke, environment);
       return Object.freeze({
-        mode: serviceMode(currentService, fixed, targetPlan),
+        mode: classifyWindowsLifecycleAuthorityLegacyService(currentService, fixed, targetPlan),
         staged: await verifyGenerationDirectory(targetPlan, ownership, measureCandidate),
         journal: await loadJournal(basePlan),
       });
@@ -589,7 +590,7 @@ export async function createWindowsLifecycleAuthorityLegacyRuntimeMechanics({
     stage: () => stageLegacyGeneration(context),
     async quiesce() {
       const currentService = await inspectServicePort(targetPlan, invoke, environment);
-      const modeNow = serviceMode(currentService, fixed, targetPlan);
+      const modeNow = classifyWindowsLifecycleAuthorityLegacyService(currentService, fixed, targetPlan);
       if (modeNow === 'fixed-stopped' || modeNow === 'generation-stopped') return false;
       if (modeNow !== 'fixed-running') throw new Error('legacy runtime quiesce observed unexpected service identity');
       await invokePowerShell(invoke, STOP_SERVICE_SCRIPT, { name: targetPlan.service.name }, 'Windows lifecycle authority legacy service stop', environment);
@@ -597,7 +598,7 @@ export async function createWindowsLifecycleAuthorityLegacyRuntimeMechanics({
     },
     async promote() {
       const currentService = await inspectServicePort(targetPlan, invoke, environment);
-      const modeNow = serviceMode(currentService, fixed, targetPlan);
+      const modeNow = classifyWindowsLifecycleAuthorityLegacyService(currentService, fixed, targetPlan);
       if (modeNow === 'generation-stopped' || modeNow === 'generation-running') return false;
       if (modeNow !== 'fixed-stopped') throw new Error('legacy runtime promotion requires the exact fixed service to be stopped');
       if (!await verifyGenerationDirectory(targetPlan, ownership, measureCandidate)) throw new Error('legacy runtime promotion target is not exact');
@@ -606,7 +607,7 @@ export async function createWindowsLifecycleAuthorityLegacyRuntimeMechanics({
     },
     async start() {
       const currentService = await inspectServicePort(targetPlan, invoke, environment);
-      const modeNow = serviceMode(currentService, fixed, targetPlan);
+      const modeNow = classifyWindowsLifecycleAuthorityLegacyService(currentService, fixed, targetPlan);
       if (modeNow === 'generation-running') return false;
       if (modeNow !== 'generation-stopped') throw new Error('legacy runtime start requires the exact generation service to be stopped');
       await invokePowerShell(invoke, START_SERVICE_SCRIPT, { name: targetPlan.service.name }, 'Windows lifecycle authority legacy generation start', environment);
@@ -615,12 +616,12 @@ export async function createWindowsLifecycleAuthorityLegacyRuntimeMechanics({
     health: () => probe(targetPlan, clientFactory),
     async restore() {
       let currentService = await inspectServicePort(targetPlan, invoke, environment);
-      let modeNow = serviceMode(currentService, fixed, targetPlan);
+      let modeNow = classifyWindowsLifecycleAuthorityLegacyService(currentService, fixed, targetPlan);
       if (modeNow === 'fixed-running') return probe({ ...targetPlan, serviceCommand: fixed.serviceCommand }, clientFactory);
       if (modeNow === 'generation-running') {
         await invokePowerShell(invoke, STOP_SERVICE_SCRIPT, { name: targetPlan.service.name }, 'Windows lifecycle authority legacy rollback stop', environment);
         currentService = await inspectServicePort(targetPlan, invoke, environment);
-        modeNow = serviceMode(currentService, fixed, targetPlan);
+        modeNow = classifyWindowsLifecycleAuthorityLegacyService(currentService, fixed, targetPlan);
       }
       if (modeNow === 'generation-stopped') {
         await configureServiceCommand({ ...targetPlan, service: fixed.service }, fixed.serviceCommand, invoke, environment);

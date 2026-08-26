@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { requestWindowsLifecycleAuthorityElevation } from '../src/setup/windows-lifecycle-authority-elevation.js';
 import {
+  classifyWindowsLifecycleAuthorityLegacyService,
   classifyWindowsLifecycleAuthorityRuntimeLayout,
   reconcileWindowsLifecycleAuthorityLegacyRuntime,
 } from '../src/setup/windows-lifecycle-authority-legacy-runtime-migration.js';
@@ -198,6 +199,34 @@ test('only an exact verified generation-addressed service suppresses legacy migr
     mode: 'generation-running',
     generationVerified: false,
   }), /generation-addressed protected runtime evidence is incomplete/u);
+});
+
+test('fixed legacy service may omit its historically absent description without weakening generation identity', () => {
+  const fixed = Object.freeze({
+    serviceCommand: 'fixed-command',
+    service: Object.freeze({ account: 'NT SERVICE\\DevBridgeLifecycle-test', description: 'fixed-description' }),
+  });
+  const generation = Object.freeze({
+    serviceCommand: 'generation-command',
+    service: Object.freeze({ account: fixed.service.account, description: 'generation-description' }),
+  });
+  const observed = Object.freeze({
+    exists: true,
+    state: 'Running',
+    startName: fixed.service.account,
+    pathName: fixed.serviceCommand,
+    description: '',
+  });
+  assert.equal(classifyWindowsLifecycleAuthorityLegacyService(observed, fixed, generation), 'fixed-running');
+  assert.equal(classifyWindowsLifecycleAuthorityLegacyService(Object.freeze({
+    ...observed,
+    pathName: generation.serviceCommand,
+  }), fixed, generation), 'foreign');
+  assert.equal(classifyWindowsLifecycleAuthorityLegacyService(Object.freeze({
+    ...observed,
+    pathName: generation.serviceCommand,
+    description: generation.service.description,
+  }), fixed, generation), 'generation-running');
 });
 
 test('legacy migration observes each durable frontier before repeating an effect', async () => {
