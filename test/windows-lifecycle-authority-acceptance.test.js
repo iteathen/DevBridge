@@ -250,6 +250,30 @@ test('parent acceptance verifier always cleans the disposable fixture and expose
   assert.deepEqual(calls, ['exercise', 'cleanup']);
 });
 
+test('parent acceptance verifier retries only the fixed idempotent cleanup operation', async () => {
+  const calls = [];
+  const delays = [];
+  let cleanupAttempts = 0;
+  const client = {
+    async exercise() { calls.push('exercise'); return { ready: true, generation: `acceptance-${'c'.repeat(32)}` }; },
+    async cleanup() {
+      cleanupAttempts += 1;
+      calls.push(`cleanup:${cleanupAttempts}`);
+      if (cleanupAttempts < 3) throw new Error('transient cleanup failure');
+      return { cleaned: true };
+    },
+  };
+  const result = await verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => client,
+    diskPathFor: ({ generation: selected }) => `/derived/${selected}.vhdx`,
+    directMutationDenied: async () => { calls.push('deny'); },
+    waitForRetry: async (delay) => { delays.push(delay); },
+  });
+  assert.equal(result.ready, true);
+  assert.deepEqual(calls, ['exercise', 'deny', 'cleanup:1', 'cleanup:2', 'cleanup:3']);
+  assert.deepEqual(delays, [100, 250]);
+});
+
 test('acceptance client wire contract has only operation identity and no caller-selected subject', async () => {
   let captured = null;
   const client = createWindowsLifecycleAuthorityAcceptanceClient({ endpoint: 'pipe' }, {

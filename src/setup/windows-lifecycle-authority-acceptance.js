@@ -27,6 +27,7 @@ const SAFE_GENERATION = /^acceptance-[0-9a-f]{32}$/u;
 const DENIED_CODES = new Set(['EACCES', 'EPERM']);
 const TRANSIENT_REMOVAL_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
 const REMOVAL_RETRY_DELAYS_MS = Object.freeze([25, 50, 100, 200, 400]);
+const CLEANUP_RETRY_DELAYS_MS = Object.freeze([100, 250, 500, 1_000]);
 const OPERATIONS = new Set(['exercise', 'cleanup']);
 
 const ENSURE_VHDX_SCRIPT = String.raw`
@@ -577,6 +578,17 @@ export async function proveWindowsLifecycleAuthorityAcceptanceDirectMutationDeni
   return Object.freeze({ ready: true });
 }
 
+async function cleanupAcceptance(client, waitForRetry) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await client.cleanup();
+    } catch (error) {
+      if (attempt >= CLEANUP_RETRY_DELAYS_MS.length) throw error;
+      await waitForRetry(CLEANUP_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+}
+
 export async function verifyWindowsLifecycleAuthorityAcceptance({
   authorityDirectory,
   endpoint,
@@ -584,8 +596,9 @@ export async function verifyWindowsLifecycleAuthorityAcceptance({
   clientFactory = createWindowsLifecycleAuthorityAcceptanceClient,
   directMutationDenied = proveWindowsLifecycleAuthorityAcceptanceDirectMutationDenied,
   diskPathFor = windowsLifecycleAuthorityAcceptanceDiskPath,
+  waitForRetry = wait,
 } = {}) {
-  if (typeof clientFactory !== 'function' || typeof directMutationDenied !== 'function' || typeof diskPathFor !== 'function') {
+  if (typeof clientFactory !== 'function' || typeof directMutationDenied !== 'function' || typeof diskPathFor !== 'function' || typeof waitForRetry !== 'function') {
     throw new TypeError('Windows lifecycle authority acceptance verification composition is invalid');
   }
   const client = clientFactory({ endpoint });
@@ -601,7 +614,7 @@ export async function verifyWindowsLifecycleAuthorityAcceptance({
     throw error;
   } finally {
     if (exercise != null || failureValue != null) {
-      try { await client.cleanup(); }
+      try { await cleanupAcceptance(client, waitForRetry); }
       catch {
         if (failureValue == null) throw new Error('Windows lifecycle authority acceptance cleanup failed');
       }
