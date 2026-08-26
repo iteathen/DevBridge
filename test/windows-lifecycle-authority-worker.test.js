@@ -5,6 +5,10 @@ import {
   parseWindowsLifecycleAuthorityWorkerArguments,
 } from '../src/entry/windows-lifecycle-authority-worker.mjs';
 import { ENVIRONMENT_LIFECYCLE_AUTHORITY_REQUEST_PROTOCOL } from '../src/runtime/environment-lifecycle-authority.js';
+import {
+  WINDOWS_LIFECYCLE_AUTHORITY_ACCEPTANCE_REQUEST_PROTOCOL,
+  WINDOWS_LIFECYCLE_AUTHORITY_ACCEPTANCE_RESULT_PROTOCOL,
+} from '../src/setup/windows-lifecycle-authority-acceptance.js';
 
 const STATE = 'C:\\Users\\Operator\\.devbridge\\state';
 const AUTHORITY = 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\0123456789abcdef0123456789abcdef\\state';
@@ -38,6 +42,15 @@ test('worker accepts only fixed access and protected state arguments', () => {
     '--authority-directory', AUTHORITY,
   ]), {
     access: 'mutation',
+    stateDirectory: STATE,
+    authorityDirectory: AUTHORITY,
+  });
+  assert.deepEqual(parseWindowsLifecycleAuthorityWorkerArguments([
+    '--access', 'acceptance',
+    '--state-directory', STATE,
+    '--authority-directory', AUTHORITY,
+  ]), {
+    access: 'acceptance',
     stateDirectory: STATE,
     authorityDirectory: AUTHORITY,
   });
@@ -95,4 +108,36 @@ test('worker preserves read versus mutation capability separation around one ope
   });
   assert.equal(deniedRead.ok, false);
   assert.equal(deniedRead.error.code, 'OPERATION_NOT_ALLOWED');
+});
+
+test('worker routes acceptance access only to the closed acceptance handler', async () => {
+  const calls = [];
+  const local = new Proxy(operator(calls), {
+    get() { throw new Error('normal environment operator must not be reachable from acceptance access'); },
+  });
+  const selected = {
+    protocol: WINDOWS_LIFECYCLE_AUTHORITY_ACCEPTANCE_REQUEST_PROTOCOL,
+    requestId: '00000000-0000-4000-8000-000000000002',
+    operation: 'exercise',
+  };
+  let received = null;
+  const response = await handleWindowsLifecycleAuthorityWorkerRequest({
+    access: 'acceptance',
+    operator: local,
+    request: selected,
+    authorityDirectory: AUTHORITY,
+  }, {
+    acceptanceHandler: async (input) => {
+      received = input;
+      return {
+        protocol: WINDOWS_LIFECYCLE_AUTHORITY_ACCEPTANCE_RESULT_PROTOCOL,
+        requestId: selected.requestId,
+        ok: true,
+        value: { ready: true, generation: `acceptance-${'a'.repeat(32)}` },
+      };
+    },
+  });
+  assert.deepEqual(received, { request: selected, authorityDirectory: AUTHORITY });
+  assert.equal(response.ok, true);
+  assert.deepEqual(calls, []);
 });

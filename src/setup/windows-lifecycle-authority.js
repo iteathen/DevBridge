@@ -66,6 +66,10 @@ function runtimeDigest(value, name) {
   return value;
 }
 
+function acceptanceEndpoint(authorityIdentity) {
+  return `\\\\.\\pipe\\devbridge-environment-${authorityIdentity}-acceptance-v1`;
+}
+
 export function windowsLifecycleAuthorityRuntimeGeneration({ packageDigest, nodeDigest } = {}) {
   const packageIdentity = runtimeDigest(packageDigest, 'Windows lifecycle authority package digest');
   const nodeIdentity = runtimeDigest(nodeDigest, 'Windows lifecycle authority Node digest');
@@ -110,6 +114,7 @@ function commandForRuntime(plan, runtime) {
     '--operator-sid', plan.operatorSid,
     '--read-pipe', plan.endpoints.read.pipeName,
     '--mutation-pipe', plan.endpoints.mutation.pipeName,
+    '--acceptance-pipe', plan.endpoints.acceptance.pipeName,
   ]);
 }
 
@@ -130,8 +135,10 @@ export function createWindowsLifecycleAuthorityPlan({
   const generationsDirectory = under(protectedRoot, 'generations');
   const readEndpoint = environmentLifecycleAuthorityEndpoint({ authorityIdentity, access: 'read', platform: 'win32' });
   const mutationEndpoint = environmentLifecycleAuthorityEndpoint({ authorityIdentity, access: 'mutation', platform: 'win32' });
+  const boundedAcceptanceEndpoint = acceptanceEndpoint(authorityIdentity);
   const readPipeName = path.win32.basename(readEndpoint);
   const mutationPipeName = path.win32.basename(mutationEndpoint);
+  const acceptancePipeName = path.win32.basename(boundedAcceptanceEndpoint);
 
   return Object.freeze({
     protocol: PROTOCOL,
@@ -156,6 +163,7 @@ export function createWindowsLifecycleAuthorityPlan({
     endpoints: Object.freeze({
       read: Object.freeze({ endpoint: readEndpoint, pipeName: readPipeName }),
       mutation: Object.freeze({ endpoint: mutationEndpoint, pipeName: mutationPipeName }),
+      acceptance: Object.freeze({ endpoint: boundedAcceptanceEndpoint, pipeName: acceptancePipeName }),
     }),
     acl: Object.freeze({
       protectedRoot: Object.freeze({
@@ -179,6 +187,11 @@ export function createWindowsLifecycleAuthorityPlan({
         owner: serviceAccount,
         servers: Object.freeze([serverAce(serviceAccount), serverAce(WINDOWS_SYSTEM_SID)]),
         clients: Object.freeze([clientAce(WINDOWS_ADMINISTRATORS_SID)]),
+      }),
+      acceptancePipe: Object.freeze({
+        owner: serviceAccount,
+        servers: Object.freeze([serverAce(serviceAccount), serverAce(WINDOWS_SYSTEM_SID)]),
+        clients: Object.freeze([clientAce(operator), clientAce(WINDOWS_ADMINISTRATORS_SID)]),
       }),
     }),
   });

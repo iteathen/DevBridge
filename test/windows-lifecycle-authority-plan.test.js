@@ -82,7 +82,8 @@ test('Windows authority plan owns the exact generation-addressed SCM command as 
   assert.match(value.serviceCommand, new RegExp(`"--node" "${value.runtime.nodeExecutable.replaceAll('\\', '\\\\')}"`, 'u'));
   assert.match(value.serviceCommand, /"--operator-sid" "S-1-5-21-111111111-222222222-333333333-1001"/u);
   assert.match(value.serviceCommand, new RegExp(`"--read-pipe" "${value.endpoints.read.pipeName}"`, 'u'));
-  assert.match(value.serviceCommand, new RegExp(`"--mutation-pipe" "${value.endpoints.mutation.pipeName}"$`, 'u'));
+  assert.match(value.serviceCommand, new RegExp(`"--mutation-pipe" "${value.endpoints.mutation.pipeName}"`, 'u'));
+  assert.match(value.serviceCommand, new RegExp(`"--acceptance-pipe" "${value.endpoints.acceptance.pipeName}"$`, 'u'));
 });
 
 test('runtime evidence deterministically binds source freshness without changing service identity', () => {
@@ -110,7 +111,7 @@ test('different runtime evidence cannot alias one protected generation', () => {
   assert.equal(second.service.name, first.service.name);
 });
 
-test('Windows authority plan preserves existing neutral endpoint namespace', () => {
+test('Windows authority plan preserves neutral read/mutation endpoints and derives one separate acceptance capability', () => {
   const value = plan();
   assert.equal(value.endpoints.read.endpoint, environmentLifecycleAuthorityEndpoint({
     authorityIdentity: value.authorityIdentity,
@@ -122,26 +123,30 @@ test('Windows authority plan preserves existing neutral endpoint namespace', () 
     access: 'mutation',
     platform: 'win32',
   }));
+  assert.equal(value.endpoints.acceptance.endpoint, `\\\\.\\pipe\\devbridge-environment-${value.authorityIdentity}-acceptance-v1`);
   assert.match(value.endpoints.read.pipeName, /-read-v1$/u);
   assert.match(value.endpoints.mutation.pipeName, /-mutation-v1$/u);
+  assert.match(value.endpoints.acceptance.pipeName, /-acceptance-v1$/u);
+  assert.notEqual(value.endpoints.acceptance.endpoint, value.endpoints.read.endpoint);
+  assert.notEqual(value.endpoints.acceptance.endpoint, value.endpoints.mutation.endpoint);
 });
 
-test('ordinary operator is admitted to read capability but not persistent mutation capability', () => {
+test('ordinary operator can reach read and fixed acceptance capabilities but not persistent mutation capability', () => {
   const value = plan();
-  assert.deepEqual(value.acl.readPipe.clients, [
-    { principal: OPERATOR_SID, rights: 'read-write' },
-    { principal: WINDOWS_ADMINISTRATORS_SID, rights: 'read-write' },
-  ]);
-  assert.deepEqual(value.acl.mutationPipe.clients, [
-    { principal: WINDOWS_ADMINISTRATORS_SID, rights: 'read-write' },
-  ]);
+  const ordinary = { principal: OPERATOR_SID, rights: 'read-write' };
+  const administrators = { principal: WINDOWS_ADMINISTRATORS_SID, rights: 'read-write' };
+  assert.deepEqual(value.acl.readPipe.clients, [ordinary, administrators]);
+  assert.deepEqual(value.acl.acceptancePipe.clients, [ordinary, administrators]);
+  assert.deepEqual(value.acl.mutationPipe.clients, [administrators]);
   assert.equal(value.acl.mutationPipe.clients.some((entry) => entry.principal === OPERATOR_SID), false);
-  assert.equal(value.acl.readPipe.clients.some((entry) => entry.rights === 'full-control'), false);
-  assert.equal(value.acl.mutationPipe.clients.some((entry) => entry.rights === 'full-control'), false);
+  for (const selected of [value.acl.readPipe, value.acl.mutationPipe, value.acl.acceptancePipe]) {
+    assert.equal(selected.clients.some((entry) => entry.rights === 'full-control'), false);
+  }
   assert.deepEqual(value.acl.mutationPipe.servers, [
     { principal: value.service.account, rights: 'full-control' },
     { principal: WINDOWS_SYSTEM_SID, rights: 'full-control' },
   ]);
+  assert.deepEqual(value.acl.acceptancePipe.servers, value.acl.mutationPipe.servers);
 });
 
 test('operator SID does not change protected authority identity or service ownership', () => {
@@ -152,6 +157,7 @@ test('operator SID does not change protected authority identity or service owner
   assert.deepEqual(second.service, first.service);
   assert.equal(second.serviceCommand, null);
   assert.notDeepEqual(second.acl.readPipe.clients, first.acl.readPipe.clients);
+  assert.notDeepEqual(second.acl.acceptancePipe.clients, first.acl.acceptancePipe.clients);
   assert.deepEqual(second.acl.mutationPipe.clients, first.acl.mutationPipe.clients);
 
   const firstBound = bindWindowsLifecycleAuthorityRuntime(first, { packageDigest: PACKAGE_DIGEST, nodeDigest: NODE_DIGEST });
