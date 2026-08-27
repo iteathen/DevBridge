@@ -80,7 +80,7 @@ Owners: canonical image canary, Hyper-V image-construction adapter, and Ubuntu m
 19. Reconcile the existing failed effect, create the replacement through the canonical image/lifecycle authority, and retain old subjects until the replacement is qualified.
 20. Finalize, sanitize, qualify, publish to the local immutable image library, and retire only exact superseded construction artifacts after the new image is verified.
 
-Software checkpoint: steps 16–18 are implemented on the isolated v7 candidate. Fifty-one focused tests, repository preflight with 39 targeted tests, and the complete 1,223-test Windows suite passed with zero failures. Remote Ubuntu/Windows CI, protected-runtime installation, and exact v7 physical construction remain pending; `cuda-target` and the preserved v6 VM/journal have not been mutated.
+Software checkpoint: steps 16–18 are implemented. Fifty-one focused tests, repository preflight with 39 targeted tests, and the complete 1,223-test Windows suite passed with zero failures. PR #319 passed all four Ubuntu/Windows smoke and full jobs in CI run `33124150724` and merged at exact recovery commit `9925905622d31caa985c27a47c18ebf817748feb`. Protected-runtime installation and exact v7 physical construction remain pending; the preserved v6 VM/journal have not been mutated.
 
 Exit evidence:
 

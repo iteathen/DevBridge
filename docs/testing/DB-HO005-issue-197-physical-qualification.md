@@ -452,7 +452,7 @@ Local verification on the isolated candidate passed:
 - repository preflight with 39 targeted tests;
 - the complete Windows suite: 1,223 tests, 1,212 passed, 11 platform skips, 0 failed.
 
-These tests prove the software contract and fail-closed expiry behavior. Ubuntu CI and a new exact Hyper-V construction subject remain required before accepting the image.
+These tests prove the software contract and fail-closed expiry behavior. PR #319 then passed all four Ubuntu/Windows smoke and full jobs in CI run `33124150724` and was squash-merged into the recovery line at exact commit `9925905622d31caa985c27a47c18ebf817748feb`. A new exact Hyper-V construction subject remains required before accepting the image.
 
 ## Preserved physical evidence
 
