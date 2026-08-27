@@ -1,6 +1,6 @@
 # Working DevBridge implementation plan
 
-Status: active dependency-ordered plan derived from `working-devbridge-assessment-2026-08-27.md`.
+Status: active dependency-ordered plan derived from `working-devbridge-assessment-2026-08-27.md`. Phase 0 and the Phase 1 physical gate are complete at recovery commit `4483474fc85e5f50a21accd7fef7c4a7a6067dfb`.
 
 ## Governing method
 
@@ -52,10 +52,17 @@ Owners: canonical image canary, Hyper-V image-construction adapter, and Ubuntu m
 
 1. Re-observe the exact durable construction subject, provider identity, VM identity, attached media, disk growth, liveness, and console evidence.
 2. Use the supported `setup --construct` re-entry only after Phase 1's ordinary setup gate passes.
-3. Reconcile the existing effect before deciding whether it is still running, failed, or recoverably superseded.
-4. Diagnose from bounded console/thumbnail and provider evidence. Do not send guest input or mutate media merely to make progress.
-5. If replacement is required, create it through the existing canonical-image/lifecycle authority with a new exact subject only when desired media/recipe identity materially changes.
-6. Finalize, sanitize, qualify, publish to the local immutable image library, and retire only exact superseded construction artifacts after the new image is verified.
+3. Repair the provider-local thumbnail normalization defect before making any VM recovery decision:
+   - preserve the neutral `captureInstallConsole()` result contract;
+   - accept the documented exact RGB565 byte count and the physically observed exact four-terminal-byte variant only;
+   - retain the first `width * height * 2` bytes for the observed variant and reject other counts;
+   - do not interpret image pixels as width/height metadata;
+   - add executable normal, exact-variant, malformed-count, and output-boundary tests rather than regex-only source assertions.
+4. Re-run non-construction setup on the exact candidate, then make one supported construction re-entry and require a valid bounded console artifact without changing VM state.
+5. Reconcile the existing effect before deciding whether it is still running, failed, or recoverably superseded.
+6. Diagnose from bounded console/thumbnail and provider evidence. Do not send guest input or mutate media merely to make progress.
+7. If replacement is required, create it through the existing canonical-image/lifecycle authority with a new exact subject only when desired media/recipe identity materially changes.
+8. Finalize, sanitize, qualify, publish to the local immutable image library, and retire only exact superseded construction artifacts after the new image is verified.
 
 Exit evidence:
 

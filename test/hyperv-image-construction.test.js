@@ -28,6 +28,8 @@ function fakeHost() {
     failAfterBootEffect: false,
     failAfterRetainEffect: false,
     guestAddresses: [],
+    consoleImageData: null,
+    consoleResult: null,
   };
   return {
     state,
@@ -63,9 +65,12 @@ function fakeHost() {
           diskAllocatedBytes: state.diskAllocatedBytes,
         };
       } else if (script.includes('GetVirtualSystemThumbnailImage')) {
-        const pixels = Buffer.alloc(320 * 240 * 2);
-        pixels.writeUInt16LE(0xf800, 0);
-        body = { available: true, width: 320, height: 240, imageData: pixels.toString('base64') };
+        if (state.consoleResult) body = state.consoleResult;
+        else {
+          const pixels = state.consoleImageData ?? Buffer.alloc(320 * 240 * 2);
+          pixels.writeUInt16LE(0xf800, 0);
+          body = { available: true, width: 320, height: 240, imageData: pixels.toString('base64') };
+        }
       } else if (script.includes('construction machine is not startable')) {
         state.machineState = 'running';
         body = { started: true, state: 'running' };
@@ -235,11 +240,52 @@ test('Hyper-V image construction captures bounded provider-owned console evidenc
     const bmp = await readFile(evidence.location);
     assert.equal(bmp.subarray(0, 2).toString('ascii'), 'BM');
     assert.equal(bmp.readInt32LE(22), -240);
+    assert.deepEqual([...bmp.subarray(54, 57)], [0, 0, 255]);
     const captureCall = host.state.calls.find((entry) => entry.script.includes('GetVirtualSystemThumbnailImage'));
-    assert.match(captureCall.script, /pixelValues\.Count -eq 320 \* 240/u);
-    assert.match(captureCall.script, /pixelValues\.Count -eq 320 \* 240 \* 2 \+ 4/u);
-    assert.match(captureCall.script, /BitConverter.*ToUInt16/u);
-    assert.match(captureCall.script, /pixel count is invalid/u);
+    assert.match(captureCall.script, /\$bytes = \[byte\[\]\]\$result\.ImageData/u);
+    assert.doesNotMatch(captureCall.script, /reportedWidth|reportedHeight|BitConverter/u);
+    assert.equal(host.state.machineState, 'running');
+    assert.equal(host.state.mediaCount, 2);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('Hyper-V image construction accepts exact zero terminal padding without shifting RGB565 pixels', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    host.state.consoleImageData = Buffer.alloc(320 * 240 * 2 + 4);
+    const construction = constructor(data, host, '6'.repeat(32));
+    await construction.prepare(data.request);
+    await construction.startInstall(data.request.identity);
+    const evidence = await construction.captureInstallConsole(data.request.identity);
+    assert.equal(evidence.available, true);
+    const bmp = await readFile(evidence.location);
+    assert.deepEqual([...bmp.subarray(54, 57)], [0, 0, 255]);
+    assert.equal(host.state.machineState, 'running');
+    assert.equal(host.state.mediaCount, 2);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('Hyper-V image construction rejects malformed console transport variants before publication', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const construction = constructor(data, host, '7'.repeat(32));
+    await construction.prepare(data.request);
+    await construction.startInstall(data.request.identity);
+
+    host.state.consoleImageData = Buffer.alloc(320 * 240 * 2 + 4);
+    host.state.consoleImageData[host.state.consoleImageData.length - 1] = 1;
+    await assert.rejects(() => construction.captureInstallConsole(data.request.identity), /terminal padding is invalid/u);
+
+    host.state.consoleImageData = Buffer.alloc(320 * 240 * 2 + 1);
+    await assert.rejects(() => construction.captureInstallConsole(data.request.identity), /evidence size is invalid/u);
+
+    host.state.consoleResult = { available: true, width: 321, height: 240, imageData: 'AAAA' };
+    await assert.rejects(() => construction.captureInstallConsole(data.request.identity), /evidence contract is invalid/u);
+
+    const location = path.join(data.stateRoot, `${data.request.identity}-install-console.bmp`);
+    await assert.rejects(() => readFile(location), /ENOENT/u);
     assert.equal(host.state.machineState, 'running');
     assert.equal(host.state.mediaCount, 2);
   } finally { await rm(data.directory, { recursive: true, force: true }); }

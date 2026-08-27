@@ -63,6 +63,26 @@ The installed Windows entry exists at the user-scoped DevBridge home. Read-only 
 
 The current VM and its durable journal are recovery evidence. Directly stopping, deleting, replacing, or editing it outside the owning lifecycle would violate DB-009 and the #169/#177 boundary. The next physical action must be an exact supported setup/lifecycle re-entry after the candidate is accepted, not manual Hyper-V surgery.
 
+### Exact protected setup and construction re-entry
+
+The recovery baseline was synchronized with current `main`, qualified locally and in Windows/Ubuntu CI, and merged into `cuda-target` as exact commit `4483474fc85e5f50a21accd7fef7c4a7a6067dfb` through PR #306.
+
+The installed permanent entry then selected that exact commit for two physical invocations:
+
+1. Ordinary `setup` exited `0`, reached the construction gate, retained all 16 configured repositories, and reported the protected Windows lifecycle service/state ready. It observed the existing durable construction frontier and performed no image or VM construction.
+2. One `setup --construct` re-entry exited `1` and preserved the running VM. It reported overdue installer liveness, 1,314 minutes without progress, `9,332,326,400` allocated VHDX bytes, `0%` CPU, and no automatic VM repair. The bounded console evidence failed with `Hyper-V thumbnail dimensions are invalid: 512x1112`.
+
+Read-only provider observation localized that final message to the console-evidence adapter:
+
+- the running exact VM remains `db-image-build-a6dd830d2c150f2b` with provider identity `96327cb7-decd-41ed-93be-5e36e7dd83a8`;
+- `GetVirtualSystemThumbnailImage(320, 240)` returns success and a `System.Byte[]` of 153,604 bytes;
+- independent `GetSummaryInformation` large-thumbnail observation reports explicit width `320`, height `240`, and the identical 153,604-byte payload;
+- the provider returns exactly four bytes beyond `width * height * 2` for tested `16x16`, `80x60`, `100x75`, `160x120`, `319x239`, and `320x240` requests;
+- the first four bytes vary with the scaled image and do not encode the requested dimensions, while the last four observed bytes are zero;
+- row-boundary coherence is materially better when the first expected RGB565 bytes are retained than when four leading bytes are removed.
+
+The current adapter's newest compatibility branch treats the first four bytes as a little-endian width/height frame. That interpretation is falsified by the provider's independently reported dimensions and by the same four-byte excess at arbitrary sizes. The defect is diagnostic-only: no guest input, power operation, media change, disk mutation, or journal rewrite occurred.
+
 ## Issue and dependency assessment
 
 The lowest unfinished product dependency is provider-management authority isolation, not polling, agent UX, or GPU routing.
@@ -102,6 +122,14 @@ Sources:
 - [Remove-VM](https://learn.microsoft.com/en-us/powershell/module/hyper-v/remove-vm)
 - [Hyper-V snapshot and differencing-disk guidance](https://learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-snapshots-checkpoints-differencing-disks)
 
+Microsoft defines `GetVirtualSystemThumbnailImage` as returning raw RGB565 in a `uint8[]` for the requested width and height. The separate `GetSummaryInformation` API exposes fixed small, medium, and large thumbnail requests, and `Msvm_SummaryInformation` reports `ThumbnailImageWidth` and `ThumbnailImageHeight` independently of its raw RGB565 byte array. DevBridge must therefore validate dimensions from the provider contract and normalize only an exactly observed transport-size variant; it must not reinterpret arbitrary image pixels as an undocumented dimension header.
+
+Sources:
+
+- [GetVirtualSystemThumbnailImage](https://learn.microsoft.com/en-us/windows/win32/hyperv_v2/getvirtualsystemthumbnailimage-msvm-virtualsystemmanagementservice)
+- [GetSummaryInformation](https://learn.microsoft.com/en-us/windows/win32/hyperv_v2/getsummaryinformation-msvm-virtualsystemmanagementservice)
+- [Msvm_SummaryInformation](https://learn.microsoft.com/en-us/windows/win32/hyperv_v2/msvm-summaryinformation)
+
 ### Linux authority, systemd, libvirt, and qcow2
 
 Libvirt's modular `virtqemud` uses local Unix sockets and is commonly systemd socket-activated. Its RW socket can grant authority comparable to root. Socket group membership alone is therefore too coarse as the final security story.
@@ -139,17 +167,16 @@ The research and current evidence preserve the original primitive ordering but r
 
 - **Windows:** continue the dedicated service-SID and explicit pipe-DACL design. Treat service configuration, running token, pipe capability, backing-store ACL, Hyper-V operation, and exact cleanup as separate observations. PR #300's bounded exact-fixture cleanup retry is architecturally valid only because it admits a small Windows transient set and preserves terminal failure.
 - **Linux:** keep the per-install system service and immutable root-owned runtime, but do not freeze broad libvirt group membership as the universal provider capability. The adapter must detect modular versus monolithic daemon/socket behavior and select a locally supported, bounded service-only authorization policy. Ordinary identity must remain outside provider RW authority.
-- **Physical recovery:** the stalled Ubuntu construction is now the immediate Windows product blocker, but it remains downstream of exact protected-authority re-entry. The latest diagnostic candidate should observe the existing action identity and console evidence before any repeat or replacement.
-- **Branch integration:** use the PR #300 head as the recovery implementation baseline, then integrate the three current-main commits and requalify. Do not develop new recovery behavior on the retired fast-track checkout or directly on `main`.
+- **Physical recovery:** exact protected-authority re-entry now passes. The immediate blocker is the Hyper-V adapter's incorrect interpretation of an exact four-byte thumbnail-size excess. Repair only that provider-local decoder, capture bounded console evidence, then classify the existing guest before any replacement decision.
+- **Branch integration:** PR #300 and the three current-main commits are synchronized and qualified at recovery commit `4483474fc85e5f50a21accd7fef7c4a7a6067dfb`. Continue new recovery behavior on fresh isolated branches from that commit. Do not develop on the retired fast-track checkout or directly on `main`.
 - **Mainline merge:** do not overwrite or force main. Open an evidence-backed integration PR only after the synchronized core branch is green and the intended fail-closed/working platform state is documented. Incomplete Linux readiness may merge only if Linux remains explicitly unavailable with no fallback and the PR scope says so.
 - **GPU:** no GPU/CUDA/ROCm implementation, device routing, image specialization, or provider attachment work belongs in the current sequence.
 
 ## Current blockers and safe frontier
 
-1. PR #300 is green but not yet integrated into `cuda-target`.
-2. The latest exact candidate has not completed the real Windows plain-setup acceptance pass on this host.
-3. The active Ubuntu construction is durably stalled and needs supported diagnostic re-entry; no manual VM mutation is authorized by this assessment.
-4. Linux protected-authority implementation must be rebased onto the shared reconciler and completed before Linux can be declared ready.
-5. `origin/main` and the active recovery lineage must be synchronized and qualified before a mainline integration proposal.
+1. The active Ubuntu construction is durably overdue; bounded console capture must be repaired before the guest state can be classified.
+2. No VM repair, replacement, or exact-owned retirement is admissible until that diagnostic evidence is captured and reconciled by the owning lifecycle.
+3. Linux protected-authority implementation must be rebased onto the shared reconciler and completed before Linux can be declared ready.
+4. The synchronized recovery lineage remains intentionally separate from `main` until the primitive provider/image/install gates have physical evidence.
 
 The implementation sequence and acceptance gates are recorded in `working-devbridge-plan.md`.

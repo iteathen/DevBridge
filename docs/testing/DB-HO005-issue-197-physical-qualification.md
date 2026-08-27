@@ -304,6 +304,36 @@ Regression coverage now requires setup to advertise v4 and separately proves tha
 
 The recovery audit and unchanged host evidence are recorded on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5392979179). No runtime rebind, setup gate, VM action, or construction invocation occurred before the stale-media identity was classified.
 
+### 13. Console evidence treated RGB565 pixels as an undocumented frame header
+
+After PR #306 synchronized the recovery line with current `main`, ordinary setup selected exact commit `4483474fc85e5f50a21accd7fef7c4a7a6067dfb`, reached the construction gate, and exited `0`. One supported `setup --construct` re-entry then preserved the existing VM and failed closed because the overdue installer diagnostic reported:
+
+```text
+Hyper-V thumbnail dimensions are invalid: 512x1112
+```
+
+The candidate branch added support for a 153,604-byte response by interpreting its first four bytes as little-endian width and height. Read-only physical observation disproved that model:
+
+- `GetVirtualSystemThumbnailImage` returned success, `System.Byte[]`, and 153,604 bytes for requested `320x240` RGB565;
+- independent `GetSummaryInformation` returned explicit `ThumbnailImageWidth=320`, `ThumbnailImageHeight=240`, and the identical byte array;
+- `16x16`, `80x60`, `100x75`, `160x120`, `319x239`, and `320x240` calls each returned exactly `width * height * 2 + 4` bytes;
+- the first four bytes varied across scaled images and did not encode the requested dimensions;
+- the final four observed bytes were zero, and retaining the first expected bytes produced the better row-boundary coherence.
+
+Microsoft's provider contract defines the method output as raw RGB565 `uint8[]` for the requested width and height. `Msvm_SummaryInformation` defines width and height as separate properties corresponding to the raw thumbnail array. There is no documented leading dimension frame.
+
+Sources:
+
+- [Microsoft: `GetVirtualSystemThumbnailImage`](https://learn.microsoft.com/en-us/windows/win32/hyperv_v2/getvirtualsystemthumbnailimage-msvm-virtualsystemmanagementservice)
+- [Microsoft: `GetSummaryInformation`](https://learn.microsoft.com/en-us/windows/win32/hyperv_v2/getsummaryinformation-msvm-virtualsystemmanagementservice)
+- [Microsoft: `Msvm_SummaryInformation`](https://learn.microsoft.com/en-us/windows/win32/hyperv_v2/msvm-summaryinformation)
+
+Solution: keep all compatibility handling inside the Hyper-V image-construction adapter and preserve the neutral console-evidence stud. The protected script now returns the provider's documented byte array without guessing at framing. The adapter accepts either the exact RGB565 byte count or the physically observed exact four-byte zero-terminal variant, retains the first expected pixel bytes, and rejects nonzero terminal bytes, all other lengths, invalid dimensions, and invalid encodings before evidence publication. The speculative word-array and leading-dimension paths were removed rather than retained as legacy behavior.
+
+Executable focused coverage proves exact-size success, physical-variant success without a two-pixel image shift, nonzero-terminal rejection, malformed-size rejection, contract rejection, no artifact publication on failure, and unchanged VM/media state. The Hyper-V construction, physical canary, and setup-construction suites pass 30 tests with no failures.
+
+The pre-fix stopped frontier and exact provider observations are recorded on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5443879067). No guest input, power operation, media rewrite, disk mutation, provider cleanup, or manual workaround occurred during diagnosis or implementation.
+
 ## Preserved physical evidence
 
 After the latest stopped attempt:
