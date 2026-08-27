@@ -291,15 +291,17 @@ test('physical canary run waits for exact SSH access before qualification', asyn
         async inspect() { return { ...status('active'), identity: subject }; },
         async advance() { advances += 1; throw new Error('qualification must not start without access'); },
       },
-      construction: { async status() { return { identity: subject, phase: 'qualifying', state: 'running', mediaCount: 0 }; } },
+      construction: { async status() { return { identity: subject, phase: 'qualifying', state: 'running', mediaCount: 0, uptimeMilliseconds: 60_000 }; } },
       accessProbe: { async inspect() { return { ready: false, reason: 'host key not ready' }; } },
       async access() { return { family: 'linux', user: 'devbridge', address: '192.168.90.20', identityFile: 'id', knownHostsFile: 'known' }; },
       addressOwner: { async releaseAddress() {} },
     });
-    const canary = createUbuntuProductionImagePhysicalCanary(data.config, { platform: 'win32', preflight: readyPreflight, payloadFactory: async () => data.payload, runtimeFactory });
+    const canary = createUbuntuProductionImagePhysicalCanary(data.config, { platform: 'win32', preflight: readyPreflight, payloadFactory: async () => data.payload, runtimeFactory, now: () => new Date('2026-08-27T22:01:00.000Z') });
     const result = await canary.run();
     assert.equal(result.state, 'waiting');
     assert.match(result.reason, /host key not ready/u);
+    assert.equal(result.readiness.classification, 'observing');
+    assert.equal(result.readiness.nextObservationAt, '2026-08-27T22:01:30.000Z');
     assert.equal(advances, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -316,14 +318,40 @@ test('physical canary run treats delayed provider-reported guest addressing as a
         async inspect() { return { ...status('active'), identity: subject }; },
         async advance() { advances += 1; throw new Error('qualification must not start without an exact endpoint'); },
       },
-      construction: { async status() { return { identity: subject, phase: 'qualifying', state: 'running', mediaCount: 0 }; } },
+      construction: { async status() { return { identity: subject, phase: 'qualifying', state: 'running', mediaCount: 0, uptimeMilliseconds: 60_000 }; } },
       accessProbe: { async inspect() { throw new Error('SSH must not run without an endpoint'); } },
       async access() { throw new Error('construction guest has not reported a private IPv4 address'); },
     });
-    const canary = createUbuntuProductionImagePhysicalCanary(data.config, { platform: 'win32', preflight: readyPreflight, payloadFactory: async () => data.payload, runtimeFactory });
+    const canary = createUbuntuProductionImagePhysicalCanary(data.config, { platform: 'win32', preflight: readyPreflight, payloadFactory: async () => data.payload, runtimeFactory, now: () => new Date('2026-08-27T22:01:00.000Z') });
     const result = await canary.run();
     assert.equal(result.state, 'waiting');
     assert.match(result.reason, /access endpoint is not ready.*has not reported a private IPv4/u);
+    assert.equal(advances, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('physical canary blocks expired access readiness without repairing or advancing the VM', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-access-expired-'));
+  try {
+    const data = await fixture(root);
+    let advances = 0;
+    const runtimeFactory = async ({ subject }) => ({
+      canary: {
+        async inspect() { return { ...status('active'), identity: subject }; },
+        async advance() { advances += 1; throw new Error('expired access must not advance'); },
+      },
+      construction: { async status() { return { identity: subject, phase: 'qualifying', state: 'running', mediaCount: 0, uptimeMilliseconds: 10 * 60_000 }; } },
+      accessProbe: { async inspect() { return { ready: false, reason: 'connection refused' }; } },
+      async access() { return { family: 'linux', user: 'devbridge', address: '192.168.90.20', identityFile: 'id', knownHostsFile: 'known' }; },
+    });
+    const canary = createUbuntuProductionImagePhysicalCanary(data.config, { platform: 'win32', preflight: readyPreflight, payloadFactory: async () => data.payload, runtimeFactory, now: () => new Date('2026-08-27T22:10:00.000Z') });
+    const result = await canary.run();
+    assert.equal(result.state, 'blocked');
+    assert.match(result.reason, /readiness deadline expired.*connection refused.*no automatic repair/u);
+    assert.equal(result.readiness.classification, 'expired');
+    assert.equal(result.readiness.nextObservationAt, null);
     assert.equal(advances, 0);
   } finally {
     await rm(root, { recursive: true, force: true });

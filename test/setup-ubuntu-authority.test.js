@@ -16,7 +16,7 @@ function index(entries) {
 
 function responseFor(url) {
   let entries = [];
-  if (url.includes('/resolute/main/')) entries = [['build-essential', '12.12ubuntu1'], ['cmake', '3.31.6-1'], ['git', '1:2.48.1-0ubuntu1'], ['linux-cloud-tools-virtual', '7.0.0-14.14']];
+  if (url.includes('/resolute/main/')) entries = [['build-essential', '12.12ubuntu1'], ['cmake', '3.31.6-1'], ['git', '1:2.48.1-0ubuntu1'], ['linux-cloud-tools-virtual', '7.0.0-14.14'], ['openssh-server', '1:9.9p1-3ubuntu3']];
   else if (url.includes('/resolute/universe/')) entries = [['nodejs', '22.16.0+dfsg-1'], ['npm', '10.9.2+ds-1']];
   else if (url.includes('/resolute-updates/main/')) entries = [['build-essential', '12.12ubuntu1.26.04.2'], ['linux-cloud-tools-virtual', '7.0.0-30.30']];
   else if (url.includes('/resolute-security/main/')) entries = [['build-essential', '12.12ubuntu1.26.04.1'], ['linux-cloud-tools-virtual', '7.0.0-29.29']];
@@ -43,6 +43,7 @@ test('setup resolves every required package from the exact snapshot without fixt
     { name: 'linux-cloud-tools-virtual', version: '7.0.0-30.30' },
     { name: 'nodejs', version: '22.16.0+dfsg-1' },
     { name: 'npm', version: '10.9.2+ds-1' },
+    { name: 'openssh-server', version: '1:9.9p1-3ubuntu3' },
   ]);
 });
 
@@ -55,10 +56,12 @@ test('setup authority binds source policy, exact snapshot and current payload ge
   assert.equal(authority.source.media.sha256, 'dec49008a71f6098d0bcfc822021f4d042d5f2db279e4d75bdd981304f1ca5d9');
   assert.equal(authority.source.media.bytes, 2_918_598_656);
   assert.equal(authority.packages.snapshot, SNAPSHOT);
-  assert.equal(authority.packages.generation, 'ubuntu-2604-tools-v3');
+  assert.equal(authority.packages.generation, 'ubuntu-2604-tools-v4');
+  assert.equal(authority.packages.packages.find((entry) => entry.name === 'openssh-server')?.version, '1:9.9p1-3ubuntu3');
   assert.deepEqual(authority.qualification.commands, ['hv_kvp_daemon', 'make']);
   assert.equal(authority.payload.generation, 'guest-image-current');
-  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v6');
+  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v7');
+  assert.equal(authority.output.generation, 'ubuntu-2604-production-v2');
   assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 2, ...UBUNTU_SETUP_BOOT_PATCH }]);
 });
 

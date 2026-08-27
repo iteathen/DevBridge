@@ -3,7 +3,7 @@ import { createGuestImagePayload } from '../guest/image-payload.js';
 import { comparePackageVersions } from './package-version.js';
 
 const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
-const PACKAGE_NAMES = Object.freeze(['build-essential', 'cmake', 'git', 'linux-cloud-tools-virtual', 'nodejs', 'npm']);
+const PACKAGE_NAMES = Object.freeze(['build-essential', 'cmake', 'git', 'linux-cloud-tools-virtual', 'nodejs', 'npm', 'openssh-server']);
 const COMPONENTS = Object.freeze(['main', 'universe']);
 const POCKETS = Object.freeze(['resolute', 'resolute-updates', 'resolute-security']);
 const MAX_COMPRESSED_BYTES = 64 * 1024 * 1024;
@@ -122,17 +122,17 @@ export async function createUbuntuSetupAuthority({
     recipe: Object.freeze({
       protocol: 'devbridge/ubuntu-autoinstall-recipe-v1',
       sourceSha256: SOURCE.mediaSha256,
-      generation: 'ubuntu-2604-autoinstall-v6',
+      generation: 'ubuntu-2604-autoinstall-v7',
       patches: Object.freeze([Object.freeze({ id: 'boot-trigger', occurrences: 2, before: BOOT_PATCH.before, after: BOOT_PATCH.after })]),
     }),
     packages: Object.freeze({
-      generation: 'ubuntu-2604-tools-v3',
+      generation: 'ubuntu-2604-tools-v4',
       snapshot,
       packages,
     }),
     payload: Object.freeze({ generation: payload.generation }),
     qualification: Object.freeze({ commands: Object.freeze(['hv_kvp_daemon', 'make']) }),
-    output: Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v1', bootstrap: 'guest-image-v1' }),
+    output: Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v2', bootstrap: 'guest-image-v1' }),
   });
 }
 

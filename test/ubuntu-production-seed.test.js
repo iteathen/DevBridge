@@ -71,7 +71,8 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.ok(result.userData.indexOf('Package-Blacklist') < result.userData.indexOf('late-commands:'));
   assert.ok(result.userData.indexOf('"upgrade"') < result.userData.indexOf('"install"'));
   assert.doesNotMatch(result.userData, /updates:\s+security/u);
-  assert.doesNotMatch(result.userData, /install-server:\s+true/u);
+  assert.match(result.userData, /ssh:\n    install-server: true\n    allow-pw: false/u);
+  assert.match(result.userData, /"openssh-server=1:9\.9p1-3ubuntu3"/u);
   assert.equal(result.evidence.payloadGeneration, 'guest-payload-v7');
   assert.equal(result.evidence.packageGeneration, 'ubuntu-tools-v4');
   assert.equal(result.evidence.packageSnapshot, snapshot);

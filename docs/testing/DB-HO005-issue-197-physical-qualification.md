@@ -415,6 +415,45 @@ Additional primary references:
 - [unattended-upgrades](https://github.com/mvo5/unattended-upgrades)
 - [Debian package-version ordering](https://manpages.debian.org/trixie/dpkg-dev/deb-version.7.en.html)
 
+### 17. Exact v6 construction reached first boot but exposed an absent access prerequisite
+
+The protected runtime at exact recovery head `2cd51898659b8d1898c8d51de3b648ad74ba19ec` was installed through one bounded setup elevation, and the supported non-elevated `devbridge setup --construct --track-ref cuda-target` path derived a fresh v6 subject:
+
+- subject: `subject-7d53b430cc49c26753d9eb090be633f0`;
+- VM: `db-image-build-faec642ff406ab53`;
+- provider identity: `6c6ee708-4b47-41f1-8ae0-10b9cf5d603d`;
+- disk: `c57faff3c5d66fd43e47ca54a7638da1956f2bd08ee8c8dce641bd02a829f6da.vhdx`.
+
+The unattended installation advanced normally: VHDX allocation progressed from 4 MiB through approximately 12.6 GB, the installer powered off, setup detached both media, and the installed disk booted. Read-only Hyper-V observation proved the VM remained `Running` and `Operating normally`, with healthy Heartbeat and Key-Value Pair Exchange integration services, one private DHCP address, and no attached installer media. At 4 minutes 58 seconds of installed-system uptime the guest remained CPU-idle and a host TCP probe still found port 22 closed. A final read-only observation at 15 minutes 25 seconds proved the same healthy provider/heartbeat and closed-port state beyond the replacement's ten-minute readiness deadline. No guest command, power action, media change, disk mutation, or construction retry was used to obtain that evidence.
+
+The implementation explains the result without a provider hypothesis. The exact seed emits `ssh.install-server: false`; the authoritative package set contains only build-essential, CMake, Git, Linux cloud tools, Node.js, and npm; yet first-boot units and qualification assume `ssh.service` exists. Canonical's current autoinstall reference defines `install-server` as the switch that installs OpenSSH in the target and documents `false` as the default. The VM therefore reached a valid installed boot without the access prerequisite DevBridge's next phase requires.
+
+Reassessment assigns the correction to the existing image contracts, not to networking, Hyper-V, or an out-of-band guest repair:
+
+1. set the seed's local SSH installation request to true while retaining password denial and the existing temporary key contract;
+2. add `openssh-server` to the same snapshot-resolved exact package authority used for other required tools, so late installation and qualification prove its final version rather than relying only on ISO contents;
+3. advance recipe, package, and output generations so neither the v6 seed, v6 package set, failed construction journal, nor a different image digest can alias the replacement;
+4. add focused tests for the emitted SSH contract, exact package authority, immutable generations, and qualification package projection;
+5. run preflight, the full Windows suite, and all four Ubuntu/Windows CI jobs before installing or constructing the replacement;
+6. preserve the current v6 VM/disk/journal as failed physical evidence until the replacement reaches a terminal verified state through supported lifecycle ownership.
+
+The first access check also exposed a presentation gap: an ordinary first-boot connection refusal carries no bounded next-observation evidence, so setup prints a terminal-sounding instruction even when startup may only be settling. That concern is separate from the absent-package root cause. The planned neutral readiness window consumes only elapsed time and a local clock: two minutes is the expected frontier, ten minutes is the hard deadline, and non-terminal observations schedule a bounded 30-second recheck. Before the deadline setup reports the exact next observation; after it, the canary blocks without repair. SSH and Hyper-V details remain reason text owned by the composition, not fields in the readiness LEGO.
+
+Primary references:
+
+- [Subiquity autoinstall SSH reference](https://github.com/canonical/subiquity/blob/main/doc/reference/autoinstall-reference.rst)
+- [Subiquity autoinstall schema](https://github.com/canonical/subiquity/blob/main/autoinstall-schema.json)
+
+Implementation keeps the correction inside those planned owners. The setup authority now resolves `openssh-server` with the other exact packages; the seed requests target installation while retaining `allow-pw: false`; qualification receives the resulting exact package evidence; and recipe/package/output generations advance to `ubuntu-2604-autoinstall-v7`, `ubuntu-2604-tools-v4`, and `ubuntu-2604-production-v2`. A new provider-free readiness-window LEGO consumes only elapsed milliseconds, a clock, and bounded policy. The physical canary composes it with provider-observed uptime, while setup formats only its neutral result.
+
+Local verification on the isolated candidate passed:
+
+- 51 focused readiness, setup-authority, seed, qualification, construction-authority, physical-canary, and setup-composition tests;
+- repository preflight with 39 targeted tests;
+- the complete Windows suite: 1,223 tests, 1,212 passed, 11 platform skips, 0 failed.
+
+These tests prove the software contract and fail-closed expiry behavior. Ubuntu CI and a new exact Hyper-V construction subject remain required before accepting the image.
+
 ## Preserved physical evidence
 
 After the latest stopped attempt:

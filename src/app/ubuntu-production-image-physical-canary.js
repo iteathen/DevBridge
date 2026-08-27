@@ -14,6 +14,7 @@ import { createUbuntuProductionImageCanaryComposition } from '../runtime/image-b
 import { createUbuntuProductionImageQualification } from '../runtime/image-builders/ubuntu-production-qualification.js';
 import { createUbuntuProductionSeedFactory } from '../runtime/image-builders/ubuntu-production-seed.js';
 import { createUbuntuReleaseMediaSource } from '../runtime/image-sources/ubuntu-release-media.js';
+import { observeBoundedReadiness } from '../runtime/bounded-readiness-window.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { createDetachedSignatureVerifier } from '../runtime/detached-signature-verifier.js';
 import { createHttpsFileDownload } from '../runtime/https-file-download.js';
@@ -46,6 +47,9 @@ const MAX_DISK_BYTES = 4 * 1024 * 1024 * 1024 * 1024;
 const MAX_PROCESSORS = 256;
 const MAX_ACCESS_SEED_BYTES = 128 * 1024;
 const MAX_ADVANCES = 16;
+const ACCESS_EXPECTED_MILLISECONDS = 2 * 60 * 1000;
+const ACCESS_DEADLINE_MILLISECONDS = 10 * 60 * 1000;
+const ACCESS_RECHECK_MILLISECONDS = 30 * 1000;
 
 function onlyKeys(value, allowed, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
@@ -246,7 +250,7 @@ function inspectionCanary(journal) {
   });
 }
 
-function publicResult(subject, canary, { state = null, reason = null, preflight = null, authorityRegistered = null, liveness = null, diagnostics = null } = {}) {
+function publicResult(subject, canary, { state = null, reason = null, preflight = null, authorityRegistered = null, liveness = null, readiness = null, diagnostics = null } = {}) {
   const selectedState = state ?? (canary?.complete ? 'completed' : canary?.blocked ? 'blocked' : canary?.phase ?? 'unavailable');
   return Object.freeze({
     protocol: STATUS_PROTOCOL,
@@ -258,6 +262,7 @@ function publicResult(subject, canary, { state = null, reason = null, preflight 
     reason: reason ?? canary?.reason ?? null,
     image: canary?.image ?? null,
     liveness,
+    readiness,
     diagnostics,
     authorityRegistered,
     preflight,
@@ -480,11 +485,13 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
   preflight = null,
   runtimeFactory = null,
   signatureVerifierExecutable = null,
+  now = () => new Date(),
 } = {}) {
   const config = normalizeConfig(rawConfig);
   if (typeof invoke !== 'function') throw new TypeError('physical canary invocation contract is invalid');
   if (typeof payloadFactory !== 'function') throw new TypeError('physical canary payload factory is invalid');
   if (runtimeFactory != null && typeof runtimeFactory !== 'function') throw new TypeError('physical canary runtime factory is invalid');
+  if (typeof now !== 'function') throw new TypeError('physical canary clock must be a function');
   if (signatureVerifierExecutable != null && (typeof signatureVerifierExecutable !== 'string' || signatureVerifierExecutable.length === 0 || signatureVerifierExecutable.includes('\0') || !path.win32.isAbsolute(signatureVerifierExecutable))) throw new TypeError('physical canary signature-verifier binding is invalid');
   const subject = ubuntuConstructionAuthoritySubject(config.authority);
   const paths = pathsFor(config, subject);
@@ -611,11 +618,24 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
           if (observed.state !== 'running' || observed.mediaCount !== 0) {
             return publicResult(subject, current, { state: 'waiting', reason: 'installed image is not yet running from its retained disk', authorityRegistered: true, preflight: before.preflight });
           }
+          const pendingAccess = (reason) => {
+            const readiness = observeBoundedReadiness({
+              elapsedMilliseconds: observed.uptimeMilliseconds,
+              observedAt: now(),
+              expectedMilliseconds: ACCESS_EXPECTED_MILLISECONDS,
+              deadlineMilliseconds: ACCESS_DEADLINE_MILLISECONDS,
+              recheckMilliseconds: ACCESS_RECHECK_MILLISECONDS,
+            });
+            if (readiness.classification === 'expired') {
+              return publicResult(subject, current, { state: 'blocked', reason: `installed image access readiness deadline expired: ${reason}; no automatic repair was attempted`, readiness, authorityRegistered: true, preflight: before.preflight });
+            }
+            return publicResult(subject, current, { state: 'waiting', reason, readiness, authorityRegistered: true, preflight: before.preflight });
+          };
           let access;
           try { access = await runtime.access(subject); }
-          catch (error) { return publicResult(subject, current, { state: 'waiting', reason: `installed image access endpoint is not ready: ${error.message}`, authorityRegistered: true, preflight: before.preflight }); }
+          catch (error) { return pendingAccess(`installed image access endpoint is not ready: ${error.message}`); }
           const observedAccess = await runtime.accessProbe.inspect(access);
-          if (observedAccess.ready !== true) return publicResult(subject, current, { state: 'waiting', reason: `installed image access is not ready: ${observedAccess.reason ?? 'unknown failure'}`, authorityRegistered: true, preflight: before.preflight });
+          if (observedAccess.ready !== true) return pendingAccess(`installed image access is not ready: ${observedAccess.reason ?? 'unknown failure'}`);
         }
 
         if (current.phase === 'finalized') {
