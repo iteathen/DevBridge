@@ -1,6 +1,6 @@
 # DB-HO012 — issue #293 Linux protected storage primitive
 
-Status: hosted candidate complete; Ubuntu real-filesystem canary awaiting exact-head CI. This isolated slice begins at recovery commit `5a24dc633ae6ff1acf43b3fecefad2b6011593bf` on branch `security/293-linux-protected-storage` and implements DB-HO011 plan step 3 only.
+Status: integrated through PR #313 at squash commit `bcfae330cb223ed7705feff888bd9c9690c137e4`. All four exact-head CI jobs passed in run `33118076373`, including the Ubuntu real-filesystem canary. This isolated slice began at recovery commit `5a24dc633ae6ff1acf43b3fecefad2b6011593bf` and implements DB-HO011 plan step 3 only.
 
 ## Assessment and ownership boundary
 
@@ -40,6 +40,6 @@ Local Windows-host evidence:
 - repository-execution architecture gates: 33 passed, 0 failed, 1 expected Windows symlink-capability skip;
 - full `npm test`: 1,179 passed, 0 failed, 9 platform-capability skips; 1,188 total.
 
-The Ubuntu CI job must execute the real-filesystem canary using actual `lstat`, exclusive write with flush, ownership/mode observation, rename, directory sync, and cleanup inside a disposable owned root. Until that exact-head job passes, this candidate is not integrated evidence.
+The Ubuntu CI job executed the real-filesystem canary using actual `lstat`, exclusive write with flush, ownership/mode observation, rename, directory sync, and cleanup inside a disposable owned root. Windows and Ubuntu smoke/test jobs all passed on the exact reviewed head.
 
-After integration, the next slice may compose this primitive into the lifecycle-owned ownership/journal and generation staging mechanics. Linux production setup and provider authority remain unattached and fail closed.
+DB-HO013 composes this primitive into lifecycle-owned claim and ownership/transaction persistence. Linux production setup and provider authority remain unattached and fail closed.

@@ -100,6 +100,8 @@ Hosted checkpoint: the corrected plan/service entry, read-only NSS/systemd/proce
 
 Protected-mechanics checkpoint: DB-HO011 records the exact name/numeric-identity ownership model, atomic generation/unit contract, append-only ordinary membership, exact service membership, and provider-separation plan for the next isolated slice.
 
+Protected-storage checkpoint: DB-HO012 is integrated at `bcfae330cb223ed7705feff888bd9c9690c137e4`; all four CI jobs passed and Ubuntu exercised the real-filesystem canary. DB-HO013 now scopes the next dependency to admitted lifecycle claim plus ownership/transaction persistence, with no account, service, provider, VM, or runtime mutation.
+
 Protected-storage checkpoint: DB-HO012 isolates normalized no-follow directory/file policy, bounded atomic replacement, file and parent-directory durability, and exact pending-file recovery before lifecycle records or runtime staging consume that capability.
 
 Exit evidence:

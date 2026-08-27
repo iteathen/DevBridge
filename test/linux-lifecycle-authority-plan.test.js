@@ -43,6 +43,10 @@ test('Linux authority plan derives one exact runtime and split local capabilitie
   assert.equal(value.service.user, `db-auth-${value.authorityIdentity.slice(0, 12)}`);
   assert.equal(value.service.readGroup, `db-read-${value.authorityIdentity.slice(0, 12)}`);
   assert.equal(value.service.coordinationGroup, `db-coord-${value.authorityIdentity.slice(0, 12)}`);
+  assert.deepEqual(value.storage, {
+    parentDirectory: '/var/lib/devbridge',
+    rootDirectory: '/var/lib/devbridge/lifecycle-authority',
+  });
   assert.equal(value.protectedRoot, `/var/lib/devbridge/lifecycle-authority/${value.authorityIdentity}`);
   assert.equal(value.runtime.generationDirectory, `${value.runtime.generationsDirectory}/${value.runtime.generation}`);
   assert.equal(value.endpoints.read.endpoint, `/run/devbridge/${value.authorityIdentity}/read/environment-v1.sock`);
@@ -50,7 +54,9 @@ test('Linux authority plan derives one exact runtime and split local capabilitie
   assert.equal(value.endpoints.read.directoryMode, 0o750);
   assert.equal(value.endpoints.read.socketMode, 0o770);
   assert.equal(value.endpoints.mutation.directoryMode, 0o700);
+  assert.equal(value.access.storageRoot.mode, 0o755);
   assert.equal(value.access.protectedRuntime.serviceWrite, false);
+  assert.equal(value.access.refreshJournal.mode, 0o600);
   assert.equal(value.access.authorityState.serviceWrite, true);
 });
 

@@ -141,7 +141,8 @@ export function createLinuxLifecycleAuthorityPlan({
   const readGroup = `${READ_GROUP_PREFIX}${suffix}`;
   const coordinationGroup = `${COORDINATION_GROUP_PREFIX}${suffix}`;
   const serviceName = `${SERVICE_PREFIX}${suffix}.service`;
-  const protectedRoot = under(varLib, 'lifecycle-authority', authorityIdentity);
+  const storageRoot = under(varLib, 'lifecycle-authority');
+  const protectedRoot = under(storageRoot, authorityIdentity);
   const authorityDirectory = under(protectedRoot, 'state');
   const ownershipManifest = under(protectedRoot, 'ownership.json');
   const refreshJournal = under(protectedRoot, 'refresh.json');
@@ -159,6 +160,7 @@ export function createLinuxLifecycleAuthorityPlan({
     protocol: PROTOCOL,
     authorityIdentity,
     stateDirectory: state,
+    storage: Object.freeze({ parentDirectory: varLib, rootDirectory: storageRoot }),
     protectedRoot,
     authorityDirectory,
     ownershipManifest,
@@ -189,10 +191,12 @@ export function createLinuxLifecycleAuthorityPlan({
       mutation: Object.freeze({ endpoint: mutationEndpoint, directory: mutationDirectory, owner: serviceUser, group: 'root', directoryMode: 0o700, socketMode: 0o700 }),
     }),
     access: Object.freeze({
+      storageRoot: Object.freeze({ owner: 'root', group: 'root', mode: 0o755, serviceWrite: false, ordinaryUserWrite: false }),
       protectedRoot: Object.freeze({ owner: 'root', group: 'root', mode: 0o755, serviceWrite: false, ordinaryUserWrite: false }),
       protectedRuntime: Object.freeze({ owner: 'root', group: 'root', directoryMode: 0o755, fileMode: 0o444, executableMode: 0o555, serviceWrite: false, ordinaryUserWrite: false }),
       authorityState: Object.freeze({ owner: serviceUser, group: 'root', mode: 0o700, serviceWrite: true, ordinaryUserWrite: false }),
       ownershipManifest: Object.freeze({ owner: 'root', group: 'root', mode: 0o444, serviceWrite: false, ordinaryUserWrite: false }),
+      refreshJournal: Object.freeze({ owner: 'root', group: 'root', mode: 0o600, serviceWrite: false, ordinaryUserWrite: false }),
       readCapability: Object.freeze({ group: readGroup, members: Object.freeze([serviceUser, operator]) }),
       coordination: Object.freeze({ group: coordinationGroup, members: Object.freeze([serviceUser, operator]) }),
       management: Object.freeze({ group: management, members: Object.freeze([serviceUser]), ordinaryUserMember: false }),
