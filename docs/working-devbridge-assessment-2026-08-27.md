@@ -162,6 +162,22 @@ Sources:
 - [Ubuntu `apt-get` manual](https://manpages.ubuntu.com/manpages/noble/man8/apt-get.8.html)
 - [Subiquity autoinstall configuration reference](https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html)
 
+The exact v5 Hyper-V construction disproved the source-wide conclusion above. Its new subject `subject-b75a87f28715720d2e51d6547f868753` reached Curtin curthooks, then failed while Curtin attempted to install the neutral UEFI boot prerequisite set (`efibootmgr`, `grub-efi-amd64`, `grub-efi-amd64-signed`, and `shim-signed`). A read-only `640x480` call to Hyper-V's documented thumbnail API exposed that earlier failure without guest input or VM/disk/media mutation. The accepted v4 subject had passed this same installer phase; v5's only relevant source-policy change was global `APT::Snapshot`. A global snapshot is therefore rejected for the installer-owned APT configuration even though it is valid for a bounded target transaction.
+
+Subiquity has no supported “none” value for `updates`: its schema admits only `security` and `all`, and the controller always runs unattended-upgrades when archive networking is available. The unattended-upgrades owner provides a narrower control. `Unattended-Upgrade::Package-Blacklist` is a list of Python regular expressions used to give matching package names a never-install pin. Its implementation returns success when no packages are eligible. A temporary installer APT fragment containing only an all-package blacklist can therefore leave Curtin's ordinary prerequisite installs untouched, prevent the pre-late automatic update from producing a mixed target generation, and disappear when Subiquity restores the installer APT configuration before late commands. DevBridge's explicit late commands remain responsible for the accepted snapshot transaction.
+
+This is a sequencing control, not permission to omit security maintenance. The next construction design must keep the image's final exact package qualification and its snapshot-bound security baseline consistent. If applying the snapshot's wider update/security pockets changes a qualified top-level package, setup authority must resolve and record the same final candidate version; qualification may not silently weaken from exact equality.
+
+The implemented v6 candidate preserves that equality: setup resolves the greatest package version across the release, updates, and security pockets using Debian's documented ordering; the seed blocks only installer-owned unattended package selection, then runs snapshot update, a no-removal snapshot upgrade, and exact top-level installation in that order. Package comparison is its own small owner with neutral string inputs and a numeric comparison result. Ubuntu authority owns pocket topology; the seed consumes only the already accepted snapshot/package contract. Recipe and package generations advance independently, so neither v5 construction state nor its top-level pins can alias this candidate.
+
+Additional primary sources:
+
+- [Subiquity install controller](https://github.com/canonical/subiquity/blob/main/subiquity/server/controllers/install.py)
+- [Subiquity autoinstall schema](https://github.com/canonical/subiquity/blob/main/autoinstall-schema.json)
+- [unattended-upgrades configuration and behavior](https://github.com/mvo5/unattended-upgrades)
+- [unattended-upgrades implementation](https://github.com/mvo5/unattended-upgrades/blob/master/unattended-upgrade)
+- [Debian package-version ordering](https://manpages.debian.org/trixie/dpkg-dev/deb-version.7.en.html)
+
 ### Linux authority, systemd, libvirt, and qcow2
 
 Libvirt's modular `virtqemud` uses local Unix sockets and is commonly systemd socket-activated. Its RW socket can grant authority comparable to root. Socket group membership alone is therefore too coarse as the final security story.
@@ -199,15 +215,15 @@ The research and current evidence preserve the original primitive ordering but r
 
 - **Windows:** continue the dedicated service-SID and explicit pipe-DACL design. Treat service configuration, running token, pipe capability, backing-store ACL, Hyper-V operation, and exact cleanup as separate observations. PR #300's bounded exact-fixture cleanup retry is architecturally valid only because it admits a small Windows transient set and preserves terminal failure.
 - **Linux:** keep the per-install system service and immutable root-owned runtime, but do not freeze broad libvirt group membership as the universal provider capability. The adapter must detect modular versus monolithic daemon/socket behavior and select a locally supported, bounded service-only authorization policy. Ordinary identity must remain outside provider RW authority.
-- **Physical recovery:** exact protected-authority re-entry and console capture now pass. The existing guest is terminally failed in the pinned apt install late command. Reproduce the exact transaction in a disposable Ubuntu 26.04 environment and capture apt's solver/install evidence before changing authority. A replacement requires a new exact subject and must not retire the failed subject until the replacement is qualified.
+- **Physical recovery:** exact protected-authority re-entry and console capture pass. The first replacement design also has terminal physical evidence: source-wide snapshot configuration moved failure earlier into Curtin's boot-prerequisite installation. Reject that design, preserve both failed subjects, and replace it with the narrower unattended-update sequencing control plus a final snapshot/package contract that exact qualification can prove.
 - **Branch integration:** PR #300 and the three current-main commits are synchronized and qualified at recovery commit `4483474fc85e5f50a21accd7fef7c4a7a6067dfb`. Continue new recovery behavior on fresh isolated branches from that commit. Do not develop on the retired fast-track checkout or directly on `main`.
 - **Mainline merge:** do not overwrite or force main. Open an evidence-backed integration PR only after the synchronized core branch is green and the intended fail-closed/working platform state is documented. Incomplete Linux readiness may merge only if Linux remains explicitly unavailable with no fallback and the PR scope says so.
 - **GPU:** no GPU/CUDA/ROCm implementation, device routing, image specialization, or provider attachment work belongs in the current sequence.
 
 ## Current blockers and safe frontier
 
-1. The exact Ubuntu package transaction failed in-target with apt exit `100`; the decisive solver/install reason must be reproduced or captured before changing pins or package delivery.
-2. No VM repair, snapshot rotation, replacement, or exact-owned retirement is admissible until the corrected package authority derives a new exact subject.
+1. The v4 exact Ubuntu package transaction failed in-target with apt exit `100`; the v5 global-snapshot replacement failed earlier in Curtin curthooks. The next authority must preserve installer prerequisites, suppress only the pre-late mutation, and make the final snapshot package/security state exactly qualifiable.
+2. No VM repair, snapshot rotation, replacement, or exact-owned retirement is admissible until the corrected package authority derives a new exact subject. The v4 and v5 failures remain evidence, not reusable construction state.
 3. Linux protected-authority implementation must be rebased onto the shared reconciler and completed before Linux can be declared ready.
 4. The synchronized recovery lineage remains intentionally separate from `main` until the primitive provider/image/install gates have physical evidence.
 

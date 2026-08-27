@@ -65,13 +65,16 @@ Owners: canonical image canary, Hyper-V image-construction adapter, and Ubuntu m
    - then simulate, download, and install the exact six pinned packages;
    - preserve complete bounded apt output and exact base/snapshot identity;
    - remove the temporary diagnostic workflow after evidence is captured.
-7. Bind installer-owned package and security-update work to the accepted package set's exact snapshot using Subiquity's neutral `apt.conf` pass-through and Canonical's `APT::Snapshot` contract. Keep the existing explicit snapshot on the later DevBridge-owned transaction because Subiquity restores its temporary install-time APT configuration before late commands.
-8. Make every snapshot metadata refresh fail on any source error. Preserve the diagnostic finding that a default update can exit zero after snapshot HTTPS failures; do not treat stale or live-archive indexes as snapshot evidence.
-9. Do not add a CA bootstrap stage merely because the minimal diagnostic container lacked it: the physical server target already completed its HTTPS snapshot update. Reassess only if the new exact construction subject produces contrary target evidence.
-10. Preserve top-level package-pin resolution as provenance evidence and prove dependency closure at the construction boundary. Keep executable/package paths and solver mechanics local; preserve the neutral authority/seed contracts.
-11. Change the package or recipe generation whenever the desired guest bytes or install behavior changes, deriving a new exact construction subject rather than reusing failed media.
-12. Reconcile the existing failed effect, create the replacement through the canonical image/lifecycle authority, and retain the old subject until the replacement is qualified.
-13. Finalize, sanitize, qualify, publish to the local immutable image library, and retire only exact superseded construction artifacts after the new image is verified.
+7. Treat the v5 source-wide `APT::Snapshot` design as rejected physical evidence. Its exact replacement subject failed in Curtin curthooks while installing UEFI boot prerequisites, before Subiquity's update or DevBridge's late-command phases.
+8. Preserve Curtin's native prerequisite APT behavior. Use the installer APT pass-through only for a narrow all-package unattended-upgrades blacklist, which is ignored by ordinary apt operations and removed by Subiquity's existing restore step before late commands.
+9. Keep the explicit DevBridge-owned snapshot update/install transaction after restore. Make every snapshot metadata refresh fail on any source error; do not treat stale or live-archive indexes as snapshot evidence.
+10. Preserve the required security baseline deliberately under the same accepted snapshot. Resolve final top-level candidates across every enabled release/update/security pocket using Debian's specified version ordering, run a no-removal snapshot-bound upgrade before the exact package installation, and require final exact-version qualification.
+11. Prove the comparator against dpkg on Ubuntu CI, prove pocket conflicts and missing/oversized index failures locally, and prove that the emitted command order is blacklist -> restore boundary -> exact update -> bounded upgrade -> exact install.
+12. Do not add a CA bootstrap stage merely because the minimal diagnostic container lacked it: the physical server target already completed its HTTPS snapshot update. Reassess only if the next exact construction subject produces contrary target evidence.
+13. Keep executable/package paths and solver mechanics local and preserve neutral authority/seed contracts. Add bounded installer failure telemetry only through the seed owner's static contract; never expose host secrets or accept caller-supplied commands/paths.
+14. Advance the recipe/package generation for every desired guest-byte or install-behavior change, deriving a new exact construction subject rather than reusing either failed media subject.
+15. Reconcile the existing failed effect, create the replacement through the canonical image/lifecycle authority, and retain old subjects until the replacement is qualified.
+16. Finalize, sanitize, qualify, publish to the local immutable image library, and retire only exact superseded construction artifacts after the new image is verified.
 
 Exit evidence:
 

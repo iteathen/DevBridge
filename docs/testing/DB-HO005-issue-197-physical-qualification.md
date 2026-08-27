@@ -380,6 +380,41 @@ Primary references:
 - [Subiquity APT configuration](https://github.com/canonical/subiquity/blob/main/subiquity/server/apt.py)
 - [Curtin APT configuration implementation](https://github.com/canonical/curtin/blob/main/curtin/commands/apt_config.py)
 
+### 16. Exact Hyper-V qualification rejected source-wide snapshot configuration
+
+PR #308 merged the v5 package-authority candidate into the recovery line as exact commit `01b8a6c8eefc35ab96626fdc76dea3dd6ce15919` after all four Ubuntu/Windows smoke and full CI jobs passed. One bounded elevated setup reconciliation installed that exact runtime and prepared protected state. A supported construction invocation then created a new immutable subject rather than adopting either older failed subject:
+
+- subject: `subject-b75a87f28715720d2e51d6547f868753`;
+- VM: `db-image-build-ad9f43367787dba1`;
+- provider identity: `e800f3af-3d36-4f35-bf0c-855762157e8d`;
+- disk: `f323f346ecb6e09d562ce3bf88ff1bb674172b665ba82f96dbb0e067c4ac223a.vhdx`;
+- terminal construction classification: `stalled` after 23 elapsed and 21 no-progress minutes;
+- durable `320x240` console SHA-256: `75d721ed5d1ff400fbeded22658baab790616d5fa3172bc5ffa8e38f0c9c52ea`.
+
+The VHDX grew from its initial 4 MiB allocation to `4,936,695,808` bytes before becoming CPU-idle. The controller did not repair or clean it automatically. A separate read-only `640x480` call to the same documented Hyper-V thumbnail method exposed the decisive boundary without changing guest state: Curtin failed in curthooks while installing `efibootmgr`, `grub-efi-amd64`, `grub-efi-amd64-signed`, and `shim-signed`; Subiquity then entered its fatal crash path. The v5 subject never reached unattended-upgrades or DevBridge late commands.
+
+The official signed ISO and exact snapshot both contain those package names and expected boot package versions. The failure therefore is not evidence that the snapshot predates the ISO. It is evidence that applying `APT::Snapshot` through Curtin's global install-time apt configuration changes an earlier package-management boundary that v4 had already crossed. The global configuration is rejected; the physical VM/disk/journal remain evidence and received no guest input, power, media, disk, or cleanup mutation.
+
+Primary-source reassessment established the narrower seam:
+
+- Subiquity's `updates` schema admits only `security` or `all`, and its controller runs unattended-upgrades before late commands when archive access exists.
+- `Unattended-Upgrade::Package-Blacklist` is a regex list used only by unattended-upgrades; matching packages receive a never-install pin, and an empty eligible set returns success.
+- Curtin can carry that temporary configuration without affecting its ordinary package installer; Subiquity restores the temporary apt configuration before late commands.
+- Debian's package-version ordering is the required authority when selecting the final exact candidate across release, updates, and security pockets.
+
+The v6 candidate therefore replaces global snapshotting with a temporary all-package unattended-upgrades blacklist, performs the explicit snapshot update and a no-removal snapshot-bound system upgrade after Subiquity restores its temporary configuration, then installs the exact final top-level candidates resolved across all enabled pockets. A self-contained package-version owner implements Debian's documented comparison algorithm; the Ubuntu authority only supplies candidate strings from the neutral package records. Exact package qualification remains mandatory; no downgrade or host fallback is admitted.
+
+For snapshot `20260821T230000Z`, the revised authority selects the final candidates visible across release, updates, and security: build-essential `12.12ubuntu2.26.04.2`, CMake `4.2.3-2ubuntu2`, Git `1:2.53.0-1ubuntu1`, Linux cloud tools `7.0.0-30.30`, Node.js `22.22.1+dfsg+~cs22.19.15-1ubuntu1`, and npm `9.2.0~ds3-1`. Recipe generation advances to `ubuntu-2604-autoinstall-v6` and package generation to `ubuntu-2604-tools-v3`, so this design cannot adopt v5 state.
+
+Pre-publication verification passed 24 focused version/authority/seed/qualification tests with one Windows platform skip, repository preflight with 36 targeted tests, and the full Windows suite: 1,148 tests, 1,141 passed, 7 platform skips, 0 failed. Linux CI must still cross-check the fixed comparator corpus against `dpkg`; exact Hyper-V construction remains the capability gate.
+
+Additional primary references:
+
+- [Subiquity install controller](https://github.com/canonical/subiquity/blob/main/subiquity/server/controllers/install.py)
+- [Subiquity autoinstall schema](https://github.com/canonical/subiquity/blob/main/autoinstall-schema.json)
+- [unattended-upgrades](https://github.com/mvo5/unattended-upgrades)
+- [Debian package-version ordering](https://manpages.debian.org/trixie/dpkg-dev/deb-version.7.en.html)
+
 ## Preserved physical evidence
 
 After the latest stopped attempt:
