@@ -8,6 +8,9 @@ import {
   LINUX_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL,
 } from './linux-lifecycle-authority.js';
 import {
+  normalizeLinuxLifecycleAuthorityGenerationManifest,
+} from './linux-lifecycle-authority-generation.js';
+import {
   LINUX_LIFECYCLE_AUTHORITY_OWNERSHIP_PROTOCOL,
   normalizeLinuxLifecycleAuthorityOwnershipRecord,
 } from './linux-lifecycle-authority-records.js';
@@ -17,9 +20,7 @@ import {
 } from './protected-authority-runtime-candidate.js';
 
 const PROTOCOL = 'devbridge/linux-lifecycle-authority-inspection-v1';
-const GENERATION_PROTOCOL = 'devbridge/linux-lifecycle-authority-generation-v1';
 const SYSTEMCTL = '/usr/bin/systemctl';
-const GENERATION = /^[0-9a-f]{64}$/u;
 
 function exactKeys(value, allowed, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name} is invalid`);
@@ -31,12 +32,6 @@ function numeric(value, name) {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`${name} is invalid`);
   return parsed;
-}
-
-function exactGeneration(value, name, { nullable = false } = {}) {
-  if (nullable && value == null) return null;
-  if (typeof value !== 'string' || !GENERATION.test(value)) throw new Error(`${name} is invalid`);
-  return value;
 }
 
 async function optionalLstat(file, stat) {
@@ -114,20 +109,6 @@ function identityEvidence(plan, identities) {
       && operator.groupIds.includes(coordination.record?.gid)
       && !operator.groupIds.includes(management.record?.gid),
   });
-}
-
-function normalizeGenerationManifest(raw, plan) {
-  exactKeys(raw, new Set(['protocol', 'authorityIdentity', 'generation', 'packageDigest', 'nodeDigest']), 'Linux lifecycle authority generation record');
-  if (raw.protocol !== GENERATION_PROTOCOL || raw.authorityIdentity !== plan.authorityIdentity) {
-    throw new Error('Linux lifecycle authority generation record does not match this installation');
-  }
-  const generation = exactGeneration(raw.generation, 'Linux lifecycle authority generation record identity');
-  const packageDigest = exactGeneration(raw.packageDigest, 'Linux lifecycle authority package digest');
-  const nodeDigest = exactGeneration(raw.nodeDigest, 'Linux lifecycle authority Node digest');
-  if (generation !== plan.runtime.generation || packageDigest !== plan.runtimeEvidence.packageDigest || nodeDigest !== plan.runtimeEvidence.nodeDigest) {
-    throw new Error('Linux lifecycle authority generation record does not match the exact candidate');
-  }
-  return Object.freeze({ protocol: GENERATION_PROTOCOL, authorityIdentity: raw.authorityIdentity, generation, packageDigest, nodeDigest });
 }
 
 async function readBoundedJson(file, expectedInfo, load, name) {
@@ -301,7 +282,10 @@ export async function inspectLinuxLifecycleAuthorityState({
     : normalizeLinuxLifecycleAuthorityOwnershipRecord(await readBoundedJson(plan.ownershipManifest, entries.get('ownershipManifest'), load, 'Linux lifecycle authority ownership record'), plan);
   const generationRecord = entries.get('generationManifest') == null
     ? null
-    : normalizeGenerationManifest(await readBoundedJson(plan.runtime.generationManifest, entries.get('generationManifest'), load, 'Linux lifecycle authority generation record'), plan);
+    : normalizeLinuxLifecycleAuthorityGenerationManifest(
+      await readBoundedJson(plan.runtime.generationManifest, entries.get('generationManifest'), load, 'Linux lifecycle authority generation record'),
+      plan,
+    );
   const service = await inspectSystemdService(plan, invoke, environment);
   const processEvidence = await inspectProcess(plan, service, identity, load, link);
   const expectedSupplements = [plan.service.coordinationGroup, plan.service.managementGroup];
@@ -375,7 +359,6 @@ export async function inspectLinuxLifecycleAuthorityState({
 }
 
 export {
-  GENERATION_PROTOCOL as LINUX_LIFECYCLE_AUTHORITY_GENERATION_PROTOCOL,
   LINUX_LIFECYCLE_AUTHORITY_OWNERSHIP_PROTOCOL,
   PROTOCOL as LINUX_LIFECYCLE_AUTHORITY_INSPECTION_PROTOCOL,
 };

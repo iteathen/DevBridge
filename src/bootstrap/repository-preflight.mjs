@@ -93,6 +93,7 @@ const TARGETED_TESTS = [
   'test/repository-preflight-diagnostics.test.js',
   'test/linux-protected-transfer.test.js',
   'test/linux-protected-tree.test.js',
+  'test/linux-lifecycle-authority-generation.test.js',
 ];
 
 function cleanOutput(value) {
