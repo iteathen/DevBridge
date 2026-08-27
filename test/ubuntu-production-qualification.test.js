@@ -16,6 +16,7 @@ const expected = {
     { name: 'nodejs', version: '22.16.0+dfsg-1' },
     { name: 'cmake', version: '3.31.6-1' },
     { name: 'git', version: '1:2.48.1-0ubuntu1' },
+    { name: 'openssh-server', version: '1:9.9p1-3ubuntu3' },
   ],
   commands: ['hv_fcopy_daemon'],
 };
@@ -71,6 +72,7 @@ function successfulBridge(calls) {
         const script = frame.body.arguments[1];
         assert.match(script, /dpkg-query -W/u);
         assert.match(script, /22\.16\.0\+dfsg-1/u);
+        assert.match(script, /openssh-server/u);
         assert.match(script, new RegExp(`apt-get --snapshot '${snapshot}' --simulate install`, 'u'));
         assert.match(script, /sha256sum -c/u);
         assert.match(script, /hv_fcopy_daemon/u);

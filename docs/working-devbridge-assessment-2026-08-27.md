@@ -176,6 +176,8 @@ The exact v6 physical gate subsequently reached installed-system boot and dispro
 
 The replacement stays within the Ubuntu image owner. It enables key-only SSH installation, adds `openssh-server` to snapshot-resolved exact package and qualification evidence, and advances immutable recipe/package/output generations. No provider retry, network change, guest repair, password access, live package source, or host fallback is admitted. The failed v6 subject remains preserved physical evidence. A separate neutral readiness-observation slice should give transient first-boot access a bounded next observation and terminal deadline; it must not be hidden as an unbounded transport retry.
 
+The isolated implementation completes both software slices. A provider-free readiness-window LEGO now reports observing/slow/expired state from neutral time inputs; the physical composition supplies its local two-minute expected, ten-minute hard, and 30-second recheck policy. Focused tests, repository preflight, and the complete 1,223-test Windows suite pass with zero failures. Remote Ubuntu/Windows CI and an exact v7 physical construction remain open acceptance gates.
+
 Additional primary sources:
 
 - [Subiquity install controller](https://github.com/canonical/subiquity/blob/main/subiquity/server/controllers/install.py)

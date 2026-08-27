@@ -437,12 +437,22 @@ Reassessment assigns the correction to the existing image contracts, not to netw
 5. run preflight, the full Windows suite, and all four Ubuntu/Windows CI jobs before installing or constructing the replacement;
 6. preserve the current v6 VM/disk/journal as failed physical evidence until the replacement reaches a terminal verified state through supported lifecycle ownership.
 
-The first access check also exposed a presentation gap: an ordinary first-boot connection refusal carries no bounded next-observation evidence, so setup prints a terminal-sounding instruction even when startup may only be settling. That concern is separate from the absent-package root cause. It must be addressed through a neutral bounded readiness contract rather than by adding retries to SSH, Hyper-V, or setup prose independently.
+The first access check also exposed a presentation gap: an ordinary first-boot connection refusal carries no bounded next-observation evidence, so setup prints a terminal-sounding instruction even when startup may only be settling. That concern is separate from the absent-package root cause. The planned neutral readiness window consumes only elapsed time and a local clock: two minutes is the expected frontier, ten minutes is the hard deadline, and non-terminal observations schedule a bounded 30-second recheck. Before the deadline setup reports the exact next observation; after it, the canary blocks without repair. SSH and Hyper-V details remain reason text owned by the composition, not fields in the readiness LEGO.
 
 Primary references:
 
 - [Subiquity autoinstall SSH reference](https://github.com/canonical/subiquity/blob/main/doc/reference/autoinstall-reference.rst)
 - [Subiquity autoinstall schema](https://github.com/canonical/subiquity/blob/main/autoinstall-schema.json)
+
+Implementation keeps the correction inside those planned owners. The setup authority now resolves `openssh-server` with the other exact packages; the seed requests target installation while retaining `allow-pw: false`; qualification receives the resulting exact package evidence; and recipe/package/output generations advance to `ubuntu-2604-autoinstall-v7`, `ubuntu-2604-tools-v4`, and `ubuntu-2604-production-v2`. A new provider-free readiness-window LEGO consumes only elapsed milliseconds, a clock, and bounded policy. The physical canary composes it with provider-observed uptime, while setup formats only its neutral result.
+
+Local verification on the isolated candidate passed:
+
+- 51 focused readiness, setup-authority, seed, qualification, construction-authority, physical-canary, and setup-composition tests;
+- repository preflight with 39 targeted tests;
+- the complete Windows suite: 1,223 tests, 1,212 passed, 11 platform skips, 0 failed.
+
+These tests prove the software contract and fail-closed expiry behavior. Ubuntu CI and a new exact Hyper-V construction subject remain required before accepting the image.
 
 ## Preserved physical evidence
 

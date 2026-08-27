@@ -100,10 +100,7 @@ function publicResult({ home, pathStatus, repositories = null, identity = null, 
 
 function appendConstructionLiveness(lines, physical) {
   const liveness = physical?.liveness;
-  if (!liveness) {
-    lines.push('Installer liveness: not proven');
-    return;
-  }
+  if (!liveness) return;
   lines.push(
     `Installer liveness: ${liveness.classification}`,
     `Elapsed: ${Math.floor(liveness.elapsedMilliseconds / 60_000)} minute(s)`,
@@ -115,6 +112,18 @@ function appendConstructionLiveness(lines, physical) {
     `Hard deadline: ${liveness.hardDeadlineAt}`,
   );
   if (liveness.nextObservationAt) lines.push(`Next bounded observation: ${liveness.nextObservationAt}`);
+}
+
+function appendConstructionReadiness(lines, physical) {
+  const readiness = physical?.readiness;
+  if (!readiness) return;
+  lines.push(
+    `Readiness window: ${readiness.classification}`,
+    `Elapsed: ${Math.floor(readiness.elapsedMilliseconds / 1000)} second(s)`,
+    `Expected frontier: ${readiness.expectedAt}`,
+    `Hard deadline: ${readiness.hardDeadlineAt}`,
+  );
+  if (readiness.nextObservationAt) lines.push(`Next bounded observation: ${readiness.nextObservationAt}`);
 }
 
 function appendConstructionDiagnostics(lines, physical) {
@@ -136,6 +145,7 @@ export function formatSetupHandoff(result) {
   if (result.blocked) {
     const lines = [result.construction?.attempted ? 'DevBridge physical image construction is blocked.' : 'DevBridge setup is blocked.', '', `Reason: ${result.blocker ?? 'unknown blocker'}`];
     if (result.construction?.attempted) appendConstructionLiveness(lines, result.linuxProfile?.physicalStatus);
+    if (result.construction?.attempted) appendConstructionReadiness(lines, result.linuxProfile?.physicalStatus);
     if (result.construction?.attempted) appendConstructionDiagnostics(lines, result.linuxProfile?.physicalStatus);
     if (result.construction?.attempted) lines.push('', 'Preserve the canary state; resolve only this blocker, then re-run devbridge setup --construct.');
     if (result.path?.requiresNewShell) lines.push('', `PATH is persisted; until a new shell is opened use: ${result.path.temporaryCommand}`);
@@ -179,8 +189,10 @@ export function formatSetupHandoff(result) {
     if (physical?.phase) lines.push(`Phase: ${physical.phase}`);
     if (physical?.reason) lines.push(`Reason: ${physical.reason}`);
     appendConstructionLiveness(lines, physical);
+    appendConstructionReadiness(lines, physical);
     appendConstructionDiagnostics(lines, physical);
-    if (physical?.liveness?.nextObservationAt) lines.push('', `Re-run devbridge setup --construct at or after ${physical.liveness.nextObservationAt} to record the next bounded observation.`, '');
+    const nextObservationAt = physical?.liveness?.nextObservationAt ?? physical?.readiness?.nextObservationAt;
+    if (nextObservationAt) lines.push('', `Re-run devbridge setup --construct at or after ${nextObservationAt} to record the next bounded observation.`, '');
     else lines.push('', 'Do not retry construction automatically; resolve the reported bounded frontier first.', '');
     return lines.join('\n');
   }

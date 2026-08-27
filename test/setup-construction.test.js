@@ -137,6 +137,35 @@ test('explicit construction crosses the canary run boundary only after an unbloc
   assert.doesNotMatch(handoff, /not started/u);
 });
 
+test('explicit construction reports a bounded neutral readiness recheck', async () => {
+  const selected = fixture({
+    runResult: {
+      state: 'waiting',
+      phase: 'active',
+      blocked: false,
+      complete: false,
+      reason: 'installed image access is not ready',
+      readiness: {
+        classification: 'observing',
+        elapsedMilliseconds: 60_000,
+        observedAt: '2026-08-27T22:01:00.000Z',
+        startedAt: '2026-08-27T22:00:00.000Z',
+        expectedAt: '2026-08-27T22:02:00.000Z',
+        hardDeadlineAt: '2026-08-27T22:10:00.000Z',
+        nextObservationAt: '2026-08-27T22:01:30.000Z',
+      },
+      preflight: { ready: true },
+    },
+  });
+  const result = await runDevBridgeSetup({ home: home('db-setup-readiness-window'), construct: true }, selected.deps);
+  const handoff = formatSetupHandoff(result);
+  assert.match(handoff, /Readiness window: observing/u);
+  assert.match(handoff, /Expected frontier: 2026-08-27T22:02:00.000Z/u);
+  assert.match(handoff, /at or after 2026-08-27T22:01:30.000Z/u);
+  assert.doesNotMatch(handoff, /Installer liveness: not proven/u);
+  assert.doesNotMatch(handoff, /Do not retry construction automatically/u);
+});
+
 test('explicit construction does not cross a blocked read-only gate', async () => {
   const selected = fixture({
     status: { state: 'blocked', blocked: true, complete: false, reason: 'Hyper-V provider is unavailable', preflight: { ready: false } },

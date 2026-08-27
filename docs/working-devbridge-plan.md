@@ -76,9 +76,11 @@ Owners: canonical image canary, Hyper-V image-construction adapter, and Ubuntu m
 15. Treat the v6 physical construction as rejected access evidence: it reached an operating installed boot with healthy provider integration and DHCP, while its exact seed disabled SSH installation and its package authority omitted `openssh-server`.
 16. In the Ubuntu image owner, enable key-only target SSH installation, resolve and qualify `openssh-server` through the existing exact snapshot package contract, and advance recipe, package, and output generations. Do not repair the guest or add a provider/network fallback.
 17. Add focused tests for seed SSH policy, exact package selection, qualification projection, and immutable generation changes. Run preflight, full Windows tests, and all Ubuntu/Windows CI jobs before another protected-runtime install.
-18. Follow with a neutral bounded readiness-observation slice so transient first-boot access reports a next observation and hard deadline without unbounded transport retries or topology leakage.
+18. Follow with a neutral bounded readiness-observation slice: consume elapsed time and a local clock, classify two minutes as the expected frontier and ten minutes as the hard deadline, schedule non-terminal observations at no more than 30 seconds, and block after expiry without repair. Do not expose transport/provider identity through that contract.
 19. Reconcile the existing failed effect, create the replacement through the canonical image/lifecycle authority, and retain old subjects until the replacement is qualified.
 20. Finalize, sanitize, qualify, publish to the local immutable image library, and retire only exact superseded construction artifacts after the new image is verified.
+
+Software checkpoint: steps 16–18 are implemented on the isolated v7 candidate. Fifty-one focused tests, repository preflight with 39 targeted tests, and the complete 1,223-test Windows suite passed with zero failures. Remote Ubuntu/Windows CI, protected-runtime installation, and exact v7 physical construction remain pending; `cuda-target` and the preserved v6 VM/journal have not been mutated.
 
 Exit evidence:
 
