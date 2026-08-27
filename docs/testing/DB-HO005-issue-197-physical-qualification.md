@@ -406,7 +406,7 @@ The v6 candidate therefore replaces global snapshotting with a temporary all-pac
 
 For snapshot `20260821T230000Z`, the revised authority selects the final candidates visible across release, updates, and security: build-essential `12.12ubuntu2.26.04.2`, CMake `4.2.3-2ubuntu2`, Git `1:2.53.0-1ubuntu1`, Linux cloud tools `7.0.0-30.30`, Node.js `22.22.1+dfsg+~cs22.19.15-1ubuntu1`, and npm `9.2.0~ds3-1`. Recipe generation advances to `ubuntu-2604-autoinstall-v6` and package generation to `ubuntu-2604-tools-v3`, so this design cannot adopt v5 state.
 
-Pre-publication verification passed 24 focused version/authority/seed/qualification tests with one Windows platform skip, repository preflight with 36 targeted tests, and the full Windows suite: 1,148 tests, 1,141 passed, 7 platform skips, 0 failed. Linux CI must still cross-check the fixed comparator corpus against `dpkg`; exact Hyper-V construction remains the capability gate.
+Pre-publication verification passed 24 focused version/authority/seed/qualification tests with one Windows platform skip, repository preflight with 36 targeted tests, and the full Windows suite: 1,148 tests, 1,141 passed, 7 platform skips, 0 failed. CI run `33112784104` then passed all four Ubuntu/Windows smoke and full jobs; Ubuntu executed the fixed comparator corpus against `dpkg`. PR #309 was squash-merged into the recovery line as exact commit `d38c662254d388edcbf1a0760e2efce8bd05b8e1`. Exact v6 Hyper-V construction remains the capability gate and requires installation of that new protected runtime generation through the bounded elevated setup path.
 
 Additional primary references:
 

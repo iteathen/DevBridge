@@ -170,6 +170,8 @@ This is a sequencing control, not permission to omit security maintenance. The n
 
 The implemented v6 candidate preserves that equality: setup resolves the greatest package version across the release, updates, and security pockets using Debian's documented ordering; the seed blocks only installer-owned unattended package selection, then runs snapshot update, a no-removal snapshot upgrade, and exact top-level installation in that order. Package comparison is its own small owner with neutral string inputs and a numeric comparison result. Ubuntu authority owns pocket topology; the seed consumes only the already accepted snapshot/package contract. Recipe and package generations advance independently, so neither v5 construction state nor its top-level pins can alias this candidate.
 
+PR #309 qualified this implementation in all four Ubuntu/Windows smoke and full CI jobs, including direct Ubuntu `dpkg` agreement for the fixed comparison corpus, and merged it into the recovery line as exact commit `d38c662254d388edcbf1a0760e2efce8bd05b8e1`. The software evidence is complete for this slice. Physical acceptance remains open because a new protected runtime generation must be installed before v6 can derive and construct its own exact Hyper-V subject; no older installed generation or manual VM mutation can substitute for that gate.
+
 Additional primary sources:
 
 - [Subiquity install controller](https://github.com/canonical/subiquity/blob/main/subiquity/server/controllers/install.py)
