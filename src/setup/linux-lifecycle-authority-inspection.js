@@ -120,6 +120,7 @@ function normalizeOwnership(raw, plan) {
     'serviceName',
     'operatorName',
     'managementGroup',
+    'localIdentity',
     'activeGeneration',
     'stagedGeneration',
     'retainedGenerations',
@@ -144,7 +145,24 @@ function normalizeOwnership(raw, plan) {
   if (stagedGeneration != null && retainedGenerations.includes(stagedGeneration)) {
     throw new Error('Linux lifecycle authority staged generation evidence aliases retained state');
   }
-  return Object.freeze({ ...raw, activeGeneration, stagedGeneration, retainedGenerations: Object.freeze(retainedGenerations) });
+  let localIdentity = null;
+  if (raw.localIdentity != null) {
+    exactKeys(raw.localIdentity, new Set(['serviceUid', 'readGid', 'coordinationGid', 'managementGid']), 'Linux lifecycle authority local identity record');
+    const values = {
+      serviceUid: numeric(raw.localIdentity.serviceUid, 'Linux lifecycle authority service uid'),
+      readGid: numeric(raw.localIdentity.readGid, 'Linux lifecycle authority read gid'),
+      coordinationGid: numeric(raw.localIdentity.coordinationGid, 'Linux lifecycle authority coordination gid'),
+      managementGid: numeric(raw.localIdentity.managementGid, 'Linux lifecycle authority management gid'),
+    };
+    if (values.serviceUid === 0 || [values.readGid, values.coordinationGid, values.managementGid].some((value) => value === 0)) {
+      throw new Error('Linux lifecycle authority local identity record contains root authority');
+    }
+    if (new Set([values.readGid, values.coordinationGid, values.managementGid]).size !== 3) {
+      throw new Error('Linux lifecycle authority local identity record aliases groups');
+    }
+    localIdentity = Object.freeze(values);
+  }
+  return Object.freeze({ ...raw, localIdentity, activeGeneration, stagedGeneration, retainedGenerations: Object.freeze(retainedGenerations) });
 }
 
 function normalizeGenerationManifest(raw, plan) {
@@ -173,7 +191,7 @@ async function readBoundedText(file, expectedInfo, load, maximumBytes) {
 }
 
 function parseSystemdShow(stdout) {
-  const allowed = new Set(['LoadState', 'ActiveState', 'SubState', 'MainPID', 'FragmentPath', 'User', 'Group', 'SupplementaryGroups', 'Type']);
+  const allowed = new Set(['LoadState', 'ActiveState', 'SubState', 'MainPID', 'FragmentPath', 'User', 'Group', 'SupplementaryGroups', 'Type', 'UnitFileState']);
   const values = new Map();
   const lines = String(stdout ?? '').trim().split('\n').filter(Boolean);
   if (lines.length !== allowed.size) throw new Error('Linux lifecycle authority service observation is incomplete');
@@ -195,6 +213,7 @@ function parseSystemdShow(stdout) {
     group: values.get('Group'),
     supplementaryGroups: Object.freeze(values.get('SupplementaryGroups').split(/\s+/u).filter(Boolean)),
     type: values.get('Type'),
+    unitFileState: values.get('UnitFileState'),
   });
 }
 
@@ -206,7 +225,7 @@ async function inspectSystemdService(plan, invoke, environment) {
       arguments: [
         'show', plan.service.name, '--no-pager',
         '--property=LoadState', '--property=ActiveState', '--property=SubState', '--property=MainPID',
-        '--property=FragmentPath', '--property=User', '--property=Group', '--property=SupplementaryGroups', '--property=Type',
+        '--property=FragmentPath', '--property=User', '--property=Group', '--property=SupplementaryGroups', '--property=Type', '--property=UnitFileState',
       ],
       input: null,
       timeoutMs: 15_000,
@@ -301,6 +320,8 @@ export async function inspectLinuxLifecycleAuthorityState({
   const rootGid = 0;
   const serviceUid = identity.service.record?.uid ?? -1;
   const readGid = identity.read.record?.gid ?? -1;
+  const coordinationGid = identity.coordination.record?.gid ?? -1;
+  const managementGid = identity.management.record?.gid ?? -1;
   const paths = {
     unit: plan.service.unitPath,
     protectedRoot: plan.protectedRoot,
@@ -340,6 +361,7 @@ export async function inspectLinuxLifecycleAuthorityState({
     groups: service.exists === true && sameSet(service.supplementaryGroups ?? [], expectedSupplements),
     fragment: service.exists === true && service.fragmentPath === plan.service.unitPath,
     startBoundary: service.type === 'exec',
+    enabled: service.exists === true && service.unitFileState === 'enabled',
   });
   const filesystem = Object.freeze({
     unit: filePolicy(entries.get('unit'), { uid: rootUid, gid: rootGid, expectedMode: 0o644, kind: 'file' }),
@@ -382,8 +404,17 @@ export async function inspectLinuxLifecycleAuthorityState({
     platform: 'linux',
     applicable: true,
     authorityIdentity: plan.authorityIdentity,
-    identities: Object.freeze({ service: identity.serviceReady, operator: identity.operatorReady, serviceUid, readGid, rootGid, serviceGroupIds: identity.service?.groupIds ?? Object.freeze([]) }),
-    ownership: Object.freeze({ exists: ownership != null, exact: ownership?.activeGeneration === plan.runtime.generation && ownership?.stagedGeneration == null, record: ownership }),
+    identities: Object.freeze({ service: identity.serviceReady, operator: identity.operatorReady, serviceUid, readGid, coordinationGid, managementGid, rootGid, serviceGroupIds: identity.service?.groupIds ?? Object.freeze([]) }),
+    ownership: Object.freeze({
+      exists: ownership != null,
+      exact: ownership?.activeGeneration === plan.runtime.generation
+        && ownership?.stagedGeneration == null
+        && ownership?.localIdentity?.serviceUid === serviceUid
+        && ownership?.localIdentity?.readGid === readGid
+        && ownership?.localIdentity?.coordinationGid === coordinationGid
+        && ownership?.localIdentity?.managementGid === managementGid,
+      record: ownership,
+    }),
     generation: Object.freeze({ exists: generationRecord != null, exact: generationRecord != null, record: generationRecord }),
     service: serviceEvidence,
     process: processEvidence,
