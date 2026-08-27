@@ -92,6 +92,7 @@ const TARGETED_TESTS = [
   'test/rate-budget.test.js',
   'test/repository-preflight-diagnostics.test.js',
   'test/linux-protected-transfer.test.js',
+  'test/linux-protected-tree.test.js',
 ];
 
 function cleanOutput(value) {

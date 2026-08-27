@@ -5,7 +5,10 @@ import { chmod, lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { transferLinuxProtectedFile } from '../src/setup/linux-protected-storage.js';
+import {
+  transferLinuxProtectedFile,
+  verifyLinuxProtectedFile,
+} from '../src/setup/linux-protected-storage.js';
 
 const FLAGS = Object.freeze({
   O_RDONLY: 0,
@@ -190,6 +193,17 @@ test('streamed protected transfer installs exact bytes and reconciles an exact n
   assert.equal(values.calls.filter(([name]) => name === 'rename').length, 1);
   assert.equal(values.calls.filter(([name]) => name === 'sync-file').length, 1);
   assert.equal(values.calls.filter(([name]) => name === 'sync-directory').length, 2);
+  const verified = await verifyLinuxProtectedFile({
+    contract: request(content).output,
+    size: content.length,
+    digest: sha256(content),
+  }, values.ports);
+  assert.equal(verified.ready, true);
+  await assert.rejects(() => verifyLinuxProtectedFile({
+    contract: request(content).output,
+    size: content.length,
+    digest: sha256('wrong'),
+  }, values.ports), /digest is invalid/u);
 });
 
 test('digest failure leaves only an admitted pending state that the exact retry recovers', async () => {
