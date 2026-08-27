@@ -64,6 +64,7 @@ function fixture({ extraServiceGroup = false, serviceType = 'exec' } = {}) {
     serviceName: selected.service.name,
     operatorName: selected.service.operator,
     managementGroup: selected.service.managementGroup,
+    localIdentity: Object.freeze({ serviceUid, readGid, coordinationGid, managementGid }),
     activeGeneration: selected.runtime.generation,
     stagedGeneration: null,
     retainedGenerations: Object.freeze([]),
@@ -124,6 +125,7 @@ function fixture({ extraServiceGroup = false, serviceType = 'exec' } = {}) {
         `Group=${selected.service.readGroup}`,
         `SupplementaryGroups=${selected.service.coordinationGroup} ${selected.service.managementGroup}`,
         `Type=${serviceType}`,
+        'UnitFileState=enabled',
         '',
       ].join('\n'),
       stderr: '',
@@ -186,6 +188,7 @@ test('Linux authority inspection proves NSS, exact-generation, systemd, process,
   assert.equal(observed.generation.exact, true);
   assert.equal(observed.service.unitExact, true);
   assert.equal(observed.service.startBoundary, true);
+  assert.equal(observed.service.enabled, true);
   assert.equal(observed.service.identity, true);
   assert.equal(observed.service.groups, true);
   assert.equal(observed.process.identity, true);
@@ -247,6 +250,7 @@ test('a missing systemd unit is observable but never projected as an installed s
       'Group=',
       'SupplementaryGroups=',
       'Type=',
+      'UnitFileState=disabled',
       '',
     ].join('\n'),
     stderr: '',
@@ -261,6 +265,18 @@ test('ownership subject mismatch fails closed instead of adopting another instal
   const values = fixture();
   values.loads.set(values.plan.ownershipManifest, JSON.stringify({ ...values.ownership, authorityIdentity: 'f'.repeat(32) }));
   await assert.rejects(() => inspect(values), /does not match this installation/u);
+});
+
+test('same-name numeric identity replacement invalidates ownership evidence', async () => {
+  const values = fixture();
+  values.loads.set(values.plan.ownershipManifest, JSON.stringify({
+    ...values.ownership,
+    localIdentity: { ...values.ownership.localIdentity, serviceUid: 996 },
+  }));
+  const observed = await inspect(values);
+  assert.equal(observed.identities.service, true);
+  assert.equal(observed.ownership.exists, true);
+  assert.equal(observed.ownership.exact, false);
 });
 
 test('non-Linux inspection is explicitly unattached and performs no observation', async () => {

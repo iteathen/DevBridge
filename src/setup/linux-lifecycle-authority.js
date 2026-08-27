@@ -205,6 +205,11 @@ export function bindLinuxLifecycleAuthorityRuntime(plan, { packageDigest, nodeDi
   if (plan.runtimeEvidence != null || plan.runtime?.generation != null || plan.service?.unit != null) {
     throw new Error('Linux lifecycle authority runtime evidence is already bound');
   }
+  return projectLinuxLifecycleAuthorityRuntime(plan, { packageDigest, nodeDigest });
+}
+
+export function projectLinuxLifecycleAuthorityRuntime(plan, { packageDigest, nodeDigest } = {}) {
+  if (!plan || typeof plan !== 'object' || plan.protocol !== PROTOCOL) throw new TypeError('Linux lifecycle authority plan is required');
   const packageIdentity = digest(packageDigest, 'Linux lifecycle authority package digest');
   const nodeIdentity = digest(nodeDigest, 'Linux lifecycle authority Node digest');
   const generation = linuxLifecycleAuthorityRuntimeGeneration({ packageDigest: packageIdentity, nodeDigest: nodeIdentity });

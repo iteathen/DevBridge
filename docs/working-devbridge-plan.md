@@ -98,6 +98,8 @@ Owners: Linux authority plan/inspection/reconciliation/protection adapters.
 
 Hosted checkpoint: the corrected plan/service entry, read-only NSS/systemd/process/runtime inspection, and shared refresh adapter are implemented and locally qualified on `security/293-linux-authority-recovery`; see `docs/testing/DB-HO010-issue-293-linux-authority-reassessment.md`. No privileged Linux mutation or readiness composition is attached. Steps 3–8 remain active work.
 
+Protected-mechanics checkpoint: DB-HO011 records the exact name/numeric-identity ownership model, atomic generation/unit contract, append-only ordinary membership, exact service membership, and provider-separation plan for the next isolated slice.
+
 Exit evidence:
 
 - Linux setup is one-command and resumable;

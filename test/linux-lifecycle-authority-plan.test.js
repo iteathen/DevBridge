@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   bindLinuxLifecycleAuthorityRuntime,
   createLinuxLifecycleAuthorityPlan,
+  projectLinuxLifecycleAuthorityRuntime,
   linuxLifecycleAuthorityRuntimeGeneration,
   LINUX_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL,
 } from '../src/setup/linux-lifecycle-authority.js';
@@ -94,6 +95,19 @@ test('runtime evidence is single-assignment and changes the exact generation', (
   assert.notEqual(first.runtime.generationDirectory, second.runtime.generationDirectory);
   assert.throws(() => bindLinuxLifecycleAuthorityRuntime(first, { packageDigest: PACKAGE_DIGEST, nodeDigest: NODE_DIGEST }), /already bound/u);
   assert.throws(() => bindLinuxLifecycleAuthorityRuntime(basePlan(), { packageDigest: 'x', nodeDigest: NODE_DIGEST }), /sha256 digest/u);
+});
+
+test('historical runtime projection derives exact rollback unit bytes without filename inference', () => {
+  const base = createLinuxLifecycleAuthorityPlan({
+    stateDirectory: '/home/alice/.devbridge/state',
+    operatorName: 'alice',
+    managementGroup: 'provider-control',
+  });
+  const current = bindLinuxLifecycleAuthorityRuntime(base, { packageDigest: 'a'.repeat(64), nodeDigest: 'b'.repeat(64) });
+  const historical = projectLinuxLifecycleAuthorityRuntime(current, { packageDigest: 'c'.repeat(64), nodeDigest: 'd'.repeat(64) });
+  assert.notEqual(historical.runtime.generation, current.runtime.generation);
+  assert.match(historical.service.unit, new RegExp(historical.runtime.generation, 'u'));
+  assert.equal(historical.service.unit.includes(current.runtime.generation), false);
 });
 
 test('Linux plan rejects nonportable names, unsafe paths, and percent specifier expansion', () => {
