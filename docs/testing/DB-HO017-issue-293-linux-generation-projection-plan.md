@@ -1,6 +1,6 @@
 # DB-HO017 — issue #293 Linux generation projection
 
-Status: implementation and local qualification complete from exact `cuda-target` baseline `f614714bede7cc5eabf4a664583886d18b42f68d` on isolated branch `security/293-linux-generation-projection`; exact-head hosted CI remains required before integration.
+Status: implemented and hosted-qualified from exact `cuda-target` baseline `f614714bede7cc5eabf4a664583886d18b42f68d`. Reviewed branch head `8a89e010c06f52988f60a488c404f1985146363c` passed CI run `33126126471` and was squash-integrated through PR #321 as `00f8fc8eb773acbe3850fc1f529f77db21444e50`.
 
 ## Assessment
 
@@ -78,3 +78,16 @@ Exact Windows-host evidence before publication:
 - full suite: 1,231 tests, 1,220 passed, 11 expected platform skips, 0 failed.
 
 No elevation prompt, account/service/provider command, VM action, protected production path, or #197 physical canary state was touched. Issue #293 remains open for identity/unit/service effect composition, one-command elevated Linux re-entry, provider authorization, and real KVM/libvirt/qcow2 qualification.
+
+## Hosted qualification and integration
+
+Exact reviewed head `8a89e010c06f52988f60a488c404f1985146363c` passed all four jobs in CI run `33126126471`:
+
+- Ubuntu smoke — passed;
+- Ubuntu architecture gates, full suite, and doctor — passed;
+- Windows smoke — passed;
+- Windows architecture gates, full suite, and doctor — passed.
+
+PR #321 was squash-integrated into `cuda-target` at `00f8fc8eb773acbe3850fc1f529f77db21444e50`. Local tree-equivalence verification between the reviewed head and integration commit passed before the isolated topic branch was removed.
+
+This evidence completes only DB-HO017. It does not claim Linux service readiness, ordinary negative provider/storage proof, protected positive lifecycle authority, or KVM/libvirt/qcow2 qualification.
