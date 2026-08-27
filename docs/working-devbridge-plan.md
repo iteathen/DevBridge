@@ -60,16 +60,18 @@ Owners: canonical image canary, Hyper-V image-construction adapter, and Ubuntu m
    - add executable normal, exact-variant, malformed-count, and output-boundary tests rather than regex-only source assertions.
 4. Re-run non-construction setup on the exact candidate, then make one supported construction re-entry and require a valid bounded console artifact without changing VM state.
 5. Treat steps 3–4 as complete at exact merge `4d5dc5633d978773a3adf02414acbc4234076ca6`; the artifact proves the existing guest failed in the pinned apt late command.
-6. Reproduce the exact snapshot transaction in a disposable Ubuntu 26.04 environment outside the production construction frontier:
+6. Reproduce the exact snapshot transaction in a disposable Ubuntu 26.04 environment outside the production construction frontier (complete):
    - first run snapshot update;
    - then simulate, download, and install the exact six pinned packages;
    - preserve complete bounded apt output and exact base/snapshot identity;
    - remove the temporary diagnostic workflow after evidence is captured.
-7. Reassess from the transaction evidence. Repair the smallest owner among snapshot selection, source/pocket selection, package-set resolution, target package configuration, or error telemetry. Do not rotate pins or move to another package mechanism without evidence.
-8. Extend setup authority so its accepted package set proves the required transaction boundary rather than top-level metadata presence alone. Keep executable/package paths and solver mechanics local; preserve the neutral authority/seed contracts.
-9. Change the package or recipe generation whenever the desired guest bytes or install behavior changes, deriving a new exact construction subject rather than reusing failed media.
-10. Reconcile the existing failed effect, create the replacement through the canonical image/lifecycle authority, and retain the old subject until the replacement is qualified.
-11. Finalize, sanitize, qualify, publish to the local immutable image library, and retire only exact superseded construction artifacts after the new image is verified.
+7. Bind installer-owned package and security-update work to the accepted package set's exact snapshot using Subiquity's neutral `apt.conf` pass-through and Canonical's `APT::Snapshot` contract. Keep the existing explicit snapshot on the later DevBridge-owned transaction because Subiquity restores its temporary install-time APT configuration before late commands.
+8. Make every snapshot metadata refresh fail on any source error. Preserve the diagnostic finding that a default update can exit zero after snapshot HTTPS failures; do not treat stale or live-archive indexes as snapshot evidence.
+9. Do not add a CA bootstrap stage merely because the minimal diagnostic container lacked it: the physical server target already completed its HTTPS snapshot update. Reassess only if the new exact construction subject produces contrary target evidence.
+10. Preserve top-level package-pin resolution as provenance evidence and prove dependency closure at the construction boundary. Keep executable/package paths and solver mechanics local; preserve the neutral authority/seed contracts.
+11. Change the package or recipe generation whenever the desired guest bytes or install behavior changes, deriving a new exact construction subject rather than reusing failed media.
+12. Reconcile the existing failed effect, create the replacement through the canonical image/lifecycle authority, and retain the old subject until the replacement is qualified.
+13. Finalize, sanitize, qualify, publish to the local immutable image library, and retire only exact superseded construction artifacts after the new image is verified.
 
 Exit evidence:
 
@@ -159,6 +161,19 @@ Exit evidence: a real UCI Arena task completes through the supported installed e
 ## Deferred GPU program
 
 Issues #162, #186, and #283 remain deferred until Phases 0–7 establish recoverable, installable CPU profiles. No generic compute abstraction is built speculatively. Later GPU work begins with a real provider/guest feasibility canary and plugs into the same profile, lifecycle, bridge, evidence, and setup studs.
+
+The operator has supplied a candidate path to preserve for that later research gate:
+
+- keep repository-controlled GPU execution VM-only and fail closed when the exact hardware profile is unavailable;
+- model GPU/device/driver requirements as host-owned execution-profile policy, never repository-granted authority;
+- evaluate first-class PCIe passthrough or mediated/SR-IOV assignment, with the physical device and DMA boundary proved per provider rather than assumed;
+- keep compilation and artifact production in the admitted persistent workspace VM, while evaluating a separate disposable execution worker for tests that require resettable device state;
+- compare a direct-passthrough VM path with a separately bounded NVIDIA `nvproxy`/gVisor path; do not combine them into one implicit topology or claim equivalent isolation;
+- evaluate a narrow host-controlled guest transport such as `virtio-vsock`, read-only execution roots, and ephemeral writable state without exposing host credentials, paths, provider objects, or Git authority;
+- treat binaries and PTX/SPIR-V transferred between environments as untrusted candidate artifacts bound to exact source, toolchain, driver, device, and verification identity;
+- require teardown/reset, IOMMU grouping, peer-device, DMA, driver, firmware, bus-I/O, and hostile-pointer/memory-copy qualification before admitting low-level GPU tests.
+
+This is a roadmap hypothesis, not an accepted security claim. Later assessment must use current primary NVIDIA, Linux VFIO/IOMMU, KVM/QEMU/libvirt, Hyper-V GPU-assignment/GPU-P, gVisor, and virtio-vsock sources and must explicitly separate Linux and Windows provider capabilities. No GPU implementation or host fallback is authorized by recording it here.
 
 ## Verification order for every slice
 

@@ -63,8 +63,10 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.match(result.userData, /"linux-cloud-tools-virtual=6\.14\.0\.29\.29"/u);
   assert.match(result.userData, /dhcp4: true/u);
   assert.doesNotMatch(result.userData, /192\.168\.77/u);
-  assert.match(result.userData, new RegExp(`apt-get", "--snapshot", "${snapshot}", "update"`, 'u'));
+  assert.match(result.userData, new RegExp(`apt:\\n    conf: \\|\\n      APT::Snapshot "${snapshot}";`, 'u'));
+  assert.match(result.userData, new RegExp(`apt-get", "--error-on=any", "--snapshot", "${snapshot}", "update"`, 'u'));
   assert.match(result.userData, new RegExp(`apt-get", "--snapshot", "${snapshot}", "install", "-y", "--no-install-recommends"`, 'u'));
+  assert.ok(result.userData.indexOf('APT::Snapshot') < result.userData.indexOf('late-commands:'));
   assert.doesNotMatch(result.userData, /updates:\s+security/u);
   assert.doesNotMatch(result.userData, /install-server:\s+true/u);
   assert.equal(result.evidence.payloadGeneration, 'guest-payload-v7');
@@ -77,6 +79,23 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.equal(JSON.stringify(result.evidence).includes('transient-private-material'), false);
   assert.equal(JSON.stringify(result.evidence).includes(publicKey), false);
   assert.match(result.metaData, /^instance-id: devbridge-image-/u);
+});
+
+test('Ubuntu production seed projects one accepted snapshot into both installer and late transaction authority', async () => {
+  const first = await factory().create(request());
+  const secondSnapshot = '20260824T100000Z';
+  const second = await factory({
+    packageSet: async () => ({
+      generation: 'ubuntu-tools-v4',
+      snapshot: secondSnapshot,
+      packages: [{ name: 'nodejs', version: '22.16.0+dfsg-1' }],
+    }),
+  }).create(request());
+
+  assert.equal((first.userData.match(new RegExp(snapshot, 'gu')) ?? []).length, 3);
+  assert.equal((second.userData.match(new RegExp(secondSnapshot, 'gu')) ?? []).length, 3);
+  assert.equal(second.userData.includes(snapshot), false);
+  assert.notEqual(first.evidence.userDataSha256, second.evidence.userDataSha256);
 });
 
 test('Ubuntu production seed retains a topology-neutral exact static addressing contract', async () => {
