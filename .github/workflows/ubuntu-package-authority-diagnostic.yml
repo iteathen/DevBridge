@@ -26,11 +26,19 @@ jobs:
           apt-get --version
           find /etc/apt -maxdepth 2 -type f \( -name '*.list' -o -name '*.sources' \) -print -exec sed -n '1,200p' {} \;
 
+      - name: Bootstrap release trust
+        shell: bash
+        run: |
+          set -euxo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates=20260223
+          dpkg-query --show --showformat='${Package}=${Version}\n' ca-certificates
+
       - name: Update exact snapshot metadata
         shell: bash
         run: |
           set -euxo pipefail
-          apt-get --snapshot "$SNAPSHOT" update
+          apt-get --error-on=any --snapshot "$SNAPSHOT" update
 
       - name: Simulate exact transaction
         shell: bash
