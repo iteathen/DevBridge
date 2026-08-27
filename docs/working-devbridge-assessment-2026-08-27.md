@@ -83,6 +83,30 @@ Read-only provider observation localized that final message to the console-evide
 
 The current adapter's newest compatibility branch treats the first four bytes as a little-endian width/height frame. That interpretation is falsified by the provider's independently reported dimensions and by the same four-byte excess at arbitrary sizes. The defect is diagnostic-only: no guest input, power operation, media change, disk mutation, or journal rewrite occurred.
 
+The adapter fix passed local and Windows/Ubuntu CI, merged through PR #307 as `4d5dc5633d978773a3adf02414acbc4234076ca6`, and passed the exact physical gate. Plain setup exited `0`; one construction re-entry preserved the VM and published bounded console evidence with SHA-256 `0404afa06f60cf153b5e55dcff53ce9418af4b12fa257fd15b0361b68570ec92`.
+
+A higher-resolution read-only provider observation then classified the guest state. Subiquity completed final system configuration and entered the user-supplied late commands. The exact snapshot update completed, but the following target transaction exited `100`:
+
+```text
+apt-get --snapshot 20260821T230000Z install -y --no-install-recommends \
+  build-essential=12.12ubuntu2 \
+  cmake=4.2.3-2ubuntu2 \
+  git=1:2.53.0-1ubuntu1 \
+  linux-cloud-tools-virtual=7.0.0-14.14 \
+  nodejs=22.22.1+dfsg+~cs22.19.15-1ubuntu1 \
+  npm=9.2.0~ds3-1
+```
+
+The exact top-level package records and files remain present in the Ubuntu snapshot, and direct dependency names are present across `main` and `universe`. That is not proof that apt can solve and apply the transaction against the installed target. The current setup authority validates top-level metadata presence only; it does not validate dependency closure, conflicts with the target base, download closure, or package configuration effects.
+
+Two bounded Ubuntu 26.04 diagnostics supplied the missing solver evidence. The minimal container first showed that an APT snapshot update can exit zero after HTTPS certificate failures while retaining live-archive indexes; `--error-on=any` is required for the update to be authoritative. After bootstrapping the exact release `ca-certificates` package, the snapshot update succeeded and the exact six-package simulation failed on a mixed-generation dependency state: `npm -> node-gyp -> libnode-dev -> libssl-dev` selected snapshot `libssl-dev=3.5.5-1ubuntu3.3`, while the existing target state could not select its exact `libssl3t64` peer. This reproduces the class of physical failure without claiming the container is byte-identical to the installed server image.
+
+Canonical's Subiquity implementation explains how the mixed state arises in the physical install: the default `updates: security` run executes `unattended-upgrades` after package installation and before user late commands. DevBridge previously applied its snapshot only inside late commands, after that installer-owned update had already moved target packages. Canonical's snapshot service documents `APT::Snapshot` as the source-wide control for all APT commands, expressly including `unattended-upgrades`. Subiquity forwards the autoinstall `apt.conf` field through Curtin, which writes the install-time target APT configuration. Subiquity restores that temporary configuration after unattended upgrades and before late commands, so the existing explicit late-command snapshot remains independently necessary.
+
+The smallest owning repair is therefore in the Ubuntu seed: bind installer-owned APT work to the same exact snapshot through neutral package-set input, retain explicit snapshot binding for the later DevBridge-owned transaction, and make snapshot metadata refresh fail on any source error. It is not an authority expansion, a package downgrade workaround, or a second package source. The actual physical target already completed an HTTPS snapshot update, so the container-only CA bootstrap is diagnostic evidence and does not justify adding another production package stage.
+
+The implemented candidate follows that boundary. It adds no interface field: the seed consumes the existing neutral `packages.snapshot`, renders it as install-time `APT::Snapshot`, and uses it in the existing late-command operations. The changed behavior is content-addressed by recipe generation `ubuntu-2604-autoinstall-v5`. The diagnostic workflow was deleted after recording its bounded evidence. Focused tests, repository preflight, and the full 1,145-test local suite pass with zero failures; exact provider construction remains the required capability proof.
+
 ## Issue and dependency assessment
 
 The lowest unfinished product dependency is provider-management authority isolation, not polling, agent UX, or GPU routing.
@@ -130,6 +154,14 @@ Sources:
 - [GetSummaryInformation](https://learn.microsoft.com/en-us/windows/win32/hyperv_v2/getsummaryinformation-msvm-virtualsystemmanagementservice)
 - [Msvm_SummaryInformation](https://learn.microsoft.com/en-us/windows/win32/hyperv_v2/msvm-summaryinformation)
 
+Ubuntu documents that a snapshot update must run immediately before the snapshot package command. It also documents `APT::Snapshot` as the way to bind every snapshot-capable repository for every APT command, including `unattended-upgrades`. APT returns `100` for an error, while an update without `--error-on=any` can still exit successfully after individual source failures. Subiquity supports exact-version entries in its `packages` list and permits `curtin in-target` late commands. Its default `updates: security` contract runs before late commands, and its implementation forwards other `apt` configuration such as `conf` to Curtin. Curtin writes that `conf` to the target's install-time APT configuration. These are separate contracts: the source-wide snapshot prevents installer-owned drift, while the explicit late-command snapshot binds the later DevBridge-owned transaction after Subiquity restores its temporary install configuration.
+
+Sources:
+
+- [Ubuntu Snapshot Service](https://snapshot.ubuntu.com/)
+- [Ubuntu `apt-get` manual](https://manpages.ubuntu.com/manpages/noble/man8/apt-get.8.html)
+- [Subiquity autoinstall configuration reference](https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html)
+
 ### Linux authority, systemd, libvirt, and qcow2
 
 Libvirt's modular `virtqemud` uses local Unix sockets and is commonly systemd socket-activated. Its RW socket can grant authority comparable to root. Socket group membership alone is therefore too coarse as the final security story.
@@ -167,15 +199,15 @@ The research and current evidence preserve the original primitive ordering but r
 
 - **Windows:** continue the dedicated service-SID and explicit pipe-DACL design. Treat service configuration, running token, pipe capability, backing-store ACL, Hyper-V operation, and exact cleanup as separate observations. PR #300's bounded exact-fixture cleanup retry is architecturally valid only because it admits a small Windows transient set and preserves terminal failure.
 - **Linux:** keep the per-install system service and immutable root-owned runtime, but do not freeze broad libvirt group membership as the universal provider capability. The adapter must detect modular versus monolithic daemon/socket behavior and select a locally supported, bounded service-only authorization policy. Ordinary identity must remain outside provider RW authority.
-- **Physical recovery:** exact protected-authority re-entry now passes. The immediate blocker is the Hyper-V adapter's incorrect interpretation of an exact four-byte thumbnail-size excess. Repair only that provider-local decoder, capture bounded console evidence, then classify the existing guest before any replacement decision.
+- **Physical recovery:** exact protected-authority re-entry and console capture now pass. The existing guest is terminally failed in the pinned apt install late command. Reproduce the exact transaction in a disposable Ubuntu 26.04 environment and capture apt's solver/install evidence before changing authority. A replacement requires a new exact subject and must not retire the failed subject until the replacement is qualified.
 - **Branch integration:** PR #300 and the three current-main commits are synchronized and qualified at recovery commit `4483474fc85e5f50a21accd7fef7c4a7a6067dfb`. Continue new recovery behavior on fresh isolated branches from that commit. Do not develop on the retired fast-track checkout or directly on `main`.
 - **Mainline merge:** do not overwrite or force main. Open an evidence-backed integration PR only after the synchronized core branch is green and the intended fail-closed/working platform state is documented. Incomplete Linux readiness may merge only if Linux remains explicitly unavailable with no fallback and the PR scope says so.
 - **GPU:** no GPU/CUDA/ROCm implementation, device routing, image specialization, or provider attachment work belongs in the current sequence.
 
 ## Current blockers and safe frontier
 
-1. The active Ubuntu construction is durably overdue; bounded console capture must be repaired before the guest state can be classified.
-2. No VM repair, replacement, or exact-owned retirement is admissible until that diagnostic evidence is captured and reconciled by the owning lifecycle.
+1. The exact Ubuntu package transaction failed in-target with apt exit `100`; the decisive solver/install reason must be reproduced or captured before changing pins or package delivery.
+2. No VM repair, snapshot rotation, replacement, or exact-owned retirement is admissible until the corrected package authority derives a new exact subject.
 3. Linux protected-authority implementation must be rebased onto the shared reconciler and completed before Linux can be declared ready.
 4. The synchronized recovery lineage remains intentionally separate from `main` until the primitive provider/image/install gates have physical evidence.
 

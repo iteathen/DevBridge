@@ -334,6 +334,52 @@ Executable focused coverage proves exact-size success, physical-variant success 
 
 The pre-fix stopped frontier and exact provider observations are recorded on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5443879067). No guest input, power operation, media rewrite, disk mutation, provider cleanup, or manual workaround occurred during diagnosis or implementation.
 
+### 14. Bounded console evidence exposed a terminal pinned-package transaction failure
+
+PR #307 merged the console normalization fix as exact commit `4d5dc5633d978773a3adf02414acbc4234076ca6` after all Windows and Ubuntu smoke/full CI jobs passed. Exact plain setup then reached the construction gate and exited `0`. One supported construction re-entry preserved the overdue VM and produced the bounded `320x240` artifact with SHA-256 `0404afa06f60cf153b5e55dcff53ce9418af4b12fa257fd15b0361b68570ec92`.
+
+A read-only `640x480` call to the same provider method made the terminal legible without changing the guest. Subiquity had completed final system configuration. The first user-supplied late command, snapshot update, completed. The next command attempted the six exact top-level pins for build-essential, CMake, Git, Linux cloud tools, Node.js, and npm against snapshot `20260821T230000Z`; curtin reported apt exit `100` and Subiquity entered its fatal error screen.
+
+Host-side re-observation confirmed that every top-level record and package file still exists in the exact snapshot and that each direct dependency name is present in `main` or `universe`. Those checks prove provenance and availability of named artifacts, not transaction solvability or successful target configuration. The existing `resolveUbuntuPackagePins()` owner reads top-level `Package` and `Version` fields only, so it cannot prevent this class of physical failure.
+
+Ubuntu's snapshot contract requires snapshot update immediately before the package command, which this seed already did. The apt exit code identifies only an error. The captured screen omits the decisive apt stderr. Therefore no snapshot, package pin, source pocket, or delivery mechanism is changed at this checkpoint. The next accepted evidence is an isolated Ubuntu 26.04 simulation/download/install of the exact transaction, followed by a reassessment of the smallest owning contract.
+
+Primary references:
+
+- [Ubuntu Snapshot Service](https://snapshot.ubuntu.com/)
+- [Ubuntu `apt-get` manual](https://manpages.ubuntu.com/manpages/noble/man8/apt-get.8.html)
+- [Subiquity autoinstall configuration reference](https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html)
+
+The exact physical result is recorded on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5444080116). No guest input, power operation, VM configuration change, media/disk mutation, snapshot rotation, cleanup, or manual workaround occurred.
+
+### 15. Disposable transaction diagnostics localized installer-owned snapshot drift
+
+A temporary pull-request workflow ran the exact transaction in Canonical's Ubuntu 26.04 container. The first run intentionally retained the container's minimal trust state and proved an important failure mode: snapshot HTTPS requests failed certificate verification, but plain `apt-get update` exited zero with warnings and left live-archive indexes usable. The accepted update form must therefore include `--error-on=any`.
+
+The second run installed exact release `ca-certificates=20260223`, completed the exact snapshot update, and reached the solver. The exact transaction failed on a mixed package generation: `npm` required `node-gyp`, then `libnode-dev`, then `libssl-dev=3.5.5-1ubuntu3.3`, whose exact `libssl3t64` peer could not be selected against the container's existing state. This is diagnostic reproduction of the dependency-conflict class, not a claim that the container is the server ISO target.
+
+The physical console and Canonical's Subiquity source establish the relevant ordering. Subiquity installs its configured packages, then runs its default security `unattended-upgrades`, and only afterward executes user late commands. DevBridge's exact snapshot began in those late commands, so it could not constrain the preceding installer-owned update. Canonical documents `APT::Snapshot` as applying to all APT operations, including unattended upgrades. Subiquity accepts the Curtin `apt` format, forwards `conf`, and Curtin writes it as target install-time APT configuration. Subiquity restores that temporary configuration before late commands, which is why both bindings are required.
+
+The accepted repair is scoped to the Ubuntu seed owner: project the already accepted neutral package snapshot into install-time `APT::Snapshot`, retain the explicit snapshot on the DevBridge late transaction, and make the explicit metadata refresh fail on any source error. No downgrade flag, live source, new package manager, host execution path, or container-only CA bootstrap is admitted. The physical target already proved its HTTPS trust by completing the snapshot update.
+
+Implementation projects `packages.snapshot` into the autoinstall `apt.conf` block and into both explicit late commands; no caller or topology field was added. The late metadata refresh now supplies `--error-on=any`. Recipe generation advanced from `ubuntu-2604-autoinstall-v4` to `ubuntu-2604-autoinstall-v5`, so the changed seed behavior derives a new immutable construction subject instead of reusing the failed media. The temporary diagnostic workflow was removed after its evidence was recorded.
+
+Local verification on the exact candidate passed:
+
+- 28 focused setup-authority, construction-authority, seed, and qualification tests;
+- repository preflight, including 36 targeted tests;
+- the full 1,145-test suite: 1,139 passed, 6 platform skips, 0 failed.
+
+These results prove contract composition and fail-closed input behavior. They do not replace the required exact Hyper-V construction and guest qualification gate.
+
+Primary references:
+
+- [Ubuntu Snapshot Service](https://snapshot.ubuntu.com/)
+- [Subiquity autoinstall configuration reference](https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html)
+- [Subiquity install controller](https://github.com/canonical/subiquity/blob/main/subiquity/server/controllers/install.py)
+- [Subiquity APT configuration](https://github.com/canonical/subiquity/blob/main/subiquity/server/apt.py)
+- [Curtin APT configuration implementation](https://github.com/canonical/curtin/blob/main/curtin/commands/apt_config.py)
+
 ## Preserved physical evidence
 
 After the latest stopped attempt:
