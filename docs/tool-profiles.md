@@ -10,6 +10,8 @@ Stage 1 removed the legacy Linux/Bubblewrap and Windows host-sandbox paths befor
 
 Deterministic DB-013 operations remain preferred where model inference is unnecessary. DB-015 dynamic `tool.*` onboarding remains a separate validated local-operation mechanism.
 
+The agent-facing guest execution surface is defined in [`agent-execution-runtime.md`](agent-execution-runtime.md). It is deliberately optimized for familiar coding-model conventions without granting arbitrary host execution authority.
+
 ## Host-sandbox-era profile fields
 
 Current profiles may contain:
@@ -74,7 +76,23 @@ Examples:
 
 During the intentional no-provider interval, repository tools requiring execution are unavailable rather than resolved to host executables.
 
-A guest executable path may be useful internal bridge data, but it is not host authority and should normally be derived by guest bootstrap/tool resolution rather than remote task text.
+A guest executable path may be useful guest/runtime data, but it is not host authority and should normally be derived by guest bootstrap/tool resolution rather than remote task text.
+
+Guest execution history should retain both the model-facing requested spelling and the canonical guest tool identity/resolved executable where available. Cache/provenance identity should use the canonical tool identity rather than fragment because an agent used an equivalent bare name or deliberate compatibility projection.
+
+## Agent-facing command names and paths
+
+For admitted guest execution, DevBridge should prefer conventional developer-tool names and ordinary `PATH` behavior so a coding agent's first reasonable command is likely to work.
+
+Examples include familiar bare names such as `git`, `cmake`, `ctest`, `ninja`, `node`, `npm`, `python3`, `rg`, and other tools that the selected profile actually admits/contains. This list is illustrative, not an unconditional base-image requirement.
+
+One canonical guest tool installation/identity may have compatible names or path projections, but the projection must be truthful for ordinary guest descendants.
+
+Do not silently translate an arbitrary nonexistent absolute path only at the top-level execution harness. If `/usr/bin/cmake` is observed or executed successfully, repository code and subprocesses in that same environment must also be able to use `/usr/bin/cmake`. Otherwise the agent may persist a path into build/configuration code that fails outside the harness.
+
+Use real guest symlinks/shims/path projections only when deliberate and conflict-safe. Prefer one stable guest tool-bin/PATH projection plus evidence-driven absolute compatibility paths rather than scattering speculative aliases across the filesystem.
+
+This is the execution referential-consistency rule in `docs/design-principles.md` and `docs/agent-execution-runtime.md`.
 
 ## Allowed structured placeholders
 
@@ -89,15 +107,19 @@ Host-sandbox-era placeholders may include:
 
 The VM bridge replaces host-path-valued assumptions with logical guest path classes/opaque endpoints where needed. Do not preserve a placeholder merely to expose a host path into a guest.
 
-Free-form instructions never become argv, shell text, provider-management arguments, or bridge transport configuration.
+Free-form instructions never become host argv, host shell text, provider-management arguments, or bridge transport configuration.
 
-## Shell rule
+## Shell and process-composition rule
 
-Trusted DevBridge host control processes continue to use `shell: false` unless a separately reviewed local adapter deliberately owns shell semantics.
+Trusted DevBridge host control processes continue to use `shell: false` unless a separately reviewed local adapter deliberately owns shell semantics. Repository-code provider absence never authorizes a host shell fallback.
 
-Inside a guest, a repository tool may itself invoke a guest shell as ordinary untrusted development behavior. That does not grant host shell authority. The host bridge sends typed locally admitted operations rather than arbitrary remote shell text.
+Inside the admitted repository VM, **direct executable + argv remains the primitive**. The guest agent execution runtime may expose familiar POSIX/Bash-shaped syntax for high-frequency process composition, but supported pipes/redirections/sequencing lower into explicit process/I/O topology rather than invoking Bash merely to connect processes.
 
-Provider absence never authorizes a host shell fallback for repository-controlled work.
+Nushell is the preferred full shell for agent-authored guest composition when actual shell-language behavior is required. Nushell remains an adapter above the same guest process/result/storage runtime; it is not the host execution mechanism or the VM security boundary.
+
+Bash/sh, PowerShell, cmd, Python, Node, and other runtimes remain valid guest compatibility targets when an existing repository artifact declares or requires them. Running an existing Bash script under Bash does not make Bash the DevBridge orchestration shell.
+
+A PTY is exceptional and explicit. Normal unattended execution uses no PTY and closed stdin/EOF unless bounded input is intentionally supplied.
 
 ## Execution boundary across migration
 
@@ -128,6 +150,8 @@ If the provider/environment/bridge is unavailable, execution remains unavailable
 
 Built-in diagnostics use logical profile identities. The Stage 6 composition stages their bounded trusted helper resources into the selected environment and supplies the local entry capability transiently; profiles do not embed Node host paths or checkout-derived script paths.
 
+The guest execution runtime may retain long process output, caches, and invocation history locally for agent use. Those records are untrusted guest state and do not alter the VM-only authority model.
+
 ## Networking
 
 Host-sandbox-era profiles may contain `sandbox.network`; after Stage 1 this field no longer authorizes a host repository-execution network mode.
@@ -155,6 +179,8 @@ A coding/model/package service may require authentication. Stage 6 must define a
 
 Any credential intentionally placed in a guest must be treated as guest-visible/exfiltratable.
 
+Guest execution history/SQL must redact or reference sensitive inputs rather than becoming a credential archive.
+
 ## Tool installation and persistence
 
 After VM restoration, repository tools should normally be installed in the persistent guest environment, not projected read-only from the host.
@@ -171,7 +197,21 @@ to survive command and VM stop/start cycles.
 
 The immutable base image carries common broadly reusable tools; repo-specific additions live in the repository writable layer.
 
+Common profile-level tools should be exposed through conventional guest command names/PATH where practical. Compatibility paths are part of the guest image/bootstrap contract and should be generated/verified deliberately rather than invented by harness-only absolute-path rewrites.
+
 Reset/reseed intentionally discards that untrusted persistent state and returns to the base/bootstrap generation.
+
+## Guest buffers, caches, history, and SQL
+
+The guest execution runtime may maintain named durable buffers, named caches, artifacts, and invocation/execution history using a lightweight metadata/index store plus external/content-addressed payload storage.
+
+The general agent introspection surface is read-only SQL. SQL is for observation; it does not grant direct runtime-state mutation.
+
+Action packets may request process work, named buffer/cache use, artifact capture, or read-only queries. They must not carry arbitrary `INSERT`/`UPDATE`/`DELETE`/DDL against authoritative guest runtime persistence or claim that a process/cache/artifact succeeded.
+
+Runtime-owned process/storage methods write observed state and compute digests. Guest SQL/history/cache records remain untrusted with respect to host verification/publication.
+
+Use query telemetry to discover high-frequency operations; promote stable hot patterns to optimized methods only after evidence justifies them. Keep SQL as the flexible fallback.
 
 ## Provider-specific guest bridge considerations
 
@@ -182,6 +222,8 @@ Hyper-V transport candidates include PowerShell Direct for supported Windows gue
 KVM/libvirt transport candidates include QEMU Guest Agent and libvirt/QEMU channels. QEMU Guest Agent is guest-controlled and may forge responses under compromise; it is a transport, not evidence authority.
 
 A profile must not depend directly on `virsh`, libvirt XML, QGA JSON, PowerShell snippets, socket paths, or provider-specific file locations.
+
+The bridge carries bounded/versioned execution intent/results/references; it does not own POSIX parsing, Nushell semantics, SQLite schema, buffer indexing, or cache validity.
 
 ## Structured result protocol
 
@@ -205,6 +247,8 @@ A compatible worker may produce `devbridge/result-v1` with fields such as:
 The bridge/worker exchange binds result bytes to exact run/environment/operation identity, bounds size, rejects malformed/ambiguous data, and returns them to host validation/sealing.
 
 A compromised guest may forge a `complete` result. That cannot create verified tests, a host commit, publication, lease ownership, or hard-gate approval.
+
+Large guest stdout/stderr should normally be represented by bounded views plus durable guest-local buffer/content identities rather than transported in full by default. Host-required verification/candidate bytes are still explicitly transferred and validated through the bridge.
 
 ## Inventory and dynamic `tool.*` operations
 
@@ -242,6 +286,7 @@ Examples:
 - libvirt domain exists != correct qcow2 backing chain;
 - QEMU Guest Agent responds != trusted guest result;
 - guest tool present != registered operation authority;
+- guest history says pass != DB-019 verification evidence;
 - model says tests pass != DB-019 verification evidence.
 
 ## Workstation process/resource governance
@@ -249,6 +294,8 @@ Examples:
 DB-018 host child priority is QoS for trusted/provider host processes, not containment and not permission for repository-code host execution.
 
 VM-backed repository workloads use provider-specific vCPU/memory/disk/lifecycle controls where Stage 7 proves them. A profile does not get to raise provider resources or create parallel scheduling authority from remote text.
+
+Guest process-level buffering/caching/history features do not change task-admission or VM-resource authority.
 
 ## Migration rule
 
@@ -258,4 +305,4 @@ VM-backed repository workloads use provider-specific vCPU/memory/disk/lifecycle 
 - **Stage 8:** migrate/deprecate obsolete sandbox-era profile/config fields through discover-first setup.
 - **Stage 9:** remove remaining compatibility/terminology scaffolding and confirm one VM-only execution model.
 
-See DB-020, `docs/vm-lego-studs.md`, and `docs/vm-migration.md`.
+See DB-020, `docs/vm-lego-studs.md`, `docs/vm-migration.md`, and [`agent-execution-runtime.md`](agent-execution-runtime.md).

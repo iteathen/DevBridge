@@ -1,0 +1,36 @@
+name: Bug report
+description: Report a reproducible DevBridge defect without sensitive details.
+title: "[BUG] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not report vulnerabilities here. Use the private security form.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Observed and expected behavior
+      description: Describe the bounded failure and what should have happened.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction and environment
+      description: Include an exact commit, OS/provider, commands, and scrubbed output.
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Owning boundary
+      description: Identify the likely component/spec and any recovery or external-effect state.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: This report contains no secrets, private paths, or vulnerability details.
+          required: true
