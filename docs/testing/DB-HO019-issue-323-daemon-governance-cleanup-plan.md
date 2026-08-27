@@ -1,6 +1,6 @@
 # DB-HO019 — issue #323 daemon-governance cleanup
 
-Status: planned from exact `cuda-target` baseline `7148efb88bbc15c1237dfb42b7f1578fdcb3e87b` on isolated branch `test/323-daemon-governance-cleanup`.
+Status: implemented and locally qualified from exact `cuda-target` baseline `7148efb88bbc15c1237dfb42b7f1578fdcb3e87b` on isolated branch `test/323-daemon-governance-cleanup`.
 
 ## Assessment
 
@@ -29,3 +29,25 @@ The correct ownership boundary is therefore a test-local daemon handle registere
 7. Run the focused file repeatedly, the repository preflight, architecture gates, and the full suite. Require a normal bounded TAP result.
 
 This slice changes no daemon, lock, provider, VM, repository-execution, setup, elevation, or runtime authority. It invokes no UAC or physical provider action.
+
+## Implementation
+
+`daemon-governance.test.js` now creates each test daemon through one local lifecycle helper. The helper:
+
+- creates a private abort controller for exactly one daemon invocation;
+- passes that signal through the daemon's existing local contract;
+- registers cleanup immediately with the current test context;
+- makes cleanup idempotent;
+- aborts and awaits the exact daemon promise, allowing its token-bound `finally` release to complete.
+
+The direct lock test likewise registers its already idempotent release action immediately. Normal pause, resume, and stop behavior remains asserted before cleanup. One explicit 10-second governance deadline replaces the previous 2–3 second load-sensitive deadlines while retaining 10-millisecond test polling. A regression throws a designated primary error before any normal stop, invokes the same registered cleanup action, proves that exact error remains observable, verifies the lock is absent, and re-invokes cleanup to prove idempotence.
+
+No production source file changed.
+
+## Local evidence
+
+- focused suite: 4 passed, 0 failed;
+- 10 consecutive additional focused executions: all passed;
+- repository preflight: passed (`syntaxFiles: 43`, `jsonFiles: 2`, `targetedTests: 40`);
+- VM/repository-execution LEGO architecture selection: 21 passed, 0 failed;
+- full suite: 1,232 total, 1,221 passed, 11 platform skips, 0 failed, with a normal TAP exit in 53.8 seconds.
