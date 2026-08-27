@@ -1,6 +1,6 @@
 # DB-HO018 — issue #293 Linux numeric identity binding
 
-Status: planned from exact `cuda-target` baseline `7148efb88bbc15c1237dfb42b7f1578fdcb3e87b` on isolated branch `security/293-linux-identity-binding`.
+Status: implementation complete from exact `cuda-target` baseline `7148efb88bbc15c1237dfb42b7f1578fdcb3e87b` on isolated branch `security/293-linux-identity-binding`. Focused, preflight, and architecture gates pass; final full-suite qualification is intentionally deferred until the separately isolated daemon-test cleanup defect in #323 is integrated.
 
 ## Assessment
 
@@ -32,3 +32,26 @@ The missing owner is therefore a pure lifecycle composition, not another account
 8. Add the focused suite to repository preflight; run focused tests, preflight, VM/LEGO architecture gates, and the full suite before isolated publication.
 
 This slice invokes no real shadow-utils command in hosted tests and performs no systemd, elevation, libvirt, provider, VM, production-image, or #197 physical action. Unit/service effects remain the next dependency.
+
+## Implementation
+
+`linux-lifecycle-authority-identity-binding.js` now owns only the connection between local identity reconciliation evidence and the lifecycle ownership record. It:
+
+- accepts one local plan and three neutral actions (`load`, `save`, and `reconcile`);
+- requires the exact lifecycle ownership claim before invoking the action;
+- projects only local account/group/home/shell values, an established-claim fact, and the current expected numeric identity;
+- accepts only applicable bounded evidence containing one non-root service UID and three distinct non-root capability GIDs;
+- passes an existing binding back as immutable expected evidence and rejects any numeric change;
+- records a first binding only after the reconcile action returns exact evidence;
+- treats record persistence as a separate final effect, so a crash after account creation re-runs bounded observation/reconciliation and completes only the missing record write;
+- rejects unknown topology-shaped inputs/ports and contains no account command, service manager, provider, repository, VM, shell, or elevation implementation.
+
+Repository preflight now includes the identity-binding boundary suite.
+
+## Current local evidence
+
+- focused identity/generation/records/shadow-utils suites: 27 passed, 0 failed;
+- repository preflight: passed (`syntaxFiles: 43`, `jsonFiles: 2`, `targetedTests: 41`);
+- VM/repository-execution LEGO architecture selection: 21 passed, 0 failed.
+
+The normal full suite exposed pre-existing load-sensitive cleanup behavior in `daemon-governance.test.js`: when a bounded assertion expires before the test reaches its normal stop path, the test-started daemon is not unconditionally cleaned and the worker remains live. This reproduced repeatedly while the same file passed 3/3 in isolation. The defect is durably tracked as #323 and is being repaired on a separate branch so unrelated test-harness work does not contaminate this ownership brick. No full-suite pass is claimed for DB-HO018 until that prerequisite is integrated and this branch is rebased/requalified.
