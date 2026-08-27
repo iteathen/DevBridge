@@ -518,4 +518,36 @@ export async function transferLinuxProtectedFile({
   }
 }
 
+export async function verifyLinuxProtectedFile({
+  contract,
+  size,
+  digest: expectedDigest,
+  maximumBytes = MAX_TRANSFER_BYTES,
+} = {}, {
+  stat = lstat,
+  openFile = open,
+  openFlags = constants,
+} = {}) {
+  const ports = requirePorts({ stat, openFile }, ['stat', 'openFile']);
+  const selectedMaximum = positive(maximumBytes, 'Linux protected verification maximum', MAX_TRANSFER_BYTES);
+  const selected = normalizeContract(contract, 'Linux protected verification file', { kind: 'file' });
+  const selectedSize = positive(size, 'Linux protected verification size', selectedMaximum);
+  const selectedDigest = digest(expectedDigest, 'Linux protected verification digest');
+  const readFlags = openFlag(openFlags, 'O_RDONLY', { zero: true }) | openFlag(openFlags, 'O_NOFOLLOW');
+  const observed = await verifyTransferredFile({
+    ...selected,
+    size: selectedSize,
+    expectedDigest: selectedDigest,
+    maximumBytes: selectedMaximum,
+  }, ports, readFlags);
+  return Object.freeze({
+    protocol: PROTOCOL,
+    path: selected.path,
+    kind: 'file',
+    size: observed.size,
+    digest: observed.digest,
+    ready: true,
+  });
+}
+
 export { PROTOCOL as LINUX_PROTECTED_STORAGE_PROTOCOL };
