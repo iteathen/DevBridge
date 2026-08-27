@@ -7,6 +7,7 @@ import { runDaemon } from '../src/app/daemon.js';
 import {
   acquireDaemonLock,
   acknowledgeDaemonPause,
+  clearDaemonPauseAcknowledgement,
   daemonStatus,
   pauseDaemon,
   requestDaemonPause,
@@ -94,10 +95,11 @@ test('pause and resume records bind to the current daemon lock token', async (t)
 
   const resuming = resumeDaemon(file, governanceWait());
   await waitUntil(async () => !(await daemonStatus(file)).pauseRequested);
-  await release();
+  assert.equal(await clearDaemonPauseAcknowledgement(file, release.record), true);
   const result = await resuming;
   assert.equal(result.resumed, true);
-  assert.equal(result.activeLock, false);
+  assert.equal(result.activeLock, true);
+  await release();
   assert.deepEqual(await daemonStatus(file), {
     activeLock: false,
     stopRequested: false,

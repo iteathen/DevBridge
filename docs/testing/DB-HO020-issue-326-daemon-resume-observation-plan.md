@@ -1,6 +1,6 @@
 # DB-HO020 — issue #326 daemon resume observation
 
-Status: planned from exact `cuda-target` baseline `67a4b0607d9e4b359395570e5259cdca9cc1259a` on isolated branch `test/326-daemon-resume-observation`.
+Status: implemented and locally qualified from exact `cuda-target` baseline `67a4b0607d9e4b359395570e5259cdca9cc1259a` on isolated branch `test/326-daemon-resume-observation`.
 
 ## Assessment
 
@@ -20,3 +20,23 @@ The production protocol already exposes `clearDaemonPauseAcknowledgement()` as t
 6. Run the focused file repeatedly, repository preflight, the 21-test VM/LEGO architecture selection, and the full suite before isolated publication.
 
 This slice changes no production daemon, lock, provider, VM, repository-execution, setup, elevation, or runtime authority. It invokes no UAC or physical provider action.
+
+## Implementation
+
+The direct-lock governance test now performs the protocol in deterministic owner order:
+
+1. the control action removes the exact pause request;
+2. the test, acting as the token-owning daemon, clears the exact pause acknowledgement;
+3. `resumeDaemon()` observes a resumed daemon whose lock is still active;
+4. the test releases the lock;
+5. a separate observation proves that the lock and all control records are absent.
+
+The unconditional idempotent release hook remains registered before assertions. No production source file changed.
+
+## Local evidence
+
+- focused suite: 4 passed, 0 failed;
+- formerly racing test: 50 consecutive additional executions passed;
+- repository preflight: passed (`syntaxFiles: 43`, `jsonFiles: 2`, `targetedTests: 40`);
+- VM/repository-execution LEGO architecture selection: 21 passed, 0 failed;
+- full suite: 1,232 total, 1,221 passed, 11 platform skips, 0 failed, with a normal TAP exit in 53.4 seconds.
