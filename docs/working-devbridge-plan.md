@@ -100,6 +100,8 @@ Hosted checkpoint: the corrected plan/service entry, read-only NSS/systemd/proce
 
 Protected-mechanics checkpoint: DB-HO011 records the exact name/numeric-identity ownership model, atomic generation/unit contract, append-only ordinary membership, exact service membership, and provider-separation plan for the next isolated slice.
 
+Protected-storage checkpoint: DB-HO012 isolates normalized no-follow directory/file policy, bounded atomic replacement, file and parent-directory durability, and exact pending-file recovery before lifecycle records or runtime staging consume that capability.
+
 Exit evidence:
 
 - Linux setup is one-command and resumable;
