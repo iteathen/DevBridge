@@ -172,6 +172,10 @@ The implemented v6 candidate preserves that equality: setup resolves the greates
 
 PR #309 qualified this implementation in all four Ubuntu/Windows smoke and full CI jobs, including direct Ubuntu `dpkg` agreement for the fixed comparison corpus, and merged it into the recovery line as exact commit `d38c662254d388edcbf1a0760e2efce8bd05b8e1`. The software evidence is complete for this slice. Physical acceptance remains open because a new protected runtime generation must be installed before v6 can derive and construct its own exact Hyper-V subject; no older installed generation or manual VM mutation can substitute for that gate.
 
+The exact v6 physical gate subsequently reached installed-system boot and disproved the remaining access assumption. Subject `subject-7d53b430cc49c26753d9eb090be633f0` installed, detached both media, booted from its retained VHDX, reported healthy Hyper-V heartbeat/KVP state and one private DHCP address, but kept TCP 22 closed through at least 4 minutes 58 seconds of idle uptime. The local contract is internally inconsistent: the seed says `ssh.install-server: false`, the exact package authority omits `openssh-server`, and the next phase requires `ssh.service`. Canonical documents that `install-server` controls target OpenSSH installation and defaults to false.
+
+The replacement stays within the Ubuntu image owner. It enables key-only SSH installation, adds `openssh-server` to snapshot-resolved exact package and qualification evidence, and advances immutable recipe/package/output generations. No provider retry, network change, guest repair, password access, live package source, or host fallback is admitted. The failed v6 subject remains preserved physical evidence. A separate neutral readiness-observation slice should give transient first-boot access a bounded next observation and terminal deadline; it must not be hidden as an unbounded transport retry.
+
 Additional primary sources:
 
 - [Subiquity install controller](https://github.com/canonical/subiquity/blob/main/subiquity/server/controllers/install.py)
