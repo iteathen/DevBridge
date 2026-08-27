@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   copyFile,
   lstat,
@@ -8,7 +7,6 @@ import {
   rename,
   rm,
 } from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { setTimeout as wait } from 'node:timers/promises';
@@ -18,6 +16,12 @@ import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment
 import {
   PROTECTED_AUTHORITY_RECONCILIATION_JOURNAL_PROTOCOL,
 } from './protected-authority-reconciliation.js';
+import {
+  hashProtectedAuthorityFile,
+  measureProtectedAuthorityRuntimeCandidate,
+  PROTECTED_AUTHORITY_RUNTIME_BOUNDS,
+  snapshotProtectedAuthorityPackage,
+} from './protected-authority-runtime-candidate.js';
 import {
   reconcileWindowsLifecycleAuthorityRefresh,
 } from './windows-lifecycle-authority-refresh-adapter.js';
@@ -32,11 +36,9 @@ const PROTOCOL = 'devbridge/windows-lifecycle-authority-service-v1';
 const OWNERSHIP_PROTOCOL = 'devbridge/windows-lifecycle-authority-ownership-v1';
 const GENERATION_PROTOCOL = 'devbridge/windows-lifecycle-authority-generation-v1';
 const PACKAGE_ROOT = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
-const MAX_PACKAGE_FILES = 2_048;
-const MAX_PACKAGE_BYTES = 64 * 1024 * 1024;
 const HEALTH_PROBE_RETRY_DELAYS_MS = Object.freeze([100, 250, 500, 1_000, 2_000]);
-const MAX_PACKAGE_FILE_BYTES = 8 * 1024 * 1024;
-const MAX_NODE_BYTES = 256 * 1024 * 1024;
+const MAX_PACKAGE_FILE_BYTES = PROTECTED_AUTHORITY_RUNTIME_BOUNDS.packageFileBytes;
+const MAX_NODE_BYTES = PROTECTED_AUTHORITY_RUNTIME_BOUNDS.executableBytes;
 const MAX_CONTROL_RECORD_BYTES = 32 * 1024;
 const GENERATION = /^[0-9a-f]{64}$/u;
 const POWERSHELL = 'powershell.exe';
@@ -411,76 +413,11 @@ async function initializeProtectedRoot(plan, operatorSid, invoke, environment) {
   return writeOwnership(plan, initialOwnership(plan, operatorSid), invoke, environment);
 }
 
-async function hashFile(file, maxBytes) {
-  const before = await lstat(file);
-  if (!before.isFile() || before.isSymbolicLink() || before.size < 1 || before.size > maxBytes) throw new Error(`protected runtime source is not a bounded real file: ${file}`);
-  const hash = createHash('sha256');
-  let bytes = 0;
-  await new Promise((resolve, reject) => {
-    const stream = createReadStream(file);
-    stream.on('data', (chunk) => { bytes += chunk.length; hash.update(chunk); });
-    stream.once('error', reject);
-    stream.once('end', resolve);
-  });
-  const after = await lstat(file);
-  if (!after.isFile() || after.isSymbolicLink() || after.size !== before.size || bytes !== before.size || after.mtimeMs !== before.mtimeMs) {
-    throw new Error(`protected runtime source changed while being measured: ${file}`);
-  }
-  return Object.freeze({ size: bytes, digest: hash.digest('hex') });
-}
-
-async function packageSnapshot(root) {
-  const rootInfo = await lstat(root);
-  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error('DevBridge package source must be a real directory');
-  const files = [];
-  const visit = async (relativeDirectory) => {
-    const directory = path.join(root, relativeDirectory);
-    const entries = await readdir(directory, { withFileTypes: true });
-    entries.sort((left, right) => left.name.localeCompare(right.name));
-    for (const entry of entries) {
-      const relative = path.join(relativeDirectory, entry.name);
-      const absolute = path.join(root, relative);
-      const info = await lstat(absolute);
-      if (info.isSymbolicLink()) throw new Error(`DevBridge package source contains filesystem indirection: ${relative}`);
-      if (info.isDirectory()) await visit(relative);
-      else if (info.isFile()) {
-        if (info.size > MAX_PACKAGE_FILE_BYTES) throw new Error(`DevBridge package source file exceeds the protected runtime bound: ${relative}`);
-        files.push(relative);
-        if (files.length > MAX_PACKAGE_FILES) throw new Error('DevBridge package source exceeds the protected runtime file-count bound');
-      } else throw new Error(`DevBridge package source contains an unsupported entry: ${relative}`);
-    }
-  };
-  const packageFile = path.join(root, 'package.json');
-  await hashFile(packageFile, MAX_PACKAGE_FILE_BYTES);
-  files.push('package.json');
-  await visit('src');
-  files.sort((left, right) => left.localeCompare(right));
-  const manifest = [];
-  let total = 0;
-  for (const relative of files) {
-    const measured = await hashFile(path.join(root, relative), MAX_PACKAGE_FILE_BYTES);
-    total += measured.size;
-    if (total > MAX_PACKAGE_BYTES) throw new Error('DevBridge package source exceeds the protected runtime byte bound');
-    manifest.push(Object.freeze({ relative: relative.replaceAll(path.sep, '/'), size: measured.size, digest: measured.digest }));
-  }
-  const digest = createHash('sha256');
-  for (const entry of manifest) digest.update(`${entry.relative}\0${entry.size}\0${entry.digest}\n`, 'utf8');
-  return Object.freeze({ digest: digest.digest('hex'), files: Object.freeze(manifest) });
-}
+const hashFile = hashProtectedAuthorityFile;
+const packageSnapshot = snapshotProtectedAuthorityPackage;
 
 export async function measureWindowsLifecycleAuthorityCandidate({ packageRoot, nodeExecutable } = {}) {
-  if (typeof packageRoot !== 'string' || packageRoot.length === 0 || typeof nodeExecutable !== 'string' || nodeExecutable.length === 0) {
-    throw new TypeError('Windows lifecycle authority runtime candidate paths are required');
-  }
-  const [sourceSnapshot, node] = await Promise.all([
-    packageSnapshot(packageRoot),
-    hashFile(nodeExecutable, MAX_NODE_BYTES),
-  ]);
-  return Object.freeze({
-    sourceSnapshot,
-    node,
-    evidence: Object.freeze({ packageDigest: sourceSnapshot.digest, nodeDigest: node.digest }),
-  });
+  return measureProtectedAuthorityRuntimeCandidate({ packageRoot, nodeExecutable });
 }
 
 async function copyPackageSnapshot(snapshot, sourceRoot, destinationRoot) {

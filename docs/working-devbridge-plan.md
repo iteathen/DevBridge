@@ -88,13 +88,15 @@ Exit evidence:
 Owners: Linux authority plan/inspection/reconciliation/protection adapters.
 
 1. Rebase the preserved #293 Linux slices onto the shared protected-authority reconciler from the synchronized core baseline.
-2. Preserve the qualified read-only plan/inspection contracts unless primary evidence requires a change.
+2. Preserve the qualified neutral identity and provider-free service-entry contracts, but correct the primary-source discrepancies recorded in `docs/testing/DB-HO010-issue-293-linux-authority-reassessment.md`: use `Type=exec`, make the read socket parent service-writable/group-traversable (`0750`), use NSS-aware account/group evidence plus actual process groups, and prove the complete content-addressed runtime generation.
 3. Add bounded reconciliation for exact system account/group, root-owned immutable runtime, service-owned mutable state, systemd unit, split socket parents, and service lifecycle.
-4. Detect modular `virtqemud` versus legacy/proxy socket topology and locally supported authorization.
+4. Detect modular `virtqemud` versus legacy/proxy socket topology and locally supported authorization. The first supported `service-group` adapter must prove every effective endpoint and fail closed on wide/polkit topology until exact policy evidence is implemented; it must not select the first socket path that exists.
 5. Prefer fine-grained service-only polkit/object policy where supported; otherwise require an explicitly proven service-only socket/group policy. Never add the ordinary operator/model identity to provider RW authority.
 6. Preserve QEMU DAC and mandatory-access-control layers and exact qcow2/backing-chain ownership.
 7. Qualify interruption/re-entry and arbitrary path/command/domain/XML/provider-object rejection in hosted tests.
 8. Run real Linux negative and positive qcow2/domain canaries on a capable host before declaring Linux ready.
+
+Hosted checkpoint: the corrected plan/service entry, read-only NSS/systemd/process/runtime inspection, and shared refresh adapter are implemented and locally qualified on `security/293-linux-authority-recovery`; see `docs/testing/DB-HO010-issue-293-linux-authority-reassessment.md`. No privileged Linux mutation or readiness composition is attached. Steps 3–8 remain active work.
 
 Exit evidence:
 
