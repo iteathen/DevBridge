@@ -51,6 +51,7 @@ const SYNTAX_FILES = [
 ];
 
 const JSON_FILES = ['package.json', 'config/devbridge.example.json'];
+const MAX_FAILURE_EVIDENCE_CHARS = 4000;
 
 const TARGETED_TESTS = [
   'test/config.test.js',
@@ -89,13 +90,70 @@ const TARGETED_TESTS = [
   'test/local-supervisor-adapter.test.js',
   'test/runtime-transition.test.js',
   'test/rate-budget.test.js',
+  'test/repository-preflight-diagnostics.test.js',
 ];
+
+function cleanOutput(value) {
+  return String(value ?? '').replaceAll('\r\n', '\n').trim();
+}
+
+function labeledOutput(result) {
+  const values = [
+    ['process-error', result.error?.stack || result.error?.message],
+    ['stderr', result.stderr],
+    ['stdout', result.stdout],
+  ].map(([name, value]) => [name, cleanOutput(value)]).filter(([, value]) => value.length > 0);
+  return values.map(([name, value]) => `[${name}]\n${value}`).join('\n');
+}
+
+function firstFailureHint(value) {
+  const patterns = [
+    /^not ok\s+\d+\s+-\s+/mu,
+    /^[✖✗×]\s+/mu,
+    /^(?:AssertionError|Error):\s+/mu,
+    /^\s*(?:code|failureType):\s*['"]?(?:ERR_|testCodeFailure)/mu,
+  ];
+  const indices = patterns.map((pattern) => pattern.exec(value)?.index).filter(Number.isSafeInteger);
+  return indices.length === 0 ? null : Math.min(...indices);
+}
+
+function lineStart(value, index) {
+  const selected = value.lastIndexOf('\n', Math.max(0, index - 1));
+  return selected < 0 ? 0 : selected + 1;
+}
+
+function clipped(value, maximum) {
+  if (value.length <= maximum) return value;
+  return value.slice(0, maximum).trimEnd();
+}
+
+export function boundedProcessFailureEvidence(result, maximumChars = MAX_FAILURE_EVIDENCE_CHARS) {
+  if (!Number.isSafeInteger(maximumChars) || maximumChars < 256 || maximumChars > 64 * 1024) {
+    throw new TypeError('process failure evidence bound is invalid');
+  }
+  const value = labeledOutput(result);
+  if (value.length <= maximumChars) return value;
+  const separator = '\n...[bounded output omitted]...\n';
+  const tailBudget = Math.min(1200, Math.floor(maximumChars / 3));
+  const focusBudget = maximumChars - tailBudget - separator.length;
+  const hint = firstFailureHint(value);
+  let focus;
+  if (hint == null) {
+    focus = value.slice(0, focusBudget);
+  } else {
+    const markerStart = lineStart(value, hint);
+    const start = Math.max(0, markerStart - Math.min(256, Math.floor(focusBudget / 5)));
+    focus = value.slice(start, start + focusBudget);
+  }
+  const projected = `${focus.trimEnd()}${separator}${value.slice(-tailBudget).trimStart()}`;
+  return clipped(projected, maximumChars);
+}
 
 function checked(runner, args, { cwd, label, timeoutMs }) {
   const result = runner(process.execPath, args, { cwd, stdio: 'pipe', shell: false, windowsHide: true, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 });
   if (result.error || result.status !== 0) {
-    const detail = String(result.stderr || result.stdout || result.error?.message || '').trim();
-    throw new Error(`${label} failed (exit ${result.status ?? 'spawn-error'})${detail ? `: ${detail.slice(-4000)}` : ''}`);
+    const detail = boundedProcessFailureEvidence(result);
+    throw new Error(`${label} failed (exit ${result.status ?? 'spawn-error'})${detail ? `: ${detail}` : ''}`);
   }
 }
 
