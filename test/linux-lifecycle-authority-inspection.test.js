@@ -6,10 +6,12 @@ import {
 } from '../src/setup/linux-lifecycle-authority.js';
 import {
   inspectLinuxLifecycleAuthorityState,
-  LINUX_LIFECYCLE_AUTHORITY_GENERATION_PROTOCOL,
   LINUX_LIFECYCLE_AUTHORITY_INSPECTION_PROTOCOL,
   LINUX_LIFECYCLE_AUTHORITY_OWNERSHIP_PROTOCOL,
 } from '../src/setup/linux-lifecycle-authority-inspection.js';
+import {
+  LINUX_LIFECYCLE_AUTHORITY_GENERATION_PROTOCOL,
+} from '../src/setup/linux-lifecycle-authority-generation.js';
 import { LINUX_LOCAL_IDENTITIES_PROTOCOL } from '../src/setup/linux-local-identities.js';
 
 const PACKAGE_DIGEST = 'a'.repeat(64);

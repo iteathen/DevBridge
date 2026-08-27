@@ -1,6 +1,6 @@
 # DB-HO017 — issue #293 Linux generation projection
 
-Status: planned from exact `cuda-target` baseline `f614714bede7cc5eabf4a664583886d18b42f68d` on isolated branch `security/293-linux-generation-projection`.
+Status: implementation and local qualification complete from exact `cuda-target` baseline `f614714bede7cc5eabf4a664583886d18b42f68d` on isolated branch `security/293-linux-generation-projection`; exact-head hosted CI remains required before integration.
 
 ## Assessment
 
@@ -48,3 +48,33 @@ The brick will not know account commands, systemd operations, elevation, libvirt
 6. Run focused tests, preflight, repository-execution architecture gates, and the full suite. Publish only this isolated branch, update issue #293, and keep it open for identity/unit/service mechanics, one-command elevation, provider authorization, and physical KVM/libvirt/qcow2 qualification.
 
 No UAC, sudo, account, systemd, libvirt, VM, production-image, or current-host authority mutation belongs to this slice.
+
+## Implementation
+
+`linux-lifecycle-authority-generation.js` now owns the Linux generation schema and the narrow composition between existing contracts. It:
+
+- reconstructs the exact bound runtime plan from package/executable evidence and rejects widened modes or escaped runtime topology;
+- strictly validates the measured candidate's closed object shape, file count/size bounds, normalized `package.json`/`src/**` paths, unique required service entry, per-file digests, aggregate package digest, executable evidence, and exact plan equality;
+- fixes protected runtime custody to numeric root identity with `0755` directories, `0444` data/source files, and a `0555` executable rather than exposing a configurable owner for test convenience;
+- emits one canonical bounded generation manifest shared by construction and read-only inspection;
+- projects only neutral parent, working/installed tree, directory, transfer, content, and local state contracts; the module imports no tree implementation or provider/service/setup mechanics;
+- requires an established ownership claim with immutable numeric identity before mutation;
+- rejects another staged generation, retained-generation aliasing, and attempts to restage the active generation;
+- delegates protected-parent preparation and the complete tree transaction through injected action ports;
+- writes `stagedGeneration` only after exact installed-tree evidence returns;
+- recovers a crash after tree publication but before the ownership update by reusing the verified installed tree and completing only the missing exact record write.
+
+The read-only inspector now consumes the generation owner's canonical normalizer. The former inspector-local schema and compatibility re-export were removed rather than retained as legacy surface.
+
+The new tests plug the projected request into the real generic `installLinuxProtectedTree` stud through in-memory filesystem ports. This proves the connection without adding lifecycle vocabulary to the generic owner or importing its implementation into the projection module. The generic lower owner's existing Ubuntu filesystem canary remains the physical storage proof; this root-fixed lifecycle layer does not weaken production ownership merely to duplicate it under an unprivileged test identity.
+
+## Local qualification
+
+Exact Windows-host evidence before publication:
+
+- focused generation/inspection/records/tree suite: 34 tests, 33 passed, 1 existing Linux-only skip, 0 failed;
+- repository preflight: passed (`syntaxFiles: 43`, `jsonFiles: 2`, `targetedTests: 40`), including the new generation boundary suite;
+- VM/repository-execution LEGO architecture selection: 21 passed, 0 failed;
+- full suite: 1,231 tests, 1,220 passed, 11 expected platform skips, 0 failed.
+
+No elevation prompt, account/service/provider command, VM action, protected production path, or #197 physical canary state was touched. Issue #293 remains open for identity/unit/service effect composition, one-command elevated Linux re-entry, provider authorization, and real KVM/libvirt/qcow2 qualification.
