@@ -19,6 +19,7 @@ DevBridge has accumulated implementation plans, migration records, normative spe
 | Understand persistent VM/workspace ownership | [`execution-profile-environments.md`](execution-profile-environments.md) |
 | Understand Stage 0 and self-update | [`bootstrap.md`](bootstrap.md) and [`bootstrap-compatibility.md`](bootstrap-compatibility.md) |
 | Understand current VM-program status | [`roadmap.md`](roadmap.md) |
+| Understand the current recovery assessment and dependency order | [`working-devbridge-assessment-2026-08-27.md`](working-devbridge-assessment-2026-08-27.md) and [`working-devbridge-plan.md`](working-devbridge-plan.md) |
 
 ## Current product model
 
