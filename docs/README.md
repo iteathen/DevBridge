@@ -14,6 +14,7 @@ DevBridge has accumulated implementation plans, migration records, normative spe
 | Operate an installed DevBridge | [`operations.md`](operations.md) |
 | Diagnose a failure | [`troubleshooting.md`](troubleshooting.md) |
 | Understand security and control flow | [`architecture.md`](architecture.md) |
+| Understand agent-facing repository execution | [`agent-execution-runtime.md`](agent-execution-runtime.md) |
 | Understand engineering rules | [`design-principles.md`](design-principles.md) and [`../AGENTS.md`](../AGENTS.md) |
 | Understand persistent VM/workspace ownership | [`execution-profile-environments.md`](execution-profile-environments.md) |
 | Understand post-recovery CUDA/GPU direction | [`gpu-execution-profiles.md`](gpu-execution-profiles.md) |
@@ -68,6 +69,9 @@ persistent untrusted VM
         |
         v
 repository workspace
+        |
+        v
+agent execution runtime
 ```
 
 The important current rules are:
@@ -79,6 +83,9 @@ The important current rules are:
 - authoritative Git, credentials, publication state, provider authority, runtime-supervision state, and other machine authority stay on the host;
 - guest output, model output, repository content, and remote task text are data/proposals, not authority;
 - missing or unready VM execution fails closed rather than falling back to direct host execution;
+- the guest agent execution surface is optimized for familiar POSIX/Bash-shaped first guesses, but supported commands are normalized into explicit process/data topology instead of using Bash as the universal execution mechanism;
+- Nushell is the preferred full shell for agent-authored guest composition; Bash/sh/PowerShell/cmd remain compatibility runtimes when an existing artifact actually requires them;
+- guest buffers, caches, and execution history are queryable working state, not host verification authority; their general agent query surface is read-only SQL;
 - the persistent installed DevBridge and disposable test installations are different installations and should be distinguished by their stable `DB-<12 hex>` installation tags.
 
 GPU-capable profiles remain a future specialization of this same model. They are intentionally sequenced after installer/runtime recovery and reconstructable VM lifecycle work. A GPU profile must use the same create/rebuild/setup/provider ownership surfaces rather than becoming a parallel provisioning stack.
@@ -97,8 +104,11 @@ Several independent identities are intentionally present. Do not collapse them i
 | Execution profile | Which materially distinct execution platform is selected? | `windows`, `linux`, future GPU variants |
 | Repository workspace | Which repository-local workspace inside the profile VM? | deterministic repository+profile identity |
 | Run/task identity | Which bounded work transaction is active? | DevBridge run identity |
+| Guest execution/buffer/cache identity | Which untrusted guest-local execution object is being queried/reused? | runtime-defined stable id/name/digest |
 
 The installation tag is stable across runner/runtime updates. Two different installation homes get different tags even when they run the same runtime head.
+
+Guest execution/buffer/cache identities are useful for replay, bounded output retrieval, and cache reuse, but they do not replace host-owned candidate/test/publication evidence.
 
 See [`operations.md`](operations.md) for operator use of these identities.
 
@@ -130,6 +140,7 @@ These documents describe current implementation structure and intended operator 
 - [`application-recovery-matrix.md`](application-recovery-matrix.md) — exact loss/recovery ownership matrix and configured/fresh-host zero-state canaries.
 - [`application-management-decisions.md`](application-management-decisions.md) — compact architectural decisions that prevent application-management layer drift.
 - [`architecture.md`](architecture.md) — authority hierarchy, trust domains, provider-neutral flow, Git/source/candidate model.
+- [`agent-execution-runtime.md`](agent-execution-runtime.md) — agent-natural POSIX-style execution surface, structured process graph, Nushell role, named buffers/caches/history, read-only SQL, content-addressed storage, causal errors, and implementation ownership.
 - [`execution-profile-environments.md`](execution-profile-environments.md) — physical profile VM ownership and repository workspace routing.
 - [`gpu-execution-profiles.md`](gpu-execution-profiles.md) — recovery-first real-CUDA/GPU sequencing, capability/evidence boundaries, and follow-on generalized compute routing.
 - [`tool-profiles.md`](tool-profiles.md) — tool/profile surface and execution policy.
@@ -162,12 +173,13 @@ When behavior changes:
 1. update the owning normative spec when the contract changes;
 2. update the operator-facing guide when commands, status, recovery, or failure semantics change;
 3. update architecture docs when ownership/topology changes;
-4. mark superseded historical material instead of rewriting history;
-5. keep examples path-free and secret-free unless a local path is essential to the operator action;
-6. distinguish **configured**, **observed**, **ready**, **accepted**, and **healthy** states instead of using a generic "enabled" label;
-7. distinguish installation identity from runner/runtime/version identity;
-8. preserve the application-management hierarchy: Permanent Entry -> Runner -> Accepted Runtime -> Services -> Declared Execution Environments;
-9. do not document a direct-host repository-code fallback—there is none.
+4. update [`agent-execution-runtime.md`](agent-execution-runtime.md) when the agent-facing guest execution, process graph, buffer/cache/history, SQL, shell, or tool-resolution contract changes;
+5. mark superseded historical material instead of rewriting history;
+6. keep examples path-free and secret-free unless a local path is essential to the operator action;
+7. distinguish **configured**, **observed**, **ready**, **accepted**, and **healthy** states instead of using a generic "enabled" label;
+8. distinguish installation identity from runner/runtime/version identity;
+9. preserve the application-management hierarchy: Permanent Entry -> Runner -> Accepted Runtime -> Services -> Declared Execution Environments;
+10. do not document a direct-host repository-code fallback—there is none.
 
 The goal is that an operator or a fresh agent can answer three questions without reading issue history:
 
