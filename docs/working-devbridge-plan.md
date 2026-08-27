@@ -1,6 +1,6 @@
 # Working DevBridge implementation plan
 
-Status: active dependency-ordered plan derived from `working-devbridge-assessment-2026-08-27.md`. Phase 0 and the Phase 1 physical gate are complete at recovery commit `4483474fc85e5f50a21accd7fef7c4a7a6067dfb`.
+Status: active dependency-ordered plan derived from `working-devbridge-assessment-2026-08-27.md`. Phase 0 and the Phase 1 physical gate are complete. Phase 2 software correction is qualified and merged at recovery commit `d38c662254d388edcbf1a0760e2efce8bd05b8e1`; exact v6 Hyper-V construction remains open.
 
 ## Governing method
 
