@@ -8,12 +8,15 @@ import {
   LINUX_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL,
 } from './linux-lifecycle-authority.js';
 import {
+  LINUX_LIFECYCLE_AUTHORITY_OWNERSHIP_PROTOCOL,
+  normalizeLinuxLifecycleAuthorityOwnershipRecord,
+} from './linux-lifecycle-authority-records.js';
+import {
   measureProtectedAuthorityRuntimeCandidate,
   verifyProtectedAuthorityRuntimeAccess,
 } from './protected-authority-runtime-candidate.js';
 
 const PROTOCOL = 'devbridge/linux-lifecycle-authority-inspection-v1';
-const OWNERSHIP_PROTOCOL = 'devbridge/linux-lifecycle-authority-ownership-v1';
 const GENERATION_PROTOCOL = 'devbridge/linux-lifecycle-authority-generation-v1';
 const SYSTEMCTL = '/usr/bin/systemctl';
 const GENERATION = /^[0-9a-f]{64}$/u;
@@ -111,58 +114,6 @@ function identityEvidence(plan, identities) {
       && operator.groupIds.includes(coordination.record?.gid)
       && !operator.groupIds.includes(management.record?.gid),
   });
-}
-
-function normalizeOwnership(raw, plan) {
-  exactKeys(raw, new Set([
-    'protocol',
-    'authorityIdentity',
-    'serviceName',
-    'operatorName',
-    'managementGroup',
-    'localIdentity',
-    'activeGeneration',
-    'stagedGeneration',
-    'retainedGenerations',
-  ]), 'Linux lifecycle authority ownership record');
-  if (raw.protocol !== OWNERSHIP_PROTOCOL
-      || raw.authorityIdentity !== plan.authorityIdentity
-      || raw.serviceName !== plan.service.name
-      || raw.operatorName !== plan.service.operator
-      || raw.managementGroup !== plan.service.managementGroup) {
-    throw new Error('Linux lifecycle authority ownership record does not match this installation');
-  }
-  if (!Array.isArray(raw.retainedGenerations) || raw.retainedGenerations.length > 8) {
-    throw new Error('Linux lifecycle authority retained generation evidence is invalid');
-  }
-  const retainedGenerations = raw.retainedGenerations.map((value) => exactGeneration(value, 'Linux lifecycle authority retained generation'));
-  if (new Set(retainedGenerations).size !== retainedGenerations.length) throw new Error('Linux lifecycle authority retained generation evidence is ambiguous');
-  const activeGeneration = exactGeneration(raw.activeGeneration, 'Linux lifecycle authority active generation', { nullable: true });
-  const stagedGeneration = exactGeneration(raw.stagedGeneration, 'Linux lifecycle authority staged generation', { nullable: true });
-  if (activeGeneration != null && (activeGeneration === stagedGeneration || retainedGenerations.includes(activeGeneration))) {
-    throw new Error('Linux lifecycle authority active generation evidence aliases another state');
-  }
-  if (stagedGeneration != null && retainedGenerations.includes(stagedGeneration)) {
-    throw new Error('Linux lifecycle authority staged generation evidence aliases retained state');
-  }
-  let localIdentity = null;
-  if (raw.localIdentity != null) {
-    exactKeys(raw.localIdentity, new Set(['serviceUid', 'readGid', 'coordinationGid', 'managementGid']), 'Linux lifecycle authority local identity record');
-    const values = {
-      serviceUid: numeric(raw.localIdentity.serviceUid, 'Linux lifecycle authority service uid'),
-      readGid: numeric(raw.localIdentity.readGid, 'Linux lifecycle authority read gid'),
-      coordinationGid: numeric(raw.localIdentity.coordinationGid, 'Linux lifecycle authority coordination gid'),
-      managementGid: numeric(raw.localIdentity.managementGid, 'Linux lifecycle authority management gid'),
-    };
-    if (values.serviceUid === 0 || [values.readGid, values.coordinationGid, values.managementGid].some((value) => value === 0)) {
-      throw new Error('Linux lifecycle authority local identity record contains root authority');
-    }
-    if (new Set([values.readGid, values.coordinationGid, values.managementGid]).size !== 3) {
-      throw new Error('Linux lifecycle authority local identity record aliases groups');
-    }
-    localIdentity = Object.freeze(values);
-  }
-  return Object.freeze({ ...raw, localIdentity, activeGeneration, stagedGeneration, retainedGenerations: Object.freeze(retainedGenerations) });
 }
 
 function normalizeGenerationManifest(raw, plan) {
@@ -347,7 +298,7 @@ export async function inspectLinuxLifecycleAuthorityState({
     : await readBoundedText(plan.service.unitPath, entries.get('unit'), load, 64 * 1024);
   const ownership = entries.get('ownershipManifest') == null
     ? null
-    : normalizeOwnership(await readBoundedJson(plan.ownershipManifest, entries.get('ownershipManifest'), load, 'Linux lifecycle authority ownership record'), plan);
+    : normalizeLinuxLifecycleAuthorityOwnershipRecord(await readBoundedJson(plan.ownershipManifest, entries.get('ownershipManifest'), load, 'Linux lifecycle authority ownership record'), plan);
   const generationRecord = entries.get('generationManifest') == null
     ? null
     : normalizeGenerationManifest(await readBoundedJson(plan.runtime.generationManifest, entries.get('generationManifest'), load, 'Linux lifecycle authority generation record'), plan);
@@ -425,6 +376,6 @@ export async function inspectLinuxLifecycleAuthorityState({
 
 export {
   GENERATION_PROTOCOL as LINUX_LIFECYCLE_AUTHORITY_GENERATION_PROTOCOL,
-  OWNERSHIP_PROTOCOL as LINUX_LIFECYCLE_AUTHORITY_OWNERSHIP_PROTOCOL,
+  LINUX_LIFECYCLE_AUTHORITY_OWNERSHIP_PROTOCOL,
   PROTOCOL as LINUX_LIFECYCLE_AUTHORITY_INSPECTION_PROTOCOL,
 };
