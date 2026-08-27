@@ -1,6 +1,6 @@
 # DB-HO019 — issue #323 daemon-governance cleanup
 
-Status: implemented and locally qualified from exact `cuda-target` baseline `7148efb88bbc15c1237dfb42b7f1578fdcb3e87b` on isolated branch `test/323-daemon-governance-cleanup`.
+Status: implemented, qualified, and integrated into `cuda-target` by PR #324 at `67a4b0607d9e4b359395570e5259cdca9cc1259a`.
 
 ## Assessment
 
@@ -51,3 +51,14 @@ No production source file changed.
 - repository preflight: passed (`syntaxFiles: 43`, `jsonFiles: 2`, `targetedTests: 40`);
 - VM/repository-execution LEGO architecture selection: 21 passed, 0 failed;
 - full suite: 1,232 total, 1,221 passed, 11 platform skips, 0 failed, with a normal TAP exit in 53.8 seconds.
+
+## Remote evidence
+
+GitHub Actions run `33127307229` passed all required jobs for PR #324:
+
+- Ubuntu smoke: passed in 13 seconds;
+- Ubuntu full test: passed in 35 seconds;
+- Windows smoke: passed in 53 seconds;
+- Windows full test: passed in 2 minutes 3 seconds.
+
+The isolated implementation branch was removed after the squash merge. Issue #323 may be closed against the integrated commit.
