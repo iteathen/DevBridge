@@ -2,7 +2,12 @@
 
 **Safely bridge remote coding controllers and agents to a locally controlled development environment.**
 
+[![CI](https://github.com/iteathen/DevBridge/actions/workflows/ci.yml/badge.svg)](https://github.com/iteathen/DevBridge/actions/workflows/ci.yml)
+[![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](LICENSE)
+
 DevBridge is a local Node.js control plane. Remote content may request development work, but DevBridge retains machine authority: provenance, capability policy, repository/environment state, execution admission, verification, leases/fencing, publication, runtime activation, and recovery remain locally controlled.
+
+> **Project status:** active public alpha development. The repository contains substantial implemented control-plane and VM-routing behavior with hosted Windows/Linux regression coverage, but it has no published package or signed production release. Real Hyper-V/KVM security, recovery, and resource qualification and blank-slate installation work remain active. Do not treat repository visibility or passing hosted CI as production qualification.
 
 ## What DevBridge does
 
@@ -28,7 +33,7 @@ persistent untrusted VM
 repository workspace
 ```
 
-Current main includes:
+Current main implements and tests:
 
 - exact trusted GitHub task/feedback/decision provenance;
 - managed authoritative Git repositories/worktrees;
@@ -123,7 +128,9 @@ Guest networking is not the primary confidentiality boundary. Confidentiality co
 
 No production repository-execution provider means repository-controlled execution is unavailable; it never means “run it directly on the host.”
 
-## Install
+## Development setup
+
+DevBridge is not published to npm and `package.json` is private. There is currently no supported production release channel. Review the source and use an exact commit for development or evaluation; do not automate execution from the moving `main` branch.
 
 Current requirements:
 
@@ -132,21 +139,12 @@ Current requirements:
 - GitHub account/access required by the configured task queue/repositories;
 - an admitted/ready VM execution route for repository-controlled work.
 
-### Linux
-
-```sh
-mkdir -p "$HOME/.devbridge/bin" \
-  && curl -fsSL https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs \
-     -o "$HOME/.devbridge/bin/devbridge.mjs" \
-  && node "$HOME/.devbridge/bin/devbridge.mjs"
-```
-
-### Windows PowerShell
-
-```powershell
-New-Item -ItemType Directory -Force "$HOME\.devbridge\bin" | Out-Null
-Invoke-WebRequest "https://raw.githubusercontent.com/iteathen/DevBridge/main/devbridge.mjs" -OutFile "$HOME\.devbridge\bin\devbridge.mjs"
-node "$HOME\.devbridge\bin\devbridge.mjs"
+```text
+git clone https://github.com/iteathen/DevBridge.git
+cd DevBridge
+git checkout <reviewed-commit-sha>
+npm run preflight
+node devbridge.mjs
 ```
 
 `devbridge.mjs` is the standalone Stage-0 launcher. It establishes/verifies the fixed managed DevBridge runtime and transfers control to secure bootstrap. It does not silently enable repository execution or provision VM authority.
@@ -207,7 +205,7 @@ Ordinary update conceptually keeps the accepted runtime live while it:
 
 A runtime may declare a minimum Stage-0 compatibility protocol. If the installed launcher is too old, it fails closed and requires a launcher refresh rather than executing incompatible candidate code.
 
-Pre-protocol development/testing installations may require one explicit local compatibility migration after the replacement exact head has already been independently validated. Production recovery remains on the signed immutable release path.
+Pre-protocol development/testing installations may require one explicit local compatibility migration after the replacement exact head has already been independently validated. The designed production recovery path requires signed immutable releases, but no public production release is currently available.
 
 See [`docs/bootstrap.md`](docs/bootstrap.md) and [`docs/bootstrap-compatibility.md`](docs/bootstrap-compatibility.md).
 
@@ -305,7 +303,7 @@ See DB-019.
 
 ## Current project checkpoint
 
-The VM-only execution pivot is implemented through Stage 6. Current roadmap work focuses on:
+The VM-only execution pivot is implemented through Stage 6 at the code and hosted-test level. It is not yet a production security qualification. Current roadmap work focuses on:
 
 - Stage 7 real-provider/security/recovery/resource qualification;
 - Stage 8 discover-first setup/reconfiguration;
@@ -368,6 +366,8 @@ node src/cli.js doctor --config config/devbridge.example.json
 ```
 
 Hosted Windows/Linux CI provides broad architecture/regression evidence. Real Hyper-V/KVM claims require appropriate virtualization-capable qualification under the roadmap/specs.
+
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before proposing changes. Report vulnerabilities through the private route in [`SECURITY.md`](SECURITY.md), never through a public issue.
 
 ## License
 
