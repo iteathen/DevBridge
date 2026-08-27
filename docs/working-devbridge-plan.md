@@ -102,6 +102,8 @@ Protected-mechanics checkpoint: DB-HO011 records the exact name/numeric-identity
 
 Protected-storage checkpoint: DB-HO012 is integrated at `bcfae330cb223ed7705feff888bd9c9690c137e4`; all four CI jobs passed and Ubuntu exercised the real-filesystem canary. DB-HO013 now scopes the next dependency to admitted lifecycle claim plus ownership/transaction persistence, with no account, service, provider, VM, or runtime mutation.
 
+Protected-transfer checkpoint: DB-HO013 is integrated at `f1f0400f7087a9ea81f69bb68b0d16c1af9b2524`. DB-HO015 implements and locally qualifies the next lower dependency: descriptor-bound streamed transfer for measured executable/package files. It preserves the 1 MiB record boundary, uses a separate bounded streaming contract, and precedes immutable generation-tree staging. Hosted Linux qualification is pending isolated publication.
+
 Protected-storage checkpoint: DB-HO012 isolates normalized no-follow directory/file policy, bounded atomic replacement, file and parent-directory durability, and exact pending-file recovery before lifecycle records or runtime staging consume that capability.
 
 Exit evidence:

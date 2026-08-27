@@ -91,6 +91,7 @@ const TARGETED_TESTS = [
   'test/runtime-transition.test.js',
   'test/rate-budget.test.js',
   'test/repository-preflight-diagnostics.test.js',
+  'test/linux-protected-transfer.test.js',
 ];
 
 function cleanOutput(value) {
