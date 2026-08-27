@@ -63,10 +63,13 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.match(result.userData, /"linux-cloud-tools-virtual=6\.14\.0\.29\.29"/u);
   assert.match(result.userData, /dhcp4: true/u);
   assert.doesNotMatch(result.userData, /192\.168\.77/u);
-  assert.match(result.userData, new RegExp(`apt:\\n    conf: \\|\\n      APT::Snapshot "${snapshot}";`, 'u'));
+  assert.match(result.userData, /apt:\n    conf: \|\n      Unattended-Upgrade::Package-Blacklist \{\n        "\.\*";\n      \};/u);
+  assert.doesNotMatch(result.userData.slice(0, result.userData.indexOf('late-commands:')), /APT::Snapshot/u);
   assert.match(result.userData, new RegExp(`apt-get", "--error-on=any", "--snapshot", "${snapshot}", "update"`, 'u'));
+  assert.match(result.userData, new RegExp(`apt-get", "--snapshot", "${snapshot}", "upgrade", "-y", "--with-new-pkgs", "--no-remove"`, 'u'));
   assert.match(result.userData, new RegExp(`apt-get", "--snapshot", "${snapshot}", "install", "-y", "--no-install-recommends"`, 'u'));
-  assert.ok(result.userData.indexOf('APT::Snapshot') < result.userData.indexOf('late-commands:'));
+  assert.ok(result.userData.indexOf('Package-Blacklist') < result.userData.indexOf('late-commands:'));
+  assert.ok(result.userData.indexOf('"upgrade"') < result.userData.indexOf('"install"'));
   assert.doesNotMatch(result.userData, /updates:\s+security/u);
   assert.doesNotMatch(result.userData, /install-server:\s+true/u);
   assert.equal(result.evidence.payloadGeneration, 'guest-payload-v7');
@@ -81,7 +84,7 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.match(result.metaData, /^instance-id: devbridge-image-/u);
 });
 
-test('Ubuntu production seed projects one accepted snapshot into both installer and late transaction authority', async () => {
+test('Ubuntu production seed projects one accepted snapshot into every explicit late transaction', async () => {
   const first = await factory().create(request());
   const secondSnapshot = '20260824T100000Z';
   const second = await factory({

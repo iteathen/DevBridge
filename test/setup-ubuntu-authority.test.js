@@ -15,9 +15,12 @@ function index(entries) {
 }
 
 function responseFor(url) {
-  const body = url.includes('/main/')
-    ? index([['build-essential', '12.12ubuntu1'], ['cmake', '3.31.6-1'], ['git', '1:2.48.1-0ubuntu1'], ['linux-cloud-tools-virtual', '7.0.0-14.14']])
-    : index([['nodejs', '22.16.0+dfsg-1'], ['npm', '10.9.2+ds-1']]);
+  let entries = [];
+  if (url.includes('/resolute/main/')) entries = [['build-essential', '12.12ubuntu1'], ['cmake', '3.31.6-1'], ['git', '1:2.48.1-0ubuntu1'], ['linux-cloud-tools-virtual', '7.0.0-14.14']];
+  else if (url.includes('/resolute/universe/')) entries = [['nodejs', '22.16.0+dfsg-1'], ['npm', '10.9.2+ds-1']];
+  else if (url.includes('/resolute-updates/main/')) entries = [['build-essential', '12.12ubuntu1.26.04.2'], ['linux-cloud-tools-virtual', '7.0.0-30.30']];
+  else if (url.includes('/resolute-security/main/')) entries = [['build-essential', '12.12ubuntu1.26.04.1'], ['linux-cloud-tools-virtual', '7.0.0-29.29']];
+  const body = index(entries);
   return new Response(body, { status: 200, headers: { 'content-length': String(body.length) } });
 }
 
@@ -31,13 +34,13 @@ test('setup resolves every required package from the exact snapshot without fixt
     snapshot: SNAPSHOT,
     fetchImpl: async (url) => { requests.push(String(url)); return responseFor(String(url)); },
   });
-  assert.equal(requests.length, 2);
-  assert.ok(requests.every((url) => url.includes(`/${SNAPSHOT}/dists/resolute/`)));
+  assert.equal(requests.length, 6);
+  assert.deepEqual(new Set(requests.map((url) => url.match(/\/dists\/(resolute(?:-updates|-security)?)\//u)?.[1])), new Set(['resolute', 'resolute-updates', 'resolute-security']));
   assert.deepEqual(packages, [
-    { name: 'build-essential', version: '12.12ubuntu1' },
+    { name: 'build-essential', version: '12.12ubuntu1.26.04.2' },
     { name: 'cmake', version: '3.31.6-1' },
     { name: 'git', version: '1:2.48.1-0ubuntu1' },
-    { name: 'linux-cloud-tools-virtual', version: '7.0.0-14.14' },
+    { name: 'linux-cloud-tools-virtual', version: '7.0.0-30.30' },
     { name: 'nodejs', version: '22.16.0+dfsg-1' },
     { name: 'npm', version: '10.9.2+ds-1' },
   ]);
@@ -52,10 +55,10 @@ test('setup authority binds source policy, exact snapshot and current payload ge
   assert.equal(authority.source.media.sha256, 'dec49008a71f6098d0bcfc822021f4d042d5f2db279e4d75bdd981304f1ca5d9');
   assert.equal(authority.source.media.bytes, 2_918_598_656);
   assert.equal(authority.packages.snapshot, SNAPSHOT);
-  assert.equal(authority.packages.generation, 'ubuntu-2604-tools-v2');
+  assert.equal(authority.packages.generation, 'ubuntu-2604-tools-v3');
   assert.deepEqual(authority.qualification.commands, ['hv_kvp_daemon', 'make']);
   assert.equal(authority.payload.generation, 'guest-image-current');
-  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v5');
+  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v6');
   assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 2, ...UBUNTU_SETUP_BOOT_PATCH }]);
 });
 

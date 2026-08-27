@@ -1,9 +1,11 @@
 import { gunzipSync } from 'node:zlib';
 import { createGuestImagePayload } from '../guest/image-payload.js';
+import { comparePackageVersions } from './package-version.js';
 
 const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
 const PACKAGE_NAMES = Object.freeze(['build-essential', 'cmake', 'git', 'linux-cloud-tools-virtual', 'nodejs', 'npm']);
 const COMPONENTS = Object.freeze(['main', 'universe']);
+const POCKETS = Object.freeze(['resolute', 'resolute-updates', 'resolute-security']);
 const MAX_COMPRESSED_BYTES = 64 * 1024 * 1024;
 const MAX_INDEX_BYTES = 256 * 1024 * 1024;
 const SNAPSHOT_LAG_MS = 48 * 60 * 60 * 1000;
@@ -70,13 +72,14 @@ export async function resolveUbuntuPackagePins({ snapshot, fetchImpl = globalThi
   if (typeof fetchImpl !== 'function') throw new TypeError('Ubuntu package snapshot fetch implementation is invalid');
   const requested = new Set(PACKAGE_NAMES);
   const versions = new Map();
-  for (const component of COMPONENTS) {
-    const url = `https://snapshot.ubuntu.com/ubuntu/${snapshot}/dists/${SOURCE.codename}/${component}/binary-${SOURCE.architecture}/Packages.gz`;
-    const records = packageRecords(await fetchPackageIndex(url, fetchImpl), requested);
-    for (const [name, version] of records) {
-      const previous = versions.get(name);
-      if (previous && previous !== version) throw new Error(`Ubuntu snapshot component versions disagree for ${name}: ${previous}, ${version}`);
-      versions.set(name, version);
+  for (const pocket of POCKETS) {
+    for (const component of COMPONENTS) {
+      const url = `https://snapshot.ubuntu.com/ubuntu/${snapshot}/dists/${pocket}/${component}/binary-${SOURCE.architecture}/Packages.gz`;
+      const records = packageRecords(await fetchPackageIndex(url, fetchImpl), requested);
+      for (const [name, version] of records) {
+        const previous = versions.get(name);
+        if (!previous || comparePackageVersions(version, previous) > 0) versions.set(name, version);
+      }
     }
   }
   const missing = PACKAGE_NAMES.filter((name) => !versions.has(name));
@@ -119,11 +122,11 @@ export async function createUbuntuSetupAuthority({
     recipe: Object.freeze({
       protocol: 'devbridge/ubuntu-autoinstall-recipe-v1',
       sourceSha256: SOURCE.mediaSha256,
-      generation: 'ubuntu-2604-autoinstall-v5',
+      generation: 'ubuntu-2604-autoinstall-v6',
       patches: Object.freeze([Object.freeze({ id: 'boot-trigger', occurrences: 2, before: BOOT_PATCH.before, after: BOOT_PATCH.after })]),
     }),
     packages: Object.freeze({
-      generation: 'ubuntu-2604-tools-v2',
+      generation: 'ubuntu-2604-tools-v3',
       snapshot,
       packages,
     }),
