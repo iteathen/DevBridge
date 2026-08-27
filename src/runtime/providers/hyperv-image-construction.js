@@ -28,6 +28,16 @@ const CONSOLE_RAW_BYTES = CONSOLE_WIDTH * CONSOLE_HEIGHT * 2;
 function encodeScript(script) { return Buffer.from(script, 'utf16le').toString('base64'); }
 function emptyState() { return { protocol: PROTOCOL, records: {} }; }
 
+function normalizeConsoleBytes(raw) {
+  if (raw.length === CONSOLE_RAW_BYTES) return raw;
+  if (raw.length === CONSOLE_RAW_BYTES + 4) {
+    const terminal = raw.subarray(CONSOLE_RAW_BYTES);
+    if (terminal.some((value) => value !== 0)) throw new Error('construction console evidence terminal padding is invalid');
+    return raw.subarray(0, CONSOLE_RAW_BYTES);
+  }
+  throw new Error('construction console evidence size is invalid');
+}
+
 function onlyKeys(value, allowed, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
   for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`${name}.${key} is not allowed`);
@@ -247,30 +257,7 @@ if ([uint32]$result.ReturnValue -ne 0) {
   @{ available = $false; reason = "Hyper-V thumbnail returned $([uint32]$result.ReturnValue)" } | ConvertTo-Json -Compress
   exit 0
 }
-$pixelValues = @($result.ImageData)
-if ($pixelValues.Count -eq 320 * 240) {
-  $bytes = [byte[]]::new(320 * 240 * 2)
-  for ($index = 0; $index -lt $pixelValues.Count; $index++) {
-    $pixel = [uint16]$pixelValues[$index]
-    $bytes[$index * 2] = [byte]($pixel -band 0xff)
-    $bytes[$index * 2 + 1] = [byte](($pixel -shr 8) -band 0xff)
-  }
-} elseif ($pixelValues.Count -eq 320 * 240 * 2) {
-  $bytes = [byte[]]$pixelValues
-} elseif ($pixelValues.Count -eq 320 * 240 * 2 + 4) {
-  $framed = [byte[]]$pixelValues
-  $reportedWidth = [BitConverter]::ToUInt16($framed, 0)
-  $reportedHeight = [BitConverter]::ToUInt16($framed, 2)
-  if ($reportedWidth -ne 320 -or $reportedHeight -ne 240) {
-    @{ available = $false; reason = "Hyper-V thumbnail dimensions are invalid: $($reportedWidth)x$($reportedHeight)" } | ConvertTo-Json -Compress
-    exit 0
-  }
-  $bytes = [byte[]]::new(320 * 240 * 2)
-  [Buffer]::BlockCopy($framed, 4, $bytes, 0, $bytes.Length)
-} else {
-  @{ available = $false; reason = "Hyper-V thumbnail pixel count is invalid: $($pixelValues.Count)" } | ConvertTo-Json -Compress
-  exit 0
-}
+$bytes = [byte[]]$result.ImageData
 @{ available = $true; width = 320; height = 240; imageData = [Convert]::ToBase64String($bytes) } | ConvertTo-Json -Compress
 `;
 
@@ -613,7 +600,8 @@ export class HyperVImageConstruction {
       throw new Error('construction console evidence contract is invalid');
     }
     const raw = Buffer.from(result.imageData, 'base64');
-    if (raw.length !== CONSOLE_RAW_BYTES || raw.toString('base64') !== result.imageData) throw new Error('construction console evidence size is invalid');
+    if (raw.toString('base64') !== result.imageData) throw new Error('construction console evidence encoding is invalid');
+    const pixels = normalizeConsoleBytes(raw);
     const rowBytes = CONSOLE_WIDTH * 3;
     const bmp = Buffer.alloc(54 + rowBytes * CONSOLE_HEIGHT);
     bmp.write('BM', 0, 'ascii');
@@ -626,7 +614,7 @@ export class HyperVImageConstruction {
     bmp.writeUInt16LE(24, 28);
     bmp.writeUInt32LE(rowBytes * CONSOLE_HEIGHT, 34);
     for (let pixel = 0; pixel < CONSOLE_WIDTH * CONSOLE_HEIGHT; pixel += 1) {
-      const packed = raw.readUInt16LE(pixel * 2);
+      const packed = pixels.readUInt16LE(pixel * 2);
       const target = 54 + pixel * 3;
       bmp[target] = Math.round((packed & 0x1f) * 255 / 31);
       bmp[target + 1] = Math.round(((packed >> 5) & 0x3f) * 255 / 63);
