@@ -4,7 +4,7 @@
 
 DevBridge is a trusted local control plane that turns remote development requests into bounded local work without giving remote content direct machine authority.
 
-DB-020 defines the repository-execution security boundary. `docs/execution-profile-environments.md` defines the persistent VM ownership topology.
+DB-020 defines the repository-execution security boundary. `docs/execution-profile-environments.md` defines the persistent VM ownership topology. `docs/agent-execution-runtime.md` defines the agent-facing guest process/data runtime beneath that boundary.
 
 The active rule is:
 
@@ -40,7 +40,7 @@ DevBridge owns authoritative:
 - runtime release/activation/rollback state;
 - daemon lifecycle/control state.
 
-Remote controllers, coding models, repository content, dependencies, guest tools, tests, guest Git, and process output are inputs/proposals. They do not own control-plane truth.
+Remote controllers, coding models, repository content, dependencies, guest tools, tests, guest Git, guest execution-history/cache/buffer state, and process output are inputs/proposals. They do not own control-plane truth.
 
 ## Trust domains
 
@@ -62,11 +62,13 @@ Host code may execute fixed/static control operations only when they cannot be r
 
 Provider/profile absence never broadens the set of host-safe operations.
 
+The trusted host deterministic process runner remains intentionally narrow. It is not the agent shell/runtime and must not acquire repository-facing POSIX/Nushell composition merely for convenience.
+
 ### Untrusted execution-profile VM
 
 A profile VM is persistent untrusted guest state for one materially distinct execution platform.
 
-Assume guest administrator/root compromise. The guest may control every guest-local process/file/service, package/tool installation, build/test output, coding worker, guest Git repository, and guest-side bridge helper. It normally has network access.
+Assume guest administrator/root compromise. The guest may control every guest-local process/file/service, package/tool installation, build/test output, coding worker, execution-history database, buffer/cache content, guest Git repository, and guest-side bridge helper. It normally has network access.
 
 The host therefore exposes no host secrets or authoritative writable control state to the VM.
 
@@ -85,6 +87,8 @@ This is a DevBridge operation/correctness boundary, not a second hypervisor boun
 ### Task state
 
 Each run owns bounded process-tree, temporary, input/output, cancellation, and evidence state within one workspace. Task completion/cancellation does not delete profile/workspace persistence.
+
+Guest execution runtime history, named buffers, and caches may outlive a task according to guest retention policy, but they remain untrusted working state and do not become host verification evidence.
 
 ## Provider model
 
@@ -151,7 +155,7 @@ Detailed flow:
 6. Host prepares authoritative source/baseline state.
 7. DevBridge verifies provider/base-image/profile-environment/bridge/workspace-route readiness.
 8. Source/context/files cross the bridge through workspace-scoped logical locations.
-9. Repository-controlled operations or optional coding workers execute inside the guest workspace.
+9. Repository-controlled operations or optional coding workers execute inside the guest workspace through the guest agent execution runtime.
 10. Results/candidate files return as untrusted data through workspace-scoped bridge paths.
 11. Host validates run/repository/baseline/source/candidate identities and imports only permitted bytes into authoritative Git state.
 12. Verification policy selects/reuses required evidence; human gates apply only where required.
@@ -184,9 +188,10 @@ repository-workspaces/  # logical guest topology
     dependencies/
     build/
     temp/
+    execution-state/    # guest-local buffers/cache/history/index/CAS as policy permits
 ```
 
-Exact host/guest paths are implementation details and must not become externally selectable authority.
+Exact host/guest paths are implementation details and must not become externally selectable host authority.
 
 Hyper-V uses differencing VHD/VHDX semantics. KVM/QEMU uses qcow2 backing/overlay semantics. Parent/backing identity is revalidated rather than inferred from filenames.
 
@@ -211,7 +216,8 @@ Keep project semantics workspace-local:
 - build trees;
 - generated source/output;
 - repository-specific configuration;
-- mutable project caches when sharing would couple correctness/trust.
+- mutable project caches when sharing would couple correctness/trust;
+- repository execution history/buffers when cross-workspace sharing would leak or couple project data.
 
 A global install performed for one repository must not silently become every repository's dependency or mutation surface.
 
@@ -231,6 +237,34 @@ It supports bounded:
 Guest-controlled messages cannot name arbitrary host paths, host executables, Git refs, credentials, provider-management targets, profile identities, workspace identities, or control-state objects.
 
 Guest agents are untrusted. Host validation determines truth.
+
+Provider adapters transport admitted versioned execution intent/results/references. They do not parse POSIX syntax, implement Nushell semantics, own SQLite schemas, or decide buffer/cache validity.
+
+## Guest agent execution runtime
+
+The repository VM contains a machine-oriented execution runtime below the bridge boundary.
+
+Its core primitive is direct executable + argv with explicit cwd/environment/stdin/lifecycle. The runtime natively models process and I/O topology for high-frequency POSIX-style plumbing such as pipes and redirects, while preserving per-stage results rather than reducing a pipeline to one opaque shell result.
+
+The agent-facing frontend should intentionally match coding-model first guesses where practical. Familiar POSIX/Bash-shaped process syntax is a compact frontend that lowers to an explicit execution graph; it is not transported/executed as an arbitrary host shell string.
+
+Nushell is the preferred full guest shell for agent-authored composition when actual shell-language semantics are required. Bash/sh/PowerShell/cmd and other runtimes remain guest compatibility targets for repository artifacts that explicitly require them.
+
+The runtime owns named durable buffers, named caches, invocation/execution history, structured causal errors, content-addressed payload/artifact storage, and a read-only SQL introspection surface. SQLite is the preferred metadata/index plane; large stream/artifact/cache payloads remain outside the database behind stable references.
+
+Action packets may request work and read-only queries but do not receive arbitrary persistence-write authority. Runtime-owned process/storage methods author observed guest state.
+
+The guest runtime is deliberately not authoritative for host verification/publication. See [`agent-execution-runtime.md`](agent-execution-runtime.md) for the detailed surface/storage/implementation contract.
+
+## Tool/path consistency
+
+Agent ergonomics must not create a false guest filesystem reality.
+
+Common admitted developer tools should be available under conventional bare names through ordinary guest `PATH` behavior where practical. A canonical tool may have deliberate real aliases/symlinks/shims.
+
+However, if DevBridge allows an agent to observe or execute an absolute path as valid, that path must remain valid for repository code and descendant processes in the same environment. Do not silently rewrite a nonexistent absolute path only for top-level harness calls.
+
+This execution-referential-consistency rule allows the model to safely reuse what it learned from tool discovery in generated build/configuration code.
 
 ## Git and source/candidate model
 
@@ -261,15 +295,19 @@ Host-only state includes:
 
 Private dependency/coding-service workflows require explicit scoped designs rather than copying broad credentials into persistent profile VMs.
 
+Guest history/SQL/buffers must not become a credential archive; sensitive inputs should be redacted or represented by bounded references/identities as appropriate.
+
 ## Deterministic operations and tools
 
-Controller plans remain data, not command authority.
+Controller plans remain data, not host command authority.
 
 - static/control operations may run on host only when provably not repository-controlled;
 - repository-controlled operations execute only inside the routed workspace/profile VM;
 - unknown operations default to repository-controlled.
 
-Controllers provide bounded schema parameters, not raw shell/host argv/paths/provider targets.
+Controllers provide bounded schema parameters/intent, not raw host shell/host argv/host paths/provider targets.
+
+Inside an admitted repository VM, the guest agent execution runtime may expose a natural POSIX-like frontend and read-only SQL query surface as defined in `docs/agent-execution-runtime.md`; that guest-local ergonomics does not grant host executable/capability authority.
 
 Host tool inventory covers control-plane/provider prerequisites. Repository-class tools are discovered/used inside profile guests and remain untrusted observations.
 
@@ -286,6 +324,8 @@ Passing evidence binds relevant identities such as:
 - writable-layer lineage;
 - bridge version;
 - guest toolchain/config.
+
+Guest execution history/cache state may help locate or reuse work but does not by itself satisfy these host evidence requirements.
 
 Issue #138 adds qualification that specifically proves:
 
@@ -314,7 +354,8 @@ Future/qualified resource governance may include:
 - active profile/warm-pool policy;
 - idle shutdown/suspend;
 - GPU/device exclusivity;
-- task/process quotas.
+- task/process quotas;
+- guest buffer/cache/history retention budgets.
 
 ## Setup/reconfiguration
 
@@ -328,6 +369,8 @@ Setup separates:
 `all` means all eligible repository workspaces. It never means one VM per repository.
 
 Legacy repository-owned VMs are migration candidates. They are not silently counted as profile environments.
+
+Guest images/bootstrap should expose common admitted developer tools through deliberate conventional command/PATH surfaces and qualify any real compatibility paths. Hidden harness-only absolute-path translation is not an image/setup substitute.
 
 See `docs/setup.md` for operator behavior.
 
@@ -344,9 +387,12 @@ Durable VM/profile/workspace objects include:
 - profile environment records;
 - workspace routes/identity;
 - bridge operations/transfers;
-- source/candidate import subjects.
+- source/candidate import subjects;
+- guest-local execution records/buffers/caches where retention policy keeps them.
 
 A failed guest command is not permission to delete persistent profile/workspace state. Deletion/reset/reseed requires exact ownership proof.
+
+If bridge loss makes a guest execution outcome ambiguous, observe/reconcile the action identity before repeating non-idempotent work.
 
 ## Migration history
 
@@ -365,6 +411,8 @@ The live target is defined by:
 - `specs/DB-020-vm-execution-boundary.md`;
 - `docs/execution-profile-environments.md`;
 - this architecture document;
+- `docs/agent-execution-runtime.md` for the guest agent execution/runtime surface;
+- `docs/design-principles.md` for Agent Least Surprise and execution referential consistency;
 - `docs/setup.md`;
 - `docs/vm-migration.md`;
 - active VM/setup/qualification issues including #103, #107, #115, #116, and #138.
