@@ -59,10 +59,17 @@ Owners: canonical image canary, Hyper-V image-construction adapter, and Ubuntu m
    - do not interpret image pixels as width/height metadata;
    - add executable normal, exact-variant, malformed-count, and output-boundary tests rather than regex-only source assertions.
 4. Re-run non-construction setup on the exact candidate, then make one supported construction re-entry and require a valid bounded console artifact without changing VM state.
-5. Reconcile the existing effect before deciding whether it is still running, failed, or recoverably superseded.
-6. Diagnose from bounded console/thumbnail and provider evidence. Do not send guest input or mutate media merely to make progress.
-7. If replacement is required, create it through the existing canonical-image/lifecycle authority with a new exact subject only when desired media/recipe identity materially changes.
-8. Finalize, sanitize, qualify, publish to the local immutable image library, and retire only exact superseded construction artifacts after the new image is verified.
+5. Treat steps 3–4 as complete at exact merge `4d5dc5633d978773a3adf02414acbc4234076ca6`; the artifact proves the existing guest failed in the pinned apt late command.
+6. Reproduce the exact snapshot transaction in a disposable Ubuntu 26.04 environment outside the production construction frontier:
+   - first run snapshot update;
+   - then simulate, download, and install the exact six pinned packages;
+   - preserve complete bounded apt output and exact base/snapshot identity;
+   - remove the temporary diagnostic workflow after evidence is captured.
+7. Reassess from the transaction evidence. Repair the smallest owner among snapshot selection, source/pocket selection, package-set resolution, target package configuration, or error telemetry. Do not rotate pins or move to another package mechanism without evidence.
+8. Extend setup authority so its accepted package set proves the required transaction boundary rather than top-level metadata presence alone. Keep executable/package paths and solver mechanics local; preserve the neutral authority/seed contracts.
+9. Change the package or recipe generation whenever the desired guest bytes or install behavior changes, deriving a new exact construction subject rather than reusing failed media.
+10. Reconcile the existing failed effect, create the replacement through the canonical image/lifecycle authority, and retain the old subject until the replacement is qualified.
+11. Finalize, sanitize, qualify, publish to the local immutable image library, and retire only exact superseded construction artifacts after the new image is verified.
 
 Exit evidence:
 

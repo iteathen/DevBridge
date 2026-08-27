@@ -334,6 +334,24 @@ Executable focused coverage proves exact-size success, physical-variant success 
 
 The pre-fix stopped frontier and exact provider observations are recorded on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5443879067). No guest input, power operation, media rewrite, disk mutation, provider cleanup, or manual workaround occurred during diagnosis or implementation.
 
+### 14. Bounded console evidence exposed a terminal pinned-package transaction failure
+
+PR #307 merged the console normalization fix as exact commit `4d5dc5633d978773a3adf02414acbc4234076ca6` after all Windows and Ubuntu smoke/full CI jobs passed. Exact plain setup then reached the construction gate and exited `0`. One supported construction re-entry preserved the overdue VM and produced the bounded `320x240` artifact with SHA-256 `0404afa06f60cf153b5e55dcff53ce9418af4b12fa257fd15b0361b68570ec92`.
+
+A read-only `640x480` call to the same provider method made the terminal legible without changing the guest. Subiquity had completed final system configuration. The first user-supplied late command, snapshot update, completed. The next command attempted the six exact top-level pins for build-essential, CMake, Git, Linux cloud tools, Node.js, and npm against snapshot `20260821T230000Z`; curtin reported apt exit `100` and Subiquity entered its fatal error screen.
+
+Host-side re-observation confirmed that every top-level record and package file still exists in the exact snapshot and that each direct dependency name is present in `main` or `universe`. Those checks prove provenance and availability of named artifacts, not transaction solvability or successful target configuration. The existing `resolveUbuntuPackagePins()` owner reads top-level `Package` and `Version` fields only, so it cannot prevent this class of physical failure.
+
+Ubuntu's snapshot contract requires snapshot update immediately before the package command, which this seed already did. The apt exit code identifies only an error. The captured screen omits the decisive apt stderr. Therefore no snapshot, package pin, source pocket, or delivery mechanism is changed at this checkpoint. The next accepted evidence is an isolated Ubuntu 26.04 simulation/download/install of the exact transaction, followed by a reassessment of the smallest owning contract.
+
+Primary references:
+
+- [Ubuntu Snapshot Service](https://snapshot.ubuntu.com/)
+- [Ubuntu `apt-get` manual](https://manpages.ubuntu.com/manpages/noble/man8/apt-get.8.html)
+- [Subiquity autoinstall configuration reference](https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html)
+
+The exact physical result is recorded on [issue #197](https://github.com/iteathen/DevBridge/issues/197#issuecomment-5444080116). No guest input, power operation, VM configuration change, media/disk mutation, snapshot rotation, cleanup, or manual workaround occurred.
+
 ## Preserved physical evidence
 
 After the latest stopped attempt:
