@@ -15,10 +15,14 @@ DevBridge has accumulated implementation plans, migration records, normative spe
 | Operate an installed DevBridge | [`operations.md`](operations.md) |
 | Diagnose a failure | [`troubleshooting.md`](troubleshooting.md) |
 | Understand security and control flow | [`architecture.md`](architecture.md) |
+| Understand chat-only agent task exchange | [`chat-agent-github-exchange.md`](chat-agent-github-exchange.md) |
+| Understand agent-facing repository execution | [`agent-execution-runtime.md`](agent-execution-runtime.md) |
 | Understand engineering rules | [`design-principles.md`](design-principles.md) and [`../AGENTS.md`](../AGENTS.md) |
 | Understand persistent VM/workspace ownership | [`execution-profile-environments.md`](execution-profile-environments.md) |
+| Understand deferred post-recovery GPU direction | [`gpu-execution-profiles.md`](gpu-execution-profiles.md) |
 | Understand Stage 0 and self-update | [`bootstrap.md`](bootstrap.md) and [`bootstrap-compatibility.md`](bootstrap-compatibility.md) |
 | Understand current VM-program status | [`roadmap.md`](roadmap.md) |
+| Understand the current recovery assessment and dependency order | [`working-devbridge-assessment-2026-08-27.md`](working-devbridge-assessment-2026-08-27.md) and [`working-devbridge-plan.md`](working-devbridge-plan.md) |
 
 ## Current product model
 
@@ -40,6 +44,9 @@ persistent untrusted VM
         |
         v
 repository workspace
+        |
+        v
+agent execution runtime
 ```
 
 The important current rules are:
@@ -54,6 +61,10 @@ The important current rules are:
 - authoritative image recovery must not assume a developer-owned artifact repository or a pre-existing local image cache;
 - guest output, model output, repository content, and remote task text are data/proposals, not authority;
 - missing or unready VM execution fails closed rather than falling back to direct host execution;
+- GitHub Issues are the universal chat-only agent mailbox: DevBridge admits an exact verified task revision/digest, while comments/labels/state remain bounded non-authoritative projections and exact Git objects carry larger immutable package members when needed;
+- the guest agent execution surface is optimized for familiar POSIX/Bash-shaped first guesses, but supported commands are normalized into explicit process/data topology instead of using Bash as the universal execution mechanism;
+- Nushell is the preferred full shell for agent-authored guest composition; Bash/sh/PowerShell/cmd remain compatibility runtimes when an existing artifact actually requires them;
+- guest buffers, caches, and execution history are queryable working state, not host verification authority; their general agent query surface is read-only SQL;
 - the persistent installed DevBridge and disposable test installations are different installations and should be distinguished by their stable `DB-<12 hex>` installation tags.
 
 ## Identity vocabulary
@@ -69,8 +80,11 @@ Several independent identities are intentionally present. Do not collapse them i
 | Execution profile | Which materially distinct execution platform is selected? | `windows`, `linux`, future GPU variants |
 | Repository workspace | Which repository-local workspace inside the profile VM? | deterministic repository+profile identity |
 | Run/task identity | Which bounded work transaction is active? | DevBridge run identity |
+| Guest execution/buffer/cache identity | Which untrusted guest-local execution object is being queried/reused? | runtime-defined stable id/name/digest |
 
 The installation tag is stable across runtime updates. Two different installation homes get different tags even when they run the same runtime head.
+
+Guest execution/buffer/cache identities are useful for replay, bounded output retrieval, and cache reuse, but they do not replace host-owned candidate/test/publication evidence.
 
 See [`operations.md`](operations.md) for operator use of these identities.
 
@@ -98,7 +112,12 @@ Documentation explains those contracts. It does not silently weaken them.
 
 These documents describe current implementation structure and intended operator behavior:
 
+- [`application-management.md`](application-management.md) — permanent entry, runner, accepted runtime, services, execution environments, state separation, and whole-stack management lifecycle.
+- [`application-recovery-matrix.md`](application-recovery-matrix.md) — exact loss/recovery ownership matrix and configured/fresh-host zero-state canaries.
+- [`application-management-decisions.md`](application-management-decisions.md) — compact architectural decisions that prevent application-management layer drift.
 - [`architecture.md`](architecture.md) — authority hierarchy, trust domains, provider-neutral flow, Git/source/candidate model.
+- [`chat-agent-github-exchange.md`](chat-agent-github-exchange.md) — GitHub Issue mailbox, exact revision/digest admission, bounded result comments, immutable Git package members, polling/reconciliation, and chat-only-agent compatibility.
+- [`agent-execution-runtime.md`](agent-execution-runtime.md) — agent-natural POSIX-style execution surface, structured process graph, Nushell role, named buffers/caches/history, read-only SQL, content-addressed storage, causal errors, and implementation ownership.
 - [`execution-profile-environments.md`](execution-profile-environments.md) — physical profile VM ownership and repository workspace routing.
 - [`development-environment.md`](development-environment.md) — persistent-workstation philosophy, console-first extensibility, prepared tooling, GUI limitation, testing emphasis, and generic observation approach.
 - [`fresh-host-image-provisioning.md`](fresh-host-image-provisioning.md) — blank-slate image construction/distribution authority, Windows licensing/activation separation, re-entry, and recovery supply.
@@ -133,11 +152,14 @@ When behavior changes:
 1. update the owning normative spec when the contract changes;
 2. update the operator-facing guide when commands, status, recovery, or failure semantics change;
 3. update architecture docs when ownership/topology changes;
-4. mark superseded historical material instead of rewriting history;
-5. keep examples path-free and secret-free unless a local path is essential to the operator action;
-6. distinguish **configured**, **observed**, **ready**, **accepted**, and **healthy** states instead of using a generic "enabled" label;
-7. distinguish installation identity from runtime/version identity;
-8. do not document a direct-host repository-code fallback—there is none.
+4. update [`chat-agent-github-exchange.md`](chat-agent-github-exchange.md) when the universal chat-agent mailbox/package/result transport contract changes;
+5. update [`agent-execution-runtime.md`](agent-execution-runtime.md) when the agent-facing guest execution, process graph, buffer/cache/history, SQL, shell, or tool-resolution contract changes;
+6. mark superseded historical material instead of rewriting history;
+7. keep examples path-free and secret-free unless a local path is essential to the operator action;
+8. distinguish **configured**, **observed**, **ready**, **accepted**, and **healthy** states instead of using a generic "enabled" label;
+9. distinguish installation identity from runner/runtime/version identity;
+10. preserve the application-management hierarchy: Permanent Entry -> Runner -> Accepted Runtime -> Services -> Declared Execution Environments;
+11. do not document a direct-host repository-code fallback—there is none.
 
 The goal is that an operator or a fresh agent can answer three questions without reading issue history:
 

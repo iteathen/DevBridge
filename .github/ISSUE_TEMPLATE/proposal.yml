@@ -1,0 +1,32 @@
+name: Change proposal
+description: Propose one bounded feature, architecture, or documentation improvement.
+title: "[PROPOSAL] "
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Intended outcome
+      description: Explain the problem, affected users, and measurable acceptance condition.
+    validations:
+      required: true
+  - type: textarea
+    id: ownership
+    attributes:
+      label: Authority and LEGO ownership
+      description: Identify the owner, boundaries, dependencies, and rewiring/deletion implications.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Trust, failure, and recovery
+      description: Explain capability effects, fail-closed behavior, and recovery/reconciliation needs.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Validation evidence
+      description: Name the cheapest decisive falsifier and any required real-provider qualification.
+    validations:
+      required: true

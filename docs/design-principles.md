@@ -35,9 +35,11 @@ Build capabilities as small replaceable pieces with explicit studs:
 - runtime supervisor/update validator;
 - daemon governance/control boundary;
 - verification planner/evidence store;
+- guest agent execution runtime/process graph;
+- guest buffer/cache/history store and read-only query surface;
 - clock/logger.
 
-A new task transport, local CLI surface, deterministic tool, decision transport, sandbox provider, release transport, coordination projection, or verification backend should normally be an adapter behind an existing authority boundary, not a rewrite of orchestration logic.
+A new task transport, local CLI surface, deterministic tool, decision transport, sandbox provider, release transport, coordination projection, verification backend, execution frontend, guest shell adapter, or guest state-query optimization should normally be an adapter behind an existing authority boundary, not a rewrite of orchestration logic.
 
 ## SOLID
 
@@ -45,15 +47,15 @@ A new task transport, local CLI surface, deterministic tool, decision transport,
 - Open/closed: add a CLI/tool/task transport/provider by implementing a contract rather than branching throughout the core.
 - Liskov: adapters must honor the same safety and lifecycle semantics, not merely the same method names.
 - Interface segregation: do not hand an adapter a broad capability when it needs a narrow one.
-- Dependency inversion: application flow depends on ports/contracts; GitHub, Git, filesystem, sandbox, process, OS priority, verification backends, and credential APIs sit at the edge.
+- Dependency inversion: application flow depends on ports/contracts; GitHub, Git, filesystem, sandbox, process, OS priority, verification backends, guest process engines, guest persistence, and credential APIs sit at the edge.
 
 ## CUPID
 
 - Composable: outputs become explicit validated inputs to the next stage.
-- Unix-like: favor transparent data and exit semantics, but do not use shell strings as an integration shortcut.
-- Predictable: state transitions, retries, task revisions, checkpoints, approvals, lease epochs, verification identities, test-selection reasons, and daemon-control ownership are inspectable/deterministic.
+- Unix-like: favor transparent data, process composition, and exit semantics, but do not use shell strings as a host integration shortcut. Inside admitted repository VMs, familiar POSIX-style process plumbing may be an agent-facing frontend over an explicit execution graph.
+- Predictable: state transitions, retries, task revisions, checkpoints, approvals, lease epochs, verification identities, test-selection reasons, daemon-control ownership, process topology, and runtime-owned buffer/cache/history state are inspectable/deterministic.
 - Idiomatic: use Node primitives where they are sufficient; use platform adapters where Node cannot honestly enforce the required boundary.
-- Domain-based: name concepts after the product domain: task revision, run, proposal, controller plan, checkpoint, decision subject, lease/fence, publication baseline, context capsule, capability policy, verification tier, qualification trigger, evidence identity, status projection.
+- Domain-based: name concepts after the product domain: task revision, run, proposal, controller plan, checkpoint, decision subject, lease/fence, publication baseline, context capsule, capability policy, verification tier, qualification trigger, evidence identity, execution graph, process result, named buffer, cache identity, status projection.
 
 ## KISS
 
@@ -65,6 +67,8 @@ Likewise, DB-018 below-normal child priority is a simple workstation QoS mechani
 
 DB-019 applies the same KISS rule to testing: do not solve long verification with a single huge timeout, a universal `run all tests`, or a raw parallelism number. Prefer explicit test classes, local qualification triggers, exact evidence identity, and the smallest verification set that still proves the required contracts.
 
+For the guest agent execution runtime, do not begin with a new general-purpose shell language, dozens of bespoke history/cache endpoints, or hidden path emulation. Start with explicit process/data topology, durable named outputs, a general read-only SQL surface, and familiar high-value syntax frontends. Promote special operations only after observed use justifies them.
+
 ## Agents propose; DevBridge decides
 
 Remote and local LLMs are subordinate proposal engines. They can be creative about solutions without being authoritative about machine capability, Git state, publication state, lease ownership, runtime activation, verification sufficiency, or whether a consequential boundary may be crossed.
@@ -74,6 +78,8 @@ This separation allows DevBridge to use multiple tools/agents without letting di
 The same principle applies to tool documentation and repository code: observation may inform a proposal or bounded schema, but does not create executable authority.
 
 An agent may recommend a test, but it does not own test cost or cached-evidence validity. A natural-language request such as `run all tests` is intent that DevBridge resolves through local/repository verification policy; it is not unlimited cost/process authority.
+
+Guest execution history, caches, named buffers, and their SQL metadata are similarly useful working evidence, not host verification/publication authority.
 
 ## Trust is dimensional, not one boolean
 
@@ -110,11 +116,45 @@ Human attention itself has a budget: deduplicate equivalent questions, bundle cl
 
 ## Domain-appropriate foundations
 
-Avoid accidental limits that become architecture. Byte caps, output tails, context budgets, polling intervals, retry bounds, refactor/churn thresholds, checkpoint retention, decision expiry, lease TTL/skew, process-priority policy, verification timeouts, and test-cost thresholds must be explicit where they materially affect behavior, with safe defaults and hard safety ceilings where needed.
+Avoid accidental limits that become architecture. Byte caps, output tails, context budgets, polling intervals, retry bounds, refactor/churn thresholds, checkpoint retention, decision expiry, lease TTL/skew, process-priority policy, verification timeouts, test-cost thresholds, buffer retention, cache size, line-index density, and SQL/result bounds must be explicit where they materially affect behavior, with safe defaults and hard safety ceilings where needed.
 
 Thresholds detect where review may help; they do not substitute for domain reasoning. A large diff is not automatically wrong and a small diff is not automatically safe. A test exceeding 30 minutes is not automatically hung, and a 30-second test is not automatically worth running for every change.
 
 One is currently the truthful effective task-concurrency limit. Do not accept a larger configuration value as proof of a parallel scheduler until durable independent admission, lease, effect, liveness, and resource accounting are implemented.
+
+## Agent least surprise
+
+The agent-facing execution surface is a performance surface. Coding models have strong learned priors for POSIX/Bash-style commands, conventional developer-tool names, ordinary `PATH`/cwd behavior, unified diffs, SQL, and common error vocabulary.
+
+When multiple equivalent interfaces are possible, prefer the representation most likely to match a coding agent's first reasonable attempt unless it would weaken correctness, security, portability, or explicit semantics.
+
+This means, for admitted repository execution inside the untrusted VM:
+
+- prefer familiar command names and POSIX-style process-plumbing syntax for the common execution frontend;
+- normalize that syntax into explicit process/I/O topology rather than making Bash the universal execution mechanism;
+- use Nushell as the preferred full agent-authored shell when actual shell-language behavior is required;
+- keep existing Bash/sh/PowerShell/cmd/etc. runtimes as compatibility targets for artifacts that require them;
+- start work in the natural repository cwd and put admitted common developer tools on conventional `PATH` surfaces;
+- use SQL as the general read-only introspection language for guest buffers, caches, and execution history before inventing a custom query DSL;
+- preserve raw canonical results behind bounded/structured agent views rather than forcing large output into model context.
+
+Measure first-command success, tool/path misses, discovery commands, parser retries, query patterns, and other bounded ergonomics signals. Optimize observed high-frequency friction rather than guessing indefinitely.
+
+## Execution referential consistency
+
+Never improve first-guess compatibility by lying about the guest filesystem.
+
+If DevBridge allows an agent to observe or successfully invoke an absolute executable path, code and descendant processes in the same execution environment must be able to use that path normally too. Hidden top-level translation of a nonexistent `/usr/bin/foo` into an internal path is unsafe because the agent may later persist `/usr/bin/foo` into build/configuration code where a descendant process bypasses the harness translation.
+
+Therefore bare tool names may resolve through normal guest tool/PATH mechanisms, but absolute compatibility paths must be real guest paths (for example via a deliberate symlink/shim/projection) or they should fail normally. Prefer one canonical tool identity behind any compatible projections so cache/provenance identity does not fragment by spelling.
+
+## General query first; optimize from evidence
+
+The guest execution state model should expose a broad read-only relational query surface before DevBridge hard-codes every useful question as a bespoke method.
+
+Collect privacy-conscious normalized query/use telemetry. When a query family or buffer/cache/history operation becomes demonstrably frequent or expensive, promote it to a dedicated optimized method, index, or materialized view while preserving SQL as the universal fallback.
+
+This applies the same LEGO/KISS rule to agent introspection: build permanent bricks from observed stable seams, not speculative convenience APIs.
 
 ## Verification cost is a control-plane concern
 
@@ -142,7 +182,9 @@ Examples:
 - a successful prior test run is not current verification after candidate/baseline drift;
 - a prior test pass is reusable only while its DB-019 evidence identity still matches the exact candidate/environment/policy subject;
 - a priority request is not applied QoS until OS application succeeds;
-- a remote comment that looks like a DevBridge protocol object is not authoritative without the typed source/provenance path.
+- a remote comment that looks like a DevBridge protocol object is not authoritative without the typed source/provenance path;
+- a guest SQLite history row or cache record is not host verification evidence;
+- an executable name/path is not a compatibility guarantee until the same guest environment actually resolves it for ordinary descendant processes.
 
 When an enforcement layer cannot prove the requested semantics, fail closed or report the limitation honestly rather than translating aspiration into `true`.
 
@@ -150,7 +192,7 @@ When an enforcement layer cannot prove the requested semantics, fail closed or r
 
 An ambiguous external effect is an observation problem before it is a retry problem.
 
-Persist intent/evidence, observe exact current state, reconcile idempotently when possible, and refuse unexplained divergence. This applies to task-branch publication, lease CAS, runtime activation, owned projections, daemon-control ownership, verification evidence, and future remote effects.
+Persist intent/evidence, observe exact current state, reconcile idempotently when possible, and refuse unexplained divergence. This applies to task-branch publication, lease CAS, runtime activation, owned projections, daemon-control ownership, verification evidence, future remote effects, and guest execution actions where a bridge interruption makes completion ambiguous.
 
 A generic retry loop is never a substitute for effect-specific identity and reconciliation. Likewise, rerunning an expensive test is not a substitute for checking whether exact prior evidence is still valid.
 
@@ -158,6 +200,10 @@ A generic retry loop is never a substitute for effect-specific identity and reco
 
 Keep useful state transitions, request-budget observations, run/task identity, tool/provider identity, Git baseline/HEAD/verified candidate identity, lease epoch/ref identity, proposal/checkpoint digests, verification plan/reason/cost class, tests and evidence identities, accepted decisions, runtime activation evidence, and errors. Do not dump secrets, private keys, complete environments, or unbounded process output.
 
+For guest agent execution, retain long output behind durable buffer/content references and return bounded views by default. Preserve per-process exit/signal/error causality instead of flattening a pipeline into one unstructured message.
+
 Remote progress should be coalesced; local diagnostics may be more detailed but remain bounded. Long-running verification should expose enough liveness to distinguish healthy work from a hang without creating heartbeat-comment spam. Decision requests should be evidence-rich enough to answer once rather than forcing a human to reconstruct the run from transcript noise.
 
 Historical handoffs/audits are evidence of what was true at their checkpoint. They must not be silently rewritten to look current or allowed to override the active specs/roadmap.
+
+See [`agent-execution-runtime.md`](agent-execution-runtime.md) for the detailed guest execution/runtime design.
