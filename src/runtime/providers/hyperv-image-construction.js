@@ -17,6 +17,13 @@ const MAX_MEMORY_BYTES = 1024 * 1024 * 1024 * 1024;
 const MIN_DISK_BYTES = 8 * 1024 * 1024 * 1024;
 const MAX_DISK_BYTES = 4 * 1024 * 1024 * 1024 * 1024;
 const MAX_PROCESSORS = 256;
+const INSTALL_EXPECTED_MILLISECONDS = 45 * 60 * 1000;
+const INSTALL_STALL_MILLISECONDS = 20 * 60 * 1000;
+const INSTALL_DEADLINE_MILLISECONDS = 2 * 60 * 60 * 1000;
+const INSTALL_RECHECK_MILLISECONDS = 2 * 60 * 1000;
+const CONSOLE_WIDTH = 320;
+const CONSOLE_HEIGHT = 240;
+const CONSOLE_RAW_BYTES = CONSOLE_WIDTH * CONSOLE_HEIGHT * 2;
 
 function encodeScript(script) { return Buffer.from(script, 'utf16le').toString('base64'); }
 function emptyState() { return { protocol: PROTOCOL, records: {} }; }
@@ -200,14 +207,71 @@ $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 Import-Module Hyper-V -ErrorAction Stop
 $item = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq [string]$data.name } | Select-Object -First 1
 if ($null -eq $item) {
-  @{ exists = $false; owned = $false; state = 'absent'; diskPresent = (Test-Path -LiteralPath $data.diskPath -PathType Leaf); diskAttached = $false; mediaCount = 0 } | ConvertTo-Json -Compress
+  @{ exists = $false; owned = $false; state = 'absent'; diskPresent = (Test-Path -LiteralPath $data.diskPath -PathType Leaf); diskAttached = $false; mediaCount = 0; uptimeMilliseconds = 0; cpuUsagePercent = 0; providerStatus = 'absent'; diskAllocatedBytes = 0 } | ConvertTo-Json -Compress
   exit 0
 }
 $owned = [string]$item.Notes -eq [string]$data.marker
 $hard = @(Get-VMHardDiskDrive -VMName ([string]$data.name) -ErrorAction Stop)
 $diskAttached = $hard.Count -eq 1 -and [IO.Path]::GetFullPath([string]$hard[0].Path) -eq [IO.Path]::GetFullPath([string]$data.diskPath)
 $mediaCount = @(Get-VMDvdDrive -VMName ([string]$data.name) -ErrorAction Stop).Count
-@{ exists = $true; owned = $owned; state = ([string]$item.State).ToLowerInvariant(); providerIdentity = ([string]$item.Id).ToLowerInvariant(); diskPresent = (Test-Path -LiteralPath $data.diskPath -PathType Leaf); diskAttached = $diskAttached; mediaCount = [int]$mediaCount } | ConvertTo-Json -Compress
+$diskPresent = Test-Path -LiteralPath $data.diskPath -PathType Leaf
+$diskAllocatedBytes = 0
+if ($diskPresent) {
+  $disk = Get-VHD -Path ([string]$data.diskPath) -ErrorAction Stop
+  $diskAllocatedBytes = [long]$disk.FileSize
+}
+@{ exists = $true; owned = $owned; state = ([string]$item.State).ToLowerInvariant(); providerIdentity = ([string]$item.Id).ToLowerInvariant(); diskPresent = $diskPresent; diskAttached = $diskAttached; mediaCount = [int]$mediaCount; uptimeMilliseconds = [long][Math]::Floor($item.Uptime.TotalMilliseconds); cpuUsagePercent = [int]$item.CPUUsage; providerStatus = [string]$item.Status; diskAllocatedBytes = $diskAllocatedBytes } | ConvertTo-Json -Compress
+`;
+
+const INSTALL_CONSOLE_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$data = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$vm = Get-CimInstance -Namespace 'root/virtualization/v2' -ClassName Msvm_ComputerSystem -ErrorAction Stop |
+  Where-Object { ([string]$_.Name).Trim('{}').ToLowerInvariant() -eq ([string]$data.providerIdentity).Trim('{}').ToLowerInvariant() } |
+  Select-Object -First 1
+if ($null -eq $vm) { throw 'construction console provider identity is absent' }
+if ([string]$vm.ElementName -ne [string]$data.name) { throw 'construction console provider name changed' }
+$settings = Get-CimAssociatedInstance -InputObject $vm -Association Msvm_SettingsDefineState -ResultClassName Msvm_VirtualSystemSettingData -ErrorAction Stop |
+  Where-Object { [string]$_.VirtualSystemType -eq 'Microsoft:Hyper-V:System:Realized' } |
+  Select-Object -First 1
+if ($null -eq $settings) { throw 'construction console realized settings are absent' }
+$service = Get-CimInstance -Namespace 'root/virtualization/v2' -ClassName Msvm_VirtualSystemManagementService -ErrorAction Stop | Select-Object -First 1
+if ($null -eq $service) { throw 'construction console management service is absent' }
+$result = Invoke-CimMethod -InputObject $service -MethodName GetVirtualSystemThumbnailImage -Arguments @{
+  TargetSystem = $settings
+  WidthPixels = [uint16]320
+  HeightPixels = [uint16]240
+} -ErrorAction Stop
+if ([uint32]$result.ReturnValue -ne 0) {
+  @{ available = $false; reason = "Hyper-V thumbnail returned $([uint32]$result.ReturnValue)" } | ConvertTo-Json -Compress
+  exit 0
+}
+$pixelValues = @($result.ImageData)
+if ($pixelValues.Count -eq 320 * 240) {
+  $bytes = [byte[]]::new(320 * 240 * 2)
+  for ($index = 0; $index -lt $pixelValues.Count; $index++) {
+    $pixel = [uint16]$pixelValues[$index]
+    $bytes[$index * 2] = [byte]($pixel -band 0xff)
+    $bytes[$index * 2 + 1] = [byte](($pixel -shr 8) -band 0xff)
+  }
+} elseif ($pixelValues.Count -eq 320 * 240 * 2) {
+  $bytes = [byte[]]$pixelValues
+} elseif ($pixelValues.Count -eq 320 * 240 * 2 + 4) {
+  $framed = [byte[]]$pixelValues
+  $reportedWidth = [BitConverter]::ToUInt16($framed, 0)
+  $reportedHeight = [BitConverter]::ToUInt16($framed, 2)
+  if ($reportedWidth -ne 320 -or $reportedHeight -ne 240) {
+    @{ available = $false; reason = "Hyper-V thumbnail dimensions are invalid: $($reportedWidth)x$($reportedHeight)" } | ConvertTo-Json -Compress
+    exit 0
+  }
+  $bytes = [byte[]]::new(320 * 240 * 2)
+  [Buffer]::BlockCopy($framed, 4, $bytes, 0, $bytes.Length)
+} else {
+  @{ available = $false; reason = "Hyper-V thumbnail pixel count is invalid: $($pixelValues.Count)" } | ConvertTo-Json -Compress
+  exit 0
+}
+@{ available = $true; width = 320; height = 240; imageData = [Convert]::ToBase64String($bytes) } | ConvertTo-Json -Compress
 `;
 
 const START_INSTALL_SCRIPT = String.raw`
@@ -314,19 +378,22 @@ export class HyperVImageConstruction {
   #outputRoot;
   #identity;
   #invoke;
+  #now;
   #stateFile;
 
-  constructor({ directory, sourceRoot, outputRoot, identity, invoke } = {}) {
+  constructor({ directory, sourceRoot, outputRoot, identity, invoke, now = () => new Date() } = {}) {
     if (typeof directory !== 'string' || directory.length === 0) throw new TypeError('construction state directory is required');
     if (typeof sourceRoot !== 'string' || sourceRoot.length === 0) throw new TypeError('construction source root is required');
     if (typeof outputRoot !== 'string' || outputRoot.length === 0) throw new TypeError('construction output root is required');
     if (typeof identity !== 'string' || !TOKEN.test(identity)) throw new TypeError('construction provider identity is invalid');
     if (typeof invoke !== 'function') throw new TypeError('construction invoke must be a function');
+    if (typeof now !== 'function') throw new TypeError('construction clock must be a function');
     this.#directory = path.resolve(directory);
     this.#sourceRoot = path.resolve(sourceRoot);
     this.#outputRoot = path.resolve(outputRoot);
     this.#identity = identity;
     this.#invoke = invoke;
+    this.#now = now;
     this.#stateFile = path.join(this.#directory, 'state.json');
   }
 
@@ -441,7 +508,7 @@ export class HyperVImageConstruction {
     const identity = subject(rawIdentity);
     const state = await this.#load();
     const record = state.records[identity];
-    if (!record) return { identity, phase: 'absent', exists: false, owned: false, state: 'absent', diskPresent: false, diskAttached: false, mediaCount: 0 };
+    if (!record) return { identity, phase: 'absent', exists: false, owned: false, state: 'absent', diskPresent: false, diskAttached: false, mediaCount: 0, uptimeMilliseconds: 0, cpuUsagePercent: 0, providerStatus: 'absent', diskAllocatedBytes: 0 };
     const observed = await this.#run(OBSERVE_SCRIPT, this.#descriptor(record), 30_000);
     // A planned observation grants no ownership. It must leave exact partial
     // admission to prepare(), while every post-admission ownership loss fails.
@@ -451,6 +518,14 @@ export class HyperVImageConstruction {
     if (record.providerIdentity && observed.exists === true && observed.providerIdentity !== record.providerIdentity) throw new Error('construction provider identity changed');
     const mediaCount = Number(observed.mediaCount ?? 0);
     if (!Number.isSafeInteger(mediaCount) || mediaCount < 0 || mediaCount > 16) throw new Error('construction media observation is invalid');
+    const uptimeMilliseconds = Number(observed.uptimeMilliseconds ?? 0);
+    if (!Number.isSafeInteger(uptimeMilliseconds) || uptimeMilliseconds < 0) throw new Error('construction uptime observation is invalid');
+    const cpuUsagePercent = Number(observed.cpuUsagePercent ?? 0);
+    if (!Number.isSafeInteger(cpuUsagePercent) || cpuUsagePercent < 0 || cpuUsagePercent > 100) throw new Error('construction CPU observation is invalid');
+    const diskAllocatedBytes = Number(observed.diskAllocatedBytes ?? 0);
+    if (!Number.isSafeInteger(diskAllocatedBytes) || diskAllocatedBytes < 0) throw new Error('construction disk allocation observation is invalid');
+    const providerStatus = String(observed.providerStatus ?? 'unknown');
+    if (providerStatus.length === 0 || providerStatus.length > 256) throw new Error('construction provider status observation is invalid');
     return {
       identity,
       phase: record.phase,
@@ -460,7 +535,115 @@ export class HyperVImageConstruction {
       diskPresent: observed.diskPresent === true,
       diskAttached: observed.diskAttached === true,
       mediaCount,
+      uptimeMilliseconds,
+      cpuUsagePercent,
+      providerStatus,
+      diskAllocatedBytes,
     };
+  }
+
+  async observeInstall(rawIdentity) {
+    const identity = subject(rawIdentity);
+    const state = await this.#load();
+    const record = state.records[identity];
+    if (!record || record.phase !== 'installing' || !record.providerIdentity) throw new Error('construction is not awaiting installation completion');
+    const observed = await this.status(identity);
+    const instant = this.#now();
+    if (!(instant instanceof Date) || !Number.isFinite(instant.getTime())) throw new Error('construction clock returned an invalid time');
+    const observedAt = instant.toISOString();
+    const observedMilliseconds = instant.getTime();
+    const previous = record.installLiveness ?? null;
+    const startedAt = previous?.startedAt ?? new Date(Math.max(0, observedMilliseconds - observed.uptimeMilliseconds)).toISOString();
+    const startedMilliseconds = Date.parse(startedAt);
+    const previousProgressMilliseconds = previous?.lastProgressAt == null ? NaN : Date.parse(previous.lastProgressAt);
+    if (!Number.isFinite(startedMilliseconds) || (previous && !Number.isFinite(previousProgressMilliseconds))) throw new Error('construction install liveness checkpoint is invalid');
+    const previousBytes = Number.isSafeInteger(previous?.diskAllocatedBytes) ? previous.diskAllocatedBytes : null;
+    const diskGrowthBytes = previousBytes == null ? 0 : Math.max(0, observed.diskAllocatedBytes - previousBytes);
+    const providerAdvanced = typeof previous?.providerStatus === 'string' && previous.providerStatus !== observed.providerStatus;
+    const progressed = previous == null || diskGrowthBytes > 0 || providerAdvanced;
+    const lastProgressAt = progressed ? observedAt : previous.lastProgressAt;
+    const lastProgressMilliseconds = Date.parse(lastProgressAt);
+    const elapsedMilliseconds = Math.max(0, observedMilliseconds - startedMilliseconds);
+    const noProgressMilliseconds = Math.max(0, observedMilliseconds - lastProgressMilliseconds);
+    let classification = 'observing';
+    if (elapsedMilliseconds >= INSTALL_DEADLINE_MILLISECONDS) classification = 'overdue';
+    else if (previous && noProgressMilliseconds >= INSTALL_STALL_MILLISECONDS) classification = 'stalled';
+    else if (previous && (diskGrowthBytes > 0 || providerAdvanced)) classification = 'progressing';
+    else if (elapsedMilliseconds >= INSTALL_EXPECTED_MILLISECONDS) classification = 'slow';
+    const expectedCompletionAt = new Date(startedMilliseconds + INSTALL_EXPECTED_MILLISECONDS).toISOString();
+    const hardDeadlineAt = new Date(startedMilliseconds + INSTALL_DEADLINE_MILLISECONDS).toISOString();
+    const nextObservationAt = ['stalled', 'overdue'].includes(classification)
+      ? null
+      : new Date(Math.min(observedMilliseconds + INSTALL_RECHECK_MILLISECONDS, startedMilliseconds + INSTALL_DEADLINE_MILLISECONDS)).toISOString();
+    const liveness = {
+      classification,
+      startedAt,
+      observedAt,
+      lastProgressAt,
+      elapsedMilliseconds,
+      noProgressMilliseconds,
+      diskAllocatedBytes: observed.diskAllocatedBytes,
+      diskGrowthBytes,
+      cpuUsagePercent: observed.cpuUsagePercent,
+      providerStatus: observed.providerStatus,
+      expectedCompletionAt,
+      hardDeadlineAt,
+      nextObservationAt,
+    };
+    record.installLiveness = liveness;
+    await this.#save(state);
+    return { ...observed, liveness: Object.freeze({ ...liveness }) };
+  }
+
+  async captureInstallConsole(rawIdentity) {
+    const identity = subject(rawIdentity);
+    const state = await this.#load();
+    const record = state.records[identity];
+    if (!record || record.phase !== 'installing' || !record.providerIdentity) throw new Error('construction is not awaiting installation completion');
+    const observed = await this.status(identity);
+    if (!observed.exists || !observed.owned || observed.state !== 'running' || observed.mediaCount < 1) {
+      throw new Error('construction console is unavailable outside the running installer frontier');
+    }
+    const result = await this.#run(INSTALL_CONSOLE_SCRIPT, this.#descriptor(record), 30_000);
+    if (result?.available !== true) {
+      const reason = String(result?.reason ?? 'Hyper-V thumbnail evidence is unavailable').slice(0, 512);
+      return Object.freeze({ available: false, reason });
+    }
+    if (result.width !== CONSOLE_WIDTH || result.height !== CONSOLE_HEIGHT || typeof result.imageData !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/u.test(result.imageData)) {
+      throw new Error('construction console evidence contract is invalid');
+    }
+    const raw = Buffer.from(result.imageData, 'base64');
+    if (raw.length !== CONSOLE_RAW_BYTES || raw.toString('base64') !== result.imageData) throw new Error('construction console evidence size is invalid');
+    const rowBytes = CONSOLE_WIDTH * 3;
+    const bmp = Buffer.alloc(54 + rowBytes * CONSOLE_HEIGHT);
+    bmp.write('BM', 0, 'ascii');
+    bmp.writeUInt32LE(bmp.length, 2);
+    bmp.writeUInt32LE(54, 10);
+    bmp.writeUInt32LE(40, 14);
+    bmp.writeInt32LE(CONSOLE_WIDTH, 18);
+    bmp.writeInt32LE(-CONSOLE_HEIGHT, 22);
+    bmp.writeUInt16LE(1, 26);
+    bmp.writeUInt16LE(24, 28);
+    bmp.writeUInt32LE(rowBytes * CONSOLE_HEIGHT, 34);
+    for (let pixel = 0; pixel < CONSOLE_WIDTH * CONSOLE_HEIGHT; pixel += 1) {
+      const packed = raw.readUInt16LE(pixel * 2);
+      const target = 54 + pixel * 3;
+      bmp[target] = Math.round((packed & 0x1f) * 255 / 31);
+      bmp[target + 1] = Math.round(((packed >> 5) & 0x3f) * 255 / 63);
+      bmp[target + 2] = Math.round(((packed >> 11) & 0x1f) * 255 / 31);
+    }
+    const sha256 = createHash('sha256').update(bmp).digest('hex');
+    const location = path.join(this.#directory, `${identity}-install-console.bmp`);
+    const temporary = `${location}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, bmp, { mode: 0o600, flag: 'wx' });
+      await rename(temporary, location);
+    } finally {
+      await rm(temporary, { force: true }).catch(() => {});
+    }
+    const captured = this.#now();
+    if (!(captured instanceof Date) || !Number.isFinite(captured.getTime())) throw new Error('construction clock returned an invalid time');
+    return Object.freeze({ available: true, capturedAt: captured.toISOString(), location, bytes: bmp.length, sha256, width: CONSOLE_WIDTH, height: CONSOLE_HEIGHT });
   }
 
   async locate(rawIdentity) {
@@ -504,7 +687,7 @@ export class HyperVImageConstruction {
     if (result.started !== true) throw new Error('construction installer did not start');
     record.phase = 'installing';
     await this.#save(state);
-    return this.status(identity);
+    return this.observeInstall(identity);
   }
 
   async bootInstalled(rawIdentity) {

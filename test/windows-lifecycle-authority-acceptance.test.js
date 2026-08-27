@@ -113,6 +113,7 @@ test('acceptance exercise resumes after an effect committed but its result was l
     operatorFactory: operatorFactoryFor(fixture),
   });
   assert.equal(first.ok, false);
+  assert.deepEqual(first.error.stages, ['create-run']);
   assert.equal(fixture.effects.length, 1);
 
   const second = await handleWindowsLifecycleAuthorityAcceptanceRequest({ request: request('exercise'), authorityDirectory }, {
@@ -159,9 +160,56 @@ test('acceptance cleanup removes only the dedicated fixture and exact lifecycle 
   await assert.rejects(access(path.join(root, 'environment-construction', 'state.json')));
 }));
 
-test('acceptance VHDX adapter observes before repeating a planned New-VHD effect', async () => withTempDirectory(async (root) => {
+test('acceptance exercise exposes the exact bounded recreate stage', async () => {
+  const response = await handleWindowsLifecycleAuthorityAcceptanceRequest({
+    request: request('exercise'),
+    authorityDirectory: 'C:\\ProgramData\\DevBridge\\authority',
+  }, {
+    operatorFactory: async () => ({
+      environmentIdentity: 'environment',
+      lifecycle: { journal: { async current() { return null; } } },
+      fixture: { async observe() { return { state: 'ready', generation: `acceptance-${'a'.repeat(32)}` }; } },
+      operator: {
+        async plan() { throw new Error('raw plan detail'); },
+        async run() { throw new Error('unexpected run'); },
+      },
+    }),
+  });
+  assert.equal(response.ok, false);
+  assert.deepEqual(response.error.stages, ['recreate-plan']);
+  assert.doesNotMatch(JSON.stringify(response), /raw plan detail/u);
+});
+
+test('acceptance cleanup attempts independent stages and returns only bounded failure codes', async () => withTempDirectory(async (authorityDirectory) => {
+  const fixture = new FakeFixture();
+  fixture.clear = async () => {
+    throw Object.assign(new Error('raw fixture detail'), {
+      acceptanceStages: ['generation-inspect', 'vhdx-remove', 'probe-inspect', 'probe-remove'],
+    });
+  };
+  const removed = [];
+  const selected = request('cleanup');
+  const response = await handleWindowsLifecycleAuthorityAcceptanceRequest({ request: selected, authorityDirectory }, {
+    operatorFactory: operatorFactoryFor(fixture),
+    removeState: async (target) => {
+      removed.push(target);
+      throw new Error('raw state detail');
+    },
+  });
+  assert.equal(response.ok, false);
+  assert.deepEqual(response.error.stages, [
+    'generation-inspect', 'vhdx-remove', 'probe-inspect', 'probe-remove',
+    'lifecycle-state-remove', 'construction-state-remove',
+  ]);
+  assert.equal(removed.length, 2);
+  assert.doesNotMatch(JSON.stringify(response), /raw fixture detail|raw state detail/u);
+}));
+
+test('acceptance VHDX adapter observes before replay and retries bounded owned cleanup', async () => withTempDirectory(async (root) => {
   let createCalls = 0;
   let failFirstCreate = true;
+  let failFirstRemoval = true;
+  const removalDelays = [];
   const invoke = async (call) => {
     const script = Buffer.from(call.arguments.at(-1), 'base64').toString('utf16le');
     const input = JSON.parse(call.input);
@@ -176,7 +224,19 @@ test('acceptance VHDX adapter observes before repeating a planned New-VHD effect
     }
     return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"exists":true,"ready":true,"diskIdentity":"disk-1"}\n', stderr: '' };
   };
-  const fixture = new WindowsLifecycleAuthorityAcceptanceFixture({ root, invoke, environment: {} });
+  const fixture = new WindowsLifecycleAuthorityAcceptanceFixture({
+    root,
+    invoke,
+    environment: {},
+    removeFile: async (target) => {
+      if (failFirstRemoval) {
+        failFirstRemoval = false;
+        throw Object.assign(new Error('sharing violation'), { code: 'EBUSY' });
+      }
+      await rm(target, { force: false });
+    },
+    waitForRetry: async (delay) => { removalDelays.push(delay); },
+  });
   await assert.rejects(fixture.ensure({ operationId: 'operation-a' }), /creation failed/u);
   const resumed = await fixture.ensure({ operationId: 'operation-a' });
   assert.equal(resumed.ready, true);
@@ -184,6 +244,8 @@ test('acceptance VHDX adapter observes before repeating a planned New-VHD effect
   const observed = await fixture.observe();
   assert.equal(observed.state, 'ready');
   assert.equal(observed.generation, resumed.implementationGeneration);
+  assert.deepEqual(await fixture.clear(), { cleaned: true });
+  assert.deepEqual(removalDelays, [25]);
 }));
 
 test('ordinary direct acceptance probes require access-denied results for replace and delete', async () => {
@@ -229,9 +291,147 @@ test('parent acceptance verifier always cleans the disposable fixture and expose
       diskPathFor: () => '/derived/fixture.vhdx',
       directMutationDenied: async () => { throw new Error('ordinary write allowed'); },
     }),
-    /ordinary write allowed/u,
+    (error) => {
+      assert.deepEqual(error.acceptanceStages, ['direct-mutation-proof']);
+      assert.doesNotMatch(error.message, /ordinary write allowed/u);
+      return true;
+    },
   );
   assert.deepEqual(calls, ['exercise', 'cleanup']);
+});
+
+test('parent acceptance verifier reports each primary composition stage without raw errors', async () => {
+  await assert.rejects(verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => { throw new Error('raw composition detail'); },
+  }), (error) => {
+    assert.deepEqual(error.acceptanceStages, ['composition']);
+    assert.doesNotMatch(error.message, /raw composition detail/u);
+    return true;
+  });
+
+  await assert.rejects(verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => ({
+      async exercise() { throw new Error('raw exercise detail'); },
+      async cleanup() { return { cleaned: true }; },
+    }),
+    waitForRetry: async () => {},
+  }), (error) => {
+    assert.deepEqual(error.acceptanceStages, ['exercise-request']);
+    assert.doesNotMatch(error.message, /raw exercise detail/u);
+    return true;
+  });
+
+  await assert.rejects(verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => ({
+      async exercise() { return { ready: true, generation: `acceptance-${'e'.repeat(32)}` }; },
+      async cleanup() { return { cleaned: true }; },
+    }),
+    diskPathFor: () => { throw new Error('raw path detail'); },
+  }), (error) => {
+    assert.deepEqual(error.acceptanceStages, ['disk-path']);
+    assert.doesNotMatch(error.message, /raw path detail/u);
+    return true;
+  });
+});
+
+test('parent acceptance verifier preserves primary and cleanup stage evidence together', async () => {
+  let cleanupAttempts = 0;
+  await assert.rejects(verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => ({
+      async exercise() { return { ready: true, generation: `acceptance-${'f'.repeat(32)}` }; },
+      async cleanup() {
+        cleanupAttempts += 1;
+        throw Object.assign(new Error('raw cleanup detail'), { acceptanceStages: ['vhdx-remove', 'construction-state-remove'] });
+      },
+    }),
+    diskPathFor: () => '/derived/fixture.vhdx',
+    directMutationDenied: async () => { throw new Error('raw denial detail'); },
+    waitForRetry: async () => {},
+  }), (error) => {
+    assert.deepEqual(error.acceptanceStages, ['direct-mutation-proof', 'vhdx-remove', 'construction-state-remove']);
+    assert.doesNotMatch(error.message, /raw cleanup detail|raw denial detail/u);
+    return true;
+  });
+  assert.equal(cleanupAttempts, 5);
+});
+
+test('parent acceptance verifier retries only the fixed idempotent cleanup operation', async () => {
+  const calls = [];
+  const delays = [];
+  let cleanupAttempts = 0;
+  const client = {
+    async exercise() { calls.push('exercise'); return { ready: true, generation: `acceptance-${'c'.repeat(32)}` }; },
+    async cleanup() {
+      cleanupAttempts += 1;
+      calls.push(`cleanup:${cleanupAttempts}`);
+      if (cleanupAttempts < 3) throw new Error('transient cleanup failure');
+      return { cleaned: true };
+    },
+  };
+  const result = await verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => client,
+    diskPathFor: ({ generation: selected }) => `/derived/${selected}.vhdx`,
+    directMutationDenied: async () => { calls.push('deny'); },
+    waitForRetry: async (delay) => { delays.push(delay); },
+  });
+  assert.equal(result.ready, true);
+  assert.deepEqual(calls, ['exercise', 'deny', 'cleanup:1', 'cleanup:2', 'cleanup:3']);
+  assert.deepEqual(delays, [100, 250]);
+});
+
+test('parent acceptance verifier retries only transport-level exercise failures', async () => {
+  let exerciseAttempts = 0;
+  const delays = [];
+  const result = await verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => ({
+      async exercise() {
+        exerciseAttempts += 1;
+        if (exerciseAttempts < 3) throw new Error('acceptance transport unavailable');
+        return { ready: true, generation: `acceptance-${'1'.repeat(32)}` };
+      },
+      async cleanup() { return { cleaned: true }; },
+    }),
+    diskPathFor: () => '/derived/fixture.vhdx',
+    directMutationDenied: async () => {},
+    waitForRetry: async (delay) => { delays.push(delay); },
+  });
+  assert.equal(result.ready, true);
+  assert.equal(exerciseAttempts, 3);
+  assert.deepEqual(delays, [100, 250]);
+});
+
+test('parent acceptance verifier does not retry explicit protected exercise failures', async () => {
+  let exerciseAttempts = 0;
+  const failure = Object.assign(new Error('bounded protected failure'), { acceptanceStages: ['recreate-run'] });
+  await assert.rejects(verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => ({
+      async exercise() { exerciseAttempts += 1; throw failure; },
+      async cleanup() { return { cleaned: true }; },
+    }),
+    waitForRetry: async () => { throw new Error('must not wait'); },
+  }), (error) => {
+    assert.deepEqual(error.acceptanceStages, ['recreate-run']);
+    return true;
+  });
+  assert.equal(exerciseAttempts, 1);
+});
+
+test('parent acceptance verifier preserves bounded stages after cleanup retry exhaustion', async () => {
+  let cleanupAttempts = 0;
+  const failure = Object.assign(new Error('bounded cleanup failure'), { acceptanceStages: ['vhdx-remove'] });
+  await assert.rejects(verifyWindowsLifecycleAuthorityAcceptance({ authorityDirectory: 'authority', endpoint: 'acceptance-pipe' }, {
+    clientFactory: () => ({
+      async exercise() { return { ready: true, generation: `acceptance-${'d'.repeat(32)}` }; },
+      async cleanup() { cleanupAttempts += 1; throw failure; },
+    }),
+    diskPathFor: () => '/derived/fixture.vhdx',
+    directMutationDenied: async () => {},
+    waitForRetry: async () => {},
+  }), (error) => {
+    assert.deepEqual(error.acceptanceStages, ['vhdx-remove']);
+    return true;
+  });
+  assert.equal(cleanupAttempts, 5);
 });
 
 test('acceptance client wire contract has only operation identity and no caller-selected subject', async () => {
@@ -251,6 +451,26 @@ test('acceptance client wire contract has only operation identity and no caller-
   assert.equal(value.ready, true);
   assert.deepEqual(Object.keys(captured).sort(), ['operation', 'protocol', 'requestId']);
   assert.equal(captured.operation, 'exercise');
+});
+
+test('acceptance client preserves only fixed server failure stages', async () => {
+  const client = createWindowsLifecycleAuthorityAcceptanceClient({ endpoint: 'pipe' }, {
+    exchangeFactory: () => async (requestValue) => ({
+      protocol: WINDOWS_LIFECYCLE_AUTHORITY_ACCEPTANCE_RESULT_PROTOCOL,
+      requestId: requestValue.requestId,
+      ok: false,
+      error: {
+        code: 'ACCEPTANCE_FAILED',
+        message: 'bounded',
+        stages: ['vhdx-remove', 'construction-state-remove'],
+      },
+    }),
+  });
+  await assert.rejects(client.cleanup(), (error) => {
+    assert.deepEqual(error.acceptanceStages, ['vhdx-remove', 'construction-state-remove']);
+    assert.doesNotMatch(error.message, /path|bounded/u);
+    return true;
+  });
 });
 
 test('acceptance provider is VHDX-only and contains no VM or production construction primitive', async () => {

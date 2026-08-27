@@ -52,7 +52,33 @@ function fixture({ status, runResult } = {}) {
         async run() {
           calls.run += 1;
           if (runResult instanceof Error) throw runResult;
-          return runResult ?? { state: 'waiting', phase: 'running', blocked: false, complete: false, reason: 'unattended installer is still running', preflight: { ready: true } };
+          return runResult ?? {
+            state: 'waiting',
+            phase: 'running',
+            blocked: false,
+            complete: false,
+            reason: 'installer VM is powered on; bounded progress evidence is pending',
+            liveness: {
+              classification: 'observing',
+              elapsedMilliseconds: 120_000,
+              lastProgressAt: '2026-08-23T20:00:00.000Z',
+              noProgressMilliseconds: 120_000,
+              diskAllocatedBytes: 4_194_304,
+              diskGrowthBytes: 0,
+              cpuUsagePercent: 0,
+              providerStatus: 'Operating normally',
+              expectedCompletionAt: '2026-08-23T20:45:00.000Z',
+              hardDeadlineAt: '2026-08-23T22:00:00.000Z',
+              nextObservationAt: '2026-08-23T20:02:00.000Z',
+            },
+            diagnostics: {
+              available: true,
+              location: 'C:\\ProgramData\\DevBridge\\evidence\\install-console.bmp',
+              sha256: 'a'.repeat(64),
+              capturedAt: '2026-08-23T20:00:30.000Z',
+            },
+            preflight: { ready: true },
+          };
         },
       }),
     },
@@ -102,7 +128,12 @@ test('explicit construction crosses the canary run boundary only after an unbloc
   assert.equal(selected.calls.run, 1);
   const handoff = formatSetupHandoff(result);
   assert.match(handoff, /durable frontier/u);
-  assert.match(handoff, /devbridge setup --construct/u);
+  assert.match(handoff, /Installer liveness: observing/u);
+  assert.match(handoff, /Next bounded observation: 2026-08-23T20:02:00.000Z/u);
+  assert.match(handoff, /Hard deadline: 2026-08-23T22:00:00.000Z/u);
+  assert.match(handoff, /Installer console evidence: C:\\ProgramData\\DevBridge\\evidence\\install-console\.bmp/u);
+  assert.match(handoff, /Installer console SHA-256: a{64}/u);
+  assert.match(handoff, /at or after 2026-08-23T20:02:00.000Z/u);
   assert.doesNotMatch(handoff, /not started/u);
 });
 

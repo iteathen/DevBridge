@@ -226,7 +226,7 @@ test('invalid installer patch fails before provider network or access allocation
   }
 });
 
-test('physical canary run returns waiting while unattended installation owns the frontier', async () => {
+test('physical canary run returns a bounded next observation while installation owns the frontier', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-install-'));
   try {
     const data = await fixture(root);
@@ -236,7 +236,7 @@ test('physical canary run returns waiting while unattended installation owns the
         async inspect() { return { ...status('running'), identity: subject }; },
         async advance() { advances += 1; throw new Error('installer frontier must not advance'); },
       },
-      construction: { async status() { return { identity: subject, phase: 'installing', state: 'running', mediaCount: 2 }; } },
+      construction: { async observeInstall() { return { identity: subject, phase: 'installing', state: 'running', mediaCount: 2, liveness: { classification: 'observing', nextObservationAt: '2026-08-26T18:02:00.000Z' } }; } },
       accessProbe: { async inspect() { return { ready: true }; } },
       async access() { throw new Error('access must not be probed during installation'); },
       addressOwner: { async releaseAddress() {} },
@@ -244,7 +244,37 @@ test('physical canary run returns waiting while unattended installation owns the
     const canary = createUbuntuProductionImagePhysicalCanary(data.config, { platform: 'win32', preflight: readyPreflight, payloadFactory: async () => data.payload, runtimeFactory });
     const result = await canary.run();
     assert.equal(result.state, 'waiting');
-    assert.match(result.reason, /installer is still running/u);
+    assert.match(result.reason, /powered on/u);
+    assert.equal(result.liveness.classification, 'observing');
+    assert.equal(advances, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('physical canary blocks a stalled installer without repairing or advancing the VM', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-stalled-'));
+  try {
+    const data = await fixture(root);
+    let advances = 0;
+    const runtimeFactory = async ({ subject }) => ({
+      canary: {
+        async inspect() { return { ...status('running'), identity: subject }; },
+        async advance() { advances += 1; throw new Error('stalled frontier must not advance'); },
+      },
+      construction: {
+        async observeInstall() { return { identity: subject, phase: 'installing', state: 'running', mediaCount: 2, liveness: { classification: 'stalled', nextObservationAt: null } }; },
+        async captureInstallConsole() { return { available: true, location: 'owned-console.bmp', sha256: 'a'.repeat(64), capturedAt: '2026-08-26T21:10:00.000Z' }; },
+      },
+      accessProbe: { async inspect() { throw new Error('access must not be probed during installation'); } },
+      async access() { throw new Error('access must not be resolved during installation'); },
+    });
+    const canary = createUbuntuProductionImagePhysicalCanary(data.config, { platform: 'win32', preflight: readyPreflight, payloadFactory: async () => data.payload, runtimeFactory });
+    const result = await canary.run();
+    assert.equal(result.state, 'blocked');
+    assert.match(result.reason, /stalled.*no automatic VM repair/u);
+    assert.equal(result.liveness.classification, 'stalled');
+    assert.equal(result.diagnostics.location, 'owned-console.bmp');
     assert.equal(advances, 0);
   } finally {
     await rm(root, { recursive: true, force: true });

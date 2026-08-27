@@ -246,7 +246,7 @@ function inspectionCanary(journal) {
   });
 }
 
-function publicResult(subject, canary, { state = null, reason = null, preflight = null, authorityRegistered = null } = {}) {
+function publicResult(subject, canary, { state = null, reason = null, preflight = null, authorityRegistered = null, liveness = null, diagnostics = null } = {}) {
   const selectedState = state ?? (canary?.complete ? 'completed' : canary?.blocked ? 'blocked' : canary?.phase ?? 'unavailable');
   return Object.freeze({
     protocol: STATUS_PROTOCOL,
@@ -257,6 +257,8 @@ function publicResult(subject, canary, { state = null, reason = null, preflight 
     blocked: selectedState === 'blocked',
     reason: reason ?? canary?.reason ?? null,
     image: canary?.image ?? null,
+    liveness,
+    diagnostics,
     authorityRegistered,
     preflight,
   });
@@ -573,9 +575,31 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
         if (current.blocked) return publicResult(subject, current, { state: 'blocked', reason: current.reason, authorityRegistered: true, preflight: before.preflight });
 
         if (current.phase === 'running') {
-          const observed = await runtime.construction.status(subject);
+          const observed = typeof runtime.construction.observeInstall === 'function'
+            ? await runtime.construction.observeInstall(subject)
+            : await runtime.construction.status(subject);
           if (observed.state === 'running' && observed.mediaCount > 0) {
-            return publicResult(subject, current, { state: 'waiting', reason: 'unattended installer is still running', authorityRegistered: true, preflight: before.preflight });
+            const classification = observed.liveness?.classification ?? null;
+            let diagnostics = null;
+            if (['slow', 'stalled', 'overdue'].includes(classification)) {
+              if (typeof runtime.construction.captureInstallConsole !== 'function') {
+                diagnostics = Object.freeze({ available: false, reason: 'Hyper-V console evidence adapter is unavailable' });
+              } else {
+                try { diagnostics = await runtime.construction.captureInstallConsole(subject); }
+                catch (error) { diagnostics = Object.freeze({ available: false, reason: String(error?.message ?? error).slice(0, 512) }); }
+              }
+            }
+            if (classification === 'stalled' || classification === 'overdue') {
+              return publicResult(subject, current, { state: 'blocked', reason: `installer liveness is ${classification}; no automatic VM repair was attempted`, liveness: observed.liveness, diagnostics, authorityRegistered: true, preflight: before.preflight });
+            }
+            const reason = classification === 'progressing'
+              ? 'installer VHDX allocation advanced since the previous bounded observation'
+              : classification === 'slow'
+                ? 'installer exceeded its expected completion window but remains within its hard deadline'
+                : observed.liveness
+                  ? 'installer VM is powered on; bounded progress evidence is pending'
+                  : 'installer VM is powered on, but bounded liveness evidence is unavailable';
+            return publicResult(subject, current, { state: 'waiting', reason, liveness: observed.liveness ?? null, diagnostics, authorityRegistered: true, preflight: before.preflight });
           }
           if (observed.state !== 'off' && !(observed.state === 'running' && observed.mediaCount === 0)) {
             return publicResult(subject, current, { state: 'waiting', reason: `installer lifecycle is not yet reconcilable: ${observed.state}`, authorityRegistered: true, preflight: before.preflight });

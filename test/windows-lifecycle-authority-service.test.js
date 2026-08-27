@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   migrateWindowsLifecycleAuthorityState,
+  probeWindowsLifecycleAuthority,
   reconcileWindowsLifecycleAuthorityService,
   WINDOWS_LIFECYCLE_AUTHORITY_SERVICE_PROTOCOL,
   WINDOWS_LIFECYCLE_AUTHORITY_STATE_PATHS,
@@ -41,6 +42,8 @@ function deps({
   exactService = false,
   probeReady = true,
   refreshResult = Object.freeze({ ready: true, changed: true, recovered: false, blocker: null }),
+  refreshHealthReason = null,
+  refreshHealthGeneration = 'candidate',
   refreshError = null,
   measureError = null,
 } = {}) {
@@ -92,10 +95,21 @@ function deps({
         assert.equal(typeof input.probe, 'function');
         return mechanics;
       },
-      refresh: async ({ candidateGeneration, mechanics: received }) => {
+      refresh: async ({ candidateGeneration, mechanics: received, onDiagnostic }) => {
         calls.push('refresh');
         assert.equal(candidateGeneration.length, 64);
         assert.equal(received, mechanics);
+        if (refreshHealthReason != null) {
+          onDiagnostic({
+            phase: 'refresh-health',
+            state: 'completed',
+            detail: {
+              generation: refreshHealthGeneration === 'candidate' ? candidateGeneration : 'c'.repeat(64),
+              ready: false,
+              reason: refreshHealthReason,
+            },
+          });
+        }
         if (refreshError) throw new Error(refreshError);
         return refreshResult;
       },
@@ -160,6 +174,65 @@ test('candidate health rejection reports the shared exact rollback instead of st
   assert.equal(result.protectedState, 'ready');
   assert.match(result.blocker, /previous generation was restored/u);
   assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'inspect-service', 'create-refresh-mechanics', 'refresh']);
+});
+
+test('Windows lifecycle authority health uses one bounded startup-readiness window', async () => {
+  let attempts = 0;
+  const delays = [];
+  const result = await probeWindowsLifecycleAuthority({ stateDirectory: STATE }, {
+    clientFactory: () => ({
+      async inspect() {
+        attempts += 1;
+        if (attempts < 3) throw new Error('environment lifecycle authority is unavailable');
+        return { protocol: 'devbridge/environment-operator-v1' };
+      },
+    }),
+    waitForRetry: async (delay) => { delays.push(delay); },
+  });
+  assert.equal(result.protocol, 'devbridge/environment-operator-v1');
+  assert.equal(attempts, 3);
+  assert.deepEqual(delays, [100, 250]);
+});
+
+test('Windows lifecycle authority health stops at its bounded readiness deadline', async () => {
+  let attempts = 0;
+  const delays = [];
+  await assert.rejects(probeWindowsLifecycleAuthority({ stateDirectory: STATE }, {
+    clientFactory: () => ({
+      async inspect() {
+        attempts += 1;
+        throw new Error(`unavailable-${attempts}`);
+      },
+    }),
+    waitForRetry: async (delay) => { delays.push(delay); },
+  }), /unavailable-6/u);
+  assert.equal(attempts, 6);
+  assert.deepEqual(delays, [100, 250, 500, 1_000, 2_000]);
+});
+
+test('candidate health rejection preserves the exact bounded candidate failure reason', async () => {
+  const fixture = deps({
+    elevated: true,
+    exactService: false,
+    refreshResult: Object.freeze({ ready: false, changed: true, recovered: true, blocker: 'candidate-health' }),
+    refreshHealthReason: 'Windows lifecycle authority structural protection proof failed: generations-directory:inheritance-enabled',
+  });
+  const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
+  assert.match(result.blocker, /previous generation was restored/u);
+  assert.match(result.blocker, /Candidate health: Windows lifecycle authority structural protection proof failed: generations-directory:inheritance-enabled/u);
+});
+
+test('candidate health rejection does not misattribute another generation health reason', async () => {
+  const fixture = deps({
+    elevated: true,
+    exactService: false,
+    refreshResult: Object.freeze({ ready: false, changed: true, recovered: true, blocker: 'candidate-health' }),
+    refreshHealthReason: 'unrelated recovery generation failed',
+    refreshHealthGeneration: 'other',
+  });
+  const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
+  assert.match(result.blocker, /previous generation was restored/u);
+  assert.doesNotMatch(result.blocker, /unrelated recovery generation/u);
 });
 
 test('shared refresh failure is bounded without leaking local platform detail', async () => {
