@@ -90,3 +90,14 @@ Added direct tests prove ledger publication/reload, local and cross-instance exc
 - `git diff --check`: passed.
 
 Hosted Windows and Ubuntu qualification on the exact pushed implementation commit remains required before #245 closes. No setup, elevation, service, provider, image, environment, VM, guest, or repository-execution effect occurred.
+
+## Accepted evidence
+
+GitHub Actions run `33211055066` passed all four jobs on exact implementation commit `42cd7543db764250dd83cb8222e137159eec1f47`:
+
+- Windows serialized complete suite plus doctor: passed in 2 minutes 11 seconds;
+- Windows preflight, identity audit, and standalone installer regression: passed in 1 minute 16 seconds;
+- Ubuntu complete suite plus doctor: passed in 43 seconds; and
+- Ubuntu preflight, identity audit, and standalone installer regression: passed in 24 seconds.
+
+This accepts issue #245. It does not accept a provider, image, profile environment, guest transport, repository-execution route, or physical C canary. No UAC or protected operation occurred.
