@@ -1,6 +1,6 @@
 # DB-HO021 — issue #328 Hyper-V prefix probe timeout
 
-Status: implemented and locally qualified from exact `cuda-target` baseline `67a4b0607d9e4b359395570e5259cdca9cc1259a` on isolated branch `test/328-hyperv-prefix-probe-timeout`, stacked on the pending issue #326 test correction for combined qualification.
+Status: implemented, qualified through stacked PR #329, and integrated into `cuda-target` with #326 by PR #327 at `2b5a3635a6aa808373b26dd1409e3e7d68fa5279`.
 
 ## Assessment
 
@@ -37,3 +37,9 @@ This slice changes no production Hyper-V/network, provider, VM, repository-execu
 - repository preflight: passed (`syntaxFiles: 43`, `jsonFiles: 2`, `targetedTests: 40`);
 - VM/repository-execution LEGO architecture selection: 21 passed, 0 failed;
 - full combined suite with the pending #326 correction: 1,232 total, 1,221 passed, 11 platform skips, 0 failed, with a normal TAP exit in 54.5 seconds.
+
+## Remote evidence
+
+Stacked PR #329 kept the #328 diff isolated against the pending #326 branch. GitHub Actions run `33128271890` passed Ubuntu smoke in 15 seconds, Ubuntu full test in 32 seconds, Windows smoke in 46 seconds, and Windows full test in 2 minutes 34 seconds. PR #329 then squash-merged only into the #326 topic branch.
+
+The resulting exact combined head `2f7ef584e223fcf71b79c4fdd4cda1a95eaa5c0e` passed final PR #327 run `33128452380`, including Windows full test in 2 minutes 9 seconds. PR #327 then squash-merged the green head into `cuda-target`; the isolated #328 branch was removed.
