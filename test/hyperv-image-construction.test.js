@@ -30,6 +30,8 @@ function fakeHost() {
     guestAddresses: [],
     consoleImageData: null,
     consoleResult: null,
+    bootCompatible: true,
+    bootReason: null,
   };
   return {
     state,
@@ -49,6 +51,8 @@ function fakeHost() {
         state.diskPresent = true;
         state.diskAttached = true;
         state.mediaCount = 2;
+        state.bootCompatible = true;
+        state.bootReason = null;
         body = { ready: true, providerIdentity: state.providerIdentity };
       } else if (script.includes("diskPresent = (Test-Path")) {
         body = {
@@ -63,6 +67,8 @@ function fakeHost() {
           cpuUsagePercent: state.cpuUsagePercent,
           providerStatus: state.providerStatus,
           diskAllocatedBytes: state.diskAllocatedBytes,
+          compatible: state.bootCompatible,
+          reason: state.bootReason,
         };
       } else if (script.includes('GetVirtualSystemThumbnailImage')) {
         if (state.consoleResult) body = state.consoleResult;
@@ -356,6 +362,35 @@ test('Hyper-V image construction refuses request drift and media mutation before
   } finally { await rm(data.directory, { recursive: true, force: true }); }
 });
 
+test('Hyper-V image construction binds and enforces neutral protected boot intent', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  data.request.bootProtection = { integrity: 'required', identity: 'required', trust: 'platform-owner' };
+  try {
+    const construction = constructor(data, host, '8'.repeat(32));
+    await construction.prepare(data.request);
+    const prepare = host.state.calls.find((entry) => entry.script.includes('construction media attachment count is incompatible'));
+    assert.equal(prepare.payload.integrityRequired, true);
+    assert.equal(prepare.payload.identityRequired, true);
+    assert.equal(typeof prepare.payload.trustTemplate, 'string');
+    assert.match(prepare.script, /Get-VMFirmware/u);
+    assert.match(prepare.script, /Get-VMSecurity/u);
+    assert.match(prepare.script, /Set-VMKeyProtector[^\r\n]+-NewLocalKeyProtector/u);
+    assert.match(prepare.script, /Enable-VMTPM/u);
+    assert.ok(prepare.script.indexOf('Enable-VMTPM') < prepare.script.indexOf('-Notes ([string]$data.marker'), 'protection must precede ownership admission');
+    assert.match(host.state.calls.find((entry) => entry.script.includes('diskPresent = (Test-Path')).script, /construction firmware integrity does not match/u);
+
+    await assert.rejects(() => construction.prepare({
+      ...data.request,
+      bootProtection: { integrity: 'required', identity: 'required', trust: 'third-party' },
+    }), /trust is invalid|request changed/u);
+
+    host.state.bootCompatible = false;
+    host.state.bootReason = 'construction protected identity does not match';
+    await assert.rejects(() => construction.status(data.request.identity), /protected identity does not match/u);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
 test('Hyper-V image construction binds an exact system-managed switch and resolves one private guest address', async () => {
   const data = await fixture();
   const host = fakeHost();
@@ -388,6 +423,7 @@ test('Windows Hyper-V construction reconciles only the exact default-adapter New
   const data = await fixture();
   const networkId = 'c08cb7b8-9b3c-408e-8e30-5e16a3aeb444';
   data.request.network = { control: 'system', reference: networkId, proof: networkId };
+  data.request.bootProtection = { integrity: 'required', identity: 'required', trust: 'platform-owner' };
   let prepareRequest;
   const providerIdentity = '11111111-2222-3333-4444-555555555555';
   try {
@@ -398,7 +434,7 @@ test('Windows Hyper-V construction reconciles only the exact default-adapter New
           prepareRequest = request;
           return { exitCode: 0, stdout: JSON.stringify({ ready: true, providerIdentity }), stderr: '', timedOut: false, aborted: false, outputTruncated: false };
         }
-        return { exitCode: 0, stdout: JSON.stringify({ exists: true, owned: true, state: 'off', providerIdentity, diskPresent: true, diskAttached: true, mediaCount: 2 }), stderr: '', timedOut: false, aborted: false, outputTruncated: false };
+        return { exitCode: 0, stdout: JSON.stringify({ exists: true, owned: true, compatible: true, reason: null, state: 'off', providerIdentity, diskPresent: true, diskAttached: true, mediaCount: 2 }), stderr: '', timedOut: false, aborted: false, outputTruncated: false };
       },
     }, '2'.repeat(32));
     await construction.prepare(data.request);
@@ -412,6 +448,9 @@ $script:item = $null
 $script:adapter = $null
 $script:hard = @()
 $script:dvd = @()
+$script:secureBoot = 'Off'
+$script:secureBootTemplate = 'MicrosoftWindows'
+$script:tpmEnabled = $false
 function Get-VMSwitch { [CmdletBinding()] param([guid]$Id, [string]$Name) [pscustomobject]@{ Id = [guid]'${networkId}'; Name = 'Default Switch'; Notes = ''; SwitchType = 'Internal' } }
 function Get-VM {
   [CmdletBinding()] param([string]$Name)
@@ -441,10 +480,21 @@ function Get-VMNetworkAdapter {
 }
 function Set-VM {
   [CmdletBinding()] param([string]$Name, [string]$Notes, [bool]$AutomaticCheckpointsEnabled, $AutomaticStartAction, $AutomaticStopAction, [long]$MemoryStartupBytes)
-  if ($PSBoundParameters.ContainsKey('Notes')) { $script:item.Notes = $Notes }
+  if ($PSBoundParameters.ContainsKey('Notes')) {
+    if ($script:secureBoot -ne 'On' -or -not $script:tpmEnabled) { throw 'ownership preceded protected boot' }
+    $script:item.Notes = $Notes
+  }
 }
 function Set-VMProcessor { [CmdletBinding()] param([string]$VMName, [long]$Count) }
-function Set-VMFirmware { [CmdletBinding()] param([string]$VMName, $EnableSecureBoot, $FirstBootDevice) }
+function Set-VMFirmware {
+  [CmdletBinding()] param([string]$VMName, $EnableSecureBoot, [string]$SecureBootTemplate, $FirstBootDevice)
+  if ($PSBoundParameters.ContainsKey('EnableSecureBoot')) { $script:secureBoot = [string]$EnableSecureBoot }
+  if ($PSBoundParameters.ContainsKey('SecureBootTemplate')) { $script:secureBootTemplate = $SecureBootTemplate }
+}
+function Get-VMFirmware { [CmdletBinding()] param([string]$VMName) [pscustomobject]@{ SecureBoot = $script:secureBoot; SecureBootTemplate = $script:secureBootTemplate } }
+function Get-VMSecurity { [CmdletBinding()] param([string]$VMName) [pscustomobject]@{ TpmEnabled = $script:tpmEnabled } }
+function Set-VMKeyProtector { [CmdletBinding()] param([string]$VMName, [switch]$NewLocalKeyProtector) if (-not $NewLocalKeyProtector) { throw 'local key protector was not requested' } }
+function Enable-VMTPM { [CmdletBinding()] param([string]$VMName) if ([string]$script:item.Notes -ne '') { throw 'TPM mutation followed ownership admission' }; $script:tpmEnabled = $true }
 function Add-VMNetworkAdapter { [CmdletBinding()] param() throw 'the default adapter was not reconciled' }
 function Connect-VMNetworkAdapter {
   [CmdletBinding()] param($VMNetworkAdapter, $VMSwitch)
@@ -463,11 +513,15 @@ function Add-VMDvdDrive {
   $script:dvd += [pscustomobject]@{ Path = $Path; ControllerNumber = $ControllerNumber; ControllerLocation = $ControllerLocation }
 }
 `;
-    const run = (mockScript) => invokeCommand({
-      ...prepareRequest,
-      arguments: [...prepareRequest.arguments.slice(0, -1), Buffer.from(`${mockScript}\n${prepareScript}`, 'utf16le').toString('base64')],
-      timeoutMs: 20_000,
-    });
+    const run = async (mockScript) => {
+      const scriptPath = path.join(data.directory, 'prepare-contract-test.ps1');
+      await writeFile(scriptPath, `${mockScript}\n${prepareScript}`, 'utf8');
+      return invokeCommand({
+        ...prepareRequest,
+        arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+        timeoutMs: 20_000,
+      });
+    };
 
     const exact = await run(mocks());
     assert.equal(exact.exitCode, 0, exact.stderr);

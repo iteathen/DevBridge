@@ -25,7 +25,7 @@ async function observeConstruction(construction, identity) {
   return Object.freeze({ identity, state });
 }
 
-export function createUbuntuProductionImageCanaryComposition({ journal, preparation, construction, qualification, foundation } = {}) {
+export function createProductionImageCanaryComposition({ journal, preparation, construction, qualification, foundation } = {}) {
   const selectedPreparation = requireMethods(preparation, ['prepare'], 'production image preparation');
   const selectedConstruction = requireMethods(
     construction,

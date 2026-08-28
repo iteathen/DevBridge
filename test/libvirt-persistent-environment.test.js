@@ -146,3 +146,29 @@ test('libvirt persistent adapter validates its own settings stud before producin
     assert.equal(fake.calls.length, 0);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('libvirt persistent adapter fails closed before effects when protected boot is not implemented', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-lv-protected-'));
+  const sourceRoot = path.join(root, 'images');
+  const sourcePath = path.join(sourceRoot, 'base.qcow2');
+  const fake = fakeManagement();
+  try {
+    await mkdir(sourceRoot, { recursive: true });
+    await writeFile(sourcePath, 'immutable-base');
+    const adapter = new LibvirtPersistentEnvironment({
+      directory: path.join(root, 'persistent'), sourceRoot,
+      identity: '0123456789abcdef0123456789abcdef', invoke: fake.invoke,
+    });
+    await assert.rejects(() => adapter.provision({
+      identity: 'env-12121212121212121212121212121212',
+      source: { identity: 'img-12121212121212121212121212121212', revision: 'r1', digest: '1'.repeat(64), handle: { location: sourcePath, format: 'qcow2' } },
+      settings: {
+        memoryBytes: 4294967296,
+        processorCount: 2,
+        firmware: 'efi',
+        bootProtection: { integrity: 'required', identity: 'required', trust: 'platform-owner' },
+      },
+    }), /protected boot is unavailable/u);
+    assert.equal(fake.calls.length, 0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

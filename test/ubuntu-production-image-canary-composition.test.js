@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createSubjectPreparationAdapter } from '../src/app/subject-preparation-adapter.js';
-import { createUbuntuProductionImageCanaryComposition } from '../src/runtime/image-builders/ubuntu-production-image-canary-composition.js';
+import { createProductionImageCanaryComposition } from '../src/runtime/image-builders/production-image-canary-composition.js';
 
 const IDENTITY = `subject-${'4'.repeat(32)}`;
 const IMAGE_IDENTITY = `img-${'5'.repeat(32)}`;
@@ -55,7 +55,7 @@ test('production composition maps concrete studs and durable phases only at the 
     },
     async verifyImage(identity) { calls.push(['verifyImage', identity]); return { identity, usable: true, verified: true }; },
   };
-  const canary = createUbuntuProductionImageCanaryComposition({ journal: memoryJournal(), preparation, construction, qualification, foundation });
+  const canary = createProductionImageCanaryComposition({ journal: memoryJournal(), preparation, construction, qualification, foundation });
 
   for (let index = 0; index < 11; index += 1) await canary.advance(request());
 
@@ -85,7 +85,7 @@ test('production composition rejects topology leakage before physical preparatio
   };
   const qualification = { async probe() { return { ready: true }; }, async finalize() { return { finalized: true }; } };
   const foundation = { async publishImage() {}, async verifyImage() {} };
-  const canary = createUbuntuProductionImageCanaryComposition({ journal: memoryJournal(), preparation, construction, qualification, foundation });
+  const canary = createProductionImageCanaryComposition({ journal: memoryJournal(), preparation, construction, qualification, foundation });
   const leaked = { ...request(), work: { subject: IDENTITY, installer: 'forbidden' } };
 
   await canary.advance(leaked);
@@ -107,7 +107,7 @@ test('production composition rejects a concrete construction phase it cannot map
   };
   const qualification = { async probe() { return { ready: true }; }, async finalize() { return { finalized: true }; } };
   const foundation = { async publishImage() {}, async verifyImage() {} };
-  const canary = createUbuntuProductionImageCanaryComposition({ journal: memoryJournal(), preparation, construction, qualification, foundation });
+  const canary = createProductionImageCanaryComposition({ journal: memoryJournal(), preparation, construction, qualification, foundation });
   await canary.advance(request());
   await assert.rejects(() => canary.advance(request()), /phase is unsupported/u);
 });

@@ -146,6 +146,21 @@ Order:
 
 Setup remains discover-first. Repository selection never provisions one VM per repository. Provider/image/profile decisions remain separate from repository/workspace approval.
 
+### Windows critical-path checkpoint
+
+Ubuntu v10 is admitted, but DevBridge is not minimally functional until the real Windows image and dual-guest C route pass. The Windows work now proceeds without another broad infrastructure detour:
+
+1. bind approved local Microsoft media to exact integrity and edition/build metadata;
+2. implement unattended Setup -> Audit Mode -> pinned tool provisioning -> qualification -> sanitation -> Sysprep shutdown;
+3. replace the current Hyper-V Secure-Boot-off assumption with a neutral protected-boot requirement mapped locally to supported Windows 11 Secure Boot/vTPM settings in both construction and persistent environments;
+4. establish fresh per-environment Windows enrollment plus a distinct non-administrative routine execution identity;
+5. admit the generalized VHDX and materialize the persistent Windows profile;
+6. run the exact Windows+Ubuntu C transfer/compile/execute/result proof, then repeat it across normal restart/reuse.
+
+Interactive Windows Setup pages, installer UI, guest UAC prompts, credential prompts, and GUI babysitting are failures, not supported continuations. Construction privilege exists only in documented unattended setup/audit passes. Routine repository work is noninteractive and non-administrative. Exact assessment, Microsoft source research, ownership seams, and the primitive plan are recorded in `docs/testing/DB-HO030-issue-198-windows-construction-assessment.md`.
+
+Checkpoint 2026-08-28: bricks 1–4 and the restartable physical-canary composition are implemented and pass repository preflight/focused tests. The host read-only gate proves Hyper-V protected-boot operations, IMAPI, managed connectivity, memory, and the declared sparse-allocation storage budget without UAC. A supply-chain reassessment replaced the insufficient bootstrapper-only compiler claim: the authority now binds Microsoft's fixed Build Tools `17.14.39` artifact, requires installed build `17.14.37614.0`, explicitly selects compiler/CMake/Windows SDK components, disables installer self-update, and rejects version drift during both preparation and qualification. The exact remaining external input is approved official Windows ISO media; bounded discovery currently finds none. No image, persistent Windows profile, or dual-guest C acceptance is claimed yet. Continue at the media inventory/approval frontier rather than reopening lower-level topology work.
+
 ## Phase 5 — complete permanent-entry and recovery composition
 
 Owners: permanent entry, runner, accepted runtime, recovery control plane, and application manager.

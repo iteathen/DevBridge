@@ -10,7 +10,7 @@ import {
   normalizeUbuntuConstructionAuthority,
   ubuntuConstructionAuthoritySubject,
 } from '../runtime/image-builders/ubuntu-construction-authority.js';
-import { createUbuntuProductionImageCanaryComposition } from '../runtime/image-builders/ubuntu-production-image-canary-composition.js';
+import { createProductionImageCanaryComposition } from '../runtime/image-builders/production-image-canary-composition.js';
 import { createUbuntuProductionImageQualification } from '../runtime/image-builders/ubuntu-production-qualification.js';
 import { createUbuntuProductionSeedFactory } from '../runtime/image-builders/ubuntu-production-seed.js';
 import { createUbuntuReleaseMediaSource } from '../runtime/image-sources/ubuntu-release-media.js';
@@ -467,7 +467,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
   const finalizer = createSshImageFinalization({ invoke, access });
   const qualification = createUbuntuProductionImageQualification({ bridge, finalizer });
   const journal = createCanonicalImageCanaryStateStore(paths.journalFile);
-  const canary = createUbuntuProductionImageCanaryComposition({ journal, preparation, construction, qualification, foundation });
+  const canary = createProductionImageCanaryComposition({ journal, preparation, construction, qualification, foundation });
   return Object.freeze({
     canary,
     construction,
