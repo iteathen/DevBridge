@@ -4,7 +4,7 @@ Date: 2026-08-28
 
 Issue: #367
 
-Status: implemented and locally qualified; hosted qualification pending. No provider, VM, guest transport, setup, service, or elevation effect is authorized by this document.
+Status: accepted. No provider, VM, guest transport, setup, service, or elevation effect is authorized by this document.
 
 ## Assessment
 
@@ -76,4 +76,4 @@ Local evidence on Windows:
 - complete repository suite: 1,667 total, 1,652 passed, 15 expected platform skips, zero failures;
 - `git diff --check`: passed.
 
-Hosted Windows and Ubuntu checks must pass on the exact pushed commit before #367 closes.
+Hosted CI run `33206256810` passed on exact implementation commit `ef370babedae610ad59a09864131326f57fa9d7a`: Windows full + doctor in 2 minutes 59 seconds, Windows smoke/preflight/identity/installer in 1 minute 7 seconds, Ubuntu full + doctor in 40 seconds, and Ubuntu smoke in 19 seconds. This accepts and closes #367.
