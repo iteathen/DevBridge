@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -110,17 +111,31 @@ function canonicalBase64(value, name, maxBytes) {
   return bytes;
 }
 
-function rootDirectory() {
-  const configured = process.env.DEVBRIDGE_GUEST_BRIDGE_ROOT;
-  if (configured) return path.resolve(configured);
-  if (process.platform === 'win32') {
-    const base = process.env.ProgramData || 'C:\\ProgramData';
-    return path.join(base, 'DevBridge', 'bridge');
-  }
-  return '/var/lib/devbridge/bridge';
+function absoluteDirectory(value, name, style, { allowRoot = true } = {}) {
+  const candidate = boundedString(value, name, { maxBytes: 4_096 });
+  if (!style.isAbsolute(candidate)) throw new TypeError(`${name} must be absolute`);
+  const normalized = style.normalize(candidate);
+  if (!allowRoot && normalized === style.parse(normalized).root) throw new TypeError(`${name} must not be a filesystem root`);
+  return normalized;
 }
 
-const ROOT = rootDirectory();
+export function selectStateRoot({ platform = process.platform, homeDirectory, variables = process.env } = {}) {
+  const environment = requireObject(variables, 'state variables');
+  const style = platform === 'win32' ? path.win32 : path.posix;
+  const configured = environment.DEVBRIDGE_GUEST_BRIDGE_ROOT;
+  if (configured) return absoluteDirectory(configured, 'configured state root', style, { allowRoot: false });
+  if (platform === 'win32') {
+    const base = environment.ProgramData || 'C:\\ProgramData';
+    return style.join(absoluteDirectory(base, 'state base', style), 'DevBridge', 'bridge');
+  }
+  const configuredBase = environment.XDG_STATE_HOME;
+  const base = configuredBase
+    ? absoluteDirectory(configuredBase, 'state base', style)
+    : style.join(absoluteDirectory(homeDirectory ?? homedir(), 'home directory', style), '.local', 'state');
+  return style.join(base, 'devbridge', 'bridge');
+}
+
+const ROOT = selectStateRoot();
 const OPERATIONS = path.join(ROOT, '.operations');
 const TRANSFERS = path.join(ROOT, '.transfers');
 
@@ -732,18 +747,22 @@ async function exchangeMain() {
   }
 }
 
-const mode = process.argv[2];
-if (mode === '--run-operation') {
-  const request = process.argv[3];
-  const token = process.argv[4];
-  try {
-    if (typeof token !== 'string' || token.length < 16 || token.length > 128 || token.includes('\0')) throw new TypeError('bridge operation monitor token is invalid');
-    await runOperation(safeRequest(request), token);
+async function commandMain(argv = process.argv) {
+  const mode = argv[2];
+  if (mode === '--run-operation') {
+    const request = argv[3];
+    const token = argv[4];
+    try {
+      if (typeof token !== 'string' || token.length < 16 || token.length > 128 || token.includes('\0')) throw new TypeError('bridge operation monitor token is invalid');
+      await runOperation(safeRequest(request), token);
+    }
+    catch (error) { process.stderr.write(`${String(error?.message ?? error).slice(0, 2_048)}\n`); process.exitCode = 1; }
+  } else if (mode === '--exchange-stdin') {
+    await exchangeMain();
+  } else {
+    process.stderr.write('bridge agent requires --exchange-stdin or --run-operation\n');
+    process.exitCode = 2;
   }
-  catch (error) { process.stderr.write(`${String(error?.message ?? error).slice(0, 2_048)}\n`); process.exitCode = 1; }
-} else if (mode === '--exchange-stdin') {
-  await exchangeMain();
-} else {
-  process.stderr.write('bridge agent requires --exchange-stdin or --run-operation\n');
-  process.exitCode = 2;
 }
+
+if (typeof process.argv[1] === 'string' && path.resolve(process.argv[1]) === path.resolve(SELF)) await commandMain();

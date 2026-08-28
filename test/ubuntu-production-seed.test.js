@@ -157,7 +157,8 @@ test('Ubuntu production seed limits temporary privilege to one self-removing san
   assert.ok(sanitizer);
   assert.match(sanitizer, /rm -f \/home\/devbridge\/\.ssh\/authorized_keys/u);
   assert.match(sanitizer, /rm -f \/etc\/ssh\/ssh_host_\*/u);
-  assert.match(sanitizer, /rm -rf \/var\/lib\/devbridge\/bridge/u);
+  assert.match(sanitizer, /rm -rf \/home\/devbridge\/\.local\/state\/devbridge/u);
+  assert.doesNotMatch(sanitizer, /\/var\/lib\/devbridge\/bridge/u);
   assert.match(sanitizer, /truncate -s 0 \/etc\/machine-id/u);
   assert.match(sanitizer, /rm -f \/etc\/sudoers\.d\/devbridge-image-build/u);
   assert.match(sanitizer, /rm -f \/usr\/local\/libexec\/devbridge\/image-sanitize\.sh/u);

@@ -524,6 +524,41 @@ Primary references:
 - [Canonical cloud-init Ubuntu module ordering](https://github.com/canonical/cloud-init/blob/main/config/cloud.cfg.tmpl)
 - [Canonical cloud-init SSH implementation](https://github.com/canonical/cloud-init/blob/main/cloudinit/config/cc_ssh.py)
 
+### 21. Exact v9 reached guest qualification and exposed a privileged bridge-state default
+
+PR #355 passed all four Ubuntu/Windows smoke and full jobs and was squash-merged into `cuda-target` at exact commit `452565fa931d7a0e04849b3e32a7f6c60e003483`. The documented zero-state bootstrap installed that exact permanent-entry component with moving selector `cuda-target` and no exact runner pin. One explicit public construction entry then derived fresh immutable v9 subject `subject-1a3e4a19173f0f6c75fd0758e287bcaf` with VM `db-image-build-39453ba381121c3d`, provider identity `173d0407-0397-4454-b543-9828cb7bd658`, and VHDX `d9305c9f0f37c8f7c50100a95a9d5bfe72c64ceae95c0af07a73b8bf808d89e5.vhdx`.
+
+The disk advanced from 4 MiB through 5.708 GiB, 8.728 GiB, and 10.037 GiB; installation completed, the installed system booted, and strict host-key verification accepted the exact subject-owned key. This physically accepts the v9 cloud-init repair and reaches the next primitive. Guest qualification then failed closed when the unprivileged access identity tried to initialize the bridge agent's default root: `EACCES: permission denied, mkdir '/var/lib/devbridge'`. No guest command was retried with privilege, no directory or ownership was changed out of band, and no provider, disk, trust, or journal state was manually repaired. The durable construction record remains active at revision 4 in `qualifying`, making the failed effect observable and resumable but not accepted.
+
+Assessment localized the defect to the bridge agent's own Linux default. The host adapter transfers and invokes a bounded payload as the exact unprivileged access identity; it neither knows nor grants a bridge-state path. The bridge agent nonetheless defaults to `/var/lib/devbridge/bridge`, whose absent root-owned parent it cannot create. The seed sanitizer names that same path, but no production initializer owns its creation. Adding `sudo`, broadening the SSH identity, changing `/var/lib` ownership, or teaching the image seed a foreign component directory would leak authority and topology across LEGO boundaries.
+
+The XDG Base Directory specification defines persistent per-user state under `$XDG_STATE_HOME` and defaults it to `$HOME/.local/state`; it also requires configured XDG paths to be absolute. Node's documented `os.homedir()` returns the current user's home on POSIX from `HOME` or the effective-user account record. systemd's tmpfiles mechanism can create system paths at boot, but it would require image composition to know this child module's directory and to coordinate with an account created during target first boot. That mechanism is unnecessary for state the unprivileged module can own and initialize itself.
+
+Reassessment therefore keeps the correction wholly inside local contracts:
+
+1. Give the bridge agent a pure local state-root selector. Preserve its explicit test/operator override and the existing Windows ProgramData default; on non-Windows systems use an absolute `XDG_STATE_HOME` when supplied, otherwise derive `$HOME/.local/state`, then append the module-local state directory.
+2. Reject relative state/home inputs rather than interpreting them against a process working directory. The bridge agent remains the sole creator and owner of its directory; no caller, provider, repository, VM name, foreign object, or seed field is added.
+3. Make module import side-effect-free so root selection can be tested directly while preserving identical direct CLI behavior for the transferred payload.
+4. Update whole-image sanitization to remove the neutral per-user DevBridge state root, not the obsolete privileged path. Do not add migration or compatibility behavior: no accepted image contains bridge state at the old location.
+5. Advance recipe and output generations so the changed payload and sanitizer derive a fresh immutable subject. Prove Linux/XDG/override/Windows root selection, relative-path rejection, import isolation, sanitizer output, generation change, and the existing bridge failure/boundary corpus before full verification and another physical construction.
+
+Implementation follows that ownership plan. The bridge agent now selects its state through one pure local function: an exact absolute override remains available to local tests, Windows retains its ProgramData location, and non-Windows execution uses an absolute XDG state base or the current user's documented home fallback. Relative inputs and filesystem-root overrides fail closed. Importing the module no longer executes the command entry, while direct payload invocation retains the same two fixed modes. The image sanitizer removes `/home/devbridge/.local/state/devbridge` and contains no old bridge-state path. Recipe/output generations advance to `ubuntu-2604-autoinstall-v10` and `ubuntu-2604-production-v5`; the changed six-file payload derives generation `guest-image-e6b08319035fea827966385c`. There is no privileged initializer, caller path field, provider branch, or compatibility migration.
+
+Local verification on the exact candidate passed:
+
+- 58 focused bridge, payload, seed, setup-authority, construction-authority, qualification, physical-canary, and setup-composition tests;
+- repository preflight with 50 syntax files, 2 JSON files, and 50 targeted tests;
+- complete Windows suite: 1,332 passed, 13 platform skips, 0 failed in 53.1 seconds; and
+- `git diff --check` with no whitespace error (only the repository's existing Windows line-ending notices).
+
+Hosted CI, exact accepted installation, and a fresh physical v10 subject remain mandatory before this correction is physically accepted.
+
+Primary references:
+
+- [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/)
+- [Node.js `os.homedir()`](https://nodejs.org/api/os.html#oshomedir)
+- [systemd temporary-files and directories](https://www.freedesktop.org/software/systemd/man/latest/tmpfiles.d.html)
+
 ## Preserved physical evidence
 
 After the latest stopped attempt:
