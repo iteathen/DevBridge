@@ -76,3 +76,7 @@ Local qualification on 2026-08-28:
 No real remote mutation, UAC request, protected operation, setup, service/provider/image/environment/VM/guest action, or repository-code execution occurred. Commit and push the exact checkpoint, then require hosted Windows/Ubuntu qualification before closing #249.
 
 Hosted attempt 1, run `33216113376` on commit `1d452f50c204fb2bc0a51fa742cfea1f2614a848`, passed Windows serialized complete-suite/doctor and both Ubuntu jobs, but Windows smoke timed out at its fixed one-minute job boundary. The failure was introduced by registering five expensive real-Git parent suites in the cheap preflight list; those same suites passed in the complete Windows job. Reassessment keeps the fast direct nested contract in preflight and the real-Git parent/recovery suites in full qualification. The product timeout is unchanged, and coverage is not removed from the complete suite.
+
+## Accepted hosted qualification
+
+GitHub Actions run `33216379948` passed on exact corrected commit `45d75c4f81c24d0e582bb6d57747ac50181a0f0d`: Windows serialized complete suite plus doctor, Windows bounded preflight/identity/standalone-installer regression, Ubuntu complete suite plus doctor, and Ubuntu bounded preflight/identity/standalone-installer regression all completed successfully. Issue #249 may close. No real publication or protected local activity occurred.
