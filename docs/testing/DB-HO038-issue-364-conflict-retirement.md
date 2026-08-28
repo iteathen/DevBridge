@@ -103,3 +103,17 @@ Verification:
 - complete suite: 1,541 total, 1,526 passed, 15 platform-specific skips, and zero failures.
 
 The code checkpoint must be committed/pushed before the exact subject is supplied to the installed selector. Physical switch retirement, owned network reconciliation, declaration publication, environment activation, and guest execution remain unclaimed.
+
+## Physical transaction checkpoint — 2026-08-28
+
+Commit `dc60348d7eee64ff8db7b7003517be5dd315d8fc` is pushed on `stage8/362-protected-activity-channel`. The installed selector persisted the exact switch consent and attempted the one-shot elevation, but Windows reported that elevation was cancelled or refused before the protected child transaction began. No second prompt was launched.
+
+Post-attempt re-observation proves:
+
+- the protected service is still running its previously refreshed generation `c0183b754f638ee205a3c2d8c467a16c39d6ca8acbee87575be3829d50d9f2ae`;
+- no WinNAT translation exists;
+- the exact target switch remains unchanged, internal, and unmarked;
+- no persistent profile VM exists; and
+- consent subject `00dbc6dd7feff1861a435eb45c715739819ce3d1ec75e044bc50919e9d8b67ef` remains durably available for exact re-entry.
+
+The next setup re-entry must reuse that subject only after a future explicit operator-ready UAC window. Until then, protected Linux activation remains fail-closed and no direct Hyper-V mutation or marker adoption is permitted.

@@ -181,6 +181,8 @@ Physical conflict reassessment 2026-08-28: the approved one-shot host elevation 
 
 Partial-switch implementation checkpoint 2026-08-28: the unchanged neutral conflict stud now classifies an exact unmarked target switch only when it is internal, guest-unattached, and has no configured non-link-local IPv4 state. Subject-bound re-observation/removal remains inside the one-shot elevated child. A live read-only probe produced subject `00dbc6dd7feff1861a435eb45c715739819ce3d1ec75e044bc50919e9d8b67ef`; focused 18/18, preflight 99/2/95, and full 1,541-total / 1,526-pass / 15-skip / zero-failure evidence are green. Commit and push before requesting the last available UAC transaction.
 
+Physical switch-consent checkpoint 2026-08-28: `dc60348` is pushed and the exact consent is persisted, but the final announced host elevation was cancelled/refused before the child transaction began. Re-observation proves no partial second effect: the refreshed protected service remains running, no NAT exists, the target switch remains unchanged/unmarked, and no persistent VM exists. Do not request another UAC during the operator's stated three-day unavailable window. Continue no-elevation acceptance/tooling work and later resume with the exact saved subject.
+
 ## Phase 5 — complete permanent-entry and recovery composition
 
 Owners: permanent entry, runner, accepted runtime, recovery control plane, and application manager.
