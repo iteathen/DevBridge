@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import {
   bindLinuxLifecycleAuthorityRuntime,
   createLinuxLifecycleAuthorityPlan,
@@ -13,6 +15,7 @@ import {
   LINUX_LIFECYCLE_AUTHORITY_GENERATION_PROTOCOL,
 } from '../src/setup/linux-lifecycle-authority-generation.js';
 import { LINUX_LOCAL_IDENTITIES_PROTOCOL } from '../src/setup/linux-local-identities.js';
+import { observeLinuxService } from '../src/setup/linux-service-observation.js';
 
 const PACKAGE_DIGEST = 'a'.repeat(64);
 const NODE_DIGEST = 'b'.repeat(64);
@@ -128,6 +131,8 @@ function fixture({ extraServiceGroup = false, serviceType = 'exec' } = {}) {
         `SupplementaryGroups=${selected.service.coordinationGroup} ${selected.service.managementGroup}`,
         `Type=${serviceType}`,
         'UnitFileState=enabled',
+        'NeedDaemonReload=no',
+        'DropInPaths=',
         '',
       ].join('\n'),
       stderr: '',
@@ -168,8 +173,6 @@ async function inspect(values) {
     plan: values.plan,
     identities: values.identities,
     platform: 'linux',
-    invoke: values.invoke,
-    environment: {},
   }, {
     stat: values.stat,
     load: values.load,
@@ -177,6 +180,7 @@ async function inspect(values) {
     readDirectory: async () => [],
     measureRuntime: values.measureRuntime,
     verifyRuntimeAccess: values.verifyRuntimeAccess,
+    observeService: (request) => observeLinuxService(request, { invoke: values.invoke }),
   });
 }
 
@@ -191,6 +195,7 @@ test('Linux authority inspection proves NSS, exact-generation, systemd, process,
   assert.equal(observed.service.unitExact, true);
   assert.equal(observed.service.startBoundary, true);
   assert.equal(observed.service.enabled, true);
+  assert.equal(observed.service.definitionCurrent, true);
   assert.equal(observed.service.identity, true);
   assert.equal(observed.service.groups, true);
   assert.equal(observed.process.identity, true);
@@ -200,7 +205,7 @@ test('Linux authority inspection proves NSS, exact-generation, systemd, process,
   assert.equal(observed.runtime.ready, true);
   assert.equal(values.invocations.length, 1);
   assert.equal(values.invocations[0].executable, '/usr/bin/systemctl');
-  assert.equal(values.invocations[0].arguments[0], 'show');
+  assert.equal(values.invocations[0].arguments.includes('show'), true);
   assert.equal(values.invocations[0].arguments.some((value) => ['start', 'stop', 'restart', 'enable', 'disable'].includes(value)), false);
 });
 
@@ -253,6 +258,8 @@ test('a missing systemd unit is observable but never projected as an installed s
       'SupplementaryGroups=',
       'Type=',
       'UnitFileState=disabled',
+      'NeedDaemonReload=no',
+      'DropInPaths=',
       '',
     ].join('\n'),
     stderr: '',
@@ -293,4 +300,11 @@ test('non-Linux inspection is explicitly unattached and performs no observation'
   });
   assert.equal(observed.applicable, false);
   assert.equal(touched, false);
+});
+
+test('lifecycle inspection delegates system-manager observation without retaining command mechanics', async () => {
+  const source = await readFile(fileURLToPath(new URL('../src/setup/linux-lifecycle-authority-inspection.js', import.meta.url)), 'utf8');
+  for (const forbidden of ['/usr/bin/systemctl', '--property=', 'daemon-reload', "'start'", "'stop'", "'enable'"]) {
+    assert.equal(source.includes(forbidden), false, `lifecycle inspection retained system-manager mechanics through ${forbidden}`);
+  }
 });

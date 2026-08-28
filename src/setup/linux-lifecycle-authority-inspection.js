@@ -1,6 +1,5 @@
 import { lstat, readFile, readlink, readdir } from 'node:fs/promises';
 import process from 'node:process';
-import { invokeCommand } from '../runtime/command-invocation.js';
 import {
   LINUX_LOCAL_IDENTITIES_PROTOCOL,
 } from './linux-local-identities.js';
@@ -18,9 +17,12 @@ import {
   measureProtectedAuthorityRuntimeCandidate,
   verifyProtectedAuthorityRuntimeAccess,
 } from './protected-authority-runtime-candidate.js';
+import {
+  LINUX_SERVICE_OBSERVATION_PROTOCOL,
+  observeLinuxService,
+} from './linux-service-observation.js';
 
 const PROTOCOL = 'devbridge/linux-lifecycle-authority-inspection-v1';
-const SYSTEMCTL = '/usr/bin/systemctl';
 
 function exactKeys(value, allowed, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name} is invalid`);
@@ -122,58 +124,6 @@ async function readBoundedText(file, expectedInfo, load, maximumBytes) {
   return await load(file, 'utf8');
 }
 
-function parseSystemdShow(stdout) {
-  const allowed = new Set(['LoadState', 'ActiveState', 'SubState', 'MainPID', 'FragmentPath', 'User', 'Group', 'SupplementaryGroups', 'Type', 'UnitFileState']);
-  const values = new Map();
-  const lines = String(stdout ?? '').trim().split('\n').filter(Boolean);
-  if (lines.length !== allowed.size) throw new Error('Linux lifecycle authority service observation is incomplete');
-  for (const line of lines) {
-    const index = line.indexOf('=');
-    if (index < 1) throw new Error('Linux lifecycle authority service observation is invalid');
-    const key = line.slice(0, index);
-    const value = line.slice(index + 1);
-    if (!allowed.has(key) || values.has(key) || /[\0\r]/u.test(value)) throw new Error('Linux lifecycle authority service observation is invalid');
-    values.set(key, value);
-  }
-  return Object.freeze({
-    loadState: values.get('LoadState'),
-    activeState: values.get('ActiveState'),
-    subState: values.get('SubState'),
-    mainPid: numeric(values.get('MainPID'), 'Linux lifecycle authority service pid'),
-    fragmentPath: values.get('FragmentPath'),
-    user: values.get('User'),
-    group: values.get('Group'),
-    supplementaryGroups: Object.freeze(values.get('SupplementaryGroups').split(/\s+/u).filter(Boolean)),
-    type: values.get('Type'),
-    unitFileState: values.get('UnitFileState'),
-  });
-}
-
-async function inspectSystemdService(plan, invoke, environment) {
-  let result;
-  try {
-    result = await invoke({
-      executable: SYSTEMCTL,
-      arguments: [
-        'show', plan.service.name, '--no-pager',
-        '--property=LoadState', '--property=ActiveState', '--property=SubState', '--property=MainPID',
-        '--property=FragmentPath', '--property=User', '--property=Group', '--property=SupplementaryGroups', '--property=Type', '--property=UnitFileState',
-      ],
-      input: null,
-      timeoutMs: 15_000,
-      maxOutputBytes: 32 * 1024,
-      environment,
-    });
-  } catch {
-    return Object.freeze({ observable: false, exists: false, reason: 'service manager observation unavailable' });
-  }
-  if (result?.exitCode !== 0 || result?.timedOut === true || result?.aborted === true || result?.outputTruncated === true) {
-    return Object.freeze({ observable: false, exists: false, reason: 'service manager observation failed' });
-  }
-  const observed = parseSystemdShow(result.stdout);
-  return Object.freeze({ observable: true, exists: observed.loadState !== 'not-found', ...observed });
-}
-
 function parseProcessStatus(text) {
   const selected = new Map();
   for (const line of String(text).split('\n')) {
@@ -230,8 +180,6 @@ export async function inspectLinuxLifecycleAuthorityState({
   plan,
   identities,
   platform = process.platform,
-  invoke = invokeCommand,
-  environment = process.env,
 } = {}, {
   stat = lstat,
   load = readFile,
@@ -239,12 +187,13 @@ export async function inspectLinuxLifecycleAuthorityState({
   readDirectory = readdir,
   measureRuntime = measureProtectedAuthorityRuntimeCandidate,
   verifyRuntimeAccess = verifyProtectedAuthorityRuntimeAccess,
+  observeService = observeLinuxService,
 } = {}) {
   if (platform !== 'linux') return Object.freeze({ protocol: PROTOCOL, platform, applicable: false });
   if (!plan || plan.protocol !== LINUX_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL || plan.runtimeEvidence == null || plan.runtime?.generation == null || typeof plan.service?.unit !== 'string') {
     throw new TypeError('Linux lifecycle authority inspection plan is invalid');
   }
-  if (typeof invoke !== 'function' || typeof stat !== 'function' || typeof load !== 'function' || typeof link !== 'function' || typeof readDirectory !== 'function' || typeof measureRuntime !== 'function' || typeof verifyRuntimeAccess !== 'function') {
+  if (typeof stat !== 'function' || typeof load !== 'function' || typeof link !== 'function' || typeof readDirectory !== 'function' || typeof measureRuntime !== 'function' || typeof verifyRuntimeAccess !== 'function' || typeof observeService !== 'function') {
     throw new TypeError('Linux lifecycle authority inspection ports are invalid');
   }
   const identity = identityEvidence(plan, identities);
@@ -286,7 +235,10 @@ export async function inspectLinuxLifecycleAuthorityState({
       await readBoundedJson(plan.runtime.generationManifest, entries.get('generationManifest'), load, 'Linux lifecycle authority generation record'),
       plan,
     );
-  const service = await inspectSystemdService(plan, invoke, environment);
+  const service = await observeService({ unit: plan.service.name, platform: 'linux' });
+  if (!service || service.protocol !== LINUX_SERVICE_OBSERVATION_PROTOCOL || service.applicable !== true) {
+    throw new Error('Linux lifecycle authority service observation is invalid');
+  }
   const processEvidence = await inspectProcess(plan, service, identity, load, link);
   const expectedSupplements = [plan.service.coordinationGroup, plan.service.managementGroup];
   const serviceEvidence = Object.freeze({
@@ -297,6 +249,7 @@ export async function inspectLinuxLifecycleAuthorityState({
     fragment: service.exists === true && service.fragmentPath === plan.service.unitPath,
     startBoundary: service.type === 'exec',
     enabled: service.exists === true && service.unitFileState === 'enabled',
+    definitionCurrent: service.exists === true && service.definitionCurrent === true,
   });
   const filesystem = Object.freeze({
     unit: filePolicy(entries.get('unit'), { uid: rootUid, gid: rootGid, expectedMode: 0o644, kind: 'file' }),

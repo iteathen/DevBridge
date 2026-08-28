@@ -97,6 +97,8 @@ const TARGETED_TESTS = [
   'test/linux-lifecycle-authority-identity-binding.test.js',
   'test/definition-reconciliation.test.js',
   'test/linux-service-manager.test.js',
+  'test/linux-service-observation.test.js',
+  'test/linux-service-definition.test.js',
 ];
 
 function cleanOutput(value) {
