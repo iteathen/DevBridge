@@ -4,7 +4,7 @@ Date: 2026-08-28
 
 Issue: #250
 
-Status: assessed and planned; implementation pending. This document authorizes no setup, elevation, service, provider, image, environment, VM, guest, repository-execution, or publication effect.
+Status: implementation complete locally; hosted qualification pending. This document authorizes no setup, elevation, service, provider, image, environment, VM, guest, repository-execution, or publication effect.
 
 ## Assessment
 
@@ -81,3 +81,26 @@ The parent alone sequences durable phase transitions (`planned` -> `prepared` ->
 ## No-elevation boundary
 
 Through at least 2026-08-31 this work is software-only. It must not invoke Hyper-V, install or activate a service/provider/image/environment, start/stop/create/remove a physical VM, run a guest operation, request UAC, retry elevation, or attempt an elevation bypass. Protected activation and real-provider qualification remain deferred.
+
+## Implementation checkpoint
+
+The three concrete provider parents retain their existing caller-facing exports and methods while composing independent provider-local trees:
+
+- Hyper-V persistent environment: request/identity contract, exact v1 ledger, PowerShell management channel, and VHDX/filesystem lineage owner;
+- libvirt persistent environment: request/identity/domain-definition contract, exact v1 ledger, virsh domain channel, and qemu-img qcow2 overlay-lineage owner; and
+- Hyper-V image construction: request/identity contract, exact v2 ledger, media admission, PowerShell construction channel, status/address observation, install liveness, and console-evidence publication.
+
+Only each parent knows its current child topology. Nested children import no sibling or local implementation. The Hyper-V trees contain no libvirt/QEMU/qcow2/virsh identity, the libvirt tree contains no Hyper-V/PowerShell/VHDX identity, and no child names repository, GitHub, Codex, or remote-agent topology. Higher layers continue to import only the provider parents. Moved code was deleted; no wrapper, legacy route, generic cross-provider helper, or alternate lifecycle authority remains.
+
+The exact embedded Hyper-V environment and image-construction PowerShell programs compare byte-for-byte with their pre-extraction versions. Existing provider identities, markers, durable protocols, record shapes, command payloads, VHDX/qcow2 lineage checks, intent-before-effect order, lifecycle/phase transitions, ambiguous-effect reconciliation, and cleanup checks remain unchanged.
+
+Local qualification on 2026-08-28:
+
+- direct nested-owner plus provider parent and Stage-3 boundary proofs: 30/30 passed;
+- dependent Windows/Ubuntu physical-canary composition and environment-foundation proofs: 36/36 passed;
+- five repeated provider-local normal/failure/recovery/boundary runs: 26/26 passed per iteration;
+- repository preflight: 168 syntax files, 2 JSON files, and 137 targeted test files passed;
+- complete suite: 1,713 total, 1,698 passed, 15 expected platform skips, zero failures;
+- exact provider-command program comparison and `git diff --check`: passed.
+
+No UAC request, elevation attempt/bypass, protected operation, physical provider/VM/image/environment/guest action, repository execution, or real publication occurred. Commit and push the exact checkpoint, then require hosted Windows/Ubuntu qualification before closing #250.
