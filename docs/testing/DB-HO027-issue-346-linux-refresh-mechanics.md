@@ -1,6 +1,6 @@
 # DB-HO027 — issue #346 exact Linux refresh mechanics
 
-Status: implemented and locally qualified from exact `cuda-target` baseline `e0380852f138f50b0e0dd95d7903a5e44a127964` on isolated branch `security/346-linux-refresh-mechanics`; isolated remote CI and integration evidence remain pending.
+Status: implemented, qualified, and integrated from exact `cuda-target` baseline `e0380852f138f50b0e0dd95d7903a5e44a127964` through isolated PR #347. Reviewed head `56692dfc110d472e814bc1d440ad37305c46fe3f` was squash-integrated as `47b88b025fce1dee923406ba6892438fc5646eb8`; both resolve to tree `928c2c709fa9804e1ffb79e9d85cfade004d1d26`.
 
 ## Assessment
 
@@ -92,4 +92,15 @@ All commands ran without elevation, UAC, service-manager mutation, provider muta
 - Full suite: 1,302 total, 1,291 passed, 11 expected platform/host skips, 0 failed.
 - `doctor` against `config/devbridge.example.json`: exited successfully and continued to report repository execution unavailable/fail-closed because no persistent-environment route is configured.
 
-The remaining qualification is the isolated pull-request matrix on Ubuntu and Windows. No hosted result will be treated as physical systemd, libvirt, KVM, or qcow2 evidence.
+## Remote qualification and integration evidence
+
+PR #347 (`security/346-linux-refresh-mechanics` -> `cuda-target`) ran CI workflow `33136443109` against reviewed head `56692dfc110d472e814bc1d440ad37305c46fe3f`:
+
+- Ubuntu smoke passed in 19 seconds.
+- Ubuntu architecture gates, full suite, and doctor passed in 34 seconds.
+- Windows smoke passed in 53 seconds.
+- Windows architecture gates, full suite, and doctor passed in 1 minute 48 seconds.
+
+GitHub reported every required job successful before integration. The pull request was cleanly squash-merged at `47b88b025fce1dee923406ba6892438fc5646eb8`. Exact reviewed/integrated tree equality was re-observed locally as `928c2c709fa9804e1ffb79e9d85cfade004d1d26`; no unreviewed content entered the integration commit.
+
+Hosted qualification proves contract, recovery, and cross-platform compatibility behavior only. It is not physical systemd, libvirt, KVM, or qcow2 evidence.
