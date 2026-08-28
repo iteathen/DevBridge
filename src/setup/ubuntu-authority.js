@@ -122,7 +122,7 @@ export async function createUbuntuSetupAuthority({
     recipe: Object.freeze({
       protocol: 'devbridge/ubuntu-autoinstall-recipe-v1',
       sourceSha256: SOURCE.mediaSha256,
-      generation: 'ubuntu-2604-autoinstall-v9',
+      generation: 'ubuntu-2604-autoinstall-v10',
       patches: Object.freeze([Object.freeze({ id: 'boot-trigger', occurrences: 2, before: BOOT_PATCH.before, after: BOOT_PATCH.after })]),
     }),
     packages: Object.freeze({
@@ -132,7 +132,7 @@ export async function createUbuntuSetupAuthority({
     }),
     payload: Object.freeze({ generation: payload.generation }),
     qualification: Object.freeze({ commands: Object.freeze(['hv_kvp_daemon', 'make']) }),
-    output: Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v4', bootstrap: 'guest-image-v1' }),
+    output: Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v5', bootstrap: 'guest-image-v1' }),
   });
 }
 

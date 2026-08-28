@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { selectStateRoot } from '../src/guest/bridge-agent.mjs';
 
 const agent = fileURLToPath(new URL('../src/guest/bridge-agent.mjs', import.meta.url));
 const protocol = 'devbridge/environment-bridge-v1';
@@ -33,6 +34,56 @@ async function exchange(root, frame, env = {}) {
 }
 
 function frame(request, kind, body = {}) { return { protocol, request, target, kind, body }; }
+
+test('state root selection is local, persistent, absolute, and platform bounded', () => {
+  assert.equal(
+    selectStateRoot({ platform: 'linux', homeDirectory: '/home/local', variables: {} }),
+    '/home/local/.local/state/devbridge/bridge',
+  );
+  assert.equal(
+    selectStateRoot({ platform: 'linux', homeDirectory: '/ignored', variables: { XDG_STATE_HOME: '/state/local' } }),
+    '/state/local/devbridge/bridge',
+  );
+  assert.equal(
+    selectStateRoot({ platform: 'linux', homeDirectory: '/ignored', variables: { DEVBRIDGE_GUEST_BRIDGE_ROOT: '/state/explicit' } }),
+    '/state/explicit',
+  );
+  assert.equal(
+    selectStateRoot({ platform: 'win32', variables: { ProgramData: 'D:\\ProgramData' } }),
+    'D:\\ProgramData\\DevBridge\\bridge',
+  );
+  assert.throws(
+    () => selectStateRoot({ platform: 'linux', homeDirectory: '/home/local', variables: { DEVBRIDGE_GUEST_BRIDGE_ROOT: 'relative' } }),
+    /configured state root must be absolute/u,
+  );
+  assert.throws(
+    () => selectStateRoot({ platform: 'linux', homeDirectory: '/home/local', variables: { DEVBRIDGE_GUEST_BRIDGE_ROOT: '/' } }),
+    /configured state root must not be a filesystem root/u,
+  );
+  assert.throws(
+    () => selectStateRoot({ platform: 'win32', variables: { DEVBRIDGE_GUEST_BRIDGE_ROOT: 'C:\\' } }),
+    /configured state root must not be a filesystem root/u,
+  );
+  assert.throws(
+    () => selectStateRoot({ platform: 'linux', homeDirectory: '/home/local', variables: { XDG_STATE_HOME: 'relative' } }),
+    /state base must be absolute/u,
+  );
+  assert.throws(
+    () => selectStateRoot({ platform: 'linux', homeDirectory: 'relative', variables: {} }),
+    /home directory must be absolute/u,
+  );
+});
+
+test('importing the bridge agent does not run its command entry', () => {
+  const result = spawnSync(process.execPath, [
+    '--input-type=module',
+    '--eval',
+    `await import(${JSON.stringify(pathToFileURL(agent).href)})`,
+  ], { encoding: 'utf8', shell: false, windowsHide: true });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '');
+});
 
 async function observeUntil(root, request, predicate, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
