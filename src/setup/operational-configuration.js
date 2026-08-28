@@ -2,7 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, link, mkdir, open, realpath, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
-import { sameFilesystemIdentity } from '../runtime/local-filesystem-identity.js';
+import {
+  sameFilesystemIdentity,
+  sameObservedFilesystemIdentity,
+} from '../runtime/local-filesystem-identity.js';
 
 export const SETUP_OPERATIONAL_CONFIGURATION_REQUEST_PROTOCOL = 'devbridge/setup-operational-configuration-request-v1';
 export const SETUP_OPERATIONAL_CONFIGURATION_RESULT_PROTOCOL = 'devbridge/setup-operational-configuration-result-v1';
@@ -193,17 +196,19 @@ async function preparePaths(home, platform) {
 async function boundedFile(location, maximum, name, platform) {
   let handle;
   try {
-    const before = await lstat(location);
-    if (!before.isFile() || before.isSymbolicLink() || before.size < 2 || before.size > maximum) throw new Error(`${name} must be one bounded real file`);
+    const maximumSize = BigInt(maximum);
+    const before = await lstat(location, { bigint: true });
+    if (!before.isFile() || before.isSymbolicLink() || before.size < 2n || before.size > maximumSize) throw new Error(`${name} must be one bounded real file`);
     const canonical = await realpath(location);
     if (!(await sameFilesystemIdentity(canonical, location, { platform }))) throw new Error(`${name} uses filesystem indirection`);
     handle = await open(location, 'r');
-    const held = await handle.stat();
-    if (!held.isFile() || held.size < 2 || held.size > maximum) throw new Error(`${name} must be one bounded real file`);
+    const held = await handle.stat({ bigint: true });
+    if (!held.isFile() || held.size < 2n || held.size > maximumSize
+        || !sameObservedFilesystemIdentity(before, held, { platform })) throw new Error(`${name} must be one bounded real file`);
     const bytes = await handle.readFile();
-    const after = await lstat(location);
-    if (!after.isFile() || after.isSymbolicLink() || after.dev !== held.dev || after.ino !== held.ino
-        || after.size !== held.size || bytes.length !== held.size || bytes.length < 2 || bytes.length > maximum
+    const after = await lstat(location, { bigint: true });
+    if (!after.isFile() || after.isSymbolicLink() || !sameObservedFilesystemIdentity(after, held, { platform })
+        || after.size !== held.size || BigInt(bytes.length) !== held.size || bytes.length < 2 || bytes.length > maximum
         || !(await sameFilesystemIdentity(await realpath(location), location, { platform }))) {
       throw new Error(`${name} changed during observation`);
     }

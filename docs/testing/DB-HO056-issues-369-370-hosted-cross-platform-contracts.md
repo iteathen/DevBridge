@@ -18,6 +18,7 @@ No fix in this slice requires or permits UAC, protected-service installation, pr
 
 - Microsoft documents that Windows can store a long filename and an 8.3 short-name alias for the same filesystem entry, and exposes `GetLongPathName` specifically to convert the short form to the long form: <https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getlongpathnamea> and <https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file>.
 - Node documents `fs.realpath()` as canonical path resolution and explicitly notes that canonical pathnames are not necessarily unique. It exposes filesystem-specific `stats.dev` and `stats.ino` identities and `lstat().isSymbolicLink()` for link detection: <https://nodejs.org/api/fs.html>.
+- Node's documented identity fields are filesystem-specific. Exact hosted Windows Server 2025 evidence then showed the important path/handle split: the path observation can report an unavailable device identifier while the open-handle observation reports the volume identifier, although both report the same file identifier. Microsoft's native contract likewise defines identity as the volume plus file identifier and notes that support is filesystem-specific: <https://learn.microsoft.com/en-us/windows/win32/api/fileapi/ns-fileapi-by_handle_file_information>.
 - DB-003 requires path/link substitution to fail closed and forbids an unavailable execution provider from becoming host execution.
 - DB-020 requires doctor to remain read-only and to report provider/environment readiness separately; it never permits a local-provider fallback.
 - DB-009 requires observed state rather than a declaration. An unreachable authority is observed as unavailable, not silently ready.
@@ -30,6 +31,8 @@ No fix in this slice requires or permits UAC, protected-service installation, pr
 Lexical equality after `path.resolve()` is insufficient on Windows because a valid short alias and long path can name the same object. Simply accepting all Windows canonicalization differences would be too broad because links and substituted ancestors must still fail closed.
 
 The setup owner should keep the input spelling as its managed target, reject a symbolic-link final entry, and compare the input and canonical observations by filesystem identity only for the Windows alias case. The existing held-file identity and before/after checks remain authoritative during reads. Non-Windows lexical canonical-path equality remains unchanged. The media source already returns its canonical path correctly; only its tests should assert that explicit contract.
+
+The first hosted correction proved the alias comparison itself, then exposed a second independent Windows representation mismatch in the held-file check: `lstat(path).dev` can be unavailable while `FileHandle.stat().dev` is populated. Comparing those device fields unconditionally rejects an unchanged file. The revised neutral observation contract requires one exact, nonzero file identifier; requires equal device identifiers whenever both observations provide them; permits a missing device identifier only on Windows; rejects different Windows roots before alias comparison; uses bigint observations to avoid 64-bit identifier precision loss; and binds both the before and after path observations to the held handle. This preserves substitution detection without pretending an unavailable field is evidence of a change.
 
 ### Doctor observation
 
@@ -61,6 +64,7 @@ This does not add a provider fallback, local operator construction, mutation, re
 The implementation now contains two isolated corrections:
 
 - `local-filesystem-identity` owns one neutral comparison contract. Non-Windows spelling rules remain exact. A Windows spelling difference is accepted only when every observed component is non-symbolic and both final observations have the same nonzero filesystem identity. The operational-configuration owner consumes this stud without acquiring Windows media, provider, guest, or setup-topology knowledge.
+- The same owner now compares path and held-handle observations through the neutral identity contract. Both before/open and after/open pairs must retain one exact nonzero file identifier. Device identity remains strict when observable; Windows alone may omit it on one side. All identity fields are read as bigint, and alias equivalence cannot cross a volume root.
 - The lifecycle client preserves only the fixed `LIFECYCLE_AUTHORITY_UNAVAILABLE` classification when its exchange cannot produce a response; it still removes raw transport detail. Doctor maps only that class to a fixed unavailable diagnostic. Other authority failures and malformed observations still propagate, and the CLI continues to compose only the protected client.
 - Windows media tests now compare the canonical path already owned and returned by the source boundary rather than the caller's lexical spelling.
 
@@ -73,4 +77,10 @@ Local verification on the exact working tree:
 - installed CLI `doctor` against the example configuration exits successfully and reports repository execution unavailable/fail-closed; the local protected read endpoint was present, so PR #368 hosted Ubuntu remains the required absent-authority CLI proof;
 - `git diff --check` passes.
 
-No UAC prompt, protected-service write, provider/image/environment/VM operation, guest command, or repository-code host execution occurred. Hosted Windows and Ubuntu acceptance remains pending after the exact commit is pushed.
+Selective requalification after the hosted Windows device-observation finding:
+
+- focused filesystem/setup suite, serialized: 12 total, 11 passed, zero failed, one expected Windows symlink-permission skip;
+- candidate preflight: 125 syntax files, two JSON files, and 123 targeted test files passed;
+- complete default suite: 1,659 total, 1,644 passed, zero failed, 15 expected platform skips.
+
+No UAC prompt, protected-service write, provider/image/environment/VM operation, guest command, or repository-code host execution occurred. Hosted run `33203516517` on exact commit `7216ee4a04d201002c97be9c88d38f9d70df4edb` passed Ubuntu smoke, the complete Ubuntu suite, and the no-authority doctor smoke. Its Windows preflight deterministically exposed the path/handle device-field mismatch above; hosted Windows acceptance remains pending after the revised exact commit is pushed.

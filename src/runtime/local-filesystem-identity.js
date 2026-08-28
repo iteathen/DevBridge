@@ -11,6 +11,21 @@ function sameSpelling(left, right, platform) {
   return platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
+function isUnknown(value) {
+  return value === 0 || value === 0n;
+}
+
+export function sameObservedFilesystemIdentity(left, right, { platform = process.platform } = {}) {
+  if (!left || !right || !['number', 'bigint'].includes(typeof left.dev)
+      || typeof left.dev !== typeof right.dev || !['number', 'bigint'].includes(typeof left.ino)
+      || typeof left.ino !== typeof right.ino) {
+    throw new TypeError('filesystem observations are invalid');
+  }
+  if (isUnknown(left.ino) || left.ino !== right.ino) return false;
+  if (isUnknown(left.dev) || isUnknown(right.dev)) return platform === 'win32';
+  return left.dev === right.dev;
+}
+
 async function containsSymbolicEntry(location, selectedPath, inspect) {
   const root = selectedPath.parse(location).root;
   let current = root;
@@ -33,6 +48,7 @@ export async function sameFilesystemIdentity(left, right, {
   const b = selectedPath.resolve(right);
   const lexicalMatch = sameSpelling(a, b, platform);
   if (platform !== 'win32' && !lexicalMatch) return false;
+  if (!sameSpelling(selectedPath.parse(a).root, selectedPath.parse(b).root, platform)) return false;
   if (await containsSymbolicEntry(a, selectedPath, inspect)
       || (!lexicalMatch && await containsSymbolicEntry(b, selectedPath, inspect))) return false;
   if (lexicalMatch) return true;
@@ -40,8 +56,5 @@ export async function sameFilesystemIdentity(left, right, {
     inspect(a, { bigint: true }),
     inspect(b, { bigint: true }),
   ]);
-  return leftIdentity.dev === rightIdentity.dev
-    && leftIdentity.ino !== 0
-    && leftIdentity.ino !== 0n
-    && leftIdentity.ino === rightIdentity.ino;
+  return sameObservedFilesystemIdentity(leftIdentity, rightIdentity, { platform });
 }

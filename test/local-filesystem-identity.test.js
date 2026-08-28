@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sameFilesystemIdentity } from '../src/runtime/local-filesystem-identity.js';
+import {
+  sameFilesystemIdentity,
+  sameObservedFilesystemIdentity,
+} from '../src/runtime/local-filesystem-identity.js';
 
-function identity({ symbolic = false, inode = 42n } = {}) {
+function identity({ device = 7n, symbolic = false, inode = 42n } = {}) {
   return Object.freeze({
-    dev: 7n,
+    dev: device,
     ino: inode,
     isSymbolicLink: () => symbolic,
   });
@@ -55,5 +58,23 @@ test('unknown Windows inode identity and non-Windows spelling changes fail close
     inspect: async () => { inspected = true; return identity(); },
   });
   assert.equal(posix, false);
+  assert.equal(inspected, false);
+});
+
+test('observed identity accepts a missing Windows path device only with one exact nonzero file identity', () => {
+  assert.equal(sameObservedFilesystemIdentity(identity({ device: 0n }), identity({ device: 7n }), { platform: 'win32' }), true);
+  assert.equal(sameObservedFilesystemIdentity(identity({ device: 7n }), identity({ device: 8n }), { platform: 'win32' }), false);
+  assert.equal(sameObservedFilesystemIdentity(identity({ device: 0n }), identity({ device: 7n }), { platform: 'linux' }), false);
+  assert.equal(sameObservedFilesystemIdentity(identity({ device: 0n, inode: 0n }), identity({ device: 7n, inode: 0n }), { platform: 'win32' }), false);
+  assert.equal(sameObservedFilesystemIdentity(identity({ device: 0n, inode: 41n }), identity({ device: 7n }), { platform: 'win32' }), false);
+});
+
+test('Windows spelling equivalence never crosses volume roots', async () => {
+  let inspected = false;
+  const result = await sameFilesystemIdentity('C:\\SHORT\\value', 'D:\\Long Name\\value', {
+    platform: 'win32',
+    inspect: async () => { inspected = true; return identity({ device: 0n }); },
+  });
+  assert.equal(result, false);
   assert.equal(inspected, false);
 });
