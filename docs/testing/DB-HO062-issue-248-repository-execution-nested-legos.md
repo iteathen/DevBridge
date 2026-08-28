@@ -71,3 +71,7 @@ Local qualification on 2026-08-28:
 - topology scan and `git diff --check`: passed.
 
 No UAC request, protected operation, setup, service/provider/image/environment/VM/guest action, or repository-code execution occurred. Commit and push the exact checkpoint, then require hosted Windows/Ubuntu qualification before closing #248.
+
+## Accepted hosted qualification
+
+GitHub Actions run `33214619626` passed on exact implementation commit `b68078dfcae35526e143c2e8ce0146c08568fd41`: Windows serialized complete suite plus doctor, Windows preflight/identity/standalone-installer regression, Ubuntu complete suite plus doctor, and Ubuntu preflight/identity/standalone-installer regression all completed successfully. Issue #248 may close. The protected activation and physical dual-guest C canary remain separate later acceptance work and were not implied by this structural qualification.
