@@ -106,6 +106,20 @@ Selection is configuration intent only. It does not install or enable a provider
 
 The selection transaction is revisioned and restartable through the host-owned setup-authority record. Its application adapter resumes only its own interrupted operation and refuses to absorb an interrupted transaction owned by another setup component.
 
+### Windows image-distribution selection
+
+Windows setup also requires an explicit prepared-image distribution policy after exact image construction and before declaration publication or protected environment activation. The currently implemented source-neutral choice is:
+
+```text
+devbridge setup --windows-distribution local-reconstruction
+```
+
+`local-reconstruction` keeps prepared image bytes local and creates no repository, Release, asset, URL, or upload authority. It preserves the approved source-media/construction owner as the recovery route; the distribution policy does not copy media or recipe identity into its own state. It also does not claim byte-deterministic reconstruction. Only an exact canonical size/SHA-256 reproduction may satisfy the existing image subject. Different qualified bytes are a new immutable generation and require explicit declaration rebind before use.
+
+Omitting the option preserves an accepted policy. Without one, Windows media discovery and image construction remain available, and independent Linux construction remains available, but a completed Windows image stops before resource-conflict mutation, environment declaration, protected activation, or operational enablement. The profile-neutral policy record is immutable and digest-addressed; setup authority retains only its opaque subject. Unknown transfer/storage modes and widened policy state fail closed.
+
+Remote-artifact distribution is not an alias for this choice and is not yet implemented. It requires separate authenticated owner/repository discovery, explicit Windows distribution-rights confirmation, explicit repository/Release approval, durable mutation reconciliation, exact #178 publication, pinned numeric Release/asset/digest identity, reacquisition, provider validation, and boot qualification. No upload may occur merely because a private repository exists.
+
 ### Windows activation-policy selection
 
 Windows setup requires a separate explicit local activation policy before a completed Windows image may proceed into protected environment activation. The currently implemented non-secret choice is:

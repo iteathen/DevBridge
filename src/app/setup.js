@@ -10,6 +10,7 @@ import { readLocalIdentity } from '../runtime/local-identity.js';
 import { createUbuntuProductionImagePhysicalCanary, UBUNTU_PRODUCTION_IMAGE_PHYSICAL_CANARY_CONFIG_PROTOCOL } from './ubuntu-production-image-physical-canary.js';
 import { reconcileSetupEnvironmentActivation } from './setup-environment-activation.js';
 import { createSetupEnvironmentProfileConfiguration } from './setup-environment-profile-configuration.js';
+import { reconcileSetupImageDistributionPolicy } from './setup-image-distribution-policy.js';
 import { reconcileSetupProfileSelection } from './setup-profile-selection.js';
 import { reconcileSetupWindowsActivationPolicy } from './setup-windows-activation-policy.js';
 import { executionWorkspaceIdentity } from './execution-profile-routing.js';
@@ -148,6 +149,43 @@ function publicWindowsActivationPolicy(value) {
     mode: value.mode,
     activationRequired: value.activationRequired,
     blocker: value.blocker,
+  });
+}
+
+function publicImageDistributionPolicy(value) {
+  if (!value) return null;
+  return Object.freeze({
+    state: value.state,
+    ready: value.ready,
+    changed: value.changed,
+    mode: value.mode,
+    blocker: value.blocker,
+  });
+}
+
+function normalizeImageDistributionPolicyStatus(raw) {
+  const allowed = new Set(['protocol', 'state', 'ready', 'changed', 'mode', 'blocker']);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('image distribution policy status must be an object');
+  for (const key of Object.keys(raw)) if (!allowed.has(key)) throw new TypeError(`image distribution policy status.${key} is not allowed`);
+  if (raw.protocol !== 'devbridge/setup-image-distribution-policy-status-v1'
+      || !['selection-required', 'accepted', 'blocked'].includes(raw.state)
+      || typeof raw.ready !== 'boolean'
+      || typeof raw.changed !== 'boolean'
+      || (raw.blocker != null && (typeof raw.blocker !== 'string' || raw.blocker.length < 1 || raw.blocker.length > 1024))) {
+    throw new TypeError('image distribution policy status is invalid');
+  }
+  if (raw.state === 'accepted') {
+    if (!raw.ready || raw.mode !== 'local-reconstruction' || raw.blocker !== null) throw new TypeError('accepted image distribution policy status is inconsistent');
+  } else if (raw.ready || raw.mode !== null || typeof raw.blocker !== 'string' || raw.changed) {
+    throw new TypeError('unready image distribution policy status is inconsistent');
+  }
+  return Object.freeze({
+    protocol: raw.protocol,
+    state: raw.state,
+    ready: raw.ready,
+    changed: raw.changed,
+    mode: raw.mode,
+    blocker: raw.blocker,
   });
 }
 
@@ -298,7 +336,7 @@ async function createSetupResourceConflict({ stateDirectory, platform, invoke })
   return createWindowsSetupResourceConflict({ identity, platform, invoke });
 }
 
-function setupResult({ home, pathStatus, repositories = null, identity = null, profileSelection = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, operationalConfiguration = null, windowsMedia = null, windowsConstruction = null, windowsActivationPolicy = null, blocker = null, constructionRequested = false, constructionAttempted = false, constructionProfile = null }) {
+function setupResult({ home, pathStatus, repositories = null, identity = null, profileSelection = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, operationalConfiguration = null, windowsMedia = null, windowsConstruction = null, windowsDistributionPolicy = null, windowsActivationPolicy = null, blocker = null, constructionRequested = false, constructionAttempted = false, constructionProfile = null }) {
   const readyForConstruction = constructionAttempted !== true && physical?.blocked === false && physical?.complete !== true;
   const linuxRequested = profileSelection?.profiles.includes(LINUX_PROFILE) === true;
   const windowsRequested = profileSelection?.profiles.includes(WINDOWS_PROFILE) === true;
@@ -335,6 +373,7 @@ function setupResult({ home, pathStatus, repositories = null, identity = null, p
       profile: WINDOWS_PROFILE,
       media: windowsMedia,
       construction: windowsConstruction,
+      distributionPolicy: publicImageDistributionPolicy(windowsDistributionPolicy),
       activationPolicy: publicWindowsActivationPolicy(windowsActivationPolicy),
     }) : null,
   });
@@ -383,6 +422,20 @@ function appendConstructionDiagnostics(lines, physical) {
 }
 
 function appendWindowsMedia(lines, windowsProfile, { constructionActive = false } = {}) {
+  const distribution = windowsProfile?.distributionPolicy;
+  if (distribution) {
+    lines.push('', 'Windows image distribution policy:');
+    if (distribution.state === 'accepted' && distribution.mode === 'local-reconstruction') {
+      lines.push('Local reconstruction (prepared image bytes remain local)');
+    } else if (distribution.state === 'selection-required') {
+      lines.push(
+        'Selection required before protected Windows environment activation.',
+        'Keep prepared bytes local: devbridge setup --windows-distribution local-reconstruction',
+      );
+    } else if (distribution.state === 'blocked') {
+      lines.push(`Blocked: ${distribution.blocker ?? 'local distribution-policy reconciliation failed'}`);
+    }
+  }
   const policy = windowsProfile?.activationPolicy;
   if (policy) {
     lines.push('', 'Windows activation policy:');
@@ -576,6 +629,7 @@ export async function runDevBridgeSetup({
   discoverWindowsMedia = false,
   windowsMediaLocation = null,
   windowsMediaApproval = null,
+  windowsDistribution = null,
   windowsActivation = null,
   env = process.env,
 } = {}, {
@@ -604,6 +658,7 @@ export async function runDevBridgeSetup({
   authorityFactory = createUbuntuSetupAuthority,
   canaryFactory = createUbuntuProductionImagePhysicalCanary,
   profileSelectionReconciler = reconcileSetupProfileSelection,
+  imageDistributionPolicyReconciler = reconcileSetupImageDistributionPolicy,
   windowsActivationPolicyReconciler = reconcileSetupWindowsActivationPolicy,
   windowsMediaReconciler = reconcileWindowsInstallMediaSetup,
   windowsConstructionReconciler = reconcileWindowsProductionImageSetup,
@@ -624,9 +679,10 @@ export async function runDevBridgeSetup({
   let profileSelection = null;
   let windowsMedia = null;
   let windowsConstruction = null;
+  let windowsDistributionPolicy = null;
   let windowsActivationPolicy = null;
   let constructionProfile = null;
-  const publicResult = (value) => setupResult({ ...value, profileSelection, windowsMedia, windowsConstruction, windowsActivationPolicy, constructionProfile });
+  const publicResult = (value) => setupResult({ ...value, profileSelection, windowsMedia, windowsConstruction, windowsDistributionPolicy, windowsActivationPolicy, constructionProfile });
   const reconcileWindowsConstruction = async (action) => {
     try {
       return await windowsConstructionReconciler({ home: root, stateDirectory, platform, invoke, action });
@@ -655,11 +711,30 @@ export async function runDevBridgeSetup({
   if (construct && (profileSelection.state !== 'accepted' || profileSelection.profiles.length === 0)) {
     return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: 'Physical image construction requires at least one accepted execution profile' });
   }
-  if ((windowsMediaLocation != null || windowsMediaApproval != null || windowsActivation != null) && !windowsRequested) {
+  if ((windowsMediaLocation != null || windowsMediaApproval != null || windowsDistribution != null || windowsActivation != null) && !windowsRequested) {
     return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: 'Windows setup options require the selected Windows execution profile' });
   }
 
   if (windowsRequested) {
+    try {
+      windowsDistributionPolicy = normalizeImageDistributionPolicyStatus(await imageDistributionPolicyReconciler({
+        stateDirectory,
+        profile: WINDOWS_PROFILE,
+        choice: windowsDistribution,
+      }));
+    } catch {
+      windowsDistributionPolicy = Object.freeze({
+        protocol: 'devbridge/setup-image-distribution-policy-status-v1',
+        state: 'blocked',
+        ready: false,
+        changed: false,
+        mode: null,
+        blocker: 'Image distribution-policy reconciliation failed; inspect local setup evidence and retry',
+      });
+    }
+    if (windowsDistribution != null && windowsDistributionPolicy?.ready !== true) {
+      return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: windowsDistributionPolicy.blocker });
+    }
     try {
       windowsActivationPolicy = normalizeWindowsActivationPolicyStatus(await windowsActivationPolicyReconciler({
         stateDirectory,
@@ -928,6 +1003,20 @@ export async function runDevBridgeSetup({
         constructionRequested: construct,
         constructionAttempted,
         blocker,
+      });
+    }
+    if (windowsDistributionPolicy?.ready !== true) {
+      return publicResult({
+        home: root,
+        pathStatus,
+        identity: scope.identity,
+        repositories,
+        snapshot,
+        prerequisites,
+        physical,
+        constructionRequested: construct,
+        constructionAttempted,
+        blocker: windowsDistributionPolicy?.blocker ?? 'Image distribution policy requires an explicit local selection',
       });
     }
     if (windowsActivationPolicy?.ready !== true) {

@@ -64,6 +64,18 @@ function windowsActivationPolicy(state = 'accepted', overrides = {}) {
   };
 }
 
+function imageDistributionPolicy(state = 'accepted', overrides = {}) {
+  return {
+    protocol: 'devbridge/setup-image-distribution-policy-status-v1',
+    state,
+    ready: state === 'accepted',
+    changed: false,
+    mode: state === 'accepted' ? 'local-reconstruction' : null,
+    blocker: state === 'accepted' ? null : 'Image distribution policy requires an explicit local selection',
+    ...overrides,
+  };
+}
+
 function memoryStore(initial = null) {
   let value = initial;
   return {
@@ -90,13 +102,14 @@ function dependencies({
   profileSelection = null,
   windowsMedia = null,
   windowsConstruction = null,
+  windowsDistribution = null,
   windowsActivation = null,
   windowsAdvance = null,
   physicalAdvance = null,
 } = {}) {
   const store = memoryStore(initialState);
   let conflictConsent = acceptedConflict;
-  const calls = { profileSelection: 0, profileSelectionRequest: null, windowsActivation: 0, windowsActivationRequest: null, windowsMedia: 0, windowsMediaRequest: null, windowsConstruction: 0, windowsConstructionActions: [], prerequisite: 0, profileConfiguration: 0, profileSourceCount: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, environmentActivationProfiles: [], operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
+  const calls = { profileSelection: 0, profileSelectionRequest: null, windowsDistribution: 0, windowsDistributionRequest: null, windowsActivation: 0, windowsActivationRequest: null, windowsMedia: 0, windowsMediaRequest: null, windowsConstruction: 0, windowsConstructionActions: [], prerequisite: 0, profileConfiguration: 0, profileSourceCount: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, environmentActivationProfiles: [], operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
   const discoveredRepositories = repositories ?? Array.from({ length: count }, (_, index) => repository(index));
   const configuredProfiles = activationProfiles ?? profileSelection?.profiles ?? ['linux-development'];
   return {
@@ -118,6 +131,11 @@ function dependencies({
           pendingProfiles: null,
           source: 'accepted',
         });
+      },
+      imageDistributionPolicyReconciler: async (value) => {
+        calls.windowsDistribution += 1;
+        calls.windowsDistributionRequest = structuredClone(value);
+        return structuredClone(windowsDistribution ?? imageDistributionPolicy());
       },
       windowsActivationPolicyReconciler: async (value) => {
         calls.windowsActivation += 1;
@@ -375,7 +393,82 @@ test('Windows-only selection reaches protected activation after exact image comp
   assert.equal(fixture.calls.lifecycleAuthority, 1);
   assert.equal(fixture.calls.operationalConfiguration, 1);
   assert.match(formatSetupHandoff(result), /1 selected environment\(s\) verified/u);
+  assert.match(formatSetupHandoff(result), /Local reconstruction \(prepared image bytes remain local\)/u);
   assert.match(formatSetupHandoff(result), /Configure later \(Windows activation remains required\)/u);
+});
+
+test('completed Windows image stops before protected effects until distribution policy is selected', async () => {
+  const fixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 2, changed: false,
+      profiles: ['windows-development'], pendingProfiles: null, source: 'accepted',
+    },
+    windowsMedia: acceptedWindowsMedia(),
+    windowsConstruction: windowsPhysical('complete', { complete: true }),
+    windowsDistribution: imageDistributionPolicy('selection-required'),
+  });
+  const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-windows-distribution-gate') }, fixture.deps);
+  assert.equal(result.blocked, true);
+  assert.match(result.blocker, /requires an explicit local selection/u);
+  assert.deepEqual(result.windowsProfile.distributionPolicy, {
+    state: 'selection-required',
+    ready: false,
+    changed: false,
+    mode: null,
+    blocker: 'Image distribution policy requires an explicit local selection',
+  });
+  assert.equal(fixture.calls.resourceConflict, 0);
+  assert.equal(fixture.calls.profileConfiguration, 0);
+  assert.equal(fixture.calls.lifecycleAuthority, 0);
+  assert.equal(fixture.calls.environmentActivation, 0);
+  assert.equal(fixture.calls.operationalConfiguration, 0);
+  assert.match(formatSetupHandoff(result), /--windows-distribution local-reconstruction/u);
+});
+
+test('explicit local reconstruction selection reaches the existing path without upload claims', async () => {
+  const fixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 2, changed: false,
+      profiles: ['windows-development'], pendingProfiles: null, source: 'accepted',
+    },
+    windowsMedia: acceptedWindowsMedia(),
+    windowsConstruction: windowsPhysical('complete', { complete: true }),
+    windowsDistribution: imageDistributionPolicy('accepted', { changed: true }),
+  });
+  const result = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-windows-distribution-local'),
+    windowsDistribution: 'local-reconstruction',
+  }, fixture.deps);
+  assert.equal(result.blocked, false);
+  assert.equal(result.phase, 'operational-ready');
+  assert.equal(fixture.calls.windowsDistribution, 1);
+  assert.equal(fixture.calls.windowsDistributionRequest.profile, 'windows-development');
+  assert.equal(fixture.calls.windowsDistributionRequest.choice, 'local-reconstruction');
+  assert.equal(result.windowsProfile.distributionPolicy.mode, 'local-reconstruction');
+  assert.equal(Object.hasOwn(result.windowsProfile.distributionPolicy, 'subject'), false);
+});
+
+test('widened distribution-policy status fails closed before activation, media, or protected effects', async () => {
+  const fixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 2, changed: false,
+      profiles: ['windows-development'], pendingProfiles: null, source: 'accepted',
+    },
+    windowsDistribution: imageDistributionPolicy('accepted', {
+      subject: `subject-${'e'.repeat(32)}`,
+      repository: 'must-not-project',
+    }),
+  });
+  const result = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-windows-distribution-widened'),
+    windowsDistribution: 'local-reconstruction',
+  }, fixture.deps);
+  assert.equal(result.blocked, true);
+  assert.match(result.blocker, /reconciliation failed/u);
+  assert.equal(fixture.calls.windowsActivation, 0);
+  assert.equal(fixture.calls.windowsMedia, 0);
+  assert.equal(fixture.calls.lifecycleAuthority, 0);
+  assert.equal(JSON.stringify(result).includes('must-not-project'), false);
 });
 
 test('completed Windows image stops before protected effects until activation policy is selected', async () => {
@@ -554,6 +647,35 @@ test('setup rejects Windows media actions outside the selected profile before it
   assert.match(policy.blocker, /require the selected Windows execution profile/u);
   assert.equal(policyFixture.calls.windowsActivation, 0);
   assert.equal(policyFixture.calls.windowsMedia, 0);
+
+  const distributionFixture = dependencies();
+  const distribution = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-distribution-without-windows'),
+    windowsDistribution: 'local-reconstruction',
+  }, distributionFixture.deps);
+  assert.equal(distribution.blocked, true);
+  assert.match(distribution.blocker, /require the selected Windows execution profile/u);
+  assert.equal(distributionFixture.calls.windowsDistribution, 0);
+  assert.equal(distributionFixture.calls.windowsActivation, 0);
+  assert.equal(distributionFixture.calls.windowsMedia, 0);
+});
+
+test('pending distribution-policy selection does not block independent Linux image progress', async () => {
+  const fixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 3, changed: false,
+      profiles: ['linux-development', 'windows-development'], pendingProfiles: null, source: 'accepted',
+    },
+    windowsDistribution: imageDistributionPolicy('selection-required'),
+    windowsMedia: acceptedWindowsMedia(),
+    windowsConstruction: windowsPhysical('complete', { complete: true }),
+    physical: { state: 'planned', blocked: false, complete: false, reason: null, preflight: { ready: true } },
+  });
+  const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-distribution-independent-progress') }, fixture.deps);
+  assert.equal(result.blocked, false);
+  assert.equal(result.readyForConstruction, true);
+  assert.equal(result.windowsProfile.distributionPolicy.state, 'selection-required');
+  assert.equal(fixture.calls.lifecycleAuthority, 0);
 });
 
 test('pending activation-policy selection does not block independent Linux image progress', async () => {

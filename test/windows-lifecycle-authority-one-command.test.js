@@ -862,6 +862,7 @@ test('lifecycle child admits only an exact entry-injected broker home', () => {
     ['--repository', 'owner/repository'],
     ['--retire-conflict', 'a'.repeat(64)],
     ['--windows-media', 'C:\\media\\Windows.iso'],
+    ['--windows-distribution', 'local-reconstruction'],
     ['--windows-activation', 'later'],
     ['--approve-windows-media', `candidate-${'a'.repeat(32)}`, '--windows-image-index', '6', '--windows-media-class', 'official-owned'],
   ]) {
@@ -916,6 +917,10 @@ test('ordinary setup accepts one bounded execution-profile choice and rejects co
   assert.throws(() => parseSetupCommandOptions(['--windows-activation', 'automatic']), /must be later/u);
   assert.throws(() => parseSetupCommandOptions(['--windows-activation', 'later', '--windows-activation', 'later']), /only once/u);
   assert.throws(() => parseSetupCommandOptions(['--profiles', 'linux', '--windows-activation', 'later']), /require the Windows execution profile/u);
+  assert.equal(parseSetupCommandOptions(['--profiles', 'windows', '--windows-distribution', 'local-reconstruction']).windowsDistribution, 'local-reconstruction');
+  assert.throws(() => parseSetupCommandOptions(['--windows-distribution', 'remote']), /must be local-reconstruction/u);
+  assert.throws(() => parseSetupCommandOptions(['--windows-distribution', 'local-reconstruction', '--windows-distribution', 'local-reconstruction']), /only once/u);
+  assert.throws(() => parseSetupCommandOptions(['--profiles', 'linux', '--windows-distribution', 'local-reconstruction']), /require the Windows execution profile/u);
 });
 
 test('ordinary setup accepts only one exact opaque resource-conflict subject', () => {

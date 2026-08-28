@@ -22,6 +22,7 @@ export function parseSetupCommandOptions(argv, {
   let windowsMediaCandidate = null;
   let windowsImageIndex = null;
   let windowsMediaClass = null;
+  let windowsDistribution = null;
   let windowsActivation = null;
   let lifecycleAuthorityChild = false;
   let entryNoUpdate = false;
@@ -45,7 +46,7 @@ export function parseSetupCommandOptions(argv, {
     }
     if (option === '--home' || option === '--repository' || option === '--track-ref' || option === '--retire-conflict' || option === '--profiles'
         || option === '--windows-media' || option === '--approve-windows-media' || option === '--windows-image-index' || option === '--windows-media-class'
-        || option === '--windows-activation') {
+        || option === '--windows-distribution' || option === '--windows-activation') {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new PolicyError(`${option} requires a value`);
       if (option === '--home') {
@@ -82,6 +83,10 @@ export function parseSetupCommandOptions(argv, {
         if (windowsMediaClass != null) throw new PolicyError('--windows-media-class may be specified only once');
         if (!['official-owned', 'evaluation'].includes(value)) throw new PolicyError('--windows-media-class must be official-owned or evaluation');
         windowsMediaClass = value;
+      } else if (option === '--windows-distribution') {
+        if (windowsDistribution != null) throw new PolicyError('--windows-distribution may be specified only once');
+        if (value !== 'local-reconstruction') throw new PolicyError('--windows-distribution must be local-reconstruction');
+        windowsDistribution = value;
       } else if (option === '--windows-activation') {
         if (windowsActivation != null) throw new PolicyError('--windows-activation may be specified only once');
         if (value !== 'later') throw new PolicyError('--windows-activation must be later');
@@ -103,10 +108,10 @@ export function parseSetupCommandOptions(argv, {
   if (construct && ['none', 'defer'].includes(profileChoice)) {
     throw new PolicyError('--construct requires at least one selected execution profile');
   }
-  if ((windowsMediaLocation != null || approvalParts > 0 || windowsActivation != null) && ['linux', 'none', 'defer'].includes(profileChoice)) {
+  if ((windowsMediaLocation != null || approvalParts > 0 || windowsDistribution != null || windowsActivation != null) && ['linux', 'none', 'defer'].includes(profileChoice)) {
     throw new PolicyError('Windows setup options require the Windows execution profile');
   }
-  if (lifecycleAuthorityChild && (construct || trackRef != null || retireConflict != null || profileChoice != null || windowsMediaLocation != null || approvalParts > 0 || windowsActivation != null || repositories.length > 0)) {
+  if (lifecycleAuthorityChild && (construct || trackRef != null || retireConflict != null || profileChoice != null || windowsMediaLocation != null || approvalParts > 0 || windowsDistribution != null || windowsActivation != null || repositories.length > 0)) {
     throw new PolicyError('lifecycle-authority child accepts no setup capability arguments');
   }
   if (lifecycleAuthorityChild && home != null
@@ -128,6 +133,7 @@ export function parseSetupCommandOptions(argv, {
       imageIndex: windowsImageIndex,
       sourceClass: windowsMediaClass,
     }),
+    windowsDistribution,
     windowsActivation,
     repositories: Object.freeze(repositories),
     lifecycleAuthorityChild,
