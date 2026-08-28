@@ -275,47 +275,66 @@ function previousRetained(observation, record) {
   return record.previousGeneration == null || record.previousGeneration === record.candidateGeneration || observation.retainedGenerations.includes(record.previousGeneration);
 }
 
-async function rejectCandidate(ports, record, reason, { changed, recover = true } = {}) {
-  let observation = await observe(ports);
+async function continueCandidateRejection(ports, record, observation, { changed }) {
+  const reason = record.reason;
+  if (!['candidate-verification', 'candidate-health'].includes(reason)) return null;
   assertCompatibleObservation(observation, record);
-  if (record.previousGeneration == null || record.previousGeneration === record.candidateGeneration || !recover) {
+  const recover = reason === 'candidate-health'
+    && record.previousGeneration != null
+    && record.previousGeneration !== record.candidateGeneration;
+
+  if (!recover) {
     if (observation.activeGeneration === record.candidateGeneration && observation.running) {
       record = await invokeEffect(ports, record, 'quiesce', record.candidateGeneration);
       observation = await observe(ports);
       assertCompatibleObservation(observation, record);
-      const status = effectStatus(record.pending, observation, record);
-      if (status !== 'complete') throw new Error('protected authority failed candidate could not be quiesced exactly');
+      if (effectStatus(record.pending, observation, record) !== 'complete') {
+        throw new Error('protected authority failed candidate could not be quiesced exactly');
+      }
       record = await save(ports.journal, withJournal(record, { phase: 'quiesced', pending: null }));
       changed = true;
     }
-    record = await save(ports.journal, withJournal(record, { phase: 'rejected', pending: null, outcome: 'rejected', reason }));
+    record = await save(ports.journal, withJournal(record, { phase: 'rejected', pending: null, outcome: 'rejected' }));
     return Object.freeze({ protocol: PROTOCOL, ready: false, changed, generation: observation.activeGeneration, recovered: false, blocker: reason });
   }
 
-  if (!observation.retainedGenerations.includes(record.previousGeneration)) {
-    const blocked = await save(ports.journal, withJournal(record, { phase: 'blocked', pending: null, outcome: 'blocked', reason: 'ambiguous-effect' }));
-    throw new Error(`protected authority previous generation is not retained for transaction ${blocked.transactionId}`);
+  if (observation.activeGeneration === record.candidateGeneration) {
+    if (!observation.retainedGenerations.includes(record.previousGeneration)) {
+      const blocked = await save(ports.journal, withJournal(record, { phase: 'blocked', pending: null, outcome: 'blocked', reason: 'ambiguous-effect' }));
+      throw new Error(`protected authority previous generation is not retained for transaction ${blocked.transactionId}`);
+    }
+    record = await invokeEffect(ports, record, 'restore', record.previousGeneration);
+    observation = await observe(ports);
+    assertCompatibleObservation(observation, record);
+    if (effectStatus(record.pending, observation, record) !== 'complete') throw new Error('protected authority previous generation restoration is not observable');
+    record = await save(ports.journal, withJournal(record, { phase: 'restored', pending: null }));
+    changed = true;
   }
-  record = await invokeEffect(ports, record, 'restore', record.previousGeneration);
-  observation = await observe(ports);
-  assertCompatibleObservation(observation, record);
-  if (effectStatus(record.pending, observation, record) !== 'complete') throw new Error('protected authority previous generation restoration is not observable');
-  record = await save(ports.journal, withJournal(record, { phase: 'restored', pending: null }));
-  changed = true;
 
+  if (observation.activeGeneration !== record.previousGeneration) {
+    const blocked = await save(ports.journal, withJournal(record, { phase: 'blocked', pending: null, outcome: 'blocked', reason: 'ambiguous-effect' }));
+    throw new Error(`protected authority recovery generation is ambiguous at transaction ${blocked.transactionId}`);
+  }
   if (!observation.running) {
     record = await invokeEffect(ports, record, 'start', record.previousGeneration);
     observation = await observe(ports);
     assertCompatibleObservation(observation, record);
     if (effectStatus(record.pending, observation, record) !== 'complete') throw new Error('protected authority restored generation did not start observably');
     record = await save(ports.journal, withJournal(record, { phase: 'started', pending: null }));
+    changed = true;
   }
   if (!await health(ports, record.previousGeneration)) {
     const blocked = await save(ports.journal, withJournal(record, { phase: 'blocked', pending: null, outcome: 'blocked', reason: 'recovery-health' }));
     throw new Error(`protected authority previous generation failed recovery health at transaction ${blocked.transactionId}`);
   }
-  await save(ports.journal, withJournal(record, { phase: 'rejected', pending: null, outcome: 'rejected', reason }));
+  await save(ports.journal, withJournal(record, { phase: 'rejected', pending: null, outcome: 'rejected' }));
   return Object.freeze({ protocol: PROTOCOL, ready: false, changed, generation: record.previousGeneration, recovered: true, blocker: reason });
+}
+
+async function rejectCandidate(ports, record, reason, { changed } = {}) {
+  record = await save(ports.journal, withJournal(record, { reason }));
+  const observation = await observe(ports);
+  return await continueCandidateRejection(ports, record, observation, { changed });
 }
 
 export async function reconcileProtectedAuthority({ candidate, ports } = {}) {
@@ -352,6 +371,19 @@ export async function reconcileProtectedAuthority({ candidate, ports } = {}) {
       throw new Error('protected authority candidate changed while reconciliation is active');
     }
     record = await save(local.journal, initialJournal(selected.generation, observation.activeGeneration));
+  }
+
+  if (record?.outcome === 'in-progress' && ['candidate-verification', 'candidate-health'].includes(record.reason)) {
+    let changed = false;
+    if (record.pending != null) {
+      const reconciled = await checkpointPending(local, record, observation);
+      record = reconciled.record;
+      observation = reconciled.observation;
+      changed ||= reconciled.changed;
+    }
+    const rejected = await continueCandidateRejection(local, record, observation, { changed });
+    if (rejected == null) throw new Error('protected authority candidate rejection recovery is invalid');
+    return rejected;
   }
 
   if (exactCurrent(observation, selected.generation) && await health(local, selected.generation)) {
@@ -414,7 +446,7 @@ export async function reconcileProtectedAuthority({ candidate, ports } = {}) {
     }
 
     if (observation.stagedGeneration === selected.generation) {
-      if (!await verify(local, selected.generation)) return rejectCandidate(local, record, 'candidate-verification', { changed, recover: false });
+      if (!await verify(local, selected.generation)) return rejectCandidate(local, record, 'candidate-verification', { changed });
       if (record.phase !== 'verified') record = await save(local.journal, withJournal(record, { phase: 'verified' }));
 
       if (record.previousGeneration != null && observation.activeGeneration === record.previousGeneration && observation.running) {

@@ -242,6 +242,74 @@ test('failed replacement health restores and revalidates the exact previous gene
   assert.equal(values.journal().previousGeneration, A);
 });
 
+test('completed restoration with a lost result resumes rejection recovery instead of restaging the candidate', async () => {
+  const values = fixture({ activeGeneration: A, running: true, health: { [A]: true, [B]: false } });
+  const restore = values.ports.restore;
+  let interrupted = false;
+  values.ports.restore = async (request) => {
+    await restore(request);
+    if (!interrupted) {
+      interrupted = true;
+      throw new Error('injected restoration result loss');
+    }
+  };
+
+  await assert.rejects(
+    reconcileProtectedAuthority({ candidate: { generation: B }, ports: values.ports }),
+    /restoration result loss/u,
+  );
+  assert.equal(values.state.activeGeneration, A);
+  assert.equal(values.state.running, false);
+  assert.equal(values.journal().pending.effect, 'restore');
+  assert.equal(values.journal().reason, 'candidate-health');
+  assert.equal(values.calls.restore, 1);
+  assert.equal(values.calls.stage, 1);
+
+  const resumed = await reconcileProtectedAuthority({ candidate: { generation: B }, ports: values.ports });
+  assert.equal(resumed.ready, false);
+  assert.equal(resumed.recovered, true);
+  assert.equal(resumed.generation, A);
+  assert.equal(values.state.running, true);
+  assert.equal(values.calls.restore, 1, 'observed restoration must not replay');
+  assert.equal(values.calls.stage, 1, 'rejected candidate must not be restaged');
+  assert.equal(values.journal().outcome, 'rejected');
+  assert.equal(values.journal().reason, 'candidate-health');
+});
+
+test('durable rejection intent takes precedence when candidate health improves before interrupted restore resumes', async () => {
+  const health = { [A]: true, [B]: false };
+  const values = fixture({ activeGeneration: A, running: true, health });
+  const restore = values.ports.restore;
+  let interrupted = false;
+  values.ports.restore = async (request) => {
+    if (!interrupted) {
+      interrupted = true;
+      throw new Error('injected restoration interruption');
+    }
+    return await restore(request);
+  };
+
+  await assert.rejects(
+    reconcileProtectedAuthority({ candidate: { generation: B }, ports: values.ports }),
+    /restoration interruption/u,
+  );
+  assert.equal(values.state.activeGeneration, B);
+  assert.equal(values.state.running, true);
+  assert.equal(values.journal().pending.effect, 'restore');
+  assert.equal(values.journal().reason, 'candidate-health');
+
+  health[B] = true;
+  const resumed = await reconcileProtectedAuthority({ candidate: { generation: B }, ports: values.ports });
+  assert.equal(resumed.ready, false);
+  assert.equal(resumed.recovered, true);
+  assert.equal(resumed.generation, A);
+  assert.equal(values.state.activeGeneration, A);
+  assert.equal(values.state.running, true);
+  assert.equal(values.calls.restore, 1);
+  assert.equal(values.calls.stage, 1, 'durably rejected candidate must not be accepted or restaged');
+  assert.equal(values.journal().outcome, 'rejected');
+});
+
 test('candidate drift is rejected while an interrupted exact transaction remains active', async () => {
   const values = fixture({ failObservationAt: 2 });
   await assert.rejects(reconcileProtectedAuthority({ candidate: { generation: A }, ports: values.ports }), /interruption/u);

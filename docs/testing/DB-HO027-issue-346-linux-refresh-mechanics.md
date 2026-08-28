@@ -1,6 +1,6 @@
 # DB-HO027 — issue #346 exact Linux refresh mechanics
 
-Status: planned from exact `cuda-target` baseline `e0380852f138f50b0e0dd95d7903a5e44a127964` on isolated branch `security/346-linux-refresh-mechanics`.
+Status: implemented and locally qualified from exact `cuda-target` baseline `e0380852f138f50b0e0dd95d7903a5e44a127964` on isolated branch `security/346-linux-refresh-mechanics`; isolated remote CI and integration evidence remain pending.
 
 ## Assessment
 
@@ -61,3 +61,35 @@ No cleanup port exists. Missing, damaged, extra, or unverifiable declared subjec
 ## Explicitly deferred
 
 This issue does not create or migrate the protected authority state directory, invoke elevation, attach setup, authorize libvirt, inspect or mutate qcow2, run a VM, cut over the production client, or claim Linux readiness. Those remain later #293 gates and continue to fail closed.
+
+## Implementation
+
+- `linux-lifecycle-authority-refresh-mechanics.js` is a self-contained atomic mechanic owner with no imports. It exposes only the existing shared mechanic functions and consumes closed neutral ports for journal, transition, state, subjects, preparation, definition, activity, and health.
+- Durable state is normalized as one immutable binding plus active, staged, and bounded retained generation identities. Declared subjects must be present and the subject catalog must report exactness before state is treated as owned.
+- Stable configured/process evidence must match the durable active generation. A stopped definition mismatch is admitted only for an exact pending promote or restore projection bound to the current candidate and exact prior subject.
+- Staging is candidate-only, verifies materialized bytes before persisting staged state, and rejects retained-capacity exhaustion before materialization or quiesce.
+- Quiesce and activation are exact and idempotent through pre/post observation. No command, path, service, endpoint, process-manager, or provider identity is representable in the mechanic contract.
+- Promotion verifies the staged subject, establishes preparation, establishes only the candidate definition while admitting the exact prior definition, re-observes it stopped, and writes active/staged/retained durable state last.
+- Restoration verifies the retained subject, quiesces only the failed exact subject when necessary, establishes only the retained definition while admitting failed bytes, re-observes it stopped, writes durable state last, and retains the failed generation.
+- Health requires exact subject verification, durable active ownership, exact configured and running process generation, and bounded local probe evidence.
+- Repository preflight now syntax-checks the mechanic and runs its focused suite.
+
+## Shared recovery defect found and repaired
+
+The new restoration-interruption test exposed a defect in the existing platform-neutral reconciler. Candidate rejection reason was not durable until after restoration completed. If restore changed the active subject but its result/checkpoint was lost, restart could checkpoint the restore and then fall back into the normal candidate path, attempting to stage the already rejected candidate again. A transiently improved candidate could also be accepted before the pending rejection recovery resumed.
+
+The shared owner now saves `candidate-verification` or `candidate-health` intent before any rejection effect, gives that durable intent precedence over exact-current acceptance, reconciles any pending quiesce/restore/start effect by observation, and completes rejection recovery without restaging. The repair is platform-neutral and retains no Linux identity. Focused Windows refresh/service tests prove the existing Windows adapter remains compatible.
+
+## Local qualification
+
+All commands ran without elevation, UAC, service-manager mutation, provider mutation, or VM effects.
+
+- New Linux mechanics plus shared reconciliation/adapter: 27 passed, 0 failed.
+- Shared/Linux/Windows refresh and Windows service compatibility selection: 49 passed, 0 failed.
+- Related Linux lifecycle and shared refresh selection: 137 total, 134 passed, 3 expected non-Linux filesystem skips, 0 failed.
+- Repository preflight: 49 syntax files, 2 JSON files, 49 targeted tests, passed.
+- Repository-execution architecture gate: 34 total, 33 passed, 1 expected Windows symlink skip, 0 failed.
+- Full suite: 1,302 total, 1,291 passed, 11 expected platform/host skips, 0 failed.
+- `doctor` against `config/devbridge.example.json`: exited successfully and continued to report repository execution unavailable/fail-closed because no persistent-environment route is configured.
+
+The remaining qualification is the isolated pull-request matrix on Ubuntu and Windows. No hosted result will be treated as physical systemd, libvirt, KVM, or qcow2 evidence.
