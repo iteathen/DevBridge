@@ -107,24 +107,30 @@ test('application selection resumes the exact interrupted working profile genera
   }
 });
 
-test('application selection refuses to absorb another setup component transaction', async () => {
+test('application selection passes accepted state to another transaction owner without absorbing its work', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-profile-owner-'));
   const stateDirectory = path.join(root, 'state');
   const file = path.join(stateDirectory, 'setup-authority.json');
   try {
+    const accepted = await reconcileSetupProfileSelection({ stateDirectory, choice: 'windows' });
+    assert.deepEqual(accepted.profiles, ['windows-development']);
     const manager = new SetupAuthorityManager({
       port: createSetupAuthorityStateStore(file),
       id: () => 'foreign-setup-operation',
     });
     const working = (await manager.begin()).record;
+    const observed = await reconcileSetupProfileSelection({ stateDirectory });
+    assert.equal(observed.changed, false);
+    assert.equal(observed.source, 'accepted');
+    assert.deepEqual(observed.profiles, ['windows-development']);
     await assert.rejects(
       reconcileSetupProfileSelection({ stateDirectory, choice: 'both' }),
       /owned by another setup component/u,
     );
     const preserved = await manager.current();
     assert.equal(preserved.working.operationId, working.working.operationId);
-    assert.equal(preserved.revision, 0);
-    assert.equal(preserved.accepted, null);
+    assert.equal(preserved.revision, 1);
+    assert.deepEqual(preserved.accepted.requestedProfiles, ['windows-development']);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

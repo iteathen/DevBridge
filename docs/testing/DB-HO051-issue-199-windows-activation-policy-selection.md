@@ -70,6 +70,8 @@ The parser rejects repetitions, any undeclared method, use with an explicitly no
 
 The transaction first records the approved opaque subject with unknown availability in the working setup-authority generation, publishes and re-observes the exact immutable non-secret record, marks availability only after that proof, validates, and commits. A restart can recover the exact `configure-later` intent from the component-owned operation identity without asking again. Another component's interrupted setup-authority transaction is never consumed.
 
+Because setup authority has one serialized working generation, ordinary re-entry also routes across earlier setup components correctly: when a different component owns the working generation and no new choice was requested, profile and activation selectors project only their accepted state and leave the working generation untouched for its owner. A new explicit choice still fails before mutation. This prevents an interrupted activation-policy transaction from being stranded behind profile selection on full setup re-entry.
+
 With no accepted policy, Windows media discovery and image construction can still advance, as can independent Linux construction. Once every selected image is complete, the policy gate stops before conflict retirement, declaration publication, protected lifecycle reconciliation, environment activation, or operational enablement. An explicit accepted `configure-later` policy allows those later setup stages while continuing to report that Windows activation is required.
 
 Public setup state and handoff include only selection state, readiness, changed state, `configure-later`, the activation-required fact, and a bounded blocker. The opaque subject, stored record, injected extra fields, and secret-shaped material are not projected.
@@ -84,7 +86,9 @@ No retail, MAK, KMS, Active Directory-based, subscription, host-entitlement, pro
 - `git diff --check`: passed;
 - no installed setup, UAC request, provider mutation, VM operation, guest command, media approval, or activation attempt occurred.
 
-The tests cover strict non-secret policy schema, deterministic identity, immutable persistence, restart/no-op behavior, interruption recovery, foreign-transaction refusal, missing/substituted record failure, protected-child denial, selected-profile enforcement, independent Linux progress, exact Windows gate placement, rejection of widened status, bounded public projection, and handoff guidance.
+Follow-up qualification of the shared-journal recovery correction also passes inside the 27-test recovery/daemon focused set, the 122-file/2-JSON/115-test preflight, and the complete 1,634-test suite (1,619 passed, 15 expected platform skips, 0 failed). That run includes the bounded daemon-record reliability repair documented in DB-HO052; the original checkpoint counts above remain the evidence for the activation-policy implementation itself.
+
+The tests cover strict non-secret policy schema, deterministic identity, immutable persistence, full setup-order restart/no-op behavior, interruption recovery, foreign-transaction pass-through/refusal rules, missing/substituted record failure, protected-child denial, selected-profile enforcement, independent Linux progress, exact Windows gate placement, rejection of widened status, bounded public projection, and handoff guidance.
 
 ## Remaining issue scope
 

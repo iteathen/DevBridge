@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { PolicyError } from '../errors.js';
+import { readBoundedText } from './bounded-text-read.js';
 
 const LOCK_PROTOCOL = 'devbridge/daemon-lock-v1';
 const STOP_PROTOCOL = 'devbridge/daemon-stop-v1';
@@ -29,7 +30,7 @@ function validateLockRecord(record, filePath) {
 
 export async function readDaemonLock(filePath) {
   let text;
-  try { text = await readFile(filePath, 'utf8'); }
+  try { text = await readBoundedText(filePath); }
   catch (error) {
     if (error?.code === 'ENOENT') return null;
     throw error;
@@ -43,7 +44,7 @@ export async function readDaemonLock(filePath) {
 
 async function readControlRecord(recordPath, { protocol, token, kind, timestampField }) {
   let text;
-  try { text = await readFile(recordPath, 'utf8'); }
+  try { text = await readBoundedText(recordPath); }
   catch (error) {
     if (error?.code === 'ENOENT') return null;
     throw error;
@@ -83,7 +84,7 @@ async function publishControlRecord(recordPath, record) {
       return true;
     } catch (error) {
       if (!['EEXIST', 'EPERM', 'EACCES'].includes(error?.code)) throw error;
-      try { await readFile(recordPath, 'utf8'); }
+      try { await readBoundedText(recordPath); }
       catch (readError) {
         if (readError?.code === 'ENOENT') throw error;
         throw readError;

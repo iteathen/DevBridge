@@ -77,6 +77,9 @@ test('interrupted component-owned selection resumes without repeating the operat
       stateDirectory: fixture.stateDirectory,
       choice: 'later',
     }, { storeFactory }), /simulated publication interruption/u);
+    const profile = await reconcileSetupProfileSelection({ stateDirectory: fixture.stateDirectory });
+    assert.equal(profile.state, 'accepted');
+    assert.deepEqual(profile.profiles, ['windows-development']);
     const resumed = await reconcileSetupWindowsActivationPolicy({ stateDirectory: fixture.stateDirectory }, { storeFactory });
     assert.equal(resumed.state, 'accepted');
     assert.equal(resumed.changed, true);
@@ -112,7 +115,7 @@ test('accepted authority fails closed when its immutable policy is missing or su
   }
 });
 
-test('foreign setup-authority work is never consumed by activation-policy selection', async () => {
+test('foreign setup-authority work is observed but never consumed by activation-policy selection', async () => {
   const fixture = await selectedWindowsState();
   try {
     const manager = new SetupAuthorityManager({
@@ -120,6 +123,10 @@ test('foreign setup-authority work is never consumed by activation-policy select
       id: () => 'foreign-setup-operation',
     });
     await manager.begin();
+    const observed = await reconcileSetupWindowsActivationPolicy({ stateDirectory: fixture.stateDirectory });
+    assert.equal(observed.state, 'selection-required');
+    const retained = await manager.current();
+    assert.equal(retained.working.operationId, 'foreign-setup-operation');
     await assert.rejects(() => reconcileSetupWindowsActivationPolicy({
       stateDirectory: fixture.stateDirectory,
       choice: 'later',

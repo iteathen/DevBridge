@@ -109,7 +109,8 @@ export async function reconcileSetupWindowsActivationPolicy({
   const current = await manager.current();
   if (!current?.accepted) throw new Error('accepted setup authority is unavailable');
   if (current.working && !current.working.operationId.startsWith(OPERATION_PREFIX)) {
-    throw new Error('setup authority has an interrupted transaction owned by another setup component');
+    if (choice != null) throw new Error('setup authority has an interrupted transaction owned by another setup component');
+    return observeAccepted(current, store, expectedPolicy, expectedSubject);
   }
 
   if (!current.working) {

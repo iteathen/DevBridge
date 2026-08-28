@@ -50,8 +50,19 @@ export async function reconcileSetupProfileSelection({
   }
 
   const current = await manager.current();
-  if (current?.working && !current.working.operationId.startsWith(OPERATION_PREFIX)) {
+  const foreignWorking = current?.working && !current.working.operationId.startsWith(OPERATION_PREFIX);
+  if (foreignWorking && choice != null) {
     throw new Error('setup authority has an interrupted transaction owned by another setup component');
+  }
+  if (foreignWorking) {
+    if (!current.accepted) throw new Error('accepted setup profile selection is unavailable during another component transaction');
+    return status({
+      state: 'accepted',
+      revision: current.revision,
+      changed: false,
+      profiles: current.accepted.requestedProfiles,
+      source: 'accepted',
+    });
   }
   const decision = resolveSetupProfileSelection({
     choice,
