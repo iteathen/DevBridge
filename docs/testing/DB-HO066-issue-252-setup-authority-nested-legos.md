@@ -4,7 +4,7 @@ Date: 2026-08-28
 
 Issue: #252
 
-Status: assessed, researched, and planned; implementation pending. This document authorizes no setup invocation, UAC/elevation request or bypass, service/provider/image/environment/VM/guest operation, repository execution, remote setup projection, or product publication.
+Status: implemented and accepted on exact hosted Windows/Ubuntu qualification. This document authorizes no setup invocation, UAC/elevation request or bypass, service/provider/image/environment/VM/guest operation, repository execution, remote setup projection, or product publication.
 
 ## Assessment
 
@@ -90,3 +90,14 @@ Behavioral and local qualification on 2026-08-28:
 The extraction intentionally does not claim concurrent multi-manager transaction safety. The independently reproduced lost-owner/temp-publication defect remains open as #371 and the concrete state adapter is unchanged.
 
 No setup, UAC/elevation request or bypass, service/prerequisite reconciliation, protected provider/image/environment/VM/guest operation, repository execution, remote setup projection, or product publication occurred. Commit and push this exact checkpoint, then require hosted Windows/Ubuntu qualification before closing #252.
+
+## Accepted hosted qualification
+
+GitHub Actions run `33220876080` passed all four jobs on exact implementation commit `bd4754699a8d9855d771914cd3b9258c396b5671` on its first attempt:
+
+- Windows serialized complete-suite plus doctor: 2 minutes 18 seconds;
+- Windows bounded preflight, identity audit, and standalone-installer regression: 1 minute 24 seconds, with cheap preflight completing in 48 seconds under its unchanged one-minute step budget;
+- Ubuntu complete-suite plus doctor: 42 seconds; and
+- Ubuntu bounded preflight, identity audit, and standalone-installer regression: 24 seconds.
+
+No product/test/CI timeout was widened. GitHub's Node-action deprecation annotations are workflow-maintenance warnings and did not affect qualification. Close #252; retain #371 as the independent setup-authority concurrency/durable-publication defect.
