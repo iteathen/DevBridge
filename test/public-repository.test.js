@@ -28,3 +28,27 @@ test("GitHub Actions dependencies use immutable commit identities", async () => 
     assert.match(action, /@[0-9a-f]{40}$/);
   }
 });
+
+function workflowStep(source, name) {
+  const workflow = source.replaceAll("\r\n", "\n");
+  const marker = `      - name: ${name}\n`;
+  const start = workflow.indexOf(marker);
+  assert.ok(start >= 0, `workflow step ${name} must exist`);
+  const next = workflow.indexOf("\n      - name:", start + marker.length);
+  return workflow.slice(start, next < 0 ? undefined : next);
+}
+
+test("Windows full CI coverage serializes test files while other platforms retain default concurrency", async () => {
+  const workflow = await read(".github/workflows/ci.yml");
+  const ordinary = workflowStep(workflow, "Tests (non-Windows default)");
+  const windows = workflowStep(workflow, "Tests (Windows serialized)");
+
+  assert.match(ordinary, /^        if: runner\.os != 'Windows'$/mu);
+  assert.match(ordinary, /^        timeout-minutes: 6$/mu);
+  assert.match(ordinary, /^        run: npm test$/mu);
+  assert.doesNotMatch(ordinary, /test-concurrency/u);
+
+  assert.match(windows, /^        if: runner\.os == 'Windows'$/mu);
+  assert.match(windows, /^        timeout-minutes: 6$/mu);
+  assert.match(windows, /^        run: npm test -- --test-concurrency=1$/mu);
+});

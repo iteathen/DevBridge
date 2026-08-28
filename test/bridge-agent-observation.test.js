@@ -10,6 +10,7 @@ const agent = fileURLToPath(new URL('../src/guest/bridge-agent.mjs', import.meta
 const protocol = 'devbridge/environment-bridge-v1';
 const recordProtocol = 'devbridge/environment-bridge-operation-v1';
 const target = 'env-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const NON_OBSERVABLE_MONITOR_PID = Number.MAX_SAFE_INTEGER;
 
 async function exchange(root, request, kind, body = {}) {
   return new Promise((resolve, reject) => {
@@ -31,32 +32,10 @@ async function exchange(root, request, kind, body = {}) {
   });
 }
 
-async function exitedProcessId() {
-  const pid = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore', shell: false, windowsHide: true });
-    child.once('error', reject);
-    child.once('spawn', () => {
-      const spawnedPid = child.pid;
-      child.once('close', () => resolve(spawnedPid));
-    });
-  });
-  assert.equal(Number.isSafeInteger(pid), true);
-  const deadline = Date.now() + 3_000;
-  while (Date.now() < deadline) {
-    try { process.kill(pid, 0); }
-    catch { return pid; }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('probe child remained observable after exit');
-}
-
-test('a dead monitor remains indeterminate when the durable record is still nonterminal', async () => {
+test('a non-observable monitor identity remains indeterminate when the durable record is still nonterminal', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-bridge-dead-monitor-'));
   const request = 'f'.repeat(32);
   try {
-    const health = await exchange(root, 'e'.repeat(32), 'health');
-    assert.equal(health.ok, true);
-    const deadMonitorPid = await exitedProcessId();
     await mkdir(path.join(root, '.operations'), { recursive: true });
     await writeFile(path.join(root, '.operations', `${request}.json`), `${JSON.stringify({
       protocol: recordProtocol,
@@ -66,7 +45,7 @@ test('a dead monitor remains indeterminate when the durable record is still nont
       body: {},
       state: 'running',
       createdAt: new Date().toISOString(),
-      monitorPid: deadMonitorPid,
+      monitorPid: NON_OBSERVABLE_MONITOR_PID,
       childPid: null,
       result: null,
       reason: null,

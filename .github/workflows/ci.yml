@@ -57,9 +57,14 @@ jobs:
       - name: Repository-execution architecture gates
         timeout-minutes: 1
         run: node --test test/repository-execution.test.js test/repository-execution-boundary-absence.test.js test/deterministic-execution-boundary.test.js test/process-runner.test.js test/worker-exchange.test.js test/local-operation-manifest.test.js test/tool-onboarding.test.js
-      - name: Tests
+      - name: Tests (non-Windows default)
+        if: runner.os != 'Windows'
         timeout-minutes: 6
         run: npm test
+      - name: Tests (Windows serialized)
+        if: runner.os == 'Windows'
+        timeout-minutes: 6
+        run: npm test -- --test-concurrency=1
       - name: Doctor smoke test
         timeout-minutes: 1
         run: node src/cli.js doctor --config config/devbridge.example.json
