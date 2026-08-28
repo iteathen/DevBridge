@@ -166,11 +166,6 @@ const MAX_FAILURE_EVIDENCE_CHARS = 4000;
 const TARGETED_TESTS = [
   'test/config.test.js',
   'test/workspace-manager-nested-lego.test.js',
-  'test/workspace-manager.test.js',
-  'test/repository-admission-origin.test.js',
-  'test/candidate-seal-transaction.test.js',
-  'test/workspace-publication-cas.test.js',
-  'test/controller-baseline.test.js',
   'test/repository-execution.test.js',
   'test/repository-environment-execution.test.js',
   'test/app-repository-execution.test.js',

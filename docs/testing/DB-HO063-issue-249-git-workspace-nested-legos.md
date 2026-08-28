@@ -69,8 +69,10 @@ Local qualification on 2026-08-28:
 - direct child plus retained admission/baseline/worktree/seal/rebase/publication/coordinator/end-to-end proofs: 29/29 passed;
 - wider baseline reverification, candidate repair, hard-gate, lease fence, transient recovery, coordinator, and publication set: 70/70 passed;
 - three repeated real-Git seal/rebase/publication recovery runs: 15/15 passed in each iteration;
-- repository preflight: 153 syntax files, 2 JSON files, and 141 targeted test files passed;
+- repository preflight: 153 syntax files, 2 JSON files, and 136 targeted test files passed in 37.21 seconds locally;
 - complete suite: 1,709 total, 1,694 passed, 15 expected platform skips, zero failures;
 - topology scan and `git diff --check`: passed.
 
 No real remote mutation, UAC request, protected operation, setup, service/provider/image/environment/VM/guest action, or repository-code execution occurred. Commit and push the exact checkpoint, then require hosted Windows/Ubuntu qualification before closing #249.
+
+Hosted attempt 1, run `33216113376` on commit `1d452f50c204fb2bc0a51fa742cfea1f2614a848`, passed Windows serialized complete-suite/doctor and both Ubuntu jobs, but Windows smoke timed out at its fixed one-minute job boundary. The failure was introduced by registering five expensive real-Git parent suites in the cheap preflight list; those same suites passed in the complete Windows job. Reassessment keeps the fast direct nested contract in preflight and the real-Git parent/recovery suites in full qualification. The product timeout is unchanged, and coverage is not removed from the complete suite.
