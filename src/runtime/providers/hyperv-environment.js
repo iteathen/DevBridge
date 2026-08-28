@@ -69,8 +69,10 @@ $switch = Get-VMSwitch -ErrorAction Stop | Where-Object { $_.Name -eq $data.name
 if ($null -eq $switch) { @{ ready = $false; reason = 'owned network is absent' } | ConvertTo-Json -Compress; exit 0 }
 if ([string]$switch.Notes -ne [string]$data.marker) { @{ ready = $false; reason = 'network ownership evidence does not match' } | ConvertTo-Json -Compress; exit 0 }
 if ([string]$switch.SwitchType -ne 'Internal') { @{ ready = $false; reason = 'network switch type does not match' } | ConvertTo-Json -Compress; exit 0 }
-$nat = Get-NetNat -ErrorAction Stop | Where-Object { $_.Name -eq $data.name } | Select-Object -First 1
-if ($null -eq $nat -or [string]$nat.InternalIPInterfaceAddressPrefix -ne [string]$data.prefix) { @{ ready = $false; reason = 'network translation state does not match' } | ConvertTo-Json -Compress; exit 0 }
+$translations = @(Get-NetNat -ErrorAction Stop)
+if ($translations.Count -ne 1) { @{ ready = $false; reason = 'network translation state does not match' } | ConvertTo-Json -Compress; exit 0 }
+$nat = $translations[0]
+if ([string]$nat.Name -ne [string]$data.name -or [string]$nat.InternalIPInterfaceAddressPrefix -ne [string]$data.prefix) { @{ ready = $false; reason = 'network translation state does not match' } | ConvertTo-Json -Compress; exit 0 }
 $alias = "vEthernet ($($data.name))"
 $address = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.IPAddress -eq $data.gateway -and $_.InterfaceAlias -eq $alias } | Select-Object -First 1
 if ($null -eq $address) { @{ ready = $false; reason = 'network gateway address is absent' } | ConvertTo-Json -Compress; exit 0 }
@@ -97,13 +99,15 @@ function Prefix-Overlaps([string]$candidate, [string]$existing) {
   $mask = if ($bits -eq 0) { [uint32]0 } else { [uint32]([uint64][uint32]::MaxValue - (([uint64]1 -shl $hostBits) - [uint64]1)) }
   return ((Convert-IPv4ToUInt32 $candidateAddress) -band $mask) -eq ((Convert-IPv4ToUInt32 $existingAddress) -band $mask)
 }
+$translations = @(Get-NetNat -ErrorAction Stop)
+if ($translations.Count -gt 1) { throw 'host network translation state is ambiguous' }
+$nat = $translations | Where-Object { [string]$_.Name -eq [string]$data.name } | Select-Object -First 1
+if ($null -ne $nat -and [string]$nat.InternalIPInterfaceAddressPrefix -ne [string]$data.prefix) { throw 'network translation name is occupied with different state' }
+if ($translations.Count -eq 1 -and $null -eq $nat) { throw 'another network translation already occupies the host' }
 $switch = Get-VMSwitch -ErrorAction Stop | Where-Object { $_.Name -eq $data.name } | Select-Object -First 1
 if ($null -eq $switch) {
   foreach ($route in (Get-NetRoute -AddressFamily IPv4 -ErrorAction Stop)) {
     if ((Prefix-Overlaps $data.prefix ([string]$route.DestinationPrefix)) -and [string]$route.DestinationPrefix -ne '0.0.0.0/0') { throw 'selected private network overlaps an existing route' }
-  }
-  foreach ($existingNat in (Get-NetNat -ErrorAction Stop)) {
-    if (Prefix-Overlaps $data.prefix ([string]$existingNat.InternalIPInterfaceAddressPrefix)) { throw 'selected private network overlaps an existing translation prefix' }
   }
   $switch = New-VMSwitch -Name $data.name -SwitchType Internal -ErrorAction Stop
   Set-VMSwitch -Name $data.name -Notes $data.marker -ErrorAction Stop
@@ -122,9 +126,7 @@ for ($attempt = 0; $attempt -lt 40; $attempt += 1) {
 if ($null -eq $interface) { throw 'owned network interface did not become ready' }
 $address = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.IPAddress -eq $data.gateway -and $_.InterfaceAlias -eq $alias } | Select-Object -First 1
 if ($null -eq $address) { $null = New-NetIPAddress -InterfaceIndex ([uint32]$interface.InterfaceIndex) -IPAddress $data.gateway -PrefixLength 24 -ErrorAction Stop }
-$nat = Get-NetNat -ErrorAction Stop | Where-Object { $_.Name -eq $data.name } | Select-Object -First 1
 if ($null -eq $nat) { $nat = New-NetNat -Name $data.name -InternalIPInterfaceAddressPrefix $data.prefix -ErrorAction Stop }
-elseif ([string]$nat.InternalIPInterfaceAddressPrefix -ne [string]$data.prefix) { throw 'network translation name is occupied with different state' }
 @{ ready = $true } | ConvertTo-Json -Compress
 `;
 
