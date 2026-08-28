@@ -9,10 +9,13 @@ import {
 } from '../src/setup/linux-lifecycle-authority.js';
 import {
   createLinuxLifecycleAuthorityGenerationProjection,
+  createLinuxLifecycleAuthorityGenerationVerificationProjection,
   LINUX_LIFECYCLE_AUTHORITY_GENERATION_PROTOCOL,
   LINUX_LIFECYCLE_AUTHORITY_GENERATION_STAGING_PROTOCOL,
+  LINUX_LIFECYCLE_AUTHORITY_GENERATION_VERIFICATION_PROTOCOL,
   normalizeLinuxLifecycleAuthorityGenerationManifest,
   stageLinuxLifecycleAuthorityGeneration,
+  verifyLinuxLifecycleAuthorityGeneration,
 } from '../src/setup/linux-lifecycle-authority-generation.js';
 import {
   initialLinuxLifecycleAuthorityOwnershipRecord,
@@ -20,6 +23,7 @@ import {
 } from '../src/setup/linux-lifecycle-authority-records.js';
 import {
   installLinuxProtectedTree,
+  verifyLinuxProtectedTree,
 } from '../src/setup/linux-protected-tree.js';
 
 function sha256(value) {
@@ -95,6 +99,7 @@ function fixture({
   };
   const value = Object.freeze({ plan, candidate, packageRoot: '/source/package', nodeExecutable: '/source/bin/node' });
   return {
+    base,
     calls,
     candidate,
     get installed() { return installed; },
@@ -192,8 +197,8 @@ test('generation projection emits one exact root-owned immutable tree and canoni
     protocol: LINUX_LIFECYCLE_AUTHORITY_GENERATION_PROTOCOL,
     authorityIdentity: values.plan.authorityIdentity,
     generation: values.plan.runtime.generation,
-    packageDigest: values.candidate.evidence.packageDigest,
-    nodeDigest: values.candidate.evidence.nodeDigest,
+    package: values.candidate.sourceSnapshot,
+    node: values.candidate.node,
   });
   const executable = projection.tree.entries.find((entry) => entry.relative === 'bin/node');
   assert.equal(executable.mode, 0o555);
@@ -234,7 +239,7 @@ test('projection rejects candidate ambiguity, path escape, protected-state alias
   assert.throws(() => createLinuxLifecycleAuthorityGenerationProjection({
     ...values.value,
     candidate: { ...values.candidate, sourceSnapshot: { ...values.candidate.sourceSnapshot, digest: 'a'.repeat(64) } },
-  }), /does not match the exact runtime plan/u);
+  }), /snapshot digest is invalid/u);
   assert.throws(() => createLinuxLifecycleAuthorityGenerationProjection({ ...values.value, packageRoot: values.plan.protectedRoot }), /aliases protected state/u);
   assert.throws(() => createLinuxLifecycleAuthorityGenerationProjection({
     ...values.value,
@@ -248,9 +253,100 @@ test('projection rejects candidate ambiguity, path escape, protected-state alias
   }), /widens or escapes/u);
   const projection = createLinuxLifecycleAuthorityGenerationProjection(values.value);
   assert.throws(() => normalizeLinuxLifecycleAuthorityGenerationManifest({ ...projection.manifest, generation: 'a'.repeat(64) }, values.plan), /does not match/u);
+  assert.throws(() => normalizeLinuxLifecycleAuthorityGenerationManifest({
+    protocol: 'devbridge/linux-lifecycle-authority-generation-v1',
+    authorityIdentity: values.plan.authorityIdentity,
+    generation: values.plan.runtime.generation,
+    packageDigest: values.candidate.evidence.packageDigest,
+    nodeDigest: values.candidate.evidence.nodeDigest,
+  }, values.plan), /unknown field|does not match/u);
 
   const missing = fixture({ files: { 'package.json': '{}\n', 'src/app/example.js': 'export {};\n' } });
   assert.throws(() => createLinuxLifecycleAuthorityGenerationProjection(missing.value), /snapshot shape/u);
+});
+
+test('self-describing manifest reconstructs and verifies one historical generation without source paths', async () => {
+  const values = fixture();
+  const installation = createLinuxLifecycleAuthorityGenerationProjection(values.value);
+  const tree = protectedTreeFixture(values);
+  await installLinuxProtectedTree(installation.tree, tree.ports);
+  const historical = createLinuxLifecycleAuthorityGenerationVerificationProjection({
+    plan: values.base,
+    manifest: installation.manifest,
+  });
+  assert.equal(historical.generation, values.plan.runtime.generation);
+  assert.equal(historical.plan.runtime.generationDirectory, values.plan.runtime.generationDirectory);
+  assert.equal(historical.plan.service.unit, values.plan.service.unit);
+  assert.deepEqual(historical.tree.directories, installation.tree.directories);
+  assert.deepEqual(historical.tree.entries.map(({ relative, mode, maximumBytes, size, digest }) => ({ relative, mode, maximumBytes, size, digest })), installation.tree.entries.map((entry) => ({
+    relative: entry.relative,
+    mode: entry.mode,
+    maximumBytes: entry.maximumBytes,
+    size: entry.kind === 'content' ? entry.content.length : entry.input.size,
+    digest: entry.kind === 'content' ? sha256(entry.content) : entry.input.digest,
+  })));
+  const observed = await verifyLinuxLifecycleAuthorityGeneration({ plan: values.base, manifest: installation.manifest }, {
+    verify: async (request) => {
+      const evidence = await verifyLinuxProtectedTree(request, {
+        observeEntry: tree.ports.observeEntry,
+        verifyFile: tree.ports.verifyFile,
+        listDirectory: tree.ports.listDirectory,
+      });
+      return { path: evidence.path, entries: evidence.entries, ready: evidence.ready };
+    },
+  });
+  assert.deepEqual(observed, {
+    protocol: LINUX_LIFECYCLE_AUTHORITY_GENERATION_VERIFICATION_PROTOCOL,
+    generation: values.plan.runtime.generation,
+    verified: true,
+  });
+});
+
+test('forged manifest inventory and widened verification evidence fail closed', async () => {
+  const values = fixture();
+  const projection = createLinuxLifecycleAuthorityGenerationProjection(values.value);
+  const forgedFile = {
+    ...projection.manifest,
+    package: {
+      ...projection.manifest.package,
+      files: projection.manifest.package.files.map((entry, index) => index === 0 ? { ...entry, size: entry.size + 1 } : entry),
+    },
+  };
+  assert.throws(() => normalizeLinuxLifecycleAuthorityGenerationManifest(forgedFile, values.base), /snapshot digest is invalid/u);
+  await assert.rejects(() => verifyLinuxLifecycleAuthorityGeneration({ plan: values.base, manifest: projection.manifest }, {
+    verify: async (request) => ({ path: request.root.path, entries: request.entries.length + request.directories.length, ready: true, source: 'foreign' }),
+  }), /unknown field/u);
+  await assert.rejects(() => verifyLinuxLifecycleAuthorityGeneration({ plan: values.base, manifest: projection.manifest }, {
+    verify: async (request) => ({ path: request.root.path, entries: 1, ready: true }),
+  }), /evidence is invalid/u);
+});
+
+test('generation record rejects an inventory that cannot fit its bounded durable evidence', () => {
+  const seed = fixture();
+  const files = [
+    { relative: 'package.json', size: 1, digest: 'a'.repeat(64) },
+    { relative: 'src/entry/linux-lifecycle-authority-service.mjs', size: 1, digest: 'b'.repeat(64) },
+  ];
+  for (let index = 0; index < 2_046; index += 1) {
+    files.push({
+      relative: `src/${'x'.repeat(240)}/${'y'.repeat(240)}/${String(index).padStart(4, '0')}.js`,
+      size: 1,
+      digest: sha256(String(index)),
+    });
+  }
+  files.sort((left, right) => left.relative < right.relative ? -1 : left.relative > right.relative ? 1 : 0);
+  const aggregate = createHash('sha256');
+  for (const entry of files) aggregate.update(`${entry.relative}\0${entry.size}\0${entry.digest}\n`, 'utf8');
+  const packageDigest = aggregate.digest('hex');
+  const node = { size: 1, digest: 'c'.repeat(64) };
+  const plan = bindLinuxLifecycleAuthorityRuntime(seed.base, { packageDigest, nodeDigest: node.digest });
+  assert.throws(() => normalizeLinuxLifecycleAuthorityGenerationManifest({
+    protocol: LINUX_LIFECYCLE_AUTHORITY_GENERATION_PROTOCOL,
+    authorityIdentity: plan.authorityIdentity,
+    generation: plan.runtime.generation,
+    package: { digest: packageDigest, files },
+    node,
+  }, plan), /manifest is outside its bound/u);
 });
 
 test('fresh staging installs and verifies bytes before recording the staged generation', async () => {

@@ -27,6 +27,8 @@ import {
 import {
   installLinuxProtectedTree,
   LINUX_PROTECTED_TREE_PROTOCOL,
+  LINUX_PROTECTED_TREE_VERIFICATION_PROTOCOL,
+  verifyLinuxProtectedTree,
 } from '../src/setup/linux-protected-tree.js';
 
 function sha256(value) {
@@ -175,6 +177,29 @@ function fixture({ failSyncAt = null, failAfterMoveAt = null } = {}) {
   return { calls, entries, nodeBytes, entryBytes, ports, put, request };
 }
 
+function verificationRequest(value) {
+  return {
+    root: {
+      path: value.installed.path,
+      ownerId: value.ownerId,
+      groupId: value.groupId,
+      mode: value.directoryMode,
+    },
+    directoryMode: value.directoryMode,
+    directories: value.directories,
+    entries: value.entries.map((entry) => {
+      const content = entry.kind === 'content' ? Buffer.from(entry.content) : null;
+      return {
+        relative: entry.relative,
+        mode: entry.mode,
+        maximumBytes: entry.maximumBytes,
+        size: entry.kind === 'content' ? content.length : entry.input.size,
+        digest: entry.kind === 'content' ? sha256(content) : entry.input.digest,
+      };
+    }),
+  };
+}
+
 test('protected tree installs one exact immutable shape and then reconciles as a no-op', async () => {
   const values = fixture();
   const first = await installLinuxProtectedTree(values.request(), values.ports);
@@ -229,6 +254,78 @@ test('an installed collision is verified read-only and is never overwritten or c
   values.put('/protected/work/tree', 'directory');
   await assert.rejects(() => installLinuxProtectedTree(values.request(), values.ports), /roots are ambiguous/u);
   assert.equal(values.entries.has('/protected/work/tree'), true);
+});
+
+test('separate historical verification proves exact tree shape through observation-only ports', async () => {
+  const values = fixture();
+  const installed = values.request();
+  await installLinuxProtectedTree(installed, values.ports);
+  values.calls.length = 0;
+  const result = await verifyLinuxProtectedTree(verificationRequest(installed), {
+    observeEntry: values.ports.observeEntry,
+    verifyFile: values.ports.verifyFile,
+    listDirectory: values.ports.listDirectory,
+  });
+  assert.deepEqual(result, {
+    protocol: LINUX_PROTECTED_TREE_VERIFICATION_PROTOCOL,
+    path: installed.installed.path,
+    entries: installed.directories.length + installed.entries.length,
+    ready: true,
+  });
+  assert.equal(values.calls.some(([name]) => ['ensure', 'content', 'transfer', 'rename', 'sync'].includes(name)), false);
+
+  values.put(`${installed.installed.path}/foreign`, 'file', { content: 'foreign' });
+  await assert.rejects(() => verifyLinuxProtectedTree(verificationRequest(installed), {
+    observeEntry: values.ports.observeEntry,
+    verifyFile: values.ports.verifyFile,
+    listDirectory: values.ports.listDirectory,
+  }), /outside its bound|contents are not exact/u);
+  values.entries.delete(`${installed.installed.path}/foreign`);
+  values.entries.delete(`${installed.installed.path}/package/package.json`);
+  await assert.rejects(() => verifyLinuxProtectedTree(verificationRequest(installed), {
+    observeEntry: values.ports.observeEntry,
+    verifyFile: values.ports.verifyFile,
+    listDirectory: values.ports.listDirectory,
+  }), /contents are not exact/u);
+  values.put(`${installed.installed.path}/package/package.json`, 'file', { mode: 0o444, content: 'substituted' });
+  await assert.rejects(() => verifyLinuxProtectedTree(verificationRequest(installed), {
+    observeEntry: values.ports.observeEntry,
+    verifyFile: values.ports.verifyFile,
+    listDirectory: values.ports.listDirectory,
+  }), /fake file evidence is invalid/u);
+});
+
+test('historical verification rejects widened requests and mutation-shaped ports before observation', async () => {
+  const values = fixture();
+  const request = verificationRequest(values.request());
+  const ports = {
+    observeEntry: values.ports.observeEntry,
+    verifyFile: values.ports.verifyFile,
+    listDirectory: values.ports.listDirectory,
+  };
+  await assert.rejects(() => verifyLinuxProtectedTree({ ...request, working: '/foreign' }, ports), /unknown field/u);
+  await assert.rejects(() => verifyLinuxProtectedTree({ ...request, directories: ['a/b'] }, ports), /parent is undeclared/u);
+  await assert.rejects(() => verifyLinuxProtectedTree({ ...request, entries: [{ ...request.entries[0], relative: '../escape' }] }, ports), /normalized relative/u);
+  await assert.rejects(() => verifyLinuxProtectedTree(request, { ...ports, remove: async () => {} }), /unknown field/u);
+  assert.equal(values.calls.length, 0);
+});
+
+test('historical verification rejects widened lower evidence', async () => {
+  const values = fixture();
+  const installation = values.request();
+  await installLinuxProtectedTree(installation, values.ports);
+  values.calls.length = 0;
+  const request = verificationRequest(installation);
+  await assert.rejects(() => verifyLinuxProtectedTree(request, {
+    observeEntry: async ({ contract, kind }) => ({ ...(await values.ports.observeEntry({ contract, kind })), source: 'foreign' }),
+    verifyFile: values.ports.verifyFile,
+    listDirectory: values.ports.listDirectory,
+  }), /unknown field/u);
+  await assert.rejects(() => verifyLinuxProtectedTree(request, {
+    observeEntry: values.ports.observeEntry,
+    verifyFile: async (entry) => ({ ...(await values.ports.verifyFile(entry)), source: 'foreign' }),
+    listDirectory: values.ports.listDirectory,
+  }), /unknown field|fake file evidence/u);
 });
 
 test('post-rename directory-sync interruption reconciles exact installed state on retry', async () => {
@@ -333,8 +430,20 @@ test('real Linux filesystem atomically installs and reuses an exact protected tr
     };
     const first = await installLinuxProtectedTree(request, ports);
     const second = await installLinuxProtectedTree(request, ports);
+    const verified = await verifyLinuxProtectedTree(verificationRequest(request), {
+      observeEntry: async (entry) => {
+        const observed = await inspectLinuxProtectedEntry(entry);
+        return { exists: observed.exists, kind: observed.kind, owner: observed.owner, group: observed.group, mode: observed.mode };
+      },
+      verifyFile: async (entry) => {
+        const observed = await verifyLinuxProtectedFile(entry);
+        return { ready: observed.ready, size: observed.size, digest: observed.digest };
+      },
+      listDirectory: readdir,
+    });
     assert.equal(first.changed, true);
     assert.equal(second.changed, false);
+    assert.equal(verified.ready, true);
     assert.equal(await readFile(path.join(installedParent, 'tree', 'data', 'record.json'), 'utf8'), '{"ready":true}\n');
     assert.equal((await lstat(path.join(installedParent, 'tree', 'bin', 'tool'))).mode & 0o7777, 0o555);
   } finally {

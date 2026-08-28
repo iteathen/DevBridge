@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import {
@@ -13,11 +14,18 @@ import {
 } from '../src/setup/linux-lifecycle-authority-inspection.js';
 import {
   LINUX_LIFECYCLE_AUTHORITY_GENERATION_PROTOCOL,
+  LINUX_LIFECYCLE_AUTHORITY_GENERATION_VERIFICATION_PROTOCOL,
 } from '../src/setup/linux-lifecycle-authority-generation.js';
 import { LINUX_LOCAL_IDENTITIES_PROTOCOL } from '../src/setup/linux-local-identities.js';
 import { observeLinuxService } from '../src/setup/linux-service-observation.js';
 
-const PACKAGE_DIGEST = 'a'.repeat(64);
+const PACKAGE_FILES = Object.freeze([
+  Object.freeze({ relative: 'package.json', size: 2, digest: 'a'.repeat(64) }),
+  Object.freeze({ relative: 'src/entry/linux-lifecycle-authority-service.mjs', size: 3, digest: 'c'.repeat(64) }),
+]);
+const packageHash = createHash('sha256');
+for (const entry of PACKAGE_FILES) packageHash.update(`${entry.relative}\0${entry.size}\0${entry.digest}\n`, 'utf8');
+const PACKAGE_DIGEST = packageHash.digest('hex');
 const NODE_DIGEST = 'b'.repeat(64);
 
 function plan() {
@@ -78,8 +86,8 @@ function fixture({ extraServiceGroup = false, serviceType = 'exec' } = {}) {
     protocol: LINUX_LIFECYCLE_AUTHORITY_GENERATION_PROTOCOL,
     authorityIdentity: selected.authorityIdentity,
     generation: selected.runtime.generation,
-    packageDigest: PACKAGE_DIGEST,
-    nodeDigest: NODE_DIGEST,
+    package: Object.freeze({ digest: PACKAGE_DIGEST, files: PACKAGE_FILES }),
+    node: Object.freeze({ size: 4, digest: NODE_DIGEST }),
   });
   const stats = new Map();
   const add = (target, kind, uid, gid, mode, size = 128) => stats.set(target, info(kind, { uid, gid, mode, size }));
@@ -166,8 +174,11 @@ function fixture({ extraServiceGroup = false, serviceType = 'exec' } = {}) {
       assert.equal(target, '/proc/4242/exe');
       return selected.runtime.nodeExecutable;
     },
-    measureRuntime: async () => Object.freeze({ evidence: Object.freeze({ packageDigest: PACKAGE_DIGEST, nodeDigest: NODE_DIGEST }) }),
-    verifyRuntimeAccess: async () => Object.freeze({ ready: true }),
+    verifyGeneration: async () => Object.freeze({
+      protocol: LINUX_LIFECYCLE_AUTHORITY_GENERATION_VERIFICATION_PROTOCOL,
+      generation: selected.runtime.generation,
+      verified: true,
+    }),
   };
 }
 
@@ -181,8 +192,7 @@ async function inspect(values) {
     load: values.load,
     link: values.link,
     readDirectory: async () => [],
-    measureRuntime: values.measureRuntime,
-    verifyRuntimeAccess: values.verifyRuntimeAccess,
+    verifyGeneration: values.verifyGeneration,
     observeService: (request) => observeLinuxService(request, { invoke: values.invoke }),
   });
 }
@@ -230,7 +240,11 @@ test('group-writable read parent and widened runtime evidence remain visible fai
   const values = fixture();
   const current = values.stats.get(values.plan.endpoints.read.directory);
   values.stats.set(values.plan.endpoints.read.directory, info('directory', { uid: current.uid, gid: current.gid, mode: 0o770 }));
-  values.verifyRuntimeAccess = async () => Object.freeze({ ready: false });
+  values.verifyGeneration = async () => Object.freeze({
+    protocol: LINUX_LIFECYCLE_AUTHORITY_GENERATION_VERIFICATION_PROTOCOL,
+    generation: values.plan.runtime.generation,
+    verified: false,
+  });
   const observed = await inspect(values);
   assert.equal(observed.filesystem.readDirectory.mode, false);
   assert.equal(observed.runtime.ready, false);
@@ -325,8 +339,7 @@ test('non-Linux inspection is explicitly unattached and performs no observation'
     load: async () => { touched = true; },
     link: async () => { touched = true; },
     readDirectory: async () => { touched = true; },
-    measureRuntime: async () => { touched = true; },
-    verifyRuntimeAccess: async () => { touched = true; },
+    verifyGeneration: async () => { touched = true; },
   });
   assert.equal(observed.applicable, false);
   assert.equal(touched, false);

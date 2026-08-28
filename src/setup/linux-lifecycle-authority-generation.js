@@ -10,12 +10,13 @@ import {
 import {
   PROTECTED_AUTHORITY_RUNTIME_BOUNDS,
 } from './protected-authority-runtime-candidate.js';
-
 const PROTOCOL = 'devbridge/linux-lifecycle-authority-generation-staging-v1';
 const PROJECTION_PROTOCOL = 'devbridge/linux-lifecycle-authority-generation-projection-v1';
-const GENERATION_PROTOCOL = 'devbridge/linux-lifecycle-authority-generation-v1';
+const VERIFICATION_PROJECTION_PROTOCOL = 'devbridge/linux-lifecycle-authority-generation-verification-projection-v1';
+const VERIFICATION_PROTOCOL = 'devbridge/linux-lifecycle-authority-generation-verification-v1';
+const GENERATION_PROTOCOL = 'devbridge/linux-lifecycle-authority-generation-v2';
 const DIGEST = /^[0-9a-f]{64}$/u;
-const MANIFEST_BYTES = 32 * 1024;
+const MANIFEST_BYTES = 1024 * 1024;
 const PENDING_SUFFIX = '.devbridge-pending';
 const SERVICE_ENTRY = 'src/entry/linux-lifecycle-authority-service.mjs';
 
@@ -66,6 +67,21 @@ function atOrBelow(root, target) {
   return relative === '' || (relative !== '..' && !relative.startsWith('../') && !path.posix.isAbsolute(relative));
 }
 
+function validateProjectedPlan(projected) {
+  if (absoluteLinuxPath(projected.protectedRoot, 'Linux lifecycle authority protected root') !== projected.protectedRoot
+      || path.posix.dirname(projected.runtime.stagingDirectory) !== projected.protectedRoot
+      || path.posix.dirname(projected.runtime.generationsDirectory) !== projected.protectedRoot
+      || projected.runtime.stagingDirectory === projected.runtime.generationsDirectory
+      || path.posix.dirname(projected.runtime.generationDirectory) !== projected.runtime.generationsDirectory
+      || projected.access?.protectedRoot?.mode !== 0o755
+      || projected.access?.protectedRuntime?.directoryMode !== 0o755
+      || projected.access?.protectedRuntime?.fileMode !== 0o444
+      || projected.access?.protectedRuntime?.executableMode !== 0o555) {
+    throw new Error('Linux lifecycle authority generation plan widens or escapes protected runtime policy');
+  }
+  return projected;
+}
+
 function exactPlan(value) {
   if (!value || value.protocol !== LINUX_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL || value.runtimeEvidence == null
       || value.runtime?.generation == null || typeof value.service?.unit !== 'string') {
@@ -86,37 +102,17 @@ function exactPlan(value) {
   if (keys.some((key) => value.runtime[key] !== projected.runtime[key]) || value.service.unit !== projected.service.unit) {
     throw new Error('Linux lifecycle authority generation plan does not match its exact runtime evidence');
   }
-  if (absoluteLinuxPath(projected.protectedRoot, 'Linux lifecycle authority protected root') !== projected.protectedRoot
-      || path.posix.dirname(projected.runtime.stagingDirectory) !== projected.protectedRoot
-      || path.posix.dirname(projected.runtime.generationsDirectory) !== projected.protectedRoot
-      || projected.runtime.stagingDirectory === projected.runtime.generationsDirectory
-      || path.posix.dirname(projected.runtime.generationDirectory) !== projected.runtime.generationsDirectory
-      || projected.access?.protectedRoot?.mode !== 0o755
-      || projected.access?.protectedRuntime?.directoryMode !== 0o755
-      || projected.access?.protectedRuntime?.fileMode !== 0o444
-      || projected.access?.protectedRuntime?.executableMode !== 0o555) {
-    throw new Error('Linux lifecycle authority generation plan widens or escapes protected runtime policy');
-  }
-  return projected;
+  return validateProjectedPlan(projected);
 }
 
-function normalizedCandidate(value, plan) {
-  exactKeys(value, new Set(['sourceSnapshot', 'node', 'evidence']), 'Linux lifecycle authority generation candidate');
-  exactKeys(value.sourceSnapshot, new Set(['digest', 'files']), 'Linux lifecycle authority package snapshot');
-  exactKeys(value.node, new Set(['size', 'digest']), 'Linux lifecycle authority executable evidence');
-  exactKeys(value.evidence, new Set(['packageDigest', 'nodeDigest']), 'Linux lifecycle authority candidate evidence');
-  const packageDigest = digest(value.sourceSnapshot.digest, 'Linux lifecycle authority package snapshot digest');
-  const nodeDigest = digest(value.node.digest, 'Linux lifecycle authority executable digest');
-  if (digest(value.evidence.packageDigest, 'Linux lifecycle authority candidate package digest') !== packageDigest
-      || digest(value.evidence.nodeDigest, 'Linux lifecycle authority candidate executable digest') !== nodeDigest
-      || packageDigest !== plan.runtimeEvidence.packageDigest || nodeDigest !== plan.runtimeEvidence.nodeDigest) {
-    throw new Error('Linux lifecycle authority candidate does not match the exact runtime plan');
-  }
-  if (!Array.isArray(value.sourceSnapshot.files) || value.sourceSnapshot.files.length < 2
-      || value.sourceSnapshot.files.length > PROTECTED_AUTHORITY_RUNTIME_BOUNDS.packageFiles) {
+function normalizedPackage(value) {
+  exactKeys(value, new Set(['digest', 'files']), 'Linux lifecycle authority package snapshot');
+  const packageDigest = digest(value.digest, 'Linux lifecycle authority package snapshot digest');
+  if (!Array.isArray(value.files) || value.files.length < 2
+      || value.files.length > PROTECTED_AUTHORITY_RUNTIME_BOUNDS.packageFiles) {
     throw new TypeError('Linux lifecycle authority package snapshot files are invalid');
   }
-  const files = value.sourceSnapshot.files.map((entry, index) => {
+  const files = value.files.map((entry, index) => {
     exactKeys(entry, new Set(['relative', 'size', 'digest']), `Linux lifecycle authority package file ${index}`);
     return Object.freeze({
       relative: relativePackagePath(entry.relative, `Linux lifecycle authority package file ${index} path`),
@@ -139,13 +135,31 @@ function normalizedCandidate(value, plan) {
     aggregate.update(`${entry.relative}\0${entry.size}\0${entry.digest}\n`, 'utf8');
   }
   if (aggregate.digest('hex') !== packageDigest) throw new Error('Linux lifecycle authority package snapshot digest is invalid');
+  return Object.freeze({ digest: packageDigest, files: Object.freeze(files) });
+}
+
+function normalizedNode(value) {
+  exactKeys(value, new Set(['size', 'digest']), 'Linux lifecycle authority executable evidence');
   return Object.freeze({
-    sourceSnapshot: Object.freeze({ digest: packageDigest, files: Object.freeze(files) }),
-    node: Object.freeze({
-      size: positive(value.node.size, 'Linux lifecycle authority executable size', PROTECTED_AUTHORITY_RUNTIME_BOUNDS.executableBytes),
-      digest: nodeDigest,
-    }),
-    evidence: Object.freeze({ packageDigest, nodeDigest }),
+    size: positive(value.size, 'Linux lifecycle authority executable size', PROTECTED_AUTHORITY_RUNTIME_BOUNDS.executableBytes),
+    digest: digest(value.digest, 'Linux lifecycle authority executable digest'),
+  });
+}
+
+function normalizedCandidate(value, plan) {
+  exactKeys(value, new Set(['sourceSnapshot', 'node', 'evidence']), 'Linux lifecycle authority generation candidate');
+  exactKeys(value.evidence, new Set(['packageDigest', 'nodeDigest']), 'Linux lifecycle authority candidate evidence');
+  const sourceSnapshot = normalizedPackage(value.sourceSnapshot);
+  const node = normalizedNode(value.node);
+  if (digest(value.evidence.packageDigest, 'Linux lifecycle authority candidate package digest') !== sourceSnapshot.digest
+      || digest(value.evidence.nodeDigest, 'Linux lifecycle authority candidate executable digest') !== node.digest
+      || sourceSnapshot.digest !== plan.runtimeEvidence.packageDigest || node.digest !== plan.runtimeEvidence.nodeDigest) {
+    throw new Error('Linux lifecycle authority candidate does not match the exact runtime plan');
+  }
+  return Object.freeze({
+    sourceSnapshot,
+    node,
+    evidence: Object.freeze({ packageDigest: sourceSnapshot.digest, nodeDigest: node.digest }),
   });
 }
 
@@ -163,21 +177,38 @@ function manifestBytes(value) {
 }
 
 export function normalizeLinuxLifecycleAuthorityGenerationManifest(value, providedPlan) {
-  const plan = exactPlan(providedPlan);
-  exactKeys(value, new Set(['protocol', 'authorityIdentity', 'generation', 'packageDigest', 'nodeDigest']), 'Linux lifecycle authority generation record');
-  if (value.protocol !== GENERATION_PROTOCOL || value.authorityIdentity !== plan.authorityIdentity
-      || digest(value.generation, 'Linux lifecycle authority generation record identity') !== plan.runtime.generation
-      || digest(value.packageDigest, 'Linux lifecycle authority package digest') !== plan.runtimeEvidence.packageDigest
-      || digest(value.nodeDigest, 'Linux lifecycle authority executable digest') !== plan.runtimeEvidence.nodeDigest) {
+  if (!providedPlan || providedPlan.protocol !== LINUX_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL) {
+    throw new TypeError('Linux lifecycle authority generation record plan is invalid');
+  }
+  if (providedPlan.runtimeEvidence == null && (providedPlan.runtime?.generation != null || providedPlan.service?.unit != null)) {
+    throw new TypeError('Linux lifecycle authority generation record base plan is invalid');
+  }
+  exactKeys(value, new Set(['protocol', 'authorityIdentity', 'generation', 'package', 'node']), 'Linux lifecycle authority generation record');
+  if (value.protocol !== GENERATION_PROTOCOL || value.authorityIdentity !== providedPlan.authorityIdentity) {
     throw new Error('Linux lifecycle authority generation record does not match the exact installation candidate');
   }
-  return Object.freeze({
+  const packageSnapshot = normalizedPackage(value.package);
+  const node = normalizedNode(value.node);
+  const plan = validateProjectedPlan(projectLinuxLifecycleAuthorityRuntime(providedPlan, {
+    packageDigest: packageSnapshot.digest,
+    nodeDigest: node.digest,
+  }));
+  if (digest(value.generation, 'Linux lifecycle authority generation record identity') !== plan.runtime.generation
+      || (providedPlan.runtimeEvidence != null && (providedPlan.runtimeEvidence.packageDigest !== packageSnapshot.digest
+        || providedPlan.runtimeEvidence.nodeDigest !== node.digest
+        || providedPlan.runtime?.generation !== plan.runtime.generation
+        || providedPlan.service?.unit !== plan.service.unit))) {
+    throw new Error('Linux lifecycle authority generation record does not match the exact installation candidate');
+  }
+  const normalized = Object.freeze({
     protocol: GENERATION_PROTOCOL,
     authorityIdentity: plan.authorityIdentity,
     generation: plan.runtime.generation,
-    packageDigest: plan.runtimeEvidence.packageDigest,
-    nodeDigest: plan.runtimeEvidence.nodeDigest,
+    package: packageSnapshot,
+    node,
   });
+  manifestBytes(normalized);
+  return normalized;
 }
 
 export function createLinuxLifecycleAuthorityGenerationProjection(value = {}) {
@@ -199,8 +230,8 @@ export function createLinuxLifecycleAuthorityGenerationProjection(value = {}) {
     protocol: GENERATION_PROTOCOL,
     authorityIdentity: plan.authorityIdentity,
     generation: plan.runtime.generation,
-    packageDigest: candidate.sourceSnapshot.digest,
-    nodeDigest: candidate.node.digest,
+    package: candidate.sourceSnapshot,
+    node: candidate.node,
   }, plan);
   const directories = new Set(['bin', 'package']);
   const entries = candidate.sourceSnapshot.files.map((entry) => {
@@ -253,6 +284,82 @@ export function createLinuxLifecycleAuthorityGenerationProjection(value = {}) {
       directories: Object.freeze([...directories].sort((left, right) => depth(left) - depth(right) || codePointCompare(left, right))),
       entries: Object.freeze(entries.sort((left, right) => codePointCompare(left.relative, right.relative))),
     }),
+  });
+}
+
+export function createLinuxLifecycleAuthorityGenerationVerificationProjection(value = {}) {
+  exactKeys(value, new Set(['plan', 'manifest']), 'Linux lifecycle authority generation verification projection');
+  const manifest = normalizeLinuxLifecycleAuthorityGenerationManifest(value.manifest, value.plan);
+  const plan = validateProjectedPlan(projectLinuxLifecycleAuthorityRuntime(value.plan, {
+    packageDigest: manifest.package.digest,
+    nodeDigest: manifest.node.digest,
+  }));
+  const directories = new Set(['bin', 'package']);
+  const entries = manifest.package.files.map((entry) => {
+    const relative = `package/${entry.relative}`;
+    let parent = path.posix.dirname(relative);
+    while (parent !== '.') {
+      directories.add(parent);
+      parent = path.posix.dirname(parent);
+    }
+    return Object.freeze({
+      relative,
+      mode: plan.access.protectedRuntime.fileMode,
+      maximumBytes: PROTECTED_AUTHORITY_RUNTIME_BOUNDS.packageFileBytes,
+      size: entry.size,
+      digest: entry.digest,
+    });
+  });
+  entries.push(Object.freeze({
+    relative: 'bin/node',
+    mode: plan.access.protectedRuntime.executableMode,
+    maximumBytes: PROTECTED_AUTHORITY_RUNTIME_BOUNDS.executableBytes,
+    size: manifest.node.size,
+    digest: manifest.node.digest,
+  }));
+  const encodedManifest = manifestBytes(manifest);
+  entries.push(Object.freeze({
+    relative: 'generation.json',
+    mode: plan.access.protectedRuntime.fileMode,
+    maximumBytes: MANIFEST_BYTES,
+    size: encodedManifest.length,
+    digest: createHash('sha256').update(encodedManifest).digest('hex'),
+  }));
+  return Object.freeze({
+    protocol: VERIFICATION_PROJECTION_PROTOCOL,
+    generation: manifest.generation,
+    plan,
+    manifest,
+    tree: Object.freeze({
+      root: Object.freeze({
+        path: plan.runtime.generationDirectory,
+        ownerId: 0,
+        groupId: 0,
+        mode: plan.access.protectedRuntime.directoryMode,
+      }),
+      directoryMode: plan.access.protectedRuntime.directoryMode,
+      directories: Object.freeze([...directories].sort((left, right) => depth(left) - depth(right) || codePointCompare(left, right))),
+      entries: Object.freeze(entries.sort((left, right) => codePointCompare(left.relative, right.relative))),
+    }),
+  });
+}
+
+export async function verifyLinuxLifecycleAuthorityGeneration(value = {}, providedPorts = {}) {
+  const projection = createLinuxLifecycleAuthorityGenerationVerificationProjection(value);
+  exactKeys(providedPorts, new Set(['verify']), 'Linux lifecycle authority generation verification ports');
+  const verify = providedPorts.verify;
+  if (typeof verify !== 'function') throw new TypeError('Linux lifecycle authority generation verification port is invalid');
+  const observed = await verify(projection.tree);
+  exactKeys(observed, new Set(['path', 'entries', 'ready']), 'Linux lifecycle authority generation verification evidence');
+  const expectedEntries = projection.tree.directories.length + projection.tree.entries.length;
+  if (observed.path !== projection.plan.runtime.generationDirectory
+      || observed.entries !== expectedEntries || observed.ready !== true) {
+    throw new Error('Linux lifecycle authority generation verification evidence is invalid');
+  }
+  return Object.freeze({
+    protocol: VERIFICATION_PROTOCOL,
+    generation: projection.generation,
+    verified: true,
   });
 }
 
@@ -330,6 +437,9 @@ export async function stageLinuxLifecycleAuthorityGeneration(value, providedPort
 
 export {
   GENERATION_PROTOCOL as LINUX_LIFECYCLE_AUTHORITY_GENERATION_PROTOCOL,
+  MANIFEST_BYTES as LINUX_LIFECYCLE_AUTHORITY_GENERATION_MANIFEST_MAX_BYTES,
   PROJECTION_PROTOCOL as LINUX_LIFECYCLE_AUTHORITY_GENERATION_PROJECTION_PROTOCOL,
   PROTOCOL as LINUX_LIFECYCLE_AUTHORITY_GENERATION_STAGING_PROTOCOL,
+  VERIFICATION_PROJECTION_PROTOCOL as LINUX_LIFECYCLE_AUTHORITY_GENERATION_VERIFICATION_PROJECTION_PROTOCOL,
+  VERIFICATION_PROTOCOL as LINUX_LIFECYCLE_AUTHORITY_GENERATION_VERIFICATION_PROTOCOL,
 };
