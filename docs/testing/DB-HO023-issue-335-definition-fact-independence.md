@@ -1,6 +1,6 @@
 # DB-HO023 — issue #335 definition-fact independence
 
-Status: implemented and locally qualified from exact `cuda-target` baseline `a398ab4abc79dce2dca4a0ed2ab0727bfa3f9533` on isolated branch `fix/335-definition-independent-facts`; hosted qualification is pending.
+Status: implemented, hosted-qualified, and squash-integrated into `cuda-target` by PR #336 at `c3214285489128dda0a00ea7de3ffa191ae6aa24`. The exact reviewed branch head was `7218488b5ae5c699b153219125fd6a728384df71`, based on `a398ab4abc79dce2dca4a0ed2ab0727bfa3f9533`.
 
 ## Assessment
 
@@ -51,3 +51,16 @@ DB-HO022's live prose was corrected in place so the repository does not retain t
 - full suite: 1,251 total, 1,240 passed, 11 expected platform skips, 0 failed, with a normal TAP exit in 52.9 seconds.
 
 No elevation prompt or real account, service, provider, VM, or protected-host mutation occurred.
+
+## Hosted qualification and integration
+
+Exact reviewed head `7218488b5ae5c699b153219125fd6a728384df71` passed all four jobs in GitHub Actions run `33130806998`:
+
+- Ubuntu smoke — passed in 14 seconds;
+- Ubuntu architecture gates, full suite, and doctor — passed in 31 seconds;
+- Windows smoke — passed in 49 seconds;
+- Windows architecture gates, full suite, and doctor — passed in 1 minute 54 seconds.
+
+PR #336 was squash-integrated into `cuda-target` at `c3214285489128dda0a00ea7de3ffa191ae6aa24`. Local tree-equivalence verification between the exact reviewed head and integration commit passed before cleanup.
+
+This closes issue #335 and restores the correct neutral foundation for Linux lifecycle composition. It does not itself claim Linux service, elevated setup, provider, or VM readiness.
