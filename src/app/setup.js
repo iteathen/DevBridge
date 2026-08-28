@@ -4,6 +4,7 @@ import { GitHubRestClient } from '../github/rest-client.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { JsonStateStore } from '../state/json-state-store.js';
 import { createUbuntuProductionImagePhysicalCanary, UBUNTU_PRODUCTION_IMAGE_PHYSICAL_CANARY_CONFIG_PROTOCOL } from './ubuntu-production-image-physical-canary.js';
+import { createSetupEnvironmentProfileConfiguration } from './setup-environment-profile-configuration.js';
 import { discoverGitHubSetupScope } from '../setup/github-discovery.js';
 import { installStableDevBridgeCommand } from '../setup/path-installation.js';
 import { reconcileSetupPrerequisites } from '../setup/prerequisite-reconciliation.js';
@@ -12,6 +13,7 @@ import { createUbuntuSetupAuthority, defaultUbuntuPackageSnapshot } from '../set
 import { establishUbuntuReleaseAuthority } from '../setup/ubuntu-release-authority.js';
 import { requestWindowsLifecycleAuthorityElevation } from '../setup/windows-lifecycle-authority-elevation.js';
 import { reconcileWindowsLifecycleAuthorityReadiness } from '../setup/windows-lifecycle-authority-readiness.js';
+import { createWindowsEnvironmentProfileConfiguration } from '../setup/windows-environment-profile-configuration.js';
 
 const PROTOCOL = 'devbridge/setup-status-v1';
 const STATE_KEY = 'setup:v1';
@@ -217,6 +219,8 @@ export async function runDevBridgeSetup({
   selectRepositories = selectRepositoryDefaults,
   prerequisiteReconciler = reconcileSetupPrerequisites,
   lifecycleAuthorityReconciler = reconcileWindowsLifecycleAuthorityReadiness,
+  profileConfigurationPublisher = createSetupEnvironmentProfileConfiguration,
+  profileConfigurationFactory = createWindowsEnvironmentProfileConfiguration,
   elevationRequester = requestWindowsLifecycleAuthorityElevation,
   releaseAuthority = establishUbuntuReleaseAuthority,
   authorityFactory = createUbuntuSetupAuthority,
@@ -264,6 +268,25 @@ export async function runDevBridgeSetup({
   const snapshot = previous?.ubuntu?.snapshot ?? defaultUbuntuPackageSnapshot(now());
   await store.set(STATE_KEY, setupState(previous, { identity: scope.identity, repositories, snapshot }));
 
+  const stateDirectory = path.join(root, 'state');
+  let profileConfiguration;
+  try {
+    const publisher = profileConfigurationPublisher({ stateDirectory, now: () => now().toISOString() });
+    if (!publisher || typeof publisher.reconcile !== 'function') throw new TypeError('setup profile configuration publisher is incomplete');
+    await publisher.reconcile({ subjects: repositories.selected });
+    profileConfiguration = profileConfigurationFactory({ stateDirectory, platform, invoke });
+  } catch (error) {
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      constructionRequested: construct,
+      blocker: `Environment profile configuration failed: ${error.message}`,
+    });
+  }
+
   let prerequisites;
   try {
     prerequisites = await prerequisiteReconciler({ platform, invoke, fetchImpl, environment: env });
@@ -295,10 +318,11 @@ export async function runDevBridgeSetup({
   let lifecycleAuthority;
   try {
     lifecycleAuthority = await lifecycleAuthorityReconciler({
-      stateDirectory: path.join(root, 'state'),
+      stateDirectory,
       platform,
       invoke,
       environment: env,
+      configuration: profileConfiguration,
       requestElevation: platform === 'win32'
         ? () => elevationRequester({
           home: root,

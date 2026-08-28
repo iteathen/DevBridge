@@ -1,18 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createEnvironmentOperator } from '../src/app/environment-operator.js';
+import { ENVIRONMENT_DECLARATION_PROTOCOL } from '../src/runtime/environment-declaration.js';
 
 function record() {
   return Object.freeze({
     identity: 'environment-test',
     revision: 3,
     declaration: Object.freeze({
+      protocol: ENVIRONMENT_DECLARATION_PROTOCOL,
       profile: 'linux-development',
       schemaGeneration: 'schema-1',
       guest: Object.freeze({ family: 'linux', generation: 'guest-1' }),
       image: Object.freeze({ identity: 'image-1', generation: 'image-gen-1' }),
-      bootstrap: Object.freeze({ generation: 'bootstrap-1' }),
+      resources: Object.freeze({ memoryBytes: 2 * 1024 * 1024 * 1024, processorCount: 2 }),
+      boot: Object.freeze({ requirement: 'efi-v1' }),
+      network: Object.freeze({ requirement: 'managed-egress-v1' }),
+      bootstrap: Object.freeze({ generation: 'bootstrap-1', requirements: Object.freeze(['runtime-js']) }),
+      enrollment: Object.freeze({ requirement: 'unique-guest-trust-v1' }),
       workspaces: Object.freeze([Object.freeze({ identity: 'workspace-1', authority: '42' })]),
+      protectedStateClasses: Object.freeze([]),
     }),
   });
 }
@@ -65,6 +72,7 @@ test('operator reports rebuild as the next action for missing system storage wit
   assert.equal(status.recommendedAction, 'rebuild');
   assert.equal(status.observed.implementationGeneration, 'generation-7');
   assert.equal(status.desiredGeneration.image, 'image-gen-1');
+  assert.match(status.declarationDigest, /^[a-f0-9]{64}$/u);
   assert.equal(status.imageRecovery.localVerified, true);
   assert.equal(JSON.stringify(status).includes('path'), false);
 });

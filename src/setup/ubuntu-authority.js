@@ -20,6 +20,8 @@ const SOURCE = Object.freeze({
   signerFingerprint: '843938DF228D22F7B3742BC0D94AA3F0EFE21092',
 });
 
+const OUTPUT = Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v5', bootstrap: 'guest-image-v1' });
+
 const BOOT_PATCH = Object.freeze({
   before: 'Try or Install Ubuntu Server" {\n    set gfxpayload=keep\n    linux  /casper/vmlinuz ',
   after: 'Automated Install" {\n    set gfxpayload=keep\n    linux  /casper/vmlinuz autoinstall',
@@ -132,8 +134,8 @@ export async function createUbuntuSetupAuthority({
     }),
     payload: Object.freeze({ generation: payload.generation }),
     qualification: Object.freeze({ commands: Object.freeze(['hv_kvp_daemon', 'make']) }),
-    output: Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v5', bootstrap: 'guest-image-v1' }),
+    output: OUTPUT,
   });
 }
 
-export { BOOT_PATCH as UBUNTU_SETUP_BOOT_PATCH, SOURCE as UBUNTU_SETUP_SOURCE_POLICY };
+export { BOOT_PATCH as UBUNTU_SETUP_BOOT_PATCH, OUTPUT as UBUNTU_SETUP_OUTPUT, SOURCE as UBUNTU_SETUP_SOURCE_POLICY };

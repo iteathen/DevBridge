@@ -24,9 +24,14 @@ const LEGACY_COMMAND_CONTRACT = Object.freeze({
   compatible: true,
 });
 const PLAN = Object.freeze({
+  protocol: 'devbridge/windows-lifecycle-authority-plan-v1',
   stateDirectory: STATE,
   ownershipManifest: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\owner\\ownership.json',
-  endpoints: Object.freeze({ mutation: Object.freeze({ endpoint: '\\\\.\\pipe\\devbridge-environment-owner-mutation-v1' }) }),
+  authorityDirectory: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\owner\\state',
+  endpoints: Object.freeze({
+    mutation: Object.freeze({ endpoint: '\\\\.\\pipe\\devbridge-environment-owner-mutation-v1' }),
+    acceptance: Object.freeze({ endpoint: '\\\\.\\pipe\\devbridge-environment-owner-acceptance-v1' }),
+  }),
 });
 
 function serviceResult({ ready, service = 'ready', protectedState = 'ready', authorityIdentity = 'a'.repeat(32), blocker = null, changed = false } = {}) {
@@ -73,6 +78,7 @@ function readinessDeps({ elevated = false, serviceReconciler, legacyRuntimeMigra
     clientFactory: () => Object.freeze({ inspect: async () => ({ protocol: 'devbridge/environment-operator-v1' }) }),
     verifyService: async () => ({ ready: true }),
     verifyProtection: async () => ({ ready: true }),
+    verifyAcceptance: async () => ({ ready: true }),
     serviceReconciler,
   };
 }
@@ -117,6 +123,54 @@ test('ordinary stale authority uses one elevation and resumes ordinary proof in 
   assert.equal(services, 2);
   assert.equal(elevations, 1);
   assert.equal(probes, 1);
+});
+
+test('ordinary exact service uses one elevation when accepted profile configuration is pending', async () => {
+  let services = 0;
+  let elevations = 0;
+  let configured = false;
+  const result = await reconcileWindowsLifecycleAuthorityReadiness({
+    stateDirectory: STATE,
+    platform: 'win32',
+    configuration: {
+      async inspect() { return { ready: configured, blocker: configured ? null : 'configuration pending' }; },
+      async reconcile() { throw new Error('ordinary parent must not reconcile protected configuration'); },
+    },
+    requestElevation: async () => { elevations += 1; configured = true; return { completed: true, exitCode: 0 }; },
+  }, readinessDeps({
+    serviceReconciler: async (_options, dependencies) => {
+      services += 1;
+      await dependencies.inspectHost({});
+      await dependencies.probe(PLAN);
+      return serviceResult({ ready: true });
+    },
+  }));
+  assert.equal(result.ready, true);
+  assert.equal(services, 2);
+  assert.equal(elevations, 1);
+});
+
+test('elevated child reconciles accepted profile configuration after protected service health', async () => {
+  let reconciliations = 0;
+  const result = await reconcileWindowsLifecycleAuthorityReadiness({
+    stateDirectory: STATE,
+    platform: 'win32',
+    mode: 'elevated-child',
+    configuration: {
+      async inspect() { throw new Error('elevated child must not use ordinary inspection'); },
+      async reconcile({ plan }) { assert.equal(plan, PLAN); reconciliations += 1; return { ready: true, changed: true }; },
+    },
+  }, readinessDeps({
+    elevated: true,
+    serviceReconciler: async (_options, dependencies) => {
+      await dependencies.inspectHost({});
+      await dependencies.probe(PLAN);
+      return serviceResult({ ready: true });
+    },
+  }));
+  assert.equal(result.ready, true);
+  assert.equal(result.changed, true);
+  assert.equal(reconciliations, 1);
 });
 
 test('UAC refusal stops after one attempt and does not repeat service reconciliation', async () => {
