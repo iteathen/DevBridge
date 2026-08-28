@@ -1,6 +1,6 @@
 # DB-HO020 — issue #326 daemon resume observation
 
-Status: implemented and locally qualified from exact `cuda-target` baseline `67a4b0607d9e4b359395570e5259cdca9cc1259a` on isolated branch `test/326-daemon-resume-observation`.
+Status: implemented, qualified, and integrated into `cuda-target` with the separately reviewed #328 prerequisite by PR #327 at `2b5a3635a6aa808373b26dd1409e3e7d68fa5279`.
 
 ## Assessment
 
@@ -40,3 +40,9 @@ The unconditional idempotent release hook remains registered before assertions. 
 - repository preflight: passed (`syntaxFiles: 43`, `jsonFiles: 2`, `targetedTests: 40`);
 - VM/repository-execution LEGO architecture selection: 21 passed, 0 failed;
 - full suite: 1,232 total, 1,221 passed, 11 platform skips, 0 failed, with a normal TAP exit in 53.4 seconds.
+
+## Remote evidence
+
+The first PR #327 run (`33127830469`) proved all daemon-governance tests, including this deterministic resume sequence, but later failed at the independent Windows prefix-probe timeout tracked as #328. Stacked PR #329 qualified that separate correction before adding it to the #326 topic branch.
+
+The resulting exact combined head `2f7ef584e223fcf71b79c4fdd4cda1a95eaa5c0e` passed final GitHub Actions run `33128452380`: Ubuntu smoke in 16 seconds, Ubuntu full test in 34 seconds, Windows smoke in 48 seconds, and Windows full test in 2 minutes 9 seconds. PR #327 then squash-merged that green head into `cuda-target`.
