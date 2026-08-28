@@ -58,3 +58,29 @@ The resume behavior remains with the immutable value owner because it is pure cl
 ## No-elevation boundary
 
 Through at least 2026-08-31 this work is software-only. It must not invoke Hyper-V, install or activate a service/provider/image/environment, start/stop/create/remove a physical VM, run a guest operation, request UAC, retry elevation, or attempt an elevation bypass. Remote handoff projection and product publication are also outside this structural slice; only branch commits/pushes and hosted CI are permitted.
+
+## Implementation checkpoint
+
+`src/context/chat-handoff.js` remains the only public surface and is now a 109-line validation/composition facade around five sibling-independent nested owners:
+
+- the immutable value owner retains the exact v1 schema, normalized field/list order, recursive canonicalization, UTF-8 ceiling, SHA-256 identity, resume seed, and resume reconciliation;
+- the record owner retains the exact planned/ready v1 envelope and verifies payload identity through neutral normalization/digest ports;
+- the pointer owner retains the exact current/previous v1 value and deterministic local key derivation without persistence access;
+- the retention owner ranks only neutral key/order summaries and returns removals without mutating state; and
+- the transaction owner sequences neutral read/write/list/remove plus value/record/pointer operations without knowing the concrete state adapter or semantic payload fields.
+
+Only the parent imports and connects these children. Children import no sibling or local implementation. The persistence-side children name no repository, GitHub, Codex, model, provider, platform, VM, remote-agent, or concrete `StateStore` topology. The parent alone maps exact repository/semantic fields to neutral subject/order/identity ports and preserves the established caller-facing diagnostics.
+
+Moved code was deleted from the parent; no legacy parser, compatibility record, alternate pointer, or second store path remains. The three durable protocol identifiers and planned -> readback -> ready -> readback -> pointer -> readback ordering are unchanged.
+
+Local qualification on 2026-08-28:
+
+- direct nested-owner plus retained parent/mailbox/projection/app tests: 24/24 passed;
+- 50 varied valid values matched the pre-extraction normalizer, canonical bytes, SHA-256 digest, and resume seed exactly;
+- the frozen representative value retained digest `33e360374592f4a01c7ead2d1137319837456bba6c3582d7d3fa6662fa9134ab` and 1,055 canonical UTF-8 bytes;
+- ten repeated value/store/recovery runs passed 15/15 per iteration;
+- repository preflight passed 173 syntax files, 2 JSON files, and 138 targeted test files;
+- the complete suite passed 1,718 total / 1,703 passed / 15 expected Windows/platform skips / zero failures; and
+- topology gates and `git diff --check` passed.
+
+No UAC request, elevation attempt/bypass, protected operation, physical provider/VM/image/environment/guest action, repository execution, remote handoff projection, or product publication occurred. Commit and push this exact checkpoint, then require hosted Windows/Ubuntu qualification before closing #251.
