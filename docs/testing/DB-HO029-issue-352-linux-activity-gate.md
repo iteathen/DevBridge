@@ -1,6 +1,6 @@
 # DB-HO029 — issue #352 exact Linux lifecycle/daemon activity gate
 
-Status: implemented and locally qualified from exact `cuda-target` baseline `69f6f80b317fe916cccaed47f040419893083e2e` on isolated branch `security/352-linux-activity-gate`; the first exact-head CI attempt exposed two portability defects, corrected locally, and the corrected exact head still requires Ubuntu/Windows CI before integration.
+Status: implemented and qualified from exact `cuda-target` baseline `69f6f80b317fe916cccaed47f040419893083e2e` on isolated branch `security/352-linux-activity-gate`. Corrected exact head `c7c69d6a57beb8c1f3aaaae1a72eccee7d6ea39d` passed the complete Ubuntu/Windows CI matrix in run `33142180685` and is ready for integration.
 
 ## Assessment
 
@@ -118,6 +118,17 @@ PR #353 at exact head `c9947ffe2c988c9c6fa7b64189fa51b443666d7f` produced useful
 - The Windows preflight timeout was the same pending-promise defect surfacing through the targeted suite, not a reason to widen its one-minute cost bound.
 
 This is a reusable Stage-7 lesson: real-platform canaries must exercise the default adapter composition, and any timer that owns an operation's terminal evidence must itself keep the process live until that evidence is produced.
+
+## Corrected exact-head CI qualification
+
+Run `33142180685` qualified corrected exact head `c7c69d6a57beb8c1f3aaaae1a72eccee7d6ea39d`:
+
+- Ubuntu smoke passed;
+- Ubuntu architecture gates, full suite, doctor, real `flock` canary, and real intent-filesystem canary passed;
+- Windows smoke passed within its bounded preflight window; and
+- Windows architecture gates, full suite, and doctor passed.
+
+No job was skipped or overridden. This qualifies the repository implementation and real Linux process/filesystem mechanics. It does not claim the separately deferred physical systemd, libvirt/qcow2, or guest-execution outcomes.
 
 ## Explicitly deferred
 
