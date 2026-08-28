@@ -77,3 +77,19 @@ test('protected activity composition refuses missing or ambiguous profile declar
   await assert.rejects(() => activity.prepare(LOGICAL), /declaration is unavailable or ambiguous/u);
   assert.equal(ensures, 0);
 });
+
+test('protected activity can expose fail-closed readiness before workload prerequisites exist', async () => {
+  const activity = await createProtectedEnvironmentActivity({
+    stateDirectory: '/ordinary', authorityDirectory: '/protected', platform: 'linux', invoke: async () => {},
+    state: {
+      inspect: async () => ({ ready: false, identity: 'b'.repeat(32), reason: 'no image is published' }),
+      listEnvironments: async () => [],
+      observeEnvironment: async () => { throw new Error('unavailable'); },
+    },
+    declarations: { list: async () => [] },
+    preparation: { ensure: async () => { throw new Error('unavailable'); }, connection: async () => ({}) },
+    bridgeExchange: async () => { throw new Error('unavailable'); },
+    policyLoader: async () => ({ protocol: ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL, routes: [] }),
+  });
+  assert.deepEqual(await activity.inspect(), { ready: false, identity: 'b'.repeat(32), reason: 'no image is published' });
+});

@@ -81,7 +81,7 @@ export async function createProtectedEnvironmentActivity({
   };
 
   const identity = await selectedState.inspect();
-  if (identity?.ready !== true || typeof identity.identity !== 'string') throw new Error('protected activity foundation is unavailable');
+  if (typeof identity?.identity !== 'string') throw new Error('protected activity foundation identity is unavailable');
   const selectedExchange = bridgeExchange ?? await createEnvironmentBridgeExchange({
     stateDirectory: authority,
     foundationIdentity: identity.identity,

@@ -135,7 +135,10 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
   }
 
   const migration = await migrationSafety({ stateDirectory, platform });
-  if (migration?.ready !== true) return migrationBlocker(migration ?? { blocker: 'Legacy Windows lifecycle authority cannot be migrated safely by the generic protected-state copy path.' });
+  const providerAwareImageAdoption = migration?.ready !== true && migration?.classification === 'provider-aware-image-migration-required';
+  if (migration?.ready !== true && !providerAwareImageAdoption) {
+    return migrationBlocker(migration ?? { blocker: 'Legacy Windows lifecycle authority cannot be migrated safely by the generic protected-state copy path.' });
+  }
 
   let diagnosticOffset = 0;
   if (mode === 'elevated-child') {

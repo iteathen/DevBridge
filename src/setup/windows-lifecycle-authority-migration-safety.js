@@ -85,20 +85,9 @@ export async function inspectWindowsLifecycleAuthorityMigrationSafety({
   if (catalog && (!plainObject(catalog.images) || !plainObject(catalog.operations))) {
     throw new Error('legacy image-library catalog shape is invalid for migration');
   }
-  if (catalog && (Object.keys(catalog.images).length > 0 || Object.keys(catalog.operations).length > 0)) {
-    return result({
-      ready: false,
-      classification: 'provider-aware-image-migration-required',
-      blocker: 'Legacy Windows lifecycle authority contains image-library state whose filesystem identity cannot be preserved by generic protected-state copying. Provider-aware image migration is required before the protected authority can be established.',
-    });
-  }
-  if (await hasMaterializedEntries(path.join(images, 'objects')) || await hasMaterializedEntries(path.join(images, 'staging'))) {
-    return result({
-      ready: false,
-      classification: 'provider-aware-image-migration-required',
-      blocker: 'Legacy Windows lifecycle authority contains image bytes without a safely portable empty catalog. Provider-aware image migration is required before the protected authority can be established.',
-    });
-  }
+  const catalogRequiresImageMigration = catalog && (Object.keys(catalog.images).length > 0 || Object.keys(catalog.operations).length > 0);
+  const materializedImagesRequireMigration = await hasMaterializedEntries(path.join(images, 'objects'))
+    || await hasMaterializedEntries(path.join(images, 'staging'));
 
   const operations = await readBoundedJson(path.join(persistentOperations, 'state.json'), 'devbridge/hyperv-persistent-environment-v1');
   if (operations && !plainObject(operations.records)) {
@@ -124,6 +113,16 @@ export async function inspectWindowsLifecycleAuthorityMigrationSafety({
       ready: false,
       classification: 'provider-aware-recovery-migration-required',
       blocker: 'Legacy Windows lifecycle authority contains image-recovery working state. Complete or reconcile that recovery state before protected authority migration can continue.',
+    });
+  }
+
+  if (catalogRequiresImageMigration || materializedImagesRequireMigration) {
+    return result({
+      ready: false,
+      classification: 'provider-aware-image-migration-required',
+      blocker: catalogRequiresImageMigration
+        ? 'Legacy Windows lifecycle authority contains image-library state whose filesystem identity cannot be preserved by generic protected-state copying. Provider-aware image migration is required before the protected authority can be established.'
+        : 'Legacy Windows lifecycle authority contains image bytes without a safely portable empty catalog. Provider-aware image migration is required before the protected authority can be established.',
     });
   }
 

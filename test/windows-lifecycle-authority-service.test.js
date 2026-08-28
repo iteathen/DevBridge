@@ -195,6 +195,15 @@ test('Windows lifecycle authority health uses one bounded startup-readiness wind
   assert.deepEqual(delays, [100, 250]);
 });
 
+test('Windows lifecycle authority generation health separates endpoint readiness from workload readiness', async () => {
+  const result = await probeWindowsLifecycleAuthority({ stateDirectory: STATE }, {
+    clientFactory: () => ({ async inspect() { return { protocol: 'devbridge/environment-operator-v1' }; } }),
+    activityClientFactory: () => ({ async inspect() { return { ready: false, identity: 'a'.repeat(32), reason: 'environment activity is unavailable' }; } }),
+    waitForRetry: async () => { throw new Error('structural endpoint should be accepted immediately'); },
+  });
+  assert.equal(result.protocol, 'devbridge/environment-operator-v1');
+});
+
 test('Windows lifecycle authority health stops at its bounded readiness deadline', async () => {
   let attempts = 0;
   const delays = [];
@@ -255,7 +264,7 @@ test('production elevated reconciliation no longer owns a monolithic provision o
   assert.doesNotMatch(source, /stopped-after-failed-health/u);
 });
 
-test('authority migration copies only closed protected state and leaves activity policy ordinary', async () => {
+test('authority migration copies only portable protected state and leaves image adoption and activity policy separate', async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'devbridge-authority-migration-'));
   const state = path.join(temp, 'ordinary');
   const authority = path.join(temp, 'protected');
@@ -273,7 +282,8 @@ test('authority migration copies only closed protected state and leaves activity
     const migrated = await migrateWindowsLifecycleAuthorityState({ stateDirectory: state, authorityDirectory: authority });
     assert.deepEqual(migrated.paths, WINDOWS_LIFECYCLE_AUTHORITY_STATE_PATHS);
     assert.equal(await readFile(path.join(authority, 'environment-foundation', 'identity.json'), 'utf8'), '{"identity":"protected"}\n');
-    assert.equal(await readFile(path.join(authority, 'environment-foundation', 'images', 'catalog.json'), 'utf8'), 'protected-image\n');
+    await assert.rejects(readFile(path.join(authority, 'environment-foundation', 'images', 'catalog.json'), 'utf8'), /ENOENT/u);
+    assert.equal(await readFile(path.join(state, 'environment-foundation', 'images', 'catalog.json'), 'utf8'), 'protected-image\n');
     assert.equal(await readFile(path.join(authority, 'environment-lifecycle', 'state.json'), 'utf8'), 'protected-lifecycle\n');
     assert.equal(await readFile(path.join(authority, 'environment-construction', 'state.json'), 'utf8'), 'protected-construction\n');
     await assert.rejects(readFile(path.join(authority, 'environment-activity', 'policy.json'), 'utf8'), /ENOENT/u);
@@ -292,7 +302,7 @@ test('closed migration refuses filesystem indirection instead of following autho
     await mkdir(path.join(state, 'environment-foundation'), { recursive: true });
     await mkdir(outside, { recursive: true });
     try {
-      await import('node:fs/promises').then(({ symlink }) => symlink(outside, path.join(state, 'environment-foundation', 'images'), process.platform === 'win32' ? 'junction' : 'dir'));
+      await import('node:fs/promises').then(({ symlink }) => symlink(outside, path.join(state, 'environment-foundation', 'control'), process.platform === 'win32' ? 'junction' : 'dir'));
     } catch (error) {
       if (['EPERM', 'EACCES', 'ENOSYS'].includes(error?.code)) return t.skip('filesystem indirection creation is unavailable');
       throw error;

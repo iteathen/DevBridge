@@ -33,6 +33,7 @@ import {
   WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1,
   WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1,
 } from './windows-lifecycle-authority.js';
+import { reconcileWindowsLifecycleAuthorityImages } from './windows-lifecycle-authority-image-adoption.js';
 
 const PROTOCOL = 'devbridge/windows-lifecycle-authority-service-v1';
 const OWNERSHIP_PROTOCOL = 'devbridge/windows-lifecycle-authority-ownership-v1';
@@ -53,7 +54,6 @@ const JOURNAL_EFFECTS = new Set(['stage', 'quiesce', 'promote', 'start', 'restor
 
 export const WINDOWS_LIFECYCLE_AUTHORITY_STATE_PATHS = Object.freeze([
   'environment-foundation/identity.json',
-  'environment-foundation/images',
   'environment-foundation/control',
   'environment-foundation/persistent',
   'environment-foundation/image-recovery',
@@ -719,13 +719,19 @@ function assertCandidateGeneration(value, candidatePlan, name) {
 }
 
 async function materializeGeneration({ generation }, context) {
-  const { basePlan, candidatePlan, candidate, packageRoot, nodeExecutable, operatorSid, invoke, environment } = context;
+  const { basePlan, candidatePlan, candidate, packageRoot, nodeExecutable, operatorSid, invoke, environment, adoptImages } = context;
   const identity = assertCandidateGeneration(generation, candidatePlan, 'Windows lifecycle authority materialization generation');
   let ownership = await initializeProtectedRoot(candidatePlan, operatorSid, invoke, environment);
   if (!ownership.stateMigrationComplete) {
     await migrateWindowsLifecycleAuthorityState({ stateDirectory: candidatePlan.stateDirectory, authorityDirectory: candidatePlan.authorityDirectory });
     ownership = await writeOwnership(candidatePlan, Object.freeze({ ...ownership, stateMigrationComplete: true, serviceReady: false }), invoke, environment);
   }
+  await adoptImages({
+    stateDirectory: candidatePlan.stateDirectory,
+    authorityDirectory: candidatePlan.authorityDirectory,
+    platform: 'win32',
+    invoke,
+  });
 
   const existing = await loadGenerationManifest(basePlan, identity);
   if (existing
@@ -990,14 +996,15 @@ export function createWindowsLifecycleAuthorityRefreshMechanics({
   nodeExecutable,
   candidate,
   probe = probeWindowsLifecycleAuthority,
+  adoptImages = reconcileWindowsLifecycleAuthorityImages,
 } = {}) {
   if (!basePlan || typeof basePlan !== 'object' || basePlan.runtimeEvidence != null) throw new TypeError('Windows lifecycle authority refresh base plan is invalid');
   if (!candidatePlan || typeof candidatePlan !== 'object' || candidatePlan.runtimeEvidence == null) throw new TypeError('Windows lifecycle authority refresh candidate plan is invalid');
-  if (typeof operatorSid !== 'string' || typeof invoke !== 'function' || typeof probe !== 'function') throw new TypeError('Windows lifecycle authority refresh local mechanics are invalid');
+  if (typeof operatorSid !== 'string' || typeof invoke !== 'function' || typeof probe !== 'function' || typeof adoptImages !== 'function') throw new TypeError('Windows lifecycle authority refresh local mechanics are invalid');
   if (!candidate || candidate.evidence?.packageDigest !== candidatePlan.runtimeEvidence.packageDigest || candidate.evidence?.nodeDigest !== candidatePlan.runtimeEvidence.nodeDigest) {
     throw new TypeError('Windows lifecycle authority refresh candidate evidence is invalid');
   }
-  const context = Object.freeze({ basePlan, candidatePlan, operatorSid, invoke, environment, packageRoot, nodeExecutable, candidate, probe });
+  const context = Object.freeze({ basePlan, candidatePlan, operatorSid, invoke, environment, packageRoot, nodeExecutable, candidate, probe, adoptImages });
   return Object.freeze({
     journal: Object.freeze({
       load: () => loadRefreshJournal(candidatePlan),
@@ -1028,7 +1035,7 @@ export async function probeWindowsLifecycleAuthority(plan, {
       if (!result || result.protocol !== 'devbridge/environment-operator-v1') throw new Error('protected lifecycle authority returned invalid inspection evidence');
       const activityClient = activityClientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
       const activity = await activityClient.inspect();
-      if (!activity || activity.ready !== true || typeof activity.identity !== 'string') throw new Error('protected environment activity authority returned invalid inspection evidence');
+      if (!activity || typeof activity.ready !== 'boolean' || typeof activity.identity !== 'string') throw new Error('protected environment activity authority returned invalid inspection evidence');
       return result;
     } catch (error) {
       lastError = error;

@@ -82,6 +82,28 @@ test('unsafe legacy path-bound state stops before service inspection or provisio
   assert.equal(result.blocker, 'provider-aware migration required');
 });
 
+test('provider-aware image adoption reaches the protected service path and accepts an already healthy exact generation', async () => {
+  const calls = [];
+  const result = await reconcileWindowsLifecycleAuthorityReadiness({ stateDirectory: STATE, platform: 'win32', invoke: async () => {} }, {
+    migrationSafety: async () => Object.freeze({
+      ready: false,
+      classification: 'provider-aware-image-migration-required',
+      blocker: 'provider-aware image adoption required',
+    }),
+    inspectHost: async () => { calls.push(['host']); return host(false); },
+    clientFactory: clientFactory(calls),
+    verifyService: async () => { calls.push(['service-proof']); return { ready: true }; },
+    verifyProtection: async () => { calls.push(['protection']); return { ready: true }; },
+    serviceReconciler: async (_options, dependencies) => {
+      await dependencies.inspectHost({});
+      await dependencies.probe(PLAN);
+      return readyService();
+    },
+  });
+  assert.equal(result.ready, true);
+  assert.deepEqual(calls.map((entry) => entry[0]), ['host', 'service-proof', 'client', 'inspect', 'protection']);
+});
+
 test('ordinary readiness requires SCM identity, read inspection, and negative-capability proof in that order', async () => {
   const calls = [];
   const result = await reconcileWindowsLifecycleAuthorityReadiness({ stateDirectory: STATE, platform: 'win32', invoke: async () => {} }, {
