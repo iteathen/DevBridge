@@ -21,9 +21,6 @@ function normalizeObservation(value) {
   for (const name of ['stored', 'current', 'persistent']) {
     if (typeof value[name] !== 'boolean') throw new TypeError(`definition observation ${name} evidence is invalid`);
   }
-  if (!value.stored && (value.current || value.persistent)) {
-    throw new Error('definition observation is impossible without stored bytes');
-  }
   return Object.freeze({
     protocol: OBSERVATION_PROTOCOL,
     stored: value.stored,

@@ -56,6 +56,35 @@ test('exact ready definition is a true effect-free no-op', async () => {
   assert.deepEqual(values.calls, ['observe']);
 });
 
+test('all independent target-fact combinations converge without clearing existing facts', async () => {
+  for (let mask = 0; mask < 8; mask += 1) {
+    const initial = {
+      stored: (mask & 1) !== 0,
+      current: (mask & 2) !== 0,
+      persistent: (mask & 4) !== 0,
+    };
+    const values = fixture(initial);
+    const result = await reconcileDefinition({ definition: DEFINITION, ports: values.ports });
+    const expected = ['observe'];
+    for (const [fact, action] of [['stored', 'publish'], ['current', 'refresh'], ['persistent', 'persist']]) {
+      if (!initial[fact]) expected.push(action, 'observe');
+    }
+    assert.deepEqual(values.calls, expected, `unexpected effects for fact mask ${mask}`);
+    assert.deepEqual(values.state, { stored: true, current: true, persistent: true });
+    assert.equal(result.changed, mask !== 7);
+  }
+});
+
+test('already-persistent upgrade and loaded-but-missing recovery preserve their exact facts', async () => {
+  const upgrade = fixture({ stored: false, current: false, persistent: true });
+  await reconcileDefinition({ definition: DEFINITION, ports: upgrade.ports });
+  assert.deepEqual(upgrade.calls, ['observe', 'publish', 'observe', 'refresh', 'observe']);
+
+  const loaded = fixture({ stored: false, current: true, persistent: false });
+  await reconcileDefinition({ definition: DEFINITION, ports: loaded.ports });
+  assert.deepEqual(loaded.calls, ['observe', 'publish', 'observe', 'persist', 'observe']);
+});
+
 test('interruption after every effect resumes from observation without replaying completed work', async () => {
   for (const selected of ['publish', 'refresh', 'persist']) {
     const values = fixture({}, { interrupt: selected });
@@ -91,14 +120,7 @@ test('inexact post-effect state and invalid action evidence fail closed', async 
   );
 });
 
-test('impossible, widened, and malformed contracts are rejected before effects', async () => {
-  const impossible = fixture({ stored: false, current: true });
-  await assert.rejects(
-    () => reconcileDefinition({ definition: DEFINITION, ports: impossible.ports }),
-    /impossible without stored bytes/u,
-  );
-  assert.deepEqual(impossible.calls, ['observe']);
-
+test('widened and malformed contracts are rejected before effects', async () => {
   const widenedObservation = fixture();
   widenedObservation.ports.observe = async () => ({
     protocol: DEFINITION_OBSERVATION_PROTOCOL,
