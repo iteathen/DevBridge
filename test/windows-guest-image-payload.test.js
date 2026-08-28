@@ -7,8 +7,10 @@ const MEMBERS = [
   'activity-store.mjs',
   'bridge-agent.mjs',
   'environment-bootstrap-agent.mjs',
+  'local-process.mjs',
   'network-seed-agent.mjs',
   'resource-agent.mjs',
+  'transfer-channel.mjs',
   'windows-access-seed-agent.mjs',
   'workspace-agent.mjs',
 ];

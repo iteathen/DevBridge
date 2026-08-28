@@ -11,7 +11,10 @@ It deliberately does **not** restore normal repository-controlled execution. Pro
 Stage 4 is split into replaceable components with deliberately neutral studs:
 
 - `src/runtime/environment-bridge.js` owns the provider-neutral bridge protocol, request/result validation, bounded execution observation, cancellation, file transfer, and ambiguous-completion behavior.
-- `src/guest/bridge-agent.mjs` owns only guest-local execution/transfer mechanics and its durable request journal. It does not know the host provider, repository controller, worker topology, or host filesystem.
+- `src/guest/bridge-agent.mjs` owns the guest-local protocol/dispatch adapter, logical-location containment, and durable operation journal. It composes nested local owners without knowing the host provider, repository controller, worker topology, or host filesystem.
+- `src/guest/activity-store.mjs` owns the permanent exact-attempt fence, token-bound activity heartbeat, and cancellation mailbox.
+- `src/guest/local-process.mjs` owns one bounded local-process lifecycle through neutral pulse/stop ports. It does not know transfer, operation-journal, provider, repository, controller, or transport identities.
+- `src/guest/transfer-channel.mjs` owns exact chunk staging, replay, digest validation, and final movement through neutral location resolvers. It does not know process, activity, cancellation, provider, repository, controller, or transport identities.
 - `src/runtime/providers/hyperv-environment-bridge.js` owns only the Windows-host attachment details used to reach an exact Stage-3 environment.
 - `src/runtime/providers/libvirt-environment-bridge.js` owns only the Linux-host attachment details used to reach an exact Stage-3 environment.
 - `src/app/environment-bridge.js` is composition. It is the only Stage-4 module that selects a concrete host attachment and maps the current Stage-3 provider-local object convention into the neutral `locate(target)` stud.

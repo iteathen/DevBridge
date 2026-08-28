@@ -1,16 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createActivityStore } from './activity-store.mjs';
+import { runLocalProcess } from './local-process.mjs';
+import { createTransferChannel } from './transfer-channel.mjs';
 
 const PROTOCOL = 'devbridge/environment-bridge-v1';
 const VERSION = '1.0.0';
 const RECORD_PROTOCOL = 'devbridge/environment-bridge-operation-v2';
 const CANCELLATION_PROTOCOL = 'devbridge/environment-bridge-cancellation-v1';
-const TRANSFER_PROTOCOL = 'devbridge/environment-bridge-transfer-v1';
 const FEATURES = Object.freeze(['health', 'execute', 'observe', 'cancel', 'put', 'get']);
 const SAFE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
 const REQUEST_ID = /^[a-f0-9]{32}$/u;
@@ -22,14 +23,11 @@ const ARGUMENT_CLASSES = new Set(['input', 'work', 'output', 'scratch', 'cache']
 const PUT_CLASSES = new Set(['input', 'work', 'scratch', 'cache']);
 const GET_CLASSES = new Set(['output', 'work', 'scratch', 'cache']);
 const MAX_FRAME_BYTES = 24 * 1024 * 1024;
-const MAX_TRANSFER_BYTES = 32 * 1024 * 1024;
-const MAX_CHUNK_BYTES = 16 * 1024;
 const MAX_OUTPUT_BYTES = 3 * 1024 * 1024;
 const MAX_STDIN_BYTES = 16 * 1024;
 const MAX_TIMEOUT_MS = 28_800_000;
 const ATOMIC_RENAME_RETRY_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
 const ATOMIC_RENAME_RETRY_DELAYS_MS = Object.freeze([5, 10, 20, 40, 80, 160]);
-const ACTIVITY_REFRESH_MS = 250;
 const ACTIVITY_OBSERVATION_RETRY_DELAYS_MS = Object.freeze([5, 10, 20, 40, 80, 160]);
 const ACTIVITY_TOKEN = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
 const SELF = fileURLToPath(import.meta.url);
@@ -109,13 +107,6 @@ function normalizeOperation(raw) {
   };
 }
 
-function canonicalBase64(value, name, maxBytes) {
-  const text = boundedString(value, name, { allowEmpty: true, maxBytes: Math.ceil(maxBytes * 4 / 3) + 16 });
-  const bytes = Buffer.from(text, 'base64');
-  if (bytes.length > maxBytes || bytes.toString('base64') !== text) throw new TypeError(`${name} is not canonical bounded base64`);
-  return bytes;
-}
-
 function absoluteDirectory(value, name, style, { allowRoot = true } = {}) {
   const candidate = boundedString(value, name, { maxBytes: 4_096 });
   if (!style.isAbsolute(candidate)) throw new TypeError(`${name} must be absolute`);
@@ -144,6 +135,7 @@ const ROOT = selectStateRoot();
 const OPERATIONS = path.join(ROOT, '.operations');
 const TRANSFERS = path.join(ROOT, '.transfers');
 let activityStore = null;
+let transferChannel = null;
 
 async function ensureDirectory(directory, name) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -164,6 +156,26 @@ async function localActivity() {
   await ensureRoot();
   if (!activityStore) activityStore = await createActivityStore({ directory: OPERATIONS });
   return activityStore;
+}
+
+async function localTransfers() {
+  await ensureRoot();
+  if (!transferChannel) {
+    transferChannel = await createTransferChannel({
+      directory: TRANSFERS,
+      normalizeWrite: (value) => normalizeLocation(value, 'transfer write location', PUT_CLASSES),
+      resolveWrite: async (value, options) => {
+        const resolved = await resolveLocation(value, PUT_CLASSES, options);
+        return { root: resolved.root, path: resolved.path };
+      },
+      normalizeRead: (value) => normalizeLocation(value, 'transfer read location', GET_CLASSES),
+      resolveRead: async (value, options) => {
+        const resolved = await resolveLocation(value, GET_CLASSES, options);
+        return { root: resolved.root, path: resolved.path };
+      },
+    });
+  }
+  return transferChannel;
 }
 
 async function safeClassRoot(name) {
@@ -251,8 +263,6 @@ async function readJson(file, name) {
 
 function operationFile(request) { return path.join(OPERATIONS, `${safeRequest(request)}.json`); }
 function cancelFile(request) { return path.join(OPERATIONS, `${safeRequest(request)}.cancel.json`); }
-function transferFile(request) { return path.join(TRANSFERS, `${safeRequest(request)}.part`); }
-function transferMeta(request) { return path.join(TRANSFERS, `${safeRequest(request)}.json`); }
 
 async function loadOperation(request) {
   await ensureRoot();
@@ -307,27 +317,6 @@ async function observedState(request, target, record) {
   return observed;
 }
 
-async function terminateTree(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return;
-  if (process.platform === 'win32') {
-    await new Promise((resolve) => {
-      const child = spawn('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', shell: false, windowsHide: true });
-      const timer = setTimeout(() => { child.kill(); resolve(); }, 3_000);
-      timer.unref?.();
-      child.once('error', () => { clearTimeout(timer); resolve(); });
-      child.once('close', () => { clearTimeout(timer); resolve(); });
-    });
-    return;
-  }
-  try { process.kill(-pid, 'SIGTERM'); }
-  catch { try { process.kill(pid, 'SIGTERM'); } catch {} }
-  const hard = setTimeout(() => {
-    try { process.kill(-pid, 'SIGKILL'); }
-    catch { try { process.kill(pid, 'SIGKILL'); } catch {} }
-  }, 1_000);
-  hard.unref?.();
-}
-
 async function cancellationReason(request) {
   try {
     const value = await readJson(cancelFile(request), 'bridge cancellation record');
@@ -345,15 +334,6 @@ async function publishCancellation(request, reason) {
   await atomicJson(cancelFile(request), { protocol: CANCELLATION_PROTOCOL, request, reason });
 }
 
-function baseEnvironment() {
-  const names = process.platform === 'win32'
-    ? ['PATH', 'Path', 'SystemRoot', 'WINDIR', 'PATHEXT', 'TEMP', 'TMP', 'ComSpec', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)']
-    : ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'];
-  const environment = {};
-  for (const name of names) if (typeof process.env[name] === 'string') environment[name] = process.env[name];
-  return environment;
-}
-
 async function runOperation(request, token) {
   const activity = await localActivity();
   if (!await activity.claim(request, token)) return;
@@ -367,87 +347,7 @@ async function runOperation(request, token) {
   record.activityToken = token;
   record.attemptedAt = new Date().toISOString();
   await atomicJson(operationFile(request), record);
-
-  const preCancelled = await cancellationReason(request);
-  if (preCancelled) {
-    const now = new Date().toISOString();
-    record.state = 'completed';
-    record.result = { exitCode: null, signal: null, timedOut: preCancelled === 'timeout', aborted: preCancelled === 'abort', outputTruncated: false, stdout: '', stderr: '', startedAt: null, finishedAt: now, lastOutputAt: null };
-    record.finishedAt = now;
-    await atomicJson(operationFile(request), record);
-    await rm(cancelFile(request), { force: true });
-    await activity.remove(request, token);
-    return;
-  }
-
-  const stdout = [];
-  const stderr = [];
-  const capture = { bytes: 0, truncated: false, lastOutputAt: null };
-  let child = null;
-  let childSettled = false;
-  let terminationSent = false;
-  let stopReason = null;
-  let controlFailure = null;
-  let controlStopped = false;
-  let controlTimer = null;
-  let controlPending = null;
-  let timeoutTimer = null;
-  let timeoutPending = null;
   let terminalRecorded = false;
-  const append = (list, chunk) => {
-    const bytes = Buffer.from(chunk);
-    capture.lastOutputAt = new Date().toISOString();
-    if (capture.bytes >= body.maxOutputBytes) { capture.truncated = true; return; }
-    const remaining = body.maxOutputBytes - capture.bytes;
-    if (bytes.length > remaining) { list.push(bytes.subarray(0, remaining)); capture.bytes = body.maxOutputBytes; capture.truncated = true; return; }
-    list.push(bytes); capture.bytes += bytes.length;
-  };
-
-  const terminateOwnedChild = async () => {
-    if (terminationSent || childSettled || !child || !Number.isSafeInteger(child.pid) || child.pid <= 0) return;
-    terminationSent = true;
-    await terminateTree(child.pid);
-  };
-
-  const controlCycle = async () => {
-    try {
-      await activity.publish(request, token);
-      const observed = await cancellationReason(request);
-      if (observed && !stopReason) stopReason = observed;
-      if (stopReason) await terminateOwnedChild();
-    } catch (error) {
-      controlFailure ??= error;
-      await terminateOwnedChild();
-    }
-  };
-
-  const scheduleControl = (delay = 0) => {
-    controlTimer = setTimeout(() => {
-      controlPending = controlCycle().finally(() => {
-        controlPending = null;
-        if (!controlStopped && !controlFailure) scheduleControl(ACTIVITY_REFRESH_MS);
-      });
-    }, delay);
-    controlTimer.unref?.();
-  };
-
-  const stopControl = async () => {
-    controlStopped = true;
-    if (controlTimer) clearTimeout(controlTimer);
-    const pending = controlPending;
-    if (pending) await pending;
-  };
-
-  const completeWithoutStart = async (reason) => {
-    const now = new Date().toISOString();
-    record.state = 'completed';
-    record.result = { exitCode: null, signal: null, timedOut: reason === 'timeout', aborted: reason === 'abort', outputTruncated: false, stdout: '', stderr: '', startedAt: null, finishedAt: now, lastOutputAt: null };
-    record.finishedAt = now;
-    await atomicJson(operationFile(request), record);
-    terminalRecorded = true;
-  };
-
-  scheduleControl();
   try {
     const working = await resolveLocation(body.directory, EXECUTION_CLASSES, { allowRoot: true, createParents: true });
     const argumentsList = [];
@@ -457,108 +357,31 @@ async function runOperation(request, token) {
       const resolved = await resolveLocation(argument, ARGUMENT_CLASSES, { createParents, requireFile: argument.class === 'input' });
       argumentsList.push(resolved.path);
     }
-    if (controlFailure) throw controlFailure;
-    stopReason ??= await cancellationReason(request);
-    if (stopReason) {
-      await stopControl();
-      await completeWithoutStart(stopReason);
-      return;
-    }
-
-    child = spawn(body.program, argumentsList, {
-      cwd: working.path,
-      env: { ...baseEnvironment(), ...body.environment },
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: false,
-      windowsHide: true,
-      detached: process.platform !== 'win32',
+    const result = await runLocalProcess({
+      program: body.program,
+      arguments: argumentsList,
+      directory: working.path,
+      environment: body.environment,
+      input: body.input,
+      timeoutMs: body.timeoutMs,
+      maxOutputBytes: body.maxOutputBytes,
+    }, {
+      pulse: () => activity.publish(request, token),
+      readStop: () => cancellationReason(request),
+      writeStop: (reason) => publishCancellation(request, reason),
     });
-
-    let inputFailure = null;
-    let settleInput;
-    const inputCompletion = new Promise((resolve) => {
-      let inputSettled = false;
-      settleInput = (error = null) => {
-        if (inputSettled) return;
-        inputSettled = true;
-        inputFailure = body.input == null ? null : error;
-        resolve();
-      };
-      child.stdin.once('error', (error) => settleInput(error));
-      child.stdin.once('close', () => settleInput(body.input == null ? null : new Error('bridge operation input closed before delivery')));
-    });
-
-    const processCompletion = new Promise((resolve) => {
-      const settleProcess = (exitCode, signal, error = null) => {
-        if (childSettled) return;
-        childSettled = true;
-        resolve({ exitCode, signal, error });
-      };
-      child.stdout.on('data', (chunk) => append(stdout, chunk));
-      child.stderr.on('data', (chunk) => append(stderr, chunk));
-      child.once('error', (error) => settleProcess(null, null, error));
-      child.once('close', (code, signal) => settleProcess(code, signal));
-    });
-
-    record.state = 'running';
-    record.startedAt = new Date().toISOString();
-    await atomicJson(operationFile(request), record);
-    if (stopReason || controlFailure) await terminateOwnedChild();
-
-    timeoutTimer = setTimeout(() => {
-      timeoutPending = (async () => {
-        if (childSettled || stopReason) return;
-        stopReason = 'timeout';
-        try { await publishCancellation(request, 'timeout'); }
-        catch (error) { controlFailure ??= error; }
-        await terminateOwnedChild();
-      })();
-    }, body.timeoutMs);
-    timeoutTimer.unref?.();
-
-    child.stdin.end(body.input ?? undefined, () => settleInput(null));
-    const outcome = await processCompletion;
-    if (timeoutTimer) clearTimeout(timeoutTimer);
-    if (timeoutPending) await timeoutPending;
-    await inputCompletion;
-    await stopControl();
-
-    if (controlFailure) throw new Error('bridge operation activity could not be maintained');
-    if (outcome.error) throw outcome.error;
-    if (inputFailure) throw new Error('bridge operation input could not be delivered');
-
-    const reason = stopReason ?? await cancellationReason(request);
-    const finishedAt = new Date().toISOString();
     record.state = 'completed';
-    record.finishedAt = finishedAt;
-    record.result = {
-      exitCode: outcome.exitCode == null ? null : Math.max(-1, Math.min(255, Number(outcome.exitCode))),
-      signal: outcome.signal == null ? null : String(outcome.signal).slice(0, 128),
-      timedOut: reason === 'timeout',
-      aborted: reason === 'abort',
-      outputTruncated: capture.truncated,
-      stdout: Buffer.concat(stdout).toString('base64'),
-      stderr: Buffer.concat(stderr).toString('base64'),
-      startedAt: record.startedAt,
-      finishedAt,
-      lastOutputAt: capture.lastOutputAt,
-    };
+    record.finishedAt = result.finishedAt;
+    record.result = result;
     await atomicJson(operationFile(request), record);
     terminalRecorded = true;
   } catch (error) {
-    await stopControl();
-    if (timeoutTimer) clearTimeout(timeoutTimer);
-    if (timeoutPending) await timeoutPending;
-    await terminateOwnedChild();
     record.state = 'failed';
     record.reason = String(error?.message ?? 'bridge operation failed').slice(0, 2_048);
     record.finishedAt = new Date().toISOString();
     await atomicJson(operationFile(request), record);
     terminalRecorded = true;
   } finally {
-    await stopControl();
-    if (timeoutTimer) clearTimeout(timeoutTimer);
-    if (timeoutPending) await timeoutPending;
     if (terminalRecorded) await rm(cancelFile(request), { force: true });
     await activity.remove(request, token);
   }
@@ -632,101 +455,11 @@ async function cancel(frame) {
 }
 
 async function put(frame) {
-  const body = requireObject(frame.body, 'bridge put body');
-  onlyKeys(body, new Set(['destination', 'offset', 'data', 'eof', 'digest']), 'bridge put body');
-  const destination = normalizeLocation(body.destination, 'bridge put destination', PUT_CLASSES);
-  const offset = integer(body.offset, 'bridge put offset', 0, MAX_TRANSFER_BYTES);
-  const data = canonicalBase64(body.data ?? '', 'bridge put data', MAX_CHUNK_BYTES);
-  if (typeof body.eof !== 'boolean') throw new TypeError('bridge put eof must be boolean');
-  if (!body.eof && body.digest != null) throw new TypeError('bridge put digest is only allowed at EOF');
-  if (body.eof && (typeof body.digest !== 'string' || !/^[a-f0-9]{64}$/u.test(body.digest))) throw new TypeError('bridge put digest is invalid');
-  if (offset + data.length > MAX_TRANSFER_BYTES) throw new Error('bridge put exceeds the transfer limit');
-
-  await ensureRoot();
-  const metaFile = transferMeta(frame.request);
-  const partFile = transferFile(frame.request);
-  let meta;
-  try { meta = await readJson(metaFile, 'bridge transfer record'); }
-  catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
-    if (offset !== 0) throw new Error('bridge put continuation has no transfer record');
-    meta = { protocol: TRANSFER_PROTOCOL, request: frame.request, target: frame.target, destination, state: 'receiving', bytes: 0, digest: null };
-    await atomicJson(metaFile, meta);
-    await writeFile(partFile, Buffer.alloc(0), { mode: 0o600, flag: 'wx' });
-  }
-  if (meta.protocol !== TRANSFER_PROTOCOL || meta.request !== frame.request || meta.target !== frame.target || JSON.stringify(meta.destination) !== JSON.stringify(destination)) throw new Error('bridge put transfer identity changed');
-  if (meta.state === 'completed') {
-    if (!body.eof || offset + data.length !== meta.bytes || body.digest !== meta.digest) throw new Error('completed bridge put was replayed with different content');
-    const resolved = await resolveLocation(destination, PUT_CLASSES, { requireFile: true });
-    const bytes = await readFile(resolved.path);
-    if (bytes.length !== meta.bytes || createHash('sha256').update(bytes).digest('hex') !== meta.digest) throw new Error('completed bridge put destination changed');
-    return { nextOffset: meta.bytes, complete: true, digest: meta.digest };
-  }
-  const info = await lstat(partFile);
-  if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_TRANSFER_BYTES) throw new Error('bridge put staging object is invalid');
-  const size = Number(info.size);
-  if (offset > size) throw new Error('bridge put offset skipped staged bytes');
-  if (offset < size) {
-    if (offset + data.length > size) throw new Error('bridge put replay overlaps unstaged bytes');
-    const handle = await open(partFile, 'r');
-    try {
-      const existing = Buffer.alloc(data.length);
-      const { bytesRead } = await handle.read(existing, 0, data.length, offset);
-      if (bytesRead !== data.length || !existing.equals(data)) throw new Error('bridge put replay bytes do not match staging');
-    } finally { await handle.close(); }
-  } else if (data.length > 0) {
-    const handle = await open(partFile, 'a');
-    try { await handle.write(data); } finally { await handle.close(); }
-  }
-  const nextOffset = offset + data.length;
-  if (!body.eof) return { nextOffset, complete: false, digest: null };
-
-  const staged = await readFile(partFile);
-  if (staged.length !== nextOffset || staged.length > MAX_TRANSFER_BYTES) throw new Error('bridge put staging length changed');
-  const digest = createHash('sha256').update(staged).digest('hex');
-  if (digest !== body.digest) throw new Error('bridge put digest does not match staged bytes');
-  const resolved = await resolveLocation(destination, PUT_CLASSES, { createParents: true });
-  const parent = await realpath(path.dirname(resolved.path));
-  if (!contained(resolved.root, parent)) throw new Error('bridge put destination parent changed');
-  try {
-    const existing = await lstat(resolved.path);
-    if (!existing.isFile() || existing.isSymbolicLink()) throw new Error('bridge put destination is not a regular file');
-    await rm(resolved.path, { force: true });
-  } catch (error) { if (error?.code !== 'ENOENT') throw error; }
-  await rename(partFile, resolved.path);
-  const finalInfo = await lstat(resolved.path);
-  if (!finalInfo.isFile() || finalInfo.isSymbolicLink()) throw new Error('bridge put destination shape changed');
-  meta = { ...meta, state: 'completed', bytes: staged.length, digest, completedAt: new Date().toISOString() };
-  await atomicJson(metaFile, meta);
-  return { nextOffset: staged.length, complete: true, digest };
+  return (await localTransfers()).put({ identity: frame.request, binding: frame.target, value: frame.body });
 }
 
 async function get(frame) {
-  const body = requireObject(frame.body, 'bridge get body');
-  onlyKeys(body, new Set(['source', 'offset', 'limit']), 'bridge get body');
-  const source = normalizeLocation(body.source, 'bridge get source', GET_CLASSES);
-  const offset = integer(body.offset, 'bridge get offset', 0, MAX_TRANSFER_BYTES);
-  const limit = integer(body.limit, 'bridge get limit', 1, MAX_CHUNK_BYTES);
-  const resolved = await resolveLocation(source, GET_CLASSES, { requireFile: true });
-  const info = await stat(resolved.path);
-  if (!info.isFile() || info.size > MAX_TRANSFER_BYTES) throw new Error('bridge get source exceeds the transfer limit');
-  if (offset > info.size) throw new Error('bridge get offset exceeds source length');
-  const count = Math.min(limit, Number(info.size) - offset);
-  const handle = await open(resolved.path, 'r');
-  let data;
-  try {
-    data = Buffer.alloc(count);
-    const { bytesRead } = await handle.read(data, 0, count, offset);
-    data = data.subarray(0, bytesRead);
-  } finally { await handle.close(); }
-  const eof = offset + data.length >= info.size;
-  let digest = null;
-  if (eof) {
-    const complete = await readFile(resolved.path);
-    if (complete.length > MAX_TRANSFER_BYTES) throw new Error('bridge get source exceeds the transfer limit');
-    digest = createHash('sha256').update(complete).digest('hex');
-  }
-  return { offset, data: data.toString('base64'), eof, digest };
+  return (await localTransfers()).get({ identity: frame.request, binding: frame.target, value: frame.body });
 }
 
 function normalizeFrame(raw) {

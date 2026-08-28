@@ -10,8 +10,10 @@ const MEMBERS = Object.freeze([
   'bridge-agent.mjs',
   'environment-bootstrap-agent.mjs',
   'linux-access-seed-agent.mjs',
+  'local-process.mjs',
   'network-seed-agent.mjs',
   'resource-agent.mjs',
+  'transfer-channel.mjs',
   'workspace-agent.mjs',
 ]);
 const TARGET_ROOT = '/usr/local/libexec/devbridge';

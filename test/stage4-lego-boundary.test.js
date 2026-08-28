@@ -6,6 +6,8 @@ const genericFiles = [
   new URL('../src/runtime/environment-bridge.js', import.meta.url),
   new URL('../src/guest/activity-store.mjs', import.meta.url),
   new URL('../src/guest/bridge-agent.mjs', import.meta.url),
+  new URL('../src/guest/local-process.mjs', import.meta.url),
+  new URL('../src/guest/transfer-channel.mjs', import.meta.url),
 ];
 const edgeFiles = [
   new URL('../src/runtime/providers/hyperv-environment-bridge.js', import.meta.url),
@@ -30,6 +32,13 @@ test('durable guest execution state contains no process locator identity', async
     const source = await readFile(file, 'utf8');
     assert.doesNotMatch(source, /monitorPid|childPid/iu);
   }
+});
+
+test('nested guest effect owners remain sibling-agnostic', async () => {
+  const localProcess = await readFile(new URL('../src/guest/local-process.mjs', import.meta.url), 'utf8');
+  const transfer = await readFile(new URL('../src/guest/transfer-channel.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(localProcess, /transfer|location|request|target|ledger/iu);
+  assert.doesNotMatch(transfer, /child_process|spawn\(|activity|cancell|execution|operation/iu);
 });
 
 test('provider-local Stage 4 attachments do not name or import the other provider family', async () => {
