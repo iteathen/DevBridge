@@ -8,12 +8,19 @@ import {
   TaskLeaseLostError,
 } from '../errors.js';
 import { validateToolProfile } from '../runtime/cli-profile.js';
+import { CandidateRecovery } from './run-coordinator/candidate-recovery.js';
+import { FeedbackContinuation } from './run-coordinator/feedback-continuation.js';
+import { FinalizationPolicy } from './run-coordinator/finalization-policy.js';
+import {
+  boundedOutput,
+  projectCandidateIdentity,
+  projectContentEvidence,
+} from './run-coordinator/projections.js';
+import { RetryWindow, RetryWindowError } from './run-coordinator/retry-window.js';
 import { controllerPlanDigest } from './controller-plan.js';
 import { parseToolResult } from './result-envelope.js';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
-const TRANSIENT_RETRY_BASE_MS = 5_000;
-const TRANSIENT_RETRY_MAX_MS = 60_000;
 
 function nowIso() {
   return new Date().toISOString();
@@ -22,56 +29,6 @@ function nowIso() {
 function defaultSleep(ms) {
   if (ms <= 0) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function transientRetryDelay(attempt) {
-  const exponent = Math.max(0, Math.min(20, attempt - 1));
-  return Math.min(TRANSIENT_RETRY_MAX_MS, TRANSIENT_RETRY_BASE_MS * (2 ** exponent));
-}
-
-function outputTail(run) {
-  const text = [run.stdout, run.stderr].filter(Boolean).join('\n');
-  return text.length <= 8000 ? text : text.slice(-8000);
-}
-
-function gitProjection(snapshot) {
-  if (!snapshot) return null;
-  return {
-    branch: snapshot.branch,
-    baseSha: snapshot.baseSha,
-    publicationBaseSha: snapshot.publicationBaseSha ?? snapshot.baseSha,
-    headSha: snapshot.headSha,
-    dirty: snapshot.dirty
-  };
-}
-
-function feedbackProvenanceProjection(provenance) {
-  if (!provenance || typeof provenance !== 'object') return null;
-  return {
-    verified: provenance.verified === true,
-    reason: provenance.reason ?? null,
-    contentSha256: provenance.contentSha256 ?? null,
-    creatorActorId: provenance.creatorActorId ?? null,
-    currentEditorActorId: provenance.currentEditorActorId ?? null,
-    editorActorIds: Array.isArray(provenance.editorActorIds) ? provenance.editorActorIds.slice(0, 20) : [],
-    editCount: Number.isInteger(provenance.editCount) ? provenance.editCount : null,
-    redactedEditCount: Number.isInteger(provenance.redactedEditCount) ? provenance.redactedEditCount : null,
-    historyComplete: provenance.historyComplete === true,
-    lastEditedAt: provenance.lastEditedAt ?? null,
-  };
-}
-
-function feedbackProvenanceRecord(entry, { accepted = false, action = null } = {}) {
-  return {
-    source: accepted ? 'github-feedback' : 'github-feedback-rejected',
-    accepted,
-    action,
-    commentId: entry.commentId ?? null,
-    actorId: entry.actorId ?? null,
-    reason: accepted ? null : (entry.reason ?? entry.provenance?.reason ?? 'provenance-rejected'),
-    content: feedbackProvenanceProjection(entry.provenance),
-    recordedAt: nowIso(),
-  };
 }
 
 export function runIdForTask(task) {
@@ -95,8 +52,10 @@ export class RunCoordinator {
   #deterministicProfileNames;
   #autoPush;
   #forceNoOpPublication;
-  #nowMs;
-  #sleep;
+  #retryWindow;
+  #feedbackContinuation;
+  #candidateRecovery;
+  #finalizationPolicy;
 
   constructor({
     stateStore,
@@ -134,8 +93,18 @@ export class RunCoordinator {
     this.#deterministicProfileNames = new Set(deterministicProfileNames);
     this.#autoPush = autoPushTaskBranches;
     this.#forceNoOpPublication = forceNoOpPublication === true;
-    this.#nowMs = nowMs;
-    this.#sleep = sleep;
+    this.#retryWindow = new RetryWindow({ now: nowMs, wait: sleep });
+    this.#feedbackContinuation = new FeedbackContinuation({
+      recordKinds: {
+        accepted: 'github-feedback',
+        rejected: 'github-feedback-rejected',
+        decision: 'trusted-feedback',
+      },
+      projectEvidence: projectContentEvidence,
+      now: nowIso,
+    });
+    this.#candidateRecovery = new CandidateRecovery({ now: nowIso });
+    this.#finalizationPolicy = new FinalizationPolicy();
   }
 
   #key(task) {
@@ -169,7 +138,7 @@ export class RunCoordinator {
       runtime: {
         changedFiles: snapshot?.changedFiles ?? state.prior.changedFiles,
         tests: state.prior.tests,
-        git: snapshot ? gitProjection(snapshot) : state.prior.git,
+        git: snapshot ? projectCandidateIdentity(snapshot) : state.prior.git,
         blockers: state.prior.blockers,
         nextStep: state.prior.nextStep,
         outputTail: state.prior.outputTail,
@@ -200,11 +169,12 @@ export class RunCoordinator {
 
   async #respectTransientBackoff(key, state) {
     const retry = state.transientRetry;
-    if (!retry?.notBefore) return;
-    const notBefore = Date.parse(retry.notBefore);
-    if (!Number.isFinite(notBefore)) throw new PolicyError('persisted transient retry deadline is malformed');
-    const remaining = notBefore - this.#nowMs();
-    if (remaining > 0) await this.#sleep(remaining);
+    try {
+      if (!await this.#retryWindow.respect(retry)) return;
+    } catch (error) {
+      if (error instanceof RetryWindowError) throw new PolicyError(error.message, { cause: error });
+      throw error;
+    }
     if (state.transientRetry?.notBefore === retry.notBefore) {
       state.transientRetry = { ...state.transientRetry, notBefore: null, delayMs: 0 };
       await this.#save(key, state);
@@ -212,90 +182,86 @@ export class RunCoordinator {
   }
 
   #scheduleTransientRetry(state, result) {
-    const attempts = (state.transientRetry?.attempts ?? 0) + 1;
     const turnLimit = state.turnLimit ?? this.#maxTurns;
-    if (state.turn >= turnLimit) {
-      state.transientRetry = {
-        classification: result.failureClassification ?? 'TRANSIENT',
-        kind: result.retryKind ?? 'tool-availability',
-        attempts,
-        delayMs: 0,
-        notBefore: null,
-        exhausted: true,
-        lastAt: new Date(this.#nowMs()).toISOString()
-      };
-      return null;
-    }
-    const delayMs = transientRetryDelay(attempts);
-    const notBefore = new Date(this.#nowMs() + delayMs).toISOString();
-    state.transientRetry = {
-      classification: result.failureClassification ?? 'TRANSIENT',
-      kind: result.retryKind ?? 'tool-availability',
-      attempts,
-      delayMs,
-      notBefore,
-      exhausted: false,
-      lastAt: new Date(this.#nowMs()).toISOString()
-    };
-    return { attempts, delayMs, notBefore };
+    const next = this.#retryWindow.schedule({
+      current: state.transientRetry,
+      completed: state.turn,
+      limit: turnLimit,
+      classification: result.failureClassification,
+      kind: result.retryKind,
+    });
+    state.transientRetry = next.record;
+    return next.scheduled;
   }
 
   async #recordCandidateRejection(key, state, workspace, error) {
     const snapshot = await this.#workspace.snapshot(workspace);
     const summary = `DevBridge candidate validation rejected the proposal: ${error.message}`;
+    const recovery = this.#candidateRecovery.rejection({
+      summary,
+      nextStep: 'Repair the candidate validation issues in the working tree, re-run relevant read-only checks, and report complete only when correct. Do not stage or commit; DevBridge owns Git administrative state.',
+    });
     state.stage = 'running';
     state.finalSnapshot = null;
     state.prior.changedFiles = snapshot.changedFiles;
-    state.prior.git = gitProjection(snapshot);
-    state.prior.blockers = [summary];
-    state.prior.nextStep = 'Repair the candidate validation issues in the working tree, re-run relevant read-only checks, and report complete only when correct. Do not stage or commit; DevBridge owns Git administrative state.';
-    state.prior.progress.push(summary);
+    state.prior.git = projectCandidateIdentity(snapshot);
+    state.prior.blockers = recovery.blockers;
+    state.prior.nextStep = recovery.nextStep;
+    state.prior.progress.push(recovery.summary);
     await this.#save(key, state);
-    await this.#publish(state, 'REPAIRING', summary, snapshot, { force: true });
+    await this.#publish(state, 'REPAIRING', recovery.summary, snapshot, { force: true });
     return null;
   }
 
   async #recordBaselineReverification(key, state, workspace, error) {
     const snapshot = await this.#workspace.snapshot(workspace);
     const reconciliation = error.reconciliation ?? {};
+    const planned = Boolean(state.task.envelope.controllerPlan);
     const summary = `DevBridge rebased the sealed candidate from publication baseline ${reconciliation.fromBaseSha ?? 'unknown'} to ${reconciliation.toBaseSha ?? snapshot.publicationBaseSha}; prior verification is stale and must be repeated before publication.`;
+    const recovery = this.#candidateRecovery.baselineReverification({
+      reconciliation,
+      snapshot,
+      history: state.baselineReconciliation?.history,
+      summary,
+      nextStep: planned
+        ? 'Re-run the deterministic controller plan and all of its assertions against the rebased publication baseline before finalization.'
+        : 'The upstream baseline advanced and DevBridge rebased the sealed candidate. Re-run the relevant verification/tests against this rebased worktree before reporting complete. Do not stage or commit; DevBridge owns Git administrative state.',
+    });
     state.finalSnapshot = null;
     state.baselineReverifyRequired = true;
-    state.baselineReconciliation ??= { history: [] };
-    state.baselineReconciliation.history ??= [];
-    state.baselineReconciliation.history.push({
-      fromBaseSha: reconciliation.fromBaseSha ?? null,
-      toBaseSha: reconciliation.toBaseSha ?? snapshot.publicationBaseSha,
-      fromHeadSha: reconciliation.fromHeadSha ?? null,
-      toHeadSha: reconciliation.toHeadSha ?? snapshot.headSha,
-      recordedAt: nowIso()
-    });
-    state.baselineReconciliation.history = state.baselineReconciliation.history.slice(-20);
+    state.baselineReconciliation = {
+      ...(state.baselineReconciliation ?? {}),
+      history: recovery.history,
+    };
     state.prior.changedFiles = snapshot.changedFiles;
-    state.prior.git = gitProjection(snapshot);
+    state.prior.git = projectCandidateIdentity(snapshot);
     state.prior.tests = [];
     state.prior.blockers = [];
-    state.prior.nextStep = state.task.envelope.controllerPlan
-      ? 'Re-run the deterministic controller plan and all of its assertions against the rebased publication baseline before finalization.'
-      : 'The upstream baseline advanced and DevBridge rebased the sealed candidate. Re-run the relevant verification/tests against this rebased worktree before reporting complete. Do not stage or commit; DevBridge owns Git administrative state.';
-    state.prior.progress.push(summary);
+    state.prior.nextStep = recovery.nextStep;
+    state.prior.progress.push(recovery.summary);
     state.stage = state.task.envelope.controllerPlan ? 'controller-plan' : 'running';
     await this.#save(key, state);
-    await this.#publish(state, 'REVERIFYING', summary, snapshot, { force: true });
+    await this.#publish(state, 'REVERIFYING', recovery.summary, snapshot, { force: true });
     return null;
   }
 
   async #consumeDeterministicBaselineReverification(key, state, workspace) {
     const turnLimit = state.turnLimit ?? this.#maxTurns;
-    const currentAttempt = Math.max(1, state.turn);
-    if (currentAttempt >= turnLimit) {
+    const attempt = this.#candidateRecovery.boundedReverification({
+      completed: state.turn,
+      limit: turnLimit,
+      exhausted: {
+        blocker: `Publication baseline kept advancing through the bounded ${turnLimit}-attempt deterministic reverification window; trusted continuation feedback is required.`,
+        nextStep: 'Inspect the publication-baseline drift and provide a trusted continuation decision. DevBridge will not replay the deterministic plan outside its bounded verification window.',
+      },
+    });
+    if (attempt.exhausted) {
       state.stage = 'waiting-feedback';
       state.baselineReverifyRequired = false;
-      const blocker = `Publication baseline kept advancing through the bounded ${turnLimit}-attempt deterministic reverification window; trusted continuation feedback is required.`;
-      state.prior.blockers = [blocker];
-      state.prior.nextStep = 'Inspect the publication-baseline drift and provide a trusted continuation decision. DevBridge will not replay the deterministic plan outside its bounded verification window.';
+      state.prior.blockers = [attempt.blocker];
+      state.prior.nextStep = attempt.nextStep;
       await this.#save(key, state);
-      await this.#publish(state, 'WAITING_FEEDBACK', blocker, await this.#workspace.snapshot(workspace), { force: true });
+      await this.#publish(state, 'WAITING_FEEDBACK', attempt.blocker, await this.#workspace.snapshot(workspace), { force: true });
       return {
         runId: state.runId,
         issueNumber: state.task.issueNumber,
@@ -304,7 +270,7 @@ export class RunCoordinator {
         branch: workspace.branch
       };
     }
-    state.turn = currentAttempt + 1;
+    state.turn = attempt.next;
     state.baselineReverifyRequired = false;
     await this.#save(key, state);
     return null;
@@ -313,16 +279,20 @@ export class RunCoordinator {
   async #recordBaselineCheckpoint(key, state, workspace, error) {
     const snapshot = await this.#workspace.snapshot(workspace);
     const summary = `DevBridge cannot safely reconcile the publication baseline automatically: ${error.message}`;
+    const recovery = this.#candidateRecovery.baselineCheckpoint({
+      summary,
+      nextStep: 'Inspect the upstream baseline change and provide a trusted continuation decision. DevBridge will not rewrite upstream history or leave an unresolved rebase in the managed worktree.',
+    });
     state.stage = 'waiting-feedback';
     state.finalSnapshot = null;
     state.baselineReverifyRequired = false;
     state.prior.changedFiles = snapshot.changedFiles;
-    state.prior.git = gitProjection(snapshot);
-    state.prior.blockers = [summary];
-    state.prior.nextStep = 'Inspect the upstream baseline change and provide a trusted continuation decision. DevBridge will not rewrite upstream history or leave an unresolved rebase in the managed worktree.';
-    state.prior.progress.push(summary);
+    state.prior.git = projectCandidateIdentity(snapshot);
+    state.prior.blockers = recovery.blockers;
+    state.prior.nextStep = recovery.nextStep;
+    state.prior.progress.push(recovery.summary);
     await this.#save(key, state);
-    await this.#publish(state, 'WAITING_FEEDBACK', summary, snapshot, { force: true });
+    await this.#publish(state, 'WAITING_FEEDBACK', recovery.summary, snapshot, { force: true });
     return {
       runId: state.runId,
       issueNumber: state.task.issueNumber,
@@ -334,36 +304,37 @@ export class RunCoordinator {
   }
 
   async #recordLocalCandidateReverification(key, state, workspace, snapshot, verifiedSnapshot) {
-    const reasons = [];
-    if (snapshot.dirty) reasons.push('the managed worktree became dirty');
-    if (snapshot.headSha !== verifiedSnapshot.headSha) reasons.push(`HEAD moved from verified ${verifiedSnapshot.headSha} to ${snapshot.headSha}`);
-    const observedPublicationBase = snapshot.publicationBaseSha ?? snapshot.baseSha;
-    const verifiedPublicationBase = verifiedSnapshot.publicationBaseSha ?? verifiedSnapshot.baseSha;
-    if (observedPublicationBase !== verifiedPublicationBase) {
-      reasons.push(`publication baseline changed from ${verifiedPublicationBase} to ${observedPublicationBase}`);
-    }
-    const summary = `DevBridge observed local candidate identity drift after verification (${reasons.join('; ')}); prior verification is stale and must be repeated before publication.`;
+    const planned = Boolean(state.task.envelope.controllerPlan);
+    const recovery = this.#candidateRecovery.localReverification({
+      observed: snapshot,
+      verified: verifiedSnapshot,
+      completed: state.turn,
+      limit: state.turnLimit ?? this.#maxTurns,
+      exhausted: {
+        blocker: `Local candidate identity kept drifting after verification through the bounded ${state.turnLimit ?? this.#maxTurns}-attempt deterministic reverification window; trusted continuation feedback is required.`,
+        nextStep: 'Inspect the post-verification local candidate drift and provide a trusted continuation decision. DevBridge will not replay the deterministic plan outside its bounded verification window.',
+      },
+    });
+    const summary = `DevBridge observed local candidate identity drift after verification (${recovery.reasons.join('; ')}); prior verification is stale and must be repeated before publication.`;
+    const nextStep = planned
+      ? 'Re-run the deterministic controller plan and all of its assertions against the current managed candidate before publication.'
+      : 'The managed candidate changed after verification. Re-run the relevant verification/tests against the current worktree before reporting complete. Do not stage or commit; DevBridge owns Git administrative state.';
     state.finalSnapshot = null;
     state.baselineReverifyRequired = false;
     state.prior.changedFiles = snapshot.changedFiles;
-    state.prior.git = gitProjection(snapshot);
+    state.prior.git = projectCandidateIdentity(snapshot);
     state.prior.tests = [];
     state.prior.blockers = [];
-    state.prior.nextStep = state.task.envelope.controllerPlan
-      ? 'Re-run the deterministic controller plan and all of its assertions against the current managed candidate before publication.'
-      : 'The managed candidate changed after verification. Re-run the relevant verification/tests against the current worktree before reporting complete. Do not stage or commit; DevBridge owns Git administrative state.';
+    state.prior.nextStep = nextStep;
     state.prior.progress.push(summary);
 
-    if (state.task.envelope.controllerPlan) {
-      const turnLimit = state.turnLimit ?? this.#maxTurns;
-      const currentAttempt = Math.max(1, state.turn);
-      if (currentAttempt >= turnLimit) {
-        const blocker = `Local candidate identity kept drifting after verification through the bounded ${turnLimit}-attempt deterministic reverification window; trusted continuation feedback is required.`;
+    if (planned) {
+      if (recovery.attempt.exhausted) {
         state.stage = 'waiting-feedback';
-        state.prior.blockers = [blocker];
-        state.prior.nextStep = 'Inspect the post-verification local candidate drift and provide a trusted continuation decision. DevBridge will not replay the deterministic plan outside its bounded verification window.';
+        state.prior.blockers = [recovery.attempt.blocker];
+        state.prior.nextStep = recovery.attempt.nextStep;
         await this.#save(key, state);
-        await this.#publish(state, 'WAITING_FEEDBACK', blocker, snapshot, { force: true });
+        await this.#publish(state, 'WAITING_FEEDBACK', recovery.attempt.blocker, snapshot, { force: true });
         return {
           runId: state.runId,
           issueNumber: state.task.issueNumber,
@@ -373,7 +344,7 @@ export class RunCoordinator {
           headSha: snapshot.headSha
         };
       }
-      state.turn = currentAttempt + 1;
+      state.turn = recovery.attempt.next;
       state.stage = 'controller-plan';
     } else {
       state.stage = 'running';
@@ -418,9 +389,7 @@ export class RunCoordinator {
 
     if (state.stage === 'publishing' && finalSnapshot) {
       const observed = await this.#workspace.snapshot(workspace);
-      const observedPublicationBase = observed.publicationBaseSha ?? observed.baseSha;
-      const verifiedPublicationBase = finalSnapshot.publicationBaseSha ?? finalSnapshot.baseSha;
-      if (observed.dirty || observed.headSha !== finalSnapshot.headSha || observedPublicationBase !== verifiedPublicationBase) {
+      if (this.#finalizationPolicy.identityChanged(observed, finalSnapshot)) {
         return this.#recordLocalCandidateReverification(key, state, workspace, observed, finalSnapshot);
       }
       const checked = await this.#sealForFinalization(key, state, workspace);
@@ -429,7 +398,7 @@ export class RunCoordinator {
       state.finalSnapshot = finalSnapshot;
       state.baselineReverifyRequired = false;
       state.prior.changedFiles = finalSnapshot.changedFiles;
-      state.prior.git = gitProjection(finalSnapshot);
+      state.prior.git = projectCandidateIdentity(finalSnapshot);
       state.prior.blockers = [];
       state.prior.nextStep = null;
       await this.#save(key, state);
@@ -442,47 +411,48 @@ export class RunCoordinator {
       state.finalSnapshot = finalSnapshot;
       state.baselineReverifyRequired = false;
       state.prior.changedFiles = finalSnapshot.changedFiles;
-      state.prior.git = gitProjection(finalSnapshot);
+      state.prior.git = projectCandidateIdentity(finalSnapshot);
       state.prior.blockers = [];
       state.prior.nextStep = null;
       await this.#save(key, state);
     }
 
-    const publicationBaseSha = finalSnapshot.publicationBaseSha ?? finalSnapshot.baseSha;
-    const noProjectDiff = finalSnapshot.headSha === publicationBaseSha && finalSnapshot.changedFiles.length === 0;
-    if (this.#autoPush && state.publication?.published !== true && !state.publication?.skipped) {
-      if (noProjectDiff && !this.#forceNoOpPublication) {
+    const disposition = this.#finalizationPolicy.publication({
+      snapshot: finalSnapshot,
+      enabled: this.#autoPush,
+      alreadyPublished: state.publication?.published === true,
+      alreadySkipped: Boolean(state.publication?.skipped),
+      forceEmpty: this.#forceNoOpPublication,
+    });
+    if (disposition.kind === 'skip') {
         state.publication = {
           published: false,
           skipped: true,
           reason: 'no-project-diff',
           headSha: finalSnapshot.headSha,
-          publicationBaseSha,
+          publicationBaseSha: disposition.baseSha,
           recordedAt: nowIso()
         };
         await this.#save(key, state);
-      } else {
+    } else if (disposition.kind === 'publish') {
         state.stage = 'publishing';
         await this.#save(key, state);
         const publication = await this.#workspace.publishTaskBranch(workspace, {
-          expectedHeadSha: finalSnapshot.headSha
+          expectedHeadSha: disposition.expectedHeadSha
         });
-        state.publication = { published: true, ...publication, publicationBaseSha, publishedAt: nowIso() };
+        state.publication = { published: true, ...publication, publicationBaseSha: disposition.baseSha, publishedAt: nowIso() };
         await this.#save(key, state);
-      }
     }
 
     state.stage = 'completed';
     await this.#save(key, state);
-    let summary;
-    if (state.publication?.skipped) {
-      summary = `Completed and verified ${finalSnapshot.headSha}; publication skipped because there is no project diff.`;
-    } else if (this.#autoPush) {
-      summary = `Completed, sealed candidate ${finalSnapshot.headSha}, and published task branch ${workspace.branch}.`;
-    } else {
-      summary = `Completed and sealed candidate ${finalSnapshot.headSha} on local task branch ${workspace.branch}; automatic push is disabled.`;
-    }
-    await this.#publish(state, 'COMPLETED', summary, finalSnapshot, { terminal: true, force: true });
+    const completion = this.#finalizationPolicy.completion({
+      snapshot: finalSnapshot,
+      branch: workspace.branch,
+      automatic: this.#autoPush,
+      publication: state.publication,
+    });
+    await this.#publish(state, 'COMPLETED', completion.summary, finalSnapshot, { terminal: true, force: true });
     return {
       runId: state.runId,
       issueNumber: state.task.issueNumber,
@@ -490,11 +460,11 @@ export class RunCoordinator {
       branch: workspace.branch,
       headSha: finalSnapshot.headSha,
       baseSha: finalSnapshot.baseSha,
-      publicationBaseSha,
-      changedFiles: finalSnapshot.changedFiles,
-      published: state.publication?.published === true,
-      publicationSkipped: state.publication?.skipped === true,
-      publicationReason: state.publication?.reason ?? null
+      publicationBaseSha: completion.baseSha,
+      changedFiles: completion.changedFiles,
+      published: completion.published,
+      publicationSkipped: completion.skipped,
+      publicationReason: completion.reason
     };
   }
 
@@ -587,18 +557,22 @@ export class RunCoordinator {
           taskRevision: task.revision,
           afterCommentId: state.lastFeedbackCommentId ?? 0
         });
-        const rejectedFeedback = Array.isArray(polled.rejected) ? polled.rejected : [];
-        if (rejectedFeedback.length > 0) {
-          state.prior.provenance.push(...rejectedFeedback.map((entry) => feedbackProvenanceRecord(entry)));
-          state.prior.provenance = state.prior.provenance.slice(-100);
-        }
-        state.lastFeedbackCommentId = polled.highestCommentId ?? state.lastFeedbackCommentId ?? 0;
-        if (!polled.feedback) {
+        const feedback = this.#feedbackContinuation.interpret({
+          poll: polled,
+          provenance: state.prior.provenance,
+          cursor: state.lastFeedbackCommentId,
+          completed: state.turn,
+          limit: state.turnLimit,
+          extension: this.#maxTurns,
+        });
+        state.prior.provenance = feedback.provenance;
+        state.lastFeedbackCommentId = feedback.cursor;
+        if (feedback.kind === 'idle') {
           await this.#save(key, state);
-          if (rejectedFeedback.length > 0) {
-            const summary = polled.provenanceRetryRequired
-              ? `Ignored ${rejectedFeedback.length} authority-shaped feedback comment(s) because exact edit provenance is temporarily unverifiable; the feedback cursor was not advanced and DevBridge will retry.`
-              : `Ignored ${rejectedFeedback.length} authority-shaped feedback comment(s) because creator/editor provenance did not satisfy local trust policy.`;
+          if (feedback.rejectedCount > 0) {
+            const summary = feedback.retryRequired
+              ? `Ignored ${feedback.rejectedCount} authority-shaped feedback comment(s) because exact edit provenance is temporarily unverifiable; the feedback cursor was not advanced and DevBridge will retry.`
+              : `Ignored ${feedback.rejectedCount} authority-shaped feedback comment(s) because creator/editor provenance did not satisfy local trust policy.`;
             await this.#publish(state, 'WAITING_FEEDBACK', summary, null);
           }
           return {
@@ -606,25 +580,12 @@ export class RunCoordinator {
             issueNumber: task.issueNumber,
             status: state.stage,
             waiting: true,
-            rejectedFeedbackCount: rejectedFeedback.length
+            rejectedFeedbackCount: feedback.rejectedCount
           };
         }
-        state.prior.provenance.push(feedbackProvenanceRecord(polled.feedback, {
-          accepted: true,
-          action: polled.feedback.action,
-        }));
-        state.prior.provenance = state.prior.provenance.slice(-100);
-        if (polled.feedback.action === 'cancel') {
+        state.prior.decisions.push(feedback.decision);
+        if (feedback.kind === 'cancel') {
           state.stage = 'cancelled';
-          state.prior.decisions.push({
-            source: 'trusted-feedback',
-            action: 'cancel',
-            actorId: polled.feedback.actorId,
-            commentId: polled.feedback.commentId,
-            contentSha256: polled.feedback.contentSha256,
-            contentProvenance: feedbackProvenanceProjection(polled.feedback.provenance),
-            note: polled.feedback.instructions ?? null
-          });
           await this.#save(key, state);
           await this.#publish(state, 'CANCELLED', 'Run cancelled by trusted exact-content feedback.', null, {
             terminal: true,
@@ -632,17 +593,8 @@ export class RunCoordinator {
           });
           return { runId: state.runId, issueNumber: task.issueNumber, status: 'cancelled' };
         }
-        state.prior.decisions.push({
-          source: 'trusted-feedback',
-          action: 'continue',
-          actorId: polled.feedback.actorId,
-          commentId: polled.feedback.commentId,
-          contentSha256: polled.feedback.contentSha256,
-          contentProvenance: feedbackProvenanceProjection(polled.feedback.provenance),
-          instructions: polled.feedback.instructions
-        });
         state.prior.blockers = [];
-        if (state.turn >= state.turnLimit) state.turnLimit = state.turn + this.#maxTurns;
+        state.turnLimit = feedback.limit;
         state.transientRetry = null;
         state.stage = 'running';
         await this.#save(key, state);
@@ -723,7 +675,7 @@ export class RunCoordinator {
           }
         });
         state.prior.changedFiles = execution.snapshot.changedFiles;
-        state.prior.git = gitProjection(execution.snapshot);
+        state.prior.git = projectCandidateIdentity(execution.snapshot);
         state.prior.tests = [...state.prior.tests, ...execution.tests].slice(-100);
         state.prior.progress.push(execution.summary);
         state.prior.nextStep = null;
@@ -768,8 +720,8 @@ export class RunCoordinator {
         });
 
         state.prior.changedFiles = snapshot.changedFiles;
-        state.prior.git = gitProjection(snapshot);
-        state.prior.outputTail = outputTail(run);
+        state.prior.git = projectCandidateIdentity(snapshot);
+        state.prior.outputTail = boundedOutput(run);
         state.prior.nextStep = result.nextStep;
         if (result.summary) state.prior.progress.push(result.summary);
         if (result.progress.length) state.prior.progress.push(...result.progress);
