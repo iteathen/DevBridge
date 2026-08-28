@@ -51,3 +51,9 @@ Local evidence:
 - `git diff --check`: passed.
 
 Multiple hosted Windows/Ubuntu runs on the exact implementation commit remain required before #261 closes because the observed access denial is intermittent. No UAC or protected operation occurred.
+
+## Accepted evidence
+
+GitHub Actions run `33208808793` completed three consecutive successful attempts on exact implementation commit `d84ac2c35ab07e1eb5245b9ff723f1d25ca6f40e`. Every attempt passed all four jobs: Windows serialized complete suite plus doctor, Windows preflight/identity/standalone-installer checks, Ubuntu complete suite plus doctor, and Ubuntu smoke. The three attempts ran from 20:34 through 20:42 UTC and each retained the same exact head SHA.
+
+This accepts #261. A future denial after the 1,275-millisecond bound remains an infrastructure failure and must be reassessed from new evidence; it does not authorize another implicit expansion. No UAC or protected operation occurred.
