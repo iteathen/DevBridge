@@ -79,8 +79,14 @@ Local qualification on 2026-08-28:
 - 50 varied valid values matched the pre-extraction normalizer, canonical bytes, SHA-256 digest, and resume seed exactly;
 - the frozen representative value retained digest `33e360374592f4a01c7ead2d1137319837456bba6c3582d7d3fa6662fa9134ab` and 1,055 canonical UTF-8 bytes;
 - ten repeated value/store/recovery runs passed 15/15 per iteration;
-- repository preflight passed 173 syntax files, 2 JSON files, and 138 targeted test files;
+- repository preflight passed 168 directly checked syntax files, 2 JSON files, and 138 targeted test files; the targeted nested test imports and verifies all five child files;
 - the complete suite passed 1,718 total / 1,703 passed / 15 expected Windows/platform skips / zero failures; and
 - topology gates and `git diff --check` passed.
 
 No UAC request, elevation attempt/bypass, protected operation, physical provider/VM/image/environment/guest action, repository execution, remote handoff projection, or product publication occurred. Commit and push this exact checkpoint, then require hosted Windows/Ubuntu qualification before closing #251.
+
+## Hosted preflight reassessment
+
+CI run `33219166402` attempt 1 on exact implementation commit `d4e2e892ca6e3bef0f3cd971936d40c9e2c5bff8` passed Windows serialized full-suite/doctor and both Ubuntu jobs, but Windows cheap preflight reached its fixed one-minute job boundary without emitting a product/test failure. A failed-job-only rerun reproduced the same Windows preflight timeout while the already-qualified jobs remained green. This is another exact instance of open CI resource-budget issue #290, not evidence that the handoff contract failed.
+
+The five new children had been added both as individual `node --check` subprocesses and as imports of the new targeted nested contract. On Windows the extra sequential process launches duplicated syntax coverage and pushed the bounded job over its wall-clock budget. Remove only those five redundant direct syntax registrations: the already registered parent imports every child, and the targeted nested test imports/reads every exact child and proves its topology. Keep the new targeted test, all complete-suite coverage, and the one-minute CI limit unchanged. Local corrected preflight passes 168 direct syntax files + 2 JSON files + 138 targeted tests in 38.28 seconds. Requalify the correction on exact hosted Windows/Ubuntu CI before acceptance.
