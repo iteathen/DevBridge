@@ -542,7 +542,7 @@ Reassessment therefore keeps the correction wholly inside local contracts:
 4. Update whole-image sanitization to remove the neutral per-user DevBridge state root, not the obsolete privileged path. Do not add migration or compatibility behavior: no accepted image contains bridge state at the old location.
 5. Advance recipe and output generations so the changed payload and sanitizer derive a fresh immutable subject. Prove Linux/XDG/override/Windows root selection, relative-path rejection, import isolation, sanitizer output, generation change, and the existing bridge failure/boundary corpus before full verification and another physical construction.
 
-Implementation follows that ownership plan. The bridge agent now selects its state through one pure local function: an exact absolute override remains available to local tests, Windows retains its ProgramData location, and non-Windows execution uses an absolute XDG state base or the current user's documented home fallback. Relative inputs and filesystem-root overrides fail closed. Importing the module no longer executes the command entry, while direct payload invocation retains the same two fixed modes. The image sanitizer removes `/home/devbridge/.local/state/devbridge` and contains no old bridge-state path. Recipe/output generations advance to `ubuntu-2604-autoinstall-v10` and `ubuntu-2604-production-v5`; the changed six-file payload derives generation `guest-image-e6b08319035fea827966385c`. There is no privileged initializer, caller path field, provider branch, or compatibility migration.
+Implementation follows that ownership plan. The bridge agent now selects its state through one pure local function: an exact absolute override remains available to local tests, Windows retains its ProgramData location, and non-Windows execution uses an absolute XDG state base or the current user's documented home fallback. Relative inputs and filesystem-root overrides fail closed. Importing the module no longer executes the command entry, while direct payload invocation retains the same two fixed modes. The image sanitizer removes `/home/devbridge/.local/state/devbridge` and contains no old bridge-state path. Recipe/output generations advance to `ubuntu-2604-autoinstall-v10` and `ubuntu-2604-production-v5`; the six-file payload generation remains derived from its exact bytes. The Windows working-tree bytes used by the local gate produced `guest-image-e6b08319035fea827966385c`; the accepted zero-state component's exact payload identity is recorded separately below. There is no privileged initializer, caller path field, provider branch, or compatibility migration.
 
 Local verification on the exact candidate passed:
 
@@ -559,9 +559,45 @@ Primary references:
 - [Node.js `os.homedir()`](https://nodejs.org/api/os.html#oshomedir)
 - [systemd temporary-files and directories](https://www.freedesktop.org/software/systemd/man/latest/tmpfiles.d.html)
 
+### 22. Exact v10 completed physical qualification and immutable local publication
+
+PR #356 bound reviewed head `4f79625b0c463247569c19777f4cc216411485e8`; its tree exactly matched the accepted squash tree. CI run `33148218419` passed all four Ubuntu/Windows smoke and full jobs, and the PR merged into `cuda-target` at exact commit `100a5722ecbda0fe006a3aea1546568473fd7cfc`. The zero-state bootstrap installed that exact permanent-entry component. Wrapper-owned `entry-install-status` reported the same component head, moving selector `cuda-target`, and no exact runner pin. One bounded host elevation reconciled the already-defined protected runtime and returned to the ordinary setup process, which stopped at the construction gate without creating a VM.
+
+One explicit ordinary `setup --construct` entry then derived fresh immutable subject `subject-8a7a9afe109534b2c128f272ab586bcf` with:
+
+- VM `db-image-build-54af3c6f4b844782` and provider identity `ee25a37a-74f2-4d50-a2f2-5f763daa1515`;
+- retained source disk `acfe37c11d76882daf976e517a5963f5026ad4992b3d716bc1c8bc3b3d0621ca.vhdx`;
+- 2 GiB startup memory, 2 virtual processors, and 32 GiB virtual disk authority; and
+- start time `2026-08-28T06:38:20.257Z`, expected completion `07:23:20.257Z`, and hard deadline `08:38:20.257Z`.
+
+Every scheduled install observation remained `Operating normally`. Allocation advanced from 4 MiB through 5,909,774,336, 7,990,149,120, 9,332,326,400, and 9,600,761,856 bytes without a stalled interval. The installer powered off, detached both media, and booted the installed disk. Strict verification accepted the subject-owned host key. The unprivileged bridge then initialized its own user-state root and completed the exact probe that v9 could not enter; no privilege retry or fallback occurred.
+
+Durable qualification evidence binds:
+
+- Ubuntu `26.04`;
+- payload `guest-image-688e4295403761cf5ae78fd1`;
+- package generation `ubuntu-2604-tools-v4` at snapshot `20260821T230000Z`;
+- Node `v22.22.1`, npm `9.2.0`, Git `2.53.0`, CMake `4.2.3`, working CTest, GCC `15.2.0`, `make`, and `hv_kvp_daemon`; and
+- successful guest networking.
+
+The probe is deliberately pre-sanitization evidence. The separate destructive finalization receipt is `devbridge/image-finalization-v1` with `finalized: true`. Its first re-entry reported the durable `finalized` phase while the VM was still powering off; no retry occurred. Plain read-only setup subsequently re-observed and explicitly authorized resume from that exact frontier. The next public construction entry accepted and retained the powered-off disk, published it through the local image library, verified the immutable artifact, and completed the canary at journal revision 12.
+
+The accepted library record is:
+
+- image `img-dd12f7d5088dc62281a89a887be9dc1b`;
+- profile/generation `linux-development` / `ubuntu-2604-production-v5`;
+- exact SHA-256 `c3fde8830056262b9466a9c6c4fed979402306ba9cacff93aa9e7c3eeb933bf6` and size `9,667,870,720` bytes;
+- VHDX content identity `EF4C2560-607C-4642-8946-238158AE4C8C`, virtual size `34,359,738,368` bytes, and no parent identity;
+- published at `2026-08-28T06:54:45.657Z` and reverified at `06:55:07.953Z`; and
+- active, not retired.
+
+Post-completion read-only observation found no VM with the exact construction name and exactly one library artifact with the recorded name and size. The exact retained construction disk remains referenced by the construction journal as the admission source; it is not an orphan and must be discarded only through the owning exact-subject lifecycle operation. Older failed subjects remain preserved evidence until that bounded cleanup surface is composed; they are not manually deleted.
+
+This completes the local Hyper-V construction, guest foundation, CMake/CTest, sanitization, parentless provider-native VHDX inspection, and immutable local-publication portion of issue #197. The issue remains open for fresh-cache reconstruction, ordinary additional-tool installation evidence, whole-image #178 bundle/manifest, configured remote publication and redownload/reconstruction, and real qcow2/KVM/libvirt qualification.
+
 ## Preserved physical evidence
 
-After the latest stopped attempt:
+Historical records preserve the following earlier stopped frontiers; the completed v10 record above is the current qualification evidence:
 
 - the production-image canary journal preserved every previously recorded `planned` subject and added exact current subject `subject-99742e1c94397011d72b6c08523c09c5` at `planned`, revision 1;
 - the official Ubuntu ISO cache remained `2,918,598,656` bytes with SHA-256 `dec49008a71f6098d0bcfc822021f4d042d5f2db279e4d75bdd981304f1ca5d9` and its original cache timestamp;
