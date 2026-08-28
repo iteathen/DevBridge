@@ -112,6 +112,26 @@ test('absent lifecycle records are read-only and do not create or admit a claim'
   assert.deepEqual(values.calls, []);
 });
 
+test('claim establishment is explicit and idempotent without creating a transaction', async () => {
+  const values = fixture();
+  const store = values.makeStore();
+  const expected = initialLinuxLifecycleAuthorityOwnershipRecord(values.selected);
+
+  assert.deepEqual(await store.claim.ensure(), expected);
+  assert.equal(values.admissions(), 1);
+  assert.deepEqual(values.calls.map((entry) => entry.slice(0, 2)), [
+    ['directory', values.selected.storage.rootDirectory],
+    ['directory', values.selected.protectedRoot],
+    ['file', values.selected.ownershipManifest],
+  ]);
+  assert.equal(await store.journal.load(), null);
+
+  const before = values.calls.length;
+  assert.deepEqual(await store.claim.ensure(), expected);
+  assert.equal(values.admissions(), 1);
+  assert.equal(values.calls.length, before);
+});
+
 test('first transaction save admits and persists the exact claim before the transaction', async () => {
   const values = fixture();
   const store = values.makeStore();
