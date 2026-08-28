@@ -1,6 +1,6 @@
 # DB-HO018 — issue #293 Linux numeric identity binding
 
-Status: implementation complete from exact `cuda-target` baseline `7148efb88bbc15c1237dfb42b7f1578fdcb3e87b` on isolated branch `security/293-linux-identity-binding`. Focused, preflight, and architecture gates pass; final full-suite qualification is intentionally deferred until the separately isolated daemon-test cleanup defect in #323 is integrated.
+Status: implemented and locally qualified on isolated branch `security/293-linux-identity-binding`. The slice was originally planned from exact `cuda-target` baseline `7148efb88bbc15c1237dfb42b7f1578fdcb3e87b`, then rebased and fully requalified against `c021abc00ffb7118990776831083a5fb66a1381c` after the separately isolated test-reliability prerequisites were integrated.
 
 ## Assessment
 
@@ -52,6 +52,7 @@ Repository preflight now includes the identity-binding boundary suite.
 
 - focused identity/generation/records/shadow-utils suites: 27 passed, 0 failed;
 - repository preflight: passed (`syntaxFiles: 43`, `jsonFiles: 2`, `targetedTests: 41`);
-- VM/repository-execution LEGO architecture selection: 21 passed, 0 failed.
+- VM/repository-execution LEGO architecture selection: 21 passed, 0 failed;
+- full suite: 1,238 total, 1,227 passed, 11 platform skips, 0 failed, with a normal TAP exit in 52.1 seconds.
 
-The normal full suite exposed pre-existing load-sensitive cleanup behavior in `daemon-governance.test.js`: when a bounded assertion expires before the test reaches its normal stop path, the test-started daemon is not unconditionally cleaned and the worker remains live. This reproduced repeatedly while the same file passed 3/3 in isolation. The defect is durably tracked as #323 and is being repaired on a separate branch so unrelated test-harness work does not contaminate this ownership brick. No full-suite pass is claimed for DB-HO018 until that prerequisite is integrated and this branch is rebased/requalified.
+The earlier qualification attempt exposed the independent test-reliability issues #323, #326, and #328. Those fixes and their evidence are integrated through `c021abc00ffb7118990776831083a5fb66a1381c`; all three issues are closed. This branch contains none of those test-harness changes, and the final evidence above was produced only after rebasing onto their integrated baseline.
