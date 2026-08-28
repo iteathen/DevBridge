@@ -1,6 +1,6 @@
 # DB-HO056 — hosted cross-platform setup and doctor contracts
 
-Status: assessment, primary-source research, reassessment, and dependency-ordered plan for issues #369 and #370 from exact predecessor `d56bf576d719294aa9037f1bd6529a4800ec8d2f` on `stage8/362-protected-activity-channel`.
+Status: implemented and accepted on hosted Windows and Ubuntu for issues #369 and #370 from exact predecessor `d56bf576d719294aa9037f1bd6529a4800ec8d2f` on `stage8/362-protected-activity-channel`.
 
 ## Assessment
 
@@ -83,4 +83,6 @@ Selective requalification after the hosted Windows device-observation finding:
 - candidate preflight: 125 syntax files, two JSON files, and 123 targeted test files passed;
 - complete default suite: 1,659 total, 1,644 passed, zero failed, 15 expected platform skips.
 
-No UAC prompt, protected-service write, provider/image/environment/VM operation, guest command, or repository-code host execution occurred. Hosted run `33203516517` on exact commit `7216ee4a04d201002c97be9c88d38f9d70df4edb` passed Ubuntu smoke, the complete Ubuntu suite, and the no-authority doctor smoke. Its Windows preflight deterministically exposed the path/handle device-field mismatch above; hosted Windows acceptance remains pending after the revised exact commit is pushed.
+No UAC prompt, protected-service write, provider/image/environment/VM operation, guest command, or repository-code host execution occurred. Hosted run `33203516517` on exact commit `7216ee4a04d201002c97be9c88d38f9d70df4edb` passed Ubuntu smoke, the complete Ubuntu suite, and the no-authority doctor smoke. Its Windows preflight deterministically exposed the path/handle device-field mismatch above.
+
+Hosted CI run `33204210686` on exact implementation commit `60182c978f4d97c9d03b631258cc617d35fc5252` then passed all four jobs. Windows preflight exercised the real `RUNNER~1` alias and passed the setup and canonical-media regressions while retaining the filesystem-indirection boundary checks. The complete serialized Windows suite and its doctor smoke passed. Ubuntu again passed the complete suite and its absent-authority doctor smoke. This satisfies #369 and #370 without a provider fallback or protected mutation.

@@ -1,6 +1,6 @@
 # DB-HO055: deterministic Windows CI test-file concurrency
 
-Status: implemented and locally verified; hosted Windows acceptance pending
+Status: implemented and accepted on hosted Windows
 
 Issue: [#290](https://github.com/iteathen/DevBridge/issues/290)
 
@@ -83,4 +83,4 @@ No test path, assertion, skip, product timeout, provider behavior, guest behavio
 - `git diff --check`: passed;
 - no setup, UAC request, provider/service/VM operation, guest transport, installed-state mutation, or host repository-code execution occurred.
 
-The remaining #290 acceptance is one clean hosted Windows full-suite job using the committed serial step. Keep #290 open until that exact remote evidence is observed. #367 remains open independently regardless of this CI result.
+Hosted CI run `33204210686` on exact implementation commit `60182c978f4d97c9d03b631258cc617d35fc5252` passed the complete Windows suite through the committed serialized step in 2 minutes 14 seconds, then passed the doctor smoke. The same run also passed Windows preflight/installer smoke and both Ubuntu jobs. No product timeout, test assertion, test file, or Windows coverage was removed. This satisfies #290 acceptance; #367 remains open independently because reusable process identity is a separate product problem.
