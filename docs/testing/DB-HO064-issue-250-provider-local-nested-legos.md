@@ -104,3 +104,7 @@ Local qualification on 2026-08-28:
 - exact provider-command program comparison and `git diff --check`: passed.
 
 No UAC request, elevation attempt/bypass, protected operation, physical provider/VM/image/environment/guest action, repository execution, or real publication occurred. Commit and push the exact checkpoint, then require hosted Windows/Ubuntu qualification before closing #250.
+
+## Accepted hosted qualification
+
+GitHub Actions run `33217939931` passed on exact implementation commit `03aa340d3ae5e130bdaa0ff1e40c269ad6cb2193`: Windows serialized complete suite plus doctor, Windows bounded preflight/identity/standalone-installer regression, Ubuntu complete suite plus doctor, and Ubuntu bounded preflight/identity/standalone-installer regression all completed successfully. Issue #250 may close. No UAC, protected local activity, or physical provider/VM/guest action occurred.
