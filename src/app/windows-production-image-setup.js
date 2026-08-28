@@ -6,6 +6,7 @@ import {
   WINDOWS_PRODUCTION_IMAGE_PHYSICAL_CANARY_CONFIG_PROTOCOL,
 } from './windows-production-image-physical-canary.js';
 import { createDefaultWindowsToolchainAuthority } from '../setup/windows-toolchain-authority.js';
+import { WINDOWS_PRODUCTION_OUTPUT } from '../setup/windows-production-output.js';
 import { resolveWindowsInstallMediaSetup } from './windows-install-media-setup.js';
 
 export const WINDOWS_PRODUCTION_IMAGE_SETUP_STATUS_PROTOCOL = 'devbridge/windows-production-image-setup-status-v1';
@@ -44,8 +45,8 @@ function productionAuthority({ media, tools, payload }) {
     payload: { generation: payload.generation },
     recipe: { generation: 'audit-handoff-v1' },
     output: {
-      profile: 'windows-development',
-      generation: 'windows-production-v1',
+      profile: WINDOWS_PRODUCTION_OUTPUT.profile,
+      generation: WINDOWS_PRODUCTION_OUTPUT.generation,
       bootstrap: payload.generation,
     },
   });

@@ -68,6 +68,8 @@ function dependencies({
   prerequisite = null,
   lifecycleAuthority = null,
   environmentActivation = null,
+  environmentActivationByProfile = null,
+  activationProfiles = null,
   operationalConfiguration = null,
   resourceConflict = null,
   acceptedConflict = null,
@@ -80,8 +82,9 @@ function dependencies({
 } = {}) {
   const store = memoryStore(initialState);
   let conflictConsent = acceptedConflict;
-  const calls = { profileSelection: 0, profileSelectionRequest: null, windowsMedia: 0, windowsMediaRequest: null, windowsConstruction: 0, windowsConstructionActions: [], prerequisite: 0, profileConfiguration: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
+  const calls = { profileSelection: 0, profileSelectionRequest: null, windowsMedia: 0, windowsMediaRequest: null, windowsConstruction: 0, windowsConstructionActions: [], prerequisite: 0, profileConfiguration: 0, profileSourceCount: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, environmentActivationProfiles: [], operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
   const discoveredRepositories = repositories ?? Array.from({ length: count }, (_, index) => repository(index));
+  const configuredProfiles = activationProfiles ?? profileSelection?.profiles ?? ['linux-development'];
   return {
     calls,
     store,
@@ -139,8 +142,15 @@ function dependencies({
         calls.prerequisite += 1;
         return prerequisite ?? { protocol: 'test/prerequisites', ready: true, blocker: null, changed: false, restartRequired: false, capabilities: {} };
       },
-      profileConfigurationPublisher: () => ({
-        async reconcile() { calls.profileConfiguration += 1; return { changed: false }; },
+      profileConfigurationPublisher: ({ sources }) => ({
+        async reconcile() {
+          calls.profileConfiguration += 1;
+          calls.profileSourceCount = sources.length;
+          return {
+            changed: false,
+            record: { configuration: { declarations: configuredProfiles.map((profile) => ({ profile })) } },
+          };
+        },
       }),
       profileConfigurationFactory: () => ({}),
       resourceConflictFactory: async () => ({
@@ -160,9 +170,12 @@ function dependencies({
         return lifecycleAuthority ?? { protocol: 'test/lifecycle-authority', ready: true, blocker: null, changed: false, service: 'ready', protectedState: 'ready' };
       },
       lifecycleClientFactory: () => { calls.lifecycleClient += 1; return {}; },
-      environmentActivationReconciler: async () => {
+      environmentActivationReconciler: async ({ profile }) => {
         calls.environmentActivation += 1;
-        return environmentActivation ?? { ready: true, changed: true, state: 'ready', environmentCount: 1 };
+        calls.environmentActivationProfiles.push(profile);
+        return environmentActivationByProfile?.[profile]
+          ?? environmentActivation
+          ?? { ready: true, changed: true, state: 'ready', environmentCount: 1 };
       },
       operationalConfigurationFactory: () => ({
         async reconcile(value) {
@@ -213,7 +226,14 @@ test('setup composes protected configuration and environment activation only aft
   const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-environment-ready') }, fixture.deps);
   assert.equal(result.blocked, false);
   assert.equal(result.phase, 'operational-ready');
-  assert.deepEqual(result.environment, { ready: true, changed: true, state: 'ready', environmentCount: 1 });
+  assert.deepEqual(result.environment, {
+    ready: true,
+    changed: true,
+    state: 'ready',
+    profile: 'linux-development',
+    environmentCount: 1,
+    profileCount: 1,
+  });
   assert.equal(Object.hasOwn(result.environment, 'environmentIdentity'), false);
   assert.equal(fixture.calls.profileConfiguration, 1);
   assert.equal(fixture.calls.lifecycleAuthority, 1);
@@ -302,6 +322,121 @@ test('Windows-only selection observes only its local setup boundary and remains 
   assert.equal(fixture.calls.canaryStatus, 0);
   assert.equal(fixture.calls.resourceConflict, 0);
   assert.equal(fixture.calls.lifecycleAuthority, 0);
+  assert.equal(fixture.calls.operationalConfiguration, 0);
+});
+
+test('Windows-only selection reaches protected activation after exact image completion without Linux work', async () => {
+  const fixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 2, changed: false,
+      profiles: ['windows-development'], pendingProfiles: null, source: 'accepted',
+    },
+    windowsMedia: acceptedWindowsMedia(),
+    windowsConstruction: windowsPhysical('complete', { complete: true }),
+  });
+  const result = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-windows-activation'),
+  }, fixture.deps);
+
+  assert.equal(result.blocked, false);
+  assert.equal(result.phase, 'operational-ready');
+  assert.deepEqual(result.environment, {
+    ready: true,
+    changed: true,
+    state: 'ready',
+    profile: 'windows-development',
+    environmentCount: 1,
+    profileCount: 1,
+  });
+  assert.equal(fixture.calls.profileSourceCount, 1);
+  assert.deepEqual(fixture.calls.environmentActivationProfiles, ['windows-development']);
+  assert.equal(fixture.calls.prerequisite, 0);
+  assert.equal(fixture.calls.authority, 0);
+  assert.equal(fixture.calls.canaryStatus, 0);
+  assert.equal(fixture.calls.lifecycleAuthority, 1);
+  assert.equal(fixture.calls.operationalConfiguration, 1);
+  assert.match(formatSetupHandoff(result), /1 selected environment\(s\) verified/u);
+});
+
+test('multi-profile activation advances one changed environment and resumes in accepted order', async () => {
+  const profileSelection = {
+    protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 3, changed: false,
+    profiles: ['linux-development', 'windows-development'], pendingProfiles: null, source: 'accepted',
+  };
+  const imageState = {
+    profileSelection,
+    physical: { state: 'completed', blocked: false, complete: true, reason: null, preflight: { ready: true } },
+    windowsMedia: acceptedWindowsMedia(),
+    windowsConstruction: windowsPhysical('complete', { complete: true }),
+  };
+  const first = dependencies({
+    ...imageState,
+    environmentActivationByProfile: {
+      'linux-development': { ready: true, changed: true, state: 'ready' },
+      'windows-development': { ready: true, changed: true, state: 'ready' },
+    },
+  });
+  const pending = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-activation-first'),
+  }, first.deps);
+  assert.equal(pending.blocked, true);
+  assert.match(pending.blocker, /Additional accepted environment profile activation remains/u);
+  assert.deepEqual(pending.environment, {
+    ready: false,
+    changed: true,
+    state: 'pending',
+    profile: 'linux-development',
+    environmentCount: 1,
+    profileCount: 2,
+  });
+  assert.deepEqual(first.calls.environmentActivationProfiles, ['linux-development']);
+  assert.equal(first.calls.operationalConfiguration, 0);
+
+  const second = dependencies({
+    ...imageState,
+    environmentActivationByProfile: {
+      'linux-development': { ready: true, changed: false, state: 'ready' },
+      'windows-development': { ready: true, changed: true, state: 'ready' },
+    },
+  });
+  const ready = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-activation-second'),
+  }, second.deps);
+  assert.equal(ready.blocked, false);
+  assert.equal(ready.phase, 'operational-ready');
+  assert.deepEqual(ready.environment, {
+    ready: true,
+    changed: true,
+    state: 'ready',
+    profile: 'windows-development',
+    environmentCount: 2,
+    profileCount: 2,
+  });
+  assert.deepEqual(second.calls.environmentActivationProfiles, ['linux-development', 'windows-development']);
+  assert.equal(second.calls.operationalConfiguration, 1);
+});
+
+test('multi-profile activation never skips a blocked earlier environment', async () => {
+  const fixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 3, changed: false,
+      profiles: ['linux-development', 'windows-development'], pendingProfiles: null, source: 'accepted',
+    },
+    physical: { state: 'completed', blocked: false, complete: true, reason: null, preflight: { ready: true } },
+    windowsMedia: acceptedWindowsMedia(),
+    windowsConstruction: windowsPhysical('complete', { complete: true }),
+    environmentActivationByProfile: {
+      'linux-development': { ready: false, changed: false, state: 'blocked', blocker: 'accepted environment requires review' },
+      'windows-development': { ready: true, changed: true, state: 'ready' },
+    },
+  });
+  const result = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-activation-blocked'),
+  }, fixture.deps);
+
+  assert.equal(result.blocked, true);
+  assert.match(result.blocker, /requires review/u);
+  assert.deepEqual(fixture.calls.environmentActivationProfiles, ['linux-development']);
   assert.equal(fixture.calls.operationalConfiguration, 0);
 });
 
@@ -567,9 +702,32 @@ test('setup keeps the image complete but fails closed when protected environment
   assert.equal(result.blocked, true);
   assert.equal(result.phase, 'blocked');
   assert.match(result.blocker, /not safely creatable/u);
-  assert.deepEqual(result.environment, { ready: false, changed: false, state: 'blocked', environmentCount: 0 });
+  assert.deepEqual(result.environment, {
+    ready: false,
+    changed: false,
+    state: 'blocked',
+    profile: 'linux-development',
+    environmentCount: 0,
+    profileCount: 1,
+  });
   assert.equal(fixture.calls.operationalConfiguration, 0);
   assert.equal(JSON.stringify(result).includes('environment-private'), false);
+});
+
+test('setup fails closed when publication omits an accepted profile', async () => {
+  const fixture = dependencies({
+    physical: { state: 'completed', blocked: false, complete: true, reason: null, preflight: { ready: true } },
+    activationProfiles: [],
+  });
+  const result = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-profile-publication-incomplete'),
+  }, fixture.deps);
+
+  assert.equal(result.blocked, true);
+  assert.match(result.blocker, /does not cover every selected profile/u);
+  assert.equal(fixture.calls.lifecycleAuthority, 0);
+  assert.equal(fixture.calls.environmentActivation, 0);
+  assert.equal(fixture.calls.operationalConfiguration, 0);
 });
 
 test('setup does not report completion when operational configuration fails after route readiness', async () => {
@@ -581,7 +739,14 @@ test('setup does not report completion when operational configuration fails afte
   assert.equal(result.blocked, true);
   assert.equal(result.phase, 'blocked');
   assert.match(result.blocker, /configuration predecessor changed/u);
-  assert.deepEqual(result.environment, { ready: true, changed: true, state: 'ready', environmentCount: 1 });
+  assert.deepEqual(result.environment, {
+    ready: true,
+    changed: true,
+    state: 'ready',
+    profile: 'linux-development',
+    environmentCount: 1,
+    profileCount: 1,
+  });
   assert.deepEqual(result.operational, { ready: false, changed: false, executionEnabled: false });
   assert.equal(fixture.calls.operationalConfiguration, 1);
 });

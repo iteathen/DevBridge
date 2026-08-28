@@ -33,7 +33,14 @@ function fixture({ status, runResult } = {}) {
         repositories: [{ id: 1, full_name: 'owner/repo', private: false, archived: false, disabled: false, permissions: { push: true } }],
       }),
       prerequisiteReconciler: async () => ({ protocol: 'test/prerequisites', ready: true, blocker: null, changed: false, restartRequired: false, capabilities: {} }),
-      profileConfigurationPublisher: () => ({ async reconcile() { return { changed: false }; } }),
+      profileConfigurationPublisher: () => ({
+        async reconcile() {
+          return {
+            changed: false,
+            record: { configuration: { declarations: [{ profile: 'linux-development' }] } },
+          };
+        },
+      }),
       profileConfigurationFactory: () => ({}),
       resourceConflictFactory: async () => ({
         async inspect() { return { protocol: 'devbridge/setup-resource-conflict-v1', state: 'clear', subject: null, reason: null }; },

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createSetupEnvironmentProfileConfiguration } from '../src/app/setup-environment-profile-configuration.js';
@@ -12,6 +12,18 @@ import {
 } from '../src/runtime/environment-profile-configuration.js';
 import { ENVIRONMENT_DECLARATION_PROTOCOL } from '../src/runtime/environment-declaration.js';
 import { createEnvironmentProfileConfigurationStateStore } from '../src/state/environment-profile-configuration-state-store.js';
+import { createUbuntuEnvironmentProfileSource } from '../src/setup/ubuntu-environment-profile-source.js';
+
+const COMPOSITION = new URL('../src/app/setup-environment-profile-configuration.js', import.meta.url);
+
+function configuration(root, now = null) {
+  return createSetupEnvironmentProfileConfiguration({
+    stateDirectory: root,
+    sources: [createUbuntuEnvironmentProfileSource()],
+    identify: executionWorkspaceIdentity,
+    ...(now ? { now } : {}),
+  });
+}
 
 test('setup projects stable subjects into one accepted profile without repository names', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-profile-configuration-'));
@@ -25,7 +37,7 @@ test('setup projects stable subjects into one accepted profile without repositor
       source,
       provenance: { origin: 'test', bootstrap: 'guest-image-v1' },
     });
-    const setup = createSetupEnvironmentProfileConfiguration({ stateDirectory: root, now: () => '2026-08-28T12:00:00.000Z' });
+    const setup = configuration(root, () => '2026-08-28T12:00:00.000Z');
     const first = await setup.reconcile({ subjects: [{ id: 42, fullName: 'must/not-cross' }, { id: 7, private: true }] });
     const declaration = first.record.configuration.declarations[0];
     assert.equal(declaration.image.identity, image.identity);
@@ -70,9 +82,15 @@ test('setup refuses to preserve an obsolete accepted image generation', async ()
         protectedStateClasses: [],
       }],
     });
-    const setup = createSetupEnvironmentProfileConfiguration({ stateDirectory: root });
+    const setup = configuration(root);
     await assert.rejects(setup.reconcile(), /no longer matches current output authority/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('setup profile publication remains isolated from platform and provider identities', async () => {
+  const source = await readFile(COMPOSITION, 'utf8');
+  assert.doesNotMatch(source, /\b(?:windows|linux|ubuntu|hyper-v|libvirt|vhdx|qcow2)\b/iu);
+  assert.doesNotMatch(source, /from\s+['"][^'"]*(?:ubuntu|windows|providers)[^'"]*['"]/iu);
 });

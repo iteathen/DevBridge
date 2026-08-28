@@ -60,7 +60,7 @@ The exact current stable and `cuda-target` qualification commands are documented
 
 For a moving development selector, Stage 0 resolves the selector to one exact commit and persists that exact subject before permanent-entry publication. An argument-equivalent interrupted rerun resumes the persisted subject even if the branch moved in the meantime. The permanent-entry component set is then fetched from that exact commit with the nested Node exact-source acquisition LEGO; the zero-state exact-subject path does not use Git.
 
-The current #238 setup path deliberately stops after prerequisite reconciliation, Ubuntu construction-authority establishment, and the read-only production-image physical `status` gate. It never calls physical construction `run`. Reaching `ready-for-construction` therefore means the setup/status gate is satisfied; it does **not** mean an image or VM was constructed by that invocation. A nonblocked incomplete durable canary returns to the same gate with its resumable frontier identified instead of requiring the operator to bypass the public status contract.
+Ordinary setup remains read-only at each production-image physical `status` gate. Reaching `ready-for-construction` means that gate authorizes an explicit next action; it does **not** mean an image or VM was constructed by the observation. `devbridge setup --construct` advances only the first incomplete accepted profile through its existing restartable construction owner and then returns. A nonblocked incomplete durable canary preserves its resumable frontier for the next explicit invocation.
 
 The broader one-command target remains responsible for eventually carrying bounded local consent for routine setup changes, such as enabling a selected provider, constructing/qualifying the required image, and enabling repository execution after validation. Those later construction/provisioning steps remain coordinated by #192/#197 and their owning roadmap gates rather than being implied by #238 bootstrap completion.
 
@@ -106,6 +106,8 @@ Selection is configuration intent only. It does not install or enable a provider
 
 The selection transaction is revisioned and restartable through the host-owned setup-authority record. Its application adapter resumes only its own interrupted operation and refuses to absorb an interrupted transaction owned by another setup component.
 
+After every selected profile has an exact complete accepted image, setup publishes declarations for only those profiles and requires the publication to cover the entire selection. Ubuntu and Windows declaration policy remains in separate profile-owned modules; the common publisher consumes neutral sources and stable repository subjects. Protected activation follows accepted profile order and returns after the first changed environment. Re-entry re-observes completed profiles before advancing the next one, and a blocked earlier profile is never skipped. Operational configuration is published only after every selected environment verifies ready through the protected lifecycle client.
+
 ## Current requirements
 
 The **zero-state bootstrap boundary** requires only:
@@ -139,7 +141,7 @@ Setup must not infer VM readiness merely from Hyper-V being installed, `/dev/kvm
 
 A normal user should need one bootstrap command, not a sequence that first creates an example JSON file and then asks the user to read/edit it.
 
-For #238 qualification, the supported setup path currently ends at the read-only physical production-image status gate. The broader fresh-install target below continues beyond that gate only under the separately authorized image/provider roadmap.
+The supported setup path observes physical production-image state by default and crosses construction only with explicit `--construct` authority. It can continue through selected-profile declaration and protected environment activation only after every selected image is exact and complete. Real provider qualification remains separately required before the broader fresh-install target can be claimed complete.
 
 The setup invocation is responsible for:
 
