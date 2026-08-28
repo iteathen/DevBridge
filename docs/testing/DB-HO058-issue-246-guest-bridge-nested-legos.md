@@ -72,3 +72,9 @@ The moved implementations were deleted from the parent. Both Linux and Windows i
 - `git diff --check`: passed.
 
 Hosted Windows and Ubuntu qualification remains required on the exact published commit before #246 can close. A documentation-only predecessor run exposed the independently tracked daemon control-file race on Windows; exact evidence was added to #261 rather than weakening or mixing that ownership boundary into this change. No setup, UAC, protected service, provider, image, environment, VM, guest transport, or repository execution occurred.
+
+## Hosted reassessment
+
+Hosted run `33207765083` on initial implementation commit `4deffd328ab43b4c4e9d65d639247f3824870223` passed both Ubuntu jobs but failed the same new transfer test in Windows preflight and the serialized Windows suite. The transfer owner compared the canonicalized destination parent with the resolver's noncanonical boundary spelling. GitHub's Windows temporary directory exposed the known `RUNNER~1`/long-name alias; this was deterministic contract evidence, not a reason to weaken the test or rerun unchanged code.
+
+The neutral resolved-location contract now canonicalizes its supplied boundary and the actual file or destination parent before their containment comparison. It first retains the lexical boundary check, so canonicalization cannot turn an already escaped path into an admitted path. This follows the Windows filesystem-identity research recorded in `docs/testing/DB-HO056-issues-369-370-hosted-cross-platform-contracts.md` without importing the runtime helper, platform identity, or caller topology into the self-contained guest module.

@@ -97,12 +97,15 @@ function normalizePorts(raw) {
   return value;
 }
 
-function validateResolved(raw, name) {
+async function validateResolved(raw, name, { requireFile }) {
   const value = requireObject(raw, name);
   onlyKeys(value, new Set(['root', 'path']), name);
   if (typeof value.root !== 'string' || !path.isAbsolute(value.root) || typeof value.path !== 'string' || !path.isAbsolute(value.path)) throw new Error(`${name} is invalid`);
   if (!contained(value.root, value.path)) throw new Error(`${name} escaped its boundary`);
-  return value;
+  const root = await realpath(value.root);
+  const observed = await realpath(requireFile ? value.path : path.dirname(value.path));
+  if (!contained(root, observed)) throw new Error(`${name} escaped its boundary`);
+  return { root, path: requireFile ? observed : value.path };
 }
 
 export async function createTransferChannel({ directory, ...rawPorts }) {
@@ -141,7 +144,7 @@ export async function createTransferChannel({ directory, ...rawPorts }) {
       }
       if (record.state === 'completed') {
         if (!value.eof || offset + data.length !== record.bytes || value.digest !== record.digest) throw new Error('completed transfer put was replayed with different content');
-        const resolved = validateResolved(await ports.resolveWrite(destination, { requireFile: true, createParents: false }), 'transfer write location');
+        const resolved = await validateResolved(await ports.resolveWrite(destination, { requireFile: true, createParents: false }), 'transfer write location', { requireFile: true });
         const bytes = await readFile(resolved.path);
         if (bytes.length !== record.bytes || createHash('sha256').update(bytes).digest('hex') !== record.digest) throw new Error('completed transfer destination changed');
         return { nextOffset: record.bytes, complete: true, digest: record.digest };
@@ -170,9 +173,7 @@ export async function createTransferChannel({ directory, ...rawPorts }) {
       if (staged.length !== nextOffset || staged.length > MAX_TRANSFER_BYTES) throw new Error('transfer staging length changed');
       const digest = createHash('sha256').update(staged).digest('hex');
       if (digest !== value.digest) throw new Error('transfer put digest does not match staged bytes');
-      const resolved = validateResolved(await ports.resolveWrite(destination, { createParents: true, requireFile: false }), 'transfer write location');
-      const parent = await realpath(path.dirname(resolved.path));
-      if (!contained(resolved.root, parent)) throw new Error('transfer destination parent changed');
+      const resolved = await validateResolved(await ports.resolveWrite(destination, { createParents: true, requireFile: false }), 'transfer write location', { requireFile: false });
       try {
         const existing = await lstat(resolved.path);
         if (!existing.isFile() || existing.isSymbolicLink()) throw new Error('transfer destination is not a regular file');
@@ -194,7 +195,7 @@ export async function createTransferChannel({ directory, ...rawPorts }) {
       const source = await ports.normalizeRead(value.source);
       const offset = integer(value.offset, 'transfer get value.offset', 0, MAX_TRANSFER_BYTES);
       const limit = integer(value.limit, 'transfer get value.limit', 1, MAX_CHUNK_BYTES);
-      const resolved = validateResolved(await ports.resolveRead(source, { requireFile: true }), 'transfer read location');
+      const resolved = await validateResolved(await ports.resolveRead(source, { requireFile: true }), 'transfer read location', { requireFile: true });
       const info = await stat(resolved.path);
       if (!info.isFile() || info.size > MAX_TRANSFER_BYTES) throw new Error('transfer source exceeds the transfer limit');
       if (offset > info.size) throw new Error('transfer get offset exceeds source length');
