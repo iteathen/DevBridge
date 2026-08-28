@@ -78,3 +78,14 @@ Hosted Windows and Ubuntu qualification remains required on the exact published 
 Hosted run `33207765083` on initial implementation commit `4deffd328ab43b4c4e9d65d639247f3824870223` passed both Ubuntu jobs but failed the same new transfer test in Windows preflight and the serialized Windows suite. The transfer owner compared the canonicalized destination parent with the resolver's noncanonical boundary spelling. GitHub's Windows temporary directory exposed the known `RUNNER~1`/long-name alias; this was deterministic contract evidence, not a reason to weaken the test or rerun unchanged code.
 
 The neutral resolved-location contract now canonicalizes its supplied boundary and the actual file or destination parent before their containment comparison. It first retains the lexical boundary check, so canonicalization cannot turn an already escaped path into an admitted path. This follows the Windows filesystem-identity research recorded in `docs/testing/DB-HO056-issues-369-370-hosted-cross-platform-contracts.md` without importing the runtime helper, platform identity, or caller topology into the self-contained guest module.
+
+## Accepted evidence
+
+Hosted CI run `33208194846` passed on exact correction commit `9e0f26b01f7bfe75a17a3cac0904c151fd34947a`:
+
+- Windows serialized full suite and doctor: passed in 2 minutes 48 seconds;
+- Windows preflight, identity audit, and standalone installer regression: passed in 1 minute 33 seconds;
+- Ubuntu full suite and doctor: passed in 49 seconds;
+- Ubuntu preflight, identity audit, and standalone installer regression: passed in 18 seconds.
+
+This accepts #246. It does not accept a VM provider, environment, guest transport, or physical repository-execution result. No UAC or protected operation occurred.
