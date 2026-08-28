@@ -60,8 +60,8 @@ test('setup authority binds source policy, exact snapshot and current payload ge
   assert.equal(authority.packages.packages.find((entry) => entry.name === 'openssh-server')?.version, '1:9.9p1-3ubuntu3');
   assert.deepEqual(authority.qualification.commands, ['hv_kvp_daemon', 'make']);
   assert.equal(authority.payload.generation, 'guest-image-current');
-  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v8');
-  assert.equal(authority.output.generation, 'ubuntu-2604-production-v3');
+  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v9');
+  assert.equal(authority.output.generation, 'ubuntu-2604-production-v4');
   assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 2, ...UBUNTU_SETUP_BOOT_PATCH }]);
 });
 
