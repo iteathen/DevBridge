@@ -1,6 +1,6 @@
 # DB-HO022 — issue #293 Linux unit/service primitives
 
-Status: implemented and locally qualified from exact `cuda-target` baseline `843a0be7e45513f43c95cbe86e5841bb4550a3e7` on isolated branch `security/293-linux-unit-service-primitives`; hosted qualification is pending.
+Status: implemented, hosted-qualified, and squash-integrated into `cuda-target` by PR #333 at `30489f5b727793b87a8f4428c9a5e580c0099f58`. The exact reviewed branch head was `41f4c78e43045e9e407e19b02c5cce1fad6f33ce`, based on `843a0be7e45513f43c95cbe86e5841bb4550a3e7`.
 
 ## Assessment
 
@@ -68,3 +68,16 @@ Exact Windows-host evidence from implementation head `efcc99c`:
 - full suite: 1,249 total, 1,238 passed, 11 expected platform skips, 0 failed, with a normal TAP exit in 52.0 seconds.
 
 No elevation prompt, account/service/provider command, VM action, protected production path, or #197 physical canary state was touched. Issue #293 remains open for exact Linux lifecycle composition, one-command elevated re-entry, provider authorization, and real KVM/libvirt/qcow2 qualification.
+
+## Hosted qualification and integration
+
+Exact reviewed head `41f4c78e43045e9e407e19b02c5cce1fad6f33ce` passed all four jobs in GitHub Actions run `33129996387`:
+
+- Ubuntu smoke — passed in 14 seconds;
+- Ubuntu architecture gates, full suite, and doctor — passed in 33 seconds;
+- Windows smoke — passed in 47 seconds;
+- Windows architecture gates, full suite, and doctor — passed in 3 minutes 12 seconds.
+
+PR #333 was squash-integrated into `cuda-target` at `30489f5b727793b87a8f4428c9a5e580c0099f58`. Local tree-equivalence verification between the exact reviewed head and the integration commit passed before cleanup.
+
+This evidence completes only DB-HO022. It does not claim composed Linux lifecycle readiness, elevated setup, provider authorization, or physical KVM/libvirt/qcow2 qualification.
