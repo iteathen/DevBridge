@@ -1,6 +1,6 @@
 # DB-HO025 — issue #340 Linux volatile endpoint topology
 
-Status: implemented and locally qualified from exact `cuda-target` baseline `58570958ca4e8ebd3c6fd979265a62624e8360de` on isolated branch `security/340-linux-endpoint-topology`; clean-checkout Ubuntu/Windows CI is pending.
+Status: implemented, locally qualified, clean-checkout qualified, and integrated into `cuda-target` as `3691a40c9ae9a58596f8fdac94081e2c0fbc2c2a` through isolated PR #341.
 
 ## Assessment
 
@@ -71,3 +71,14 @@ No elevated command, UAC prompt, system-manager mutation, tmpfiles mutation, acc
 - Doctor smoke: `ok: true`; repository execution remained explicitly unavailable/fail-closed because no persistent-environment route is configured.
 
 Hosted CI and physical Linux qualification remain distinct gates. This slice can prove the deterministic contracts on Windows and later through clean Ubuntu CI, but it cannot claim real tmpfiles creation, boot recreation, ordinary-user denial, or protected-service access until the bounded elevated Linux setup and dedicated physical qualification are implemented.
+
+## Hosted integration evidence
+
+PR [#341](https://github.com/iteathen/DevBridge/pull/341) qualified exact implementation head `57b96f89b499c800ddcb6313a3c4d77a578f9e04` in CI run [33133508439](https://github.com/iteathen/DevBridge/actions/runs/33133508439):
+
+- Ubuntu smoke/preflight passed in 19 seconds;
+- Ubuntu architecture gates, full suite, and doctor passed in 31 seconds;
+- Windows smoke/preflight passed in 45 seconds;
+- Windows architecture gates, full suite, and doctor passed in 3 minutes 2 seconds.
+
+The PR was squash-integrated as `3691a40c9ae9a58596f8fdac94081e2c0fbc2c2a`. The reviewed head and integrated commit have the same Git tree, `055c92439a9be1009d77ed63c2729d7cff9892a6`, so integration changed commit history but not qualified source, tests, or documentation bytes.
