@@ -2,10 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createEnvironmentBootstrap } from './environment-bootstrap.js';
-import { createEnvironmentBridge } from './environment-bridge.js';
-import { createEnvironmentFoundation } from './environment-foundation.js';
-import { invokeCommand } from '../runtime/command-invocation.js';
+import { EnvironmentBridge } from '../runtime/environment-bridge.js';
 import { RepositoryEnvironmentExecution } from '../runtime/repository-environment-execution.js';
 import {
   REPOSITORY_EXECUTION_STATUS_PROTOCOL,
@@ -18,13 +15,13 @@ import {
   snapshotFileTree,
   stageFileTreeDelta,
 } from '../runtime/file-tree-transfer.js';
+import {
+  environmentActivityRouteForSubject,
+  loadEnvironmentActivityPolicy,
+  normalizeEnvironmentActivityPolicy,
+} from '../runtime/environment-activity-policy.js';
 
-export const ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL = 'devbridge/environment-execution-routes-v1';
-const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
 const SAFE_NAME = /^[A-Za-z][A-Za-z0-9_.+-]{0,159}$/u;
-const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
-const MAX_ROUTE_BYTES = 1024 * 1024;
-const MAX_ROUTES = 256;
 const BRIDGE_OUTPUT_LIMIT = 3 * 1024 * 1024;
 const TRANSFER_LIMIT = 16 * 1024 * 1024;
 const MANIFEST_LIMIT = 24 * 1024 * 1024;
@@ -35,9 +32,7 @@ const RESOURCE_AGENT_FILE = fileURLToPath(new URL('../guest/resource-agent.mjs',
 
 function requireObject(value, name) { if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`); return value; }
 function onlyKeys(value, allowed, name) { for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`${name}.${key} is not allowed`); }
-function safeId(value, name) { if (typeof value !== 'string' || !SAFE_ID.test(value)) throw new TypeError(`${name} is invalid`); return value; }
 function stableSubject(value, name) { if (typeof value !== 'string' || !/^\d+$/u.test(value)) throw new TypeError(`${name} must be a numeric stable identity`); return value; }
-function bounded(value, name, maxBytes = 4096) { if (typeof value !== 'string' || value.length === 0 || value.includes('\0') || Buffer.byteLength(value, 'utf8') > maxBytes) throw new TypeError(`${name} is invalid`); return value; }
 function hashIdentity(value) { return `execution-${createHash('sha256').update(JSON.stringify(value), 'utf8').digest('hex')}`; }
 function repositoryPathAllowed(relative) { const first = String(relative).replace(/\\/gu, '/').split('/')[0]; return first !== '.git' && first !== '.devbridge'; }
 function splitNul(text) { return String(text).split('\0').filter(Boolean); }
@@ -67,100 +62,6 @@ async function acquireExclusiveSession(directory, identity) {
     await rm(file, { force: false });
     released = true;
   };
-}
-
-export function repositoryExecutionRoutesPath(stateDirectory) {
-  return path.join(path.resolve(stateDirectory), 'environment-foundation', 'execution-routes.json');
-}
-
-function normalizeRouteAccess(raw, index) {
-  const value = requireObject(raw, `execution route[${index}].access`);
-  onlyKeys(value, new Set(['family', 'username', 'passwordEnvironment', 'user', 'identityFile', 'knownHostsFile']), `execution route[${index}].access`);
-  if (!['windows', 'linux'].includes(value.family)) throw new TypeError(`execution route[${index}].access.family is invalid`);
-  const result = { family: value.family };
-  if (value.username != null) result.username = bounded(value.username, `execution route[${index}].access.username`, 512);
-  if (value.passwordEnvironment != null) {
-    if (typeof value.passwordEnvironment !== 'string' || !ENV_NAME.test(value.passwordEnvironment)) throw new TypeError(`execution route[${index}].access.passwordEnvironment is invalid`);
-    result.passwordEnvironment = value.passwordEnvironment;
-  }
-  if (value.user != null) result.user = bounded(value.user, `execution route[${index}].access.user`, 256);
-  if (value.identityFile != null) result.identityFile = bounded(value.identityFile, `execution route[${index}].access.identityFile`, 4096);
-  if (value.knownHostsFile != null) result.knownHostsFile = bounded(value.knownHostsFile, `execution route[${index}].access.knownHostsFile`, 4096);
-  return result;
-}
-
-export function normalizeEnvironmentExecutionRoutes(raw) {
-  const value = requireObject(raw, 'environment execution routes');
-  onlyKeys(value, new Set(['protocol', 'routes']), 'environment execution routes');
-  if (value.protocol !== ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL) throw new TypeError('environment execution routes protocol is unsupported');
-  if (!Array.isArray(value.routes) || value.routes.length > MAX_ROUTES) throw new TypeError('environment execution routes are invalid');
-  const seen = new Set();
-  const routes = value.routes.map((rawRoute, index) => {
-    const route = requireObject(rawRoute, `execution route[${index}]`);
-    onlyKeys(route, new Set(['subject', 'profile', 'preferred', 'validation', 'access']), `execution route[${index}]`);
-    const normalized = {
-      subject: stableSubject(route.subject, `execution route[${index}].subject`),
-      profile: safeId(route.profile, `execution route[${index}].profile`),
-      preferred: route.preferred === true,
-      validation: route.validation === true,
-      access: normalizeRouteAccess(route.access, index),
-    };
-    const key = `${normalized.subject}\0${normalized.profile}`;
-    if (seen.has(key)) throw new TypeError('environment execution routes contain a duplicate subject/profile');
-    seen.add(key);
-    return normalized;
-  });
-  const preferredBySubject = new Map();
-  for (const route of routes) {
-    if (!route.preferred) continue;
-    if (preferredBySubject.has(route.subject)) throw new TypeError(`environment execution routes contain multiple preferred profiles for ${route.subject}`);
-    preferredBySubject.set(route.subject, route.profile);
-  }
-  const validation = routes.filter((route) => route.validation);
-  if (validation.length > 1) throw new TypeError('environment execution routes contain multiple validation routes');
-  return Object.freeze({ protocol: ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL, routes: Object.freeze(routes.map((route) => Object.freeze({ ...route, access: Object.freeze({ ...route.access }) }))) });
-}
-
-export async function loadEnvironmentExecutionRoutes(stateDirectory) {
-  const file = repositoryExecutionRoutesPath(stateDirectory);
-  try {
-    const info = await lstat(file);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_ROUTE_BYTES) throw new Error('environment execution route file must be a bounded real file');
-    return normalizeEnvironmentExecutionRoutes(JSON.parse(await readFile(file, 'utf8')));
-  } catch (error) {
-    if (error?.code === 'ENOENT') return null;
-    throw error;
-  }
-}
-
-export function validationEnvironmentExecutionRoute(policy) {
-  if (policy == null) throw new Error('no local execution routes are configured');
-  const normalized = normalizeEnvironmentExecutionRoutes(policy);
-  const matches = normalized.routes.filter((route) => route.validation);
-  if (matches.length !== 1) throw new Error('exactly one local validation execution route is required');
-  return matches[0];
-}
-
-function routeForSubject(policy, subject) {
-  const matches = policy.routes.filter((route) => route.subject === subject);
-  if (matches.length === 0) throw new Error('no local execution route exists for the repository subject');
-  if (matches.length === 1) return matches[0];
-  const preferred = matches.filter((route) => route.preferred);
-  if (preferred.length !== 1) throw new Error('repository subject has multiple execution profiles and no unique preferred route');
-  return preferred[0];
-}
-
-function resolvedAccess(route, platform, env) {
-  if (platform === 'linux') return { family: route.access.family };
-  if (platform !== 'win32') throw new Error('repository execution has no supported host attachment on this platform');
-  if (route.access.family === 'windows') {
-    if (!route.access.username || !route.access.passwordEnvironment) throw new Error('Windows guest route requires username and passwordEnvironment');
-    const password = env[route.access.passwordEnvironment];
-    if (typeof password !== 'string' || password.length === 0) throw new Error(`guest access environment ${route.access.passwordEnvironment} is unavailable`);
-    return { family: 'windows', username: route.access.username, password };
-  }
-  if (!route.access.user || !route.access.identityFile || !route.access.knownHostsFile) throw new Error('Linux guest route requires user, identityFile, and knownHostsFile');
-  return { family: 'linux', user: route.access.user, identityFile: route.access.identityFile, knownHostsFile: route.access.knownHostsFile };
 }
 
 function bufferPort(buffer) {
@@ -300,20 +201,34 @@ async function stageToolResources(channel, target, resolved) {
   return { class: 'input', path: `${root}/${entry}` };
 }
 
+function activityComponents(raw) {
+  const methods = ['inspect', 'list', 'observe', 'prepare', 'exchange'];
+  if (!raw || methods.some((name) => typeof raw[name] !== 'function')) {
+    throw new TypeError('repository execution activity contract is incomplete');
+  }
+  return Object.freeze({
+    state: Object.freeze({
+      inspect: () => raw.inspect(),
+      listEnvironments: () => raw.list(),
+      observeEnvironment: (target) => raw.observe(target),
+    }),
+    preparation: Object.freeze({ ensure: (target) => raw.prepare(target) }),
+    channel: new EnvironmentBridge({ exchange: (frame, options) => raw.exchange(frame, options) }),
+  });
+}
+
 export async function createRepositoryExecution({
   stateDirectory,
-  platform = process.platform,
-  env = process.env,
-  invoke = invokeCommand,
   routes = null,
   rootFor,
   listPaths,
   resolveSubject,
   resolveTool,
   protectedValues = [],
-  createState = createEnvironmentFoundation,
-  createPreparation = createEnvironmentBootstrap,
-  createChannel = createEnvironmentBridge,
+  activity = null,
+  createState = null,
+  createPreparation = null,
+  createChannel = null,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('repository execution stateDirectory is required');
   if (typeof rootFor !== 'function' || typeof listPaths !== 'function' || typeof resolveSubject !== 'function' || typeof resolveTool !== 'function') {
@@ -321,25 +236,43 @@ export async function createRepositoryExecution({
   }
   if (!Array.isArray(protectedValues) || protectedValues.some((value) => typeof value !== 'string')) throw new TypeError('repository execution protectedValues must be strings');
   const protectedEnvironmentValues = protectedValues.filter((value) => value.length >= 8);
-  const policy = routes == null ? await loadEnvironmentExecutionRoutes(stateDirectory) : normalizeEnvironmentExecutionRoutes(routes);
+  const policy = routes == null ? await loadEnvironmentActivityPolicy(stateDirectory) : normalizeEnvironmentActivityPolicy(routes);
   if (!policy || policy.routes.length === 0) return new UnavailableRepositoryExecution({ reason: 'no local persistent-environment execution routes are configured' });
-  if (!['win32', 'linux'].includes(platform)) return new UnavailableRepositoryExecution({ reason: 'no persistent-environment execution attachment is available for this host platform' });
-
-  const state = await createState({ stateDirectory, platform, invoke });
-  const observed = await state.inspect();
+  let components;
+  if (activity != null) components = activityComponents(activity);
+  else if ([createState, createPreparation, createChannel].every((value) => typeof value === 'function')) {
+    components = Object.freeze({
+      state: await createState({ stateDirectory }),
+      preparation: await createPreparation({ stateDirectory }),
+      channel: await createChannel({ stateDirectory }),
+    });
+  } else {
+    return new UnavailableRepositoryExecution({ reason: 'protected environment activity authority is not configured' });
+  }
+  const { state, preparation, channel } = components;
+  if (!state || ['inspect', 'listEnvironments', 'observeEnvironment'].some((name) => typeof state[name] !== 'function')) {
+    throw new TypeError('repository execution state contract is incomplete');
+  }
+  if (!preparation || typeof preparation.ensure !== 'function') throw new TypeError('repository execution preparation contract is incomplete');
+  if (!channel || ['health', 'execute', 'put', 'get'].some((name) => typeof channel[name] !== 'function')) {
+    throw new TypeError('repository execution channel contract is incomplete');
+  }
+  let observed;
+  try { observed = await state.inspect(); }
+  catch {
+    if (activity != null) return new UnavailableRepositoryExecution({ reason: 'protected environment activity authority is unavailable' });
+    throw new Error('repository execution state inspection failed');
+  }
   if (observed?.ready !== true) return new UnavailableRepositoryExecution({ reason: observed?.reason ?? 'environment foundation is not ready' });
-  const known = await state.listEnvironments();
+  let known;
+  try { known = await state.listEnvironments(); }
+  catch {
+    if (activity != null) return new UnavailableRepositoryExecution({ reason: 'protected environment activity authority is unavailable' });
+    throw new Error('repository execution environment listing failed');
+  }
   const routed = known.filter((entry) => policy.routes.some((route) => route.subject === entry.record?.subject && route.profile === entry.record?.profile) && entry.observation?.exists && entry.observation?.owned && entry.observation?.compatible);
   if (routed.length === 0) return new UnavailableRepositoryExecution({ reason: 'no routed persistent environment is present and compatible' });
 
-  const access = async (target) => {
-    const current = await state.observeEnvironment(target);
-    const route = policy.routes.find((entry) => entry.subject === current.record.subject && entry.profile === current.record.profile);
-    if (!route) throw new Error('environment target is no longer admitted by local execution routes');
-    return resolvedAccess(route, platform, env);
-  };
-  const preparation = await createPreparation({ stateDirectory, platform, invoke, access });
-  const channel = await createChannel({ stateDirectory, platform, invoke, access: (target) => preparation.connection(target) });
   const status = {
     protocol: REPOSITORY_EXECUTION_STATUS_PROTOCOL,
     state: 'ready', ready: true,
@@ -355,7 +288,7 @@ export async function createRepositoryExecution({
     status,
     open: async (scope) => {
       const subject = stableSubject(await resolveSubject(structuredClone(scope)), 'repository execution subject');
-      const route = routeForSubject(policy, subject);
+      const route = environmentActivityRouteForSubject(policy, subject);
       const matches = (await state.listEnvironments()).filter((entry) => entry.record?.subject === subject && entry.record?.profile === route.profile);
       if (matches.length !== 1) throw new Error(matches.length === 0 ? 'routed persistent environment is absent' : 'routed persistent environment is ambiguous');
       const selected = matches[0];

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createEnvironmentConstructionWorkspaces } from '../src/app/environment-construction-workspaces.js';
 import { executionProfileSubject, executionWorkspaceIdentity } from '../src/app/execution-profile-routing.js';
-import { loadEnvironmentExecutionRoutes } from '../src/app/repository-execution.js';
+import { loadEnvironmentActivityPolicy } from '../src/runtime/environment-activity-policy.js';
 
 function stateFor(profile) {
   const physical = {
@@ -41,19 +41,17 @@ test('construction workspaces publish exact routes and prepare scoped roots', as
       state: stateFor(profile),
       channel: channel(events),
       resolveAuthority: async (authority) => { assert.equal(authority, 'authority-a'); return subject; },
-      resolveAccess: async () => ({ family: 'linux', user: 'devbridge', identityFile: '/host/identity', knownHostsFile: '/host/known-hosts' }),
     });
     const request = { declaration, workspaces: declaration.workspaces, implementationGeneration: 'env-0123456789abcdef0123456789abcdef' };
     const result = await port.ensure(request);
     assert.equal(result.ready, true);
     assert.equal(result.routesChanged, true);
-    const policy = await loadEnvironmentExecutionRoutes(directory);
+    const policy = await loadEnvironmentActivityPolicy(directory);
     assert.deepEqual(policy.routes, [{
       subject,
       profile,
       preferred: false,
       validation: false,
-      access: { family: 'linux', user: 'devbridge', identityFile: '/host/identity', knownHostsFile: '/host/known-hosts' },
     }]);
     const scopedPut = events.find((entry) => entry[0] === 'put');
     assert.match(scopedPut[2].path, new RegExp(`^workspaces/${workspace.identity}/lifecycle/ready$`, 'u'));
@@ -78,7 +76,6 @@ test('construction workspaces may resolve a request-scoped channel without persi
       state: stateFor(profile),
       resolveChannel: async ({ declaration: selected }) => { assert.equal(selected, declaration); resolved += 1; return channel([]); },
       resolveAuthority: async () => subject,
-      resolveAccess: async () => ({ family: 'linux', user: 'devbridge', identityFile: '/host/identity', knownHostsFile: '/host/known-hosts' }),
     });
     const request = { declaration, workspaces: declaration.workspaces, implementationGeneration: 'env-0123456789abcdef0123456789abcdef' };
     assert.equal((await port.ensure(request)).ready, true);
@@ -88,12 +85,11 @@ test('construction workspaces may resolve a request-scoped channel without persi
   }
 });
 
-test('construction workspaces refuse identity or access authority drift', async () => {
+test('construction workspaces refuse identity authority drift', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'devbridge-workspaces-'));
   try {
     const profile = 'linux-development';
     const subject = '42';
-    let access = { family: 'linux', user: 'devbridge', identityFile: '/host/identity', knownHostsFile: '/host/known-hosts' };
     const workspace = { identity: executionWorkspaceIdentity(subject, profile), authority: 'authority-a' };
     const declaration = { profile, workspaces: [workspace] };
     const port = createEnvironmentConstructionWorkspaces({
@@ -101,14 +97,34 @@ test('construction workspaces refuse identity or access authority drift', async 
       state: stateFor(profile),
       channel: channel([]),
       resolveAuthority: async () => subject,
-      resolveAccess: async () => access,
     });
     const request = { declaration, workspaces: declaration.workspaces, implementationGeneration: 'env-0123456789abcdef0123456789abcdef' };
     await port.ensure(request);
-    access = { ...access, identityFile: '/host/other-identity' };
-    await assert.rejects(() => port.ensure(request), /access changed/u);
     const wrong = { declaration: { ...declaration, workspaces: [{ ...workspace, identity: 'workspace-wrong' }] }, implementationGeneration: request.implementationGeneration };
     await assert.rejects(() => port.ensure(wrong), /does not match host authority/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('construction workspaces do not publish admission before scoped-root verification succeeds', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'devbridge-workspaces-'));
+  try {
+    const profile = 'linux-development';
+    const subject = '42';
+    const workspace = { identity: executionWorkspaceIdentity(subject, profile), authority: 'authority-a' };
+    const declaration = { profile, workspaces: [workspace] };
+    const failing = channel([]);
+    failing.execute = async () => ({ completion: 'observed', result: { exitCode: 1, timedOut: false, aborted: false, outputTruncated: false, stdout: '', stderr: 'verification failed' } });
+    const port = createEnvironmentConstructionWorkspaces({
+      stateDirectory: directory,
+      state: stateFor(profile),
+      channel: failing,
+      resolveAuthority: async () => subject,
+    });
+    const request = { declaration, workspaces: declaration.workspaces, implementationGeneration: 'env-0123456789abcdef0123456789abcdef' };
+    await assert.rejects(() => port.ensure(request), /verification failed/u);
+    assert.equal(await loadEnvironmentActivityPolicy(directory), null);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

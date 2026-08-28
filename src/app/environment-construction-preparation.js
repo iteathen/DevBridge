@@ -1,7 +1,6 @@
 import path from 'node:path';
 import { createEnvironmentBootstrap } from './environment-bootstrap.js';
 import { createLinuxAccessPreparation } from './linux-access-preparation.js';
-import { executionProfileSubject } from './execution-profile-routing.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { loadOrCreateLocalIdentity } from '../runtime/local-identity.js';
 import { SshAccessMaterial } from '../runtime/ssh-access-material.js';
@@ -32,6 +31,13 @@ function guestKind(guest) {
 
 function safeReason(error) {
   return String(error?.message ?? error ?? 'environment preparation is unavailable').slice(0, 2048);
+}
+
+function persistentEnvironmentIdentity(value) {
+  if (typeof value !== 'string' || !/^env-[a-f0-9]{32}$/u.test(value)) {
+    throw new TypeError('environment preparation implementationGeneration must be an exact persistent environment identity');
+  }
+  return value;
 }
 
 export async function createLocalEnvironmentAccess({
@@ -97,8 +103,8 @@ export function createEnvironmentConstructionPreparation({
     if (!sameRequirement(request.enrollment ?? declaration.enrollment, declaration.enrollment)) throw new Error('environment preparation enrollment no longer matches declaration authority');
     if (!sameBootstrap(request.bootstrap ?? declaration.bootstrap, declaration.bootstrap)) throw new Error('environment preparation bootstrap no longer matches declaration authority');
     if (declaration.enrollment?.requirement !== 'unique-guest-trust-v1') throw new Error(`unsupported environment enrollment requirement: ${String(declaration.enrollment?.requirement ?? 'missing')}`);
-    const target = executionProfileSubject(declaration.profile);
-    const key = JSON.stringify([declaration.profile, declaration.guest, declaration.bootstrap, declaration.enrollment]);
+    const target = persistentEnvironmentIdentity(request.implementationGeneration);
+    const key = JSON.stringify([target, declaration.profile, declaration.guest, declaration.bootstrap, declaration.enrollment]);
     if (!values.has(key)) {
       const access = await createAccess({ stateDirectory, authorityDirectory: authorityStateDirectory, platform, invoke, guest: declaration.guest, windowsAccess });
       if (!access || typeof access.connection !== 'function' || (access.prepare != null && typeof access.prepare !== 'function')) throw new TypeError('environment access composition contract is incomplete');

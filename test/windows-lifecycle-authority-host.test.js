@@ -22,6 +22,8 @@ test('Windows lifecycle service host is only an SCM, IPC, and bounded process ad
     'ScrubbedWorkerEnvironment',
     'acceptanceThread',
     'options.AcceptancePipe',
+    'activityThread',
+    'options.ActivityPipe',
   ]) assert.equal(source.includes(required), true, `service host lost ${required}`);
 
   for (const forbidden of [
@@ -45,12 +47,16 @@ test('Windows lifecycle service host is only an SCM, IPC, and bounded process ad
   assert.equal(source.includes('operatorIdentity, PipeAccessRights.FullControl'), false);
 });
 
-test('Windows lifecycle acceptance capability is ordinary-accessible without widening the mutation pipe', async () => {
+test('Windows lifecycle acceptance and activity capabilities are ordinary-accessible without widening the mutation pipe', async () => {
   const source = await readFile(SOURCE, 'utf8');
-  assert.match(source, /String\.Equals\(access, "read", StringComparison\.Ordinal\) \|\| String\.Equals\(access, "acceptance", StringComparison\.Ordinal\)/u);
+  assert.match(source, /String\.Equals\(access, "read", StringComparison\.Ordinal\) \|\| String\.Equals\(access, "acceptance", StringComparison\.Ordinal\) \|\| String\.Equals\(access, "activity", StringComparison\.Ordinal\)/u);
   assert.doesNotMatch(source, /String\.Equals\(access, "mutation", StringComparison\.Ordinal\)[^\n]*operatorIdentity/u);
   assert.match(source, /Serve\(options\.AcceptancePipe, "acceptance"\)/u);
   assert.match(source, /--acceptance-pipe/u);
+  assert.match(source, /Serve\(options\.ActivityPipe, "activity"\)/u);
+  assert.match(source, /--activity-pipe/u);
+  assert.match(source, /S-1-5-2/u);
+  assert.match(source, /network, PipeAccessRights\.FullControl, AccessControlType\.Deny/u);
 });
 
 test('Windows lifecycle endpoints keep one first-instance server alive across requests', async () => {

@@ -49,11 +49,15 @@ test('Stage 6 restoration does not add provider or bridge topology to controller
 
 test('Stage 6 composition owns temporary topology while candidate validation stays provider and repository agnostic', async () => {
   const composition = await readFile(new URL('../src/app/repository-execution.js', import.meta.url), 'utf8');
-  assert.match(composition, /createEnvironmentFoundation/u);
-  assert.match(composition, /createEnvironmentBootstrap/u);
-  assert.match(composition, /createEnvironmentBridge/u);
+  assert.match(composition, /activityComponents/u);
+  assert.doesNotMatch(composition, /createEnvironmentFoundation|createEnvironmentBootstrap|createEnvironmentBridge/u);
   assert.doesNotMatch(composition, /from ['"].*providers\//u);
   assert.doesNotMatch(composition, /bubblewrap|appcontainer|processcontainer/iu);
+
+  const protectedComposition = await readFile(new URL('../src/app/environment-activity-host.js', import.meta.url), 'utf8');
+  assert.match(protectedComposition, /createEnvironmentFoundation/u);
+  assert.match(protectedComposition, /createEnvironmentConstructionPreparation/u);
+  assert.match(protectedComposition, /createEnvironmentBridgeExchange/u);
 
   const validator = await readFile(new URL('../src/bootstrap/candidate-validator.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(validator, /hyper-?v|libvirt|qemu|powershell|virsh/iu);

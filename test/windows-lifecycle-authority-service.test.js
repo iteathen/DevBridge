@@ -187,6 +187,7 @@ test('Windows lifecycle authority health uses one bounded startup-readiness wind
         return { protocol: 'devbridge/environment-operator-v1' };
       },
     }),
+    activityClientFactory: () => ({ async inspect() { return { ready: true, identity: 'a'.repeat(32) }; } }),
     waitForRetry: async (delay) => { delays.push(delay); },
   });
   assert.equal(result.protocol, 'devbridge/environment-operator-v1');
@@ -204,6 +205,7 @@ test('Windows lifecycle authority health stops at its bounded readiness deadline
         throw new Error(`unavailable-${attempts}`);
       },
     }),
+    activityClientFactory: () => ({ async inspect() { return { ready: true, identity: 'a'.repeat(32) }; } }),
     waitForRetry: async (delay) => { delays.push(delay); },
   }), /unavailable-6/u);
   assert.equal(attempts, 6);
@@ -253,7 +255,7 @@ test('production elevated reconciliation no longer owns a monolithic provision o
   assert.doesNotMatch(source, /stopped-after-failed-health/u);
 });
 
-test('authority migration copies only closed protected state and leaves execution routes ordinary', async () => {
+test('authority migration copies only closed protected state and leaves activity policy ordinary', async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'devbridge-authority-migration-'));
   const state = path.join(temp, 'ordinary');
   const authority = path.join(temp, 'protected');
@@ -263,7 +265,8 @@ test('authority migration copies only closed protected state and leaves executio
     await mkdir(path.join(state, 'environment-construction'), { recursive: true });
     await writeFile(path.join(state, 'environment-foundation', 'identity.json'), '{"identity":"protected"}\n');
     await writeFile(path.join(state, 'environment-foundation', 'images', 'catalog.json'), 'protected-image\n');
-    await writeFile(path.join(state, 'environment-foundation', 'execution-routes.json'), 'ordinary-route\n');
+    await mkdir(path.join(state, 'environment-activity'), { recursive: true });
+    await writeFile(path.join(state, 'environment-activity', 'policy.json'), 'ordinary-policy\n');
     await writeFile(path.join(state, 'environment-lifecycle', 'state.json'), 'protected-lifecycle\n');
     await writeFile(path.join(state, 'environment-construction', 'state.json'), 'protected-construction\n');
 
@@ -273,8 +276,8 @@ test('authority migration copies only closed protected state and leaves executio
     assert.equal(await readFile(path.join(authority, 'environment-foundation', 'images', 'catalog.json'), 'utf8'), 'protected-image\n');
     assert.equal(await readFile(path.join(authority, 'environment-lifecycle', 'state.json'), 'utf8'), 'protected-lifecycle\n');
     assert.equal(await readFile(path.join(authority, 'environment-construction', 'state.json'), 'utf8'), 'protected-construction\n');
-    await assert.rejects(readFile(path.join(authority, 'environment-foundation', 'execution-routes.json'), 'utf8'), /ENOENT/u);
-    assert.equal(await readFile(path.join(state, 'environment-foundation', 'execution-routes.json'), 'utf8'), 'ordinary-route\n');
+    await assert.rejects(readFile(path.join(authority, 'environment-activity', 'policy.json'), 'utf8'), /ENOENT/u);
+    assert.equal(await readFile(path.join(state, 'environment-activity', 'policy.json'), 'utf8'), 'ordinary-policy\n');
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

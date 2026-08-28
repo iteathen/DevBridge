@@ -16,7 +16,8 @@ There is no direct-host or legacy sandbox fallback. Missing routes, an unavailab
 - `src/runtime/repository-environment-execution.js` owns only neutral session sequencing, cancellation checks, result classification, and evidence binding.
 - `src/runtime/file-tree-transfer.js` owns portable content-addressed tree and delta validation.
 - `src/guest/workspace-agent.mjs` owns only guest-local source preparation, local baseline Git, logical operation execution, and candidate collection.
-- `src/app/repository-execution.js` is the execution topology edge. It composes foundation, preparation, bridge, route, transfer, and guest-work studs without knowing provider-specific VM details.
+- `src/app/repository-execution.js` consumes only the neutral protected activity client plus route, transfer, and guest-work studs. It has no provider, credential, foundation-construction, or direct-process fallback.
+- `src/app/environment-activity-host.js` is the protected execution topology edge. It composes physical state, exact declarations, guest preparation, and bridge exchange without projecting provider or access material.
 - `src/app/execution-profile-routing.js` is the profile/workspace topology edge. It maps stable repository subjects to deterministic workspace targets, maps those targets to profile-owned physical environments, and scopes bridge locations beneath the workspace identity.
 - `src/app/runtime-execution.js` maps trusted host worktree identity and locally registered logical tools at the application edge.
 - Controller, worker, Git, verification, and publication modules retain their prior contracts and contain no provider or bridge topology.
@@ -27,20 +28,19 @@ Connections are transient. A session is opened for one exact source/operation/ca
 
 Routes are stored under the control-owned state directory at:
 
-`environment-foundation/execution-routes.json`
+`environment-activity/policy.json`
 
 Example shape:
 
 ```json
 {
-  "protocol": "devbridge/environment-execution-routes-v1",
+  "protocol": "devbridge/environment-activity-policy-v1",
   "routes": [
     {
       "subject": "123456789",
       "profile": "linux-development",
       "preferred": true,
-      "validation": true,
-      "access": { "family": "linux" }
+      "validation": true
     }
   ]
 }
@@ -48,7 +48,9 @@ Example shape:
 
 `subject` is the stable numeric repository identity observed by the trusted host, never a mutable owner/name string. It identifies the repository side of the route; it is **not** the persistent VM owner. `profile` identifies the compatible execution profile. The profile router derives a repository-independent profile subject for physical VM lookup and a deterministic repository+profile workspace identity/target for execution.
 
-A subject may have multiple profiles only when exactly one is preferred. At most one route may be the runtime-validation route. Routes sharing one profile must agree on that profile's guest-access configuration. Host attachment credentials remain route-local composition input and are never placed in an operation descriptor.
+A subject may have multiple profiles only when exactly one is preferred. At most one route may be the runtime-validation route. The public policy rejects guest-access, provider, path, address, and credential fields. The protected activity host resolves guest access transiently from protected declaration and preparation state; it never places access material in policy, an operation descriptor, or an ordinary-process result.
+
+Admission publication is transactional: setup verifies the exact workspace roots through the scoped protected channel before atomically publishing a changed policy. A failed verification leaves the prior policy unchanged.
 
 Legacy repository-owned persistent-environment records are not silently treated as profile environments merely because their old subject matches a repository route.
 
@@ -77,7 +79,7 @@ Runtime-validation and tool-documentation probes never import a candidate delta.
 
 ## Execution classes
 
-Production runtime wiring routes registered repository-code operations and proposal workers through the repository execution stud. Direct logical tools include Node, CMake, CTest, npm, and npx. Local profiles contribute only a bounded logical tool name; host executable paths are reduced to a safe program basename at the composition edge and are never sent as host paths.
+Production runtime wiring routes registered repository-code operations and proposal workers through the repository execution stud and the protected activity capability. Direct logical tools include Node, CMake, CTest, npm, and npx. Local profiles contribute only a bounded logical tool name; host executable paths are reduced to a safe program basename at the composition edge and are never sent as host paths.
 
 Shipped diagnostic helpers are also selected only by logical identity. Composition reads their trusted runtime resources, binds a digest, stages the bounded bundle through input capabilities, and invokes its environment-local entry location. Neither profile data nor the runner contains a host checkout path.
 

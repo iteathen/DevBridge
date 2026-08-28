@@ -4,13 +4,7 @@ import {
   createExecutionProfileRouting,
   executionProfileSubject,
 } from '../src/app/execution-profile-routing.js';
-
-const ACCESS = Object.freeze({
-  family: 'linux',
-  user: 'devbridge',
-  identityFile: '/host/id',
-  knownHostsFile: '/host/known-hosts',
-});
+import { ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL } from '../src/runtime/environment-activity-policy.js';
 
 function physicalEntry(identity, profile, suffix) {
   return {
@@ -55,10 +49,10 @@ test('different execution profiles resolve to distinct physical environments', a
   const routing = createExecutionProfileRouting({
     state,
     policy: {
-      protocol: 'devbridge/environment-execution-routes-v1',
+      protocol: ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL,
       routes: [
-        { subject: '101', profile: linuxProfile, preferred: true, validation: true, access: ACCESS },
-        { subject: '202', profile: windowsProfile, preferred: true, validation: false, access: ACCESS },
+        { subject: '101', profile: linuxProfile, preferred: true, validation: true },
+        { subject: '202', profile: windowsProfile, preferred: true, validation: false },
       ],
     },
   });

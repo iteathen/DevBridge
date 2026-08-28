@@ -9,7 +9,7 @@ import { runOnce } from './app/run-once.js';
 import { runDaemon } from './app/daemon.js';
 import { createLinuxActivityAdmission } from './app/linux-activity-admission.js';
 import { createRuntime } from './app/runtime.js';
-import { createLocalEnvironmentOperator } from './app/environment-operator-runtime.js';
+import { createConfiguredLifecycleAuthorityClient } from './runtime/environment-lifecycle-authority-transport.js';
 import { chatHandoffSeed, chatHandoffStatus } from './app/chat-handoff.js';
 import { formatSetupHandoff, runDevBridgeSetup } from './app/setup.js';
 import { runWindowsLifecycleAuthoritySetupChild } from './app/windows-lifecycle-authority-setup-child.js';
@@ -61,7 +61,7 @@ function environmentIdentity(args) {
 async function runEnvironmentCommand(config, args) {
   const [action] = args;
   if (!action) throw new PolicyError('environment command requires an action');
-  const operator = await createLocalEnvironmentOperator({ stateDirectory: config.state.directory });
+  const operator = createConfiguredLifecycleAuthorityClient({ stateDirectory: config.state.directory });
   const identity = environmentIdentity(args);
   if (action === 'list') return operator.list();
   if (action === 'setup-reentry') return operator.setupReentry(identity);
@@ -208,7 +208,7 @@ async function main() {
     return;
   }
   if (command === 'doctor') {
-    const environmentOperator = await createLocalEnvironmentOperator({ stateDirectory: config.state.directory });
+    const environmentOperator = createConfiguredLifecycleAuthorityClient({ stateDirectory: config.state.directory });
     console.log(JSON.stringify(await doctor(config, {
       checkRepositoryAdmission: true,
       repositoryAdmissionTargets: [repository],

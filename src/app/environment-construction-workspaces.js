@@ -1,17 +1,14 @@
-import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, rename, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 import {
   createExecutionProfileRouting,
   createWorkspaceScopedChannel,
   executionWorkspaceIdentity,
 } from './execution-profile-routing.js';
 import {
-  ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL,
-  loadEnvironmentExecutionRoutes,
-  normalizeEnvironmentExecutionRoutes,
-  repositoryExecutionRoutesPath,
-} from './repository-execution.js';
+  ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL,
+  loadEnvironmentActivityPolicy,
+  normalizeEnvironmentActivityPolicy,
+  publishEnvironmentActivityPolicy,
+} from '../runtime/environment-activity-policy.js';
 
 const STABLE_SUBJECT = /^\d+$/u;
 const READY_BYTES = Buffer.from('ready\n', 'utf8');
@@ -19,10 +16,6 @@ const READY_BYTES = Buffer.from('ready\n', 'utf8');
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
   return value;
-}
-
-function sameAccess(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function assertChannel(value) {
@@ -48,52 +41,25 @@ function observed(outcome, name) {
   }
 }
 
-async function atomicPolicy(stateDirectory, policy) {
-  const file = repositoryExecutionRoutesPath(stateDirectory);
-  const directory = path.dirname(file);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const directoryInfo = await lstat(directory);
-  if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink()) throw new Error('environment route directory must be a real directory');
-  try {
-    const current = await lstat(file);
-    if (!current.isFile() || current.isSymbolicLink()) throw new Error('environment route file must be a real file');
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
-  }
-  const temporary = path.join(directory, `.execution-routes-${randomUUID()}.tmp`);
-  await writeFile(temporary, `${JSON.stringify(policy)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-  await rename(temporary, file);
-}
-
-function normalizedAccess(profile, raw) {
-  const policy = normalizeEnvironmentExecutionRoutes({
-    protocol: ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL,
-    routes: [{ subject: '1', profile, preferred: false, validation: false, access: raw }],
-  });
-  return policy.routes[0].access;
-}
-
 export function createEnvironmentConstructionWorkspaces({
   stateDirectory,
   state,
   channel = null,
   resolveChannel = null,
   resolveAuthority,
-  resolveAccess,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('environment workspace stateDirectory is required');
   if (!state || typeof state.listEnvironments !== 'function' || typeof state.observeEnvironment !== 'function' || typeof state.inspect !== 'function') throw new TypeError('environment workspace state contract is incomplete');
   if (channel == null && typeof resolveChannel !== 'function') throw new TypeError('environment workspace channel contract is incomplete');
   if (channel != null) assertChannel(channel);
   if (resolveChannel != null && typeof resolveChannel !== 'function') throw new TypeError('environment workspace channel resolver is invalid');
-  if (typeof resolveAuthority !== 'function' || typeof resolveAccess !== 'function') throw new TypeError('environment workspace authority contract is incomplete');
+  if (typeof resolveAuthority !== 'function') throw new TypeError('environment workspace authority contract is incomplete');
 
-  const resolve = async (rawRequest, { publish = false } = {}) => {
+  const resolve = async (rawRequest) => {
     const request = requireObject(rawRequest, 'environment workspace request');
     const declaration = requireObject(request.declaration, 'environment workspace declaration');
     const workspaces = request.workspaces ?? declaration.workspaces;
     if (!Array.isArray(workspaces) || JSON.stringify(workspaces) !== JSON.stringify(declaration.workspaces)) throw new Error('environment workspaces no longer match declaration authority');
-    const access = normalizedAccess(declaration.profile, await resolveAccess(Object.freeze({ declaration })));
     const selected = [];
     for (const workspace of workspaces) {
       const subject = String(await resolveAuthority(workspace.authority));
@@ -102,21 +68,17 @@ export function createEnvironmentConstructionWorkspaces({
       selected.push(Object.freeze({ subject, workspace }));
     }
 
-    const existing = await loadEnvironmentExecutionRoutes(stateDirectory);
+    const existing = await loadEnvironmentActivityPolicy(stateDirectory);
     const routes = existing ? existing.routes.map((route) => structuredClone(route)) : [];
     let changed = false;
     for (const entry of selected) {
       const matches = routes.filter((route) => route.subject === entry.subject && route.profile === declaration.profile);
       if (matches.length > 1) throw new Error('environment workspace route is ambiguous');
-      if (matches.length === 1) {
-        if (!sameAccess(matches[0].access, access)) throw new Error('environment workspace route access changed; setup re-entry is required');
-        continue;
-      }
-      routes.push({ subject: entry.subject, profile: declaration.profile, preferred: false, validation: false, access: structuredClone(access) });
+      if (matches.length === 1) continue;
+      routes.push({ subject: entry.subject, profile: declaration.profile, preferred: false, validation: false });
       changed = true;
     }
-    const policy = normalizeEnvironmentExecutionRoutes({ protocol: ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL, routes });
-    if (publish && changed) await atomicPolicy(stateDirectory, policy);
+    const policy = normalizeEnvironmentActivityPolicy({ protocol: ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL, routes });
     const selectedChannel = assertChannel(channel ?? await resolveChannel(Object.freeze({ declaration })));
     const routing = createExecutionProfileRouting({ state, policy });
     const scoped = createWorkspaceScopedChannel({ channel: selectedChannel, routing });
@@ -159,13 +121,14 @@ export function createEnvironmentConstructionWorkspaces({
 
   return Object.freeze({
     async ensure(request) {
-      const resolved = await resolve(request, { publish: true });
+      const resolved = await resolve(request);
       await verifyRoots(resolved);
+      if (resolved.changed) await publishEnvironmentActivityPolicy(stateDirectory, resolved.policy);
       return Object.freeze({ ready: true, implementationGeneration: request.implementationGeneration, routesChanged: resolved.changed, workspaceCount: resolved.selected.length });
     },
     async inspect(request) {
       try {
-        const resolved = await resolve(request, { publish: false });
+        const resolved = await resolve(request);
         const status = await inspectRoots(resolved);
         return Object.freeze({ ...status, routeCount: resolved.policy.routes.length });
       } catch (error) {

@@ -4,11 +4,10 @@ import {
   createExecutionProfileRouting,
   executionProfileSubject,
 } from '../src/app/execution-profile-routing.js';
+import { ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL } from '../src/runtime/environment-activity-policy.js';
 
 const PROFILE = 'linux-development';
 const PHYSICAL = `env-${'a'.repeat(32)}`;
-const ACCESS = Object.freeze({ family: 'linux' });
-
 function state() {
   const entry = {
     record: {
@@ -43,13 +42,12 @@ function routing(subjects) {
   return createExecutionProfileRouting({
     state: state(),
     policy: {
-      protocol: 'devbridge/environment-execution-routes-v1',
+      protocol: ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL,
       routes: subjects.map((subject, index) => ({
         subject,
         profile: PROFILE,
         preferred: true,
         validation: index === 0,
-        access: ACCESS,
       })),
     },
   });

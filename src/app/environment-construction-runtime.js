@@ -73,7 +73,6 @@ export async function createEnvironmentConstructionRuntime({
     stateDirectory,
     state: localFoundation,
     resolveAuthority,
-    resolveAccess: ({ declaration }) => preparation.access({ declaration }),
     resolveChannel: async ({ declaration }) => createEnvironmentBridge({
       stateDirectory,
       platform,

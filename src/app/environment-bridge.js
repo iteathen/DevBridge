@@ -39,7 +39,7 @@ function foundationIdentity(value) {
   return value;
 }
 
-export async function createEnvironmentBridge({
+export async function createEnvironmentBridgeExchange({
   stateDirectory,
   foundationIdentity: injectedFoundationIdentity = null,
   platform = process.platform,
@@ -56,5 +56,9 @@ export async function createEnvironmentBridge({
   if (platform === 'win32') attachment = new HyperVEnvironmentBridge({ invoke, access, locate });
   else if (platform === 'linux') attachment = new LibvirtEnvironmentBridge({ invoke, access, locate });
   else throw new Error('no environment bridge attachment is available for this host platform');
-  return new EnvironmentBridge({ exchange: attachment.exchange.bind(attachment) });
+  return attachment.exchange.bind(attachment);
+}
+
+export async function createEnvironmentBridge(options = {}) {
+  return new EnvironmentBridge({ exchange: await createEnvironmentBridgeExchange(options) });
 }

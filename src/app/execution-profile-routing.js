@@ -1,12 +1,7 @@
 import { createHash } from 'node:crypto';
-import { createEnvironmentBootstrap } from './environment-bootstrap.js';
-import { createEnvironmentBridge } from './environment-bridge.js';
-import { createEnvironmentFoundation } from './environment-foundation.js';
 import {
-  createRepositoryExecution,
-  loadEnvironmentExecutionRoutes,
-  normalizeEnvironmentExecutionRoutes,
-} from './repository-execution.js';
+  normalizeEnvironmentActivityPolicy,
+} from '../runtime/environment-activity-policy.js';
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
 const MAX_SUBJECT_BYTES = 512;
@@ -25,7 +20,6 @@ function opaqueSubject(value) {
   }
   return value;
 }
-
 function digest(namespace, ...parts) {
   const hash = createHash('sha256').update(namespace, 'utf8');
   for (const part of parts) hash.update('\0', 'utf8').update(String(part), 'utf8');
@@ -43,22 +37,6 @@ export function executionWorkspaceIdentity(subject, profile) {
 
 export function executionWorkspaceTarget(subject, profile) {
   return `env-${digest('execution-workspace-target-v1', opaqueSubject(subject), safeId(profile, 'execution profile')).slice(0, 32)}`;
-}
-
-function profileAccessKey(route) {
-  return JSON.stringify(route.access ?? {});
-}
-
-function validateProfileAccess(policy) {
-  const seen = new Map();
-  for (const route of policy.routes) {
-    const current = profileAccessKey(route);
-    const prior = seen.get(route.profile);
-    if (prior != null && prior !== current) {
-      throw new Error(`execution profile ${route.profile} has conflicting guest-access configuration`);
-    }
-    seen.set(route.profile, current);
-  }
 }
 
 function routeIndex(policy) {
@@ -100,7 +78,6 @@ function syntheticEntry(route, target, physical) {
     }),
   });
 }
-
 function profileMatches(environments, profile) {
   const subject = executionProfileSubject(profile);
   return environments.filter((entry) => entry.record?.subject === subject && entry.record?.profile === profile);
@@ -110,8 +87,7 @@ export function createExecutionProfileRouting({ state, policy }) {
   if (!state || typeof state.inspect !== 'function' || typeof state.listEnvironments !== 'function' || typeof state.observeEnvironment !== 'function') {
     throw new TypeError('execution-profile state contract is incomplete');
   }
-  const normalized = normalizeEnvironmentExecutionRoutes(policy);
-  validateProfileAccess(normalized);
+  const normalized = normalizeEnvironmentActivityPolicy(policy);
   const index = routeIndex(normalized);
 
   const physicalForRoute = async (route) => {
@@ -262,90 +238,4 @@ export function createWorkspaceScopedChannel({ channel, routing }) {
     },
   });
 }
-
-function createMappedPreparation(preparation, routing) {
-  const map = (target) => routing.physicalTarget(target);
-  return Object.freeze({
-    inspect: typeof preparation.inspect === 'function' ? async (target) => preparation.inspect(await map(target)) : undefined,
-    ensure: async (target) => preparation.ensure(await map(target)),
-    verifyContinuity: typeof preparation.verifyContinuity === 'function'
-      ? async (target) => preparation.verifyContinuity(await map(target))
-      : undefined,
-    connection: typeof preparation.connection === 'function'
-      ? async (target) => preparation.connection(await map(target))
-      : undefined,
-    reconcile: typeof preparation.reconcile === 'function' ? (...args) => preparation.reconcile(...args) : undefined,
-  });
-}
-
-function lifecycleScopeTarget(routing, resolveSubject, scope) {
-  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) throw new TypeError('workspace lifecycle scope is invalid');
-  if (typeof resolveSubject !== 'function') throw new TypeError('workspace lifecycle subject resolver is unavailable');
-  return Promise.resolve(resolveSubject(structuredClone(scope))).then((subject) => routing.targetForSubject(String(subject)));
-}
-
-export async function createExecutionProfileRepositoryExecution({
-  stateDirectory,
-  routes = null,
-  createState = createEnvironmentFoundation,
-  createPreparation = createEnvironmentBootstrap,
-  createChannel = createEnvironmentBridge,
-  ...options
-} = {}) {
-  const policy = routes == null ? await loadEnvironmentExecutionRoutes(stateDirectory) : normalizeEnvironmentExecutionRoutes(routes);
-  let routing = null;
-  let workspaceChannel = null;
-
-  const routedStateFactory = async (input) => {
-    const state = await createState(input);
-    if (!policy) return state;
-    routing = createExecutionProfileRouting({ state, policy });
-    return routing;
-  };
-
-  const routedPreparationFactory = async (input) => {
-    if (!routing) throw new Error('execution-profile routing state was not initialized');
-    const preparation = await createPreparation({
-      ...input,
-      access: async (physical) => input.access(await routing.representativeTarget(physical)),
-    });
-    return createMappedPreparation(preparation, routing);
-  };
-
-  const routedChannelFactory = async (input) => {
-    if (!routing) throw new Error('execution-profile routing state was not initialized');
-    const channel = await createChannel({
-      ...input,
-      access: async (physical) => input.access(await routing.representativeTarget(physical)),
-    });
-    workspaceChannel = createWorkspaceScopedChannel({ channel, routing });
-    return workspaceChannel;
-  };
-
-  const execution = await createRepositoryExecution({
-    stateDirectory,
-    routes: policy,
-    ...options,
-    createState: routedStateFactory,
-    createPreparation: routedPreparationFactory,
-    createChannel: routedChannelFactory,
-  });
-  if (!policy || !routing || !workspaceChannel) return execution;
-
-  const resolveTarget = (scope) => lifecycleScopeTarget(routing, options.resolveSubject, scope);
-  Object.defineProperties(execution, {
-    cleanupWorkspace: {
-      enumerable: false,
-      value: async ({ scope, signal = null }) => workspaceChannel.cleanupWorkspace(await resolveTarget(scope), { signal }),
-    },
-    resetWorkspace: {
-      enumerable: false,
-      value: async ({ scope, signal = null }) => workspaceChannel.resetWorkspace(await resolveTarget(scope), { signal }),
-    },
-    reseedWorkspace: {
-      enumerable: false,
-      value: async ({ scope, signal = null }) => workspaceChannel.reseedWorkspace(await resolveTarget(scope), { signal }),
-    },
-  });
-  return execution;
-}
+// Physical attachment and guest-access resolution stay outside this neutral router.

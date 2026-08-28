@@ -1,7 +1,7 @@
 import path from 'node:path';
-import { createExecutionProfileRepositoryExecution } from './execution-profile-routing.js';
-import { gitVisiblePathsFromResult } from './repository-execution.js';
+import { createRepositoryExecution, gitVisiblePathsFromResult } from './repository-execution.js';
 import { resolveBuiltInHelper } from './builtin-helper-resolver.js';
+import { createConfiguredEnvironmentActivityClient } from '../runtime/environment-activity-authority-transport.js';
 
 const SAFE_SEGMENT = /^[A-Za-z0-9_.-]+$/u;
 const SAFE_RUN = /^[A-Za-z0-9_.-]{1,120}$/u;
@@ -54,13 +54,13 @@ export async function createRuntimeExecutionContext({
   client,
   toolProfiles = config?.tools ?? {},
   protectedValues = [],
-  env = process.env,
+  activity = null,
 } = {}) {
   if (!config || !workspaceManager || !gitClient || !client) throw new TypeError('runtime execution composition is incomplete');
   const repositoryIds = new Map();
-  const repositoryExecution = await createExecutionProfileRepositoryExecution({
+  const repositoryExecution = await createRepositoryExecution({
     stateDirectory: config.state.directory,
-    env,
+    activity: activity ?? createConfiguredEnvironmentActivityClient({ stateDirectory: config.state.directory }),
     protectedValues,
     rootFor: async (scope) => workspaceManager.worktreePath(scope.repository, scope.runId),
     listPaths: async (root) => gitVisiblePathsFromResult(await gitClient.run(['ls-files', '-co', '--exclude-standard', '-z'], { cwd: root })),

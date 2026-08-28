@@ -13,6 +13,7 @@ import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment-lifecycle-authority-transport.js';
+import { createConfiguredEnvironmentActivityClient } from '../runtime/environment-activity-authority-transport.js';
 import {
   PROTECTED_AUTHORITY_RECONCILIATION_JOURNAL_PROTOCOL,
 } from './protected-authority-reconciliation.js';
@@ -28,6 +29,7 @@ import {
 import {
   bindWindowsLifecycleAuthorityRuntime,
   createWindowsLifecycleAuthorityPlan,
+  WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACCEPTANCE_V1,
   WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1,
   WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1,
 } from './windows-lifecycle-authority.js';
@@ -309,7 +311,7 @@ function normalizeOwnership(raw, plan) {
       if (typeof raw.runtime[key] !== 'string' || !GENERATION.test(raw.runtime[key])) throw new Error('protected lifecycle authority runtime digest is invalid');
     }
     if (raw.runtime.hostCommandProtocol != null
-        && ![WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1].includes(raw.runtime.hostCommandProtocol)) {
+        && ![WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACCEPTANCE_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1].includes(raw.runtime.hostCommandProtocol)) {
       throw new Error('protected lifecycle authority runtime host command protocol is invalid');
     }
   }
@@ -570,7 +572,7 @@ function normalizeGenerationManifest(raw, basePlan, generation) {
   for (const key of ['packageDigest', 'nodeDigest', 'hostSourceDigest', 'hostExecutableDigest']) {
     if (typeof raw[key] !== 'string' || !GENERATION.test(raw[key])) throw new Error('Windows lifecycle authority generation manifest digest is invalid');
   }
-  if (![WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1].includes(raw.hostCommandProtocol)) {
+  if (![WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACCEPTANCE_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1].includes(raw.hostCommandProtocol)) {
     throw new Error('Windows lifecycle authority generation manifest host command protocol is invalid');
   }
   const plan = bindWindowsLifecycleAuthorityRuntime(basePlan, {
@@ -1014,15 +1016,19 @@ export function createWindowsLifecycleAuthorityRefreshMechanics({
 
 export async function probeWindowsLifecycleAuthority(plan, {
   clientFactory = createConfiguredLifecycleAuthorityClient,
+  activityClientFactory = createConfiguredEnvironmentActivityClient,
   waitForRetry = wait,
 } = {}) {
-  if (typeof clientFactory !== 'function' || typeof waitForRetry !== 'function') throw new TypeError('Windows lifecycle authority health probe composition is invalid');
+  if (typeof clientFactory !== 'function' || typeof activityClientFactory !== 'function' || typeof waitForRetry !== 'function') throw new TypeError('Windows lifecycle authority health probe composition is invalid');
   let lastError = null;
   for (let attempt = 0; ; attempt += 1) {
     try {
       const client = clientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
       const result = await client.inspect();
       if (!result || result.protocol !== 'devbridge/environment-operator-v1') throw new Error('protected lifecycle authority returned invalid inspection evidence');
+      const activityClient = activityClientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
+      const activity = await activityClient.inspect();
+      if (!activity || activity.ready !== true || typeof activity.identity !== 'string') throw new Error('protected environment activity authority returned invalid inspection evidence');
       return result;
     } catch (error) {
       lastError = error;

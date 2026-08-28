@@ -17,7 +17,7 @@ import {
 } from '../git/repository-admission.js';
 import { resolveGitHubCredential, publicGitHubCredentialStatus } from '../github/auth-provider.js';
 import { normalizeEnvironmentFoundationStatus } from '../runtime/environment-foundation.js';
-import { createEnvironmentFoundation } from './environment-foundation.js';
+import { createConfiguredEnvironmentActivityClient } from '../runtime/environment-activity-authority-transport.js';
 import { createRepositoryExecution } from './repository-execution.js';
 
 async function describeProfile(name, raw, { source, allowUncontainedTools, repositoryExecutionStatus }) {
@@ -38,6 +38,7 @@ export async function doctor(config, {
   probeCoreCapabilities = true,
   env = process.env,
   repositoryExecution = null,
+  environmentActivity = null,
   environmentFoundation = null,
   probeEnvironmentFoundation = null,
   environmentDiagnosis = null,
@@ -56,7 +57,7 @@ export async function doctor(config, {
   const execution = repositoryExecution == null
     ? await createRepositoryExecution({
         stateDirectory: config.state.directory,
-        env,
+        activity: environmentActivity ?? createConfiguredEnvironmentActivityClient({ stateDirectory: config.state.directory }),
         rootFor: async () => { throw new Error('doctor inspection does not open an execution source'); },
         listPaths: async () => { throw new Error('doctor inspection does not enumerate execution source'); },
         resolveSubject: async () => { throw new Error('doctor inspection does not resolve an execution subject'); },
@@ -67,10 +68,7 @@ export async function doctor(config, {
   const shouldProbeEnvironmentFoundation = probeEnvironmentFoundation ?? probeCoreCapabilities;
   let environmentFoundationStatus = null;
   if (environmentFoundation != null) environmentFoundationStatus = normalizeEnvironmentFoundationStatus(await environmentFoundation.inspect());
-  else if (shouldProbeEnvironmentFoundation) {
-    const foundation = await createEnvironmentFoundation({ stateDirectory: config.state.directory });
-    environmentFoundationStatus = normalizeEnvironmentFoundationStatus(await foundation.inspect());
-  }
+  else if (shouldProbeEnvironmentFoundation) environmentFoundationStatus = null;
   const environmentDiagnostics = environmentDiagnosis == null ? null : await environmentDiagnosis.list();
   if (environmentDiagnostics != null && !Array.isArray(environmentDiagnostics)) throw new TypeError('environment diagnosis list must be an array');
   const environmentLifecycle = environmentOperator == null ? null : await environmentOperator.inspect();

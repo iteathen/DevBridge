@@ -37,7 +37,6 @@ test('workspace inspection performs health checks only', async () => {
       state: stateFor(profile),
       channel,
       resolveAuthority: async () => subject,
-      resolveAccess: async () => ({ family: 'linux', user: 'devbridge', identityFile: '/host/identity', knownHostsFile: '/host/known-hosts' }),
     });
     const result = await port.inspect({ declaration, workspaces: declaration.workspaces, implementationGeneration: 'env-0123456789abcdef0123456789abcdef' });
     assert.equal(result.ready, true);

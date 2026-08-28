@@ -122,7 +122,7 @@ test('default candidate validation fails closed when no local validation route e
     })}\n`);
     await assert.rejects(
       () => validateRuntimeCandidate({ home: root, config: configFile }, { runtimeDir, head: 'c'.repeat(40), version: '0.1.0' }, null, { env: {} }),
-      /no local execution routes/u,
+      /no local environment activity policy/u,
     );
   } finally { await rm(root, { recursive: true, force: true }); }
 });
