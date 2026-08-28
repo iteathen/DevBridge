@@ -4,7 +4,7 @@ Date: 2026-08-28
 
 Issue: #251
 
-Status: assessed, researched, and planned; implementation pending. This document authorizes no setup, elevation, service, provider, image, environment, VM, guest, repository-execution, remote projection, or publication effect.
+Status: implemented and accepted on exact hosted Windows/Ubuntu qualification. This document authorizes no setup, elevation, service, provider, image, environment, VM, guest, repository-execution, remote projection, or publication effect.
 
 ## Assessment
 
@@ -90,3 +90,11 @@ No UAC request, elevation attempt/bypass, protected operation, physical provider
 CI run `33219166402` attempt 1 on exact implementation commit `d4e2e892ca6e3bef0f3cd971936d40c9e2c5bff8` passed Windows serialized full-suite/doctor and both Ubuntu jobs, but Windows cheap preflight reached its fixed one-minute job boundary without emitting a product/test failure. A failed-job-only rerun reproduced the same Windows preflight timeout while the already-qualified jobs remained green. This is another exact instance of open CI resource-budget issue #290, not evidence that the handoff contract failed.
 
 The five new children had been added both as individual `node --check` subprocesses and as imports of the new targeted nested contract. On Windows the extra sequential process launches duplicated syntax coverage and pushed the bounded job over its wall-clock budget. Remove only those five redundant direct syntax registrations: the already registered parent imports every child, and the targeted nested test imports/reads every exact child and proves its topology. Keep the new targeted test, all complete-suite coverage, and the one-minute CI limit unchanged. Local corrected preflight passes 168 direct syntax files + 2 JSON files + 138 targeted tests in 38.28 seconds. Requalify the correction on exact hosted Windows/Ubuntu CI before acceptance.
+
+## Accepted hosted qualification
+
+GitHub Actions run `33219513699` qualified exact correction commit `fb4d2650921e7e17fb9821988c74e061e64a1224` across all four Windows/Ubuntu jobs. Windows bounded preflight/identity/installer passed with the unchanged one-minute cheap-preflight budget; the preflight step completed in 43 seconds. Ubuntu complete-suite/doctor and bounded preflight also passed.
+
+The first Windows complete-suite attempt passed 1,709 tests and hit the already documented #290 20-second child-process boundary only in `Windows Hyper-V construction reconciles only the exact default-adapter New-VM partial effect`. That exact test had passed on implementation commit `d4e2e892ca6e3bef0f3cd971936d40c9e2c5bff8`, and the failed-job-only rerun on the correction commit passed the complete 1,718-test serialized suite plus doctor in 2 minutes 27 seconds. No product timeout, test timeout, safety assertion, or hosted deadline was widened. The bounded preflight correction is accepted; #290 continues to own the independent hosted-runner timing recurrence.
+
+No UAC request, elevation attempt/bypass, protected operation, physical provider/VM/image/environment/guest action, repository execution, remote handoff projection, or product publication occurred during qualification.
