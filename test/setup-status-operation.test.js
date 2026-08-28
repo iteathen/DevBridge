@@ -65,6 +65,23 @@ function blockedResult() {
         },
       },
     },
+    windowsProfile: {
+      profile: 'windows-development',
+      media: {
+        state: 'accepted',
+        inbox: 'C:\\Users\\operator\\private\\media',
+        candidates: [{ subject: 'candidate-secret', source: 'source-secret' }],
+        rejectedCount: 1,
+        accepted: {
+          candidate: 'candidate-secret',
+          authority: 'C:\\Users\\operator\\private\\authority.json',
+          sourceClass: 'official-owned',
+          temporary: false,
+          media: { name: 'private.iso', bytes: 100, sha256: 'a'.repeat(64) },
+          image: { index: 6, name: 'Windows 11 Pro', edition: 'Professional', architecture: 'amd64', build: 26100 },
+        },
+      },
+    },
   };
 }
 
@@ -108,6 +125,20 @@ test('setup.status delegates with no remote arguments and returns blocked setup 
   assert.equal(projected.linuxProfile.physicalStatus.preflight.capabilities.provider, true);
   assert.equal(projected.linuxProfile.physicalStatus.preflight.capabilities.connectivity, true);
   assert.deepEqual(projected.linuxProfile.physicalStatus.preflight.connectivity, { control: 'system', addressing: 'automatic' });
+  assert.deepEqual(projected.windowsProfile, {
+    profile: 'windows-development',
+    media: {
+      state: 'accepted',
+      blocker: null,
+      candidateCount: 1,
+      rejectedCount: 1,
+      accepted: {
+        sourceClass: 'official-owned',
+        temporary: false,
+        image: { index: 6, name: 'Windows 11 Pro', edition: 'Professional', architecture: 'amd64', build: 26100 },
+      },
+    },
+  });
 });
 
 test('setup status projection removes local paths and repository or identity details', () => {
@@ -132,6 +163,10 @@ test('setup status projection removes local paths and repository or identity det
     'binDirectory',
     'temporaryCommand',
     'image.vhdx',
+    'candidate-secret',
+    'source-secret',
+    'private.iso',
+    'authority.json',
   ]) {
     assert.equal(serialized.includes(forbidden), false, forbidden);
   }

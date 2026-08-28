@@ -860,11 +860,40 @@ test('lifecycle child admits only an exact entry-injected broker home', () => {
     ['--track-ref', 'main'],
     ['--repository', 'owner/repository'],
     ['--retire-conflict', 'a'.repeat(64)],
+    ['--windows-media', 'C:\\media\\Windows.iso'],
+    ['--approve-windows-media', `candidate-${'a'.repeat(32)}`, '--windows-image-index', '6', '--windows-media-class', 'official-owned'],
   ]) {
     assert.throws(() => parseSetupCommandOptions([
       '--lifecycle-authority-child', '--no-update', ...capability,
     ], { authorityHome, platform: 'win32' }), /accepts no setup capability arguments/u);
   }
+});
+
+test('ordinary setup keeps Windows media discovery separate from exact approval', () => {
+  const candidate = `candidate-${'a'.repeat(32)}`;
+  const discovery = parseSetupCommandOptions(['--windows-media', 'C:\\media\\Windows.iso'], { platform: 'win32' });
+  assert.equal(discovery.windowsMediaLocation, 'C:\\media\\Windows.iso');
+  assert.equal(discovery.windowsMediaApproval, null);
+
+  const approval = parseSetupCommandOptions([
+    '--approve-windows-media', candidate,
+    '--windows-image-index', '6',
+    '--windows-media-class', 'official-owned',
+  ]);
+  assert.deepEqual(approval.windowsMediaApproval, { candidate, imageIndex: 6, sourceClass: 'official-owned' });
+  assert.throws(() => parseSetupCommandOptions(['--windows-media', 'relative.iso'], { platform: 'win32' }), /absolute local ISO path/u);
+  assert.throws(() => parseSetupCommandOptions(['--approve-windows-media', candidate]), /requires --approve-windows-media/u);
+  assert.throws(() => parseSetupCommandOptions([
+    '--windows-media', 'C:\\media\\Windows.iso',
+    '--approve-windows-media', candidate,
+    '--windows-image-index', '6',
+    '--windows-media-class', 'official-owned',
+  ], { platform: 'win32' }), /discover Windows media before approving/u);
+  assert.throws(() => parseSetupCommandOptions([
+    '--approve-windows-media', candidate,
+    '--windows-image-index', '6',
+    '--windows-media-class', 'temporary',
+  ]), /official-owned or evaluation/u);
 });
 
 test('ordinary setup accepts only one exact opaque resource-conflict subject', () => {

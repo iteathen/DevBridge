@@ -4,7 +4,10 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { WindowsInstallMediaInspector } from '../src/runtime/image-sources/windows-install-media-inspector.js';
+import {
+  WindowsInstallMediaInspector,
+  normalizeWindowsInstallMediaInventory,
+} from '../src/runtime/image-sources/windows-install-media-inspector.js';
 import { invokeCommand } from '../src/runtime/command-invocation.js';
 
 function success(value) {
@@ -86,6 +89,20 @@ test('Windows media inventory discovers every bounded image before local approva
     assert.deepEqual(result.images.map(({ index, edition }) => [index, edition]), [[1, 'Core'], [6, 'Professional']]);
     assert.equal(JSON.parse(calls[0].input).index, null);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('public Windows media inventory normalization is closed and deterministic', () => {
+  const inventory = normalizeWindowsInstallMediaInventory({
+    protocol: 'devbridge/windows-install-media-inventory-v1',
+    media: { name: 'Windows.iso', bytes: 100, sha256: 'a'.repeat(64) },
+    images: [
+      { ...observed().images[0], container: 'wim', index: 6 },
+      { ...observed().images[0], container: 'wim', index: 1, edition: 'Core', name: 'Windows 11 Home' },
+    ],
+  });
+  assert.deepEqual(inventory.images.map((entry) => entry.index), [1, 6]);
+  assert.throws(() => normalizeWindowsInstallMediaInventory({ ...inventory, location: 'C:\\private\\Windows.iso' }), /location is not allowed/u);
+  assert.throws(() => normalizeWindowsInstallMediaInventory({ ...inventory, media: { ...inventory.media, sha256: 'A'.repeat(64) } }), /sha256 is invalid/u);
 });
 
 test('Windows media inventory platform script is accepted by Windows PowerShell without execution', { skip: process.platform !== 'win32' }, async () => {

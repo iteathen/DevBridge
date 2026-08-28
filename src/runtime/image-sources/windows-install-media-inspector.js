@@ -7,6 +7,7 @@ export const WINDOWS_INSTALL_MEDIA_OBSERVATION_PROTOCOL = 'devbridge/windows-ins
 export const WINDOWS_INSTALL_MEDIA_INVENTORY_PROTOCOL = 'devbridge/windows-install-media-inventory-v1';
 
 const SHA256 = /^[a-f0-9]{64}$/u;
+const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._()+ -]{0,159}\.iso$/iu;
 const VERSION = /^10\.0\.(\d{4,6})\.(\d{1,6})$/u;
 const EDITION = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,95}$/u;
 const LANGUAGE = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}$/u;
@@ -168,6 +169,34 @@ function normalizeInventory(raw) {
   return Object.freeze(images);
 }
 
+export function normalizeWindowsInstallMediaInventory(raw) {
+  const value = onlyKeys(raw, new Set(['protocol', 'media', 'images']), 'Windows media inventory');
+  if (value.protocol !== WINDOWS_INSTALL_MEDIA_INVENTORY_PROTOCOL) throw new TypeError('Windows media inventory protocol is unsupported');
+  const media = onlyKeys(value.media, new Set(['name', 'bytes', 'sha256']), 'Windows media inventory media');
+  if (typeof media.name !== 'string' || !FILE_NAME.test(media.name)) throw new TypeError('Windows media inventory name is invalid');
+  if (!Number.isSafeInteger(media.bytes) || media.bytes < 1) throw new TypeError('Windows media inventory bytes is invalid');
+  if (typeof media.sha256 !== 'string' || !SHA256.test(media.sha256)) throw new TypeError('Windows media inventory sha256 is invalid');
+  if (!Array.isArray(value.images) || value.images.length < 1 || value.images.length > 512) throw new TypeError('Windows media inventory images are invalid');
+  const indices = new Set();
+  const images = value.images.map((entry) => {
+    const rawImage = onlyKeys(entry, new Set([
+      'container', 'index', 'name', 'edition', 'architecture', 'version', 'build', 'installationType', 'languages', 'defaultLanguage',
+    ]), 'Windows media inventory image');
+    if (!['wim', 'esd'].includes(rawImage.container)) throw new TypeError('Windows media inventory image container is invalid');
+    const { container, ...imageFields } = rawImage;
+    const image = normalizeImage(imageFields, container);
+    if (indices.has(image.index)) throw new TypeError('Windows media inventory image index is duplicated');
+    indices.add(image.index);
+    return image;
+  });
+  images.sort((left, right) => left.index - right.index);
+  return Object.freeze({
+    protocol: WINDOWS_INSTALL_MEDIA_INVENTORY_PROTOCOL,
+    media: Object.freeze({ name: media.name, bytes: media.bytes, sha256: media.sha256 }),
+    images: Object.freeze(images),
+  });
+}
+
 async function sha256File(location) {
   const hash = createHash('sha256');
   await new Promise((resolve, reject) => {
@@ -243,7 +272,7 @@ export class WindowsInstallMediaInspector {
   async inventory({ location } = {}) {
     const { actual, info, measuredSha256 } = await this.#measure(location);
     const images = normalizeInventory(await this.#invokeInspection(actual, null));
-    return Object.freeze({
+    return normalizeWindowsInstallMediaInventory({
       protocol: WINDOWS_INSTALL_MEDIA_INVENTORY_PROTOCOL,
       media: Object.freeze({ name: path.basename(actual), bytes: info.size, sha256: measuredSha256 }),
       images,

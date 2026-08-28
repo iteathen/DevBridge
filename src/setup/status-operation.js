@@ -117,6 +117,39 @@ function operationalProjection(value) {
   });
 }
 
+function boundedPublicText(value, maximum = 512) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > maximum || /[\u0000-\u001f\u007f]/u.test(value)) return null;
+  return remoteReason(value);
+}
+
+function windowsMediaProjection(value) {
+  if (!value || typeof value !== 'object') return null;
+  const states = new Set(['platform-unavailable', 'blocked', 'source-required', 'selection-required', 'accepted']);
+  const state = states.has(value.state) ? value.state : null;
+  const accepted = state === 'accepted' && value.accepted && typeof value.accepted === 'object'
+    ? Object.freeze({
+        sourceClass: ['official-owned', 'evaluation'].includes(value.accepted.sourceClass) ? value.accepted.sourceClass : null,
+        temporary: value.accepted.temporary === true,
+        image: value.accepted.image && typeof value.accepted.image === 'object'
+          ? Object.freeze({
+              index: Number.isSafeInteger(value.accepted.image.index) && value.accepted.image.index >= 1 && value.accepted.image.index <= 512 ? value.accepted.image.index : null,
+              name: boundedPublicText(value.accepted.image.name),
+              edition: boundedPublicText(value.accepted.image.edition),
+              architecture: ['amd64', 'arm64'].includes(value.accepted.image.architecture) ? value.accepted.image.architecture : null,
+              build: Number.isSafeInteger(value.accepted.image.build) && value.accepted.image.build >= 0 ? value.accepted.image.build : null,
+            })
+          : null,
+      })
+    : null;
+  return Object.freeze({
+    state,
+    blocker: state === 'blocked' ? remoteReason(value.blocker) : null,
+    candidateCount: Array.isArray(value.candidates) && value.candidates.length <= 16 ? value.candidates.length : null,
+    rejectedCount: Number.isSafeInteger(value.rejectedCount) && value.rejectedCount >= 0 && value.rejectedCount <= 16 ? value.rejectedCount : null,
+    accepted,
+  });
+}
+
 export function projectSetupStatus(result) {
   if (!result || typeof result !== 'object' || result.protocol !== 'devbridge/setup-status-v1') {
     throw new TypeError('setup.status received an invalid setup result');
@@ -141,6 +174,10 @@ export function projectSetupStatus(result) {
       profile: result.linuxProfile?.profile === 'linux-development' ? 'linux-development' : null,
       snapshot: typeof result.linuxProfile?.snapshot === 'string' ? result.linuxProfile.snapshot : null,
       physicalStatus: physicalProjection(result.linuxProfile?.physicalStatus),
+    }),
+    windowsProfile: Object.freeze({
+      profile: result.windowsProfile?.profile === 'windows-development' ? 'windows-development' : null,
+      media: windowsMediaProjection(result.windowsProfile?.media),
     }),
   });
 }

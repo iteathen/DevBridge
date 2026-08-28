@@ -46,10 +46,11 @@ function dependencies({
   resourceConflict = null,
   acceptedConflict = null,
   initialState = null,
+  windowsMedia = null,
 } = {}) {
   const store = memoryStore(initialState);
   let conflictConsent = acceptedConflict;
-  const calls = { prerequisite: 0, profileConfiguration: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
+  const calls = { windowsMedia: 0, windowsMediaRequest: null, prerequisite: 0, profileConfiguration: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
   const discoveredRepositories = repositories ?? Array.from({ length: count }, (_, index) => repository(index));
   return {
     calls,
@@ -62,6 +63,24 @@ function dependencies({
       tokenResolver: async () => 'test-token',
       clientFactory: () => ({}),
       discover: async () => ({ identity, repositories: discoveredRepositories }),
+      windowsMediaReconciler: async (value) => {
+        calls.windowsMedia += 1;
+        calls.windowsMediaRequest = structuredClone({
+          home: value.home,
+          stateDirectory: value.stateDirectory,
+          platform: value.platform,
+          discover: value.discover,
+          location: value.location,
+          approval: value.approval,
+        });
+        return structuredClone(windowsMedia ?? {
+          protocol: 'devbridge/windows-install-media-selection-status-v1',
+          state: 'platform-unavailable',
+          candidates: [],
+          rejectedCount: 0,
+          accepted: null,
+        });
+      },
       prerequisiteReconciler: async () => {
         calls.prerequisite += 1;
         return prerequisite ?? { protocol: 'test/prerequisites', ready: true, blocker: null, changed: false, restartRequired: false, capabilities: {} };
@@ -147,6 +166,74 @@ test('setup composes protected configuration and environment activation only aft
   });
   assert.equal(fixture.calls.canaryStatus, 1);
   assert.equal(fixture.calls.canaryRun, 0);
+});
+
+test('setup discovers Windows media before presenting exact approval choices without blocking Linux', async () => {
+  const candidate = 'candidate-0123456789abcdef0123456789abcdef';
+  const fixture = dependencies({
+    windowsMedia: {
+      protocol: 'devbridge/windows-install-media-selection-status-v1',
+      state: 'selection-required',
+      candidates: [{
+        subject: candidate,
+        media: { name: 'Windows.iso', bytes: 100, sha256: 'a'.repeat(64) },
+        images: [{ index: 6, name: 'Windows 11 Pro', edition: 'Professional', architecture: 'amd64', build: 26100 }],
+      }],
+      rejectedCount: 0,
+      accepted: null,
+      acquisition: {
+        officialOwned: 'https://www.microsoft.com/en-us/software-download/windows11',
+        evaluation: 'https://www.microsoft.com/en-us/evalcenter/evaluate-windows-11-enterprise',
+      },
+      inbox: 'C:\\managed\\media',
+    },
+  });
+  const result = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-windows-media-discovery'),
+    discoverWindowsMedia: true,
+  }, fixture.deps);
+
+  assert.equal(result.blocked, false);
+  assert.equal(result.readyForConstruction, true);
+  assert.equal(result.windowsProfile.media.state, 'selection-required');
+  assert.equal(fixture.calls.windowsMedia, 1);
+  assert.equal(fixture.calls.windowsMediaRequest.discover, true);
+  const handoff = formatSetupHandoff(result);
+  assert.match(handoff, new RegExp(`--approve-windows-media ${candidate}`, 'u'));
+  assert.match(handoff, /--windows-image-index 6 --windows-media-class official-owned/u);
+  assert.match(handoff, /Evaluation media must be explicitly classified/u);
+});
+
+test('automatic Windows media failure remains profile-local while an explicit approval failure blocks', async () => {
+  const blockedMedia = {
+    protocol: 'devbridge/windows-install-media-selection-status-v1',
+    state: 'blocked',
+    blocker: 'Windows install media reconciliation failed; inspect the local setup evidence and retry',
+    candidates: [],
+    rejectedCount: 0,
+    accepted: null,
+  };
+  const automatic = dependencies({ windowsMedia: blockedMedia });
+  const continued = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-windows-media-optional'),
+    discoverWindowsMedia: true,
+  }, automatic.deps);
+  assert.equal(continued.blocked, false);
+  assert.equal(continued.readyForConstruction, true);
+  assert.equal(continued.windowsProfile.media.state, 'blocked');
+
+  const explicit = dependencies({ windowsMedia: blockedMedia });
+  const stopped = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-windows-media-explicit'),
+    windowsMediaApproval: {
+      candidate: 'candidate-0123456789abcdef0123456789abcdef',
+      imageIndex: 6,
+      sourceClass: 'official-owned',
+    },
+  }, explicit.deps);
+  assert.equal(stopped.blocked, true);
+  assert.match(stopped.blocker, /Windows install media reconciliation failed/u);
+  assert.equal(explicit.calls.prerequisite, 0);
 });
 
 test('setup discovers one exact inactive conflict and stops before elevation until the subject is approved', async () => {

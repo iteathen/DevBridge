@@ -30,6 +30,7 @@ import {
   createSetupOperationalConfiguration,
   SETUP_OPERATIONAL_CONFIGURATION_REQUEST_PROTOCOL,
 } from '../setup/operational-configuration.js';
+import { reconcileWindowsInstallMediaSetup } from './windows-install-media-setup.js';
 
 const PROTOCOL = 'devbridge/setup-status-v1';
 const STATE_KEY = 'setup:v1';
@@ -129,7 +130,7 @@ async function createSetupResourceConflict({ stateDirectory, platform, invoke })
   return createWindowsSetupResourceConflict({ identity, platform, invoke });
 }
 
-function publicResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, operationalConfiguration = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
+function setupResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, operationalConfiguration = null, windowsMedia = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
   const readyForConstruction = constructionAttempted !== true && physical?.blocked === false && physical?.complete !== true;
   return Object.freeze({
     protocol: PROTOCOL,
@@ -148,6 +149,7 @@ function publicResult({ home, pathStatus, repositories = null, identity = null, 
     environment: publicEnvironmentActivation(environmentActivation),
     operational: publicOperationalConfiguration(operationalConfiguration),
     linuxProfile: Object.freeze({ profile: 'linux-development', snapshot, physicalStatus: physical }),
+    windowsProfile: Object.freeze({ profile: 'windows-development', media: windowsMedia }),
   });
 }
 
@@ -193,6 +195,49 @@ function appendConstructionDiagnostics(lines, physical) {
   );
 }
 
+function appendWindowsMedia(lines, windowsProfile) {
+  const media = windowsProfile?.media;
+  if (!media || media.state === 'platform-unavailable') return;
+  lines.push('', 'Windows execution profile media:');
+  if (media.state === 'blocked') {
+    lines.push(`Blocked: ${media.blocker ?? 'local media reconciliation failed'}`);
+    return;
+  }
+  if (media.state === 'accepted') {
+    lines.push(
+      `Accepted source class: ${media.accepted.sourceClass}${media.accepted.temporary ? ' (temporary)' : ''}`,
+      `Authority subject: ${media.accepted.authority}`,
+      `Media: ${media.accepted.media.name} (${media.accepted.media.sha256})`,
+      `Image: index ${media.accepted.image.index}, ${media.accepted.image.name}, ${media.accepted.image.architecture}, build ${media.accepted.image.build}`,
+    );
+    return;
+  }
+  if (media.state === 'selection-required') {
+    for (const candidate of media.candidates) {
+      lines.push(`Candidate: ${candidate.subject}`, `Media: ${candidate.media.name} (${candidate.media.sha256})`);
+      for (const image of candidate.images) {
+        lines.push(
+          `  Image ${image.index}: ${image.name}, ${image.architecture}, build ${image.build}`,
+          `  Approve owned media: devbridge setup --approve-windows-media ${candidate.subject} --windows-image-index ${image.index} --windows-media-class official-owned`,
+        );
+      }
+    }
+    lines.push(`Evaluation media must be explicitly classified with --windows-media-class evaluation and is temporary: ${media.acquisition.evaluation}`);
+    if (media.rejectedCount > 0) lines.push(`Rejected media candidates: ${media.rejectedCount}`);
+    return;
+  }
+  if (media.state === 'source-required') {
+    if (media.inbox) lines.push(`Managed media inbox: ${media.inbox}`);
+    lines.push(
+      'Place an owned Windows ISO in the managed inbox, or provide one explicitly:',
+      'devbridge setup --windows-media "<absolute-iso-path>"',
+      `Official Windows media: ${media.acquisition.officialOwned}`,
+      `Optional 90-day Evaluation media (explicit temporary classification required): ${media.acquisition.evaluation}`,
+    );
+    if (media.rejectedCount > 0) lines.push(`Rejected media candidates: ${media.rejectedCount}`);
+  }
+}
+
 export function formatSetupHandoff(result) {
   if (!result || result.protocol !== PROTOCOL) throw new TypeError('setup handoff result is invalid');
   if (result.blocked) {
@@ -208,6 +253,7 @@ export function formatSetupHandoff(result) {
         `Re-run setup with --retire-conflict ${result.resourceConflict.subject} to authorize retirement of only this unchanged inactive subject.`,
       );
     }
+    appendWindowsMedia(lines, result.windowsProfile);
     if (constructionBlocked) lines.push('', 'Preserve the canary state; resolve only this blocker, then re-run devbridge setup --construct.');
     if (result.path?.requiresNewShell) lines.push('', `PATH is persisted; until a new shell is opened use: ${result.path.temporaryCommand}`);
     return `${lines.join('\n')}\n`;
@@ -228,6 +274,7 @@ export function formatSetupHandoff(result) {
     if (physical?.preflight?.connectivity?.control === 'system' && physical.preflight.connectivity.addressing === 'automatic') {
       lines.push('Physical construction connectivity: verified host-managed DHCP; not claimed as DevBridge-owned network state');
     }
+    appendWindowsMedia(lines, result.windowsProfile);
     lines.push('',
       'The setup path performed no image or VM construction.',
       result.path?.requiresNewShell ? `Open a new shell for devbridge on PATH. Until then: ${result.path.temporaryCommand}` : 'The devbridge command is available on PATH.',
@@ -236,7 +283,7 @@ export function formatSetupHandoff(result) {
     return lines.join('\n');
   }
   if (result.phase === 'environment-ready') {
-    return [
+    const lines = [
       'DevBridge protected execution environment is ready.',
       '',
       'Linux execution profile: environment and workspace routes verified',
@@ -244,11 +291,13 @@ export function formatSetupHandoff(result) {
       `Execution environments: ${result.environment?.environmentCount ?? 0} ready`,
       '',
       'Operational configuration and execution opt-in remain pending; setup has not started task polling.',
-      '',
-    ].join('\n');
+    ];
+    appendWindowsMedia(lines, result.windowsProfile);
+    lines.push('');
+    return lines.join('\n');
   }
   if (result.phase === 'operational-ready') {
-    return [
+    const lines = [
       'Welcome to DevBridge — setup completed successfully.',
       '',
       'Linux execution profile: environment and workspace routes verified',
@@ -256,13 +305,17 @@ export function formatSetupHandoff(result) {
       `Execution environments: ${result.environment?.environmentCount ?? 0} ready`,
       'Controller-plan execution: enabled',
       'Coding-model adapters: disabled (opt-in only)',
+    ];
+    appendWindowsMedia(lines, result.windowsProfile);
+    lines.push(
       '',
       'Setup did not start task polling. Start DevBridge with: devbridge',
       'Check health with: devbridge doctor',
       'Check runtime state with: devbridge status',
       'Change local setup later with: devbridge setup',
       '',
-    ].join('\n');
+    );
+    return lines.join('\n');
   }
   if (result.phase === 'image-complete') {
     return result.construction?.attempted
@@ -281,6 +334,7 @@ export function formatSetupHandoff(result) {
     appendConstructionLiveness(lines, physical);
     appendConstructionReadiness(lines, physical);
     appendConstructionDiagnostics(lines, physical);
+    appendWindowsMedia(lines, result.windowsProfile);
     const nextObservationAt = physical?.liveness?.nextObservationAt ?? physical?.readiness?.nextObservationAt;
     if (nextObservationAt) lines.push('', `Re-run devbridge setup --construct at or after ${nextObservationAt} to record the next bounded observation.`, '');
     else lines.push('', 'Do not retry construction automatically; resolve the reported bounded frontier first.', '');
@@ -294,6 +348,9 @@ export async function runDevBridgeSetup({
   requestedRepositories = null,
   construct = false,
   retireConflict = null,
+  discoverWindowsMedia = false,
+  windowsMediaLocation = null,
+  windowsMediaApproval = null,
   env = process.env,
 } = {}, {
   invoke = invokeCommand,
@@ -319,12 +376,41 @@ export async function runDevBridgeSetup({
   releaseAuthority = establishUbuntuReleaseAuthority,
   authorityFactory = createUbuntuSetupAuthority,
   canaryFactory = createUbuntuProductionImagePhysicalCanary,
+  windowsMediaReconciler = reconcileWindowsInstallMediaSetup,
 } = {}) {
   if (typeof construct !== 'boolean') throw new TypeError('DevBridge setup construction option must be boolean');
+  if (typeof discoverWindowsMedia !== 'boolean') throw new TypeError('DevBridge Windows media discovery option must be boolean');
+  if (windowsMediaLocation != null && windowsMediaApproval != null) throw new TypeError('DevBridge Windows media discovery and approval must be separate setup invocations');
   const requestedConflictConsent = retireConflict == null ? null : setupResourceConflictConsent(retireConflict);
   const root = absoluteHome(home);
   const store = storeFactory(path.join(root, 'state', 'setup.json'));
   const previous = await store.get(STATE_KEY);
+  let windowsMedia = null;
+  const publicResult = (value) => setupResult({ ...value, windowsMedia });
+
+  try {
+    windowsMedia = await windowsMediaReconciler({
+      home: root,
+      stateDirectory: path.join(root, 'state'),
+      platform,
+      invoke,
+      discover: discoverWindowsMedia,
+      location: windowsMediaLocation,
+      approval: windowsMediaApproval,
+    });
+  } catch {
+    windowsMedia = Object.freeze({
+      protocol: 'devbridge/windows-install-media-selection-status-v1',
+      state: 'blocked',
+      blocker: 'Windows install media reconciliation failed; inspect the local setup evidence and retry',
+      candidates: Object.freeze([]),
+      rejectedCount: 0,
+      accepted: null,
+    });
+  }
+  if (windowsMedia?.state === 'blocked' && (windowsMediaLocation != null || windowsMediaApproval != null)) {
+    return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: windowsMedia.blocker });
+  }
 
   let pathStatus;
   try {

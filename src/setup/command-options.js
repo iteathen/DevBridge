@@ -17,6 +17,10 @@ export function parseSetupCommandOptions(argv, {
   let construct = false;
   let trackRef = null;
   let retireConflict = null;
+  let windowsMediaLocation = null;
+  let windowsMediaCandidate = null;
+  let windowsImageIndex = null;
+  let windowsMediaClass = null;
   let lifecycleAuthorityChild = false;
   let entryNoUpdate = false;
   const repositories = [];
@@ -37,7 +41,8 @@ export function parseSetupCommandOptions(argv, {
       entryNoUpdate = true;
       continue;
     }
-    if (option === '--home' || option === '--repository' || option === '--track-ref' || option === '--retire-conflict') {
+    if (option === '--home' || option === '--repository' || option === '--track-ref' || option === '--retire-conflict'
+        || option === '--windows-media' || option === '--approve-windows-media' || option === '--windows-image-index' || option === '--windows-media-class') {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new PolicyError(`${option} requires a value`);
       if (option === '--home') {
@@ -50,6 +55,24 @@ export function parseSetupCommandOptions(argv, {
         if (retireConflict != null) throw new PolicyError('--retire-conflict may be specified only once');
         if (!/^[0-9a-f]{64}$/u.test(value)) throw new PolicyError('--retire-conflict requires an exact conflict consent subject');
         retireConflict = value;
+      } else if (option === '--windows-media') {
+        if (windowsMediaLocation != null) throw new PolicyError('--windows-media may be specified only once');
+        const pathApi = platform === 'win32' ? path.win32 : path.posix;
+        if (!pathApi.isAbsolute(value)) throw new PolicyError('--windows-media requires one absolute local ISO path');
+        windowsMediaLocation = value;
+      } else if (option === '--approve-windows-media') {
+        if (windowsMediaCandidate != null) throw new PolicyError('--approve-windows-media may be specified only once');
+        if (!/^candidate-[a-f0-9]{32}$/u.test(value)) throw new PolicyError('--approve-windows-media requires an exact candidate subject');
+        windowsMediaCandidate = value;
+      } else if (option === '--windows-image-index') {
+        if (windowsImageIndex != null) throw new PolicyError('--windows-image-index may be specified only once');
+        if (!/^\d+$/u.test(value)) throw new PolicyError('--windows-image-index requires a positive integer');
+        windowsImageIndex = Number.parseInt(value, 10);
+        if (!Number.isSafeInteger(windowsImageIndex) || windowsImageIndex < 1 || windowsImageIndex > 512) throw new PolicyError('--windows-image-index requires an integer from 1 through 512');
+      } else if (option === '--windows-media-class') {
+        if (windowsMediaClass != null) throw new PolicyError('--windows-media-class may be specified only once');
+        if (!['official-owned', 'evaluation'].includes(value)) throw new PolicyError('--windows-media-class must be official-owned or evaluation');
+        windowsMediaClass = value;
       } else {
         repositories.push(value);
       }
@@ -61,7 +84,10 @@ export function parseSetupCommandOptions(argv, {
   if (entryNoUpdate && !lifecycleAuthorityChild) {
     throw new PolicyError('--no-update is reserved for the lifecycle-authority child');
   }
-  if (lifecycleAuthorityChild && (construct || trackRef != null || retireConflict != null || repositories.length > 0)) {
+  const approvalParts = [windowsMediaCandidate, windowsImageIndex, windowsMediaClass].filter((value) => value != null).length;
+  if (windowsMediaLocation != null && approvalParts > 0) throw new PolicyError('discover Windows media before approving an exact candidate in a later setup invocation');
+  if (approvalParts !== 0 && approvalParts !== 3) throw new PolicyError('Windows media approval requires --approve-windows-media, --windows-image-index, and --windows-media-class together');
+  if (lifecycleAuthorityChild && (construct || trackRef != null || retireConflict != null || windowsMediaLocation != null || approvalParts > 0 || repositories.length > 0)) {
     throw new PolicyError('lifecycle-authority child accepts no setup capability arguments');
   }
   if (lifecycleAuthorityChild && home != null
@@ -76,6 +102,12 @@ export function parseSetupCommandOptions(argv, {
     construct,
     trackRef,
     retireConflict,
+    windowsMediaLocation,
+    windowsMediaApproval: windowsMediaCandidate == null ? null : Object.freeze({
+      candidate: windowsMediaCandidate,
+      imageIndex: windowsImageIndex,
+      sourceClass: windowsMediaClass,
+    }),
     repositories: Object.freeze(repositories),
     lifecycleAuthorityChild,
     entryNoUpdate,
