@@ -29,6 +29,8 @@ function fixture({ status, runResult } = {}) {
         repositories: [{ id: 1, full_name: 'owner/repo', private: false, archived: false, disabled: false, permissions: { push: true } }],
       }),
       prerequisiteReconciler: async () => ({ protocol: 'test/prerequisites', ready: true, blocker: null, changed: false, restartRequired: false, capabilities: {} }),
+      profileConfigurationPublisher: () => ({ async reconcile() { return { changed: false }; } }),
+      profileConfigurationFactory: () => ({}),
       lifecycleAuthorityReconciler: async ({ homeDirectory, stateDirectory, elevated }) => ({
         ok: true,
         changed: false,
@@ -42,6 +44,8 @@ function fixture({ status, runResult } = {}) {
         blocker: null,
         steps: [],
       }),
+      lifecycleClientFactory: () => ({}),
+      environmentActivationReconciler: async () => ({ ready: true, changed: true, state: 'ready', environmentCount: 1 }),
       releaseAuthority: async ({ home }) => ({ keyring: path.join(home, 'authority', 'ubuntu.gpg') }),
       authorityFactory: async ({ snapshot }) => ({ protocol: 'test/authority', snapshot }),
       canaryFactory: () => ({
@@ -186,9 +190,9 @@ test('explicit construction resumes a non-complete durable canary state', async 
   const result = await runDevBridgeSetup({ home: home('db-setup-construct-resume'), construct: true }, selected.deps);
   assert.equal(selected.calls.status, 1);
   assert.equal(selected.calls.run, 1);
-  assert.equal(result.phase, 'image-complete');
+  assert.equal(result.phase, 'environment-ready');
   assert.deepEqual(result.construction, { requested: true, attempted: true });
-  assert.match(formatSetupHandoff(result), /construction canary completed/u);
+  assert.match(formatSetupHandoff(result), /protected execution environment is ready/u);
 });
 
 test('construction failures are reported without misclassifying them as read-only gate failures', async () => {

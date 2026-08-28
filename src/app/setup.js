@@ -3,13 +3,15 @@ import path from 'node:path';
 import { GitHubRestClient } from '../github/rest-client.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { JsonStateStore } from '../state/json-state-store.js';
+import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment-lifecycle-authority-transport.js';
 import { createUbuntuProductionImagePhysicalCanary, UBUNTU_PRODUCTION_IMAGE_PHYSICAL_CANARY_CONFIG_PROTOCOL } from './ubuntu-production-image-physical-canary.js';
+import { reconcileSetupEnvironmentActivation } from './setup-environment-activation.js';
 import { createSetupEnvironmentProfileConfiguration } from './setup-environment-profile-configuration.js';
 import { discoverGitHubSetupScope } from '../setup/github-discovery.js';
 import { installStableDevBridgeCommand } from '../setup/path-installation.js';
 import { reconcileSetupPrerequisites } from '../setup/prerequisite-reconciliation.js';
 import { selectRepositoryDefaults } from '../setup/repository-defaults.js';
-import { createUbuntuSetupAuthority, defaultUbuntuPackageSnapshot } from '../setup/ubuntu-authority.js';
+import { createUbuntuSetupAuthority, defaultUbuntuPackageSnapshot, UBUNTU_SETUP_OUTPUT } from '../setup/ubuntu-authority.js';
 import { establishUbuntuReleaseAuthority } from '../setup/ubuntu-release-authority.js';
 import { requestWindowsLifecycleAuthorityElevation } from '../setup/windows-lifecycle-authority-elevation.js';
 import { reconcileWindowsLifecycleAuthorityReadiness } from '../setup/windows-lifecycle-authority-readiness.js';
@@ -81,12 +83,22 @@ function publicLifecycleAuthority(value) {
   });
 }
 
-function publicResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
+function publicEnvironmentActivation(value) {
+  if (!value) return null;
+  return Object.freeze({
+    ready: value.ready === true,
+    changed: value.changed === true,
+    state: typeof value.state === 'string' ? value.state : 'unknown',
+    environmentCount: Number.isSafeInteger(value.environmentCount) ? value.environmentCount : 0,
+  });
+}
+
+function publicResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, environmentActivation = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
   const readyForConstruction = constructionAttempted !== true && physical?.blocked === false && physical?.complete !== true;
   return Object.freeze({
     protocol: PROTOCOL,
     home,
-    phase: blocker ? 'blocked' : readyForConstruction ? 'ready-for-construction' : physical?.complete ? 'image-complete' : physical?.state ?? 'discovering',
+    phase: blocker ? 'blocked' : environmentActivation?.ready === true ? 'environment-ready' : readyForConstruction ? 'ready-for-construction' : physical?.complete ? 'image-complete' : physical?.state ?? 'discovering',
     blocked: blocker != null || physical?.blocked === true,
     blocker: blocker ?? physical?.reason ?? null,
     readyForConstruction,
@@ -96,6 +108,7 @@ function publicResult({ home, pathStatus, repositories = null, identity = null, 
     repositories,
     prerequisites,
     lifecycleAuthority: publicLifecycleAuthority(lifecycleAuthority),
+    environment: publicEnvironmentActivation(environmentActivation),
     linuxProfile: Object.freeze({ profile: 'linux-development', snapshot, physicalStatus: physical }),
   });
 }
@@ -145,11 +158,12 @@ function appendConstructionDiagnostics(lines, physical) {
 export function formatSetupHandoff(result) {
   if (!result || result.protocol !== PROTOCOL) throw new TypeError('setup handoff result is invalid');
   if (result.blocked) {
-    const lines = [result.construction?.attempted ? 'DevBridge physical image construction is blocked.' : 'DevBridge setup is blocked.', '', `Reason: ${result.blocker ?? 'unknown blocker'}`];
-    if (result.construction?.attempted) appendConstructionLiveness(lines, result.linuxProfile?.physicalStatus);
-    if (result.construction?.attempted) appendConstructionReadiness(lines, result.linuxProfile?.physicalStatus);
-    if (result.construction?.attempted) appendConstructionDiagnostics(lines, result.linuxProfile?.physicalStatus);
-    if (result.construction?.attempted) lines.push('', 'Preserve the canary state; resolve only this blocker, then re-run devbridge setup --construct.');
+    const constructionBlocked = result.construction?.attempted === true && result.linuxProfile?.physicalStatus?.complete !== true;
+    const lines = [constructionBlocked ? 'DevBridge physical image construction is blocked.' : 'DevBridge setup is blocked.', '', `Reason: ${result.blocker ?? 'unknown blocker'}`];
+    if (constructionBlocked) appendConstructionLiveness(lines, result.linuxProfile?.physicalStatus);
+    if (constructionBlocked) appendConstructionReadiness(lines, result.linuxProfile?.physicalStatus);
+    if (constructionBlocked) appendConstructionDiagnostics(lines, result.linuxProfile?.physicalStatus);
+    if (constructionBlocked) lines.push('', 'Preserve the canary state; resolve only this blocker, then re-run devbridge setup --construct.');
     if (result.path?.requiresNewShell) lines.push('', `PATH is persisted; until a new shell is opened use: ${result.path.temporaryCommand}`);
     return `${lines.join('\n')}\n`;
   }
@@ -175,6 +189,18 @@ export function formatSetupHandoff(result) {
       '',
     );
     return lines.join('\n');
+  }
+  if (result.phase === 'environment-ready') {
+    return [
+      'DevBridge protected execution environment is ready.',
+      '',
+      'Linux execution profile: environment and workspace routes verified',
+      `Repositories: ${result.repositories?.selectedCount ?? 0} configured`,
+      `Execution environments: ${result.environment?.environmentCount ?? 0} ready`,
+      '',
+      'Operational configuration and execution opt-in remain pending; setup has not started task polling.',
+      '',
+    ].join('\n');
   }
   if (result.phase === 'image-complete') {
     return result.construction?.attempted
@@ -222,6 +248,8 @@ export async function runDevBridgeSetup({
   profileConfigurationPublisher = createSetupEnvironmentProfileConfiguration,
   profileConfigurationFactory = createWindowsEnvironmentProfileConfiguration,
   elevationRequester = requestWindowsLifecycleAuthorityElevation,
+  lifecycleClientFactory = createConfiguredLifecycleAuthorityClient,
+  environmentActivationReconciler = reconcileSetupEnvironmentActivation,
   releaseAuthority = establishUbuntuReleaseAuthority,
   authorityFactory = createUbuntuSetupAuthority,
   canaryFactory = createUbuntuProductionImagePhysicalCanary,
@@ -269,24 +297,6 @@ export async function runDevBridgeSetup({
   await store.set(STATE_KEY, setupState(previous, { identity: scope.identity, repositories, snapshot }));
 
   const stateDirectory = path.join(root, 'state');
-  let profileConfiguration;
-  try {
-    const publisher = profileConfigurationPublisher({ stateDirectory, now: () => now().toISOString() });
-    if (!publisher || typeof publisher.reconcile !== 'function') throw new TypeError('setup profile configuration publisher is incomplete');
-    await publisher.reconcile({ subjects: repositories.selected });
-    profileConfiguration = profileConfigurationFactory({ stateDirectory, platform, invoke });
-  } catch (error) {
-    return publicResult({
-      home: root,
-      pathStatus,
-      identity: scope.identity,
-      repositories,
-      snapshot,
-      constructionRequested: construct,
-      blocker: `Environment profile configuration failed: ${error.message}`,
-    });
-  }
-
   let prerequisites;
   try {
     prerequisites = await prerequisiteReconciler({ platform, invoke, fetchImpl, environment: env });
@@ -315,50 +325,6 @@ export async function runDevBridgeSetup({
   }
   const signatureVerifierExecutable = prerequisites?.local?.signatureVerifierExecutable ?? null;
 
-  let lifecycleAuthority;
-  try {
-    lifecycleAuthority = await lifecycleAuthorityReconciler({
-      stateDirectory,
-      platform,
-      invoke,
-      environment: env,
-      configuration: profileConfiguration,
-      requestElevation: platform === 'win32'
-        ? () => elevationRequester({
-          home: root,
-          launcher: pathStatus.launcher,
-          platform,
-          invoke,
-          environment: env,
-        })
-        : null,
-    });
-  } catch (error) {
-    return publicResult({
-      home: root,
-      pathStatus,
-      identity: scope.identity,
-      repositories,
-      snapshot,
-      prerequisites,
-      constructionRequested: construct,
-      blocker: `Lifecycle authority reconciliation failed: ${error.message}`,
-    });
-  }
-  if (lifecycleAuthority?.ready !== true) {
-    return publicResult({
-      home: root,
-      pathStatus,
-      identity: scope.identity,
-      repositories,
-      snapshot,
-      prerequisites,
-      lifecycleAuthority,
-      constructionRequested: construct,
-      blocker: lifecycleAuthority?.blocker ?? 'Protected lifecycle authority is not ready; resolve the reported host boundary and re-run devbridge setup',
-    });
-  }
-
   let release;
   let authority;
   try {
@@ -372,7 +338,7 @@ export async function runDevBridgeSetup({
       authorityFactory({ snapshot, fetchImpl }),
     ]);
   } catch (error) {
-    return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, lifecycleAuthority, constructionRequested: construct, blocker: `Ubuntu construction authority is unavailable: ${error.message}` });
+    return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, constructionRequested: construct, blocker: `Ubuntu construction authority is unavailable: ${error.message}` });
   }
 
   const physicalConfig = Object.freeze({
@@ -401,10 +367,128 @@ export async function runDevBridgeSetup({
       repositories,
       snapshot,
       prerequisites,
-      lifecycleAuthority,
       constructionRequested: construct,
       constructionAttempted,
       blocker: `${prefix}: ${error.message}`,
+    });
+  }
+
+  if (physical?.complete !== true) {
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      prerequisites,
+      physical,
+      constructionRequested: construct,
+      constructionAttempted,
+    });
+  }
+
+  let profileConfiguration;
+  try {
+    const publisher = profileConfigurationPublisher({ stateDirectory, now: () => now().toISOString() });
+    if (!publisher || typeof publisher.reconcile !== 'function') throw new TypeError('setup profile configuration publisher is incomplete');
+    await publisher.reconcile({ subjects: repositories.selected });
+    profileConfiguration = profileConfigurationFactory({ stateDirectory, platform, invoke });
+  } catch (error) {
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      prerequisites,
+      physical,
+      constructionRequested: construct,
+      constructionAttempted,
+      blocker: `Environment profile configuration failed: ${error.message}`,
+    });
+  }
+
+  let lifecycleAuthority;
+  try {
+    lifecycleAuthority = await lifecycleAuthorityReconciler({
+      stateDirectory,
+      platform,
+      invoke,
+      environment: env,
+      configuration: profileConfiguration,
+      requestElevation: platform === 'win32'
+        ? () => elevationRequester({
+          home: root,
+          launcher: pathStatus.launcher,
+          platform,
+          invoke,
+          environment: env,
+        })
+        : null,
+    });
+  } catch (error) {
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      prerequisites,
+      physical,
+      constructionRequested: construct,
+      constructionAttempted,
+      blocker: `Lifecycle authority reconciliation failed: ${error.message}`,
+    });
+  }
+  if (lifecycleAuthority?.ready !== true) {
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      prerequisites,
+      lifecycleAuthority,
+      physical,
+      constructionRequested: construct,
+      constructionAttempted,
+      blocker: lifecycleAuthority?.blocker ?? 'Protected lifecycle authority is not ready; resolve the reported host boundary and re-run devbridge setup',
+    });
+  }
+
+  let environmentActivation;
+  try {
+    const client = lifecycleClientFactory({ stateDirectory, platform, connectTimeoutMs: 3_000 });
+    environmentActivation = await environmentActivationReconciler({ client, profile: UBUNTU_SETUP_OUTPUT.profile });
+  } catch (error) {
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      prerequisites,
+      lifecycleAuthority,
+      physical,
+      constructionRequested: construct,
+      constructionAttempted,
+      blocker: `Protected environment activation failed: ${error.message}`,
+    });
+  }
+  if (environmentActivation?.ready !== true) {
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      prerequisites,
+      lifecycleAuthority,
+      physical,
+      environmentActivation,
+      constructionRequested: construct,
+      constructionAttempted,
+      blocker: environmentActivation?.blocker ?? 'Protected environment did not verify ready after setup activation',
     });
   }
 
@@ -417,6 +501,7 @@ export async function runDevBridgeSetup({
     prerequisites,
     lifecycleAuthority,
     physical,
+    environmentActivation,
     constructionRequested: construct,
     constructionAttempted,
   });
