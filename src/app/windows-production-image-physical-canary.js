@@ -236,7 +236,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
     identity: localIdentity,
     invoke,
   });
-  const accessMaterial = createWindowsProtectedAccessMaterial({ directory: paths.accessRoot, invoke });
+  const accessMaterial = createWindowsProtectedAccessMaterial({ directory: paths.accessRoot, invoke, user: 'Administrator' });
 
   const loadReceipt = async () => {
     const raw = await preparationStore.get(subject);
@@ -416,7 +416,7 @@ export function createWindowsProductionImagePhysicalCanary(rawConfig, {
     if (before.complete) {
       return withRunLock(paths.runLock, async () => {
         const reasons = [];
-        try { await createWindowsProtectedAccessMaterial({ directory: paths.accessRoot, invoke }).discard(subject); }
+        try { await createWindowsProtectedAccessMaterial({ directory: paths.accessRoot, invoke, user: 'Administrator' }).discard(subject); }
         catch (error) { reasons.push(`temporary access cleanup failed: ${error.message}`); }
         await rm(paths.subjectRoot, { recursive: true, force: true }).catch(() => {});
         return publicResult(subject, before, { state: 'completed', reason: reasons.length === 0 ? null : reasons.join('; '), preflight: before.preflight, authorityRegistered: true });

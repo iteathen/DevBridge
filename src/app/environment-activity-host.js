@@ -40,7 +40,6 @@ export async function createProtectedEnvironmentActivity({
   authorityDirectory = null,
   platform = process.platform,
   invoke = invokeCommand,
-  windowsAccess = null,
   state = null,
   declarations = null,
   preparation = null,
@@ -60,7 +59,6 @@ export async function createProtectedEnvironmentActivity({
     authorityDirectory: authority,
     platform,
     invoke,
-    windowsAccess,
   }));
 
   const requestFor = async (rawTarget) => {

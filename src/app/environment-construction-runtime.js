@@ -35,7 +35,6 @@ export async function createEnvironmentConstructionRuntime({
   foundation = null,
   lifecycle = null,
   fence = null,
-  windowsAccess = null,
   resetAuthorization = null,
   recreateAuthorization = null,
   now,
@@ -67,7 +66,6 @@ export async function createEnvironmentConstructionRuntime({
     authorityDirectory: authorityStateDirectory,
     platform,
     invoke,
-    windowsAccess,
   });
   const workspaces = createEnvironmentConstructionWorkspaces({
     stateDirectory,
