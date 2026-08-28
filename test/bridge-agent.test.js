@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawn, spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -34,6 +34,26 @@ async function exchange(root, frame, env = {}) {
 }
 
 function frame(request, kind, body = {}) { return { protocol, request, target, kind, body }; }
+
+async function seedPlannedOperation(root, request, body) {
+  const operations = path.join(root, '.operations');
+  await mkdir(operations, { recursive: true });
+  const record = {
+    protocol: 'devbridge/environment-bridge-operation-v1',
+    request,
+    target,
+    digest: createHash('sha256').update(JSON.stringify(body), 'utf8').digest('hex'),
+    body,
+    state: 'planned',
+    createdAt: new Date().toISOString(),
+    monitorPid: null,
+    childPid: null,
+    result: null,
+    reason: null,
+  };
+  await writeFile(path.join(operations, `${request}.json`), `${JSON.stringify(record)}\n`, { encoding: 'utf8', flag: 'wx' });
+  return path.join(operations, `${request}.monitor.json`);
+}
 
 test('state root selection is local, persistent, absolute, and platform bounded', () => {
   assert.equal(
@@ -165,17 +185,100 @@ test('execute is durable, asynchronous, and exact replay does not repeat side ef
 test('concurrent exact execute requests are fenced to one guest-side effect', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-bridge-concurrent-'));
   try {
-    const request = 'c'.repeat(32);
+    for (let round = 0; round < 6; round += 1) {
+      const request = (12 + round).toString(16).padStart(32, '0');
+      const result = `concurrent-${round}.txt`;
+      const operation = {
+        program: nodeProgram,
+        arguments: ['-e', `const fs=require('fs'); const p=${JSON.stringify(result)}; let n=0; try{n=+fs.readFileSync(p,'utf8')}catch{} fs.writeFileSync(p,String(n+1)); setTimeout(()=>{},150)`],
+        directory: { class: 'work', path: '.' }, environment: {}, input: null, timeoutMs: 5_000, maxOutputBytes: 4096,
+      };
+      const responses = await Promise.all(Array.from({ length: 4 }, () => exchange(root, frame(request, 'execute', operation))));
+      for (const response of responses) assert.equal(response.ok, true);
+      await observeUntil(root, request, (body) => body.state === 'completed');
+      assert.equal(await readFile(path.join(root, 'work', result), 'utf8'), '1');
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('concurrent exact execute observes a claim whose publication is still completing', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-bridge-claim-publish-'));
+  let claimHandle;
+  try {
+    const request = '1'.repeat(32);
     const operation = {
       program: nodeProgram,
-      arguments: ['-e', "const fs=require('fs'); const p='concurrent.txt'; let n=0; try{n=+fs.readFileSync(p,'utf8')}catch{} fs.writeFileSync(p,String(n+1)); setTimeout(()=>{},150)"],
+      arguments: ['-e', "require('fs').writeFileSync('published.txt','1')"],
       directory: { class: 'work', path: '.' }, environment: {}, input: null, timeoutMs: 5_000, maxOutputBytes: 4096,
     };
-    const [left, right] = await Promise.all([exchange(root, frame(request, 'execute', operation)), exchange(root, frame(request, 'execute', operation))]);
-    assert.equal(left.ok, true);
-    assert.equal(right.ok, true);
+    const claimFile = await seedPlannedOperation(root, request, operation);
+    claimHandle = await open(claimFile, 'wx');
+    await claimHandle.writeFile('{', 'utf8');
+    const pending = exchange(root, frame(request, 'execute', operation));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await claimHandle.writeFile(`${JSON.stringify({ token: 'claim-publication-token', state: 'starting', pid: process.pid, createdAt: Date.now() }).slice(1)}\n`, 'utf8');
+    await claimHandle.close();
+    claimHandle = null;
+    const observed = await pending;
+    assert.equal(observed.ok, true);
+    assert.equal(observed.body.state, 'planned');
+
+    await rm(claimFile);
+    assert.equal((await exchange(root, frame(request, 'execute', operation))).ok, true);
     await observeUntil(root, request, (body) => body.state === 'completed');
-    assert.equal(await readFile(path.join(root, 'work', 'concurrent.txt'), 'utf8'), '1');
+    assert.equal(await readFile(path.join(root, 'work', 'published.txt'), 'utf8'), '1');
+  } finally {
+    try { await claimHandle?.close(); } catch {}
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a claim disappearing during publication observation returns to exclusive acquisition', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-bridge-claim-disappear-'));
+  let claimHandle;
+  try {
+    const request = '2'.repeat(32);
+    const operation = {
+      program: nodeProgram,
+      arguments: ['-e', "require('fs').writeFileSync('reacquired.txt','1')"],
+      directory: { class: 'work', path: '.' }, environment: {}, input: null, timeoutMs: 5_000, maxOutputBytes: 4096,
+    };
+    const claimFile = await seedPlannedOperation(root, request, operation);
+    claimHandle = await open(claimFile, 'wx');
+    await claimHandle.writeFile('{', 'utf8');
+    const pending = exchange(root, frame(request, 'execute', operation));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await claimHandle.close();
+    claimHandle = null;
+    await rm(claimFile);
+
+    const reacquired = await pending;
+    assert.equal(reacquired.ok, true);
+    await observeUntil(root, request, (body) => body.state === 'completed');
+    assert.equal(await readFile(path.join(root, 'work', 'reacquired.txt'), 'utf8'), '1');
+  } finally {
+    try { await claimHandle?.close(); } catch {}
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a permanently malformed monitor claim fails closed after bounded observation', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-bridge-claim-malformed-'));
+  try {
+    const request = '3'.repeat(32);
+    const operation = {
+      program: nodeProgram,
+      arguments: ['-e', "require('fs').writeFileSync('forbidden.txt','1')"],
+      directory: { class: 'work', path: '.' }, environment: {}, input: null, timeoutMs: 5_000, maxOutputBytes: 4096,
+    };
+    const claimFile = await seedPlannedOperation(root, request, operation);
+    await writeFile(claimFile, '{', { encoding: 'utf8', flag: 'wx' });
+    const startedAt = Date.now();
+    const rejected = await exchange(root, frame(request, 'execute', operation));
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error.code, 'operation-failed');
+    assert.ok(Date.now() - startedAt < 2_000);
+    await assert.rejects(readFile(path.join(root, 'work', 'forbidden.txt'), 'utf8'), { code: 'ENOENT' });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

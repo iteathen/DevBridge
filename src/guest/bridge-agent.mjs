@@ -27,6 +27,8 @@ const MAX_STDIN_BYTES = 16 * 1024;
 const MAX_TIMEOUT_MS = 28_800_000;
 const ATOMIC_RENAME_RETRY_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
 const ATOMIC_RENAME_RETRY_DELAYS_MS = Object.freeze([5, 10, 20, 40, 80, 160]);
+const CLAIM_PUBLICATION_RETRY_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
+const CLAIM_PUBLICATION_RETRY_DELAYS_MS = Object.freeze([5, 10, 20, 40, 80, 160]);
 const SELF = fileURLToPath(import.meta.url);
 
 function requireObject(value, name) {
@@ -323,8 +325,16 @@ function processAlive(pid) {
 }
 
 async function monitorClaim(request) {
-  try { return await readJson(monitorFile(request), 'bridge operation monitor claim'); }
-  catch (error) { if (error?.code === 'ENOENT') return null; throw error; }
+  for (let attempt = 0; ; attempt += 1) {
+    try { return await readJson(monitorFile(request), 'bridge operation monitor claim'); }
+    catch (error) {
+      if (error?.code === 'ENOENT') return null;
+      const publicationPending = error instanceof SyntaxError
+        || (process.platform === 'win32' && CLAIM_PUBLICATION_RETRY_CODES.has(error?.code));
+      if (!publicationPending || attempt >= CLAIM_PUBLICATION_RETRY_DELAYS_MS.length) throw error;
+      await new Promise((resolve) => setTimeout(resolve, CLAIM_PUBLICATION_RETRY_DELAYS_MS[attempt]));
+    }
+  }
 }
 
 async function reserveMonitor(request) {
@@ -340,7 +350,8 @@ async function reserveMonitor(request) {
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
       const claim = await monitorClaim(request);
-      if (!claim || typeof claim !== 'object') throw new Error('bridge operation monitor claim is invalid');
+      if (!claim) continue;
+      if (typeof claim !== 'object') throw new Error('bridge operation monitor claim is invalid');
       const age = Date.now() - Number(claim.createdAt ?? 0);
       if ((claim.state === 'active' && processAlive(Number(claim.pid))) || (claim.state === 'starting' && Number.isFinite(age) && age >= 0 && age < 10_000)) {
         return { token: null, reserved: false };

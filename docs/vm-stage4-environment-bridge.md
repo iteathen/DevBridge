@@ -100,6 +100,8 @@ This has two important properties:
 
 The helper rejects reuse of a request identity with a different operation body. Concurrent exact starts are fenced by a request-owned monitor claim so they cannot launch duplicate side effects. A `planned` record is the one safely restartable pre-effect state: before any guest command can start, the monitor must durably advance the record to `attempting`. If a monitor disappears while the record is still `planned`, the host observes that state and may re-present the exact same request so the helper can replace only a stale pre-effect monitor claim. Once `attempting` is durable, a dead/unobservable monitor becomes indeterminate rather than replayable.
 
+Exclusive creation publishes the claim path before its small JSON body is necessarily complete. A losing concurrent starter therefore observes incomplete JSON and Windows sharing/open failures through a fixed bounded reread window; exhaustion still fails closed. If the claim disappears between exclusive-create failure and observation, the caller returns only to the same exclusive acquisition step. Observation alone never grants monitor ownership.
+
 If the initial transport call fails, the common bridge observes the exact request before deciding whether the identical start request may be repeated. If observation itself is unavailable or contradictory, completion is `indeterminate` rather than guessed.
 
 ## Timeout and cancellation
