@@ -1,6 +1,6 @@
 # DB-HO023 — issue #335 definition-fact independence
 
-Status: planned from exact `cuda-target` baseline `a398ab4abc79dce2dca4a0ed2ab0727bfa3f9533` on isolated branch `fix/335-definition-independent-facts`.
+Status: implemented and locally qualified from exact `cuda-target` baseline `a398ab4abc79dce2dca4a0ed2ab0727bfa3f9533` on isolated branch `fix/335-definition-independent-facts`; hosted qualification is pending.
 
 ## Assessment
 
@@ -34,3 +34,20 @@ Every other fact must be preserved and every effect must still be followed by ex
 6. Run focused tests, repository preflight, repository-execution architecture gates, and the full suite. Publish and qualify only the isolated fix branch before resuming Linux lifecycle composition.
 
 No UAC, sudo, account/service/provider command, VM action, or physical host mutation belongs to this correction.
+
+## Implementation
+
+The generic observation normalizer now treats `stored`, `current`, and `persistent` strictly as independent booleans. No ordering, platform, identifier, or topology relationship is inferred between them. The reconciliation loop is otherwise unchanged: it invokes only missing fact owners in dependency order, requires exact successful action evidence, re-observes after each action, and rejects any change outside the fact owned by that action.
+
+The boundary suite now enumerates all eight initial fact combinations and proves exact convergence. Dedicated cases prove an already-persistent upgrade skips persistence mutation and a loaded-but-missing recovery skips refresh mutation. Existing interruption, no-op, malformed/widened contract, invalid action evidence, and neighbor-change tests remain intact.
+
+DB-HO022's live prose was corrected in place so the repository does not retain the superseded false invariant as current guidance.
+
+## Local qualification
+
+- focused definition boundary: 8 passed, 0 failed;
+- repository preflight: passed (`syntaxFiles: 43`, `jsonFiles: 2`, `targetedTests: 43`);
+- repository-execution architecture gates: 34 total, 33 passed, 1 expected Windows symlink-capability skip, 0 failed;
+- full suite: 1,251 total, 1,240 passed, 11 expected platform skips, 0 failed, with a normal TAP exit in 52.9 seconds.
+
+No elevation prompt or real account, service, provider, VM, or protected-host mutation occurred.
