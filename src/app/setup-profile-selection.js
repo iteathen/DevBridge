@@ -93,7 +93,15 @@ export async function reconcileSetupProfileSelection({
     });
   }
 
-  let record = current?.working ? current : (await manager.begin()).record;
+  let record = current;
+  if (!record?.working) {
+    const started = await manager.begin();
+    if (started.resumed) throw new Error('setup authority changed while starting profile selection; retry');
+    record = started.record;
+  }
+  if (!record.working.operationId.startsWith(OPERATION_PREFIX)) {
+    throw new Error('setup authority has an interrupted transaction owned by another setup component');
+  }
   const operationId = record.working.operationId;
   record = await manager.replaceProfiles(operationId, { requestedProfiles: decision.profiles });
   record = await manager.markValidation(operationId, 'passed');

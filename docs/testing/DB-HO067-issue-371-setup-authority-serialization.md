@@ -64,3 +64,26 @@ While holding the lease, the adapter freshly reads the JSON envelope, invokes on
 ## Acceptance boundary
 
 No test may invoke setup, protected access, service/provider/image/environment/VM/guest changes, repository-controlled execution, or elevation. A green mock-only result is insufficient for cross-process serialization; the exact filesystem adapter and real OS IPC implementation must run on both hosted Windows and Ubuntu.
+
+## Implementation checkpoint
+
+Implemented on `stage8/362-protected-activity-channel` after plan commit `ea305a7`.
+
+`createSetupAuthorityStateStore()` is now the sole composition edge around two neutral import-isolated children. The exclusive-mutation child canonicalizes and hashes only its local target, acquires a short-lived Windows named pipe or Linux abstract socket, bounds contention at five seconds, accepts no command or payload, destroys connections, and releases on every returned/failed operation or process exit. The JSON-record child reads without a cache and replaces through an exclusive UUID temporary file, file sync, rename reconciliation, exact byte re-observation, and cleanup of only that attempt's temporary path.
+
+The state port is now only `load()` plus `mutate(transform)`. Each manager mutation normalizes the freshly observed predecessor and completes its authority decision inside that one exclusive transformation. The old separate `load()`/`save()` mutation sequence and setup-specific use of `JsonStateStore` were deleted; no compatibility port or second state machine remains. The v1 authority values and `setup:authority` envelope are unchanged, and unrelated envelope keys are preserved.
+
+Profile selection, image-distribution policy, and Windows-activation policy now reject a working generation that appears between their read-only observation and `begin()` result instead of consuming another component's work. The transaction manager remains topology-neutral and learns none of those caller identities.
+
+Local evidence:
+
+- the exact serialization file passes 9/9, including 25 independent-manager races, serialized fresh transforms, bounded contention/reuse, preserved envelope bytes, concurrent terminal operations, concurrent disjoint edits, real child-process begin, killed-owner release, and all three caller races;
+- ten repeated runs of that complete serialization file pass;
+- all `setup*.test.js` files pass 137 total / 136 passed / 1 expected Windows symlink skip;
+- repository preflight passes 168 syntax files, 2 JSON files, and 141 targeted test files;
+- the complete suite passes 1,735 total / 1,720 passed / 15 expected platform skips / zero failures in 59.2 seconds;
+- the first complete-suite attempt identified only that Node's default discovery also executed the process fixture; the fixture now intentionally performs no action when invoked without its closed mode, and the unchanged complete suite then passed;
+- doctor passes against the example configuration and continues to report repository execution unavailable/fail-closed because no persistent-environment route is configured; and
+- the dedicated topology test and `git diff --check` pass.
+
+No setup invocation, UAC/elevation request or bypass, protected operation, physical provider/VM/guest action, repository execution, or product publication occurred. Commit and push the exact implementation, then require the real hosted Windows and Ubuntu jobs before closing #371.

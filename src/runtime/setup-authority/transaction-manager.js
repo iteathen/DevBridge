@@ -17,7 +17,7 @@ export function createTransactionManager({
     #id;
 
     constructor({ port, now = defaultNow, id = defaultId } = {}) {
-      if (!port || typeof port.load !== 'function' || typeof port.save !== 'function') throw new TypeError('setup authority persistence port is incomplete');
+      if (!port || typeof port.load !== 'function' || typeof port.mutate !== 'function') throw new TypeError('setup authority persistence port is incomplete');
       if (typeof now !== 'function' || typeof id !== 'function') throw new TypeError('setup authority dependencies are invalid');
       this.#port = port;
       this.#now = now;
@@ -30,30 +30,30 @@ export function createTransactionManager({
     }
 
     async begin() {
-      const current = await this.current();
-      if (current?.working) return Object.freeze({ resumed: true, record: current });
-      const now = this.#now();
-      const revision = current?.revision ?? 0;
-      const accepted = current?.accepted ?? null;
-      const next = normalizeRecord({
-        protocol,
-        revision,
-        accepted,
-        working: {
-          operationId: normalizeIdentifier(this.#id(), 'setup authority operation identity'),
-          baseRevision: revision,
-          snapshot: accepted ?? createInitialValue(),
-          validation: 'pending',
+      return this.#port.mutate((raw) => {
+        const current = raw == null ? null : normalizeRecord(raw);
+        if (current?.working) return { result: Object.freeze({ resumed: true, record: current }) };
+        const now = this.#now();
+        const revision = current?.revision ?? 0;
+        const accepted = current?.accepted ?? null;
+        const next = normalizeRecord({
+          protocol,
+          revision,
+          accepted,
+          working: {
+            operationId: normalizeIdentifier(this.#id(), 'setup authority operation identity'),
+            baseRevision: revision,
+            snapshot: accepted ?? createInitialValue(),
+            validation: 'pending',
+            updatedAt: now,
+          },
           updatedAt: now,
-        },
-        updatedAt: now,
+        });
+        return { next, result: Object.freeze({ resumed: false, record: next }) };
       });
-      await this.#port.save(next);
-      return Object.freeze({ resumed: false, record: next });
     }
 
-    async #working(operationId) {
-      const current = await this.current();
+    #working(current, operationId) {
       if (!current?.working) throw new Error('setup authority working generation does not exist');
       if (current.working.operationId !== normalizeIdentifier(operationId, 'setup authority operation identity')) {
         throw new Error('setup authority operation identity does not match current working generation');
@@ -61,72 +61,80 @@ export function createTransactionManager({
       return current;
     }
 
-    async #saveEdit(current, snapshot) {
+    #edit(current, snapshot) {
       const now = this.#now();
       const next = normalizeRecord({
         ...current,
         working: { ...current.working, snapshot, validation: 'pending', updatedAt: now },
         updatedAt: now,
       });
-      await this.#port.save(next);
-      return next;
+      return { next, result: next };
     }
 
     async replaceProfiles(operationId, input) {
-      const current = await this.#working(operationId);
-      return this.#saveEdit(current, replaceSelection(current.working.snapshot, input));
+      return this.#port.mutate((raw) => {
+        const current = this.#working(raw == null ? null : normalizeRecord(raw), operationId);
+        return this.#edit(current, replaceSelection(current.working.snapshot, input));
+      });
     }
 
     async replaceAuthority(operationId, authority) {
-      const current = await this.#working(operationId);
-      return this.#saveEdit(current, replaceEntry(current.working.snapshot, authority));
+      return this.#port.mutate((raw) => {
+        const current = this.#working(raw == null ? null : normalizeRecord(raw), operationId);
+        return this.#edit(current, replaceEntry(current.working.snapshot, authority));
+      });
     }
 
     async importTemplate(operationId, template) {
-      const current = await this.#working(operationId);
-      return this.#saveEdit(current, importValue(template));
+      return this.#port.mutate((raw) => {
+        const current = this.#working(raw == null ? null : normalizeRecord(raw), operationId);
+        return this.#edit(current, importValue(template));
+      });
     }
 
     async markValidation(operationId, outcome) {
-      const current = await this.#working(operationId);
       const validation = normalizeValidation(outcome);
       if (validation === 'pending') throw new TypeError('setup authority validation outcome must be terminal for this working generation');
-      if (validation === 'passed') {
-        const blockers = evaluateBlockers(current.working.snapshot);
-        if (blockers.length > 0) throw new Error(`setup authority working generation has unresolved blockers: ${blockers.map((entry) => entry.code).join(', ')}`);
-      }
-      const now = this.#now();
-      const next = normalizeRecord({
-        ...current,
-        working: { ...current.working, validation, updatedAt: now },
-        updatedAt: now,
+      return this.#port.mutate((raw) => {
+        const current = this.#working(raw == null ? null : normalizeRecord(raw), operationId);
+        if (validation === 'passed') {
+          const blockers = evaluateBlockers(current.working.snapshot);
+          if (blockers.length > 0) throw new Error(`setup authority working generation has unresolved blockers: ${blockers.map((entry) => entry.code).join(', ')}`);
+        }
+        const now = this.#now();
+        const next = normalizeRecord({
+          ...current,
+          working: { ...current.working, validation, updatedAt: now },
+          updatedAt: now,
+        });
+        return { next, result: next };
       });
-      await this.#port.save(next);
-      return next;
     }
 
     async commit(operationId) {
-      const current = await this.#working(operationId);
-      if (current.working.validation !== 'passed') throw new Error('setup authority working generation is not validated');
-      if (current.working.baseRevision !== current.revision) throw new Error('setup authority accepted revision changed; re-read before commit');
-      const now = this.#now();
-      const next = normalizeRecord({
-        protocol,
-        revision: current.revision + 1,
-        accepted: current.working.snapshot,
-        working: null,
-        updatedAt: now,
+      return this.#port.mutate((raw) => {
+        const current = this.#working(raw == null ? null : normalizeRecord(raw), operationId);
+        if (current.working.validation !== 'passed') throw new Error('setup authority working generation is not validated');
+        if (current.working.baseRevision !== current.revision) throw new Error('setup authority accepted revision changed; re-read before commit');
+        const now = this.#now();
+        const next = normalizeRecord({
+          protocol,
+          revision: current.revision + 1,
+          accepted: current.working.snapshot,
+          working: null,
+          updatedAt: now,
+        });
+        return { next, result: next };
       });
-      await this.#port.save(next);
-      return next;
     }
 
     async discard(operationId) {
-      const current = await this.#working(operationId);
-      const now = this.#now();
-      const next = normalizeRecord({ ...current, working: null, updatedAt: now });
-      await this.#port.save(next);
-      return next;
+      return this.#port.mutate((raw) => {
+        const current = this.#working(raw == null ? null : normalizeRecord(raw), operationId);
+        const now = this.#now();
+        const next = normalizeRecord({ ...current, working: null, updatedAt: now });
+        return { next, result: next };
+      });
     }
   };
 }

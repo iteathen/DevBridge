@@ -123,7 +123,15 @@ export async function reconcileSetupImageDistributionPolicy({
     if (choice == null || (observed.state === 'accepted' && observed.mode === expectedPolicy.mode)) return observed;
   }
 
-  let record = current.working ? current : (await manager.begin()).record;
+  let record = current;
+  if (!record.working) {
+    const started = await manager.begin();
+    if (started.resumed) throw new Error('setup authority changed while starting image distribution policy; retry');
+    record = started.record;
+  }
+  if (!record.working.operationId.startsWith(prefix)) {
+    throw new Error('setup authority has an interrupted transaction owned by another setup component');
+  }
   const operationId = record.working.operationId;
   let authority = distributionAuthority(record.working.snapshot, profile);
   if (authority.subjectRef == null) {

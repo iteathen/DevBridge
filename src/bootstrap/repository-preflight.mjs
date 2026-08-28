@@ -181,6 +181,8 @@ const MAX_FAILURE_EVIDENCE_CHARS = 4000;
 const TARGETED_TESTS = [
   'test/config.test.js',
   'test/setup-authority-nested-lego.test.js',
+  'test/setup-authority-state-store-lego.test.js',
+  'test/setup-authority-state-serialization.test.js',
   'test/provider-local-nested-lego.test.js',
   'test/workspace-manager-nested-lego.test.js',
   'test/repository-execution.test.js',

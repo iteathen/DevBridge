@@ -183,14 +183,22 @@ test('nested template contract exports requirements only and imports no accepted
   assert.equal(evaluation.evaluate(imported).length, CLASSES.length);
 });
 
-test('nested transaction manager retains load-save order, validation invalidation, acceptance, and discard', async () => {
+test('nested transaction manager retains atomic mutation order, validation invalidation, acceptance, and discard', async () => {
   const { values, snapshots, evaluation, records, templates } = contracts();
   const trace = [];
   let stored = null;
   let tick = 0;
   const port = {
     async load() { trace.push('load'); return structuredClone(stored); },
-    async save(value) { trace.push('save'); stored = structuredClone(value); },
+    async mutate(transform) {
+      trace.push('mutate:read');
+      const outcome = await transform(structuredClone(stored));
+      if (Object.hasOwn(outcome, 'next')) {
+        trace.push('mutate:write');
+        stored = structuredClone(outcome.next);
+      }
+      return outcome.result;
+    },
   };
   const Manager = createTransactionManager({
     protocol: RECORD_PROTOCOL,
@@ -223,7 +231,13 @@ test('nested transaction manager retains load-save order, validation invalidatio
   assert.equal(record.revision, 1);
   assert.equal(record.working, null);
   assert.equal(entry(record.accepted, 'profile-a', 'construction').availability, 'available');
-  assert.deepEqual(trace, ['load', 'save', 'load', 'save', 'load', 'save', 'load', 'save', 'load', 'save']);
+  assert.deepEqual(trace, [
+    'mutate:read', 'mutate:write',
+    'mutate:read', 'mutate:write',
+    'mutate:read', 'mutate:write',
+    'mutate:read', 'mutate:write',
+    'mutate:read', 'mutate:write',
+  ]);
 
   record = (await manager.begin()).record;
   record = await manager.markValidation(record.working.operationId, 'passed');

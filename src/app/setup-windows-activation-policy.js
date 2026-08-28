@@ -118,7 +118,15 @@ export async function reconcileSetupWindowsActivationPolicy({
     if (observed.state !== 'selection-required' || choice == null) return observed;
   }
 
-  let record = current.working ? current : (await manager.begin()).record;
+  let record = current;
+  if (!record.working) {
+    const started = await manager.begin();
+    if (started.resumed) throw new Error('setup authority changed while starting activation policy; retry');
+    record = started.record;
+  }
+  if (!record.working.operationId.startsWith(OPERATION_PREFIX)) {
+    throw new Error('setup authority has an interrupted transaction owned by another setup component');
+  }
   const operationId = record.working.operationId;
   let authority = activationAuthority(record.working.snapshot);
   if (authority.subjectRef == null) {
