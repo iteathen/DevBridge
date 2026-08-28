@@ -63,3 +63,30 @@ Every child is import-free and sibling-independent. Child studs use only intrins
 ## No-elevation boundary
 
 Through at least 2026-08-31 this work remains source/test/documentation-only. It must not invoke setup, request or retry UAC, attempt an elevation bypass, install/reconcile a service or prerequisite, mutate provider/image/environment/VM state, run a guest operation, execute repository code, or publish product configuration. Branch commits/pushes, issue updates, and hosted CI are permitted.
+
+## Implementation checkpoint
+
+`src/runtime/setup-authority.js` remains the only public surface and is now a 112-line constants/composition/re-export parent around six import-free nested owners:
+
+- value primitives own bounded identifiers/references, closed choices, entry normalization, stable entry identity/order, defaults, and requirement maps;
+- snapshots own complete immutable profile/class matrices and profile/entry replacement;
+- evaluation maps a normalized value to ordered frozen blockers without mutation or acceptance;
+- records own the exact accepted/working v1 generation value and its revision/timestamp/validation invariants;
+- templates own sanitized requirement-only export and imported-provenance reconstruction; and
+- the transaction manager owns the existing single-owner load/save sequence and begin/edit/validate/commit/discard mechanics through neutral function ports.
+
+Only the parent imports and connects these children, supplies the default clock and cryptographic local operation identity, and exposes the established names. Children import no sibling or local implementation and name no caller, repository, remote-agent, provider, platform, VM, product-policy, or concrete JSON-store topology. Moved code was deleted from the parent; no compatibility schema, alternate record, second manager, or fallback path remains.
+
+Behavioral and local qualification on 2026-08-28:
+
+- public export names and callable arities match the pre-extraction parent;
+- 50 varied snapshot/replacement/blocker/template/import cases match the pre-extraction implementation byte-for-byte under JSON serialization;
+- direct child plus retained parent/state/profile/distribution/activation tests pass 30/30;
+- ten repeated nested/value/transaction/restart runs pass;
+- repository preflight passes 168 directly checked syntax files, 2 JSON files, and 139 targeted test files; the targeted nested test imports and verifies every child;
+- the complete suite passes 1,724 total / 1,709 passed / 15 expected Windows/platform skips / zero failures; and
+- topology gates and `git diff --check` pass.
+
+The extraction intentionally does not claim concurrent multi-manager transaction safety. The independently reproduced lost-owner/temp-publication defect remains open as #371 and the concrete state adapter is unchanged.
+
+No setup, UAC/elevation request or bypass, service/prerequisite reconciliation, protected provider/image/environment/VM/guest operation, repository execution, remote setup projection, or product publication occurred. Commit and push this exact checkpoint, then require hosted Windows/Ubuntu qualification before closing #252.
