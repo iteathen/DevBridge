@@ -29,6 +29,29 @@ function cloneRemote(config, repository) {
   return `${String(config.git.cloneBaseUrl).replace(/\/$/u, '')}/${repository}.git`;
 }
 
+function unavailableEnvironmentLifecycle() {
+  return Object.freeze({
+    protocol: 'devbridge/environment-lifecycle-diagnostic-v1',
+    state: 'unavailable',
+    ready: false,
+    reason: 'environment lifecycle authority is unavailable',
+  });
+}
+
+async function inspectEnvironmentLifecycle(environmentOperator) {
+  if (environmentOperator == null) return null;
+  let observed;
+  try { observed = await environmentOperator.inspect(); }
+  catch (error) {
+    if (error?.code === 'LIFECYCLE_AUTHORITY_UNAVAILABLE') return unavailableEnvironmentLifecycle();
+    throw error;
+  }
+  if (!observed || typeof observed !== 'object' || Array.isArray(observed)) {
+    throw new TypeError('environment operator inspection must be an object');
+  }
+  return observed;
+}
+
 export async function doctor(config, {
   resolveTools = true,
   checkGit = true,
@@ -71,8 +94,7 @@ export async function doctor(config, {
   else if (shouldProbeEnvironmentFoundation) environmentFoundationStatus = null;
   const environmentDiagnostics = environmentDiagnosis == null ? null : await environmentDiagnosis.list();
   if (environmentDiagnostics != null && !Array.isArray(environmentDiagnostics)) throw new TypeError('environment diagnosis list must be an array');
-  const environmentLifecycle = environmentOperator == null ? null : await environmentOperator.inspect();
-  if (environmentLifecycle != null && (typeof environmentLifecycle !== 'object' || Array.isArray(environmentLifecycle))) throw new TypeError('environment operator inspection must be an object');
+  const environmentLifecycle = await inspectEnvironmentLifecycle(environmentOperator);
 
   const builtIns = builtInToolProfiles();
   for (const name of Object.keys(builtIns)) if (Object.hasOwn(config.tools, name)) throw new Error(`local tool profile name ${name} is reserved by DevBridge`);

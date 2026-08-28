@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { WindowsInstallMediaSource } from '../src/runtime/image-sources/windows-install-media-source.js';
@@ -33,6 +33,7 @@ test('Windows media source discovers bounded real ISO files and projects only op
     await mkdir(sources);
     const location = path.join(sources, 'Windows.iso');
     await writeFile(location, 'exact-media');
+    const canonicalLocation = await realpath(location);
     await writeFile(path.join(sources, 'ignore.txt'), 'not-media');
     const state = registry();
     const calls = [];
@@ -48,8 +49,8 @@ test('Windows media source discovers bounded real ISO files and projects only op
     assert.match(listed[0].reference, /^source-[a-f0-9]{32}$/u);
     assert.equal(JSON.stringify(listed).includes(root), false);
     assert.equal((await source.inventory(listed[0].reference)).media.name, 'Windows.iso');
-    assert.equal(calls[0].location, location);
-    assert.equal((await source.resolve(listed[0].reference)).location, location);
+    assert.equal(calls[0].location, canonicalLocation);
+    assert.equal((await source.resolve(listed[0].reference)).location, canonicalLocation);
     await writeFile(path.join(sources, 'later.iso'), 'later-media');
     await source.resolve(listed[0].reference);
     assert.equal(state.size(), 1);

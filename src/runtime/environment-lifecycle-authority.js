@@ -238,7 +238,11 @@ export class LifecycleAuthorityClient {
     const exchange = MUTATION_AUTHORITY_OPERATIONS.has(operation) ? this.#mutationExchange : this.#readExchange;
     let raw;
     try { raw = await exchange(request); }
-    catch { throw new Error('environment lifecycle authority is unavailable'); }
+    catch {
+      const error = new Error('environment lifecycle authority is unavailable');
+      error.code = 'LIFECYCLE_AUTHORITY_UNAVAILABLE';
+      throw error;
+    }
     const result = normalizeLifecycleAuthorityResult(raw, request.requestId);
     if (!result.ok) {
       const error = new Error(result.error.message);

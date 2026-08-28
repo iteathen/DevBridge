@@ -305,6 +305,14 @@ This is a roadmap hypothesis, not an accepted security claim. Later assessment m
 
 Passing mocks prove composition, not Hyper-V/libvirt enforcement. Expensive still-valid evidence is reused only when its exact candidate/provider/image/environment/policy identity remains valid.
 
+## No-elevation hosted-CI correction plan
+
+Checkpoint 2026-08-28: PR #368 run `33202061303` proved the Windows serialization policy was active but exposed two deterministic cross-platform contract defects. `docs/testing/DB-HO056-issues-369-370-hosted-cross-platform-contracts.md` records the assessment, Microsoft/Node primary-source research, reassessment, and plan. Issue #369 owns Windows short/long filesystem-alias handling without weakening link/substitution checks. Issue #370 owns bounded read-only doctor reporting when the protected lifecycle authority is absent. Both are non-elevated prerequisites to meaningful hosted qualification of #290.
+
+Implement only these neutral owner corrections, then re-run the exact Windows/Ubuntu workflow. Keep #290 open until the serialized hosted Windows suite passes; close #369/#370 only after their exact hosted acceptance evidence passes. No UAC, protected service, provider, image, environment, VM, guest, or repository-execution effect is permitted during the operator's three-day no-UAC interval.
+
+Implementation checkpoint: the neutral filesystem-identity stud, exact setup consumption, canonical media expectations, typed lifecycle transport absence, and bounded doctor projection are complete locally. Focused ordinary/serialized owner tests, 125/2/123 preflight, the 1,657-test default suite, the 1,657-test serialized suite before final symmetric link hardening, and exact selective requalification after that hardening are green. Push the exact candidate and use PR #368 as the required real `RUNNER~1` and absent-authority proof before closing #369/#370 or declaring #290 accepted.
+
 ## No-elevation checkpoint: remote status authority
 
 Checkpoint 2026-08-28: the parameter-free remote `setup.status` operation had been wired to the mutating setup coordinator. Its historical “read-only” label covered only the final physical canary call and concealed earlier path, prerequisite, authority, lifecycle, environment, and operational-configuration effects. This is now corrected on `stage8/362-protected-activity-channel`: runtime status consumes only immutable validated configuration facts plus the attached execution contract's read-only inspection, exposes no execution identity, and never claims unobserved construction readiness. The obsolete setup-runner connection is removed. Full evidence is recorded in `docs/testing/DB-HO047-setup-status-observation-boundary.md`.

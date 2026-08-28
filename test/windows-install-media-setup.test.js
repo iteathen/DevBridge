@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -61,6 +61,7 @@ test('Windows media setup discovers then separately approves exact durable autho
   const home = await temporaryHome(t);
   const location = path.join(home, 'owned-windows.iso');
   await writeFile(location, 'bounded test media', 'utf8');
+  const canonicalLocation = await realpath(location);
   let invocations = 0;
   const invoke = async () => { invocations += 1; return inspectionResult(); };
 
@@ -99,7 +100,7 @@ test('Windows media setup discovers then separately approves exact durable autho
     platform: 'win32',
     invoke,
   });
-  assert.equal(resolved.location, location);
+  assert.equal(resolved.location, canonicalLocation);
   assert.equal(resolved.authority.image.index, 6);
   assert.equal(invocations, 2);
 });

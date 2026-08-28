@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, link, mkdir, open, realpath, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { sameFilesystemIdentity } from '../runtime/local-filesystem-identity.js';
 
 export const SETUP_OPERATIONAL_CONFIGURATION_REQUEST_PROTOCOL = 'devbridge/setup-operational-configuration-request-v1';
 export const SETUP_OPERATIONAL_CONFIGURATION_RESULT_PROTOCOL = 'devbridge/setup-operational-configuration-result-v1';
@@ -167,12 +168,6 @@ function normalizeRecord(raw) {
   });
 }
 
-function samePath(left, right, platform) {
-  const a = path.resolve(left);
-  const b = path.resolve(right);
-  return platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
-}
-
 async function realDirectory(location, name) {
   const info = await lstat(location);
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(`${name} must be a real directory`);
@@ -183,13 +178,13 @@ async function preparePaths(home, platform) {
   const root = path.resolve(home);
   await mkdir(root, { recursive: true, mode: 0o700 });
   const canonicalRoot = await realDirectory(root, 'operational configuration home');
-  if (!samePath(root, canonicalRoot, platform)) throw new Error('operational configuration home uses filesystem indirection');
+  if (!(await sameFilesystemIdentity(root, canonicalRoot, { platform }))) throw new Error('operational configuration home uses filesystem indirection');
   const state = path.join(root, 'state');
   const control = path.join(state, 'setup-operational-configuration');
   await mkdir(control, { recursive: true, mode: 0o700 });
   const canonicalState = await realDirectory(state, 'operational configuration state');
   const canonicalControl = await realDirectory(control, 'operational configuration control');
-  if (!samePath(state, canonicalState, platform) || !samePath(control, canonicalControl, platform)) {
+  if (!(await sameFilesystemIdentity(state, canonicalState, { platform })) || !(await sameFilesystemIdentity(control, canonicalControl, { platform }))) {
     throw new Error('operational configuration control uses filesystem indirection');
   }
   return Object.freeze({ root, config: path.join(root, 'config.json'), control, record: path.join(control, 'state.json'), platform });
@@ -201,7 +196,7 @@ async function boundedFile(location, maximum, name, platform) {
     const before = await lstat(location);
     if (!before.isFile() || before.isSymbolicLink() || before.size < 2 || before.size > maximum) throw new Error(`${name} must be one bounded real file`);
     const canonical = await realpath(location);
-    if (!samePath(canonical, location, platform)) throw new Error(`${name} uses filesystem indirection`);
+    if (!(await sameFilesystemIdentity(canonical, location, { platform }))) throw new Error(`${name} uses filesystem indirection`);
     handle = await open(location, 'r');
     const held = await handle.stat();
     if (!held.isFile() || held.size < 2 || held.size > maximum) throw new Error(`${name} must be one bounded real file`);
@@ -209,7 +204,7 @@ async function boundedFile(location, maximum, name, platform) {
     const after = await lstat(location);
     if (!after.isFile() || after.isSymbolicLink() || after.dev !== held.dev || after.ino !== held.ino
         || after.size !== held.size || bytes.length !== held.size || bytes.length < 2 || bytes.length > maximum
-        || !samePath(await realpath(location), location, platform)) {
+        || !(await sameFilesystemIdentity(await realpath(location), location, { platform }))) {
       throw new Error(`${name} changed during observation`);
     }
     return Object.freeze({ bytes, digest: digest(bytes) });

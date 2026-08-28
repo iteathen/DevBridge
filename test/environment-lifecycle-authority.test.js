@@ -128,7 +128,12 @@ test('client treats exchange failure and response ownership mismatch as authorit
     readExchange: async () => { throw new Error('socket down'); },
     mutationExchange: async () => { throw new Error('socket down'); },
   });
-  await assert.rejects(unavailable.status(ENV), /authority is unavailable/u);
+  await assert.rejects(unavailable.status(ENV), (error) => {
+    assert.equal(error.code, 'LIFECYCLE_AUTHORITY_UNAVAILABLE');
+    assert.match(error.message, /authority is unavailable/u);
+    assert.equal(error.message.includes('socket down'), false);
+    return true;
+  });
 
   const mismatchedExchange = async (request) => ({
     protocol: 'devbridge/environment-lifecycle-authority-result-v1',

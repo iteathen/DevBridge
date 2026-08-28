@@ -42,3 +42,54 @@ test('doctor consumes only the read-only environment operator inspection contrac
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('doctor reports an unavailable environment lifecycle authority without inventing readiness', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-doctor-lifecycle-unavailable-'));
+  try {
+    let inspected = 0;
+    const environmentOperator = {
+      async inspect() {
+        inspected += 1;
+        const error = new Error('local transport detail');
+        error.code = 'LIFECYCLE_AUTHORITY_UNAVAILABLE';
+        throw error;
+      },
+    };
+    const result = await doctor(configFor(root), {
+      resolveTools: false,
+      checkGit: false,
+      checkGitHubAuth: false,
+      probeCoreCapabilities: false,
+      env: {},
+      environmentOperator,
+    });
+    assert.equal(inspected, 1);
+    assert.deepEqual(result.capabilities.environmentLifecycle, {
+      protocol: 'devbridge/environment-lifecycle-diagnostic-v1',
+      state: 'unavailable',
+      ready: false,
+      reason: 'environment lifecycle authority is unavailable',
+    });
+    assert.equal(JSON.stringify(result).includes('local transport detail'), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('doctor propagates lifecycle inspection failures that are not transport absence', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-doctor-lifecycle-failure-'));
+  try {
+    const failure = new Error('bounded authority failure');
+    failure.code = 'OPERATION_FAILED';
+    await assert.rejects(() => doctor(configFor(root), {
+      resolveTools: false,
+      checkGit: false,
+      checkGitHubAuth: false,
+      probeCoreCapabilities: false,
+      env: {},
+      environmentOperator: { inspect: async () => { throw failure; } },
+    }), (error) => error === failure);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
