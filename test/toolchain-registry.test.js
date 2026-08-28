@@ -73,7 +73,7 @@ test('repository CMake operations derive only logical tool and environment-relat
     generator: 'Ninja',
   }, context);
   await registry.execute('cmake.build', { buildId: 'release', config: 'Release', target: 'all' }, context);
-  await registry.execute('ctest.run', { buildId: 'release', config: 'Release' }, context);
+  await registry.execute('ctest.run', { buildId: 'release', config: 'Release', verbose: true }, context);
 
   const scratch = { kind: 'scratch', name: 'cmake-release' };
   assert.equal(observed[0].repositoryTool, 'cmake');
@@ -83,7 +83,7 @@ test('repository CMake operations derive only logical tool and environment-relat
   assert.equal(observed[1].repositoryTool, 'cmake');
   assert.deepEqual(observed[1].args, ['--build', scratch, '--config', 'Release', '--target', 'all']);
   assert.equal(observed[2].repositoryTool, 'ctest');
-  assert.deepEqual(observed[2].args, ['--test-dir', scratch, '--output-on-failure', '-C', 'Release']);
+  assert.deepEqual(observed[2].args, ['--test-dir', scratch, '--output-on-failure', '--verbose', '-C', 'Release']);
   for (const entry of observed) {
     assert.equal(entry.executionClass, 'repository-code');
     assert.equal(entry.repository, 'owner/project');
@@ -92,4 +92,5 @@ test('repository CMake operations derive only logical tool and environment-relat
     assert.equal(entry.args.some((arg) => typeof arg === 'string' && /(?:^|[\\/])scratch[\\/]/u.test(arg)), false);
   }
   assert.throws(() => registry.validate('cmake.configure', { buildId: 'x', arguments: ['--trace'] }), /parameter arguments is not allowed/u);
+  assert.throws(() => registry.validate('ctest.run', { buildId: 'x', verbose: 'yes' }), /verbose must be a boolean/u);
 });

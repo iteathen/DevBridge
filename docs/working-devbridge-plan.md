@@ -183,6 +183,10 @@ Partial-switch implementation checkpoint 2026-08-28: the unchanged neutral confl
 
 Physical switch-consent checkpoint 2026-08-28: `dc60348` is pushed and the exact consent is persisted, but the final announced host elevation was cancelled/refused before the child transaction began. Re-observation proves no partial second effect: the refreshed protected service remains running, no NAT exists, the target switch remains unchanged/unmarked, and no persistent VM exists. Do not request another UAC during the operator's stated three-day unavailable window. Continue no-elevation acceptance/tooling work and later resume with the exact saved subject.
 
+Deterministic C acceptance assessment 2026-08-28: `docs/testing/DB-HO042-issue-360-c-route-acceptance.md` replaces the unsuitable self-materializing diagnostic idea with one normalized, all-ephemeral controller plan. It uses only registered CMake/CTest operations, an exact stdout challenge, target-aware SHA-256 reporting, empty changed paths, and verified scratch cleanup. Implement the fixed verbose CTest evidence option and plan factory while host elevation is unavailable; physical route proof remains separate and unclaimed.
+
+Deterministic C acceptance implementation checkpoint 2026-08-28: the normalized plan factory and closed optional verbose CTest result channel are implemented. Focused tests pass 9/9 and repository preflight passes 100 syntax files, 2 JSON files, and 96 targeted test files. The first complete-suite run had one unrelated transient Windows temporary-file `EPERM`; its owning daemon-governance suite immediately passed 6/6, and a fresh complete-suite run passed 1,529 with 15 platform skips and 0 failures. The exact physical setup re-entry was then approved: protected reconciliation crossed the saved partial-switch frontier and started one exact Linux installer VM. Subsequent ordinary bounded observations show healthy provider status and advancing VHDX allocation; no second UAC has been requested.
+
 ## Phase 5 — complete permanent-entry and recovery composition
 
 Owners: permanent entry, runner, accepted runtime, recovery control plane, and application manager.

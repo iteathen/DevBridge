@@ -86,6 +86,11 @@ function safeTarget(value) {
   if (typeof value !== 'string' || !SAFE_TARGET.test(value)) throw new PolicyError('cmake.build target is invalid');
   return value;
 }
+function optionalBoolean(value, name) {
+  if (value == null) return false;
+  if (typeof value !== 'boolean') throw new PolicyError(`${name} must be a boolean`);
+  return value;
+}
 function observedResult(stdout, stderr = '', exitCode = 0) {
   const now = new Date().toISOString();
   return { exitCode, signal: null, timedOut: false, outputTruncated: false, stdout, stderr, startedAt: now, finishedAt: now, lastOutputAt: stdout || stderr ? now : null };
@@ -289,11 +294,16 @@ function ctestAdapter() {
     environmentScratch: true,
     validate(raw) {
       const params = objectParams(raw, 'ctest.run');
-      onlyKeys(params, new Set(['buildId', 'config']), 'ctest.run');
-      return { buildId: safeId(params.buildId, 'ctest.run buildId'), config: safeBuildType(params.config, 'ctest.run config') };
+      onlyKeys(params, new Set(['buildId', 'config', 'verbose']), 'ctest.run');
+      return {
+        buildId: safeId(params.buildId, 'ctest.run buildId'),
+        config: safeBuildType(params.config, 'ctest.run config'),
+        verbose: optionalBoolean(params.verbose, 'ctest.run verbose'),
+      };
     },
     async execute(params, { projectDir, processRunner, onActivity }) {
       const args = ['--test-dir', executionScratch(params.buildId), '--output-on-failure'];
+      if (params.verbose) args.push('--verbose');
       if (params.config) args.push('-C', params.config);
       return processRunner.run({
         args,
