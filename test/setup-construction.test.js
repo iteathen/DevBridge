@@ -55,6 +55,9 @@ function fixture({ status, runResult } = {}) {
       }),
       lifecycleClientFactory: () => ({}),
       environmentActivationReconciler: async () => ({ ready: true, changed: true, state: 'ready', environmentCount: 1 }),
+      operationalConfigurationFactory: () => ({
+        async reconcile() { return { ready: true, changed: true, executionEnabled: true, blocker: null }; },
+      }),
       releaseAuthority: async ({ home }) => ({ keyring: path.join(home, 'authority', 'ubuntu.gpg') }),
       authorityFactory: async ({ snapshot }) => ({ protocol: 'test/authority', snapshot }),
       canaryFactory: () => ({
@@ -199,9 +202,9 @@ test('explicit construction resumes a non-complete durable canary state', async 
   const result = await runDevBridgeSetup({ home: home('db-setup-construct-resume'), construct: true }, selected.deps);
   assert.equal(selected.calls.status, 1);
   assert.equal(selected.calls.run, 1);
-  assert.equal(result.phase, 'environment-ready');
+  assert.equal(result.phase, 'operational-ready');
   assert.deepEqual(result.construction, { requested: true, attempted: true });
-  assert.match(formatSetupHandoff(result), /protected execution environment is ready/u);
+  assert.match(formatSetupHandoff(result), /setup completed successfully/u);
 });
 
 test('construction failures are reported without misclassifying them as read-only gate failures', async () => {

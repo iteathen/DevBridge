@@ -109,6 +109,14 @@ function prerequisiteProjection(value) {
   });
 }
 
+function operationalProjection(value) {
+  if (!value || typeof value !== 'object') return null;
+  return Object.freeze({
+    ready: value.ready === true,
+    executionEnabled: value.executionEnabled === true,
+  });
+}
+
 export function projectSetupStatus(result) {
   if (!result || typeof result !== 'object' || result.protocol !== 'devbridge/setup-status-v1') {
     throw new TypeError('setup.status received an invalid setup result');
@@ -128,6 +136,7 @@ export function projectSetupStatus(result) {
       : null,
     repositories: repositoryProjection(result.repositories),
     prerequisites: prerequisiteProjection(result.prerequisites),
+    operational: operationalProjection(result.operational),
     linuxProfile: Object.freeze({
       profile: result.linuxProfile?.profile === 'linux-development' ? 'linux-development' : null,
       snapshot: typeof result.linuxProfile?.snapshot === 'string' ? result.linuxProfile.snapshot : null,

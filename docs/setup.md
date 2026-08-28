@@ -159,6 +159,8 @@ It is **not** a required reading assignment or hand-authored prerequisite for no
 
 Fresh configuration keeps model adapters, coordination, dynamic tool onboarding, and automatic task-branch publication conservative/off unless the setup command's explicit local options enable them. Existing operator configuration is never silently rewritten during self-update.
 
+After the selected persistent environment and every selected workspace route verify ready, the explicit local `devbridge setup` transaction publishes the normal multi-repository configuration and enables deterministic controller-plan execution. It keeps coding-model adapters, uncontained host execution, dynamic onboarding, coordination, and automatic publication disabled. Publication is digest-bound and restart-reconcilable: setup records the exact predecessor and target before replacement, verifies the normal configuration schema and exact bytes afterward, and refuses an unmanaged or externally changed config instead of overwriting it. Re-entered setup may update only an unchanged setup-owned generation.
+
 `workspace.externalReadRoots`, proposal profile `sandbox.*`, and `execution.allowUncontainedTools` are host-sandbox-era surface. Stage 1 removes their ability to authorize repository-code host execution. Stage 8 defines deliberate operator-facing migration/deprecation, and Stage 9 removes remaining compatibility where appropriate.
 
 `execution.allowUncontainedTools` or equivalent must never bypass the no-provider state.
@@ -166,6 +168,8 @@ Fresh configuration keeps model adapters, coordination, dynamic tool onboarding,
 ## Execution remains opt-in and provider-bound
 
 Execution authority must be granted locally. A first-run `setup` invocation may carry that explicit local consent as a bounded command option so the installer does not need to stop later merely to ask the same question again.
+
+For the default CPU profile, the explicit local setup invocation itself is the execution opt-in, but activation occurs only after provider, image, environment, bridge, and workspace-route readiness all verify. This opt-in does not enable a coding model: model adapters remain separately disabled until explicitly configured.
 
 Remote task text cannot enable execution.
 

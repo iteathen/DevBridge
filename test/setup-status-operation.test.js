@@ -42,6 +42,7 @@ function blockedResult() {
       restartRequired: false,
       capabilities: { gpgv: true, opensshClient: false },
     },
+    operational: { ready: false, changed: false, executionEnabled: false },
     linuxProfile: {
       profile: 'linux-development',
       snapshot: '20260821T200000Z',
@@ -103,6 +104,7 @@ test('setup.status delegates with no remote arguments and returns blocked setup 
   assert.equal(projected.readyForConstruction, false);
   assert.equal(projected.prerequisites.ready, false);
   assert.equal(projected.prerequisites.capabilities.opensshClient, false);
+  assert.deepEqual(projected.operational, { ready: false, executionEnabled: false });
   assert.equal(projected.linuxProfile.physicalStatus.preflight.capabilities.provider, true);
   assert.equal(projected.linuxProfile.physicalStatus.preflight.capabilities.connectivity, true);
   assert.deepEqual(projected.linuxProfile.physicalStatus.preflight.connectivity, { control: 'system', addressing: 'automatic' });

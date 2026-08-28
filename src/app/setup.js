@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import { validateConfig } from '../config.js';
 import { GitHubRestClient } from '../github/rest-client.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { JsonStateStore } from '../state/json-state-store.js';
@@ -25,6 +26,10 @@ import {
   setupResourceConflictConsent,
 } from '../setup/resource-conflict.js';
 import { createWindowsSetupResourceConflict } from '../setup/windows-resource-conflict.js';
+import {
+  createSetupOperationalConfiguration,
+  SETUP_OPERATIONAL_CONFIGURATION_REQUEST_PROTOCOL,
+} from '../setup/operational-configuration.js';
 
 const PROTOCOL = 'devbridge/setup-status-v1';
 const STATE_KEY = 'setup:v1';
@@ -108,6 +113,15 @@ function publicResourceConflict(value) {
   return Object.freeze({ state: observed.state, subject: observed.subject, reason: observed.reason });
 }
 
+function publicOperationalConfiguration(value) {
+  if (!value) return null;
+  return Object.freeze({
+    ready: value.ready === true,
+    changed: value.changed === true,
+    executionEnabled: value.executionEnabled === true,
+  });
+}
+
 async function createSetupResourceConflict({ stateDirectory, platform, invoke }) {
   if (platform !== 'win32') return createClearSetupResourceConflictPort();
   const identity = await readLocalIdentity({ directory: path.join(path.resolve(stateDirectory), 'environment-foundation') });
@@ -115,12 +129,12 @@ async function createSetupResourceConflict({ stateDirectory, platform, invoke })
   return createWindowsSetupResourceConflict({ identity, platform, invoke });
 }
 
-function publicResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
+function publicResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, operationalConfiguration = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
   const readyForConstruction = constructionAttempted !== true && physical?.blocked === false && physical?.complete !== true;
   return Object.freeze({
     protocol: PROTOCOL,
     home,
-    phase: blocker ? 'blocked' : environmentActivation?.ready === true ? 'environment-ready' : readyForConstruction ? 'ready-for-construction' : physical?.complete ? 'image-complete' : physical?.state ?? 'discovering',
+    phase: blocker ? 'blocked' : operationalConfiguration?.ready === true ? 'operational-ready' : environmentActivation?.ready === true ? 'environment-ready' : readyForConstruction ? 'ready-for-construction' : physical?.complete ? 'image-complete' : physical?.state ?? 'discovering',
     blocked: blocker != null || physical?.blocked === true,
     blocker: blocker ?? physical?.reason ?? null,
     readyForConstruction,
@@ -132,6 +146,7 @@ function publicResult({ home, pathStatus, repositories = null, identity = null, 
     resourceConflict: publicResourceConflict(resourceConflict),
     lifecycleAuthority: publicLifecycleAuthority(lifecycleAuthority),
     environment: publicEnvironmentActivation(environmentActivation),
+    operational: publicOperationalConfiguration(operationalConfiguration),
     linuxProfile: Object.freeze({ profile: 'linux-development', snapshot, physicalStatus: physical }),
   });
 }
@@ -232,6 +247,23 @@ export function formatSetupHandoff(result) {
       '',
     ].join('\n');
   }
+  if (result.phase === 'operational-ready') {
+    return [
+      'Welcome to DevBridge — setup completed successfully.',
+      '',
+      'Linux execution profile: environment and workspace routes verified',
+      `Repositories: ${result.repositories?.selectedCount ?? 0} configured`,
+      `Execution environments: ${result.environment?.environmentCount ?? 0} ready`,
+      'Controller-plan execution: enabled',
+      'Coding-model adapters: disabled (opt-in only)',
+      '',
+      'Setup did not start task polling. Start DevBridge with: devbridge',
+      'Check health with: devbridge doctor',
+      'Check runtime state with: devbridge status',
+      'Change local setup later with: devbridge setup',
+      '',
+    ].join('\n');
+  }
   if (result.phase === 'image-complete') {
     return result.construction?.attempted
       ? 'DevBridge physical image construction canary completed.\n'
@@ -283,6 +315,7 @@ export async function runDevBridgeSetup({
   elevationRequester = requestWindowsLifecycleAuthorityElevation,
   lifecycleClientFactory = createConfiguredLifecycleAuthorityClient,
   environmentActivationReconciler = reconcileSetupEnvironmentActivation,
+  operationalConfigurationFactory = createSetupOperationalConfiguration,
   releaseAuthority = establishUbuntuReleaseAuthority,
   authorityFactory = createUbuntuSetupAuthority,
   canaryFactory = createUbuntuProductionImagePhysicalCanary,
@@ -574,12 +607,58 @@ export async function runDevBridgeSetup({
     });
   }
 
+  let operationalConfiguration;
+  try {
+    const targets = repositories.selected.map((entry) => entry.fullName);
+    const owners = [...new Set(targets.map((target) => target.split('/')[0].toLowerCase()))];
+    const publisher = operationalConfigurationFactory({ home: root, validate: validateConfig, platform });
+    if (!publisher || typeof publisher.reconcile !== 'function') throw new TypeError('setup operational configuration publisher is incomplete');
+    operationalConfiguration = await publisher.reconcile({
+      protocol: SETUP_OPERATIONAL_CONFIGURATION_REQUEST_PROTOCOL,
+      targets,
+      submitters: [String(scope.identity.id)],
+      owners,
+    });
+  } catch (error) {
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      prerequisites,
+      lifecycleAuthority,
+      physical,
+      environmentActivation,
+      constructionRequested: construct,
+      constructionAttempted,
+      blocker: `Operational configuration activation failed: ${error.message}`,
+    });
+  }
+  if (operationalConfiguration?.ready !== true || operationalConfiguration.executionEnabled !== true) {
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      prerequisites,
+      lifecycleAuthority,
+      physical,
+      environmentActivation,
+      operationalConfiguration,
+      constructionRequested: construct,
+      constructionAttempted,
+      blocker: operationalConfiguration?.blocker ?? 'Operational configuration did not verify execution ready',
+    });
+  }
+
   if (conflictConsentAccepted) {
     try { await conflictConsentStore.clear(); }
     catch (error) {
       return publicResult({
         home, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, lifecycleAuthority, physical,
-        environmentActivation, constructionRequested: construct, constructionAttempted,
+        environmentActivation, operationalConfiguration, constructionRequested: construct, constructionAttempted,
         blocker: `Completed setup could not retire its consumed local consent: ${error.message}`,
       });
     }
@@ -595,6 +674,7 @@ export async function runDevBridgeSetup({
     lifecycleAuthority,
     physical,
     environmentActivation,
+    operationalConfiguration,
     constructionRequested: construct,
     constructionAttempted,
   });

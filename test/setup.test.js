@@ -42,13 +42,14 @@ function dependencies({
   prerequisite = null,
   lifecycleAuthority = null,
   environmentActivation = null,
+  operationalConfiguration = null,
   resourceConflict = null,
   acceptedConflict = null,
   initialState = null,
 } = {}) {
   const store = memoryStore(initialState);
   let conflictConsent = acceptedConflict;
-  const calls = { prerequisite: 0, profileConfiguration: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, authority: 0, canaryStatus: 0, canaryRun: 0 };
+  const calls = { prerequisite: 0, profileConfiguration: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
   const discoveredRepositories = repositories ?? Array.from({ length: count }, (_, index) => repository(index));
   return {
     calls,
@@ -90,6 +91,13 @@ function dependencies({
         calls.environmentActivation += 1;
         return environmentActivation ?? { ready: true, changed: true, state: 'ready', environmentCount: 1 };
       },
+      operationalConfigurationFactory: () => ({
+        async reconcile(value) {
+          calls.operationalConfiguration += 1;
+          calls.operationalRequest = structuredClone(value);
+          return operationalConfiguration ?? { ready: true, changed: true, executionEnabled: true, blocker: null };
+        },
+      }),
       releaseAuthority: async ({ home }) => ({ keyring: path.join(home, 'authority', 'ubuntu.gpg') }),
       authorityFactory: async ({ snapshot }) => { calls.authority += 1; return { protocol: 'test/authority', snapshot }; },
       canaryFactory: () => ({
@@ -123,13 +131,20 @@ test('setup composes protected configuration and environment activation only aft
   });
   const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-environment-ready') }, fixture.deps);
   assert.equal(result.blocked, false);
-  assert.equal(result.phase, 'environment-ready');
+  assert.equal(result.phase, 'operational-ready');
   assert.deepEqual(result.environment, { ready: true, changed: true, state: 'ready', environmentCount: 1 });
   assert.equal(Object.hasOwn(result.environment, 'environmentIdentity'), false);
   assert.equal(fixture.calls.profileConfiguration, 1);
   assert.equal(fixture.calls.lifecycleAuthority, 1);
   assert.equal(fixture.calls.lifecycleClient, 1);
   assert.equal(fixture.calls.environmentActivation, 1);
+  assert.equal(fixture.calls.operationalConfiguration, 1);
+  assert.deepEqual(fixture.calls.operationalRequest, {
+    protocol: 'devbridge/setup-operational-configuration-request-v1',
+    targets: ['owner/repo-0', 'owner/repo-1'],
+    submitters: ['42'],
+    owners: ['owner'],
+  });
   assert.equal(fixture.calls.canaryStatus, 1);
   assert.equal(fixture.calls.canaryRun, 0);
 });
@@ -172,10 +187,11 @@ test('setup persists only the exact observed conflict subject before entering pr
     retireConflict: subject,
   }, fixture.deps);
   assert.equal(result.blocked, false);
-  assert.equal(result.phase, 'environment-ready');
+  assert.equal(result.phase, 'operational-ready');
   assert.equal(fixture.calls.conflictSaved, 1);
   assert.equal(fixture.calls.conflictCleared, 1);
   assert.equal(fixture.calls.lifecycleAuthority, 1);
+  assert.equal(fixture.calls.operationalConfiguration, 1);
 
   const changed = await runDevBridgeSetup({
     home: path.join(os.tmpdir(), 'db-setup-conflict-changed'),
@@ -195,7 +211,22 @@ test('setup keeps the image complete but fails closed when protected environment
   assert.equal(result.phase, 'blocked');
   assert.match(result.blocker, /not safely creatable/u);
   assert.deepEqual(result.environment, { ready: false, changed: false, state: 'blocked', environmentCount: 0 });
+  assert.equal(fixture.calls.operationalConfiguration, 0);
   assert.equal(JSON.stringify(result).includes('environment-private'), false);
+});
+
+test('setup does not report completion when operational configuration fails after route readiness', async () => {
+  const fixture = dependencies({
+    physical: { state: 'completed', blocked: false, complete: true, reason: null, preflight: { ready: true } },
+    operationalConfiguration: { ready: false, changed: false, executionEnabled: false, blocker: 'configuration predecessor changed' },
+  });
+  const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-operational-blocked') }, fixture.deps);
+  assert.equal(result.blocked, true);
+  assert.equal(result.phase, 'blocked');
+  assert.match(result.blocker, /configuration predecessor changed/u);
+  assert.deepEqual(result.environment, { ready: true, changed: true, state: 'ready', environmentCount: 1 });
+  assert.deepEqual(result.operational, { ready: false, changed: false, executionEnabled: false });
+  assert.equal(fixture.calls.operationalConfiguration, 1);
 });
 
 test('setup preserves the repository selection boundary before prerequisite or image authority work', async () => {
