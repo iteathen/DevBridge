@@ -42,6 +42,33 @@ test('guest image payload generation changes when one owned helper changes', asy
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test('guest image payload canonicalizes LF and CRLF source delivery to identical bytes', async () => {
+  const lfDirectory = await root();
+  const crlfDirectory = await root();
+  try {
+    await writeFixture(lfDirectory);
+    for (const name of MEMBERS) {
+      await writeFile(path.join(crlfDirectory, name), `export default ${JSON.stringify(name)};\r\n`, 'utf8');
+    }
+    const lf = await createGuestImagePayload({ directory: lfDirectory });
+    const crlf = await createGuestImagePayload({ directory: crlfDirectory });
+    assert.deepEqual(crlf, lf);
+    assert.equal(crlf.files.every((entry) => !entry.content.includes('\r')), true);
+  } finally {
+    await rm(lfDirectory, { recursive: true, force: true });
+    await rm(crlfDirectory, { recursive: true, force: true });
+  }
+});
+
+test('guest image payload rejects ambiguous bare carriage returns', async () => {
+  const directory = await root();
+  try {
+    await writeFixture(directory);
+    await writeFile(path.join(directory, 'resource-agent.mjs'), 'export default "invalid";\r', 'utf8');
+    await assert.rejects(() => createGuestImagePayload({ directory }), /unsupported line endings/u);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test('guest image payload fails closed when its owned membership is incomplete', async () => {
   const directory = await root();
   try {

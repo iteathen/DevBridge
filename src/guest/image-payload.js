@@ -25,6 +25,12 @@ function generationFor(files) {
   return `guest-image-${hash.digest('hex').slice(0, 24)}`;
 }
 
+function canonicalText(value) {
+  const content = value.replaceAll('\r\n', '\n');
+  if (content.includes('\r')) throw new Error('guest image payload member has unsupported line endings');
+  return content;
+}
+
 async function loadMember(root, canonicalRoot, name) {
   const location = path.join(root, name);
   const lexicalInfo = await lstat(location);
@@ -35,10 +41,11 @@ async function loadMember(root, canonicalRoot, name) {
   if (path.dirname(canonicalFile) !== canonicalRoot || canonicalFile !== path.join(canonicalRoot, name)) {
     throw new Error('guest image payload member escaped its owning directory');
   }
-  const content = await readFile(canonicalFile, 'utf8');
-  if (content.includes('\0')) throw new Error('guest image payload member contains invalid bytes');
+  const observed = await readFile(canonicalFile, 'utf8');
+  if (observed.includes('\0')) throw new Error('guest image payload member contains invalid bytes');
+  if (Buffer.byteLength(observed, 'utf8') !== lexicalInfo.size) throw new Error('guest image payload member changed during read');
+  const content = canonicalText(observed);
   const bytes = Buffer.byteLength(content, 'utf8');
-  if (bytes !== lexicalInfo.size) throw new Error('guest image payload member changed during read');
   const sha256 = createHash('sha256').update(content, 'utf8').digest('hex');
   return Object.freeze({ path: `${TARGET_ROOT}/${name}`, content, bytes, sha256 });
 }
