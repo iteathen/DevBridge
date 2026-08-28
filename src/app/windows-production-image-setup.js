@@ -56,6 +56,7 @@ export async function reconcileWindowsProductionImageSetup({
   stateDirectory,
   platform = process.platform,
   invoke,
+  action = 'observe',
 } = {}, {
   mediaResolver = resolveWindowsInstallMediaSetup,
   payloadFactory = createWindowsGuestImagePayload,
@@ -66,6 +67,7 @@ export async function reconcileWindowsProductionImageSetup({
   const selectedHome = absolute(home, 'production image setup home');
   const selectedState = absolute(stateDirectory, 'production image setup state directory');
   if (typeof platform !== 'string' || platform.length === 0 || typeof invoke !== 'function') throw new TypeError('production image setup dependencies are invalid');
+  if (!['observe', 'advance'].includes(action)) throw new TypeError('production image setup action is invalid');
   requireFunction(mediaResolver, 'production image setup media resolver');
   requireFunction(payloadFactory, 'production image setup payload factory');
   requireFunction(toolAuthorityFactory, 'production image setup tool authority factory');
@@ -89,7 +91,7 @@ export async function reconcileWindowsProductionImageSetup({
       resources: RESOURCES,
     }, { platform, invoke, payloadFactory: async () => payload });
     if (!canary || typeof canary.status !== 'function' || typeof canary.run !== 'function') throw new TypeError('production image setup canary contract is incomplete');
-    const physical = await canary.status();
+    const physical = action === 'observe' ? await canary.status() : await canary.run();
     if (!physical || typeof physical !== 'object') throw new TypeError('production image setup physical status is invalid');
     return publicStatus(physical.complete === true ? 'complete' : physical.blocked === true ? 'blocked' : 'ready', physical, physical.reason ?? null);
   } catch {

@@ -3,6 +3,8 @@
 Date: 2026-08-28
 Branch: `stage8/362-protected-activity-channel`
 
+Post-checkpoint note: DB-HO049 subsequently generalized the explicit construction action to the next incomplete accepted profile while preserving this checkpoint's selection and isolation contracts.
+
 ## Assessment
 
 The public setup path currently has no execution-profile choice. It always performs Linux/Ubuntu authority and construction-status work, while the CLI always asks the Windows media owner to discover candidates. Consequently a default Linux-only setup can surface Windows questions, a Windows-only or no-profile install cannot be expressed, and the existing restartable setup-authority record is not connected to setup.
@@ -38,7 +40,7 @@ The smallest complete slice is a transactional selection stud at the start of se
 - Windows media observation attaches only when Windows is selected;
 - Linux authority/construction work attaches only when Linux is selected;
 - Windows-only, none, and deferred paths stop before Linux-specific work rather than using Linux as a hidden fallback;
-- the existing Linux `--construct` action is rejected unless Linux is selected.
+- at this checkpoint, the existing Linux-only `--construct` action was rejected unless Linux was selected.
 
 The profile vocabulary belongs only in the application composition adapter. The reusable selection policy receives opaque profile identifiers and neutral choice mappings; it contains no operating-system, provider, VM, repository, or media names.
 

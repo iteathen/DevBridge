@@ -15,6 +15,7 @@ import { discoverGitHubSetupScope } from '../setup/github-discovery.js';
 import { installStableDevBridgeCommand } from '../setup/path-installation.js';
 import { reconcileSetupPrerequisites } from '../setup/prerequisite-reconciliation.js';
 import { selectRepositoryDefaults } from '../setup/repository-defaults.js';
+import { selectSerialProfileAction } from '../setup/serial-profile-action.js';
 import { createUbuntuSetupAuthority, defaultUbuntuPackageSnapshot, UBUNTU_SETUP_OUTPUT } from '../setup/ubuntu-authority.js';
 import { establishUbuntuReleaseAuthority } from '../setup/ubuntu-release-authority.js';
 import { requestWindowsLifecycleAuthorityElevation } from '../setup/windows-lifecycle-authority-elevation.js';
@@ -171,6 +172,13 @@ function hasProfile(selection, profile) {
 }
 
 function windowsReadinessBlocker(media, construction, platform) {
+  const constructionBlocker = windowsConstructionBlocker(media, construction, platform);
+  if (constructionBlocker) return constructionBlocker;
+  if (construction?.state !== 'complete') return construction?.reason ?? 'Windows production image construction is incomplete';
+  return 'Windows environment activation is not yet available through setup; execution remains disabled';
+}
+
+function windowsConstructionBlocker(media, construction, platform) {
   if (!media || media.state === 'platform-unavailable') {
     return platform === 'win32'
       ? 'Windows execution profile media status is unavailable; execution remains disabled'
@@ -180,9 +188,33 @@ function windowsReadinessBlocker(media, construction, platform) {
   if (media.state === 'source-required') return 'Windows execution profile requires an accepted install-media source';
   if (media.state === 'selection-required') return 'Windows execution profile requires explicit approval of one exact install-media candidate';
   if (media.state !== 'accepted') return 'Windows execution profile install-media state is not ready';
+  if (!construction || construction.state === 'platform-unavailable') return 'Windows production image status is unavailable';
   if (construction?.state === 'blocked') return construction.reason ?? 'Windows production image status is blocked';
-  if (construction?.state !== 'complete') return construction?.reason ?? 'Windows production image construction is incomplete';
-  return 'Windows environment activation is not yet available through setup; execution remains disabled';
+  return null;
+}
+
+function constructionDecision(profileSelection, physical, windowsMedia, windowsConstruction, platform) {
+  const observations = [];
+  if (profileSelection.profiles.includes(LINUX_PROFILE)) {
+    observations.push(Object.freeze({
+      profile: LINUX_PROFILE,
+      complete: physical?.complete === true,
+      blocked: physical?.blocked === true,
+      reason: physical?.blocked === true ? (physical.reason ?? 'selected profile construction is blocked') : null,
+    }));
+  }
+  if (profileSelection.profiles.includes(WINDOWS_PROFILE)) {
+    const blocker = windowsConstructionBlocker(windowsMedia, windowsConstruction, platform);
+    observations.push(Object.freeze({
+      profile: WINDOWS_PROFILE,
+      complete: windowsConstruction?.state === 'complete',
+      blocked: blocker != null,
+      reason: blocker,
+    }));
+  }
+  return selectSerialProfileAction({ profiles: profileSelection.profiles, observations }, {
+    order: [LINUX_PROFILE, WINDOWS_PROFILE],
+  });
 }
 
 async function createSetupResourceConflict({ stateDirectory, platform, invoke }) {
@@ -192,10 +224,13 @@ async function createSetupResourceConflict({ stateDirectory, platform, invoke })
   return createWindowsSetupResourceConflict({ identity, platform, invoke });
 }
 
-function setupResult({ home, pathStatus, repositories = null, identity = null, profileSelection = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, operationalConfiguration = null, windowsMedia = null, windowsConstruction = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
+function setupResult({ home, pathStatus, repositories = null, identity = null, profileSelection = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, operationalConfiguration = null, windowsMedia = null, windowsConstruction = null, blocker = null, constructionRequested = false, constructionAttempted = false, constructionProfile = null }) {
   const readyForConstruction = constructionAttempted !== true && physical?.blocked === false && physical?.complete !== true;
   const linuxRequested = profileSelection?.profiles.includes(LINUX_PROFILE) === true;
   const windowsRequested = profileSelection?.profiles.includes(WINDOWS_PROFILE) === true;
+  const activePhysical = constructionProfile === WINDOWS_PROFILE ? windowsConstruction?.physical : physical;
+  const activeBlocked = constructionAttempted && (activePhysical?.blocked === true
+    || (constructionProfile === WINDOWS_PROFILE && windowsConstruction?.state === 'blocked'));
   return Object.freeze({
     protocol: PROTOCOL,
     home,
@@ -204,13 +239,14 @@ function setupResult({ home, pathStatus, repositories = null, identity = null, p
       : profileSelection?.profiles.length === 0 ? 'profiles-disabled'
       : operationalConfiguration?.ready === true ? 'operational-ready'
       : environmentActivation?.ready === true ? 'environment-ready'
+      : constructionAttempted ? activePhysical?.state ?? windowsConstruction?.state ?? 'constructing'
       : readyForConstruction ? 'ready-for-construction'
       : physical?.complete ? 'image-complete'
       : physical?.state ?? 'discovering',
-    blocked: blocker != null || physical?.blocked === true,
-    blocker: blocker ?? physical?.reason ?? null,
+    blocked: blocker != null || physical?.blocked === true || activeBlocked,
+    blocker: blocker ?? (activeBlocked ? (activePhysical?.reason ?? windowsConstruction?.reason ?? 'selected profile construction is blocked') : physical?.reason) ?? null,
     readyForConstruction,
-    construction: Object.freeze({ requested: constructionRequested, attempted: constructionAttempted }),
+    construction: Object.freeze({ requested: constructionRequested, attempted: constructionAttempted, profile: constructionProfile }),
     path: pathStatus,
     github: identity ? Object.freeze({ id: identity.id, login: identity.login }) : null,
     repositories,
@@ -267,7 +303,7 @@ function appendConstructionDiagnostics(lines, physical) {
   );
 }
 
-function appendWindowsMedia(lines, windowsProfile) {
+function appendWindowsMedia(lines, windowsProfile, { constructionActive = false } = {}) {
   const media = windowsProfile?.media;
   if (!media || media.state === 'platform-unavailable') return;
   lines.push('', 'Windows execution profile media:');
@@ -283,8 +319,9 @@ function appendWindowsMedia(lines, windowsProfile) {
       `Image: index ${media.accepted.image.index}, ${media.accepted.image.name}, ${media.accepted.image.architecture}, build ${media.accepted.image.build}`,
     );
     const construction = windowsProfile.construction;
-    if (construction?.state === 'blocked') lines.push(`Read-only construction gate blocked: ${construction.reason ?? 'unknown blocker'}`);
-    else if (construction?.physical) lines.push(`Read-only construction gate: ${construction.physical.state ?? construction.state}`);
+    const label = constructionActive ? 'Construction status' : 'Read-only construction gate';
+    if (construction?.state === 'blocked') lines.push(`${label} blocked: ${construction.reason ?? 'unknown blocker'}`);
+    else if (construction?.physical) lines.push(`${label}: ${construction.physical.state ?? construction.state}`);
     return;
   }
   if (media.state === 'selection-required') {
@@ -313,14 +350,25 @@ function appendWindowsMedia(lines, windowsProfile) {
   }
 }
 
+function activeConstructionPhysical(result) {
+  return result.construction?.profile === WINDOWS_PROFILE
+    ? result.windowsProfile?.construction?.physical
+    : result.linuxProfile?.physicalStatus;
+}
+
+function activeConstructionLabel(result) {
+  return result.construction?.profile === WINDOWS_PROFILE ? 'Windows' : 'Linux';
+}
+
 export function formatSetupHandoff(result) {
   if (!result || result.protocol !== PROTOCOL) throw new TypeError('setup handoff result is invalid');
   if (result.blocked) {
-    const constructionBlocked = result.construction?.attempted === true && result.linuxProfile?.physicalStatus?.complete !== true;
+    const activePhysical = activeConstructionPhysical(result);
+    const constructionBlocked = result.construction?.attempted === true && activePhysical?.complete !== true;
     const lines = [constructionBlocked ? 'DevBridge physical image construction is blocked.' : 'DevBridge setup is blocked.', '', `Reason: ${result.blocker ?? 'unknown blocker'}`];
-    if (constructionBlocked) appendConstructionLiveness(lines, result.linuxProfile?.physicalStatus);
-    if (constructionBlocked) appendConstructionReadiness(lines, result.linuxProfile?.physicalStatus);
-    if (constructionBlocked) appendConstructionDiagnostics(lines, result.linuxProfile?.physicalStatus);
+    if (constructionBlocked) appendConstructionLiveness(lines, activePhysical);
+    if (constructionBlocked) appendConstructionReadiness(lines, activePhysical);
+    if (constructionBlocked) appendConstructionDiagnostics(lines, activePhysical);
     if (result.resourceConflict?.state === 'approval-required') {
       lines.push(
         '',
@@ -328,7 +376,7 @@ export function formatSetupHandoff(result) {
         `Re-run setup with --retire-conflict ${result.resourceConflict.subject} to authorize retirement of only this unchanged inactive subject.`,
       );
     }
-    appendWindowsMedia(lines, result.windowsProfile);
+    appendWindowsMedia(lines, result.windowsProfile, { constructionActive: result.construction?.profile === WINDOWS_PROFILE });
     if (constructionBlocked) lines.push('', 'Preserve the canary state; resolve only this blocker, then re-run devbridge setup --construct.');
     if (result.path?.requiresNewShell) lines.push('', `PATH is persisted; until a new shell is opened use: ${result.path.temporaryCommand}`);
     return `${lines.join('\n')}\n`;
@@ -399,14 +447,16 @@ export function formatSetupHandoff(result) {
     return lines.join('\n');
   }
   if (result.phase === 'image-complete') {
+    const label = activeConstructionLabel(result);
     return result.construction?.attempted
-      ? 'DevBridge physical image construction canary completed.\n'
+      ? `DevBridge ${label} physical image construction canary completed.\n`
       : 'Welcome to DevBridge — the Linux production image is already complete.\n';
   }
   if (result.construction?.attempted) {
-    const physical = result.linuxProfile?.physicalStatus;
+    const physical = activeConstructionPhysical(result);
+    const label = activeConstructionLabel(result);
     const lines = [
-      'DevBridge physical image construction canary advanced to a durable frontier.',
+      `DevBridge ${label} physical image construction canary advanced to a durable frontier.`,
       '',
       `State: ${physical?.state ?? result.phase ?? 'unknown'}`,
     ];
@@ -415,7 +465,7 @@ export function formatSetupHandoff(result) {
     appendConstructionLiveness(lines, physical);
     appendConstructionReadiness(lines, physical);
     appendConstructionDiagnostics(lines, physical);
-    appendWindowsMedia(lines, result.windowsProfile);
+    appendWindowsMedia(lines, result.windowsProfile, { constructionActive: result.construction?.profile === WINDOWS_PROFILE });
     const nextObservationAt = physical?.liveness?.nextObservationAt ?? physical?.readiness?.nextObservationAt;
     if (nextObservationAt) lines.push('', `Re-run devbridge setup --construct at or after ${nextObservationAt} to record the next bounded observation.`, '');
     else lines.push('', 'Do not retry construction automatically; resolve the reported bounded frontier first.', '');
@@ -473,7 +523,22 @@ export async function runDevBridgeSetup({
   let profileSelection = null;
   let windowsMedia = null;
   let windowsConstruction = null;
-  const publicResult = (value) => setupResult({ ...value, profileSelection, windowsMedia, windowsConstruction });
+  let constructionProfile = null;
+  const publicResult = (value) => setupResult({ ...value, profileSelection, windowsMedia, windowsConstruction, constructionProfile });
+  const reconcileWindowsConstruction = async (action) => {
+    try {
+      return await windowsConstructionReconciler({ home: root, stateDirectory, platform, invoke, action });
+    } catch {
+      return Object.freeze({
+        protocol: 'devbridge/windows-production-image-setup-status-v1',
+        state: 'blocked',
+        reason: action === 'advance'
+          ? 'Windows production image construction failed; inspect local setup evidence and retry'
+          : 'Windows production image status reconciliation failed; inspect local setup evidence and retry',
+        physical: null,
+      });
+    }
+  };
 
   try {
     profileSelection = normalizeProfileSelection(await profileSelectionReconciler({
@@ -485,8 +550,8 @@ export async function runDevBridgeSetup({
   }
   const linuxRequested = hasProfile(profileSelection, LINUX_PROFILE);
   const windowsRequested = hasProfile(profileSelection, WINDOWS_PROFILE);
-  if (construct && !linuxRequested) {
-    return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: 'Physical image construction requires the selected Linux execution profile' });
+  if (construct && (profileSelection.state !== 'accepted' || profileSelection.profiles.length === 0)) {
+    return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: 'Physical image construction requires at least one accepted execution profile' });
   }
   if ((windowsMediaLocation != null || windowsMediaApproval != null) && !windowsRequested) {
     return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: 'Windows media options require the selected Windows execution profile' });
@@ -517,16 +582,7 @@ export async function runDevBridgeSetup({
       return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: windowsMedia.blocker });
     }
     if (windowsMedia?.state === 'accepted') {
-      try {
-        windowsConstruction = await windowsConstructionReconciler({ home: root, stateDirectory, platform, invoke });
-      } catch {
-        windowsConstruction = Object.freeze({
-          protocol: 'devbridge/windows-production-image-setup-status-v1',
-          state: 'blocked',
-          reason: 'Windows production image status reconciliation failed; inspect local setup evidence and retry',
-          physical: null,
-        });
-      }
+      windowsConstruction = await reconcileWindowsConstruction('observe');
     }
   }
 
@@ -571,6 +627,33 @@ export async function runDevBridgeSetup({
     return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, constructionRequested: construct });
   }
   if (!linuxRequested) {
+    if (construct) {
+      const decision = constructionDecision(profileSelection, null, windowsMedia, windowsConstruction, platform);
+      constructionProfile = decision.profile;
+      if (decision.state === 'blocked') {
+        return publicResult({
+          home: root,
+          pathStatus,
+          identity: scope.identity,
+          repositories,
+          snapshot,
+          constructionRequested: construct,
+          blocker: decision.reason,
+        });
+      }
+      if (decision.state === 'ready') {
+        windowsConstruction = await reconcileWindowsConstruction('advance');
+        return publicResult({
+          home: root,
+          pathStatus,
+          identity: scope.identity,
+          repositories,
+          snapshot,
+          constructionRequested: construct,
+          constructionAttempted: true,
+        });
+      }
+    }
     return publicResult({
       home: root,
       pathStatus,
@@ -634,17 +717,13 @@ export async function runDevBridgeSetup({
     resources: Object.freeze({ memoryBytes: DEFAULT_MEMORY_BYTES, processorCount: DEFAULT_PROCESSORS, diskBytes: DEFAULT_DISK_BYTES }),
   });
 
+  let canary;
   let physical;
   let constructionAttempted = false;
   try {
-    const canary = canaryFactory(physicalConfig, { platform, invoke, fetchImpl, signatureVerifierExecutable });
+    canary = canaryFactory(physicalConfig, { platform, invoke, fetchImpl, signatureVerifierExecutable });
     physical = await canary.status();
-    if (construct === true && physical?.blocked !== true && physical?.complete !== true) {
-      constructionAttempted = true;
-      physical = await canary.run();
-    }
   } catch (error) {
-    const prefix = constructionAttempted ? 'physical production-image construction failed' : 'read-only production-image status gate failed';
     return publicResult({
       home: root,
       pathStatus,
@@ -654,8 +733,60 @@ export async function runDevBridgeSetup({
       prerequisites,
       constructionRequested: construct,
       constructionAttempted,
-      blocker: `${prefix}: ${error.message}`,
+      blocker: `read-only production-image status gate failed: ${error.message}`,
     });
+  }
+
+  if (construct) {
+    const decision = constructionDecision(profileSelection, physical, windowsMedia, windowsConstruction, platform);
+    constructionProfile = decision.profile;
+    if (decision.state === 'blocked') {
+      return publicResult({
+        home: root,
+        pathStatus,
+        identity: scope.identity,
+        repositories,
+        snapshot,
+        prerequisites,
+        physical,
+        constructionRequested: construct,
+        blocker: decision.reason,
+      });
+    }
+    if (decision.state === 'ready') {
+      constructionAttempted = true;
+      if (decision.profile === WINDOWS_PROFILE) {
+        windowsConstruction = await reconcileWindowsConstruction('advance');
+      } else {
+        try {
+          physical = await canary.run();
+        } catch (error) {
+          return publicResult({
+            home: root,
+            pathStatus,
+            identity: scope.identity,
+            repositories,
+            snapshot,
+            prerequisites,
+            physical,
+            constructionRequested: construct,
+            constructionAttempted,
+            blocker: `physical production-image construction failed: ${error.message}`,
+          });
+        }
+      }
+      return publicResult({
+        home: root,
+        pathStatus,
+        identity: scope.identity,
+        repositories,
+        snapshot,
+        prerequisites,
+        physical,
+        constructionRequested: construct,
+        constructionAttempted,
+      });
+    }
   }
 
   if (physical?.complete !== true) {

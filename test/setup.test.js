@@ -25,6 +25,32 @@ function persistedState({ identity = { id: 42, login: 'owner' }, selected = [], 
   };
 }
 
+function acceptedWindowsMedia() {
+  return {
+    protocol: 'devbridge/windows-install-media-selection-status-v1',
+    state: 'accepted',
+    candidates: [],
+    rejectedCount: 0,
+    accepted: {
+      candidate: 'candidate-0123456789abcdef0123456789abcdef',
+      authority: 'subject-0123456789abcdef0123456789abcdef',
+      sourceClass: 'official-owned',
+      temporary: false,
+      media: { name: 'Windows.iso', bytes: 100, sha256: 'a'.repeat(64) },
+      image: { index: 6, name: 'Windows 11 Pro', edition: 'Professional', architecture: 'amd64', build: 26100 },
+    },
+  };
+}
+
+function windowsPhysical(state = 'ready', { complete = false, blocked = false, reason = null } = {}) {
+  return {
+    protocol: 'devbridge/windows-production-image-setup-status-v1',
+    state,
+    reason,
+    physical: { state, complete, blocked, reason },
+  };
+}
+
 function memoryStore(initial = null) {
   let value = initial;
   return {
@@ -49,10 +75,12 @@ function dependencies({
   profileSelection = null,
   windowsMedia = null,
   windowsConstruction = null,
+  windowsAdvance = null,
+  physicalAdvance = null,
 } = {}) {
   const store = memoryStore(initialState);
   let conflictConsent = acceptedConflict;
-  const calls = { profileSelection: 0, profileSelectionRequest: null, windowsMedia: 0, windowsMediaRequest: null, windowsConstruction: 0, prerequisite: 0, profileConfiguration: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
+  const calls = { profileSelection: 0, profileSelectionRequest: null, windowsMedia: 0, windowsMediaRequest: null, windowsConstruction: 0, windowsConstructionActions: [], prerequisite: 0, profileConfiguration: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
   const discoveredRepositories = repositories ?? Array.from({ length: count }, (_, index) => repository(index));
   return {
     calls,
@@ -96,8 +124,10 @@ function dependencies({
           accepted: null,
         });
       },
-      windowsConstructionReconciler: async () => {
+      windowsConstructionReconciler: async (value) => {
         calls.windowsConstruction += 1;
+        calls.windowsConstructionActions.push(value.action);
+        if (value.action === 'advance' && windowsAdvance != null) return structuredClone(windowsAdvance);
         return structuredClone(windowsConstruction ?? {
           protocol: 'devbridge/windows-production-image-setup-status-v1',
           state: 'platform-unavailable',
@@ -148,7 +178,11 @@ function dependencies({
           calls.canaryStatus += 1;
           return physical ?? { state: 'absent', blocked: false, complete: false, reason: null, preflight: { ready: true } };
         },
-        async run() { calls.canaryRun += 1; throw new Error('setup must never construct'); },
+        async run() {
+          calls.canaryRun += 1;
+          if (physicalAdvance != null) return structuredClone(physicalAdvance);
+          throw new Error('setup must never construct');
+        },
       }),
     },
   };
@@ -271,7 +305,7 @@ test('Windows-only selection observes only its local setup boundary and remains 
   assert.equal(fixture.calls.operationalConfiguration, 0);
 });
 
-test('setup rejects platform-specific actions outside the selected profile before their adapters run', async () => {
+test('setup rejects Windows media actions outside the selected profile before its adapter runs', async () => {
   const linux = dependencies();
   const media = await runDevBridgeSetup({
     home: path.join(os.tmpdir(), 'db-setup-media-without-windows'),
@@ -281,21 +315,83 @@ test('setup rejects platform-specific actions outside the selected profile befor
   assert.match(media.blocker, /require the selected Windows execution profile/u);
   assert.equal(linux.calls.windowsMedia, 0);
   assert.equal(linux.calls.prerequisite, 0);
+});
 
-  const windows = dependencies({
+test('Windows-only construction observes before advancing only its selected profile', async () => {
+  const fixture = dependencies({
     profileSelection: {
       protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 2, changed: false,
       profiles: ['windows-development'], pendingProfiles: null, source: 'accepted',
     },
+    windowsMedia: acceptedWindowsMedia(),
+    windowsConstruction: windowsPhysical(),
+    windowsAdvance: windowsPhysical('waiting'),
   });
-  const construction = await runDevBridgeSetup({
-    home: path.join(os.tmpdir(), 'db-setup-construction-without-linux'), construct: true,
+  const result = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-windows-construction'), construct: true,
+  }, fixture.deps);
+  assert.equal(result.blocked, false);
+  assert.deepEqual(result.construction, { requested: true, attempted: true, profile: 'windows-development' });
+  assert.deepEqual(fixture.calls.windowsConstructionActions, ['observe', 'advance']);
+  assert.equal(fixture.calls.prerequisite, 0);
+  assert.equal(fixture.calls.authority, 0);
+  assert.equal(fixture.calls.canaryStatus, 0);
+  assert.equal(fixture.calls.canaryRun, 0);
+  assert.match(formatSetupHandoff(result), /Windows physical image construction canary advanced/u);
+});
+
+test('multi-profile construction advances Linux before Windows and only one frontier per invocation', async () => {
+  const profileSelection = {
+    protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 3, changed: false,
+    profiles: ['linux-development', 'windows-development'], pendingProfiles: null, source: 'accepted',
+  };
+  const linux = dependencies({
+    profileSelection,
+    windowsMedia: acceptedWindowsMedia(),
+    windowsConstruction: windowsPhysical(),
+    physical: { state: 'planned', blocked: false, complete: false, reason: null, preflight: { ready: true } },
+    physicalAdvance: { state: 'waiting', blocked: false, complete: false, reason: null, preflight: { ready: true } },
+  });
+  const linuxResult = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-serial-linux'), construct: true,
+  }, linux.deps);
+  assert.deepEqual(linuxResult.construction, { requested: true, attempted: true, profile: 'linux-development' });
+  assert.equal(linux.calls.canaryRun, 1);
+  assert.deepEqual(linux.calls.windowsConstructionActions, ['observe']);
+
+  const windows = dependencies({
+    profileSelection,
+    windowsMedia: acceptedWindowsMedia(),
+    windowsConstruction: windowsPhysical(),
+    windowsAdvance: windowsPhysical('waiting'),
+    physical: { state: 'completed', blocked: false, complete: true, reason: null, preflight: { ready: true } },
+  });
+  const windowsResult = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-serial-windows'), construct: true,
   }, windows.deps);
-  assert.equal(construction.blocked, true);
-  assert.match(construction.blocker, /requires the selected Linux execution profile/u);
-  assert.equal(windows.calls.windowsMedia, 0);
-  assert.equal(windows.calls.prerequisite, 0);
-  assert.equal(windows.calls.canaryStatus, 0);
+  assert.deepEqual(windowsResult.construction, { requested: true, attempted: true, profile: 'windows-development' });
+  assert.equal(windows.calls.canaryRun, 0);
+  assert.deepEqual(windows.calls.windowsConstructionActions, ['observe', 'advance']);
+});
+
+test('multi-profile construction never skips a blocked earlier profile', async () => {
+  const fixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 3, changed: false,
+      profiles: ['linux-development', 'windows-development'], pendingProfiles: null, source: 'accepted',
+    },
+    windowsMedia: acceptedWindowsMedia(),
+    windowsConstruction: windowsPhysical(),
+    physical: { state: 'blocked', blocked: true, complete: false, reason: 'selected profile prerequisite is unavailable', preflight: { ready: false } },
+  });
+  const result = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-serial-blocked'), construct: true,
+  }, fixture.deps);
+  assert.equal(result.blocked, true);
+  assert.match(result.blocker, /selected profile prerequisite is unavailable/u);
+  assert.deepEqual(result.construction, { requested: true, attempted: false, profile: 'linux-development' });
+  assert.equal(fixture.calls.canaryRun, 0);
+  assert.deepEqual(fixture.calls.windowsConstructionActions, ['observe']);
 });
 
 test('setup discovers Windows media before presenting exact approval choices without blocking Linux', async () => {

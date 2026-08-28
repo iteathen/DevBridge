@@ -94,8 +94,8 @@ export function parseSetupCommandOptions(argv, {
   const approvalParts = [windowsMediaCandidate, windowsImageIndex, windowsMediaClass].filter((value) => value != null).length;
   if (windowsMediaLocation != null && approvalParts > 0) throw new PolicyError('discover Windows media before approving an exact candidate in a later setup invocation');
   if (approvalParts !== 0 && approvalParts !== 3) throw new PolicyError('Windows media approval requires --approve-windows-media, --windows-image-index, and --windows-media-class together');
-  if (construct && ['windows', 'none', 'defer'].includes(profileChoice)) {
-    throw new PolicyError('--construct requires the Linux execution profile');
+  if (construct && ['none', 'defer'].includes(profileChoice)) {
+    throw new PolicyError('--construct requires at least one selected execution profile');
   }
   if ((windowsMediaLocation != null || approvalParts > 0) && ['linux', 'none', 'defer'].includes(profileChoice)) {
     throw new PolicyError('Windows media options require the Windows execution profile');

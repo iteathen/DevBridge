@@ -903,9 +903,10 @@ test('ordinary setup accepts one bounded execution-profile choice and rejects co
   }
   assert.throws(() => parseSetupCommandOptions(['--profiles', 'other']), /must be linux, windows, both, none, or defer/u);
   assert.throws(() => parseSetupCommandOptions(['--profiles', 'linux', '--profiles', 'both']), /only once/u);
-  for (const choice of ['windows', 'none', 'defer']) {
-    assert.throws(() => parseSetupCommandOptions(['--profiles', choice, '--construct']), /requires the Linux execution profile/u);
+  for (const choice of ['none', 'defer']) {
+    assert.throws(() => parseSetupCommandOptions(['--profiles', choice, '--construct']), /requires at least one selected execution profile/u);
   }
+  assert.equal(parseSetupCommandOptions(['--profiles', 'windows', '--construct']).construct, true);
   assert.equal(parseSetupCommandOptions(['--profiles', 'both', '--construct']).construct, true);
   assert.throws(() => parseSetupCommandOptions([
     '--profiles', 'linux', '--windows-media', 'C:\\media\\Windows.iso',

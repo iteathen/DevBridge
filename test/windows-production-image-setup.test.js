@@ -109,6 +109,31 @@ test('Windows production setup preserves bounded physical blockers without runni
   assert.equal(runs, 0);
 });
 
+test('Windows production setup advances only through an explicit closed action', async () => {
+  const calls = [];
+  const result = await reconcileWindowsProductionImageSetup(options({ action: 'advance' }), {
+    mediaResolver: async () => ({ location: path.join(os.tmpdir(), 'owned-Windows.iso'), authority: mediaAuthority() }),
+    payloadFactory: async () => ({ generation: 'guest-image-0123456789abcdef01234567' }),
+    canaryFactory: () => ({
+      async status() { calls.push('status'); throw new Error('advance must use only the mutation operation'); },
+      async run() {
+        calls.push('run');
+        return { state: 'waiting', complete: false, blocked: false, reason: 'bounded progress is pending' };
+      },
+    }),
+  });
+  assert.deepEqual(calls, ['run']);
+  assert.equal(result.state, 'ready');
+  assert.equal(result.physical.state, 'waiting');
+  assert.equal(result.reason, 'bounded progress is pending');
+
+  let resolved = false;
+  await assert.rejects(reconcileWindowsProductionImageSetup(options({ action: 'other' }), {
+    mediaResolver: async () => { resolved = true; },
+  }), /action is invalid/u);
+  assert.equal(resolved, false);
+});
+
 test('Windows production setup bounds dependency failures and stays unattached on other hosts', async () => {
   const secretLocation = path.join(os.tmpdir(), 'private-Windows.iso');
   const blocked = await reconcileWindowsProductionImageSetup(options(), {

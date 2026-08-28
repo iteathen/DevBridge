@@ -39,11 +39,12 @@ test('Windows media setup selection and source adapter retain replaceable local 
   assert.match(source, /inspectorFactory/u);
 });
 
-test('Windows production setup observation is a thin composition edge with no provider or remote policy', async () => {
+test('Windows production setup is a thin composition edge with a closed local action and no provider or remote policy', async () => {
   const source = await readFile(new URL('../src/app/windows-production-image-setup.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /HyperV|libvirt|qemu|GitHub|repository[A-Z]|Codex|CUDA|product.?key/iu);
   for (const stud of ['mediaResolver', 'payloadFactory', 'toolAuthorityFactory', 'authorityFactory', 'canaryFactory']) {
     assert.match(source, new RegExp(stud, 'u'), stud);
   }
-  assert.doesNotMatch(source, /\.run\(/u);
+  assert.match(source, /\['observe', 'advance'\]/u);
+  assert.match(source, /action === 'observe' \? await canary\.status\(\) : await canary\.run\(\)/u);
 });

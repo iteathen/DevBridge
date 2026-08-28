@@ -113,7 +113,7 @@ test('plain setup remains read-only at the construction gate', async () => {
   const selected = fixture();
   const result = await runDevBridgeSetup({ home: home('db-setup-plain-construction-gate') }, selected.deps);
   assert.equal(result.readyForConstruction, true);
-  assert.deepEqual(result.construction, { requested: false, attempted: false });
+  assert.deepEqual(result.construction, { requested: false, attempted: false, profile: null });
   assert.equal(selected.calls.status, 1);
   assert.equal(selected.calls.run, 0);
   const handoff = formatSetupHandoff(result);
@@ -128,7 +128,7 @@ test('plain setup reauthorizes a non-complete durable canary at the construction
   const result = await runDevBridgeSetup({ home: home('db-setup-planned-construction-gate') }, selected.deps);
   assert.equal(result.readyForConstruction, true);
   assert.equal(result.phase, 'ready-for-construction');
-  assert.deepEqual(result.construction, { requested: false, attempted: false });
+  assert.deepEqual(result.construction, { requested: false, attempted: false, profile: null });
   assert.equal(selected.calls.status, 1);
   assert.equal(selected.calls.run, 0);
   const handoff = formatSetupHandoff(result);
@@ -143,7 +143,7 @@ test('explicit construction crosses the canary run boundary only after an unbloc
   assert.equal(result.blocked, false);
   assert.equal(result.readyForConstruction, false);
   assert.equal(result.phase, 'waiting');
-  assert.deepEqual(result.construction, { requested: true, attempted: true });
+  assert.deepEqual(result.construction, { requested: true, attempted: true, profile: 'linux-development' });
   assert.equal(selected.calls.status, 1);
   assert.equal(selected.calls.run, 1);
   const handoff = formatSetupHandoff(result);
@@ -192,7 +192,7 @@ test('explicit construction does not cross a blocked read-only gate', async () =
   });
   const result = await runDevBridgeSetup({ home: home('db-setup-construct-blocked'), construct: true }, selected.deps);
   assert.equal(result.blocked, true);
-  assert.deepEqual(result.construction, { requested: true, attempted: false });
+  assert.deepEqual(result.construction, { requested: true, attempted: false, profile: 'linux-development' });
   assert.equal(selected.calls.status, 1);
   assert.equal(selected.calls.run, 0);
   assert.match(formatSetupHandoff(result), /DevBridge setup is blocked/u);
@@ -206,16 +206,16 @@ test('explicit construction resumes a non-complete durable canary state', async 
   const result = await runDevBridgeSetup({ home: home('db-setup-construct-resume'), construct: true }, selected.deps);
   assert.equal(selected.calls.status, 1);
   assert.equal(selected.calls.run, 1);
-  assert.equal(result.phase, 'operational-ready');
-  assert.deepEqual(result.construction, { requested: true, attempted: true });
-  assert.match(formatSetupHandoff(result), /setup completed successfully/u);
+  assert.equal(result.phase, 'completed');
+  assert.deepEqual(result.construction, { requested: true, attempted: true, profile: 'linux-development' });
+  assert.match(formatSetupHandoff(result), /Linux physical image construction canary advanced/u);
 });
 
 test('construction failures are reported without misclassifying them as read-only gate failures', async () => {
   const selected = fixture({ runResult: new Error('injected construction failure') });
   const result = await runDevBridgeSetup({ home: home('db-setup-construct-error'), construct: true }, selected.deps);
   assert.equal(result.blocked, true);
-  assert.deepEqual(result.construction, { requested: true, attempted: true });
+  assert.deepEqual(result.construction, { requested: true, attempted: true, profile: 'linux-development' });
   assert.match(result.blocker, /physical production-image construction failed: injected construction failure/u);
   assert.equal(selected.calls.status, 1);
   assert.equal(selected.calls.run, 1);
