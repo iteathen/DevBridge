@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { normalizeBootProtection } from '../../values/boot-protection.js';
 
 const PROTOCOL = 'devbridge/hyperv-image-construction-v2';
 const TOKEN = /^[a-f0-9]{32}$/u;
@@ -24,6 +25,7 @@ const INSTALL_RECHECK_MILLISECONDS = 2 * 60 * 1000;
 const CONSOLE_WIDTH = 320;
 const CONSOLE_HEIGHT = 240;
 const CONSOLE_RAW_BYTES = CONSOLE_WIDTH * CONSOLE_HEIGHT * 2;
+const TRUST_TEMPLATES = Object.freeze({ 'platform-owner': 'MicrosoftWindows' });
 
 function encodeScript(script) { return Buffer.from(script, 'utf16le').toString('base64'); }
 function emptyState() { return { protocol: PROTOCOL, records: {} }; }
@@ -78,7 +80,8 @@ function privateIpv4(value) {
 }
 
 function normalizeRequest(raw) {
-  const value = onlyKeys(raw, new Set(['identity', 'installer', 'seed', 'memoryBytes', 'processorCount', 'diskBytes', 'network']), 'construction request');
+  const value = onlyKeys(raw, new Set(['identity', 'installer', 'seed', 'memoryBytes', 'processorCount', 'diskBytes', 'network', 'bootProtection']), 'construction request');
+  const bootProtection = normalizeBootProtection(value.bootProtection, { optional: true, name: 'construction request.bootProtection' });
   return {
     identity: subject(value.identity),
     installer: mediaIdentity(value.installer, 'construction installer'),
@@ -87,6 +90,15 @@ function normalizeRequest(raw) {
     processorCount: boundedInteger(value.processorCount, 1, MAX_PROCESSORS, 'construction processorCount'),
     diskBytes: boundedInteger(value.diskBytes, MIN_DISK_BYTES, MAX_DISK_BYTES, 'construction diskBytes'),
     network: networkIdentity(value.network),
+    bootProtection,
+  };
+}
+
+function providerBootSettings(protection) {
+  return {
+    integrityRequired: protection?.integrity === 'required',
+    identityRequired: protection?.identity === 'required',
+    trustTemplate: protection ? TRUST_TEMPLATES[protection.trust] : null,
   };
 }
 
@@ -126,7 +138,8 @@ function sameRequest(record, request) {
     && record.diskBytes === request.diskBytes
     && record.network.control === request.network.control
     && record.network.reference === request.network.reference
-    && record.network.proof === request.network.proof;
+    && record.network.proof === request.network.proof
+    && JSON.stringify(record.bootProtection ?? null) === JSON.stringify(request.bootProtection);
 }
 
 function parseJson(result, name) {
@@ -158,7 +171,8 @@ if ($null -eq $item) {
   $item = New-VM -Name ([string]$data.name) -Generation 2 -NoVHD -MemoryStartupBytes ([long]$data.memoryBytes) -Path ([string]$data.configPath) -SwitchName ([string]$switch.Name) -ErrorAction Stop
 }
 if ([string]$item.State -ne 'Off') { throw 'construction machine must be stopped during preparation' }
-if ([string]$item.Notes -ne [string]$data.marker) {
+$alreadyOwned = [string]$item.Notes -eq [string]$data.marker
+if (-not $alreadyOwned) {
   $hard = @(Get-VMHardDiskDrive -VMName ([string]$data.name) -ErrorAction Stop)
   $dvd = @(Get-VMDvdDrive -VMName ([string]$data.name) -ErrorAction Stop)
   $net = @(Get-VMNetworkAdapter -VMName ([string]$data.name) -ErrorAction Stop)
@@ -171,11 +185,27 @@ if ([string]$item.Notes -ne [string]$data.marker) {
   if (-not [string]::IsNullOrWhiteSpace([string]$item.Notes) -or [int]$item.Generation -ne 2 -or [long]$item.MemoryStartup -ne [long]$data.memoryBytes -or -not $configMatches -or $hard.Count -ne 0 -or $dvd.Count -ne 0 -or (-not $adapterIsUnbound -and -not $adapterIsExpected)) {
     throw 'construction machine name is occupied without matching ownership evidence'
   }
-  Set-VM -Name ([string]$data.name) -Notes ([string]$data.marker) -ErrorAction Stop
 }
 Set-VM -Name ([string]$data.name) -AutomaticCheckpointsEnabled $false -AutomaticStartAction Nothing -AutomaticStopAction ShutDown -MemoryStartupBytes ([long]$data.memoryBytes) -ErrorAction Stop
 Set-VMProcessor -VMName ([string]$data.name) -Count ([long]$data.processorCount) -ErrorAction Stop
-Set-VMFirmware -VMName ([string]$data.name) -EnableSecureBoot Off -ErrorAction Stop
+$security = Get-VMSecurity -VMName ([string]$data.name) -ErrorAction Stop
+if ($alreadyOwned) {
+  if ([bool]$security.TpmEnabled -ne [bool]$data.identityRequired) { throw 'construction protected identity does not match' }
+  $firmware = Get-VMFirmware -VMName ([string]$data.name) -ErrorAction Stop
+  $integrityMatches = ([string]$firmware.SecureBoot -eq 'On') -eq [bool]$data.integrityRequired
+  if ($data.integrityRequired -eq $true) { $integrityMatches = $integrityMatches -and [string]$firmware.SecureBootTemplate -eq [string]$data.trustTemplate }
+  if (-not $integrityMatches) { throw 'construction firmware integrity does not match' }
+} else {
+  if ($data.integrityRequired -eq $true) { Set-VMFirmware -VMName ([string]$data.name) -EnableSecureBoot On -SecureBootTemplate ([string]$data.trustTemplate) -ErrorAction Stop }
+  else { Set-VMFirmware -VMName ([string]$data.name) -EnableSecureBoot Off -ErrorAction Stop }
+  if ($data.identityRequired -eq $true -and -not [bool]$security.TpmEnabled) {
+    Set-VMKeyProtector -VMName ([string]$data.name) -NewLocalKeyProtector -ErrorAction Stop
+    Enable-VMTPM -VMName ([string]$data.name) -ErrorAction Stop
+  } elseif ($data.identityRequired -ne $true -and [bool]$security.TpmEnabled) {
+    throw 'construction protected identity does not match'
+  }
+  Set-VM -Name ([string]$data.name) -Notes ([string]$data.marker) -ErrorAction Stop
+}
 $nets = @(Get-VMNetworkAdapter -VMName ([string]$data.name) -ErrorAction Stop)
 if ($nets.Count -eq 0) {
   Add-VMNetworkAdapter -VMName ([string]$data.name) -Name 'Network Adapter' -SwitchName ([string]$switch.Name) -ErrorAction Stop | Out-Null
@@ -217,10 +247,23 @@ $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 Import-Module Hyper-V -ErrorAction Stop
 $item = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq [string]$data.name } | Select-Object -First 1
 if ($null -eq $item) {
-  @{ exists = $false; owned = $false; state = 'absent'; diskPresent = (Test-Path -LiteralPath $data.diskPath -PathType Leaf); diskAttached = $false; mediaCount = 0; uptimeMilliseconds = 0; cpuUsagePercent = 0; providerStatus = 'absent'; diskAllocatedBytes = 0 } | ConvertTo-Json -Compress
+  @{ exists = $false; owned = $false; compatible = $false; reason = 'construction machine is absent'; state = 'absent'; diskPresent = (Test-Path -LiteralPath $data.diskPath -PathType Leaf); diskAttached = $false; mediaCount = 0; uptimeMilliseconds = 0; cpuUsagePercent = 0; providerStatus = 'absent'; diskAllocatedBytes = 0 } | ConvertTo-Json -Compress
   exit 0
 }
 $owned = [string]$item.Notes -eq [string]$data.marker
+$compatible = $owned
+$reason = if ($owned) { $null } else { 'construction ownership evidence does not match' }
+if ($owned -and [int]$item.Generation -ne 2) { $compatible = $false; $reason = 'construction firmware generation does not match' }
+if ($owned -and $compatible) {
+  $security = Get-VMSecurity -VMName ([string]$data.name) -ErrorAction Stop
+  if ([bool]$security.TpmEnabled -ne [bool]$data.identityRequired) { $compatible = $false; $reason = 'construction protected identity does not match' }
+}
+if ($owned -and $compatible) {
+  $firmware = Get-VMFirmware -VMName ([string]$data.name) -ErrorAction Stop
+  $integrityMatches = ([string]$firmware.SecureBoot -eq 'On') -eq [bool]$data.integrityRequired
+  if ($data.integrityRequired -eq $true) { $integrityMatches = $integrityMatches -and [string]$firmware.SecureBootTemplate -eq [string]$data.trustTemplate }
+  if (-not $integrityMatches) { $compatible = $false; $reason = 'construction firmware integrity does not match' }
+}
 $hard = @(Get-VMHardDiskDrive -VMName ([string]$data.name) -ErrorAction Stop)
 $diskAttached = $hard.Count -eq 1 -and [IO.Path]::GetFullPath([string]$hard[0].Path) -eq [IO.Path]::GetFullPath([string]$data.diskPath)
 $mediaCount = @(Get-VMDvdDrive -VMName ([string]$data.name) -ErrorAction Stop).Count
@@ -230,7 +273,7 @@ if ($diskPresent) {
   $disk = Get-VHD -Path ([string]$data.diskPath) -ErrorAction Stop
   $diskAllocatedBytes = [long]$disk.FileSize
 }
-@{ exists = $true; owned = $owned; state = ([string]$item.State).ToLowerInvariant(); providerIdentity = ([string]$item.Id).ToLowerInvariant(); diskPresent = $diskPresent; diskAttached = $diskAttached; mediaCount = [int]$mediaCount; uptimeMilliseconds = [long][Math]::Floor($item.Uptime.TotalMilliseconds); cpuUsagePercent = [int]$item.CPUUsage; providerStatus = [string]$item.Status; diskAllocatedBytes = $diskAllocatedBytes } | ConvertTo-Json -Compress
+@{ exists = $true; owned = $owned; compatible = $compatible; reason = $reason; state = ([string]$item.State).ToLowerInvariant(); providerIdentity = ([string]$item.Id).ToLowerInvariant(); diskPresent = $diskPresent; diskAttached = $diskAttached; mediaCount = [int]$mediaCount; uptimeMilliseconds = [long][Math]::Floor($item.Uptime.TotalMilliseconds); cpuUsagePercent = [int]$item.CPUUsage; providerStatus = [string]$item.Status; diskAllocatedBytes = $diskAllocatedBytes } | ConvertTo-Json -Compress
 `;
 
 const INSTALL_CONSOLE_SCRIPT = String.raw`
@@ -463,6 +506,7 @@ export class HyperVImageConstruction {
         processorCount: request.processorCount,
         diskBytes: request.diskBytes,
         network: request.network,
+        bootProtection: request.bootProtection,
         phase: 'planned',
         providerIdentity: null,
       };
@@ -483,6 +527,7 @@ export class HyperVImageConstruction {
       networkReference: record.network.reference,
       networkProof: record.network.proof,
       networkControl: record.network.control,
+      ...providerBootSettings(record.bootProtection ?? null),
     }, 120_000);
     if (result.ready !== true || typeof result.providerIdentity !== 'string') throw new Error('construction preparation did not become ready');
     record.providerIdentity = result.providerIdentity;
@@ -496,12 +541,13 @@ export class HyperVImageConstruction {
     const state = await this.#load();
     const record = state.records[identity];
     if (!record) return { identity, phase: 'absent', exists: false, owned: false, state: 'absent', diskPresent: false, diskAttached: false, mediaCount: 0, uptimeMilliseconds: 0, cpuUsagePercent: 0, providerStatus: 'absent', diskAllocatedBytes: 0 };
-    const observed = await this.#run(OBSERVE_SCRIPT, this.#descriptor(record), 30_000);
+    const observed = await this.#run(OBSERVE_SCRIPT, { ...this.#descriptor(record), ...providerBootSettings(record.bootProtection ?? null) }, 30_000);
     // A planned observation grants no ownership. It must leave exact partial
     // admission to prepare(), while every post-admission ownership loss fails.
     if (observed.exists === true && observed.owned !== true && (record.phase !== 'planned' || record.providerIdentity)) {
       throw new Error('construction provider object is not owned by this operation');
     }
+    if (observed.exists === true && observed.owned === true && observed.compatible !== true) throw new Error(String(observed.reason ?? 'construction provider object is incompatible'));
     if (record.providerIdentity && observed.exists === true && observed.providerIdentity !== record.providerIdentity) throw new Error('construction provider identity changed');
     const mediaCount = Number(observed.mediaCount ?? 0);
     if (!Number.isSafeInteger(mediaCount) || mediaCount < 0 || mediaCount > 16) throw new Error('construction media observation is invalid');

@@ -114,3 +114,54 @@ test('Hyper-V persistent adapter validates its own settings stud before invoking
     assert.equal(calls.length, 0);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('Hyper-V persistent adapter translates neutral protected boot and observes exact provider state', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-hv-protected-'));
+  const sourceRoot = path.join(root, 'images');
+  const sourcePath = path.join(sourceRoot, 'base.vhdx');
+  const calls = [];
+  try {
+    await mkdir(sourceRoot, { recursive: true });
+    await writeFile(sourcePath, 'immutable-base');
+    const invoke = async (request) => {
+      calls.push(request);
+      const script = decode(request);
+      const input = JSON.parse(request.input);
+      if (script.includes('New-VHD') && script.includes('New-VM')) {
+        await mkdir(path.dirname(input.diskPath), { recursive: true });
+        await writeFile(input.diskPath, 'child-state');
+        return success({ ready: true, providerIdentity: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' });
+      }
+      if (script.includes('Get-VMHardDiskDrive')) return success({ exists: true, owned: true, compatible: true, state: 'off', storageIdentity: 'disk-child-1', allocatedBytes: 8192 });
+      throw new Error('unexpected PowerShell request');
+    };
+    const adapter = new HyperVPersistentEnvironment({
+      directory: path.join(root, 'persistent'), sourceRoot,
+      identity: '0123456789abcdef0123456789abcdef', invoke,
+    });
+    await adapter.provision({
+      identity: 'env-11111111111111111111111111111111',
+      source: { identity: 'img-11111111111111111111111111111111', revision: 'r1', digest: '1'.repeat(64), handle: { location: sourcePath, format: 'vhdx' } },
+      settings: {
+        memoryBytes: 4294967296,
+        processorCount: 2,
+        firmware: 'efi',
+        bootProtection: { integrity: 'required', identity: 'required', trust: 'platform-owner' },
+      },
+    });
+    const provision = calls.find((call) => decode(call).includes('New-VHD'));
+    const script = decode(provision);
+    const payload = JSON.parse(provision.input);
+    assert.equal(payload.integrityRequired, true);
+    assert.equal(payload.identityRequired, true);
+    assert.equal(typeof payload.trustTemplate, 'string');
+    assert.match(script, /Get-VMFirmware/u);
+    assert.match(script, /Get-VMSecurity/u);
+    assert.match(script, /Set-VMKeyProtector[^\r\n]+-NewLocalKeyProtector/u);
+    assert.match(script, /Enable-VMTPM/u);
+    assert.ok(script.indexOf('Enable-VMTPM') < script.indexOf('-Notes $data.marker'), 'protection must precede ownership admission');
+    const observation = calls.find((call) => decode(call).includes('environment writable state is missing'));
+    assert.match(decode(observation), /environment firmware integrity does not match/u);
+    assert.match(decode(observation), /environment protected identity does not match/u);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

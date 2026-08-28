@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const genericSource = new URL('../src/runtime/image-builders/canonical-image-canary.js', import.meta.url);
-const compositionSource = new URL('../src/runtime/image-builders/ubuntu-production-image-canary-composition.js', import.meta.url);
+const compositionSource = new URL('../src/runtime/image-builders/production-image-canary-composition.js', import.meta.url);
 
 test('canonical image canary remains isolated from provider, guest, transport, and neighboring implementation identities', async () => {
   const text = await readFile(genericSource, 'utf8');

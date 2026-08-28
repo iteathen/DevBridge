@@ -20,7 +20,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Import-Module Hyper-V -ErrorAction Stop
 $required = @(
-  'Get-VMHost','Get-VM','New-VM','Remove-VM','Start-VM','Stop-VM','Set-VM','Set-VMProcessor','Set-VMFirmware',
+  'Get-VMHost','Get-VM','New-VM','Remove-VM','Start-VM','Stop-VM','Set-VM','Set-VMProcessor','Set-VMFirmware','Set-VMKeyProtector','Enable-VMTPM',
   'Get-VHD','Test-VHD','New-VHD','Get-VMSwitch','Get-VMHardDiskDrive','Add-VMHardDiskDrive',
   'Get-VMNetworkAdapter','Add-VMNetworkAdapter','Connect-VMNetworkAdapter','Get-VMDvdDrive','Add-VMDvdDrive','Remove-VMDvdDrive'
 )

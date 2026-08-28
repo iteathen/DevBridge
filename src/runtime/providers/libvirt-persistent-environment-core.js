@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { normalizeBootProtection } from '../../values/boot-protection.js';
 
 const PROTOCOL = 'devbridge/libvirt-persistent-environment-v1';
 const TOKEN = /^[a-f0-9]{32}$/u;
@@ -23,10 +24,13 @@ function onlyKeys(value, allowed, name) {
 
 function normalizeSettings(raw) {
   const value = requireObject(raw, 'environment settings');
-  onlyKeys(value, new Set(['memoryBytes', 'processorCount', 'firmware']), 'environment settings');
+  onlyKeys(value, new Set(['memoryBytes', 'processorCount', 'firmware', 'bootProtection']), 'environment settings');
   if (!Number.isSafeInteger(value.memoryBytes) || value.memoryBytes < MIN_MEMORY_BYTES || value.memoryBytes > MAX_MEMORY_BYTES) throw new TypeError('environment settings.memoryBytes is invalid');
   if (!Number.isSafeInteger(value.processorCount) || value.processorCount < 1 || value.processorCount > MAX_PROCESSORS) throw new TypeError('environment settings.processorCount is invalid');
   if (!['efi', 'bios'].includes(value.firmware)) throw new TypeError('environment settings.firmware is invalid');
+  if (normalizeBootProtection(value.bootProtection, { optional: true, name: 'environment settings.bootProtection' })) {
+    throw new Error('protected boot is unavailable through this environment adapter');
+  }
   return { memoryBytes: value.memoryBytes, processorCount: value.processorCount, firmware: value.firmware };
 }
 

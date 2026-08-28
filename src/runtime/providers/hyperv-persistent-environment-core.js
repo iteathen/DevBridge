@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { normalizeBootProtection } from '../../values/boot-protection.js';
 
 const PROTOCOL = 'devbridge/hyperv-persistent-environment-v1';
 const TOKEN = /^[a-f0-9]{32}$/u;
@@ -13,6 +14,7 @@ const COMMAND_ARGS = ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPol
 const MIN_MEMORY_BYTES = 256 * 1024 * 1024;
 const MAX_MEMORY_BYTES = 1024 * 1024 * 1024 * 1024;
 const MAX_PROCESSORS = 256;
+const TRUST_TEMPLATES = Object.freeze({ 'platform-owner': 'MicrosoftWindows' });
 
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
@@ -25,11 +27,24 @@ function onlyKeys(value, allowed, name) {
 
 function normalizeSettings(raw) {
   const value = requireObject(raw, 'environment settings');
-  onlyKeys(value, new Set(['memoryBytes', 'processorCount', 'firmware']), 'environment settings');
+  onlyKeys(value, new Set(['memoryBytes', 'processorCount', 'firmware', 'bootProtection']), 'environment settings');
   if (!Number.isSafeInteger(value.memoryBytes) || value.memoryBytes < MIN_MEMORY_BYTES || value.memoryBytes > MAX_MEMORY_BYTES) throw new TypeError('environment settings.memoryBytes is invalid');
   if (!Number.isSafeInteger(value.processorCount) || value.processorCount < 1 || value.processorCount > MAX_PROCESSORS) throw new TypeError('environment settings.processorCount is invalid');
   if (!['efi', 'bios'].includes(value.firmware)) throw new TypeError('environment settings.firmware is invalid');
-  return { memoryBytes: value.memoryBytes, processorCount: value.processorCount, firmware: value.firmware };
+  const bootProtection = normalizeBootProtection(value.bootProtection, { optional: true, name: 'environment settings.bootProtection' });
+  if (bootProtection && value.firmware !== 'efi') throw new TypeError('environment protected boot requires EFI firmware');
+  const settings = { memoryBytes: value.memoryBytes, processorCount: value.processorCount, firmware: value.firmware };
+  if (bootProtection) settings.bootProtection = bootProtection;
+  return settings;
+}
+
+function providerBootSettings(settings) {
+  const protection = settings.bootProtection ?? null;
+  return {
+    integrityRequired: protection?.integrity === 'required',
+    identityRequired: protection?.identity === 'required',
+    trustTemplate: protection ? TRUST_TEMPLATES[protection.trust] : null,
+  };
 }
 
 function encodeScript(script) {
@@ -108,6 +123,29 @@ if (-not $owned) {
   @{ exists = $true; owned = $false; compatible = $false; state = ([string]$item.State).ToLowerInvariant(); reason = 'environment ownership evidence does not match' } | ConvertTo-Json -Compress
   exit 0
 }
+$expectedGeneration = if ([string]$data.firmware -eq 'bios') { 1 } else { 2 }
+if ([int]$item.Generation -ne $expectedGeneration) {
+  @{ exists = $true; owned = $true; compatible = $false; state = ([string]$item.State).ToLowerInvariant(); reason = 'environment firmware generation does not match' } | ConvertTo-Json -Compress
+  exit 0
+}
+$security = Get-VMSecurity -VMName $data.name -ErrorAction Stop
+$identityMatches = [bool]$security.TpmEnabled -eq [bool]$data.identityRequired
+if (-not $identityMatches) {
+  @{ exists = $true; owned = $true; compatible = $false; state = ([string]$item.State).ToLowerInvariant(); reason = 'environment protected identity does not match' } | ConvertTo-Json -Compress
+  exit 0
+}
+if ($expectedGeneration -eq 2) {
+  $firmware = Get-VMFirmware -VMName $data.name -ErrorAction Stop
+  $integrityEnabled = [string]$firmware.SecureBoot -eq 'On'
+  $integrityMatches = $integrityEnabled -eq [bool]$data.integrityRequired
+  if ($data.integrityRequired -eq $true) {
+    $integrityMatches = $integrityMatches -and [string]$firmware.SecureBootTemplate -eq [string]$data.trustTemplate
+  }
+  if (-not $integrityMatches) {
+    @{ exists = $true; owned = $true; compatible = $false; state = ([string]$item.State).ToLowerInvariant(); reason = 'environment firmware integrity does not match' } | ConvertTo-Json -Compress
+    exit 0
+  }
+}
 if (-not $diskExists) {
   @{ exists = $true; owned = $true; compatible = $false; state = ([string]$item.State).ToLowerInvariant(); reason = 'environment writable state is missing' } | ConvertTo-Json -Compress
   exit 0
@@ -184,7 +222,8 @@ if (-not [string]::IsNullOrWhiteSpace([string]$data.providerIdentity) -and $actu
 }
 $attached = @(Get-VMHardDiskDrive -VMName $data.name -ErrorAction Stop)
 $attachedMatches = $attached.Count -eq 1 -and [IO.Path]::GetFullPath([string]$attached[0].Path) -eq [IO.Path]::GetFullPath([string]$data.diskPath)
-if ([string]$item.Notes -ne [string]$data.marker) {
+$alreadyOwned = [string]$item.Notes -eq [string]$data.marker
+if (-not $alreadyOwned) {
   # A crash may occur after New-VM commits but before the ownership marker is
   # written. Only adopt that exact partial effect when it has no foreign marker
   # and already points at the pre-recorded owned writable disk.
@@ -194,9 +233,31 @@ if ([string]$item.Notes -ne [string]$data.marker) {
 } elseif (-not $attachedMatches) {
   throw 'environment storage attachment does not match'
 }
+$expectedGeneration = if ([string]$data.firmware -eq 'bios') { 1 } else { 2 }
+if ([int]$item.Generation -ne $expectedGeneration) { throw 'environment firmware generation does not match' }
+$security = Get-VMSecurity -VMName $data.name -ErrorAction Stop
+if ($alreadyOwned) {
+  if ([bool]$security.TpmEnabled -ne [bool]$data.identityRequired) { throw 'environment protected identity does not match' }
+  if ($expectedGeneration -eq 2) {
+    $firmware = Get-VMFirmware -VMName $data.name -ErrorAction Stop
+    $integrityMatches = ([string]$firmware.SecureBoot -eq 'On') -eq [bool]$data.integrityRequired
+    if ($data.integrityRequired -eq $true) { $integrityMatches = $integrityMatches -and [string]$firmware.SecureBootTemplate -eq [string]$data.trustTemplate }
+    if (-not $integrityMatches) { throw 'environment firmware integrity does not match' }
+  }
+} else {
+  if ($expectedGeneration -eq 2) {
+    if ($data.integrityRequired -eq $true) { Set-VMFirmware -VMName $data.name -EnableSecureBoot On -SecureBootTemplate ([string]$data.trustTemplate) -ErrorAction Stop }
+    else { Set-VMFirmware -VMName $data.name -EnableSecureBoot Off -ErrorAction Stop }
+  }
+  if ($data.identityRequired -eq $true -and -not [bool]$security.TpmEnabled) {
+    Set-VMKeyProtector -VMName $data.name -NewLocalKeyProtector -ErrorAction Stop
+    Enable-VMTPM -VMName $data.name -ErrorAction Stop
+  } elseif ($data.identityRequired -ne $true -and [bool]$security.TpmEnabled) {
+    throw 'environment protected identity does not match'
+  }
+}
 Set-VM -Name $data.name -Notes $data.marker -AutomaticCheckpointsEnabled $false -AutomaticStartAction Nothing -AutomaticStopAction ShutDown -ErrorAction Stop
 Set-VMProcessor -VMName $data.name -Count ([long]$data.processorCount) -ErrorAction Stop
-if ($vmGeneration -eq 2) { Set-VMFirmware -VMName $data.name -EnableSecureBoot Off -ErrorAction Stop }
 @{ ready = $true; providerIdentity = $actualIdentity } | ConvertTo-Json -Compress
 `;
 
@@ -410,6 +471,7 @@ export class HyperVPersistentEnvironment {
       memoryBytes: settings.memoryBytes,
       processorCount: settings.processorCount,
       firmware: settings.firmware,
+      ...providerBootSettings(settings),
     }, 120_000);
     const providerIdentity = String(outcome?.providerIdentity ?? '').toLowerCase();
     if (!PROVIDER_ID.test(providerIdentity)) throw new Error('environment management did not return a valid provider identity');
@@ -439,7 +501,7 @@ export class HyperVPersistentEnvironment {
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error;
     }
-    const raw = await this.#run(OBSERVE_SCRIPT, record, 45_000);
+    const raw = await this.#run(OBSERVE_SCRIPT, { ...record, ...providerBootSettings(normalizeSettings(record.settings)) }, 45_000);
     return normalizedObservation(identity, raw, record.sourceIdentity);
   }
 

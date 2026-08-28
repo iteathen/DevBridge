@@ -54,5 +54,11 @@ test('initial materialization policy supports the declared EFI contract without 
   const policy = createEnvironmentMaterializationPolicy();
   assert.match(await policy.subject.resolve({ profile: 'linux-development' }), /^profile-[a-f0-9]{32}$/u);
   assert.deepEqual(await policy.settings.resolve({ resources: { memoryBytes: 4096, processorCount: 4 }, boot: { requirement: 'efi-v1' } }), { memoryBytes: 4096, processorCount: 4, firmware: 'efi' });
+  assert.deepEqual(await policy.settings.resolve({ resources: { memoryBytes: 4096, processorCount: 4 }, boot: { requirement: 'efi-protected-v1' } }), {
+    memoryBytes: 4096,
+    processorCount: 4,
+    firmware: 'efi',
+    bootProtection: { integrity: 'required', identity: 'required', trust: 'platform-owner' },
+  });
   await assert.rejects(() => policy.settings.resolve({ resources: { memoryBytes: 4096, processorCount: 4 }, boot: { requirement: 'unknown-v1' } }), /unsupported/u);
 });
