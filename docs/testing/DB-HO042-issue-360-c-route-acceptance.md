@@ -26,7 +26,7 @@ These are tool-owned interfaces used inside the guest. They add no host executio
 
 ## Reassessment
 
-The smallest complete fixture is a normalized controller plan containing only ephemeral `CMakeLists.txt` and `main.c` files. It defines one target and two tests:
+The smallest complete fixture is a normalized controller plan containing only ephemeral `CMakeLists.txt` and `main.c` files under a challenge-derived project directory. It defines one target and two tests:
 
 1. execute the target and require the exact bounded run challenge in stdout;
 2. invoke CMake's fixed SHA-256 helper on the exact target and return the digest.
@@ -52,10 +52,12 @@ No host UAC, provider, VM, guest, route, repository, or operational configuratio
 
 ## Implementation checkpoint
 
-The acceptance factory now emits one normalized `devbridge/controller-plan-v1` value. For challenge `DEVBRIDGE_ROUTE_42A6E90C`, its exact plan digest is `e5869626ecdaa0419c7f90bb79c5ef3b71358ea291c22e11c4bc38eb015022bb`. The two ephemeral inputs are bound as:
+The acceptance factory now emits both the raw proposal accepted by a normal `devbridge/task-v1` envelope and its one normalized `devbridge/controller-plan-v1` value. For challenge `DEVBRIDGE_ROUTE_42A6E90C`, the project directory is `route-acceptance-ca2a1238bc9c6e79` and the exact normalized plan digest is `df2a79e827bb9ca9e6e4aff82a60e4936cfb5d54566695d93352d57b3eea32cd`. The two ephemeral inputs are bound as:
 
-- `CMakeLists.txt`: `867ac713fe24ec66fa68a1ef1af8e602b0c089bff6a5ccf2ff4d5f4456265e6a`;
-- `main.c`: `92cc46bea18340103bf5913065df42bf26919701b1859fe51300cb196cd31e3e`.
+- `route-acceptance-ca2a1238bc9c6e79/CMakeLists.txt`: `867ac713fe24ec66fa68a1ef1af8e602b0c089bff6a5ccf2ff4d5f4456265e6a`;
+- `route-acceptance-ca2a1238bc9c6e79/main.c`: `92cc46bea18340103bf5913065df42bf26919701b1859fe51300cb196cd31e3e`.
+
+The raw proposal contains no normalization-derived digest fields and round-trips through the ordinary task-envelope parser with no preferred coding tool. The challenge-derived directory avoids collisions with files owned by an arbitrary target repository. Generic executor cleanup owns that directory only when it was observed absent before materialization and removes it exactly and non-recursively after its files; see `docs/testing/DB-HO044-issue-360-ephemeral-parent-cleanup.md`.
 
 The existing CTest adapter accepts only an optional boolean `verbose` property and translates `true` to the fixed local `--verbose` argument. It still rejects unknown parameters and non-boolean values. The plan carries no executable, host path, credential, provider, environment, profile, repository, model, or remote identity. All three registered operations retain repository-code classification and therefore cannot select a host-direct fallback.
 
@@ -68,3 +70,9 @@ Hosted evidence on 2026-08-28:
 - a fresh complete-suite run then passed: 1,529 passed, 15 platform skips, 0 failed.
 
 This checkpoint proves plan determinism, closed input/operation contracts, repository-code classification, and the generic cleanup/evidence composition. It deliberately does **not** claim that either physical guest executed the plan. Linux execution requires the active protected profile to finish construction/configuration; Windows still requires locally approved installation media and its separate accepted profile.
+
+Hosted isolation update on 2026-08-28:
+
+- focused controller-plan, recovery, task-envelope, operation-registry, and scratch-contract tests: 21 passed, 0 failed;
+- repository preflight: 102 syntax files, 2 JSON files, and 98 targeted test files passed;
+- complete suite: 1,534 passed, 15 platform skips, 0 failed out of 1,549 tests.
