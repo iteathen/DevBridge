@@ -1,6 +1,6 @@
 # DB-HO024 — issue #293 Linux service-definition composition
 
-Status: planned from exact `cuda-target` baseline `d91fbeec0274fcd8ab4fe5c526c6ab7931d39b26` on isolated branch `security/293-linux-service-definition`.
+Status: implemented and locally qualified from exact `cuda-target` baseline `d91fbeec0274fcd8ab4fe5c526c6ab7931d39b26` on isolated branch `security/293-linux-service-definition`; hosted CI is pending.
 
 ## Assessment
 
@@ -40,3 +40,25 @@ The definition composition knows only its local name/path/bytes/identity contrac
 6. Add both suites to preflight; run focused Linux authority tests, repository preflight, repository-execution architecture gates, and the full suite before isolated publication.
 
 No real system-manager, filesystem, account, sudo/UAC, provider, VM, or physical-host mutation belongs to hosted qualification.
+
+## Implementation
+
+The service observation adapter now owns the one fixed, read-only `/usr/bin/systemctl --system --no-pager --no-ask-password show` call. It requests exactly twelve locally selected properties, uses only a fixed C locale, accepts a bounded cancellation signal, limits time and output, and converts spawn, exit, timeout, truncation, or parse failure into path-free evidence. `NeedDaemonReload=no` and an empty `DropInPaths` are independently required before it reports the loaded definition current. Non-Linux hosts remain explicitly unattached without invoking the adapter.
+
+The service-definition composition connects six neutral studs: inspect, load, save, observe, actions, and reconcile. It accepts one exact target plus at most two explicit prior definitions; verifies a real root-owned, root-group, `0644` file under an immediate root-owned non-writable parent; rejects unadmitted bytes rather than overwriting them; and verifies the loaded fragment, local identity, exact supplementary-group set, service type, absence of drop-ins, manager reload state, and enablement. The generic reconciler alone sequences publish, refresh, and persist, so an interrupted effect is recovered from fresh observation and an exact ready definition is mutation-free.
+
+Lifecycle inspection now consumes the observer through one replaceable read-only stud. Its former system-manager invocation and parser were deleted, and a source-isolation test prevents that command authority from drifting back into the broader inspector. The new modules do not name lifecycle generations, ownership records, journals, repositories, providers, virtual machines, elevation mechanisms, or neighboring topology.
+
+Review found and closed two injected-evidence ambiguity paths before publication: duplicate supplementary groups can no longer masquerade as an expected set, and every protected-file observation must carry typed presence, policy, and observed-mode evidence. Both fail before a publication, reload, or enable action.
+
+## Local qualification
+
+All qualification below ran without elevation and without touching a real system manager, account database, protected filesystem, provider, or VM:
+
+- focused definition/manager/observer/lifecycle boundary selection: 38 passed, 0 failed;
+- broader Linux authority selection: 111 total, 108 passed, 3 expected real-Linux filesystem skips, 0 failed;
+- repository preflight: 43 syntax files, 2 JSON files, 45 targeted test files, passed;
+- repository-execution architecture gates: 34 total, 33 passed, 1 expected Windows symlink-capability skip, 0 failed;
+- complete Windows suite: 1,267 total, 1,256 passed, 11 platform skips, 0 failed.
+
+Hosted Ubuntu and Windows CI must still prove this exact isolated head before integration. Issue #293 remains open because higher lifecycle composition, bounded one-command elevation, libvirt/qcow2 provider authorization, and physical Linux qualification are not part of this slice.
