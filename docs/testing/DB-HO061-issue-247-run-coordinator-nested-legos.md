@@ -79,3 +79,16 @@ Existing durable run fields and exact strings remain intact. A new parent failur
 - `git diff --check`: passed.
 
 Hosted Windows and Ubuntu qualification on the exact pushed implementation commit remains required before #247 closes. No setup, elevation, service, provider, image, environment, VM, guest, or repository-execution effect occurred.
+
+## Accepted evidence
+
+GitHub Actions run `33212636105` qualified exact implementation commit `9cf4155df5887d8df1120dbf13b43a110ab7c420`:
+
+- Windows serialized complete suite plus doctor passed in 2 minutes 18 seconds;
+- Ubuntu complete suite plus doctor passed in 41 seconds;
+- Ubuntu preflight, identity audit, and installer regression passed in 23 seconds; and
+- unchanged attempt 2 passed Windows preflight, identity audit, and installer regression in 1 minute 7 seconds.
+
+Attempt 1's Windows smoke preflight failed the existing real CMake capability probe under parallel targeted-test load, while that same test passed in the serialized Windows complete suite on the same SHA. The unchanged retry passed. This does not invalidate the isolated coordinator implementation, but it proves that #290's full-suite-only serialization did not finish its broader Windows smoke reliability acceptance. Issue #290 was reopened with the exact failure and rerun evidence; no product or probe timeout was widened.
+
+This accepts issue #247. It does not accept provider, image, profile-environment, guest-transport, repository-execution, or physical C-canary readiness. No UAC or protected operation occurred.
