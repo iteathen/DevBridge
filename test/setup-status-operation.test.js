@@ -81,6 +81,26 @@ function blockedResult() {
           image: { index: 6, name: 'Windows 11 Pro', edition: 'Professional', architecture: 'amd64', build: 26100 },
         },
       },
+      construction: {
+        state: 'blocked',
+        reason: 'provider data at C:\\Users\\operator\\private\\provider-state is unavailable',
+        physical: {
+          state: 'blocked',
+          phase: 'absent',
+          complete: false,
+          blocked: true,
+          reason: 'source C:\\Users\\operator\\private\\media.iso is unavailable',
+          subject: 'subject-private',
+          image: 'C:\\Users\\operator\\private\\windows.vhdx',
+          authorityRegistered: false,
+          preflight: {
+            ready: false,
+            reason: 'storage C:\\Users\\operator\\private\\images is unavailable',
+            platform: 'win32',
+            capabilities: { provider: true, connectivity: true, keyring: false, memory: true, storage: false },
+          },
+        },
+      },
     },
   };
 }
@@ -138,6 +158,25 @@ test('setup.status delegates with no remote arguments and returns blocked setup 
         image: { index: 6, name: 'Windows 11 Pro', edition: 'Professional', architecture: 'amd64', build: 26100 },
       },
     },
+    construction: {
+      state: 'blocked',
+      reason: 'provider data at <local-path>',
+      physicalStatus: {
+        state: 'blocked',
+        phase: 'absent',
+        complete: false,
+        blocked: true,
+        reason: 'source <local-path>',
+        authorityRegistered: false,
+        preflight: {
+          ready: false,
+          reason: 'storage <local-path>',
+          platform: 'win32',
+          capabilities: { provider: true, connectivity: true, keyring: false, memory: true, storage: false },
+          connectivity: null,
+        },
+      },
+    },
   });
 });
 
@@ -167,6 +206,8 @@ test('setup status projection removes local paths and repository or identity det
     'source-secret',
     'private.iso',
     'authority.json',
+    'subject-private',
+    'windows.vhdx',
   ]) {
     assert.equal(serialized.includes(forbidden), false, forbidden);
   }

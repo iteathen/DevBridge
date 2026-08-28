@@ -31,6 +31,7 @@ import {
   SETUP_OPERATIONAL_CONFIGURATION_REQUEST_PROTOCOL,
 } from '../setup/operational-configuration.js';
 import { reconcileWindowsInstallMediaSetup } from './windows-install-media-setup.js';
+import { reconcileWindowsProductionImageSetup } from './windows-production-image-setup.js';
 
 const PROTOCOL = 'devbridge/setup-status-v1';
 const STATE_KEY = 'setup:v1';
@@ -130,7 +131,7 @@ async function createSetupResourceConflict({ stateDirectory, platform, invoke })
   return createWindowsSetupResourceConflict({ identity, platform, invoke });
 }
 
-function setupResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, operationalConfiguration = null, windowsMedia = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
+function setupResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, operationalConfiguration = null, windowsMedia = null, windowsConstruction = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
   const readyForConstruction = constructionAttempted !== true && physical?.blocked === false && physical?.complete !== true;
   return Object.freeze({
     protocol: PROTOCOL,
@@ -149,7 +150,7 @@ function setupResult({ home, pathStatus, repositories = null, identity = null, s
     environment: publicEnvironmentActivation(environmentActivation),
     operational: publicOperationalConfiguration(operationalConfiguration),
     linuxProfile: Object.freeze({ profile: 'linux-development', snapshot, physicalStatus: physical }),
-    windowsProfile: Object.freeze({ profile: 'windows-development', media: windowsMedia }),
+    windowsProfile: Object.freeze({ profile: 'windows-development', media: windowsMedia, construction: windowsConstruction }),
   });
 }
 
@@ -210,6 +211,9 @@ function appendWindowsMedia(lines, windowsProfile) {
       `Media: ${media.accepted.media.name} (${media.accepted.media.sha256})`,
       `Image: index ${media.accepted.image.index}, ${media.accepted.image.name}, ${media.accepted.image.architecture}, build ${media.accepted.image.build}`,
     );
+    const construction = windowsProfile.construction;
+    if (construction?.state === 'blocked') lines.push(`Read-only construction gate blocked: ${construction.reason ?? 'unknown blocker'}`);
+    else if (construction?.physical) lines.push(`Read-only construction gate: ${construction.physical.state ?? construction.state}`);
     return;
   }
   if (media.state === 'selection-required') {
@@ -377,6 +381,7 @@ export async function runDevBridgeSetup({
   authorityFactory = createUbuntuSetupAuthority,
   canaryFactory = createUbuntuProductionImagePhysicalCanary,
   windowsMediaReconciler = reconcileWindowsInstallMediaSetup,
+  windowsConstructionReconciler = reconcileWindowsProductionImageSetup,
 } = {}) {
   if (typeof construct !== 'boolean') throw new TypeError('DevBridge setup construction option must be boolean');
   if (typeof discoverWindowsMedia !== 'boolean') throw new TypeError('DevBridge Windows media discovery option must be boolean');
@@ -386,7 +391,8 @@ export async function runDevBridgeSetup({
   const store = storeFactory(path.join(root, 'state', 'setup.json'));
   const previous = await store.get(STATE_KEY);
   let windowsMedia = null;
-  const publicResult = (value) => setupResult({ ...value, windowsMedia });
+  let windowsConstruction = null;
+  const publicResult = (value) => setupResult({ ...value, windowsMedia, windowsConstruction });
 
   try {
     windowsMedia = await windowsMediaReconciler({
@@ -410,6 +416,23 @@ export async function runDevBridgeSetup({
   }
   if (windowsMedia?.state === 'blocked' && (windowsMediaLocation != null || windowsMediaApproval != null)) {
     return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: windowsMedia.blocker });
+  }
+  if (windowsMedia?.state === 'accepted') {
+    try {
+      windowsConstruction = await windowsConstructionReconciler({
+        home: root,
+        stateDirectory: path.join(root, 'state'),
+        platform,
+        invoke,
+      });
+    } catch {
+      windowsConstruction = Object.freeze({
+        protocol: 'devbridge/windows-production-image-setup-status-v1',
+        state: 'blocked',
+        reason: 'Windows production image status reconciliation failed; inspect local setup evidence and retry',
+        physical: null,
+      });
+    }
   }
 
   let pathStatus;

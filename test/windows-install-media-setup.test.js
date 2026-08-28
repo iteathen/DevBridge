@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { reconcileWindowsInstallMediaSetup } from '../src/app/windows-install-media-setup.js';
+import {
+  reconcileWindowsInstallMediaSetup,
+  resolveWindowsInstallMediaSetup,
+} from '../src/app/windows-install-media-setup.js';
 
 function inspectionResult() {
   return {
@@ -90,6 +93,15 @@ test('Windows media setup discovers then separately approves exact durable autho
   assert.equal(accepted.accepted.sourceClass, 'official-owned');
   assert.equal(accepted.accepted.temporary, false);
   assert.equal(JSON.stringify(accepted).includes(location), false);
+  const resolved = await resolveWindowsInstallMediaSetup({
+    home,
+    stateDirectory: path.join(home, 'state'),
+    platform: 'win32',
+    invoke,
+  });
+  assert.equal(resolved.location, location);
+  assert.equal(resolved.authority.image.index, 6);
+  assert.equal(invocations, 2);
 });
 
 test('Windows media setup isolates local inspection failures behind a bounded status', async (t) => {
@@ -121,4 +133,10 @@ test('Windows media setup remains unavailable without mutation on other hosts', 
   });
   assert.equal(result.state, 'platform-unavailable');
   assert.equal(result.inbox, null);
+  assert.equal(await resolveWindowsInstallMediaSetup({
+    home,
+    stateDirectory: path.join(home, 'state'),
+    platform: 'linux',
+    invoke: async () => inspectionResult(),
+  }), null);
 });

@@ -47,10 +47,11 @@ function dependencies({
   acceptedConflict = null,
   initialState = null,
   windowsMedia = null,
+  windowsConstruction = null,
 } = {}) {
   const store = memoryStore(initialState);
   let conflictConsent = acceptedConflict;
-  const calls = { windowsMedia: 0, windowsMediaRequest: null, prerequisite: 0, profileConfiguration: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
+  const calls = { windowsMedia: 0, windowsMediaRequest: null, windowsConstruction: 0, prerequisite: 0, profileConfiguration: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
   const discoveredRepositories = repositories ?? Array.from({ length: count }, (_, index) => repository(index));
   return {
     calls,
@@ -79,6 +80,15 @@ function dependencies({
           candidates: [],
           rejectedCount: 0,
           accepted: null,
+        });
+      },
+      windowsConstructionReconciler: async () => {
+        calls.windowsConstruction += 1;
+        return structuredClone(windowsConstruction ?? {
+          protocol: 'devbridge/windows-production-image-setup-status-v1',
+          state: 'platform-unavailable',
+          reason: null,
+          physical: null,
         });
       },
       prerequisiteReconciler: async () => {
@@ -234,6 +244,38 @@ test('automatic Windows media failure remains profile-local while an explicit ap
   assert.equal(stopped.blocked, true);
   assert.match(stopped.blocker, /Windows install media reconciliation failed/u);
   assert.equal(explicit.calls.prerequisite, 0);
+});
+
+test('accepted Windows media exposes only read-only construction status and never blocks Linux progress', async () => {
+  const fixture = dependencies({
+    windowsMedia: {
+      protocol: 'devbridge/windows-install-media-selection-status-v1',
+      state: 'accepted',
+      candidates: [],
+      rejectedCount: 0,
+      accepted: {
+        candidate: 'candidate-0123456789abcdef0123456789abcdef',
+        authority: 'subject-0123456789abcdef0123456789abcdef',
+        sourceClass: 'official-owned',
+        temporary: false,
+        media: { name: 'Windows.iso', bytes: 100, sha256: 'a'.repeat(64) },
+        image: { index: 6, name: 'Windows 11 Pro', edition: 'Professional', architecture: 'amd64', build: 26100 },
+      },
+    },
+    windowsConstruction: {
+      protocol: 'devbridge/windows-production-image-setup-status-v1',
+      state: 'blocked',
+      reason: 'provider prerequisite is unavailable',
+      physical: { state: 'blocked', complete: false, blocked: true, reason: 'provider prerequisite is unavailable' },
+    },
+  });
+  const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-windows-construction-status') }, fixture.deps);
+  assert.equal(result.blocked, false);
+  assert.equal(result.readyForConstruction, true);
+  assert.equal(result.windowsProfile.construction.state, 'blocked');
+  assert.equal(fixture.calls.windowsConstruction, 1);
+  assert.equal(fixture.calls.canaryRun, 0);
+  assert.match(formatSetupHandoff(result), /Read-only construction gate blocked: provider prerequisite is unavailable/u);
 });
 
 test('setup discovers one exact inactive conflict and stops before elevation until the subject is approved', async () => {

@@ -150,6 +150,16 @@ function windowsMediaProjection(value) {
   });
 }
 
+function windowsConstructionProjection(value) {
+  if (!value || typeof value !== 'object') return null;
+  const states = new Set(['platform-unavailable', 'media-required', 'ready', 'blocked', 'complete']);
+  return Object.freeze({
+    state: states.has(value.state) ? value.state : null,
+    reason: remoteReason(value.reason),
+    physicalStatus: physicalProjection(value.physical),
+  });
+}
+
 export function projectSetupStatus(result) {
   if (!result || typeof result !== 'object' || result.protocol !== 'devbridge/setup-status-v1') {
     throw new TypeError('setup.status received an invalid setup result');
@@ -178,6 +188,7 @@ export function projectSetupStatus(result) {
     windowsProfile: Object.freeze({
       profile: result.windowsProfile?.profile === 'windows-development' ? 'windows-development' : null,
       media: windowsMediaProjection(result.windowsProfile?.media),
+      construction: windowsConstructionProjection(result.windowsProfile?.construction),
     }),
   });
 }

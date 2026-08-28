@@ -56,6 +56,27 @@ function blockedStatus(inbox) {
   });
 }
 
+function setupComposition({ home, stateDirectory, platform, invoke, locations = [] }) {
+  const root = path.join(stateDirectory, 'windows-install-media');
+  const inbox = path.join(home, 'media', 'windows');
+  const source = createWindowsInstallMediaSource({
+    roots: [inbox],
+    locations,
+    registry: createWindowsInstallMediaSourceStateStore(path.join(root, 'sources.json')),
+    platform,
+    invoke,
+    inspectorFactory: (options) => createWindowsInstallMediaInspector(options),
+  });
+  const selection = createWindowsInstallMediaSelection({
+    source,
+    catalog: createWindowsInstallMediaAuthorityCatalog({ store: createWindowsInstallMediaAuthorityStateStore(path.join(root, 'authorities.json')) }),
+    state: createWindowsInstallMediaSelectionStateStore(path.join(root, 'selection.json')),
+    normalizeInventory: normalizeWindowsInstallMediaInventory,
+    createAuthority: authorityValue,
+  });
+  return Object.freeze({ inbox, selection });
+}
+
 export async function reconcileWindowsInstallMediaSetup({
   home,
   stateDirectory,
@@ -75,22 +96,13 @@ export async function reconcileWindowsInstallMediaSetup({
 
   const inbox = path.join(selectedHome, 'media', 'windows');
   try {
-    const root = path.join(selectedState, 'windows-install-media');
     if (discover || location != null) await mkdir(inbox, { recursive: true, mode: 0o700 });
-    const source = createWindowsInstallMediaSource({
-      roots: [inbox],
-      locations: location == null ? [] : [absolute(location, 'install media source location')],
-      registry: createWindowsInstallMediaSourceStateStore(path.join(root, 'sources.json')),
+    const { selection } = setupComposition({
+      home: selectedHome,
+      stateDirectory: selectedState,
       platform,
       invoke,
-      inspectorFactory: (options) => createWindowsInstallMediaInspector(options),
-    });
-    const selection = createWindowsInstallMediaSelection({
-      source,
-      catalog: createWindowsInstallMediaAuthorityCatalog({ store: createWindowsInstallMediaAuthorityStateStore(path.join(root, 'authorities.json')) }),
-      state: createWindowsInstallMediaSelectionStateStore(path.join(root, 'selection.json')),
-      normalizeInventory: normalizeWindowsInstallMediaInventory,
-      createAuthority: authorityValue,
+      locations: location == null ? [] : [absolute(location, 'install media source location')],
     });
     const status = approval != null
       ? await selection.approve(approval)
@@ -99,4 +111,18 @@ export async function reconcileWindowsInstallMediaSetup({
   } catch {
     return blockedStatus(inbox);
   }
+}
+
+export async function resolveWindowsInstallMediaSetup({
+  home,
+  stateDirectory,
+  platform = process.platform,
+  invoke,
+} = {}) {
+  const selectedHome = absolute(home, 'install media setup home');
+  const selectedState = absolute(stateDirectory, 'install media setup state directory');
+  if (typeof platform !== 'string' || platform.length === 0 || typeof invoke !== 'function') throw new TypeError('install media setup dependencies are invalid');
+  if (platform !== 'win32') return null;
+  const { selection } = setupComposition({ home: selectedHome, stateDirectory: selectedState, platform, invoke });
+  return selection.resolve();
 }
