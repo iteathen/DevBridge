@@ -1,6 +1,6 @@
 # DB-HO018 — issue #293 Linux numeric identity binding
 
-Status: implemented and locally qualified on isolated branch `security/293-linux-identity-binding`. The slice was originally planned from exact `cuda-target` baseline `7148efb88bbc15c1237dfb42b7f1578fdcb3e87b`, then rebased and fully requalified against `c021abc00ffb7118990776831083a5fb66a1381c` after the separately isolated test-reliability prerequisites were integrated.
+Status: implemented, qualified, and integrated into `cuda-target` by PR #331 at `6b6aafa0db3662e6074dd8f8445501027e8302bc`. The slice was originally planned from exact baseline `7148efb88bbc15c1237dfb42b7f1578fdcb3e87b`, then rebased and fully requalified against `c021abc00ffb7118990776831083a5fb66a1381c` after the separately isolated test-reliability prerequisites were integrated.
 
 ## Assessment
 
@@ -56,3 +56,7 @@ Repository preflight now includes the identity-binding boundary suite.
 - full suite: 1,238 total, 1,227 passed, 11 platform skips, 0 failed, with a normal TAP exit in 52.1 seconds.
 
 The earlier qualification attempt exposed the independent test-reliability issues #323, #326, and #328. Those fixes and their evidence are integrated through `c021abc00ffb7118990776831083a5fb66a1381c`; all three issues are closed. This branch contains none of those test-harness changes, and the final evidence above was produced only after rebasing onto their integrated baseline.
+
+## Remote evidence
+
+GitHub Actions run `33129012235` passed all four required jobs for PR #331: Ubuntu smoke in 16 seconds, Ubuntu full test in 31 seconds, Windows smoke in 50 seconds, and Windows full test in 2 minutes 23 seconds. The isolated implementation branch was removed after the squash merge. Issue #293 remains open because Linux unit/service, bounded elevation, and physical libvirt qualification dependencies are still outstanding.
