@@ -16,6 +16,13 @@ const businessFiles = [
   new URL('../src/runtime/work-runner.js', import.meta.url),
   new URL('../src/runtime/deterministic-process-runner.js', import.meta.url),
 ];
+const nestedCompositionFiles = [
+  new URL('../src/app/repository-execution/byte-channel.js', import.meta.url),
+  new URL('../src/app/repository-execution/operation-materializer.js', import.meta.url),
+  new URL('../src/app/repository-execution/route-access.js', import.meta.url),
+  new URL('../src/app/repository-execution/session-guard.js', import.meta.url),
+  new URL('../src/app/repository-execution/workspace-session.js', import.meta.url),
+];
 
 test('Stage 6 neutral transfer and orchestration LEGO contains no provider, transport, or neighboring-module identity', async () => {
   const forbidden = [
@@ -66,4 +73,12 @@ test('Stage 6 composition owns temporary topology while candidate validation sta
   const runtime = await readFile(new URL('../src/app/runtime.js', import.meta.url), 'utf8');
   assert.match(runtime, /createRuntimeExecutionContext/u);
   assert.doesNotMatch(runtime, /UnavailableRepositoryExecution/u);
+});
+
+test('Stage 6 nested composition mechanics import no local implementation or external topology', async () => {
+  for (const file of nestedCompositionFiles) {
+    const source = await readFile(file, 'utf8');
+    assert.doesNotMatch(source, /from ['"]\.\.?\//u);
+    assert.doesNotMatch(source, /hyper-?v|libvirt|qemu|powershell|virsh|github|codex|environment-bridge|persistent-environment|workspace-agent|resource-agent|bubblewrap|appcontainer|processcontainer/iu);
+  }
 });
