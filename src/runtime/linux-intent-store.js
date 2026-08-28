@@ -6,6 +6,13 @@ const PROTOCOL = 'devbridge/activity-intent-v1';
 const MODE = 0o640;
 const MAX_BYTES = 512;
 const SAFE_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,159}$/u;
+const DEFAULT_OPEN_FLAGS = Object.freeze({
+  O_RDONLY: constants.O_RDONLY,
+  O_WRONLY: constants.O_WRONLY,
+  O_CREAT: constants.O_CREAT,
+  O_EXCL: constants.O_EXCL,
+  O_NOFOLLOW: constants.O_NOFOLLOW,
+});
 
 function exactObject(value, allowed, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} is invalid`);
@@ -214,7 +221,7 @@ export function createLinuxIntentStore(raw = {}, dependencies = {}) {
     openFile: injected.openFile ?? open,
     removeFile: injected.removeFile ?? unlink,
     syncDirectory: injected.syncDirectory ?? defaultSyncDirectory,
-    openFlags: injected.openFlags ?? constants,
+    openFlags: injected.openFlags ?? DEFAULT_OPEN_FLAGS,
   });
 
   return Object.freeze({

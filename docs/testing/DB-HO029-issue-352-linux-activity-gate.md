@@ -1,6 +1,6 @@
 # DB-HO029 — issue #352 exact Linux lifecycle/daemon activity gate
 
-Status: implemented and locally qualified from exact `cuda-target` baseline `69f6f80b317fe916cccaed47f040419893083e2e` on isolated branch `security/352-linux-activity-gate`; exact-head Ubuntu/Windows CI remains required before integration.
+Status: implemented and locally qualified from exact `cuda-target` baseline `69f6f80b317fe916cccaed47f040419893083e2e` on isolated branch `security/352-linux-activity-gate`; the first exact-head CI attempt exposed two portability defects, corrected locally, and the corrected exact head still requires Ubuntu/Windows CI before integration.
 
 ## Assessment
 
@@ -108,6 +108,16 @@ Qualification on Windows from the isolated worktree completed with:
 - doctor: exited successfully and truthfully reported repository execution unavailable because no local persistent-environment route is configured.
 
 These results prove the neutral mechanics, composition, fault closure, source isolation, and Windows regression boundary. They do not substitute for the skipped real Linux filesystem/process canaries or exact-head Ubuntu CI. No real Linux service installation, elevation, libvirt/qcow2 effect, or VM execution readiness is claimed by this checkpoint.
+
+## First exact-head CI fault discovery
+
+PR #353 at exact head `c9947ffe2c988c9c6fa7b64189fa51b443666d7f` produced useful cross-platform evidence rather than an integration result:
+
+- Ubuntu reached the real intent-store canary and rejected the default `node:fs` constants object because the adapter passed the entire platform constant namespace into its own exact five-flag contract. The corrected composition projects only `O_RDONLY`, `O_WRONLY`, `O_CREAT`, `O_EXCL`, and `O_NOFOLLOW`; unrelated platform constants never enter the port.
+- Both CI platforms found that acquisition/release deadline timers had been detached from the event loop. A real child normally kept the process alive, while a deliberately unobservable fake child did not, so the test promise could remain pending after the event loop drained. These timers are authoritative completion bounds, not background conveniences; the correction keeps them referenced until the operation settles and clears them on observed completion.
+- The Windows preflight timeout was the same pending-promise defect surfacing through the targeted suite, not a reason to widen its one-minute cost bound.
+
+This is a reusable Stage-7 lesson: real-platform canaries must exercise the default adapter composition, and any timer that owns an operation's terminal evidence must itself keep the process live until that evidence is produced.
 
 ## Explicitly deferred
 

@@ -134,10 +134,8 @@ function acquireProcess({ mode, target, cancellation, start, policy }) {
               else settle(null, fault ?? new Error('Linux file lease process termination was not observable'));
             }
           }, policy.killMs);
-          terminalTimer.unref?.();
         }
       }, policy.killMs);
-      hardTimer.unref?.();
     };
     const fail = (message) => {
       if (fault == null) fault = new Error(message);
@@ -166,7 +164,6 @@ function acquireProcess({ mode, target, cancellation, start, policy }) {
             catch { fail('Linux file lease holder input could not close'); }
           }
           const releaseTimer = setTimeout(() => fail('Linux file lease holder did not release in time'), policy.releaseMs);
-          releaseTimer.unref?.();
           await closePromise;
           clearTimeout(releaseTimer);
           if (fault != null) throw fault;
@@ -182,7 +179,6 @@ function acquireProcess({ mode, target, cancellation, start, policy }) {
       () => fail('Linux file lease acquisition did not complete in time'),
       mode === 'shared' ? policy.sharedAcquireMs : policy.exclusiveAcquireMs,
     );
-    acquireTimer.unref?.();
 
     child.stdin.on?.('error', () => {});
     child.stdout.on('data', (chunk) => append(chunk, 'stdout'));
