@@ -59,6 +59,8 @@ function neutralPayload(payload, files = payload.files) {
 test('Ubuntu production seed binds exact package snapshot, versions, and payload generation', async () => {
   const result = await factory().create(request());
   assert.match(result.userData, /^#cloud-config\nautoinstall:/u);
+  assert.match(result.userData, /  source:\n    id: ubuntu-server-minimal\n/u);
+  assert.doesNotMatch(result.userData, /id: ubuntu-server(?:\n|$)/u);
   assert.match(result.userData, /"nodejs=22\.16\.0\+dfsg-1"/u);
   assert.match(result.userData, /"linux-cloud-tools-virtual=6\.14\.0\.29\.29"/u);
   assert.match(result.userData, /dhcp4: true/u);
@@ -195,4 +197,5 @@ test('Ubuntu production seed rejects mutable or ambiguous package authority', as
 test('Ubuntu production seed keeps its input contract topology-neutral', async () => {
   await assert.rejects(() => factory().create(request({ repository: 'iteathen/DevBridge' })), /repository is not allowed/u);
   await assert.rejects(() => factory().create(request({ hypervisor: 'hyperv' })), /hypervisor is not allowed/u);
+  await assert.rejects(() => factory().create(request({ source: { id: 'ubuntu-server' } })), /source is not allowed/u);
 });
