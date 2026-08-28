@@ -26,16 +26,16 @@ test('bounded text read recovers from transient access denial on its fixed sched
 });
 
 test('bounded text read rethrows the exact final transient error after exhaustion', async () => {
-  const errors = Array.from({ length: 6 }, () => codedError('EPERM'));
+  const errors = Array.from({ length: 9 }, () => codedError('EPERM'));
   const waits = [];
   let reads = 0;
   await assert.rejects(() => readBoundedText('local-record', {
     async read() { const error = errors[reads]; reads += 1; throw error; },
     async wait(delayMs) { waits.push(delayMs); },
-  }), (error) => error === errors[5]);
+  }), (error) => error === errors[8]);
 
-  assert.equal(reads, 6);
-  assert.deepEqual(waits, [5, 10, 20, 40, 80]);
+  assert.equal(reads, 9);
+  assert.deepEqual(waits, [5, 10, 20, 40, 80, 160, 320, 640]);
 });
 
 for (const code of ['ENOENT', 'EACCES', 'EBUSY']) {

@@ -12,6 +12,6 @@ test('bounded text read remains isolated from topology and caller policy', async
   ]) {
     assert.equal(text.includes(forbidden), false, `${forbidden} leaked into the text-read module`);
   }
-  assert.match(text, /Object\.freeze\(\[5, 10, 20, 40, 80\]\)/u);
+  assert.match(text, /Object\.freeze\(\[5, 10, 20, 40, 80, 160, 320, 640\]\)/u);
   assert.equal(/retry|delay|code/iu.test(text.match(/\{ read = readFile, wait = defaultWait \}/u)?.[0] ?? ''), false);
 });

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 const TRANSIENT_ACCESS_CODE = 'EPERM';
-const RETRY_DELAYS_MS = Object.freeze([5, 10, 20, 40, 80]);
+const RETRY_DELAYS_MS = Object.freeze([5, 10, 20, 40, 80, 160, 320, 640]);
 
 function defaultWait(delayMs) {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
