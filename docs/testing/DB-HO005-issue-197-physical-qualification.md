@@ -485,13 +485,44 @@ Local verification on the isolated candidate passed:
 - complete `npm test`: 1,330 passed, 13 intentionally skipped, 0 failed in 54.9 seconds;
 - `git diff --check`: no whitespace errors (Git emitted only the repository's existing Windows line-ending notices).
 
-These are software-contract results only. Hosted CI and a new exact v8 physical subject remain mandatory before the repaired image can be accepted.
+PR #354 bound the candidate to exact head `5e9e4ed3bf9d98b9e5a641bfe624002775662a27`. All four Ubuntu/Windows smoke and full jobs passed in CI run `33144784604`, after which the PR was squash-merged into `cuda-target` at exact commit `041ebd4cb364c8141cfedc1b84c1902c90bd0423`. The documented zero-state `cuda-target` bootstrap then installed that exact permanent-entry component. `entry-install-status` reported the same component head, moving selector `cuda-target`, and no exact runner pin. Plain setup reached the construction gate without constructing or changing a VM.
 
 Primary references:
 
 - [Canonical autoinstall source selection](https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html#source)
 - [Canonical Subiquity source-catalog example](https://github.com/canonical/subiquity/blob/fd4da11699ef061f1b59453c071e8cbbcc199867/examples/sources/install.yaml)
 - [Canonical Curtin extraction implementation](https://github.com/canonical/curtin/blob/e2fc2bb9e38c7336c181567864f6b963e5c3835b/curtin/commands/extract.py)
+
+### 19. Exact v8 construction advanced beyond the layered-extraction frontier
+
+One explicit public `setup --construct` entry at accepted commit `041ebd4cb364c8141cfedc1b84c1902c90bd0423` derived fresh immutable subject `subject-a527ba4de198188473c3f22c7f4778af`. Its exact provider resources are VM `db-image-build-49ef9972c68d694c`, provider identity `1477587b-5464-4904-a1c2-cb182d4e5e0c`, and VHDX `8e96524ed70c0446362ab8cbd389531ff2bacb3918b48dc3be2b2473870c3920.vhdx`. The failed v7 VM, disk, console artifact, and journal record remained untouched.
+
+The v8 subject began with a 4 MiB allocated disk and healthy `Operating normally` provider evidence. At the first scheduled re-entry its disk had advanced to 6,010,437,632 bytes. At the second scheduled re-entry it advanced again to 8,057,257,984 bytes, with 3% Hyper-V CPU usage and no elapsed no-progress interval. This passes the exact 1,077,936,128-byte frontier where v7 stopped and is consistent with the single-image source avoiding the observed early layered extraction fault. It is not yet acceptance evidence: construction remains nonterminal, and subsequent observations must continue only at the persisted `nextObservationAt` cadence through installed boot, bounded access readiness, guest qualification, sanitization, shutdown, and local immutable publication.
+
+### 20. Exact v8 installed boot exposed incorrect cloud-init host-key ownership
+
+The v8 installer completed, powered off, detached both construction media, and booted the retained disk without manual intervention. The first access observation found an SSH endpoint at the exact VM-reported private address, but strict verification rejected it. Subject-owned `known_hosts` expected ED25519 fingerprint `SHA256:+YxOVGjeZRuwB4XlIytvpTvHnuQFPy6faRJA2Xs/cuA`; the guest repeatedly presented `SHA256:5HAAVkTaCMymcKKH3Lmk38u5ywDC9tW8m6okDQBysM4` throughout the bounded readiness window. The presented fingerprint does not match the preserved expected key for any earlier construction subject. At 679 seconds of installed uptime, the ten-minute readiness deadline expired and the canary blocked with no automatic repair. No trust file, guest key, address, VM, disk, media, or provider state was changed, and strict checking remained enabled.
+
+The current seed owner puts the exact generated host private/public pair into target `user-data.write_files` at `/etc/ssh/ssh_host_ed25519_key*`, then restarts SSH from `runcmd`. Canonical's current Ubuntu cloud-init configuration orders `write_files` before the `ssh` module. The SSH module defaults `ssh_deletekeys` to true; Canonical documents that when `ssh_keys` is absent it generates host keys, while an explicit `ssh_keys` mapping installs the supplied private/public material and suppresses separate generation. Canonical also confirms that `autoinstall.user-data` is processed in the target system during first boot. The physical fingerprint disagreement is therefore consistent with cloud-init deleting the ordinary files after `write_files` and replacing them during its owning SSH module.
+
+Reassessment keeps the security boundary unchanged. The subject-owned expected key and `StrictHostKeyChecking=yes` probe are correct and must not learn or accept the observed replacement. The repair belongs only in `UbuntuProductionSeedFactory`: express the already-local exact Ed25519 pair through target `user-data.ssh_keys`, retain `ssh_deletekeys: true`, remove the duplicate `/etc/ssh/ssh_host_ed25519_key*` file writes, and leave client authorization, access material, probing, address resolution, provider lifecycle, and finalization untouched. Advance recipe/output generations so the failed v8 subject cannot be reused. Tests must prove exact SSH-module projection, absence of ordinary host-key file writes, private-key non-projection in evidence, unchanged neutral input topology, and immutable generation changes. Then repeat focused, preflight, full local, four-job hosted, exact-install, and fresh physical qualification gates.
+
+Implementation follows that plan without adding an interface or compatibility mode. The seed emits only the exact local `ed25519_private` and `ed25519_public` values under target `ssh_keys`, explicitly retains inherited-key deletion, and no longer emits either host-key path under `write_files`. The setup authority advances to recipe `ubuntu-2604-autoinstall-v9` and output `ubuntu-2604-production-v4`; package generation remains `ubuntu-2604-tools-v4`. Client authorization, source selection, package snapshot, payload, network, access probe, provider, and finalization code are unchanged.
+
+Local verification on the isolated v9 candidate passed:
+
+- focused seed, setup-authority, construction-authority, physical-canary, and setup-construction tests: 41 passed, 0 failed;
+- `npm run preflight`: 50 syntax files, 2 JSON files, and 50 targeted tests passed; active Stage-0 compatibility protocol remained absent;
+- complete `npm test`: 1,330 passed, 13 intentionally skipped, 0 failed in 54.2 seconds.
+
+Hosted CI, exact accepted installation, and a fresh physical subject remain mandatory.
+
+Primary references:
+
+- [Canonical cloud-init and autoinstall interaction](https://canonical-subiquity.readthedocs-hosted.com/en/latest/explanation/cloudinit-autoinstall-interaction.html)
+- [Canonical cloud-init module reference: SSH keys](https://cloudinit.readthedocs.io/en/latest/topics/modules.html#ssh)
+- [Canonical cloud-init Ubuntu module ordering](https://github.com/canonical/cloud-init/blob/main/config/cloud.cfg.tmpl)
+- [Canonical cloud-init SSH implementation](https://github.com/canonical/cloud-init/blob/main/cloudinit/config/cc_ssh.py)
 
 ## Preserved physical evidence
 

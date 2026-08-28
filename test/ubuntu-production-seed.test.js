@@ -75,6 +75,10 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.doesNotMatch(result.userData, /updates:\s+security/u);
   assert.match(result.userData, /ssh:\n    install-server: true\n    allow-pw: false/u);
   assert.match(result.userData, /"openssh-server=1:9\.9p1-3ubuntu3"/u);
+  assert.match(result.userData, /    ssh_deletekeys: true\n    ssh_keys:\n/u);
+  assert.equal(result.userData.includes(`      ed25519_private: ${JSON.stringify(hostPrivateKey)}\n`), true);
+  assert.equal(result.userData.includes(`      ed25519_public: ${JSON.stringify(hostPublicKey)}\n`), true);
+  assert.doesNotMatch(result.userData, /path: "\/etc\/ssh\/ssh_host_ed25519_key(?:\.pub)?"/u);
   assert.equal(result.evidence.payloadGeneration, 'guest-payload-v7');
   assert.equal(result.evidence.packageGeneration, 'ubuntu-tools-v4');
   assert.equal(result.evidence.packageSnapshot, snapshot);
@@ -165,7 +169,8 @@ test('Ubuntu production seed limits temporary privilege to one self-removing san
 
 test('Ubuntu production seed embeds transient access only in seed material and enables future local seed agents', async () => {
   const result = await factory().create(request());
-  assert.equal(result.userData.includes(Buffer.from(hostPrivateKey, 'utf8').toString('base64')), true);
+  assert.equal(result.userData.includes(JSON.stringify(hostPrivateKey)), true);
+  assert.equal(result.userData.includes(Buffer.from(hostPrivateKey, 'utf8').toString('base64')), false);
   assert.equal(result.userData.includes(Buffer.from('console.log("bridge");\n', 'utf8').toString('base64')), true);
   assert.match(result.userData, /devbridge-network-seed\.service/u);
   assert.match(result.userData, /devbridge-access-seed\.service/u);
