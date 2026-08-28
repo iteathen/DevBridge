@@ -27,6 +27,8 @@ Node's official [`fs` documentation](https://nodejs.org/api/fs.html) states that
 
 Microsoft's [`Get-VHD`](https://learn.microsoft.com/en-us/powershell/module/hyper-v/get-vhd?view=windowsserver2025-ps) returns the virtual-disk object for an exact path, while [`Test-VHD`](https://learn.microsoft.com/en-us/powershell/module/hyper-v/test-vhd?view=windowsserver2025-ps) tests a virtual disk or chain for problems that make it unusable. The configuration reconciler therefore consumes the protected image library's existing provider-verified result. It does not treat an ordinary configuration declaration as proof that a VHDX is usable.
 
+Microsoft's [Hyper-V NAT guidance](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/setup-nat-network) states that Windows is limited to one NAT network per host. [`Remove-NetNat`](https://learn.microsoft.com/en-us/powershell/module/netnat/remove-netnat?view=windowsserver2025-ps) removes an exact NAT object and drops its existing translations. DevBridge therefore keeps current profile resource reconciliation inside the elevated setup transaction, while an obsolete disposable NAT must be retired only as an exact, separately authorized local cleanup subject; provider absence or a foreign/conflicting NAT remains fail-closed.
+
 No new external platform behavior is needed for declaration CAS. The repository's existing `EnvironmentDeclarationRegistry` is the normative local owner: it reads the current revision, permits an exact no-op, and rejects replacement unless the caller presents the revision it just observed.
 
 ## Reassessment
@@ -62,16 +64,16 @@ If a process stops after some declarations are registered, re-entry observes exa
 1. Add deterministic declaration/configuration digests and a bounded revisioned configuration registry.
 2. Add a neutral reconcile/inspect transaction with pre-write image verification, unexpected-profile refusal, CAS registration, and exact reread.
 3. Add ordinary setup composition for the accepted Linux profile and stable repository subjects.
-4. Add hardened Windows privileged intake and transient protected image/declaration attachment.
+4. Add hardened Windows privileged intake and transient protected foundation/declaration attachment.
 5. Join configuration readiness to the existing one-shot UAC path without adding a new CLI capability or lifecycle mutation operation.
-6. Test normal, no-op, image failure, extra declaration, digest mismatch, stable-subject projection, no repository-name leakage, exact protected composition, ordinary pending configuration, and elevated reconciliation.
+6. Test normal, no-op, image failure, resource failure/identity drift, extra declaration, digest mismatch, stable-subject projection, no repository-name leakage, exact protected composition, ordinary pending configuration, and elevated reconciliation.
 7. Run syntax, focused, LEGO/preflight, and full tests; review the diff and push before live activation.
-8. During an explicitly announced UAC window, run normal setup through the installed exact branch selector. Require protected image adoption, service refresh, declaration revision evidence, ordinary negative-capability proof, and zero provider/network/environment mutation beyond those admitted setup effects.
-9. Only then continue #360 with owned network migration, environment creation, verified workspace routes, and the physical Linux C canary.
+8. During an explicitly announced UAC window, retire only the exact authorized disposable NAT, then run normal setup through the installed exact branch selector. Require protected image adoption, service refresh, owned storage/network reconciliation and re-observation, declaration revision evidence, and the ordinary negative-capability proof.
+9. Only then continue #360 with environment creation, verified workspace routes, and the physical Linux C canary.
 
 ## Implementation checkpoint
 
-The code now implements steps 1–6:
+The code now implements steps 1–7:
 
 - accepted configurations are canonical, bounded to 64 profiles, 4,096 aggregate workspaces, and 2 MiB of normalized JSON, revisioned, content-digested, and idempotent;
 - profile reconciliation bounds protected inventories, rejects unaccepted declarations, verifies every exact active image before mutation, uses the current declaration revision as CAS authority, and rereads exact identity/revision/digest;
@@ -80,18 +82,21 @@ The code now implements steps 1–6:
 - that retention is exact to the current output and bootstrap generations; obsolete accepted output fails closed instead of silently erasing or perpetuating desired state;
 - the elevated Windows reader rejects missing structure, indirection, unbounded files, canonical escape, malformed records, and an inexact authority plan;
 - every elevated reconciliation re-runs idempotent provider-aware image adoption before declaration intake, including when the protected service generation itself is already current;
+- the same elevated transaction reconciles and re-observes protected storage and networking before it can claim the accepted profile ready; ordinary inspection consumes only the protected activity channel's neutral aggregate-readiness projection;
 - ordinary readiness compares protected read results to exact accepted declaration digests and requests at most the existing single elevation when configuration alone is pending;
 - the elevated child reconciles configuration only after the protected service and its negative-capability boundary are structurally verified.
 
 Verification from the exact working tree on 2026-08-28:
 
-- focused owner/composition run: 43 passed, zero failed, one Windows-host symlink-fixture skip;
-- repository suite: 1,454 passed, zero failed, 14 platform-specific skips;
+- focused owner/composition run: 32 passed, zero failed, one Windows-host symlink-fixture skip;
+- repository suite: 1,456 passed, zero failed, 14 platform-specific skips;
 - candidate preflight: 94 syntax files, two JSON files, and 91 targeted test files passed;
 - `git diff --check`: no whitespace errors (Git reported only the repository's expected LF-to-CRLF checkout notices).
 
-The physical UAC transaction remains pending and will be appended without rewriting this checkpoint.
+Two initial full-suite attempts exposed pre-existing host-resource coupling in unrelated provider unit fixtures: each requested a 4 GiB profile while the concurrent suite left only narrowly more than the required 5 GiB including reserve. Their protected-boot assertions now use the adapters' valid 256 MiB minimum, preserving real production admission while keeping the tests focused on their claimed provider behavior. The deterministic-liveness test involved in the first attempt passed five consecutive isolated reruns; the final unchanged full suite passed.
+
+The physical UAC transaction remains pending and will be appended without rewriting this checkpoint. Read-only host re-observation found the exact protected switch ready with its current ownership marker, while the disposable fast-track NAT still occupies the single WinNAT slot. The disposable switch has no attached guest adapter, static mapping, or active NAT session; its exact retirement remains a separate local cleanup action and is not encoded as permanent compatibility logic.
 
 ## Explicit exclusions
 
-This checkpoint does not create or start an environment, migrate the legacy fast-track NAT, publish a route, execute guest code, install Windows, add a host fallback, enable a coding model, or implement GPU/CUDA behavior.
+This checkpoint does not create or start an environment, migrate the disposable fast-track NAT, publish a route, execute guest code, install Windows, add a host fallback, enable a coding model, or implement GPU/CUDA behavior.

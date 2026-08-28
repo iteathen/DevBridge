@@ -143,7 +143,7 @@ test('Hyper-V persistent adapter translates neutral protected boot and observes 
       identity: 'env-11111111111111111111111111111111',
       source: { identity: 'img-11111111111111111111111111111111', revision: 'r1', digest: '1'.repeat(64), handle: { location: sourcePath, format: 'vhdx' } },
       settings: {
-        memoryBytes: 4294967296,
+        memoryBytes: 268435456,
         processorCount: 2,
         firmware: 'efi',
         bootProtection: { integrity: 'required', identity: 'required', trust: 'platform-owner' },

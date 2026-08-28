@@ -51,13 +51,32 @@ test('Windows setup reconciles accepted configuration only inside exact protecte
     await accepted.publish({ protocol: ENVIRONMENT_PROFILE_CONFIGURATION_PROTOCOL, declarations: [declaration()] });
     const declarations = new EnvironmentDeclarationRegistry({ port: keyedPort(), now: () => '2026-08-28T12:01:00.000Z' });
     let adoptions = 0;
+    let storage = false;
+    let networking = false;
     const configuration = createWindowsEnvironmentProfileConfiguration({ stateDirectory: root, platform: 'win32', invoke: async () => {} }, {
       adoptImages: async () => { adoptions += 1; return { ready: true }; },
       foundationFactory: async () => ({
+        async inspect() {
+          return {
+            identity: 'foundation-a',
+            capabilities: {
+              management: { ready: true },
+              storage: { ready: storage },
+              networking: { ready: networking },
+            },
+          };
+        },
+        async ensureStorage() { storage = true; return { ready: true }; },
+        async ensureNetwork() { networking = true; return { ready: true }; },
         async listImages() { return [{ identity: 'image-a', profile: 'profile-a', generation: 'image-v1', retiredAt: null }]; },
         async verifyImage(identity) { return { identity, usable: true, verified: true }; },
       }),
       lifecycleFactory: () => ({ declarations }),
+      activityFactory: () => ({
+        async inspect() {
+          return { ready: storage && networking, identity: 'foundation-a', reason: storage && networking ? null : 'unavailable' };
+        },
+      }),
     });
     assert.equal((await configuration.inspect({ client: { list: async () => [] } })).ready, false);
     const plan = {
@@ -70,9 +89,104 @@ test('Windows setup reconciles accepted configuration only inside exact protecte
     assert.equal(first.ready, true);
     assert.equal(first.changed, true);
     assert.equal(adoptions, 1);
+    assert.equal(storage, true);
+    assert.equal(networking, true);
     const status = [{ profile: record.declaration.profile, declarationRevision: record.revision, declarationDigest: environmentDeclarationDigest(record.declaration) }];
     assert.equal((await configuration.inspect({ client: { list: async () => status } })).ready, true);
     assert.equal((await configuration.reconcile({ plan })).changed, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('ordinary inspection requires protected resource readiness as well as exact declarations', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-windows-profile-resources-'));
+  try {
+    const accepted = new EnvironmentProfileConfigurationRegistry({
+      port: createEnvironmentProfileConfigurationStateStore(path.join(root, 'environment-profile-configuration', 'state.json')),
+    });
+    const record = (await accepted.publish({ protocol: ENVIRONMENT_PROFILE_CONFIGURATION_PROTOCOL, declarations: [declaration()] })).record;
+    const status = [{
+      profile: 'profile-a',
+      declarationRevision: 1,
+      declarationDigest: environmentDeclarationDigest(record.configuration.declarations[0]),
+    }];
+    let networking = false;
+    const configuration = createWindowsEnvironmentProfileConfiguration({ stateDirectory: root, platform: 'win32' }, {
+      activityFactory: () => ({
+        async inspect() {
+          return { ready: networking, identity: 'foundation-a', reason: networking ? null : 'unavailable' };
+        },
+      }),
+    });
+    assert.equal((await configuration.inspect({ client: { list: async () => status } })).ready, false);
+    networking = true;
+    assert.equal((await configuration.inspect({ client: { list: async () => status } })).ready, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('protected reconciliation does not publish declarations when resource authority is unavailable or changes identity', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-windows-profile-resource-boundary-'));
+  try {
+    const accepted = new EnvironmentProfileConfigurationRegistry({
+      port: createEnvironmentProfileConfigurationStateStore(path.join(root, 'environment-profile-configuration', 'state.json')),
+    });
+    await accepted.publish({ protocol: ENVIRONMENT_PROFILE_CONFIGURATION_PROTOCOL, declarations: [declaration()] });
+    const plan = {
+      protocol: 'devbridge/windows-lifecycle-authority-plan-v1',
+      stateDirectory: path.win32.resolve(root),
+      authorityDirectory: path.join(root, 'protected'),
+    };
+    const declarations = new EnvironmentDeclarationRegistry({ port: keyedPort() });
+    let storageCalls = 0;
+    let networkCalls = 0;
+    const unavailable = createWindowsEnvironmentProfileConfiguration({ stateDirectory: root, platform: 'win32' }, {
+      adoptImages: async () => ({ ready: true }),
+      foundationFactory: async () => ({
+        async inspect() {
+          return {
+            identity: 'foundation-a',
+            capabilities: {
+              management: { ready: false },
+              storage: { ready: false },
+              networking: { ready: false },
+            },
+          };
+        },
+        async ensureStorage() { storageCalls += 1; return { ready: true }; },
+        async ensureNetwork() { networkCalls += 1; return { ready: true }; },
+      }),
+      lifecycleFactory: () => ({ declarations }),
+    });
+    await assert.rejects(unavailable.reconcile({ plan }), /management is unavailable/u);
+    assert.equal(storageCalls, 0);
+    assert.equal(networkCalls, 0);
+    assert.deepEqual(await declarations.list(), []);
+
+    let inspections = 0;
+    const changedIdentity = createWindowsEnvironmentProfileConfiguration({ stateDirectory: root, platform: 'win32' }, {
+      adoptImages: async () => ({ ready: true }),
+      foundationFactory: async () => ({
+        async inspect() {
+          inspections += 1;
+          return {
+            identity: inspections === 1 ? 'foundation-a' : 'foundation-b',
+            capabilities: {
+              management: { ready: true },
+              storage: { ready: inspections > 1 },
+              networking: { ready: inspections > 1 },
+            },
+          };
+        },
+        async ensureStorage() { return { ready: true }; },
+        async ensureNetwork() { return { ready: true }; },
+      }),
+      lifecycleFactory: () => ({ declarations }),
+    });
+    await assert.rejects(changedIdentity.reconcile({ plan }), /did not verify after reconciliation/u);
+    assert.deepEqual(await declarations.list(), []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -2,6 +2,7 @@ import { lstat, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { createEnvironmentFoundation } from '../app/environment-foundation.js';
 import { createEnvironmentLifecycle } from '../app/environment-lifecycle.js';
+import { createConfiguredEnvironmentActivityClient } from '../runtime/environment-activity-authority-transport.js';
 import {
   ENVIRONMENT_PROFILE_CONFIGURATION_MAX_BYTES,
   inspectEnvironmentProfileConfiguration,
@@ -57,11 +58,13 @@ export function createWindowsEnvironmentProfileConfiguration({
   adoptImages = reconcileWindowsLifecycleAuthorityImages,
   foundationFactory = createEnvironmentFoundation,
   lifecycleFactory = createEnvironmentLifecycle,
+  activityFactory = createConfiguredEnvironmentActivityClient,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('environment profile setup stateDirectory is required');
   if (typeof platform !== 'string' || platform.length === 0) throw new TypeError('environment profile setup platform is invalid');
   if (invoke != null && typeof invoke !== 'function') throw new TypeError('environment profile setup invocation contract is invalid');
-  if (typeof adoptImages !== 'function' || typeof foundationFactory !== 'function' || typeof lifecycleFactory !== 'function') {
+  if (typeof adoptImages !== 'function' || typeof foundationFactory !== 'function' || typeof lifecycleFactory !== 'function'
+      || typeof activityFactory !== 'function') {
     throw new TypeError('environment profile setup composition is incomplete');
   }
   return Object.freeze({
@@ -71,10 +74,18 @@ export function createWindowsEnvironmentProfileConfiguration({
       const record = await boundedAcceptedRecord(stateDirectory);
       if (record == null || record.configuration.declarations.length === 0) return configurationResult({ ready: true });
       try {
-        const result = inspectEnvironmentProfileConfiguration(record, await client.list());
-        return configurationResult({ ready: result.ready, blocker: result.blocker });
+        const [declarations, resources] = await Promise.all([
+          client.list(),
+          activityFactory({ stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 }).inspect(),
+        ]);
+        const result = inspectEnvironmentProfileConfiguration(record, declarations);
+        if (!result.ready) return configurationResult({ ready: false, blocker: result.blocker });
+        if (resources?.ready !== true) {
+          return configurationResult({ ready: false, blocker: 'protected environment resources do not match accepted profile requirements' });
+        }
+        return configurationResult({ ready: true });
       } catch {
-        return configurationResult({ ready: false, blocker: 'protected declarations could not be verified against accepted profile configuration' });
+        return configurationResult({ ready: false, blocker: 'protected profile state could not be verified against accepted configuration' });
       }
     },
 
@@ -98,6 +109,19 @@ export function createWindowsEnvironmentProfileConfiguration({
         platform,
         ...(invoke ? { invoke } : {}),
       });
+      const before = await foundation.inspect();
+      if (before?.capabilities?.management?.ready !== true) throw new Error('protected environment management is unavailable');
+      const storage = await foundation.ensureStorage();
+      if (storage?.ready !== true) throw new Error('protected environment storage did not reconcile');
+      const network = await foundation.ensureNetwork();
+      if (network?.ready !== true) throw new Error('protected environment networking did not reconcile');
+      const after = await foundation.inspect();
+      if (after?.identity !== before.identity
+          || after?.capabilities?.management?.ready !== true
+          || after?.capabilities?.storage?.ready !== true
+          || after?.capabilities?.networking?.ready !== true) {
+        throw new Error('protected environment resources did not verify after reconciliation');
+      }
       const lifecycle = lifecycleFactory({ stateDirectory: plan.authorityDirectory });
       const result = await reconcileEnvironmentProfileConfiguration(record, {
         declarations: lifecycle.declarations,
@@ -106,7 +130,8 @@ export function createWindowsEnvironmentProfileConfiguration({
           verify: (identity) => foundation.verifyImage(identity),
         }),
       });
-      return configurationResult({ ready: result.ready, changed: result.changed });
+      const resourcesChanged = before.capabilities.storage?.ready !== true || before.capabilities.networking?.ready !== true;
+      return configurationResult({ ready: result.ready, changed: result.changed || resourcesChanged });
     },
   });
 }

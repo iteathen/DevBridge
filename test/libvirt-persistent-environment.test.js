@@ -163,7 +163,7 @@ test('libvirt persistent adapter fails closed before effects when protected boot
       identity: 'env-12121212121212121212121212121212',
       source: { identity: 'img-12121212121212121212121212121212', revision: 'r1', digest: '1'.repeat(64), handle: { location: sourcePath, format: 'qcow2' } },
       settings: {
-        memoryBytes: 4294967296,
+        memoryBytes: 268435456,
         processorCount: 2,
         firmware: 'efi',
         bootProtection: { integrity: 'required', identity: 'required', trust: 'platform-owner' },

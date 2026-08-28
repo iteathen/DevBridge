@@ -146,7 +146,7 @@ Order:
 
 Setup remains discover-first. Repository selection never provisions one VM per repository. Provider/image/profile decisions remain separate from repository/workspace approval.
 
-Protected-profile checkpoint 2026-08-28: `docs/testing/DB-HO035-issue-360-protected-profile-configuration.md` records the bounded accepted-configuration and declaration-CAS slice. The implementation is deliberately before provider/network/environment effects: setup projects stable subjects into neutral desired declarations, the elevated child verifies/adopts the exact protected image and registers by revision, and the ordinary read client proves the declaration digest. The full repository suite and candidate preflight pass; physical activation is pending. Environment creation and routes remain the immediate later #360 steps.
+Protected-profile checkpoint 2026-08-28: `docs/testing/DB-HO035-issue-360-protected-profile-configuration.md` records the bounded accepted-configuration and declaration-CAS slice. Setup projects stable subjects into neutral desired declarations; the elevated child verifies/adopts the exact protected image, reconciles and re-observes its foundation resources, and registers by revision; the ordinary read client proves the declaration digest and consumes only aggregate protected readiness. The full repository suite and candidate preflight pass; physical activation is pending. Exact retirement of the authorized disposable NAT precedes protected setup, while environment creation and routes remain the immediate later #360 steps.
 
 ### Windows critical-path checkpoint
 
