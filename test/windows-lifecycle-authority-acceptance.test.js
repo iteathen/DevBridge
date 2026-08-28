@@ -33,8 +33,8 @@ function generation(operationId) {
 
 function noOpFence() {
   return Object.freeze({
-    async acquire({ environmentIdentity }) {
-      return Object.freeze({ subject: environmentIdentity, async release() {} });
+    async acquire({ subject }) {
+      return Object.freeze({ subject, async release() {} });
     },
   });
 }

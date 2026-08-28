@@ -6,6 +6,7 @@ import { setTimeout as wait } from 'node:timers/promises';
 import { createEnvironmentConstructionPipeline } from '../app/environment-construction.js';
 import { createEnvironmentLifecycle } from '../app/environment-lifecycle.js';
 import { createEnvironmentLifecycleFence } from '../app/environment-lifecycle-fence.js';
+import { createDaemonPauseAdmission } from '../app/daemon-pause-admission.js';
 import { createEnvironmentOperator } from '../app/environment-operator.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { ENVIRONMENT_DECLARATION_PROTOCOL, logicalEnvironmentIdentity } from '../runtime/environment-declaration.js';
@@ -438,7 +439,9 @@ export async function createWindowsLifecycleAuthorityAcceptanceOperator({
   const registration = await lifecycle.declarations.register(acceptanceDeclaration());
   const record = registration.record;
   const observer = Object.freeze({ async observe() { return observationFor(record, await selectedFixture.observe()); } });
-  const lifecycleFence = fence ?? createEnvironmentLifecycleFence({ stateDirectory: selectedRoot });
+  const lifecycleFence = fence ?? createEnvironmentLifecycleFence({
+    admission: createDaemonPauseAdmission({ stateDirectory: selectedRoot }),
+  });
   const image = acceptancePort(async () => Object.freeze({ ready: true }));
   const resources = acceptancePort(async () => Object.freeze({ ready: true }));
   const materialization = acceptancePort(async (request) => selectedFixture.ensure({ operationId: request.operationId }));

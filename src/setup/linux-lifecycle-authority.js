@@ -126,10 +126,12 @@ function volatileDefinition(plan) {
   const lines = [
     [plan.endpoints.parentDirectory, '0755', 'root', 'root'],
     [plan.endpoints.runRoot, '0755', 'root', 'root'],
+    [plan.coordination.directory, '3770', 'root', plan.coordination.group],
     [plan.endpoints.read.directory, '0750', plan.endpoints.read.directoryOwner, plan.endpoints.read.directoryGroup],
     [plan.endpoints.mutation.directory, '0700', plan.endpoints.mutation.directoryOwner, plan.endpoints.mutation.directoryGroup],
   ];
-  return `${lines.map(([target, mode, owner, group]) => `d ${target} ${mode} ${owner} ${group} -`).join('\n')}\n`;
+  return `${lines.map(([target, mode, owner, group]) => `d ${target} ${mode} ${owner} ${group} -`).join('\n')}\n`
+    + `f ${plan.coordination.lock.path} 0660 root ${plan.coordination.group} -\n`;
 }
 
 export function linuxLifecycleAuthorityRuntimeGeneration({ packageDigest, nodeDigest } = {}) {
@@ -174,10 +176,23 @@ export function createLinuxLifecycleAuthorityPlan({
   const runRoot = under(run, authorityIdentity);
   const readDirectory = under(runRoot, 'read');
   const mutationDirectory = under(runRoot, 'mutation');
-  const coordinationDirectory = under(state, 'environment-foundation');
+  const coordinationDirectory = under(runRoot, 'governance');
+  const coordinationLock = under(coordinationDirectory, 'activity.lock');
+  const sharedIntent = under(coordinationDirectory, 'shared.intent');
+  const exclusiveIntent = under(coordinationDirectory, 'exclusive.intent');
   const unitPath = under(systemd, serviceName);
   const readEndpoint = environmentLifecycleAuthorityEndpoint({ authorityIdentity, access: 'read', platform: 'linux', runDirectory: run });
   const mutationEndpoint = environmentLifecycleAuthorityEndpoint({ authorityIdentity, access: 'mutation', platform: 'linux', runDirectory: run });
+  const coordination = Object.freeze({
+    directory: coordinationDirectory,
+    group: coordinationGroup,
+    directoryOwner: 'root',
+    directoryMode: 0o3770,
+    lock: Object.freeze({ path: coordinationLock, owner: 'root', group: coordinationGroup, mode: 0o660 }),
+    shared: Object.freeze({ path: sharedIntent, owner: operator, group: coordinationGroup, mode: 0o640 }),
+    exclusive: Object.freeze({ path: exclusiveIntent, owner: serviceUser, group: coordinationGroup, mode: 0o640 }),
+    serviceWrite: true,
+  });
 
   const endpoints = {
     parentDirectory: run,
@@ -208,7 +223,7 @@ export function createLinuxLifecycleAuthorityPlan({
       socketMode: 0o770,
     }),
   };
-  endpoints.definition = Object.freeze({ ...endpoints.definition, content: volatileDefinition({ endpoints }) });
+  endpoints.definition = Object.freeze({ ...endpoints.definition, content: volatileDefinition({ endpoints, coordination }) });
 
   return Object.freeze({
     protocol: PROTOCOL,
@@ -234,11 +249,7 @@ export function createLinuxLifecycleAuthorityPlan({
       account: Object.freeze({ home: '/nonexistent', shell: '/usr/sbin/nologin', system: true }),
       restart: 'on-failure',
     }),
-    coordination: Object.freeze({
-      directory: coordinationDirectory,
-      group: coordinationGroup,
-      serviceWrite: true,
-    }),
+    coordination,
     endpoints: Object.freeze(endpoints),
     access: Object.freeze({
       storageRoot: Object.freeze({ owner: 'root', group: 'root', mode: 0o755, serviceWrite: false, ordinaryUserWrite: false }),

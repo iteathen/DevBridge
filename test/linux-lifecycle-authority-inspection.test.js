@@ -52,6 +52,7 @@ function info(kind, { uid, gid, mode, size = 128 }) {
 function fixture({ extraServiceGroup = false, serviceType = 'exec' } = {}) {
   const selected = plan();
   const serviceUid = 995;
+  const operatorUid = 1000;
   const readGid = 994;
   const coordinationGid = 993;
   const managementGid = 108;
@@ -61,7 +62,7 @@ function fixture({ extraServiceGroup = false, serviceType = 'exec' } = {}) {
     platform: 'linux',
     applicable: true,
     accounts: Object.freeze([
-      Object.freeze({ name: 'alice', record: Object.freeze({ name: 'alice', uid: 1000, gid: 1000, home: '/home/alice', shell: '/bin/bash' }), groupIds: Object.freeze([coordinationGid, readGid, 1000].sort((left, right) => left - right)) }),
+      Object.freeze({ name: 'alice', record: Object.freeze({ name: 'alice', uid: operatorUid, gid: 1000, home: '/home/alice', shell: '/bin/bash' }), groupIds: Object.freeze([coordinationGid, readGid, 1000].sort((left, right) => left - right)) }),
       Object.freeze({ name: selected.service.user, record: Object.freeze({ name: selected.service.user, uid: serviceUid, gid: readGid, home: '/nonexistent', shell: '/usr/sbin/nologin' }), groupIds: Object.freeze(serviceGroups) }),
     ]),
     groups: Object.freeze([
@@ -77,7 +78,7 @@ function fixture({ extraServiceGroup = false, serviceType = 'exec' } = {}) {
     serviceName: selected.service.name,
     operatorName: selected.service.operator,
     managementGroup: selected.service.managementGroup,
-    localIdentity: Object.freeze({ serviceUid, readGid, coordinationGid, managementGid }),
+    localIdentity: Object.freeze({ serviceUid, operatorUid, readGid, coordinationGid, managementGid }),
     activeGeneration: selected.runtime.generation,
     stagedGeneration: null,
     retainedGenerations: Object.freeze([]),
@@ -106,6 +107,8 @@ function fixture({ extraServiceGroup = false, serviceType = 'exec' } = {}) {
   add(selected.runtime.serviceEntry, 'file', 0, 0, 0o444);
   add(selected.endpoints.parentDirectory, 'directory', 0, 0, 0o755);
   add(selected.endpoints.runRoot, 'directory', 0, 0, 0o755);
+  add(selected.coordination.directory, 'directory', 0, coordinationGid, 0o3770);
+  add(selected.coordination.lock.path, 'file', 0, coordinationGid, 0o660);
   add(selected.endpoints.read.directory, 'directory', serviceUid, readGid, 0o750);
   add(selected.endpoints.mutation.directory, 'directory', serviceUid, 0, 0o700);
   add(selected.endpoints.read.endpoint, 'socket', serviceUid, readGid, 0o770);

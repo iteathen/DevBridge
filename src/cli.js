@@ -7,6 +7,7 @@ import { doctor } from './app/doctor.js';
 import { pollOnce } from './app/poll-once.js';
 import { runOnce } from './app/run-once.js';
 import { runDaemon } from './app/daemon.js';
+import { createLinuxActivityAdmission } from './app/linux-activity-admission.js';
 import { createRuntime } from './app/runtime.js';
 import { createLocalEnvironmentOperator } from './app/environment-operator-runtime.js';
 import { chatHandoffSeed, chatHandoffStatus } from './app/chat-handoff.js';
@@ -84,8 +85,16 @@ async function runDaemonCommand(config) {
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
   try {
+    const activityAdmission = process.platform === 'linux'
+      ? await createLinuxActivityAdmission({
+          access: 'shared',
+          stateDirectory: config.state.directory,
+          platform: 'linux',
+        })
+      : null;
     await runDaemon(config, {
       signal: controller.signal,
+      activityAdmission,
       onEvent: (event) => console.log(JSON.stringify(event)),
     });
   } finally {

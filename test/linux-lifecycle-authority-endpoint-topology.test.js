@@ -24,7 +24,7 @@ function plan() {
   });
 }
 
-function claim(selected, localIdentity = Object.freeze({ serviceUid: 995, readGid: 994, coordinationGid: 993, managementGid: 108 })) {
+function claim(selected, localIdentity = Object.freeze({ serviceUid: 995, operatorUid: 1000, readGid: 994, coordinationGid: 993, managementGid: 108 })) {
   return Object.freeze({
     protocol: LINUX_LIFECYCLE_AUTHORITY_OWNERSHIP_PROTOCOL,
     authorityIdentity: selected.authorityIdentity,
@@ -53,6 +53,8 @@ function fixture({
     readyPaths: new Set(directoriesReady ? [
       selected.endpoints.parentDirectory,
       selected.endpoints.runRoot,
+      selected.coordination.directory,
+      selected.coordination.lock.path,
       selected.endpoints.read.directory,
       selected.endpoints.mutation.directory,
     ] : []),
@@ -106,6 +108,8 @@ function fixture({
       for (const target of [
         selected.endpoints.parentDirectory,
         selected.endpoints.runRoot,
+        selected.coordination.directory,
+        selected.coordination.lock.path,
         selected.endpoints.read.directory,
         selected.endpoints.mutation.directory,
       ]) state.readyPaths.add(target);
@@ -144,7 +148,7 @@ test('fresh endpoint topology publishes exact bytes and applies exact local defi
     changed: true,
   });
   assert.equal(values.state.content, values.plan.endpoints.definition.content);
-  assert.equal(values.state.readyPaths.size, 4);
+  assert.equal(values.state.readyPaths.size, 6);
   assert.deepEqual(effects(values).map(([name]) => name), ['save', 'apply']);
   const save = effects(values)[0];
   assert.deepEqual(save.slice(1), [values.plan.endpoints.definition.path, '/etc/tmpfiles.d', 64 * 1024]);

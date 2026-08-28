@@ -14,7 +14,7 @@ import {
   normalizeLinuxLifecycleAuthorityOwnershipRecord,
 } from '../src/setup/linux-lifecycle-authority-records.js';
 
-const IDENTITY = Object.freeze({ serviceUid: 1201, readGid: 1202, coordinationGid: 1203, managementGid: 1204 });
+const IDENTITY = Object.freeze({ serviceUid: 1201, operatorUid: 1200, readGid: 1202, coordinationGid: 1203, managementGid: 1204 });
 
 function fixture({ identity = null, reconciledIdentity = IDENTITY, reconcileChanged = true, failSave = false } = {}) {
   const plan = createLinuxLifecycleAuthorityPlan({

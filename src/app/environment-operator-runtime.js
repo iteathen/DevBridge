@@ -1,6 +1,8 @@
 import { createEnvironmentConstructionRuntime } from './environment-construction-runtime.js';
 import { createEnvironmentFoundation } from './environment-foundation.js';
+import { createEnvironmentLifecycleFence } from './environment-lifecycle-fence.js';
 import { createEnvironmentOperator } from './environment-operator.js';
+import { createDaemonPauseAdmission } from './daemon-pause-admission.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 
 const STABLE_SUBJECT = /^\d+$/u;
@@ -63,6 +65,7 @@ export async function createLocalEnvironmentOperator({
   windowsAccess = null,
   foundation = null,
   availability = null,
+  fence = null,
   resolveAuthority = stableAuthority,
   resetAuthorization = exactAuthorization(),
   recreateAuthorization = exactAuthorization(),
@@ -76,6 +79,9 @@ export async function createLocalEnvironmentOperator({
   const authorityStateDirectory = authorityDirectory ?? stateDirectory;
   const localFoundation = foundation ?? await createEnvironmentFoundation({ stateDirectory: authorityStateDirectory, platform, invoke });
   const localAvailability = availability ?? localImageAvailability(localFoundation);
+  const localFence = fence ?? createEnvironmentLifecycleFence({
+    admission: createDaemonPauseAdmission({ stateDirectory }),
+  });
   const runtime = await createEnvironmentConstructionRuntime({
     stateDirectory,
     authorityDirectory: authorityStateDirectory,
@@ -84,6 +90,7 @@ export async function createLocalEnvironmentOperator({
     windowsAccess,
     foundation: localFoundation,
     availability: localAvailability,
+    fence: localFence,
     resolveAuthority,
     resetAuthorization,
     recreateAuthorization,

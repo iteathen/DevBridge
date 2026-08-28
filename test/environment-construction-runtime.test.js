@@ -28,6 +28,7 @@ test('production construction composition exposes shared create, diagnosis, repa
       availability: { ensure: async () => ({ state: 'local' }) },
       resolveAuthority: async () => '42',
       foundation: foundation(),
+      fence: { acquire: async ({ subject }) => ({ subject, release: async () => {} }) },
       invoke: async () => { throw new Error('not expected during composition'); },
     });
     assert.equal(typeof runtime.create, 'function');

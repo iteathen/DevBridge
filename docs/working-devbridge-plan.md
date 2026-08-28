@@ -179,6 +179,35 @@ After the lower gates are green:
 
 Exit evidence: a real UCI Arena task completes through the supported installed entry without direct-host repository execution, manual VM surgery, or coding-model default fallback.
 
+### Minimal non-CUDA functional acceptance
+
+The first product-level vertical slice deliberately uses trivial application logic so the evidence measures DevBridge rather than the fixture:
+
+1. Admit one fixed C source from a trusted remote task and bind it to the exact repository revision, route, profile, image, environment, workspace, bridge, and locally registered tool operations.
+2. Transfer that source through the bounded bridge to one native Windows guest and one Linux guest.
+3. Compile and execute inside each exact guest, never through a host compiler/process or coding-model fallback.
+4. Return exit code zero, one exact bounded run-specific stdout challenge, compiler evidence, and executable digest through the result contract.
+5. Keep GitHub credentials, provider-management authority, authoritative Git, and publication state host-only; a missing compiler, route, environment, bridge, or provider fails closed.
+6. Repeat after normal reuse and daemon/service restart to prove persistent-environment and recovery behavior.
+
+Passing both guest profiles on a Windows Hyper-V host establishes this minimal product slice on that host. It does not establish Linux-host provider equivalence: Stage 7 still requires the corresponding real KVM/libvirt route, security, storage-lineage, cancellation, and recovery evidence before cross-platform provider readiness is claimed.
+
+### Baseline guest toolchain qualification
+
+The C vertical slice proves the DevBridge pipeline; it is not the complete prepared-profile usability claim. Each supported Windows and Linux guest profile should also advertise and smoke-test a bounded baseline matrix:
+
+- Node.js plus its standard package client, including the TypeScript path when present;
+- Python plus its standard package/environment path;
+- native C and C++ compiler/linker support;
+- Rust plus Cargo;
+- .NET SDK and C#;
+- a JDK and the ordinary Java build path;
+- Go;
+- Git, CMake, Ninja and/or Make as appropriate to the guest; and
+- the native noninteractive shell surface (PowerShell on Windows and POSIX shell tooling on Linux).
+
+Qualification means exact in-guest inventory plus one tiny deterministic compile-or-run smoke for every capability the profile claims. It does not mean exhaustive language conformance testing, host-side compiler discovery, or a separate DevBridge adapter for each package ecosystem. Additional ecosystems such as Ruby or PHP remain demand-driven unless a declared profile or admitted repository requirement makes them part of the local contract. Tool additions still require pinned/acquired guest authority, bounded evidence, and no host-execution fallback.
+
 ## Deferred GPU program
 
 Issues #162, #186, and #283 remain deferred until Phases 0–7 establish recoverable, installable CPU profiles. No generic compute abstraction is built speculatively. Later GPU work begins with a real provider/guest feasibility canary and plugs into the same profile, lifecycle, bridge, evidence, and setup studs.

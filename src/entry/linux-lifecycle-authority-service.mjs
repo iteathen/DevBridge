@@ -2,6 +2,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import { createEnvironmentLifecycleAuthorityHost } from '../app/environment-lifecycle-authority-host.js';
+import { createEnvironmentLifecycleFence } from '../app/environment-lifecycle-fence.js';
+import { createLinuxActivityAdmission } from '../app/linux-activity-admission.js';
 
 const ARGUMENTS = new Set(['--state-directory', '--authority-directory']);
 
@@ -34,19 +36,32 @@ export async function runLinuxLifecycleAuthorityService({
   argv = process.argv.slice(2),
   runDirectory = '/run/devbridge',
   hostFactory = createEnvironmentLifecycleAuthorityHost,
+  admissionFactory = createLinuxActivityAdmission,
+  fenceFactory = createEnvironmentLifecycleFence,
   signalTarget = process,
 } = {}) {
-  if (typeof hostFactory !== 'function') throw new TypeError('Linux lifecycle authority service hostFactory is invalid');
+  if (typeof hostFactory !== 'function' || typeof admissionFactory !== 'function' || typeof fenceFactory !== 'function') {
+    throw new TypeError('Linux lifecycle authority service composition is invalid');
+  }
   if (!signalTarget || typeof signalTarget.once !== 'function' || typeof signalTarget.off !== 'function') {
     throw new TypeError('Linux lifecycle authority service signalTarget is invalid');
   }
   const options = parseLinuxLifecycleAuthorityServiceArguments(argv);
   const run = absoluteLinuxPath(runDirectory, 'Linux lifecycle authority service runDirectory');
+  const admission = await admissionFactory({
+    access: 'exclusive',
+    stateDirectory: options.stateDirectory,
+    authorityDirectory: options.authorityDirectory,
+    platform: 'linux',
+    runDirectory: run,
+  });
+  const fence = fenceFactory({ admission });
   const host = await hostFactory({
     stateDirectory: options.stateDirectory,
     authorityDirectory: options.authorityDirectory,
     platform: 'linux',
     runDirectory: run,
+    fence,
   });
   if (!host || typeof host.start !== 'function' || typeof host.close !== 'function') {
     throw new TypeError('Linux lifecycle authority service host contract is invalid');

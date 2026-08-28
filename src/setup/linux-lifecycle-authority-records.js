@@ -45,14 +45,16 @@ function exactPlan(plan) {
 
 function localIdentity(value) {
   if (value == null) return null;
-  exactKeys(value, new Set(['serviceUid', 'readGid', 'coordinationGid', 'managementGid']), 'Linux lifecycle authority local identity record');
+  exactKeys(value, new Set(['serviceUid', 'operatorUid', 'readGid', 'coordinationGid', 'managementGid']), 'Linux lifecycle authority local identity record');
   const normalized = Object.freeze({
     serviceUid: numeric(value.serviceUid, 'Linux lifecycle authority service uid'),
+    operatorUid: numeric(value.operatorUid, 'Linux lifecycle authority operator uid'),
     readGid: numeric(value.readGid, 'Linux lifecycle authority read gid'),
     coordinationGid: numeric(value.coordinationGid, 'Linux lifecycle authority coordination gid'),
     managementGid: numeric(value.managementGid, 'Linux lifecycle authority management gid'),
   });
-  if (new Set([normalized.readGid, normalized.coordinationGid, normalized.managementGid]).size !== 3) {
+  if (normalized.serviceUid === normalized.operatorUid
+      || new Set([normalized.readGid, normalized.coordinationGid, normalized.managementGid]).size !== 3) {
     throw new TypeError('Linux lifecycle authority local identity record aliases groups');
   }
   return normalized;
@@ -137,6 +139,7 @@ function parentContract(target, mode = null) {
 
 function sameIdentity(left, right) {
   return left?.serviceUid === right?.serviceUid
+    && left?.operatorUid === right?.operatorUid
     && left?.readGid === right?.readGid
     && left?.coordinationGid === right?.coordinationGid
     && left?.managementGid === right?.managementGid;

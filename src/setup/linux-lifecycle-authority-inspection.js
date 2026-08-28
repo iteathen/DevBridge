@@ -214,6 +214,7 @@ export async function inspectLinuxLifecycleAuthorityState({
   const rootUid = 0;
   const rootGid = 0;
   const serviceUid = identity.service.record?.uid ?? -1;
+  const operatorUid = identity.operator.record?.uid ?? -1;
   const readGid = identity.read.record?.gid ?? -1;
   const coordinationGid = identity.coordination.record?.gid ?? -1;
   const managementGid = identity.management.record?.gid ?? -1;
@@ -233,6 +234,8 @@ export async function inspectLinuxLifecycleAuthorityState({
     serviceEntry: plan.runtime.serviceEntry,
     endpointsParent: plan.endpoints.parentDirectory,
     runRoot: plan.endpoints.runRoot,
+    governanceDirectory: plan.coordination.directory,
+    governanceLock: plan.coordination.lock.path,
     readDirectory: plan.endpoints.read.directory,
     mutationDirectory: plan.endpoints.mutation.directory,
     readEndpoint: plan.endpoints.read.endpoint,
@@ -292,6 +295,8 @@ export async function inspectLinuxLifecycleAuthorityState({
     serviceEntry: filePolicy(entries.get('serviceEntry'), { uid: rootUid, gid: rootGid, expectedMode: plan.access.protectedRuntime.fileMode, kind: 'file' }),
     endpointsParent: filePolicy(entries.get('endpointsParent'), { uid: rootUid, gid: rootGid, expectedMode: 0o755, kind: 'directory' }),
     runRoot: filePolicy(entries.get('runRoot'), { uid: rootUid, gid: rootGid, expectedMode: 0o755, kind: 'directory' }),
+    governanceDirectory: filePolicy(entries.get('governanceDirectory'), { uid: rootUid, gid: coordinationGid, expectedMode: plan.coordination.directoryMode, kind: 'directory' }),
+    governanceLock: filePolicy(entries.get('governanceLock'), { uid: rootUid, gid: coordinationGid, expectedMode: plan.coordination.lock.mode, kind: 'file' }),
     readDirectory: filePolicy(entries.get('readDirectory'), { uid: serviceUid, gid: readGid, expectedMode: plan.endpoints.read.directoryMode, kind: 'directory' }),
     mutationDirectory: filePolicy(entries.get('mutationDirectory'), { uid: serviceUid, gid: rootGid, expectedMode: plan.endpoints.mutation.directoryMode, kind: 'directory' }),
     readEndpoint: filePolicy(entries.get('readEndpoint'), { uid: serviceUid, gid: readGid, expectedMode: plan.endpoints.read.socketMode, kind: 'socket' }),
@@ -317,12 +322,13 @@ export async function inspectLinuxLifecycleAuthorityState({
     platform: 'linux',
     applicable: true,
     authorityIdentity: plan.authorityIdentity,
-    identities: Object.freeze({ service: identity.serviceReady, operator: identity.operatorReady, serviceUid, readGid, coordinationGid, managementGid, rootGid, serviceGroupIds: identity.service?.groupIds ?? Object.freeze([]) }),
+    identities: Object.freeze({ service: identity.serviceReady, operator: identity.operatorReady, serviceUid, operatorUid, readGid, coordinationGid, managementGid, rootGid, serviceGroupIds: identity.service?.groupIds ?? Object.freeze([]) }),
     ownership: Object.freeze({
       exists: ownership != null,
       exact: ownership?.activeGeneration === plan.runtime.generation
         && ownership?.stagedGeneration == null
         && ownership?.localIdentity?.serviceUid === serviceUid
+        && ownership?.localIdentity?.operatorUid === operatorUid
         && ownership?.localIdentity?.readGid === readGid
         && ownership?.localIdentity?.coordinationGid === coordinationGid
         && ownership?.localIdentity?.managementGid === managementGid,

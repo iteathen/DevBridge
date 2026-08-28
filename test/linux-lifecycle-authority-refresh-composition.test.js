@@ -150,7 +150,7 @@ test('generation subjects resolve exact self-describing generations and report u
 
 test('activity binds exact stored definition, loaded identity, numeric process identity, and executable generation', async () => {
   const selected = values();
-  const identity = Object.freeze({ serviceUid: 1101, readGid: 1102, coordinationGid: 1103, managementGid: 1104 });
+  const identity = Object.freeze({ serviceUid: 1101, operatorUid: 1100, readGid: 1102, coordinationGid: 1103, managementGid: 1104 });
   const processStatus = `Uid:\t1101\t1101\t1101\t1101\nGid:\t1102\t1102\t1102\t1102\nGroups:\t1102 1103 1104\n`;
   const state = Object.freeze({ load: async () => Object.freeze({ localIdentity: identity }) });
   const subjects = Object.freeze({ resolve: async (generation) => generation === selected.plan.runtime.generation ? Object.freeze({ plan: selected.plan }) : null });
@@ -245,7 +245,7 @@ test('composition connects concrete ownership to neutral mechanics and reaches e
     async quiesce({ generation }) { effects.push('quiesce'); localActivity.running = false; localActivity.processGeneration = null; return Object.freeze({ generation, ready: true }); },
     async activate({ generation }) { effects.push('activate'); localActivity.running = true; localActivity.processGeneration = generation; return Object.freeze({ generation, ready: true }); },
   });
-  const missing = (code = 'ENOENT') => Object.assign(new Error(code), { code });
+  const missing = () => Object.assign(new Error('missing'), { code: 'ENOENT' });
   const composition = await createLinuxLifecycleAuthorityRefreshComposition({
     basePlan: selected.base,
     candidatePlan: selected.plan,
@@ -256,10 +256,9 @@ test('composition connects concrete ownership to neutral mechanics and reaches e
   }, {
     createRecords: () => records,
     bindIdentity: async () => {
-      ownership = Object.freeze({ ...ownership, localIdentity: Object.freeze({ serviceUid: 1101, readGid: 1102, coordinationGid: 1103, managementGid: 1104 }) });
+      ownership = Object.freeze({ ...ownership, localIdentity: Object.freeze({ serviceUid: 1101, operatorUid: 1100, readGid: 1102, coordinationGid: 1103, managementGid: 1104 }) });
     },
     reconcileIdentity: async () => ({}),
-    observeIdentities: async () => Object.freeze({ accounts: Object.freeze([{ name: 'operator', record: Object.freeze({ uid: 1000 }) }]) }),
     ensureDirectory: async (request) => { effects.push(`directory:${request.contract.path}`); return Object.freeze({ changed: true }); },
     ensureEndpoints: async () => { effects.push('endpoints'); return Object.freeze({ ready: true }); },
     ensureDefinition: async ({ definition }) => {
@@ -272,11 +271,7 @@ test('composition connects concrete ownership to neutral mechanics and reaches e
     createSubjects: () => subjects,
     createActivity: () => activity,
     probe: async () => { effects.push('probe'); return Object.freeze({ protocol: 'devbridge/environment-operator-v1' }); },
-    stat: async (target) => {
-      if ([selected.plan.authorityDirectory, selected.plan.coordination.directory].includes(target)) throw missing();
-      if (target === selected.plan.stateDirectory) return Object.freeze({ uid: 1000, gid: 1000, isDirectory: () => true, isSymbolicLink: () => false });
-      throw missing();
-    },
+    stat: async () => { throw missing(); },
   });
   assert.equal(composition.protocol, LINUX_LIFECYCLE_AUTHORITY_REFRESH_COMPOSITION_PROTOCOL);
   assert.deepEqual(Object.keys(composition).sort(), ['generation', 'mechanics', 'protocol']);

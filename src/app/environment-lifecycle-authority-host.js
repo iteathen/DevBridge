@@ -27,15 +27,15 @@ export async function createEnvironmentLifecycleAuthorityHost({
   platform = process.platform,
   runDirectory = '/run/devbridge',
   operator = null,
-  operatorOptions = {},
+  fence = null,
 } = {}) {
   const state = requireStateDirectory(stateDirectory);
   const authority = requireAuthorityDirectory(authorityDirectory, state);
-  if (!operatorOptions || typeof operatorOptions !== 'object' || Array.isArray(operatorOptions)) {
-    throw new TypeError('environment lifecycle authority host operatorOptions must be an object');
+  if (operator == null && platform === 'linux' && (!fence || typeof fence.acquire !== 'function')) {
+    throw new TypeError('Linux environment lifecycle authority host requires an activity fence');
   }
   const localOperator = operator == null
-    ? await createLocalEnvironmentOperator({ ...operatorOptions, stateDirectory: state, authorityDirectory: authority, platform })
+    ? await createLocalEnvironmentOperator({ stateDirectory: state, authorityDirectory: authority, platform, ...(fence == null ? {} : { fence }) })
     : assertOperator(operator);
   const servers = createLifecycleAuthoritySocketServers({
     operator: localOperator,
