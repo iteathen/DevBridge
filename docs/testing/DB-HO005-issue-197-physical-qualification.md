@@ -454,6 +454,45 @@ Local verification on the isolated candidate passed:
 
 These tests prove the software contract and fail-closed expiry behavior. PR #319 then passed all four Ubuntu/Windows smoke and full jobs in CI run `33124150724` and was squash-merged into the recovery line at exact commit `9925905622d31caa985c27a47c18ebf817748feb`. A new exact Hyper-V construction subject remains required before accepting the image.
 
+### 18. Exact v7 construction exposed a live-installer OverlayFS failure
+
+The exact v7 software contract was installed and entered through the supported public setup surface at recovery head `aabcbd71be0306882e062cfaa54395bc4bec6227`. Plain setup first completed the protected-authority check and reported the construction gate without creating or changing an image VM. One explicit public construction entry then derived a new immutable subject:
+
+- subject: `subject-d0e6aff6b40f76e5c30da4bb7fc9588b`;
+- VM: `db-image-build-28408c4d9f8b662e`;
+- provider identity: `253da429-9a81-4b0f-b0c8-adef7064bf6d`;
+- disk: `52005ecb3adcba9dd2ff9f73fa1ccc154d5944aee9c244c25ff9de898733ada7.vhdx`;
+- recipe/package/output generations: `ubuntu-2604-autoinstall-v7`, `ubuntu-2604-tools-v4`, and `ubuntu-2604-production-v2`.
+
+The first bounded observations proved a running, owned VM with provider status `Operating normally`. The VHDX advanced from 4 MiB to 1,077,936,128 bytes, then remained unchanged and CPU-idle. At the exact twenty-minute no-progress threshold the existing liveness owner classified the install as `stalled`, captured the bounded `320x240` console artifact with SHA-256 `9d7a213a4376264d2d7969f39453bf809aaf7f3d8bee1cb08363fc7bb51bf84b`, and blocked without repair. No guest input, power action, media/disk/network mutation, construction retry, or cleanup was used.
+
+A separate read-only `640x480` call to the same Hyper-V thumbnail method preserved the exact VM/provider ownership checks and produced diagnostic PNG SHA-256 `26d59578f75daac57cce6b6e8225f6e6a0f95b93aebb9341c904aa579e405569`. The larger capture showed a kernel fault in `ovl_iterate_merged` while Subiquity/Curtin was in `cmd-install/stage-extract`; `rsync` exited with interrupts disabled while acquiring and extracting the live image. This failure precedes the package transaction, SSH installation, installed boot, and v7 readiness window. It therefore does not falsify the v7 access correction and must not be assigned to Hyper-V networking or repaired inside the guest.
+
+Primary-source reassessment identifies a smaller supported image contract:
+
+- Canonical's autoinstall reference defines `source.id` as the exact installer source selection, identifies `ubuntu-server-minimal` as the current Ubuntu Server minimal source, and says the ISO's `casper/install-sources.yaml` is authoritative.
+- Canonical's current source catalog describes `ubuntu-server-minimal` as type `fsimage` and the default `ubuntu-server` source as type `fsimage-layered`.
+- Curtin's source handler mounts a single `fsimage` directly. It constructs an OverlayFS lower stack only when a layered source resolves to multiple images, then copies the selected root with `rsync`.
+
+The accepted plan is consequently to select `ubuntu-server-minimal` in the Ubuntu seed owner and avoid the failing layered extraction path through a documented installer contract. Do not add undocumented kernel parameters, probabilistic retries, guest console input, or provider workarounds. Keep package authority, snapshot semantics, networking, access, payload, and qualification unchanged. Advance the exact recipe and output generations so the corrected seed derives a new construction subject and cannot adopt the failed v7 journal or bytes. Focused tests must prove the emitted source selection, immutable generation changes, authority subject change, and rejection of caller/provider/repository topology. Then run repository preflight, the complete local suite, all four Ubuntu/Windows CI jobs, install the exact accepted runtime through the bounded setup elevation if required, and construct one new physical subject through the public gate.
+
+Implementation stays within the two existing owners. `UbuntuProductionSeedFactory` now emits the fixed local source choice `ubuntu-server-minimal`; the request contract did not gain a source, provider, repository, or topology input. The setup authority advances the recipe to `ubuntu-2604-autoinstall-v8` and the output to `ubuntu-2604-production-v3`, leaving source media, package snapshot, package versions, payload generation, network policy, access policy, and qualification commands unchanged. There is no compatibility branch, retry path, provider special case, or legacy source mode.
+
+Local verification on the isolated candidate passed:
+
+- focused seed, setup-authority, construction-authority, physical-canary, and setup-construction tests: 41 passed, 0 failed;
+- `npm run preflight`: 50 syntax files, 2 JSON files, and 50 targeted tests passed; active Stage-0 compatibility protocol remained absent;
+- complete `npm test`: 1,330 passed, 13 intentionally skipped, 0 failed in 54.9 seconds;
+- `git diff --check`: no whitespace errors (Git emitted only the repository's existing Windows line-ending notices).
+
+These are software-contract results only. Hosted CI and a new exact v8 physical subject remain mandatory before the repaired image can be accepted.
+
+Primary references:
+
+- [Canonical autoinstall source selection](https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html#source)
+- [Canonical Subiquity source-catalog example](https://github.com/canonical/subiquity/blob/fd4da11699ef061f1b59453c071e8cbbcc199867/examples/sources/install.yaml)
+- [Canonical Curtin extraction implementation](https://github.com/canonical/curtin/blob/e2fc2bb9e38c7336c181567864f6b963e5c3835b/curtin/commands/extract.py)
+
 ## Preserved physical evidence
 
 After the latest stopped attempt:

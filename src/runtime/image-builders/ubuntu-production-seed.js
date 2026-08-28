@@ -128,7 +128,7 @@ export class UbuntuProductionSeedFactory {
     const payload = normalizePayload(await this.#payloadSet());
     const packages = normalizePackages(await this.#packageSet());
     const packageSpecifications = packages.packages.map((entry) => entry.specification);
-    const lines = ['#cloud-config', 'autoinstall:', '  version: 1', '  locale: en_US.UTF-8', '  keyboard:', '    layout: us', '  apt:', '    conf: |', '      Unattended-Upgrade::Package-Blacklist {', '        ".*";', '      };', '  storage:', '    layout:', '      name: direct', '  network:', '    version: 2', '    ethernets:', '      build:', '        match:', '          name: "e*"'];
+    const lines = ['#cloud-config', 'autoinstall:', '  version: 1', '  locale: en_US.UTF-8', '  keyboard:', '    layout: us', '  source:', '    id: ubuntu-server-minimal', '  apt:', '    conf: |', '      Unattended-Upgrade::Package-Blacklist {', '        ".*";', '      };', '  storage:', '    layout:', '      name: direct', '  network:', '    version: 2', '    ethernets:', '      build:', '        match:', '          name: "e*"'];
     if (request.network.method === 'automatic') {
       lines.push('        dhcp4: true', '        dhcp6: false');
     } else {

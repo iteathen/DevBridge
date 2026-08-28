@@ -1,6 +1,6 @@
 # Working DevBridge implementation plan
 
-Status: active dependency-ordered plan derived from `working-devbridge-assessment-2026-08-27.md`. Phase 0 and the Phase 1 physical gate are complete. Exact v6 Hyper-V construction reached installed boot and exposed an absent SSH prerequisite; Phase 2 now owns the immutable v7 replacement.
+Status: active dependency-ordered plan derived from `working-devbridge-assessment-2026-08-27.md`. Phase 0 and the Phase 1 physical gate are complete. Exact v7 Hyper-V construction proved the SSH/package correction was present but stopped earlier when the live installer faulted in layered OverlayFS extraction; Phase 2 now owns the immutable single-image replacement.
 
 ## Governing method
 
@@ -78,9 +78,12 @@ Owners: canonical image canary, Hyper-V image-construction adapter, and Ubuntu m
 17. Add focused tests for seed SSH policy, exact package selection, qualification projection, and immutable generation changes. Run preflight, full Windows tests, and all Ubuntu/Windows CI jobs before another protected-runtime install.
 18. Follow with a neutral bounded readiness-observation slice: consume elapsed time and a local clock, classify two minutes as the expected frontier and ten minutes as the hard deadline, schedule non-terminal observations at no more than 30 seconds, and block after expiry without repair. Do not expose transport/provider identity through that contract.
 19. Reconcile the existing failed effect, create the replacement through the canonical image/lifecycle authority, and retain old subjects until the replacement is qualified.
-20. Finalize, sanitize, qualify, publish to the local immutable image library, and retire only exact superseded construction artifacts after the new image is verified.
+20. Treat the exact v7 physical subject as rejected installer evidence: the running VM advanced its VHDX, then hit a kernel fault in `ovl_iterate_merged` during Curtin `stage-extract`; the existing twenty-minute no-progress gate captured console evidence and stopped without repair.
+21. Select Canonical's supported `ubuntu-server-minimal` source in the Ubuntu seed owner. This exact source is a single `fsimage`, while the default server source is `fsimage-layered`; preserve every other package/network/access/payload/qualification boundary and do not add kernel flags or retry the failed guest.
+22. Advance recipe and output generations so the source-selection change derives a new subject. Prove emitted source selection, authority subject change, topology rejection, preflight, full local tests, and all four hosted jobs before another physical construction.
+23. Finalize, sanitize, qualify, publish to the local immutable image library, and retire only exact superseded construction artifacts after the new image is verified.
 
-Software checkpoint: steps 16–18 are implemented. Fifty-one focused tests, repository preflight with 39 targeted tests, and the complete 1,223-test Windows suite passed with zero failures. PR #319 passed all four Ubuntu/Windows smoke and full jobs in CI run `33124150724` and merged at exact recovery commit `9925905622d31caa985c27a47c18ebf817748feb`. Protected-runtime installation and exact v7 physical construction remain pending; the preserved v6 VM/journal have not been mutated.
+Software checkpoint: steps 16–18 are implemented. Fifty-one focused tests, repository preflight with 39 targeted tests, and the complete 1,223-test Windows suite passed with zero failures. PR #319 passed all four Ubuntu/Windows smoke and full jobs in CI run `33124150724` and merged at exact recovery commit `9925905622d31caa985c27a47c18ebf817748feb`. Exact v7 physical construction then produced the bounded OverlayFS failure evidence recorded in `docs/testing/DB-HO005-issue-197-physical-qualification.md`. Step 21 and the immutable generation portion of step 22 are implemented on the isolated repair candidate: 41 focused tests, preflight with 50 targeted tests, and the complete 1,330-pass local suite are green with zero failures. Hosted CI, accepted-runtime installation, and the new v8 physical subject remain pending.
 
 Exit evidence:
 
