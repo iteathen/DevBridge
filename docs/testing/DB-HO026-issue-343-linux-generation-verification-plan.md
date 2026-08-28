@@ -1,6 +1,6 @@
 # DB-HO026 — issue #343 Linux restart-safe generation verification
 
-Status: implemented and locally qualified from exact `cuda-target` baseline `e821e538f69acb6a734a0328d87639ac7af0729f` on isolated branch `security/343-linux-generation-verification`; isolated remote CI and integration evidence remain pending.
+Status: implemented, qualified, and integrated from exact `cuda-target` baseline `e821e538f69acb6a734a0328d87639ac7af0729f` through isolated PR #344. Reviewed head `f855d03abf6dab603ab91cc54ca01f9f9d1f4ce8` was squash-integrated as `0012dab0604a4697b2cc937553b633623b6ccadc`; both resolve to tree `8bee4c28c6e4c47f1ad7a88343cbf3de4d858e7b`.
 
 ## Assessment
 
@@ -62,4 +62,13 @@ All commands ran without elevation, UAC, service-manager mutation, provider muta
 - Full suite: 1,289 tests, 1,278 passed, 11 expected platform/host skips, 0 failed.
 - `doctor` against `config/devbridge.example.json`: exited successfully and continued to report repository execution unavailable/fail-closed because no persistent-environment route is configured.
 
-The remaining qualification is the isolated pull-request matrix. Ubuntu CI is expected to execute the real protected-tree install/reuse/verification canary, while both operating systems rerun preflight and the full suite.
+## Remote qualification and integration evidence
+
+PR #344 (`security/343-linux-generation-verification` -> `cuda-target`) ran CI workflow `33134968002` against reviewed head `f855d03abf6dab603ab91cc54ca01f9f9d1f4ce8`:
+
+- Ubuntu smoke passed in 14 seconds, including preflight, identity audit, and standalone-installer regression.
+- Ubuntu full test passed in 33 seconds, including repository-execution architecture gates, the full suite, doctor, and the real protected-tree install/reuse/verification canary.
+- Windows smoke passed in 48 seconds.
+- Windows full test passed in 1 minute 58 seconds.
+
+GitHub reported every required job successful before integration. The pull request was cleanly squash-merged at `0012dab0604a4697b2cc937553b633623b6ccadc`. Exact reviewed/integrated tree equality was re-observed locally as `8bee4c28c6e4c47f1ad7a88343cbf3de4d858e7b`; no unreviewed content entered the integration commit.
