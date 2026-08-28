@@ -37,7 +37,7 @@ export class EnvironmentRepair {
   }
 
   async #acquireFence(record) {
-    const held = await this.#fence.acquire(Object.freeze({ environmentIdentity: record.environmentIdentity, operationId: record.operationId }));
+    const held = await this.#fence.acquire(Object.freeze({ subject: record.environmentIdentity, operationId: record.operationId }));
     if (!held || typeof held.release !== 'function') throw new Error('environment repair fence did not return a release contract');
     const subject = safeId(held.subject, 'environment repair fence subject');
     const prior = fenceEntry(record)?.fence ?? null;

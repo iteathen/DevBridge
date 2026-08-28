@@ -30,10 +30,11 @@ function numeric(value, name) {
 function normalizeExpected(value) {
   if (value == null) return null;
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Linux local identity expected binding is invalid');
-  const allowed = new Set(['serviceUid', 'readGid', 'coordinationGid', 'managementGid']);
+  const allowed = new Set(['serviceUid', 'operatorUid', 'readGid', 'coordinationGid', 'managementGid']);
   for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError('Linux local identity expected binding contains an unknown field');
   const selected = Object.freeze({
     serviceUid: numeric(value.serviceUid, 'Linux local service uid'),
+    operatorUid: numeric(value.operatorUid, 'Linux local operator uid'),
     readGid: numeric(value.readGid, 'Linux local read gid'),
     coordinationGid: numeric(value.coordinationGid, 'Linux local coordination gid'),
     managementGid: numeric(value.managementGid, 'Linux local management gid'),
@@ -85,10 +86,12 @@ function validateObservation(value) {
 function exactBoundIdentity(observed, selected, expected) {
   if (expected == null) return;
   const service = account(observed, selected.serviceAccount)?.record;
+  const operator = account(observed, selected.operatorAccount)?.record;
   const read = group(observed, selected.readGroup)?.record;
   const coordination = group(observed, selected.coordinationGroup)?.record;
   const management = group(observed, selected.managementGroup)?.record;
   if (service?.uid !== expected.serviceUid
+      || operator?.uid !== expected.operatorUid
       || read?.gid !== expected.readGid
       || coordination?.gid !== expected.coordinationGid
       || management?.gid !== expected.managementGid) {
@@ -105,7 +108,9 @@ function projectIdentity(observed, selected) {
   if ([service?.record, operator?.record, read?.record, coordination?.record, management?.record].some((entry) => entry == null)) {
     throw new Error('Linux local identity reconciliation is incomplete');
   }
-  if (service.record.uid === 0 || operator.record.uid === 0) throw new Error('Linux local identity unexpectedly has root authority');
+  if (service.record.uid === 0 || operator.record.uid === 0 || service.record.uid === operator.record.uid) {
+    throw new Error('Linux local identity accounts are invalid');
+  }
   const groupIds = [read.record.gid, coordination.record.gid, management.record.gid];
   if (groupIds.some((value) => value === 0) || new Set(groupIds).size !== groupIds.length) {
     throw new Error('Linux local identity groups are invalid');
@@ -123,6 +128,7 @@ function projectIdentity(observed, selected) {
   }
   return Object.freeze({
     serviceUid: service.record.uid,
+    operatorUid: operator.record.uid,
     readGid: read.record.gid,
     coordinationGid: coordination.record.gid,
     managementGid: management.record.gid,

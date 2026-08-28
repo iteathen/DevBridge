@@ -177,3 +177,75 @@ test('registered cleanup preserves a primary failure before normal stop and rele
   assert.equal((await daemonStatus(lockPath)).activeLock, false);
   await handle.cleanup();
 });
+
+test('daemon reconciles only after singleton ownership and holds one shared admission around a cycle', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'pp-daemon-activity-'));
+  const config = daemonConfig(root);
+  const controller = new AbortController();
+  const counter = { cycles: 0 };
+  const events = [];
+  let held = false;
+  const activityAdmission = {
+    async reconcile() {
+      events.push(['reconcile', (await daemonStatus(path.join(root, 'daemon.lock'))).activeLock]);
+      return false;
+    },
+    async acquire(request) {
+      events.push(['acquire', request.subject, request.operationId]);
+      held = true;
+      return {
+        subject: request.subject,
+        operationId: request.operationId,
+        async release() { events.push(['release']); held = false; },
+      };
+    },
+  };
+  await runDaemon(config, {
+    signal: controller.signal,
+    activityAdmission,
+    runtimeFactory: async () => {
+      const runtime = idleRuntime(config, counter);
+      const recommended = runtime.rateBudget.recommendedPollIntervalMs.bind(runtime.rateBudget);
+      runtime.rateBudget.recommendedPollIntervalMs = (value) => {
+        assert.equal(held, true);
+        return recommended(value);
+      };
+      return runtime;
+    },
+    onEvent(event) {
+      if (event.type === 'cycle') {
+        assert.equal(held, false);
+        controller.abort();
+      }
+    },
+  });
+  assert.deepEqual(events[0], ['reconcile', true]);
+  assert.equal(events[1][0], 'acquire');
+  assert.equal(events[1][1], 'cycle');
+  assert.match(events[1][2], /^cycle-[0-9a-f-]{36}-1$/u);
+  assert.deepEqual(events[2], ['release']);
+  assert.equal(counter.cycles, 1);
+});
+
+test('refused shared admission defers without running a cycle', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'pp-daemon-activity-deferred-'));
+  const config = daemonConfig(root);
+  const controller = new AbortController();
+  const counter = { cycles: 0 };
+  const observed = [];
+  await runDaemon(config, {
+    signal: controller.signal,
+    activityAdmission: {
+      async reconcile() { return false; },
+      async acquire() { return null; },
+    },
+    runtimeFactory: async () => idleRuntime(config, counter),
+    onEvent(event) {
+      observed.push(event.type);
+      if (event.type === 'cycle-deferred') controller.abort();
+    },
+  });
+  assert.equal(counter.cycles, 0);
+  assert.equal(observed.includes('cycle-deferred'), true);
+  assert.equal(observed.includes('cycle'), false);
+});

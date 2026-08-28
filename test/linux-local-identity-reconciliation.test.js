@@ -104,7 +104,7 @@ test('fresh protected claim creates exact local identities and appends only ordi
   const values = fixture();
   const result = await reconcile(values);
   assert.equal(result.changed, true);
-  assert.deepEqual(result.identity, { serviceUid: 995, readGid: 994, coordinationGid: 993, managementGid: 992 });
+  assert.deepEqual(result.identity, { serviceUid: 995, operatorUid: 1000, readGid: 994, coordinationGid: 993, managementGid: 992 });
   assert.deepEqual(values.calls.map((call) => [call.executable, call.arguments]), [
     ['/usr/sbin/groupadd', ['--system', '--', NAMES.readGroup]],
     ['/usr/sbin/groupadd', ['--system', '--', NAMES.coordinationGroup]],
@@ -117,7 +117,7 @@ test('fresh protected claim creates exact local identities and appends only ordi
 
 test('exact numeric-bound identity is a mutation-free no-op', async () => {
   const values = fixture({ exact: true });
-  const result = await reconcile(values, { expectedIdentity: { serviceUid: 995, readGid: 994, coordinationGid: 993, managementGid: 992 } });
+  const result = await reconcile(values, { expectedIdentity: { serviceUid: 995, operatorUid: 1000, readGid: 994, coordinationGid: 993, managementGid: 992 } });
   assert.equal(result.changed, false);
   assert.deepEqual(values.calls, []);
 });
@@ -134,7 +134,7 @@ test('interrupted claimed service membership is replaced exactly without replaci
 
 test('numeric identity drift and ordinary management membership fail before mutation', async () => {
   const drift = fixture({ exact: true });
-  await assert.rejects(() => reconcile(drift, { expectedIdentity: { serviceUid: 996, readGid: 994, coordinationGid: 993, managementGid: 992 } }), /numeric binding changed/u);
+  await assert.rejects(() => reconcile(drift, { expectedIdentity: { serviceUid: 996, operatorUid: 1000, readGid: 994, coordinationGid: 993, managementGid: 992 } }), /numeric binding changed/u);
   assert.deepEqual(drift.calls, []);
 
   const widened = fixture({ operatorManagement: true });

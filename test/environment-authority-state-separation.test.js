@@ -44,6 +44,7 @@ async function compose(stateDirectory, authorityDirectory = null) {
     stateDirectory,
     ...(authorityDirectory == null ? {} : { authorityDirectory }),
     availability: { ensure: async () => ({ ready: true }) },
+    fence: { acquire: async ({ subject }) => ({ subject, release: async () => {} }) },
     resolveAuthority: async () => '42',
     invoke: noProviderInvoke,
   });

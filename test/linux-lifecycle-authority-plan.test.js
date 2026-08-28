@@ -56,10 +56,22 @@ test('Linux authority plan derives one exact runtime and split local capabilitie
   assert.equal(value.endpoints.definition.content, [
     'd /run/devbridge 0755 root root -',
     `d /run/devbridge/${value.authorityIdentity} 0755 root root -`,
+    `d /run/devbridge/${value.authorityIdentity}/governance 3770 root ${value.service.coordinationGroup} -`,
     `d /run/devbridge/${value.authorityIdentity}/read 0750 ${value.service.user} ${value.service.readGroup} -`,
     `d /run/devbridge/${value.authorityIdentity}/mutation 0700 ${value.service.user} root -`,
+    `f /run/devbridge/${value.authorityIdentity}/governance/activity.lock 0660 root ${value.service.coordinationGroup} -`,
     '',
   ].join('\n'));
+  assert.deepEqual(value.coordination, {
+    directory: `/run/devbridge/${value.authorityIdentity}/governance`,
+    group: value.service.coordinationGroup,
+    directoryOwner: 'root',
+    directoryMode: 0o3770,
+    lock: { path: `/run/devbridge/${value.authorityIdentity}/governance/activity.lock`, owner: 'root', group: value.service.coordinationGroup, mode: 0o660 },
+    shared: { path: `/run/devbridge/${value.authorityIdentity}/governance/shared.intent`, owner: 'alice', group: value.service.coordinationGroup, mode: 0o640 },
+    exclusive: { path: `/run/devbridge/${value.authorityIdentity}/governance/exclusive.intent`, owner: value.service.user, group: value.service.coordinationGroup, mode: 0o640 },
+    serviceWrite: true,
+  });
   assert.equal(Object.hasOwn(value.endpoints.read, 'owner'), false);
   assert.equal(Object.hasOwn(value.endpoints.read, 'group'), false);
   assert.equal(value.endpoints.read.directoryOwner, value.service.user);
@@ -157,10 +169,20 @@ test('Linux service entry accepts only local directories and composes the existi
   const calls = [];
   let starts = 0;
   let closes = 0;
+  const admission = { acquire: async () => { throw new Error('not exercised'); } };
+  const fence = { acquire: async () => { throw new Error('not exercised'); } };
   const service = await runLinuxLifecycleAuthorityService({
     argv: ['--state-directory', '/home/alice/.devbridge/state', '--authority-directory', '/var/lib/devbridge/lifecycle-authority/test/state'],
     runDirectory: '/tmp/devbridge-authority-test',
     signalTarget: events,
+    admissionFactory: async (options) => {
+      calls.push({ admission: options });
+      return admission;
+    },
+    fenceFactory: (options) => {
+      assert.deepEqual(options, { admission });
+      return fence;
+    },
     hostFactory: async (options) => {
       calls.push(options);
       return {
@@ -172,11 +194,18 @@ test('Linux service entry accepts only local directories and composes the existi
   });
   assert.equal(starts, 1);
   assert.equal(service.authorityIdentity, 'a'.repeat(32));
-  assert.deepEqual(calls, [{
+  assert.deepEqual(calls, [{ admission: {
+    access: 'exclusive',
     stateDirectory: '/home/alice/.devbridge/state',
     authorityDirectory: '/var/lib/devbridge/lifecycle-authority/test/state',
     platform: 'linux',
     runDirectory: '/tmp/devbridge-authority-test',
+  } }, {
+    stateDirectory: '/home/alice/.devbridge/state',
+    authorityDirectory: '/var/lib/devbridge/lifecycle-authority/test/state',
+    platform: 'linux',
+    runDirectory: '/tmp/devbridge-authority-test',
+    fence,
   }]);
   await service.close();
   await service.close();

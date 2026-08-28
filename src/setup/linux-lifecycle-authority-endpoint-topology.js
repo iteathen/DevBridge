@@ -62,8 +62,10 @@ function expectedDefinition(value) {
   return [
     `d ${value.endpoints.parentDirectory} 0755 root root -`,
     `d ${value.endpoints.runRoot} 0755 root root -`,
+    `d ${value.coordination.directory} 3770 root ${value.coordination.group} -`,
     `d ${value.endpoints.read.directory} 0750 ${value.endpoints.read.directoryOwner} ${value.endpoints.read.directoryGroup} -`,
     `d ${value.endpoints.mutation.directory} 0700 ${value.endpoints.mutation.directoryOwner} ${value.endpoints.mutation.directoryGroup} -`,
+    `f ${value.coordination.lock.path} 0660 root ${value.coordination.group} -`,
     '',
   ].join('\n');
 }
@@ -75,12 +77,15 @@ function exactPlan(value) {
   const definition = value.endpoints?.definition;
   const read = value.endpoints?.read;
   const mutation = value.endpoints?.mutation;
-  if (!definition || !read || !mutation
+  const coordination = value.coordination;
+  if (!definition || !read || !mutation || !coordination || !coordination.lock || !coordination.shared || !coordination.exclusive
       || !endpointPath(value.endpoints.parentDirectory)
       || !value.endpoints.parentDirectory.startsWith('/run/')
       || !endpointPath(value.endpoints.runRoot)
       || !endpointPath(read.directory) || !endpointPath(mutation.directory)
       || !endpointPath(read.endpoint) || !endpointPath(mutation.endpoint)
+      || !endpointPath(coordination.directory) || !endpointPath(coordination.lock.path)
+      || !endpointPath(coordination.shared.path) || !endpointPath(coordination.exclusive.path)
       || typeof value.authorityIdentity !== 'string'
       || !/^[0-9a-f]{32}$/u.test(value.authorityIdentity)
       || definition.name !== `devbridge-lifecycle-authority-${value.authorityIdentity.slice(0, 12)}.conf`
@@ -90,6 +95,10 @@ function exactPlan(value) {
       || path.posix.dirname(value.endpoints.runRoot ?? '') !== value.endpoints.parentDirectory
       || path.posix.dirname(read.directory ?? '') !== value.endpoints.runRoot
       || path.posix.dirname(mutation.directory ?? '') !== value.endpoints.runRoot
+      || path.posix.dirname(coordination.directory ?? '') !== value.endpoints.runRoot
+      || path.posix.dirname(coordination.lock.path ?? '') !== coordination.directory
+      || path.posix.dirname(coordination.shared.path ?? '') !== coordination.directory
+      || path.posix.dirname(coordination.exclusive.path ?? '') !== coordination.directory
       || path.posix.dirname(read.endpoint ?? '') !== read.directory
       || path.posix.dirname(mutation.endpoint ?? '') !== mutation.directory
       || read.directoryOwner !== value.service?.user
@@ -100,7 +109,13 @@ function exactPlan(value) {
       || mutation.socketOwner !== value.service?.user
       || read.socketGroup !== value.service?.readGroup
       || mutation.socketGroup !== value.service?.readGroup
-      || !localName(value.service?.user) || !localName(value.service?.readGroup)
+      || coordination.group !== value.service?.coordinationGroup
+      || coordination.directoryOwner !== 'root' || coordination.directoryMode !== 0o3770
+      || coordination.lock.owner !== 'root' || coordination.lock.group !== coordination.group || coordination.lock.mode !== 0o660
+      || coordination.shared.owner !== value.service?.operator || coordination.shared.group !== coordination.group || coordination.shared.mode !== 0o640
+      || coordination.exclusive.owner !== value.service?.user || coordination.exclusive.group !== coordination.group || coordination.exclusive.mode !== 0o640
+      || !localName(value.service?.user) || !localName(value.service?.operator)
+      || !localName(value.service?.readGroup) || !localName(value.service?.coordinationGroup)
       || read.directoryMode !== 0o750 || mutation.directoryMode !== 0o700
       || read.socketMode !== 0o770 || mutation.socketMode !== 0o770
       || value.access?.volatileDefinition?.mode !== 0o644) {
@@ -175,11 +190,13 @@ function contracts(plan, identity) {
   return Object.freeze({
     definitionParent: Object.freeze({ path: DEFINITION_DIRECTORY, ownerId: 0, groupId: 0, mode: null }),
     definition: Object.freeze({ path: plan.endpoints.definition.path, ownerId: 0, groupId: 0, mode: plan.access.volatileDefinition.mode }),
-    directories: Object.freeze([
-      Object.freeze({ name: 'Linux lifecycle authority endpoint parent', contract: Object.freeze({ path: plan.endpoints.parentDirectory, ownerId: 0, groupId: 0, mode: 0o755 }) }),
-      Object.freeze({ name: 'Linux lifecycle authority endpoint root', contract: Object.freeze({ path: plan.endpoints.runRoot, ownerId: 0, groupId: 0, mode: 0o755 }) }),
-      Object.freeze({ name: 'Linux lifecycle authority read endpoint directory', contract: Object.freeze({ path: plan.endpoints.read.directory, ownerId: identity.serviceUid, groupId: identity.readGid, mode: plan.endpoints.read.directoryMode }) }),
-      Object.freeze({ name: 'Linux lifecycle authority mutation endpoint directory', contract: Object.freeze({ path: plan.endpoints.mutation.directory, ownerId: identity.serviceUid, groupId: 0, mode: plan.endpoints.mutation.directoryMode }) }),
+    entries: Object.freeze([
+      Object.freeze({ name: 'Linux lifecycle authority endpoint parent', kind: 'directory', contract: Object.freeze({ path: plan.endpoints.parentDirectory, ownerId: 0, groupId: 0, mode: 0o755 }) }),
+      Object.freeze({ name: 'Linux lifecycle authority endpoint root', kind: 'directory', contract: Object.freeze({ path: plan.endpoints.runRoot, ownerId: 0, groupId: 0, mode: 0o755 }) }),
+      Object.freeze({ name: 'Linux lifecycle authority governance directory', kind: 'directory', contract: Object.freeze({ path: plan.coordination.directory, ownerId: 0, groupId: identity.coordinationGid, mode: plan.coordination.directoryMode }) }),
+      Object.freeze({ name: 'Linux lifecycle authority governance lock', kind: 'file', contract: Object.freeze({ path: plan.coordination.lock.path, ownerId: 0, groupId: identity.coordinationGid, mode: plan.coordination.lock.mode }) }),
+      Object.freeze({ name: 'Linux lifecycle authority read endpoint directory', kind: 'directory', contract: Object.freeze({ path: plan.endpoints.read.directory, ownerId: identity.serviceUid, groupId: identity.readGid, mode: plan.endpoints.read.directoryMode }) }),
+      Object.freeze({ name: 'Linux lifecycle authority mutation endpoint directory', kind: 'directory', contract: Object.freeze({ path: plan.endpoints.mutation.directory, ownerId: identity.serviceUid, groupId: 0, mode: plan.endpoints.mutation.directoryMode }) }),
     ]),
   });
 }
@@ -211,10 +228,10 @@ export async function reconcileLinuxLifecycleAuthorityEndpointTopology(value = {
     return true;
   }
 
-  async function observeDirectories() {
+  async function observeEntries() {
     const evidence = [];
-    for (const entry of selected.directories) {
-      const observed = await ports.inspect({ contract: entry.contract, kind: 'directory' });
+    for (const entry of selected.entries) {
+      const observed = await ports.inspect({ contract: entry.contract, kind: entry.kind });
       evidence.push(entryEvidence(observed, entry.contract, entry.name));
     }
     return evidence;
@@ -233,11 +250,11 @@ export async function reconcileLinuxLifecycleAuthorityEndpointTopology(value = {
     changed = true;
   }
 
-  let directoryEvidence = await observeDirectories();
-  if (directoryEvidence.includes(false)) {
+  let topologyEvidence = await observeEntries();
+  if (topologyEvidence.includes(false)) {
     applicationEvidence(await ports.apply({ path: selected.definition.path, platform: 'linux', signal }));
-    directoryEvidence = await observeDirectories();
-    if (directoryEvidence.includes(false)) throw new Error('Linux lifecycle authority endpoint directories are not observable');
+    topologyEvidence = await observeEntries();
+    if (topologyEvidence.includes(false)) throw new Error('Linux lifecycle authority endpoint topology is not observable');
     changed = true;
   }
 

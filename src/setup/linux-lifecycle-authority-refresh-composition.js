@@ -20,7 +20,6 @@ import { createLinuxLifecycleAuthorityRefreshMechanics } from './linux-lifecycle
 import {
   LINUX_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL,
 } from './linux-lifecycle-authority.js';
-import { observeLinuxLocalIdentities } from './linux-local-identities.js';
 import { reconcileLinuxLocalIdentityContract } from './linux-local-identity-reconciliation.js';
 import {
   ensureLinuxProtectedDirectory,
@@ -40,7 +39,6 @@ const PROTOCOL = 'devbridge/linux-lifecycle-authority-refresh-composition-v1';
 const GENERATION = /^[0-9a-f]{64}$/u;
 const MAX_GENERATIONS = 11;
 const HEALTH_RETRY_DELAYS_MS = Object.freeze([100, 250, 500, 1_000, 2_000]);
-const COORDINATION_MODE = 0o770;
 
 function exactKeys(value, allowed, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} is invalid`);
@@ -429,7 +427,6 @@ export async function createLinuxLifecycleAuthorityRefreshComposition({
   createRecords = createLinuxLifecycleAuthorityRecordStore,
   bindIdentity = bindLinuxLifecycleAuthorityIdentity,
   reconcileIdentity = reconcileLinuxLocalIdentityContract,
-  observeIdentities = observeLinuxLocalIdentities,
   ensureDirectory = ensureLinuxProtectedDirectory,
   ensureEndpoints = reconcileLinuxLifecycleAuthorityEndpointTopology,
   ensureDefinition = reconcileLinuxServiceDefinition,
@@ -448,7 +445,7 @@ export async function createLinuxLifecycleAuthorityRefreshComposition({
     throw new Error('Linux lifecycle authority composition plans do not describe one installation');
   }
   if (typeof admitClaim !== 'function' || typeof invoke !== 'function') throw new TypeError('Linux lifecycle authority composition authority ports are invalid');
-  for (const [name, port] of Object.entries({ createRecords, bindIdentity, reconcileIdentity, observeIdentities, ensureDirectory, ensureEndpoints, ensureDefinition, createSubjects, createActivity, probe, stat })) {
+  for (const [name, port] of Object.entries({ createRecords, bindIdentity, reconcileIdentity, ensureDirectory, ensureEndpoints, ensureDefinition, createSubjects, createActivity, probe, stat })) {
     if (typeof port !== 'function') throw new TypeError(`Linux lifecycle authority composition ${name} port is invalid`);
   }
   const records = createRecords({ plan: selected, admitClaim, normalizeTransaction: normalizeProtectedAuthorityReconciliationJournal });
@@ -491,34 +488,6 @@ export async function createLinuxLifecycleAuthorityRefreshComposition({
       parent: protectedParent,
       adoptOwnerIds: authority == null ? [0] : [],
       adoptGroupIds: authority == null ? [0] : [],
-    });
-    const identities = await observeIdentities({
-      accountNames: [selected.service.operator, selected.service.user],
-      groupNames: [selected.service.readGroup, selected.service.coordinationGroup, selected.service.managementGroup],
-      platform: 'linux',
-      invoke,
-      environment,
-    });
-    const operator = identities?.accounts?.find((entry) => entry.name === selected.service.operator)?.record;
-    if (!operator || operator.uid === 0) throw new Error('Linux lifecycle authority coordination owner is unavailable');
-    const stateInfo = await stat(selected.stateDirectory);
-    if (!stateInfo.isDirectory() || stateInfo.isSymbolicLink() || stateInfo.uid !== operator.uid) {
-      throw new Error('Linux lifecycle authority state parent is foreign');
-    }
-    const coordination = await stat(selected.coordination.directory).catch((error) => error?.code === 'ENOENT' ? null : Promise.reject(error));
-    if (coordination != null && (!coordination.isDirectory() || coordination.isSymbolicLink() || coordination.uid !== operator.uid)) {
-      throw new Error('Linux lifecycle authority coordination directory is foreign');
-    }
-    await ensureDirectory({
-      contract: Object.freeze({
-        path: selected.coordination.directory,
-        ownerId: operator.uid,
-        groupId: ownership.localIdentity.coordinationGid,
-        mode: COORDINATION_MODE,
-      }),
-      parent: Object.freeze({ path: selected.stateDirectory, ownerId: operator.uid, groupId: stateInfo.gid, mode: null }),
-      adoptOwnerIds: coordination == null ? [0] : [],
-      adoptGroupIds: coordination == null ? [0] : [coordination.gid],
     });
     const endpoint = await ensureEndpoints({ plan: selected, platform: 'linux', signal: cancellation }, {
       state: records.ownership,

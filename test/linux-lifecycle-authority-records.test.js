@@ -185,7 +185,7 @@ test('an established claim resumes without admission and numeric identity cannot
   const resumed = values.makeStore({ admit: false });
   const bound = {
     ...initialLinuxLifecycleAuthorityOwnershipRecord(values.selected),
-    localIdentity: { serviceUid: 995, readGid: 994, coordinationGid: 993, managementGid: 992 },
+    localIdentity: { serviceUid: 995, operatorUid: 1000, readGid: 994, coordinationGid: 993, managementGid: 992 },
   };
   assert.deepEqual((await resumed.ownership.save(bound)).localIdentity, bound.localIdentity);
   assert.equal(values.admissions(), admitted);
@@ -223,7 +223,7 @@ test('ownership schema rejects root identities, generation aliasing, and foreign
   assert.throws(() => normalizeLinuxLifecycleAuthorityOwnershipRecord({ ...initial, authorityIdentity: B }, selected), /does not match this installation/u);
   assert.throws(() => normalizeLinuxLifecycleAuthorityOwnershipRecord({
     ...initial,
-    localIdentity: { serviceUid: 0, readGid: 994, coordinationGid: 993, managementGid: 992 },
+    localIdentity: { serviceUid: 0, operatorUid: 1000, readGid: 994, coordinationGid: 993, managementGid: 992 },
   }, selected), /service uid is invalid/u);
   assert.throws(() => normalizeLinuxLifecycleAuthorityOwnershipRecord({
     ...initial,

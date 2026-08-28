@@ -50,9 +50,10 @@ function exactPlan(value) {
 }
 
 function numericIdentity(value, name) {
-  exactKeys(value, new Set(['serviceUid', 'readGid', 'coordinationGid', 'managementGid']), name);
+  exactKeys(value, new Set(['serviceUid', 'operatorUid', 'readGid', 'coordinationGid', 'managementGid']), name);
   const selected = Object.freeze({
     serviceUid: value.serviceUid,
+    operatorUid: value.operatorUid,
     readGid: value.readGid,
     coordinationGid: value.coordinationGid,
     managementGid: value.managementGid,
@@ -60,7 +61,8 @@ function numericIdentity(value, name) {
   for (const [key, identity] of Object.entries(selected)) {
     if (!Number.isSafeInteger(identity) || identity < 1) throw new TypeError(`${name} ${key} is invalid`);
   }
-  if (new Set([selected.readGid, selected.coordinationGid, selected.managementGid]).size !== 3) {
+  if (selected.serviceUid === selected.operatorUid
+      || new Set([selected.readGid, selected.coordinationGid, selected.managementGid]).size !== 3) {
     throw new TypeError(`${name} groups alias`);
   }
   return selected;
@@ -68,6 +70,7 @@ function numericIdentity(value, name) {
 
 function sameIdentity(left, right) {
   return left?.serviceUid === right?.serviceUid
+    && left?.operatorUid === right?.operatorUid
     && left?.readGid === right?.readGid
     && left?.coordinationGid === right?.coordinationGid
     && left?.managementGid === right?.managementGid;

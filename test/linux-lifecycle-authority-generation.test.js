@@ -67,7 +67,7 @@ function fixture({
   const initial = initialLinuxLifecycleAuthorityOwnershipRecord(plan);
   let record = normalizeLinuxLifecycleAuthorityOwnershipRecord(current ?? {
     ...initial,
-    localIdentity: { serviceUid: 1101, readGid: 1102, coordinationGid: 1103, managementGid: 1104 },
+    localIdentity: { serviceUid: 1101, operatorUid: 1100, readGid: 1102, coordinationGid: 1103, managementGid: 1104 },
   }, plan);
   let installed = false;
   let saveFailures = 0;

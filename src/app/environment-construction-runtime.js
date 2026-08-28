@@ -10,7 +10,6 @@ import { createEnvironmentConstructionWorkspaces } from './environment-construct
 import { createEnvironmentFoundation } from './environment-foundation.js';
 import { createEnvironmentImageAvailability } from './environment-image-availability.js';
 import { createEnvironmentLifecycle } from './environment-lifecycle.js';
-import { createEnvironmentLifecycleFence } from './environment-lifecycle-fence.js';
 import { createEnvironmentMaterialization, createEnvironmentRebuildMaterialization } from './environment-materialization.js';
 import { createEnvironmentMaterializationPolicy } from './environment-materialization-policy.js';
 import { createEnvironmentRecreateMaterialization, createEnvironmentRecreateRetirement } from './environment-recreate.js';
@@ -83,7 +82,10 @@ export async function createEnvironmentConstructionRuntime({
     }),
   });
   const observation = createEnvironmentConstructionObservation({ materialization, preparation, workspaces });
-  const localFence = fence ?? createEnvironmentLifecycleFence({ stateDirectory });
+  if (!fence || typeof fence !== 'object' || Array.isArray(fence) || typeof fence.acquire !== 'function') {
+    throw new TypeError('environment construction runtime fence contract is incomplete');
+  }
+  const localFence = fence;
   const resources = createEnvironmentResourcePort({ state: localFoundation, settings: policy.settings });
   const image = createEnvironmentImagePort({ availability: localAvailability });
   const construction = createEnvironmentConstruction({
