@@ -288,6 +288,7 @@ export function createLinuxLifecycleAuthorityRecordStore({
 
   return Object.freeze({
     protocol: PROTOCOL,
+    claim: Object.freeze({ ensure: ensureClaim }),
     ownership: Object.freeze({ load: loadOwnership, save: saveOwnership }),
     journal: Object.freeze({ load: loadTransaction, save: saveTransaction }),
   });
