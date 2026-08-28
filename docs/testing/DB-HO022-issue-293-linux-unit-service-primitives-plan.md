@@ -1,6 +1,6 @@
 # DB-HO022 — issue #293 Linux unit/service primitives
 
-Status: planned from exact `cuda-target` baseline `843a0be7e45513f43c95cbe86e5841bb4550a3e7` on isolated branch `security/293-linux-unit-service-primitives`.
+Status: implemented and locally qualified from exact `cuda-target` baseline `843a0be7e45513f43c95cbe86e5841bb4550a3e7` on isolated branch `security/293-linux-unit-service-primitives`; hosted qualification is pending.
 
 ## Assessment
 
@@ -48,3 +48,23 @@ Definition-file publication remains owned by the existing protected filesystem b
 6. Publish only the isolated branch, require hosted Ubuntu and Windows qualification, integrate only after exact evidence, and update issue #293 while leaving it open for lifecycle composition, bounded elevation, provider authorization, and physical KVM/libvirt/qcow2 qualification.
 
 No UAC, sudo, account mutation, real system-manager command, libvirt, VM, production-image, or #197 physical action belongs to this slice.
+
+## Implementation
+
+`definition-reconciliation.js` now owns only exact definition readiness. It accepts a bounded definition and the four neutral `observe`, `publish`, `refresh`, and `persist` studs. Its observation schema contains only `stored`, `current`, and `persistent` facts. It rejects impossible or widened observations, requires a strict successful action result, re-observes after every effect, rejects any neighboring state change, performs no effects for exact readiness, and resumes an interrupted completed effect from observation rather than replaying it. It contains no platform, system-manager, path, service identity, provider, repository, VM, or lifecycle topology.
+
+`linux-service-manager.js` now owns only fixed local command invocation. The adapter accepts a bounded non-option `.service` identifier, local platform, cancellation signal, and replaceable invocation mechanism. On Linux it internally fixes `/usr/bin/systemctl`, system scope, noninteractive password behavior, pager suppression, a minimal locale environment, null input, a 30-second timeout, and a 16-KiB combined-output bound. It exposes only `refresh`, `persist`, `quiesce`, and `activate`; successful actions return the neutral boolean expected by an action stud. All spawn, exit, timeout, abort, and truncation failures collapse to bounded path-free errors. On other platforms it is explicitly inapplicable and invokes nothing.
+
+The implementation does not publish unit bytes, inspect manager/process state, choose an installation, or sequence lifecycle generations. Those remain separately owned and will be connected by the later Linux lifecycle composition. Repository preflight now includes both new boundary suites.
+
+## Local qualification
+
+Exact Windows-host evidence from implementation head `efcc99c`:
+
+- focused new boundary suites: 11 passed, 0 failed;
+- related Linux authority/storage/shared-refresh suites: 89 total, 86 passed, 3 expected Linux-only filesystem skips, 0 failed;
+- repository preflight: passed (`syntaxFiles: 43`, `jsonFiles: 2`, `targetedTests: 43`);
+- repository-execution architecture gates: 34 total, 33 passed, 1 expected Windows symlink-capability skip, 0 failed;
+- full suite: 1,249 total, 1,238 passed, 11 expected platform skips, 0 failed, with a normal TAP exit in 52.0 seconds.
+
+No elevation prompt, account/service/provider command, VM action, protected production path, or #197 physical canary state was touched. Issue #293 remains open for exact Linux lifecycle composition, one-command elevated re-entry, provider authorization, and real KVM/libvirt/qcow2 qualification.
