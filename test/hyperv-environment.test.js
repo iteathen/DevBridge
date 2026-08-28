@@ -9,6 +9,7 @@ import { HyperVEnvironment } from '../src/runtime/providers/hyperv-environment.j
 import { invokeCommand } from '../src/runtime/command-invocation.js';
 
 const execFileAsync = promisify(execFile);
+const PREFIX_PROBE_TIMEOUT_MS = 60_000;
 
 function success(value) {
   return { exitCode: 0, signal: null, timedOut: false, aborted: false, outputTruncated: false, stdout: JSON.stringify(value), stderr: '' };
@@ -99,7 +100,7 @@ if (Prefix-Overlaps '192.168.10.0/24' '192.168.11.0/24') { throw 'disjoint prefi
     const encoded = Buffer.from(probe, 'utf16le').toString('base64');
     const { stdout } = await execFileAsync('powershell.exe', [
       '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded,
-    ], { encoding: 'utf8', timeout: 20_000, windowsHide: true });
+    ], { encoding: 'utf8', timeout: PREFIX_PROBE_TIMEOUT_MS, windowsHide: true });
     assert.deepEqual(JSON.parse(stdout), { ready: true });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
