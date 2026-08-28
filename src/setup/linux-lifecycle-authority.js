@@ -13,6 +13,7 @@ const ACCOUNT_PREFIX = 'db-auth-';
 const READ_GROUP_PREFIX = 'db-read-';
 const COORDINATION_GROUP_PREFIX = 'db-coord-';
 const RUNTIME_GENERATION_DOMAIN = 'devbridge/linux-lifecycle-authority-runtime-generation-v1';
+const VOLATILE_DEFINITION_DIRECTORY = '/etc/tmpfiles.d';
 
 function absoluteLinuxPath(value, name) {
   if (typeof value !== 'string' || value.length === 0 || /[\0\r\n]/u.test(value) || !path.posix.isAbsolute(value)) {
@@ -26,6 +27,17 @@ function localName(value, name) {
     throw new TypeError(`${name} must be a portable bounded local account or group name`);
   }
   return value;
+}
+
+function definitionPath(value, name) {
+  if (typeof value !== 'string' || path.posix.resolve(value) !== value) {
+    throw new TypeError(`${name} contains unsupported definition syntax`);
+  }
+  const selected = absoluteLinuxPath(value, name);
+  if (selected === '/run' || !selected.startsWith('/run/') || /[\\%\s]/u.test(selected)) {
+    throw new TypeError(`${name} contains unsupported definition syntax`);
+  }
+  return selected;
 }
 
 function digest(value, name) {
@@ -110,6 +122,16 @@ function systemdUnit(plan, runtime) {
   ].join('\n');
 }
 
+function volatileDefinition(plan) {
+  const lines = [
+    [plan.endpoints.parentDirectory, '0755', 'root', 'root'],
+    [plan.endpoints.runRoot, '0755', 'root', 'root'],
+    [plan.endpoints.read.directory, '0750', plan.endpoints.read.directoryOwner, plan.endpoints.read.directoryGroup],
+    [plan.endpoints.mutation.directory, '0700', plan.endpoints.mutation.directoryOwner, plan.endpoints.mutation.directoryGroup],
+  ];
+  return `${lines.map(([target, mode, owner, group]) => `d ${target} ${mode} ${owner} ${group} -`).join('\n')}\n`;
+}
+
 export function linuxLifecycleAuthorityRuntimeGeneration({ packageDigest, nodeDigest } = {}) {
   const packageIdentity = digest(packageDigest, 'Linux lifecycle authority package digest');
   const nodeIdentity = digest(nodeDigest, 'Linux lifecycle authority Node digest');
@@ -133,7 +155,7 @@ export function createLinuxLifecycleAuthorityPlan({
   const operator = localName(operatorName, 'Linux lifecycle authority operatorName');
   const management = localName(managementGroup, 'Linux lifecycle authority managementGroup');
   const varLib = absoluteLinuxPath(varLibDirectory, 'Linux lifecycle authority varLibDirectory');
-  const run = absoluteLinuxPath(runDirectory, 'Linux lifecycle authority runDirectory');
+  const run = definitionPath(runDirectory, 'Linux lifecycle authority runDirectory');
   const systemd = absoluteLinuxPath(systemdDirectory, 'Linux lifecycle authority systemdDirectory');
   const authorityIdentity = environmentLifecycleAuthorityIdentity(state, { platform: 'linux' });
   const suffix = authorityIdentity.slice(0, 12);
@@ -141,6 +163,7 @@ export function createLinuxLifecycleAuthorityPlan({
   const readGroup = `${READ_GROUP_PREFIX}${suffix}`;
   const coordinationGroup = `${COORDINATION_GROUP_PREFIX}${suffix}`;
   const serviceName = `${SERVICE_PREFIX}${suffix}.service`;
+  const definitionName = `${SERVICE_PREFIX}${suffix}.conf`;
   const storageRoot = under(varLib, 'lifecycle-authority');
   const protectedRoot = under(storageRoot, authorityIdentity);
   const authorityDirectory = under(protectedRoot, 'state');
@@ -155,6 +178,37 @@ export function createLinuxLifecycleAuthorityPlan({
   const unitPath = under(systemd, serviceName);
   const readEndpoint = environmentLifecycleAuthorityEndpoint({ authorityIdentity, access: 'read', platform: 'linux', runDirectory: run });
   const mutationEndpoint = environmentLifecycleAuthorityEndpoint({ authorityIdentity, access: 'mutation', platform: 'linux', runDirectory: run });
+
+  const endpoints = {
+    parentDirectory: run,
+    runRoot,
+    definition: Object.freeze({
+      name: definitionName,
+      path: under(VOLATILE_DEFINITION_DIRECTORY, definitionName),
+      content: null,
+    }),
+    read: Object.freeze({
+      endpoint: readEndpoint,
+      directory: readDirectory,
+      directoryOwner: serviceUser,
+      directoryGroup: readGroup,
+      directoryMode: 0o750,
+      socketOwner: serviceUser,
+      socketGroup: readGroup,
+      socketMode: 0o770,
+    }),
+    mutation: Object.freeze({
+      endpoint: mutationEndpoint,
+      directory: mutationDirectory,
+      directoryOwner: serviceUser,
+      directoryGroup: 'root',
+      directoryMode: 0o700,
+      socketOwner: serviceUser,
+      socketGroup: readGroup,
+      socketMode: 0o770,
+    }),
+  };
+  endpoints.definition = Object.freeze({ ...endpoints.definition, content: volatileDefinition({ endpoints }) });
 
   return Object.freeze({
     protocol: PROTOCOL,
@@ -185,11 +239,7 @@ export function createLinuxLifecycleAuthorityPlan({
       group: coordinationGroup,
       serviceWrite: true,
     }),
-    endpoints: Object.freeze({
-      runRoot,
-      read: Object.freeze({ endpoint: readEndpoint, directory: readDirectory, owner: serviceUser, group: readGroup, directoryMode: 0o750, socketMode: 0o770 }),
-      mutation: Object.freeze({ endpoint: mutationEndpoint, directory: mutationDirectory, owner: serviceUser, group: 'root', directoryMode: 0o700, socketMode: 0o700 }),
-    }),
+    endpoints: Object.freeze(endpoints),
     access: Object.freeze({
       storageRoot: Object.freeze({ owner: 'root', group: 'root', mode: 0o755, serviceWrite: false, ordinaryUserWrite: false }),
       protectedRoot: Object.freeze({ owner: 'root', group: 'root', mode: 0o755, serviceWrite: false, ordinaryUserWrite: false }),
@@ -197,6 +247,7 @@ export function createLinuxLifecycleAuthorityPlan({
       authorityState: Object.freeze({ owner: serviceUser, group: 'root', mode: 0o700, serviceWrite: true, ordinaryUserWrite: false }),
       ownershipManifest: Object.freeze({ owner: 'root', group: 'root', mode: 0o444, serviceWrite: false, ordinaryUserWrite: false }),
       refreshJournal: Object.freeze({ owner: 'root', group: 'root', mode: 0o600, serviceWrite: false, ordinaryUserWrite: false }),
+      volatileDefinition: Object.freeze({ owner: 'root', group: 'root', mode: 0o644, serviceWrite: false, ordinaryUserWrite: false }),
       readCapability: Object.freeze({ group: readGroup, members: Object.freeze([serviceUser, operator]) }),
       coordination: Object.freeze({ group: coordinationGroup, members: Object.freeze([serviceUser, operator]) }),
       management: Object.freeze({ group: management, members: Object.freeze([serviceUser]), ordinaryUserMember: false }),

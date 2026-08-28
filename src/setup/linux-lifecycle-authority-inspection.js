@@ -205,6 +205,7 @@ export async function inspectLinuxLifecycleAuthorityState({
   const managementGid = identity.management.record?.gid ?? -1;
   const paths = {
     unit: plan.service.unitPath,
+    endpointDefinition: plan.endpoints.definition.path,
     protectedRoot: plan.protectedRoot,
     authorityState: plan.authorityDirectory,
     ownershipManifest: plan.ownershipManifest,
@@ -216,6 +217,7 @@ export async function inspectLinuxLifecycleAuthorityState({
     nodeExecutable: plan.runtime.nodeExecutable,
     packageManifest: plan.runtime.packageManifest,
     serviceEntry: plan.runtime.serviceEntry,
+    endpointsParent: plan.endpoints.parentDirectory,
     runRoot: plan.endpoints.runRoot,
     readDirectory: plan.endpoints.read.directory,
     mutationDirectory: plan.endpoints.mutation.directory,
@@ -226,6 +228,9 @@ export async function inspectLinuxLifecycleAuthorityState({
   const unitText = entries.get('unit') == null
     ? null
     : await readBoundedText(plan.service.unitPath, entries.get('unit'), load, 64 * 1024);
+  const endpointDefinitionText = entries.get('endpointDefinition') == null
+    ? null
+    : await readBoundedText(plan.endpoints.definition.path, entries.get('endpointDefinition'), load, 64 * 1024);
   const ownership = entries.get('ownershipManifest') == null
     ? null
     : normalizeLinuxLifecycleAuthorityOwnershipRecord(await readBoundedJson(plan.ownershipManifest, entries.get('ownershipManifest'), load, 'Linux lifecycle authority ownership record'), plan);
@@ -253,6 +258,7 @@ export async function inspectLinuxLifecycleAuthorityState({
   });
   const filesystem = Object.freeze({
     unit: filePolicy(entries.get('unit'), { uid: rootUid, gid: rootGid, expectedMode: 0o644, kind: 'file' }),
+    endpointDefinition: filePolicy(entries.get('endpointDefinition'), { uid: rootUid, gid: rootGid, expectedMode: plan.access.volatileDefinition.mode, kind: 'file' }),
     protectedRoot: filePolicy(entries.get('protectedRoot'), { uid: rootUid, gid: rootGid, expectedMode: plan.access.protectedRoot.mode, kind: 'directory' }),
     authorityState: filePolicy(entries.get('authorityState'), { uid: serviceUid, gid: rootGid, expectedMode: plan.access.authorityState.mode, kind: 'directory' }),
     ownershipManifest: filePolicy(entries.get('ownershipManifest'), { uid: rootUid, gid: rootGid, expectedMode: plan.access.ownershipManifest.mode, kind: 'file' }),
@@ -264,11 +270,12 @@ export async function inspectLinuxLifecycleAuthorityState({
     nodeExecutable: filePolicy(entries.get('nodeExecutable'), { uid: rootUid, gid: rootGid, expectedMode: plan.access.protectedRuntime.executableMode, kind: 'file' }),
     packageManifest: filePolicy(entries.get('packageManifest'), { uid: rootUid, gid: rootGid, expectedMode: plan.access.protectedRuntime.fileMode, kind: 'file' }),
     serviceEntry: filePolicy(entries.get('serviceEntry'), { uid: rootUid, gid: rootGid, expectedMode: plan.access.protectedRuntime.fileMode, kind: 'file' }),
+    endpointsParent: filePolicy(entries.get('endpointsParent'), { uid: rootUid, gid: rootGid, expectedMode: 0o755, kind: 'directory' }),
     runRoot: filePolicy(entries.get('runRoot'), { uid: rootUid, gid: rootGid, expectedMode: 0o755, kind: 'directory' }),
     readDirectory: filePolicy(entries.get('readDirectory'), { uid: serviceUid, gid: readGid, expectedMode: plan.endpoints.read.directoryMode, kind: 'directory' }),
     mutationDirectory: filePolicy(entries.get('mutationDirectory'), { uid: serviceUid, gid: rootGid, expectedMode: plan.endpoints.mutation.directoryMode, kind: 'directory' }),
     readEndpoint: filePolicy(entries.get('readEndpoint'), { uid: serviceUid, gid: readGid, expectedMode: plan.endpoints.read.socketMode, kind: 'socket' }),
-    mutationEndpoint: filePolicy(entries.get('mutationEndpoint'), { uid: serviceUid, gid: rootGid, expectedMode: plan.endpoints.mutation.socketMode, kind: 'socket' }),
+    mutationEndpoint: filePolicy(entries.get('mutationEndpoint'), { uid: serviceUid, gid: readGid, expectedMode: plan.endpoints.mutation.socketMode, kind: 'socket' }),
   });
 
   let runtime = Object.freeze({ ready: false, access: false, exact: false });
@@ -304,6 +311,7 @@ export async function inspectLinuxLifecycleAuthorityState({
       record: ownership,
     }),
     generation: Object.freeze({ exists: generationRecord != null, exact: generationRecord != null, record: generationRecord }),
+    topology: Object.freeze({ definitionExact: endpointDefinitionText === plan.endpoints.definition.content }),
     service: serviceEvidence,
     process: processEvidence,
     filesystem,

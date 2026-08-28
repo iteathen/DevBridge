@@ -84,6 +84,7 @@ function fixture({ extraServiceGroup = false, serviceType = 'exec' } = {}) {
   const stats = new Map();
   const add = (target, kind, uid, gid, mode, size = 128) => stats.set(target, info(kind, { uid, gid, mode, size }));
   add(selected.service.unitPath, 'file', 0, 0, 0o644, selected.service.unit.length);
+  add(selected.endpoints.definition.path, 'file', 0, 0, 0o644, selected.endpoints.definition.content.length);
   add(selected.protectedRoot, 'directory', 0, 0, 0o755);
   add(selected.authorityDirectory, 'directory', serviceUid, 0, 0o700);
   add(selected.ownershipManifest, 'file', 0, 0, 0o444, JSON.stringify(ownership).length);
@@ -95,14 +96,16 @@ function fixture({ extraServiceGroup = false, serviceType = 'exec' } = {}) {
   add(selected.runtime.nodeExecutable, 'file', 0, 0, 0o555);
   add(selected.runtime.packageManifest, 'file', 0, 0, 0o444);
   add(selected.runtime.serviceEntry, 'file', 0, 0, 0o444);
+  add(selected.endpoints.parentDirectory, 'directory', 0, 0, 0o755);
   add(selected.endpoints.runRoot, 'directory', 0, 0, 0o755);
   add(selected.endpoints.read.directory, 'directory', serviceUid, readGid, 0o750);
   add(selected.endpoints.mutation.directory, 'directory', serviceUid, 0, 0o700);
   add(selected.endpoints.read.endpoint, 'socket', serviceUid, readGid, 0o770);
-  add(selected.endpoints.mutation.endpoint, 'socket', serviceUid, 0, 0o700);
+  add(selected.endpoints.mutation.endpoint, 'socket', serviceUid, readGid, 0o770);
 
   const loads = new Map([
     [selected.service.unitPath, selected.service.unit],
+    [selected.endpoints.definition.path, selected.endpoints.definition.content],
     [selected.ownershipManifest, JSON.stringify(ownership)],
     [selected.runtime.generationManifest, JSON.stringify(generation)],
     ['/proc/4242/status', [
@@ -192,6 +195,7 @@ test('Linux authority inspection proves NSS, exact-generation, systemd, process,
   assert.equal(observed.identities.operator, true);
   assert.equal(observed.ownership.exact, true);
   assert.equal(observed.generation.exact, true);
+  assert.equal(observed.topology.definitionExact, true);
   assert.equal(observed.service.unitExact, true);
   assert.equal(observed.service.startBoundary, true);
   assert.equal(observed.service.enabled, true);
@@ -230,6 +234,32 @@ test('group-writable read parent and widened runtime evidence remain visible fai
   const observed = await inspect(values);
   assert.equal(observed.filesystem.readDirectory.mode, false);
   assert.equal(observed.runtime.ready, false);
+});
+
+test('mutation access is bounded by its private parent while the process-created socket retains its group', async () => {
+  const values = fixture();
+  let observed = await inspect(values);
+  assert.equal(observed.filesystem.mutationDirectory.owner, true);
+  assert.equal(observed.filesystem.mutationDirectory.group, true);
+  assert.equal(observed.filesystem.mutationDirectory.mode, true);
+  assert.equal(observed.filesystem.mutationEndpoint.owner, true);
+  assert.equal(observed.filesystem.mutationEndpoint.group, true);
+  assert.equal(observed.filesystem.mutationEndpoint.mode, true);
+
+  values.stats.set(values.plan.endpoints.mutation.endpoint, info('socket', { uid: 0, gid: 0, mode: 0o700 }));
+  observed = await inspect(values);
+  assert.equal(observed.filesystem.mutationEndpoint.owner, false);
+  assert.equal(observed.filesystem.mutationEndpoint.group, false);
+  assert.equal(observed.filesystem.mutationEndpoint.mode, false);
+});
+
+test('volatile directory definition bytes remain independently observable', async () => {
+  const values = fixture();
+  values.loads.set(values.plan.endpoints.definition.path, 'd /run/foreign 0777 root root -\n');
+  const observed = await inspect(values);
+  assert.equal(observed.filesystem.endpointDefinition.exists, true);
+  assert.equal(observed.filesystem.endpointDefinition.mode, true);
+  assert.equal(observed.topology.definitionExact, false);
 });
 
 test('runtime identity remains independently observable while an endpoint is stopped', async () => {
