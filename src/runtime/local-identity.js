@@ -46,3 +46,23 @@ export async function loadOrCreateLocalIdentity({ directory }) {
     return parseIdentity(await readFile(file, 'utf8'));
   }
 }
+
+export async function readLocalIdentity({ directory }) {
+  const root = path.resolve(directory);
+  let rootInfo;
+  try { rootInfo = await lstat(root); }
+  catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error('local identity directory must be a real directory');
+  const file = path.join(root, 'identity.json');
+  let info;
+  try { info = await lstat(file); }
+  catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+  if (!info.isFile() || info.isSymbolicLink() || info.size < 2 || info.size > 1024) throw new Error('local identity record must be one bounded real file');
+  return parseIdentity(await readFile(file, 'utf8'));
+}

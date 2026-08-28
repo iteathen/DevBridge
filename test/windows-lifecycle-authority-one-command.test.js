@@ -859,9 +859,18 @@ test('lifecycle child admits only an exact entry-injected broker home', () => {
     ['--construct'],
     ['--track-ref', 'main'],
     ['--repository', 'owner/repository'],
+    ['--retire-conflict', 'a'.repeat(64)],
   ]) {
     assert.throws(() => parseSetupCommandOptions([
       '--lifecycle-authority-child', '--no-update', ...capability,
     ], { authorityHome, platform: 'win32' }), /accepts no setup capability arguments/u);
   }
+});
+
+test('ordinary setup accepts only one exact opaque resource-conflict subject', () => {
+  const subject = 'b'.repeat(64);
+  const selected = parseSetupCommandOptions(['--retire-conflict', subject]);
+  assert.equal(selected.retireConflict, subject);
+  assert.throws(() => parseSetupCommandOptions(['--retire-conflict', 'not-a-subject']), /exact conflict consent subject/u);
+  assert.throws(() => parseSetupCommandOptions(['--retire-conflict', subject, '--retire-conflict', subject]), /only once/u);
 });

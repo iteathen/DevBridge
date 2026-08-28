@@ -16,6 +16,7 @@ export function parseSetupCommandOptions(argv, {
   let home = null;
   let construct = false;
   let trackRef = null;
+  let retireConflict = null;
   let lifecycleAuthorityChild = false;
   let entryNoUpdate = false;
   const repositories = [];
@@ -36,7 +37,7 @@ export function parseSetupCommandOptions(argv, {
       entryNoUpdate = true;
       continue;
     }
-    if (option === '--home' || option === '--repository' || option === '--track-ref') {
+    if (option === '--home' || option === '--repository' || option === '--track-ref' || option === '--retire-conflict') {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new PolicyError(`${option} requires a value`);
       if (option === '--home') {
@@ -45,6 +46,10 @@ export function parseSetupCommandOptions(argv, {
       } else if (option === '--track-ref') {
         if (trackRef != null) throw new PolicyError('--track-ref may be specified only once');
         trackRef = value;
+      } else if (option === '--retire-conflict') {
+        if (retireConflict != null) throw new PolicyError('--retire-conflict may be specified only once');
+        if (!/^[0-9a-f]{64}$/u.test(value)) throw new PolicyError('--retire-conflict requires an exact conflict consent subject');
+        retireConflict = value;
       } else {
         repositories.push(value);
       }
@@ -56,7 +61,7 @@ export function parseSetupCommandOptions(argv, {
   if (entryNoUpdate && !lifecycleAuthorityChild) {
     throw new PolicyError('--no-update is reserved for the lifecycle-authority child');
   }
-  if (lifecycleAuthorityChild && (construct || trackRef != null || repositories.length > 0)) {
+  if (lifecycleAuthorityChild && (construct || trackRef != null || retireConflict != null || repositories.length > 0)) {
     throw new PolicyError('lifecycle-authority child accepts no setup capability arguments');
   }
   if (lifecycleAuthorityChild && home != null
@@ -70,6 +75,7 @@ export function parseSetupCommandOptions(argv, {
     home,
     construct,
     trackRef,
+    retireConflict,
     repositories: Object.freeze(repositories),
     lifecycleAuthorityChild,
     entryNoUpdate,

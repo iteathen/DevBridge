@@ -41,6 +41,13 @@ function keyedPort() {
   };
 }
 
+function clearConflict() {
+  return {
+    async inspect() { return { protocol: 'devbridge/setup-resource-conflict-v1', state: 'clear', subject: null, reason: null }; },
+    async retire() { throw new Error('clear setup conflict must not retire'); },
+  };
+}
+
 test('Windows setup reconciles accepted configuration only inside exact protected authority', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-windows-profile-configuration-'));
   try {
@@ -77,6 +84,7 @@ test('Windows setup reconciles accepted configuration only inside exact protecte
           return { ready: storage && networking, identity: 'foundation-a', reason: storage && networking ? null : 'unavailable' };
         },
       }),
+      conflictFactory: clearConflict,
     });
     assert.equal((await configuration.inspect({ client: { list: async () => [] } })).ready, false);
     const plan = {
@@ -184,6 +192,7 @@ test('protected reconciliation does not publish declarations when resource autho
         async ensureNetwork() { return { ready: true }; },
       }),
       lifecycleFactory: () => ({ declarations }),
+      conflictFactory: clearConflict,
     });
     await assert.rejects(changedIdentity.reconcile({ plan }), /did not verify after reconciliation/u);
     assert.deepEqual(await declarations.list(), []);
@@ -233,6 +242,65 @@ test('protected reconciliation rejects an incomplete authority plan as data', as
       configuration.reconcile({ plan: { protocol: 'devbridge/windows-lifecycle-authority-plan-v1', authorityDirectory: path.join(root, 'protected') } }),
       /authority plan is invalid/u,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('protected configuration retires only an exact accepted conflict before owned network reconciliation', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-windows-profile-conflict-'));
+  try {
+    const accepted = new EnvironmentProfileConfigurationRegistry({
+      port: createEnvironmentProfileConfigurationStateStore(path.join(root, 'environment-profile-configuration', 'state.json')),
+    });
+    await accepted.publish({ protocol: ENVIRONMENT_PROFILE_CONFIGURATION_PROTOCOL, declarations: [declaration()] });
+    const subject = 'c'.repeat(64);
+    const calls = [];
+    const declarations = new EnvironmentDeclarationRegistry({ port: keyedPort() });
+    let storage = false;
+    let networking = false;
+    const configuration = createWindowsEnvironmentProfileConfiguration({ stateDirectory: root, platform: 'win32' }, {
+      adoptImages: async () => ({ ready: true }),
+      foundationFactory: async () => ({
+        async inspect() {
+          return {
+            identity: 'd'.repeat(32),
+            capabilities: {
+              management: { ready: true },
+              storage: { ready: storage },
+              networking: { ready: networking },
+            },
+          };
+        },
+        async ensureStorage() { calls.push('storage'); storage = true; return { ready: true }; },
+        async ensureNetwork() { calls.push('network'); networking = true; return { ready: true }; },
+        async listImages() { return [{ identity: 'image-a', profile: 'profile-a', generation: 'image-v1', retiredAt: null }]; },
+        async verifyImage(identity) { return { identity, usable: true, verified: true }; },
+      }),
+      lifecycleFactory: () => ({ declarations }),
+      conflictFactory: () => ({
+        async inspect() {
+          calls.push('conflict-inspect');
+          return { protocol: 'devbridge/setup-resource-conflict-v1', state: 'approval-required', subject, reason: 'approval required' };
+        },
+        async retire(consent) {
+          calls.push('conflict-retire');
+          assert.equal(consent.subject, subject);
+          return { protocol: 'devbridge/setup-resource-conflict-retirement-v1', ready: true, changed: true, reason: null };
+        },
+      }),
+      consentStoreFactory: () => ({ async load() { return { protocol: 'devbridge/setup-resource-conflict-consent-v1', subject }; } }),
+    });
+    const result = await configuration.reconcile({
+      plan: {
+        protocol: 'devbridge/windows-lifecycle-authority-plan-v1',
+        stateDirectory: path.win32.resolve(root),
+        authorityDirectory: path.join(root, 'protected'),
+      },
+    });
+    assert.equal(result.ready, true);
+    assert.equal(result.changed, true);
+    assert.deepEqual(calls.slice(0, 4), ['conflict-inspect', 'conflict-retire', 'storage', 'network']);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

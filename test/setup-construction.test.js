@@ -31,6 +31,15 @@ function fixture({ status, runResult } = {}) {
       prerequisiteReconciler: async () => ({ protocol: 'test/prerequisites', ready: true, blocker: null, changed: false, restartRequired: false, capabilities: {} }),
       profileConfigurationPublisher: () => ({ async reconcile() { return { changed: false }; } }),
       profileConfigurationFactory: () => ({}),
+      resourceConflictFactory: async () => ({
+        async inspect() { return { protocol: 'devbridge/setup-resource-conflict-v1', state: 'clear', subject: null, reason: null }; },
+        async retire() { throw new Error('clear setup conflict must not retire'); },
+      }),
+      resourceConflictConsentStoreFactory: () => ({
+        async load() { return null; },
+        async save() { throw new Error('clear setup conflict must not persist consent'); },
+        async clear() { return false; },
+      }),
       lifecycleAuthorityReconciler: async ({ homeDirectory, stateDirectory, elevated }) => ({
         ok: true,
         changed: false,

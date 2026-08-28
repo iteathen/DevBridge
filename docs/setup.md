@@ -305,6 +305,8 @@ DevBridge setup must distinguish its own VM artifacts from shared operator infra
 
 Windows uninstall/repair must not casually disable Hyper-V or delete operator-owned virtual switches/VMs/disks.
 
+Windows currently permits only one internal WinNAT network. Setup discovers a blocking translation before elevation and reports an opaque consent subject. It does not remove the translation automatically or accept its name from the caller. When the operator elects to retire that exact inactive subject, re-enter setup with `--retire-conflict <subject>`. The existing one-shot elevated setup child re-enumerates the subject, requires zero static mappings, active sessions, and guest attachments, removes only the unchanged translation, preserves its switch, and then continues normal protected-network reconciliation. Changed, ambiguous, active, attached, or unobservable state fails closed. The consent is deleted after successful environment activation.
+
 Linux uninstall/repair must not casually remove KVM/QEMU/libvirt packages, stop shared libvirt infrastructure, delete operator-owned domains/storage pools/networks/images, or rewrite system virtualization policy when a DevBridge-owned object suffices.
 
 Legacy repository-owned DevBridge VMs are retained as migration candidates until their replacement workspace is proven or the operator explicitly authorizes retirement. Multiple old writable VM disks must not be blindly merged into one shared profile disk.

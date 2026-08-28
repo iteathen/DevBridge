@@ -3,7 +3,9 @@ import path from 'node:path';
 import { GitHubRestClient } from '../github/rest-client.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { JsonStateStore } from '../state/json-state-store.js';
+import { createSetupResourceConflictConsentStore } from '../state/setup-resource-conflict-consent-store.js';
 import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment-lifecycle-authority-transport.js';
+import { readLocalIdentity } from '../runtime/local-identity.js';
 import { createUbuntuProductionImagePhysicalCanary, UBUNTU_PRODUCTION_IMAGE_PHYSICAL_CANARY_CONFIG_PROTOCOL } from './ubuntu-production-image-physical-canary.js';
 import { reconcileSetupEnvironmentActivation } from './setup-environment-activation.js';
 import { createSetupEnvironmentProfileConfiguration } from './setup-environment-profile-configuration.js';
@@ -16,6 +18,13 @@ import { establishUbuntuReleaseAuthority } from '../setup/ubuntu-release-authori
 import { requestWindowsLifecycleAuthorityElevation } from '../setup/windows-lifecycle-authority-elevation.js';
 import { reconcileWindowsLifecycleAuthorityReadiness } from '../setup/windows-lifecycle-authority-readiness.js';
 import { createWindowsEnvironmentProfileConfiguration } from '../setup/windows-environment-profile-configuration.js';
+import {
+  assertSetupResourceConflictPort,
+  createClearSetupResourceConflictPort,
+  normalizeSetupResourceConflictObservation,
+  setupResourceConflictConsent,
+} from '../setup/resource-conflict.js';
+import { createWindowsSetupResourceConflict } from '../setup/windows-resource-conflict.js';
 
 const PROTOCOL = 'devbridge/setup-status-v1';
 const STATE_KEY = 'setup:v1';
@@ -93,7 +102,20 @@ function publicEnvironmentActivation(value) {
   });
 }
 
-function publicResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, environmentActivation = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
+function publicResourceConflict(value) {
+  if (!value) return null;
+  const observed = normalizeSetupResourceConflictObservation(value);
+  return Object.freeze({ state: observed.state, subject: observed.subject, reason: observed.reason });
+}
+
+async function createSetupResourceConflict({ stateDirectory, platform, invoke }) {
+  if (platform !== 'win32') return createClearSetupResourceConflictPort();
+  const identity = await readLocalIdentity({ directory: path.join(path.resolve(stateDirectory), 'environment-foundation') });
+  if (identity == null) throw new Error('accepted environment foundation identity is unavailable');
+  return createWindowsSetupResourceConflict({ identity, platform, invoke });
+}
+
+function publicResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
   const readyForConstruction = constructionAttempted !== true && physical?.blocked === false && physical?.complete !== true;
   return Object.freeze({
     protocol: PROTOCOL,
@@ -107,6 +129,7 @@ function publicResult({ home, pathStatus, repositories = null, identity = null, 
     github: identity ? Object.freeze({ id: identity.id, login: identity.login }) : null,
     repositories,
     prerequisites,
+    resourceConflict: publicResourceConflict(resourceConflict),
     lifecycleAuthority: publicLifecycleAuthority(lifecycleAuthority),
     environment: publicEnvironmentActivation(environmentActivation),
     linuxProfile: Object.freeze({ profile: 'linux-development', snapshot, physicalStatus: physical }),
@@ -163,6 +186,13 @@ export function formatSetupHandoff(result) {
     if (constructionBlocked) appendConstructionLiveness(lines, result.linuxProfile?.physicalStatus);
     if (constructionBlocked) appendConstructionReadiness(lines, result.linuxProfile?.physicalStatus);
     if (constructionBlocked) appendConstructionDiagnostics(lines, result.linuxProfile?.physicalStatus);
+    if (result.resourceConflict?.state === 'approval-required') {
+      lines.push(
+        '',
+        `Conflict consent subject: ${result.resourceConflict.subject}`,
+        `Re-run setup with --retire-conflict ${result.resourceConflict.subject} to authorize retirement of only this unchanged inactive subject.`,
+      );
+    }
     if (constructionBlocked) lines.push('', 'Preserve the canary state; resolve only this blocker, then re-run devbridge setup --construct.');
     if (result.path?.requiresNewShell) lines.push('', `PATH is persisted; until a new shell is opened use: ${result.path.temporaryCommand}`);
     return `${lines.join('\n')}\n`;
@@ -231,6 +261,7 @@ export async function runDevBridgeSetup({
   home = null,
   requestedRepositories = null,
   construct = false,
+  retireConflict = null,
   env = process.env,
 } = {}, {
   invoke = invokeCommand,
@@ -247,6 +278,8 @@ export async function runDevBridgeSetup({
   lifecycleAuthorityReconciler = reconcileWindowsLifecycleAuthorityReadiness,
   profileConfigurationPublisher = createSetupEnvironmentProfileConfiguration,
   profileConfigurationFactory = createWindowsEnvironmentProfileConfiguration,
+  resourceConflictFactory = createSetupResourceConflict,
+  resourceConflictConsentStoreFactory = createSetupResourceConflictConsentStore,
   elevationRequester = requestWindowsLifecycleAuthorityElevation,
   lifecycleClientFactory = createConfiguredLifecycleAuthorityClient,
   environmentActivationReconciler = reconcileSetupEnvironmentActivation,
@@ -255,6 +288,7 @@ export async function runDevBridgeSetup({
   canaryFactory = createUbuntuProductionImagePhysicalCanary,
 } = {}) {
   if (typeof construct !== 'boolean') throw new TypeError('DevBridge setup construction option must be boolean');
+  const requestedConflictConsent = retireConflict == null ? null : setupResourceConflictConsent(retireConflict);
   const root = absoluteHome(home);
   const store = storeFactory(path.join(root, 'state', 'setup.json'));
   const previous = await store.get(STATE_KEY);
@@ -387,6 +421,54 @@ export async function runDevBridgeSetup({
     });
   }
 
+  let resourceConflict;
+  let conflictConsentStore = null;
+  let conflictConsentAccepted = false;
+  try {
+    const conflict = assertSetupResourceConflictPort(await resourceConflictFactory({ stateDirectory, platform, invoke }));
+    conflictConsentStore = resourceConflictConsentStoreFactory({ stateDirectory });
+    if (!conflictConsentStore || ['load', 'save', 'clear'].some((name) => typeof conflictConsentStore[name] !== 'function')) {
+      throw new TypeError('setup resource conflict consent store is incomplete');
+    }
+    resourceConflict = normalizeSetupResourceConflictObservation(await conflict.inspect());
+    const accepted = await conflictConsentStore.load();
+    if (resourceConflict.state === 'clear') {
+      if (requestedConflictConsent != null) {
+        return publicResult({
+          home, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, physical,
+          resourceConflict, constructionRequested: construct, constructionAttempted,
+          blocker: 'No current local resource conflict matches the supplied consent subject',
+        });
+      }
+      if (accepted != null) await conflictConsentStore.clear();
+    } else if (resourceConflict.state === 'blocked') {
+      if (accepted != null) await conflictConsentStore.clear();
+      return publicResult({
+        home, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, physical,
+        resourceConflict, constructionRequested: construct, constructionAttempted,
+        blocker: resourceConflict.reason,
+      });
+    } else {
+      const selectedConsent = requestedConflictConsent ?? accepted;
+      if (selectedConsent?.subject !== resourceConflict.subject) {
+        if (accepted != null) await conflictConsentStore.clear();
+        return publicResult({
+          home, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, physical,
+          resourceConflict, constructionRequested: construct, constructionAttempted,
+          blocker: 'One inactive local resource blocks protected setup and requires exact operator consent',
+        });
+      }
+      if (accepted?.subject !== selectedConsent.subject) await conflictConsentStore.save(selectedConsent);
+      conflictConsentAccepted = true;
+    }
+  } catch (error) {
+    return publicResult({
+      home, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, physical,
+      resourceConflict, constructionRequested: construct, constructionAttempted,
+      blocker: `Local setup resource conflict reconciliation failed: ${error.message}`,
+    });
+  }
+
   let profileConfiguration;
   try {
     const publisher = profileConfigurationPublisher({ stateDirectory, now: () => now().toISOString() });
@@ -490,6 +572,17 @@ export async function runDevBridgeSetup({
       constructionAttempted,
       blocker: environmentActivation?.blocker ?? 'Protected environment did not verify ready after setup activation',
     });
+  }
+
+  if (conflictConsentAccepted) {
+    try { await conflictConsentStore.clear(); }
+    catch (error) {
+      return publicResult({
+        home, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, lifecycleAuthority, physical,
+        environmentActivation, constructionRequested: construct, constructionAttempted,
+        blocker: `Completed setup could not retire its consumed local consent: ${error.message}`,
+      });
+    }
   }
 
   return publicResult({

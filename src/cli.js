@@ -23,7 +23,7 @@ const installationTag = process.env.DEVBRIDGE_INSTALLATION_TAG;
 if (/^DB-[0-9A-F]{12}$/u.test(installationTag ?? '')) process.title = `DevBridge[${installationTag}]`;
 
 function usage() {
-  console.error('Usage: devbridge setup [--construct] [--track-ref <branch>] [--home <path>] [--repository owner/name|all]...');
+  console.error('Usage: devbridge setup [--construct] [--track-ref <branch>] [--retire-conflict <subject>] [--home <path>] [--repository owner/name|all]...');
   console.error('       devbridge <doctor|poll-once|run-once|daemon|status|pause|resume|stop|restart|handoff-status|handoff-seed|handoff-project|environment> --config <path> [options]');
   console.error('       devbridge environment <list|show|plan|create|repair|rebuild|reset|recreate|resume|setup-reentry> --config <path> [--identity id|--profile name] [--operation op] [--confirm subject]');
 }
@@ -132,6 +132,7 @@ async function main() {
       home: setupHome,
       requestedRepositories: selected.repositories.length > 0 ? selected.repositories : null,
       construct: selected.construct,
+      retireConflict: selected.retireConflict,
     });
     process.stdout.write(formatSetupHandoff(result));
     if (result.blocked) process.exitCode = 3;

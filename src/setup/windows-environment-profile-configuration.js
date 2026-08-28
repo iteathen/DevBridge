@@ -10,8 +10,11 @@ import {
   reconcileEnvironmentProfileConfiguration,
 } from '../runtime/environment-profile-configuration.js';
 import { ENVIRONMENT_PROFILE_CONFIGURATION_STATE_KEY } from '../state/environment-profile-configuration-state-store.js';
+import { createSetupResourceConflictConsentStore } from '../state/setup-resource-conflict-consent-store.js';
 import { reconcileWindowsLifecycleAuthorityImages } from './windows-lifecycle-authority-image-adoption.js';
 import { WINDOWS_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL } from './windows-lifecycle-authority.js';
+import { assertSetupResourceConflictPort, normalizeSetupResourceConflictObservation } from './resource-conflict.js';
+import { createWindowsSetupResourceConflict } from './windows-resource-conflict.js';
 
 const MAX_STATE_BYTES = ENVIRONMENT_PROFILE_CONFIGURATION_MAX_BYTES + 64 * 1024;
 
@@ -59,12 +62,14 @@ export function createWindowsEnvironmentProfileConfiguration({
   foundationFactory = createEnvironmentFoundation,
   lifecycleFactory = createEnvironmentLifecycle,
   activityFactory = createConfiguredEnvironmentActivityClient,
+  conflictFactory = createWindowsSetupResourceConflict,
+  consentStoreFactory = createSetupResourceConflictConsentStore,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('environment profile setup stateDirectory is required');
   if (typeof platform !== 'string' || platform.length === 0) throw new TypeError('environment profile setup platform is invalid');
   if (invoke != null && typeof invoke !== 'function') throw new TypeError('environment profile setup invocation contract is invalid');
   if (typeof adoptImages !== 'function' || typeof foundationFactory !== 'function' || typeof lifecycleFactory !== 'function'
-      || typeof activityFactory !== 'function') {
+      || typeof activityFactory !== 'function' || typeof conflictFactory !== 'function' || typeof consentStoreFactory !== 'function') {
     throw new TypeError('environment profile setup composition is incomplete');
   }
   return Object.freeze({
@@ -111,6 +116,17 @@ export function createWindowsEnvironmentProfileConfiguration({
       });
       const before = await foundation.inspect();
       if (before?.capabilities?.management?.ready !== true) throw new Error('protected environment management is unavailable');
+      const conflict = assertSetupResourceConflictPort(conflictFactory({ identity: before.identity, platform, ...(invoke ? { invoke } : {}) }));
+      const observedConflict = normalizeSetupResourceConflictObservation(await conflict.inspect());
+      let conflictChanged = false;
+      if (observedConflict.state === 'blocked') throw new Error(observedConflict.reason);
+      if (observedConflict.state === 'approval-required') {
+        const consent = await consentStoreFactory({ stateDirectory }).load();
+        if (consent?.subject !== observedConflict.subject) throw new Error('local resource conflict requires exact operator consent');
+        const retired = await conflict.retire(consent);
+        if (retired?.ready !== true) throw new Error(retired?.reason ?? 'approved local resource conflict did not retire');
+        conflictChanged = retired.changed === true;
+      }
       const storage = await foundation.ensureStorage();
       if (storage?.ready !== true) throw new Error('protected environment storage did not reconcile');
       const network = await foundation.ensureNetwork();
@@ -130,7 +146,7 @@ export function createWindowsEnvironmentProfileConfiguration({
           verify: (identity) => foundation.verifyImage(identity),
         }),
       });
-      const resourcesChanged = before.capabilities.storage?.ready !== true || before.capabilities.networking?.ready !== true;
+      const resourcesChanged = conflictChanged || before.capabilities.storage?.ready !== true || before.capabilities.networking?.ready !== true;
       return configurationResult({ ready: result.ready, changed: result.changed || resourcesChanged });
     },
   });

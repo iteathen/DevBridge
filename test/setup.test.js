@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import os from 'node:os';
-import { runDevBridgeSetup } from '../src/app/setup.js';
+import { formatSetupHandoff, runDevBridgeSetup } from '../src/app/setup.js';
 
 function repository(index, overrides = {}) {
   return {
@@ -42,10 +42,13 @@ function dependencies({
   prerequisite = null,
   lifecycleAuthority = null,
   environmentActivation = null,
+  resourceConflict = null,
+  acceptedConflict = null,
   initialState = null,
 } = {}) {
   const store = memoryStore(initialState);
-  const calls = { prerequisite: 0, profileConfiguration: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, authority: 0, canaryStatus: 0, canaryRun: 0 };
+  let conflictConsent = acceptedConflict;
+  const calls = { prerequisite: 0, profileConfiguration: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, authority: 0, canaryStatus: 0, canaryRun: 0 };
   const discoveredRepositories = repositories ?? Array.from({ length: count }, (_, index) => repository(index));
   return {
     calls,
@@ -66,6 +69,18 @@ function dependencies({
         async reconcile() { calls.profileConfiguration += 1; return { changed: false }; },
       }),
       profileConfigurationFactory: () => ({}),
+      resourceConflictFactory: async () => ({
+        async inspect() {
+          calls.resourceConflict += 1;
+          return resourceConflict ?? { protocol: 'devbridge/setup-resource-conflict-v1', state: 'clear', subject: null, reason: null };
+        },
+        async retire() { throw new Error('clear setup conflict must not retire'); },
+      }),
+      resourceConflictConsentStoreFactory: () => ({
+        async load() { return conflictConsent; },
+        async save(value) { conflictConsent = structuredClone(value); calls.conflictSaved += 1; return value; },
+        async clear() { const changed = conflictConsent != null; conflictConsent = null; calls.conflictCleared += changed ? 1 : 0; return changed; },
+      }),
       lifecycleAuthorityReconciler: async () => {
         calls.lifecycleAuthority += 1;
         return lifecycleAuthority ?? { protocol: 'test/lifecycle-authority', ready: true, blocker: null, changed: false, service: 'ready', protectedState: 'ready' };
@@ -117,6 +132,57 @@ test('setup composes protected configuration and environment activation only aft
   assert.equal(fixture.calls.environmentActivation, 1);
   assert.equal(fixture.calls.canaryStatus, 1);
   assert.equal(fixture.calls.canaryRun, 0);
+});
+
+test('setup discovers one exact inactive conflict and stops before elevation until the subject is approved', async () => {
+  const subject = 'a'.repeat(64);
+  const fixture = dependencies({
+    physical: { state: 'completed', blocked: false, complete: true, reason: null, preflight: { ready: true } },
+    resourceConflict: {
+      protocol: 'devbridge/setup-resource-conflict-v1',
+      state: 'approval-required',
+      subject,
+      reason: 'one inactive local resource blocks protected setup',
+    },
+  });
+  const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-conflict-discovery') }, fixture.deps);
+  assert.equal(result.blocked, true);
+  assert.equal(result.resourceConflict.subject, subject);
+  assert.equal(fixture.calls.lifecycleAuthority, 0);
+  assert.equal(fixture.calls.profileConfiguration, 0);
+  assert.match(result.blocker, /exact operator consent/u);
+  const handoff = formatSetupHandoff(result);
+  assert.match(handoff, new RegExp(`Conflict consent subject: ${subject}`, 'u'));
+  assert.match(handoff, new RegExp(`--retire-conflict ${subject}`, 'u'));
+});
+
+test('setup persists only the exact observed conflict subject before entering protected reconciliation', async () => {
+  const subject = 'b'.repeat(64);
+  const fixture = dependencies({
+    physical: { state: 'completed', blocked: false, complete: true, reason: null, preflight: { ready: true } },
+    resourceConflict: {
+      protocol: 'devbridge/setup-resource-conflict-v1',
+      state: 'approval-required',
+      subject,
+      reason: 'one inactive local resource blocks protected setup',
+    },
+  });
+  const result = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-conflict-approved'),
+    retireConflict: subject,
+  }, fixture.deps);
+  assert.equal(result.blocked, false);
+  assert.equal(result.phase, 'environment-ready');
+  assert.equal(fixture.calls.conflictSaved, 1);
+  assert.equal(fixture.calls.conflictCleared, 1);
+  assert.equal(fixture.calls.lifecycleAuthority, 1);
+
+  const changed = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-conflict-changed'),
+    retireConflict: 'c'.repeat(64),
+  }, fixture.deps);
+  assert.equal(changed.blocked, true);
+  assert.match(changed.blocker, /exact operator consent/u);
 });
 
 test('setup keeps the image complete but fails closed when protected environment activation is not ready', async () => {

@@ -1,6 +1,7 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { environmentInstanceDescriptor, environmentNetworkDescriptor } from './hyperv-environment-identity.js';
 
 const STATE_PROTOCOL = 'devbridge/hyperv-environment-state-v1';
 const TOKEN = /^[a-f0-9]{32}$/u;
@@ -18,20 +19,6 @@ function parseJson(result, action) {
     throw new Error(detail.slice(0, 2_048));
   }
   try { return JSON.parse(result.stdout); } catch { throw new Error(`${action} returned invalid structured output`); }
-}
-
-function ownedName(identity, kind, value = '') {
-  return `db-${kind}-${createHash('sha256').update(`${identity}:${kind}:${value}`).digest('hex').slice(0, 16)}`;
-}
-
-function ownership(identity, kind, value = '') {
-  return `devbridge-owned:${identity}:${kind}:${value || 'default'}:v1`;
-}
-
-function selectPrefix(identity) {
-  const digest = createHash('sha256').update(`${identity}:network`).digest();
-  const third = 64 + (digest[0] % 128);
-  return { prefix: `192.168.${third}.0/24`, gateway: `192.168.${third}.1` };
 }
 
 function emptyState() { return { protocol: STATE_PROTOCOL, network: null }; }
@@ -320,13 +307,10 @@ export class HyperVEnvironment {
   async ensureNetwork() {
     const state = await this.#loadState();
     if (!state.network) {
-      const selected = selectPrefix(this.#identity);
+      const selected = environmentNetworkDescriptor(this.#identity);
       state.network = {
         phase: 'planned',
-        name: ownedName(this.#identity, 'network'),
-        marker: ownership(this.#identity, 'network'),
-        prefix: selected.prefix,
-        gateway: selected.gateway,
+        ...selected,
       };
       await this.#saveState(state);
     }
@@ -370,7 +354,7 @@ export class HyperVEnvironment {
 
   #instanceDescriptor(identity) {
     if (typeof identity !== 'string' || !INSTANCE.test(identity)) throw new TypeError('instance identity must be an opaque local token');
-    return { name: ownedName(this.#identity, 'instance', identity), marker: ownership(this.#identity, 'instance', identity) };
+    return environmentInstanceDescriptor(this.#identity, identity);
   }
 
   async observeInstance(identity) {
