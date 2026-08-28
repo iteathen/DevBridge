@@ -94,6 +94,7 @@ const TARGETED_TESTS = [
   'test/linux-protected-transfer.test.js',
   'test/linux-protected-tree.test.js',
   'test/linux-lifecycle-authority-generation.test.js',
+  'test/linux-lifecycle-authority-identity-binding.test.js',
 ];
 
 function cleanOutput(value) {
