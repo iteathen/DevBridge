@@ -128,7 +128,7 @@ export async function doctor(config, {
 
   let repositoryAdmission = [];
   if (checkRepositoryAdmission) {
-    const targets = normalizeRepositoryAdmissionSet(repositoryAdmissionTargets ?? [config.github.queueRepository]);
+    const targets = normalizeRepositoryAdmissionSet(repositoryAdmissionTargets ?? config.github.queueRepositories);
     repositoryAdmission = await Promise.all(targets.map((repository) => inspectRepositoryAdmission({
       repository,
       remoteUrl: cloneRemote(config, repository),
@@ -140,7 +140,7 @@ export async function doctor(config, {
 
   return {
     ok: true,
-    queueRepository: config.github.queueRepository,
+    queueRepositories: [...config.github.queueRepositories],
     apiVersion: config.github.apiVersion,
     githubAuth,
     workspaceRoot,

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TaskLeaseLostError } from '../src/errors.js';
-import { runCycle } from '../src/app/run-once.js';
+import { runCycle } from '../src/app/runtime-cycle.js';
 import { RunCoordinator, runIdForTask } from '../src/run/run-coordinator.js';
 
 const REVISION = 'a'.repeat(64);
@@ -20,8 +20,9 @@ function cycleRuntime(overrides = {}) {
   return {
     config: {
       execution: { enabled: true },
-      github: { queueRepository: 'iteathen/DevBridge', pollIntervalMs: 60_000 },
+      github: { queueRepositories: ['iteathen/DevBridge'], pollIntervalMs: 60_000 },
     },
+    queueRepository: 'iteathen/DevBridge',
     stateStore: { entries: async () => [] },
     rateBudget: {
       recommendedPollIntervalMs: (value) => value,

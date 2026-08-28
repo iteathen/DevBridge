@@ -9,6 +9,7 @@ import { runOnce } from './app/run-once.js';
 import { runDaemon } from './app/daemon.js';
 import { createLinuxActivityAdmission } from './app/linux-activity-admission.js';
 import { createRuntime } from './app/runtime.js';
+import { selectConfiguredQueue } from './app/queue-selection.js';
 import { createConfiguredLifecycleAuthorityClient } from './runtime/environment-lifecycle-authority-transport.js';
 import { chatHandoffSeed, chatHandoffStatus } from './app/chat-handoff.js';
 import { formatSetupHandoff, runDevBridgeSetup } from './app/setup.js';
@@ -145,7 +146,8 @@ async function main() {
   }
 
   const config = await loadConfig(file);
-  const repository = optionValue(args, '--repository') ?? config.github.queueRepository;
+  const requestedRepository = optionValue(args, '--repository');
+  const repository = selectConfiguredQueue(config, requestedRepository);
   if (command === 'environment') {
     console.log(JSON.stringify(await runEnvironmentCommand(config, args), null, 2));
     return;
@@ -165,7 +167,7 @@ async function main() {
     return;
   }
   if (command === 'handoff-project') {
-    const runtime = await createRuntime(config);
+    const runtime = await createRuntime(config, { queueRepository: repository });
     const latest = await runtime.chatHandoffStore.loadLatest(repository);
     if (!latest) {
       console.log(JSON.stringify({ projected: false, reason: 'no-ready-handoff', repository }));
@@ -211,7 +213,7 @@ async function main() {
     const environmentOperator = createConfiguredLifecycleAuthorityClient({ stateDirectory: config.state.directory });
     console.log(JSON.stringify(await doctor(config, {
       checkRepositoryAdmission: true,
-      repositoryAdmissionTargets: [repository],
+      repositoryAdmissionTargets: requestedRepository == null ? config.github.queueRepositories : [repository],
       environmentOperator,
     }), null, 2));
     return;

@@ -1,53 +1,78 @@
-import path from 'node:path';
-import { JsonStateStore } from '../state/json-state-store.js';
-import { RateBudget } from '../github/rate-budget.js';
-import { GitHubRestClient } from '../github/rest-client.js';
+import { RateLimitError } from '../errors.js';
 import { IssueTaskSource } from '../github/issue-task-source.js';
 import { WorkspacePolicy } from '../security/workspace-policy.js';
+import { assertGitHubRuntimeContext, createGitHubRuntimeContext } from './github-runtime-context.js';
+import { configuredQueues } from './queue-selection.js';
 
-function stateFileName(repository) {
-  return `${repository.replace(/[^A-Za-z0-9_.-]+/g, '__')}.json`;
+function publicError(error) {
+  return Object.freeze({
+    name: typeof error?.name === 'string' ? error.name : 'Error',
+    message: String(error?.message ?? error).slice(0, 2048),
+  });
 }
 
-export async function pollOnce(config, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
+export async function pollOnce(config, {
+  env = process.env,
+  fetchImpl = globalThis.fetch,
+  contextFactory = createGitHubRuntimeContext,
+  sourceFactory = (options) => new IssueTaskSource(options),
+} = {}) {
   const workspace = new WorkspacePolicy(config.workspace);
   await workspace.ensureRoot();
-
-  const store = new JsonStateStore(path.join(config.state.directory, stateFileName(config.github.queueRepository)));
-  const budget = new RateBudget(config.github.rateLimit);
-  const client = new GitHubRestClient({
+  const queues = configuredQueues(config);
+  const context = assertGitHubRuntimeContext(await contextFactory({
     apiVersion: config.github.apiVersion,
-    tokenProvider: async () => env[config.github.tokenEnv] ?? null,
-    stateStore: store,
-    rateBudget: budget,
-    mutationIntervalMs: config.github.rateLimit.mutationIntervalMs,
-    fetchImpl
-  });
-  const source = new IssueTaskSource({
-    client,
-    queueRepository: config.github.queueRepository,
-    taskLabel: config.github.taskLabel,
-    trustedActorIds: config.github.trustedActorIds
-  });
-
-  const result = await source.poll();
+    rateLimit: config.github.rateLimit,
+    auth: config.github.auth,
+    stateDirectory: config.state.directory,
+    env,
+    fetchImpl,
+  }));
   const accepted = [];
-  const rejected = [...(result.rejected ?? [])];
+  const rejected = [];
+  const observations = [];
+  let recommendedPollIntervalMs = config.github.pollIntervalMs;
 
-  for (const task of result.tasks) {
+  for (const queueRepository of queues) {
+    const source = sourceFactory({
+      client: context.client,
+      queueRepository,
+      taskLabel: config.github.taskLabel,
+      trustedActorIds: config.github.trustedActorIds,
+    });
     try {
-      const projectDir = workspace.projectPath(task.envelope.target.repository);
-      accepted.push({ ...task, projectDir });
+      const result = await source.poll();
+      recommendedPollIntervalMs = Math.max(recommendedPollIntervalMs, result.pollIntervalMs ?? 0);
+      for (const entry of result.rejected ?? []) rejected.push({ ...entry, queueRepository });
+      for (const task of result.tasks) {
+        try {
+          const projectDir = workspace.projectPath(task.envelope.target.repository);
+          accepted.push({ ...task, queueRepository, projectDir });
+        } catch (error) {
+          rejected.push({ queueRepository, issueNumber: task.issueNumber, reason: 'local-policy', detail: error.message });
+        }
+      }
+      observations.push({ queueRepository, ready: true, unchanged: result.unchanged === true, error: null });
     } catch (error) {
-      rejected.push({ issueNumber: task.issueNumber, reason: 'local-policy', detail: error.message });
+      if (error instanceof RateLimitError) throw error;
+      observations.push({ queueRepository, ready: false, unchanged: false, error: publicError(error) });
     }
   }
 
+  recommendedPollIntervalMs = Math.max(
+    recommendedPollIntervalMs,
+    context.rateBudget.recommendedPollIntervalMs(
+      config.github.pollIntervalMs,
+      { estimatedRequestsPerCycle: queues.length * 2 },
+    ),
+  );
+
   return {
-    unchanged: result.unchanged,
+    unchanged: observations.every((entry) => entry.ready && entry.unchanged),
+    queues: observations,
     tasks: accepted,
     rejected,
-    recommendedPollIntervalMs: Math.max(config.github.pollIntervalMs, result.pollIntervalMs ?? 0),
-    rateLimit: budget.snapshot()
+    recommendedPollIntervalMs,
+    rateLimit: context.rateBudget.snapshot(),
   };
 }

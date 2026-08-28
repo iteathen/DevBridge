@@ -279,7 +279,7 @@ Existing operator configuration is never silently rewritten during self-update.
 
 Important authority areas include:
 
-- `github.queueRepository` and `github.trustedActorIds`;
+- `github.queueRepositories` and `github.trustedActorIds`;
 - `workspace.allowedOwners` and baseline channels;
 - `execution.*` and decision authorities;
 - coordination/peer trust;

@@ -64,8 +64,8 @@ export class RateBudget {
     estimatedRequestsPerCycle = 2,
   } = {}) {
     if (!Number.isInteger(configuredMs) || configuredMs < 1_000) throw new TypeError('configured polling interval must be an integer >= 1000 ms');
-    if (!Number.isInteger(estimatedRequestsPerCycle) || estimatedRequestsPerCycle < 1 || estimatedRequestsPerCycle > 100) {
-      throw new TypeError('estimatedRequestsPerCycle must be an integer between 1 and 100');
+    if (!Number.isInteger(estimatedRequestsPerCycle) || estimatedRequestsPerCycle < 1 || estimatedRequestsPerCycle > 10_000) {
+      throw new TypeError('estimatedRequestsPerCycle must be an integer between 1 and 10000');
     }
 
     let recommended = Math.max(configuredMs, this.#snapshot.pollIntervalMs ?? 0);
