@@ -1,6 +1,6 @@
 # DB-HO021 — issue #328 Hyper-V prefix probe timeout
 
-Status: planned from exact `cuda-target` baseline `67a4b0607d9e4b359395570e5259cdca9cc1259a` on isolated branch `test/328-hyperv-prefix-probe-timeout`.
+Status: implemented and locally qualified from exact `cuda-target` baseline `67a4b0607d9e4b359395570e5259cdca9cc1259a` on isolated branch `test/328-hyperv-prefix-probe-timeout`, stacked on the pending issue #326 test correction for combined qualification.
 
 ## Assessment
 
@@ -26,3 +26,14 @@ A 60-second test-local hard deadline gives three times the observed threshold wh
 4. Run the Windows-only focused test repeatedly, repository preflight, the 21-test VM/LEGO architecture selection, and the full suite before isolated publication.
 
 This slice changes no production Hyper-V/network, provider, VM, repository-execution, setup, elevation, or runtime authority. It invokes no UAC or physical provider action.
+
+## Implementation
+
+`hyperv-environment.test.js` now names a 60-second hard deadline for only the Windows prefix probe and passes it to the existing direct `execFile()` invocation. The generated PowerShell, executable, arguments, encoding, and hidden-window behavior are unchanged. No production source file changed.
+
+## Local evidence
+
+- Windows prefix probe: 1 focused pass plus 20 consecutive additional focused executions;
+- repository preflight: passed (`syntaxFiles: 43`, `jsonFiles: 2`, `targetedTests: 40`);
+- VM/repository-execution LEGO architecture selection: 21 passed, 0 failed;
+- full combined suite with the pending #326 correction: 1,232 total, 1,221 passed, 11 platform skips, 0 failed, with a normal TAP exit in 54.5 seconds.
