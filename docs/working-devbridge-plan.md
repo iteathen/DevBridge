@@ -304,3 +304,9 @@ This is a roadmap hypothesis, not an accepted security claim. Later assessment m
 8. implementation and issue evidence update.
 
 Passing mocks prove composition, not Hyper-V/libvirt enforcement. Expensive still-valid evidence is reused only when its exact candidate/provider/image/environment/policy identity remains valid.
+
+## No-elevation checkpoint: remote status authority
+
+Checkpoint 2026-08-28: the parameter-free remote `setup.status` operation had been wired to the mutating setup coordinator. Its historical “read-only” label covered only the final physical canary call and concealed earlier path, prerequisite, authority, lifecycle, environment, and operational-configuration effects. This is now corrected on `stage8/362-protected-activity-channel`: runtime status consumes only immutable validated configuration facts plus the attached execution contract's read-only inspection, exposes no execution identity, and never claims unobserved construction readiness. The obsolete setup-runner connection is removed. Full evidence is recorded in `docs/testing/DB-HO047-setup-status-observation-boundary.md`.
+
+This checkpoint is a prerequisite for profile-selection work: a remote status request must not become an implicit setup, profile change, UAC request, or construction action. Richer status will be added only through dedicated observation studs. No elevation or VM/provider mutation is permitted during the current three-day no-UAC interval.

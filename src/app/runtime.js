@@ -21,6 +21,7 @@ import { loadLocalOperationManifests } from '../runtime/local-operation-manifest
 import { ToolOnboarding } from '../runtime/tool-onboarding.js';
 import { canonicalExternalDirectory } from '../runtime/external-directory.js';
 import { createSetupStatusOperation } from '../setup/status-operation.js';
+import { createSetupStatusObserver } from '../setup/status-observer.js';
 import { connectToolOnboarding } from './tool-onboarding-composition.js';
 import { composeWorkRunner } from './work-runner-composition.js';
 import { createCoreToolchainRegistry } from '../runtime/toolchain-registry.js';
@@ -37,7 +38,6 @@ import { DecisionGatedRunCoordinator, DecisionGatedWorkspaceManager } from '../r
 import { createRuntimeExecutionContext } from './runtime-execution.js';
 import { assertGitHubRuntimeContext, createGitHubRuntimeContext } from './github-runtime-context.js';
 import { selectConfiguredQueue } from './queue-selection.js';
-import { runDevBridgeSetup } from './setup.js';
 
 export { stateFileName } from '../state/state-file.js';
 
@@ -217,8 +217,13 @@ export async function createRuntime(config, {
 
   const toolchainRegistry = createCoreToolchainRegistry({ env });
   const operationRegistry = createCoreOperationRegistry({ toolchainRegistry });
+  const setupStatusObserver = createSetupStatusObserver({
+    configuredSubjectCount: config.github.queueRepositories.length,
+    enabled: config.execution.enabled,
+    inspectCapability: () => repositoryExecution.inspect(),
+  });
   operationRegistry.register('setup.status', createSetupStatusOperation({
-    runSetup: () => runDevBridgeSetup({ env }, { fetchImpl }),
+    observeSetup: () => setupStatusObserver.observe(),
   }));
   const onboardingConfig = config.execution.toolOnboarding ?? {
     enabled: false,

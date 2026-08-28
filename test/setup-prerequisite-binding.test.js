@@ -2,8 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import os from 'node:os';
-import { runDevBridgeSetup } from '../src/app/setup.js';
-import { projectSetupStatus } from '../src/setup/status-operation.js';
+import { formatSetupHandoff, runDevBridgeSetup } from '../src/app/setup.js';
 
 function memoryStore() {
   let value = null;
@@ -74,9 +73,7 @@ test('setup carries the local signature-verifier binding through release verific
   assert.equal(canaryBinding, VERIFIER);
   assert.equal(canaryRun, 0);
 
-  const projected = projectSetupStatus(result);
-  const serialized = JSON.stringify(projected);
-  assert.equal(serialized.includes(VERIFIER), false);
-  assert.equal(serialized.includes('signatureVerifierExecutable'), false);
-  assert.deepEqual(projected.prerequisites.capabilities, { gpgv: true, opensshClient: true });
+  const handoff = formatSetupHandoff(result);
+  assert.equal(handoff.includes(VERIFIER), false);
+  assert.equal(handoff.includes('signatureVerifierExecutable'), false);
 });
