@@ -1,6 +1,6 @@
 # DB-HO028 — issue #349 exact Linux refresh composition
 
-Status: implemented and locally qualified from exact `cuda-target` baseline `0b16e8b4e184efd8c8fc6fc6a219a7ba878db7a2` on isolated branch `security/349-linux-refresh-composition`; exact-head remote CI and integration evidence remain pending.
+Status: implemented, qualified, and integrated into `cuda-target` from exact baseline `0b16e8b4e184efd8c8fc6fc6a219a7ba878db7a2`; physical Linux provider qualification and the explicitly deferred downstream work remain pending.
 
 ## Assessment
 
@@ -103,3 +103,16 @@ Qualification on Windows from the isolated branch completed with:
 - doctor: exited successfully and correctly reported repository execution unavailable because no local persistent-environment route or constructed base image is configured.
 
 This is software qualification of the composition boundary, not physical Linux provider evidence. Real libvirt/qcow2 construction, service installation, refresh, rollback, and host-fallback-negative qualification remain required before Linux readiness or Stage 7 can be claimed.
+
+## Remote qualification and integration evidence
+
+Pull request [#350](https://github.com/iteathen/DevBridge/pull/350) reviewed exact topic head `66928d80632fdf5bd60ee76eff1c4c2454def633` and targeted `cuda-target`.
+
+GitHub Actions run [33138709514](https://github.com/iteathen/DevBridge/actions/runs/33138709514) completed successfully on that exact reviewed head:
+
+- Ubuntu smoke job `98744478982`: passed;
+- Windows smoke job `98744479038`: passed;
+- Ubuntu architecture gates, full tests, and doctor job `98744479023`: passed; and
+- Windows architecture gates, full tests, and doctor job `98744478899`: passed.
+
+The PR was squash-merged as `08667af36746dea8e7df2f13efbec7c59553fdae`. The reviewed topic and integrated commit both resolve to tree `15def231d913e6b6c91a0d3f442bc1705c3b3f61`; an exact tree diff is empty. This binds the integrated bytes to the reviewed and remotely qualified bytes despite the expected squash-commit identity change.
