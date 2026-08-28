@@ -106,6 +106,20 @@ Selection is configuration intent only. It does not install or enable a provider
 
 The selection transaction is revisioned and restartable through the host-owned setup-authority record. Its application adapter resumes only its own interrupted operation and refuses to absorb an interrupted transaction owned by another setup component.
 
+### Windows activation-policy selection
+
+Windows setup requires a separate explicit local activation policy before a completed Windows image may proceed into protected environment activation. The currently implemented non-secret choice is:
+
+```text
+devbridge setup --windows-activation later
+```
+
+This records `configure-later`; it does not install a product key, infer host entitlement, invoke a guest activation command, or claim that Windows is activated. Setup continues to report **Windows activation required** as a non-blocking deferred capability after the policy is accepted.
+
+Omitting the option preserves an accepted policy on re-entry. If none is accepted, Windows media discovery and image construction remain available, and independent Linux image work remains available, but a completed Windows image stops before declaration publication, protected lifecycle/environment activation, and operational enablement. The policy record is immutable and digest-addressed; setup authority retains only its opaque local subject. A missing, substituted, imported, unavailable, or otherwise mismatched accepted record fails closed.
+
+Retail, MAK, KMS, Active Directory-based activation, and subscription activation are not yet implemented. Setup rejects those undeclared choices instead of treating `configure-later` as a compatibility alias. Product keys and other secret material are not accepted by this policy contract or serialized into its state/status.
+
 After every selected profile has an exact complete accepted image, setup publishes declarations for only those profiles and requires the publication to cover the entire selection. Ubuntu and Windows declaration policy remains in separate profile-owned modules; the common publisher consumes neutral sources and stable repository subjects. Protected activation follows accepted profile order and returns after the first changed environment. Re-entry re-observes completed profiles before advancing the next one, and a blocked earlier profile is never skipped. Operational configuration is published only after every selected environment verifies ready through the protected lifecycle client.
 
 ## Current requirements

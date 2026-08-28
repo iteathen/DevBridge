@@ -51,6 +51,19 @@ function windowsPhysical(state = 'ready', { complete = false, blocked = false, r
   };
 }
 
+function windowsActivationPolicy(state = 'accepted', overrides = {}) {
+  return {
+    protocol: 'devbridge/setup-windows-activation-policy-status-v1',
+    state,
+    ready: state === 'accepted',
+    changed: false,
+    mode: state === 'accepted' ? 'configure-later' : null,
+    activationRequired: true,
+    blocker: state === 'accepted' ? null : 'Windows activation policy requires an explicit local selection',
+    ...overrides,
+  };
+}
+
 function memoryStore(initial = null) {
   let value = initial;
   return {
@@ -77,12 +90,13 @@ function dependencies({
   profileSelection = null,
   windowsMedia = null,
   windowsConstruction = null,
+  windowsActivation = null,
   windowsAdvance = null,
   physicalAdvance = null,
 } = {}) {
   const store = memoryStore(initialState);
   let conflictConsent = acceptedConflict;
-  const calls = { profileSelection: 0, profileSelectionRequest: null, windowsMedia: 0, windowsMediaRequest: null, windowsConstruction: 0, windowsConstructionActions: [], prerequisite: 0, profileConfiguration: 0, profileSourceCount: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, environmentActivationProfiles: [], operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
+  const calls = { profileSelection: 0, profileSelectionRequest: null, windowsActivation: 0, windowsActivationRequest: null, windowsMedia: 0, windowsMediaRequest: null, windowsConstruction: 0, windowsConstructionActions: [], prerequisite: 0, profileConfiguration: 0, profileSourceCount: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, environmentActivationProfiles: [], operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
   const discoveredRepositories = repositories ?? Array.from({ length: count }, (_, index) => repository(index));
   const configuredProfiles = activationProfiles ?? profileSelection?.profiles ?? ['linux-development'];
   return {
@@ -104,6 +118,11 @@ function dependencies({
           pendingProfiles: null,
           source: 'accepted',
         });
+      },
+      windowsActivationPolicyReconciler: async (value) => {
+        calls.windowsActivation += 1;
+        calls.windowsActivationRequest = structuredClone(value);
+        return structuredClone(windowsActivation ?? windowsActivationPolicy());
       },
       pathInstaller: async ({ home }) => ({ protocol: 'test/path', command: path.join(home, 'bin', 'devbridge.cmd'), persisted: true, changed: false, requiresNewShell: false, temporaryCommand: null }),
       tokenResolver: async () => 'test-token',
@@ -356,6 +375,81 @@ test('Windows-only selection reaches protected activation after exact image comp
   assert.equal(fixture.calls.lifecycleAuthority, 1);
   assert.equal(fixture.calls.operationalConfiguration, 1);
   assert.match(formatSetupHandoff(result), /1 selected environment\(s\) verified/u);
+  assert.match(formatSetupHandoff(result), /Configure later \(Windows activation remains required\)/u);
+});
+
+test('completed Windows image stops before protected effects until activation policy is selected', async () => {
+  const fixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 2, changed: false,
+      profiles: ['windows-development'], pendingProfiles: null, source: 'accepted',
+    },
+    windowsMedia: acceptedWindowsMedia(),
+    windowsConstruction: windowsPhysical('complete', { complete: true }),
+    windowsActivation: windowsActivationPolicy('selection-required'),
+  });
+  const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-windows-policy-gate') }, fixture.deps);
+  assert.equal(result.blocked, true);
+  assert.match(result.blocker, /requires an explicit local selection/u);
+  assert.deepEqual(result.windowsProfile.activationPolicy, {
+    state: 'selection-required',
+    ready: false,
+    changed: false,
+    mode: null,
+    activationRequired: true,
+    blocker: 'Windows activation policy requires an explicit local selection',
+  });
+  assert.equal(fixture.calls.resourceConflict, 0);
+  assert.equal(fixture.calls.profileConfiguration, 0);
+  assert.equal(fixture.calls.lifecycleAuthority, 0);
+  assert.equal(fixture.calls.environmentActivation, 0);
+  assert.equal(fixture.calls.operationalConfiguration, 0);
+  assert.match(formatSetupHandoff(result), /devbridge setup --windows-activation later/u);
+});
+
+test('explicit configure-later selection reaches the existing protected path without activation claims', async () => {
+  const fixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 2, changed: false,
+      profiles: ['windows-development'], pendingProfiles: null, source: 'accepted',
+    },
+    windowsMedia: acceptedWindowsMedia(),
+    windowsConstruction: windowsPhysical('complete', { complete: true }),
+    windowsActivation: windowsActivationPolicy('accepted', { changed: true }),
+  });
+  const result = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-windows-policy-later'),
+    windowsActivation: 'later',
+  }, fixture.deps);
+  assert.equal(result.blocked, false);
+  assert.equal(result.phase, 'operational-ready');
+  assert.equal(fixture.calls.windowsActivation, 1);
+  assert.equal(fixture.calls.windowsActivationRequest.choice, 'later');
+  assert.equal(result.windowsProfile.activationPolicy.mode, 'configure-later');
+  assert.equal(result.windowsProfile.activationPolicy.activationRequired, true);
+  assert.equal(Object.hasOwn(result.windowsProfile.activationPolicy, 'subject'), false);
+});
+
+test('widened activation-policy status fails closed before media or protected effects', async () => {
+  const fixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 2, changed: false,
+      profiles: ['windows-development'], pendingProfiles: null, source: 'accepted',
+    },
+    windowsActivation: windowsActivationPolicy('accepted', {
+      subject: `subject-${'f'.repeat(32)}`,
+      credential: 'must-not-project',
+    }),
+  });
+  const result = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-windows-policy-widened'),
+    windowsActivation: 'later',
+  }, fixture.deps);
+  assert.equal(result.blocked, true);
+  assert.match(result.blocker, /reconciliation failed/u);
+  assert.equal(fixture.calls.windowsMedia, 0);
+  assert.equal(fixture.calls.lifecycleAuthority, 0);
+  assert.equal(JSON.stringify(result).includes('must-not-project'), false);
 });
 
 test('multi-profile activation advances one changed environment and resumes in accepted order', async () => {
@@ -450,6 +544,34 @@ test('setup rejects Windows media actions outside the selected profile before it
   assert.match(media.blocker, /require the selected Windows execution profile/u);
   assert.equal(linux.calls.windowsMedia, 0);
   assert.equal(linux.calls.prerequisite, 0);
+
+  const policyFixture = dependencies();
+  const policy = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-policy-without-windows'),
+    windowsActivation: 'later',
+  }, policyFixture.deps);
+  assert.equal(policy.blocked, true);
+  assert.match(policy.blocker, /require the selected Windows execution profile/u);
+  assert.equal(policyFixture.calls.windowsActivation, 0);
+  assert.equal(policyFixture.calls.windowsMedia, 0);
+});
+
+test('pending activation-policy selection does not block independent Linux image progress', async () => {
+  const fixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 3, changed: false,
+      profiles: ['linux-development', 'windows-development'], pendingProfiles: null, source: 'accepted',
+    },
+    windowsActivation: windowsActivationPolicy('selection-required'),
+    windowsMedia: acceptedWindowsMedia(),
+    windowsConstruction: windowsPhysical('complete', { complete: true }),
+    physical: { state: 'planned', blocked: false, complete: false, reason: null, preflight: { ready: true } },
+  });
+  const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-policy-independent-progress') }, fixture.deps);
+  assert.equal(result.blocked, false);
+  assert.equal(result.readyForConstruction, true);
+  assert.equal(result.windowsProfile.activationPolicy.state, 'selection-required');
+  assert.equal(fixture.calls.lifecycleAuthority, 0);
 });
 
 test('Windows-only construction observes before advancing only its selected profile', async () => {

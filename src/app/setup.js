@@ -11,6 +11,7 @@ import { createUbuntuProductionImagePhysicalCanary, UBUNTU_PRODUCTION_IMAGE_PHYS
 import { reconcileSetupEnvironmentActivation } from './setup-environment-activation.js';
 import { createSetupEnvironmentProfileConfiguration } from './setup-environment-profile-configuration.js';
 import { reconcileSetupProfileSelection } from './setup-profile-selection.js';
+import { reconcileSetupWindowsActivationPolicy } from './setup-windows-activation-policy.js';
 import { executionWorkspaceIdentity } from './execution-profile-routing.js';
 import { discoverGitHubSetupScope } from '../setup/github-discovery.js';
 import { installStableDevBridgeCommand } from '../setup/path-installation.js';
@@ -138,6 +139,46 @@ function publicOperationalConfiguration(value) {
   });
 }
 
+function publicWindowsActivationPolicy(value) {
+  if (!value) return null;
+  return Object.freeze({
+    state: value.state,
+    ready: value.ready,
+    changed: value.changed,
+    mode: value.mode,
+    activationRequired: value.activationRequired,
+    blocker: value.blocker,
+  });
+}
+
+function normalizeWindowsActivationPolicyStatus(raw) {
+  const allowed = new Set(['protocol', 'state', 'ready', 'changed', 'mode', 'activationRequired', 'blocker']);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('Windows activation policy status must be an object');
+  for (const key of Object.keys(raw)) if (!allowed.has(key)) throw new TypeError(`Windows activation policy status.${key} is not allowed`);
+  if (raw.protocol !== 'devbridge/setup-windows-activation-policy-status-v1'
+      || !['selection-required', 'accepted', 'blocked'].includes(raw.state)
+      || typeof raw.ready !== 'boolean'
+      || typeof raw.changed !== 'boolean'
+      || raw.activationRequired !== true
+      || (raw.blocker != null && (typeof raw.blocker !== 'string' || raw.blocker.length < 1 || raw.blocker.length > 1024))) {
+    throw new TypeError('Windows activation policy status is invalid');
+  }
+  if (raw.state === 'accepted') {
+    if (!raw.ready || raw.mode !== 'configure-later' || raw.blocker !== null) throw new TypeError('accepted Windows activation policy status is inconsistent');
+  } else if (raw.ready || raw.mode !== null || typeof raw.blocker !== 'string' || raw.changed) {
+    throw new TypeError('unready Windows activation policy status is inconsistent');
+  }
+  return Object.freeze({
+    protocol: raw.protocol,
+    state: raw.state,
+    ready: raw.ready,
+    changed: raw.changed,
+    mode: raw.mode,
+    activationRequired: true,
+    blocker: raw.blocker,
+  });
+}
+
 function normalizeProfileSelection(value) {
   const allowedKeys = new Set(['protocol', 'state', 'revision', 'changed', 'profiles', 'pendingProfiles', 'source']);
   if (!value || value.protocol !== 'devbridge/setup-profile-selection-status-v1'
@@ -257,7 +298,7 @@ async function createSetupResourceConflict({ stateDirectory, platform, invoke })
   return createWindowsSetupResourceConflict({ identity, platform, invoke });
 }
 
-function setupResult({ home, pathStatus, repositories = null, identity = null, profileSelection = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, operationalConfiguration = null, windowsMedia = null, windowsConstruction = null, blocker = null, constructionRequested = false, constructionAttempted = false, constructionProfile = null }) {
+function setupResult({ home, pathStatus, repositories = null, identity = null, profileSelection = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, operationalConfiguration = null, windowsMedia = null, windowsConstruction = null, windowsActivationPolicy = null, blocker = null, constructionRequested = false, constructionAttempted = false, constructionProfile = null }) {
   const readyForConstruction = constructionAttempted !== true && physical?.blocked === false && physical?.complete !== true;
   const linuxRequested = profileSelection?.profiles.includes(LINUX_PROFILE) === true;
   const windowsRequested = profileSelection?.profiles.includes(WINDOWS_PROFILE) === true;
@@ -290,7 +331,12 @@ function setupResult({ home, pathStatus, repositories = null, identity = null, p
     environment: publicEnvironmentActivation(environmentActivation),
     operational: publicOperationalConfiguration(operationalConfiguration),
     linuxProfile: linuxRequested ? Object.freeze({ profile: LINUX_PROFILE, snapshot, physicalStatus: physical }) : null,
-    windowsProfile: windowsRequested ? Object.freeze({ profile: WINDOWS_PROFILE, media: windowsMedia, construction: windowsConstruction }) : null,
+    windowsProfile: windowsRequested ? Object.freeze({
+      profile: WINDOWS_PROFILE,
+      media: windowsMedia,
+      construction: windowsConstruction,
+      activationPolicy: publicWindowsActivationPolicy(windowsActivationPolicy),
+    }) : null,
   });
 }
 
@@ -337,6 +383,20 @@ function appendConstructionDiagnostics(lines, physical) {
 }
 
 function appendWindowsMedia(lines, windowsProfile, { constructionActive = false } = {}) {
+  const policy = windowsProfile?.activationPolicy;
+  if (policy) {
+    lines.push('', 'Windows activation policy:');
+    if (policy.state === 'accepted' && policy.mode === 'configure-later') {
+      lines.push('Configure later (Windows activation remains required)');
+    } else if (policy.state === 'selection-required') {
+      lines.push(
+        'Selection required before protected Windows environment activation.',
+        'Defer activation explicitly: devbridge setup --windows-activation later',
+      );
+    } else if (policy.state === 'blocked') {
+      lines.push(`Blocked: ${policy.blocker ?? 'local activation-policy reconciliation failed'}`);
+    }
+  }
   const media = windowsProfile?.media;
   if (!media || media.state === 'platform-unavailable') return;
   lines.push('', 'Windows execution profile media:');
@@ -516,6 +576,7 @@ export async function runDevBridgeSetup({
   discoverWindowsMedia = false,
   windowsMediaLocation = null,
   windowsMediaApproval = null,
+  windowsActivation = null,
   env = process.env,
 } = {}, {
   invoke = invokeCommand,
@@ -543,6 +604,7 @@ export async function runDevBridgeSetup({
   authorityFactory = createUbuntuSetupAuthority,
   canaryFactory = createUbuntuProductionImagePhysicalCanary,
   profileSelectionReconciler = reconcileSetupProfileSelection,
+  windowsActivationPolicyReconciler = reconcileSetupWindowsActivationPolicy,
   windowsMediaReconciler = reconcileWindowsInstallMediaSetup,
   windowsConstructionReconciler = reconcileWindowsProductionImageSetup,
   profileSourceFactories = Object.freeze({
@@ -562,8 +624,9 @@ export async function runDevBridgeSetup({
   let profileSelection = null;
   let windowsMedia = null;
   let windowsConstruction = null;
+  let windowsActivationPolicy = null;
   let constructionProfile = null;
-  const publicResult = (value) => setupResult({ ...value, profileSelection, windowsMedia, windowsConstruction, constructionProfile });
+  const publicResult = (value) => setupResult({ ...value, profileSelection, windowsMedia, windowsConstruction, windowsActivationPolicy, constructionProfile });
   const reconcileWindowsConstruction = async (action) => {
     try {
       return await windowsConstructionReconciler({ home: root, stateDirectory, platform, invoke, action });
@@ -592,11 +655,30 @@ export async function runDevBridgeSetup({
   if (construct && (profileSelection.state !== 'accepted' || profileSelection.profiles.length === 0)) {
     return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: 'Physical image construction requires at least one accepted execution profile' });
   }
-  if ((windowsMediaLocation != null || windowsMediaApproval != null) && !windowsRequested) {
-    return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: 'Windows media options require the selected Windows execution profile' });
+  if ((windowsMediaLocation != null || windowsMediaApproval != null || windowsActivation != null) && !windowsRequested) {
+    return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: 'Windows setup options require the selected Windows execution profile' });
   }
 
   if (windowsRequested) {
+    try {
+      windowsActivationPolicy = normalizeWindowsActivationPolicyStatus(await windowsActivationPolicyReconciler({
+        stateDirectory,
+        choice: windowsActivation,
+      }));
+    } catch {
+      windowsActivationPolicy = Object.freeze({
+        protocol: 'devbridge/setup-windows-activation-policy-status-v1',
+        state: 'blocked',
+        ready: false,
+        changed: false,
+        mode: null,
+        activationRequired: true,
+        blocker: 'Windows activation-policy reconciliation failed; inspect local setup evidence and retry',
+      });
+    }
+    if (windowsActivation != null && windowsActivationPolicy?.ready !== true) {
+      return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: windowsActivationPolicy.blocker });
+    }
     try {
       windowsMedia = await windowsMediaReconciler({
         home: root,
@@ -846,6 +928,20 @@ export async function runDevBridgeSetup({
         constructionRequested: construct,
         constructionAttempted,
         blocker,
+      });
+    }
+    if (windowsActivationPolicy?.ready !== true) {
+      return publicResult({
+        home: root,
+        pathStatus,
+        identity: scope.identity,
+        repositories,
+        snapshot,
+        prerequisites,
+        physical,
+        constructionRequested: construct,
+        constructionAttempted,
+        blocker: windowsActivationPolicy?.blocker ?? 'Windows activation policy requires an explicit local selection',
       });
     }
   }
