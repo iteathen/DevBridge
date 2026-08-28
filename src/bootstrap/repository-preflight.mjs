@@ -49,7 +49,10 @@ const SYNTAX_FILES = [
   'src/bootstrap/secure-bootstrap.mjs',
   'src/bootstrap/transactional-bootstrap.mjs',
   'src/setup/linux-directory-definition-applicator.js',
+  'src/setup/linux-lifecycle-authority-generation.js',
+  'src/setup/linux-lifecycle-authority-inspection.js',
   'src/setup/linux-lifecycle-authority-endpoint-topology.js',
+  'src/setup/linux-protected-tree.js',
 ];
 
 const JSON_FILES = ['package.json', 'config/devbridge.example.json'];
@@ -96,6 +99,7 @@ const TARGETED_TESTS = [
   'test/linux-protected-transfer.test.js',
   'test/linux-protected-tree.test.js',
   'test/linux-lifecycle-authority-generation.test.js',
+  'test/linux-lifecycle-authority-inspection.test.js',
   'test/linux-lifecycle-authority-identity-binding.test.js',
   'test/definition-reconciliation.test.js',
   'test/linux-service-manager.test.js',

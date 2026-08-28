@@ -1,6 +1,6 @@
 # DB-HO026 — issue #343 Linux restart-safe generation verification
 
-Status: planned from exact `cuda-target` baseline `e821e538f69acb6a734a0328d87639ac7af0729f` on isolated branch `security/343-linux-generation-verification`.
+Status: implemented and locally qualified from exact `cuda-target` baseline `e821e538f69acb6a734a0328d87639ac7af0729f` on isolated branch `security/343-linux-generation-verification`; isolated remote CI and integration evidence remain pending.
 
 ## Assessment
 
@@ -40,3 +40,26 @@ The interface does not expose source paths, service names, provider objects, com
 7. Add focused suites to repository preflight; run related Linux tests, preflight, repository-execution architecture gates, and the full suite before isolated publication.
 
 This prerequisite does not promote, start, stop, restore, provision, elevate, authorize libvirt, touch a VM, or claim Linux readiness. After it is integrated, the higher lifecycle mechanic can safely load and reverify active/staged/retained generation subjects after restart.
+
+## Implementation
+
+- `linux-protected-tree.js` now exposes a separate `devbridge/linux-protected-tree-verification-v1` contract. It accepts one normalized root contract, exact directory names, and exact file size/digest/mode evidence. Its only ports are `observeEntry`, `verifyFile`, and `listDirectory`; mutation-shaped or widened ports are rejected before observation.
+- `linux-lifecycle-authority-generation.js` replaces the incomplete v1 record with `devbridge/linux-lifecycle-authority-generation-v2`. The record contains the normalized package aggregate and complete bounded file inventory plus the Node size/digest. Normalization revalidates path, count, per-file size, aggregate size, required-entry, order, uniqueness, aggregate digest, generation identity, authority identity, and encoded-manifest bounds.
+- The old aggregate-only v1 shape is rejected. There is no compatibility reader because no production Linux generation exists and the old record cannot support exact restart or rollback verification.
+- A historical verification projection reconstructs the bound generation plan, exact unit bytes, and neutral protected-tree verification request from an unbound local plan plus the self-describing record. It does not require or expose package source paths.
+- The generation verifier accepts one neutral `verify` port and validates only its local root path, observed-entry count, and readiness evidence before returning the generation identity and `verified: true`. The temporary inspection composition strips the lower verifier's identity, so generation logic does not name or depend on the currently connected implementation.
+- Broad Linux lifecycle inspection now loads the larger bounded generation record and delegates runtime proof to exact generation verification. The previous aggregate remeasurement plus broad access walk was removed from this path; damaged or inexact historical trees remain explicit not-ready evidence.
+- Repository preflight now syntax-checks all three changed setup modules and runs lifecycle inspection alongside the existing protected-tree and generation suites.
+
+## Local qualification
+
+All commands ran without elevation, UAC, service-manager mutation, provider mutation, or VM effects.
+
+- Focused protected-tree/generation/inspection: 35 tests, 34 passed, 1 expected non-Linux filesystem skip, 0 failed.
+- Related Linux lifecycle selection: 110 tests, 107 passed, 3 expected non-Linux filesystem skips, 0 failed.
+- Repository preflight: 48 syntax files, 2 JSON files, 48 targeted tests, passed.
+- Repository-execution architecture gate: 34 tests, 33 passed, 1 expected Windows symlink skip, 0 failed.
+- Full suite: 1,289 tests, 1,278 passed, 11 expected platform/host skips, 0 failed.
+- `doctor` against `config/devbridge.example.json`: exited successfully and continued to report repository execution unavailable/fail-closed because no persistent-environment route is configured.
+
+The remaining qualification is the isolated pull-request matrix. Ubuntu CI is expected to execute the real protected-tree install/reuse/verification canary, while both operating systems rerun preflight and the full suite.

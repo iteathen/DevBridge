@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 const PROTOCOL = 'devbridge/linux-protected-tree-v1';
+const VERIFICATION_PROTOCOL = 'devbridge/linux-protected-tree-verification-v1';
 const DIGEST = /^[0-9a-f]{64}$/u;
 const PENDING_SUFFIX = '.devbridge-pending';
 const MAX_DIRECTORIES = 4_096;
@@ -123,6 +124,20 @@ function normalizeEntry(value, index) {
   throw new TypeError(`${name} kind is invalid`);
 }
 
+function normalizeVerificationEntry(value, index) {
+  const name = `Linux protected tree verification entry ${index}`;
+  exactKeys(value, new Set(['relative', 'mode', 'maximumBytes', 'size', 'digest']), name);
+  const maximumBytes = positive(value.maximumBytes, `${name} maximum`, MAX_ENTRY_BYTES);
+  return Object.freeze({
+    kind: 'file',
+    relative: relativePath(value.relative, `${name} path`),
+    mode: accessMode(value.mode, `${name} mode`),
+    maximumBytes,
+    size: positive(value.size, `${name} size`, maximumBytes),
+    digest: digest(value.digest, `${name} digest`),
+  });
+}
+
 function depth(value) {
   return value.split('/').length;
 }
@@ -193,10 +208,75 @@ function normalizeRequest(value) {
   return Object.freeze({ ownerId, groupId, creatorIds: creator, directoryMode, working, installed, directories: Object.freeze(directories), entries: Object.freeze(entries) });
 }
 
+function normalizeVerificationRequest(value) {
+  exactKeys(value, new Set(['root', 'directoryMode', 'directories', 'entries']), 'Linux protected tree verification request');
+  const root = contract(value.root, 'Linux protected tree verification root');
+  const directoryMode = accessMode(value.directoryMode, 'Linux protected tree verification directory mode');
+  if (!Array.isArray(value.directories) || value.directories.length > MAX_DIRECTORIES) {
+    throw new TypeError('Linux protected tree verification directories are invalid');
+  }
+  if (!Array.isArray(value.entries) || value.entries.length < 1 || value.entries.length > MAX_ENTRIES) {
+    throw new TypeError('Linux protected tree verification entries are invalid');
+  }
+  const directories = value.directories.map((entry, index) => relativePath(entry, `Linux protected tree verification directory ${index}`));
+  if (new Set(directories).size !== directories.length) throw new TypeError('Linux protected tree verification directories are ambiguous');
+  const directorySet = new Set(directories);
+  for (const relative of directories) {
+    const parent = path.posix.dirname(relative);
+    if (parent !== '.' && !directorySet.has(parent)) throw new TypeError('Linux protected tree verification directory parent is undeclared');
+  }
+  directories.sort((left, right) => depth(left) - depth(right) || codePointCompare(left, right));
+  const entries = value.entries.map(normalizeVerificationEntry);
+  const entryPaths = entries.map((entry) => entry.relative);
+  if (new Set(entryPaths).size !== entryPaths.length || entryPaths.some((entry) => directorySet.has(entry))) {
+    throw new TypeError('Linux protected tree verification entry paths are ambiguous');
+  }
+  let totalBytes = 0;
+  for (const entry of entries) {
+    const parent = path.posix.dirname(entry.relative);
+    if (parent !== '.' && !directorySet.has(parent)) throw new TypeError('Linux protected tree verification entry parent is undeclared');
+    totalBytes += entry.size;
+    if (!Number.isSafeInteger(totalBytes) || totalBytes > MAX_TREE_BYTES) throw new TypeError('Linux protected tree verification bytes exceed their bound');
+  }
+  entries.sort((left, right) => codePointCompare(left.relative, right.relative));
+  return Object.freeze({
+    root,
+    ownerId: root.ownerId,
+    groupId: root.groupId,
+    directoryMode,
+    directories: Object.freeze(directories),
+    entries: Object.freeze(entries),
+  });
+}
+
 function requirePorts(ports) {
   const names = ['observeEntry', 'ensureDirectory', 'writeContent', 'transferContent', 'verifyFile', 'listDirectory', 'move', 'syncDirectory'];
   for (const name of names) if (typeof ports?.[name] !== 'function') throw new TypeError(`Linux protected tree ${name} port is invalid`);
   return ports;
+}
+
+function requireVerificationPorts(ports) {
+  exactKeys(ports, new Set(['observeEntry', 'verifyFile', 'listDirectory']), 'Linux protected tree verification ports');
+  for (const name of ['observeEntry', 'verifyFile', 'listDirectory']) {
+    if (typeof ports[name] !== 'function') throw new TypeError(`Linux protected tree verification ${name} port is invalid`);
+  }
+  return ports;
+}
+
+function normalizedVerificationObservation(value) {
+  exactKeys(value, new Set(['exists', 'kind', 'owner', 'group', 'mode']), 'Linux protected tree verification observation');
+  for (const name of ['exists', 'kind', 'owner', 'group', 'mode']) {
+    if (typeof value[name] !== 'boolean') throw new Error('Linux protected tree verification observation is invalid');
+  }
+  return Object.freeze({ ...value });
+}
+
+function normalizedVerificationFile(value) {
+  exactKeys(value, new Set(['ready', 'size', 'digest']), 'Linux protected tree verification file evidence');
+  if (value.ready !== true || !Number.isSafeInteger(value.size) || value.size < 1 || typeof value.digest !== 'string' || !DIGEST.test(value.digest)) {
+    throw new Error('Linux protected tree verification file evidence is invalid');
+  }
+  return Object.freeze({ ...value });
 }
 
 function ready(value) {
@@ -374,4 +454,25 @@ export async function installLinuxProtectedTree(value, providedPorts) {
   return Object.freeze({ protocol: PROTOCOL, path: request.installed.contract.path, entries: installedTree.entries, changed: true });
 }
 
-export { PROTOCOL as LINUX_PROTECTED_TREE_PROTOCOL };
+export async function verifyLinuxProtectedTree(value, providedPorts) {
+  const request = normalizeVerificationRequest(value);
+  const ports = requireVerificationPorts(providedPorts);
+  const children = declaredChildren(request);
+  const local = Object.freeze({
+    observeEntry: async (entry) => normalizedVerificationObservation(await ports.observeEntry(entry)),
+    verifyFile: async (entry) => normalizedVerificationFile(await ports.verifyFile(entry)),
+    listDirectory: ports.listDirectory,
+  });
+  const observed = await verifyTree(Object.freeze({ contract: request.root }), request, local, children);
+  return Object.freeze({
+    protocol: VERIFICATION_PROTOCOL,
+    path: request.root.path,
+    entries: observed.entries,
+    ready: true,
+  });
+}
+
+export {
+  PROTOCOL as LINUX_PROTECTED_TREE_PROTOCOL,
+  VERIFICATION_PROTOCOL as LINUX_PROTECTED_TREE_VERIFICATION_PROTOCOL,
+};

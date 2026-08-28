@@ -7,16 +7,22 @@ import {
   LINUX_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL,
 } from './linux-lifecycle-authority.js';
 import {
+  LINUX_LIFECYCLE_AUTHORITY_GENERATION_MANIFEST_MAX_BYTES,
+  LINUX_LIFECYCLE_AUTHORITY_GENERATION_VERIFICATION_PROTOCOL,
   normalizeLinuxLifecycleAuthorityGenerationManifest,
+  verifyLinuxLifecycleAuthorityGeneration,
 } from './linux-lifecycle-authority-generation.js';
 import {
   LINUX_LIFECYCLE_AUTHORITY_OWNERSHIP_PROTOCOL,
   normalizeLinuxLifecycleAuthorityOwnershipRecord,
 } from './linux-lifecycle-authority-records.js';
 import {
-  measureProtectedAuthorityRuntimeCandidate,
-  verifyProtectedAuthorityRuntimeAccess,
-} from './protected-authority-runtime-candidate.js';
+  inspectLinuxProtectedEntry,
+  verifyLinuxProtectedFile,
+} from './linux-protected-storage.js';
+import {
+  verifyLinuxProtectedTree,
+} from './linux-protected-tree.js';
 import {
   LINUX_SERVICE_OBSERVATION_PROTOCOL,
   observeLinuxService,
@@ -113,8 +119,8 @@ function identityEvidence(plan, identities) {
   });
 }
 
-async function readBoundedJson(file, expectedInfo, load, name) {
-  if (!realKind(expectedInfo, 'file') || expectedInfo.size < 2 || expectedInfo.size > 32 * 1024) throw new Error(`${name} is not a bounded real file`);
+async function readBoundedJson(file, expectedInfo, load, name, maximumBytes = 32 * 1024) {
+  if (!realKind(expectedInfo, 'file') || expectedInfo.size < 2 || expectedInfo.size > maximumBytes) throw new Error(`${name} is not a bounded real file`);
   try { return JSON.parse(await load(file, 'utf8')); }
   catch { throw new Error(`${name} is invalid JSON`); }
 }
@@ -160,19 +166,28 @@ async function inspectProcess(plan, service, identity, load, link) {
   }
 }
 
-function runtimeFileEvidenceReady(filesystem) {
-  return [
-    'generationsDirectory',
-    'generationDirectory',
-    'binDirectory',
-    'packageDirectory',
-    'generationManifest',
-    'nodeExecutable',
-    'packageManifest',
-    'serviceEntry',
-  ].every((name) => {
-    const entry = filesystem[name];
-    return entry.exists && entry.kind && entry.owner && entry.group && entry.mode;
+async function verifyGenerationOnFilesystem(value, { stat, readDirectory }) {
+  return await verifyLinuxLifecycleAuthorityGeneration(value, {
+    verify: async (request) => {
+      const observed = await verifyLinuxProtectedTree(request, {
+        observeEntry: async (entry) => {
+          const entryEvidence = await inspectLinuxProtectedEntry(entry, { stat });
+          return Object.freeze({
+            exists: entryEvidence.exists,
+            kind: entryEvidence.kind,
+            owner: entryEvidence.owner,
+            group: entryEvidence.group,
+            mode: entryEvidence.mode,
+          });
+        },
+        verifyFile: async (entry) => {
+          const fileEvidence = await verifyLinuxProtectedFile(entry, { stat });
+          return Object.freeze({ ready: fileEvidence.ready, size: fileEvidence.size, digest: fileEvidence.digest });
+        },
+        listDirectory: readDirectory,
+      });
+      return Object.freeze({ path: observed.path, entries: observed.entries, ready: observed.ready });
+    },
   });
 }
 
@@ -185,15 +200,14 @@ export async function inspectLinuxLifecycleAuthorityState({
   load = readFile,
   link = readlink,
   readDirectory = readdir,
-  measureRuntime = measureProtectedAuthorityRuntimeCandidate,
-  verifyRuntimeAccess = verifyProtectedAuthorityRuntimeAccess,
+  verifyGeneration = verifyGenerationOnFilesystem,
   observeService = observeLinuxService,
 } = {}) {
   if (platform !== 'linux') return Object.freeze({ protocol: PROTOCOL, platform, applicable: false });
   if (!plan || plan.protocol !== LINUX_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL || plan.runtimeEvidence == null || plan.runtime?.generation == null || typeof plan.service?.unit !== 'string') {
     throw new TypeError('Linux lifecycle authority inspection plan is invalid');
   }
-  if (typeof stat !== 'function' || typeof load !== 'function' || typeof link !== 'function' || typeof readDirectory !== 'function' || typeof measureRuntime !== 'function' || typeof verifyRuntimeAccess !== 'function' || typeof observeService !== 'function') {
+  if (typeof stat !== 'function' || typeof load !== 'function' || typeof link !== 'function' || typeof readDirectory !== 'function' || typeof verifyGeneration !== 'function' || typeof observeService !== 'function') {
     throw new TypeError('Linux lifecycle authority inspection ports are invalid');
   }
   const identity = identityEvidence(plan, identities);
@@ -237,7 +251,13 @@ export async function inspectLinuxLifecycleAuthorityState({
   const generationRecord = entries.get('generationManifest') == null
     ? null
     : normalizeLinuxLifecycleAuthorityGenerationManifest(
-      await readBoundedJson(plan.runtime.generationManifest, entries.get('generationManifest'), load, 'Linux lifecycle authority generation record'),
+      await readBoundedJson(
+        plan.runtime.generationManifest,
+        entries.get('generationManifest'),
+        load,
+        'Linux lifecycle authority generation record',
+        LINUX_LIFECYCLE_AUTHORITY_GENERATION_MANIFEST_MAX_BYTES,
+      ),
       plan,
     );
   const service = await observeService({ unit: plan.service.name, platform: 'linux' });
@@ -278,20 +298,18 @@ export async function inspectLinuxLifecycleAuthorityState({
     mutationEndpoint: filePolicy(entries.get('mutationEndpoint'), { uid: serviceUid, gid: readGid, expectedMode: plan.endpoints.mutation.socketMode, kind: 'socket' }),
   });
 
-  let runtime = Object.freeze({ ready: false, access: false, exact: false });
-  if (generationRecord != null && runtimeFileEvidenceReady(filesystem)) {
-    const [measured, access] = await Promise.all([
-      measureRuntime({ packageRoot: plan.runtime.packageDirectory, nodeExecutable: plan.runtime.nodeExecutable }),
-      verifyRuntimeAccess({
-        generationDirectory: plan.runtime.generationDirectory,
-        packageDirectory: plan.runtime.packageDirectory,
-        nodeExecutable: plan.runtime.nodeExecutable,
-        generationManifest: plan.runtime.generationManifest,
-      }, { stat, readDirectory }),
-    ]);
-    const exact = measured.evidence.packageDigest === plan.runtimeEvidence.packageDigest
-      && measured.evidence.nodeDigest === plan.runtimeEvidence.nodeDigest;
-    runtime = Object.freeze({ ready: access.ready === true && exact, access: access.ready === true, exact, evidence: measured.evidence });
+  let runtime = Object.freeze({ ready: false, exact: false, generation: null });
+  if (generationRecord != null) {
+    try {
+      const verified = await verifyGeneration({ plan, manifest: generationRecord }, { stat, readDirectory });
+      exactKeys(verified, new Set(['protocol', 'generation', 'verified']), 'Linux lifecycle authority generation verification');
+      const exact = verified.protocol === LINUX_LIFECYCLE_AUTHORITY_GENERATION_VERIFICATION_PROTOCOL
+        && verified.generation === plan.runtime.generation
+        && verified.verified === true;
+      runtime = Object.freeze({ ready: exact, exact, generation: verified.generation });
+    } catch {
+      runtime = Object.freeze({ ready: false, exact: false, generation: plan.runtime.generation });
+    }
   }
 
   return Object.freeze({
