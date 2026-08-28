@@ -86,7 +86,7 @@ test('Windows prefix collision arithmetic remains unsigned across every IPv4 pre
     await adapter.ensureNetwork();
 
     const functionStart = networkScript.indexOf('function Convert-IPv4ToUInt32');
-    const functionEnd = networkScript.indexOf('$switch = Get-VMSwitch');
+    const functionEnd = networkScript.indexOf('$translations = @(');
     assert.ok(functionStart >= 0 && functionEnd > functionStart, 'network prefix functions must remain inspectable');
     const probe = `$ErrorActionPreference = 'Stop'
 ${networkScript.slice(functionStart, functionEnd)}
@@ -173,5 +173,140 @@ function New-NetNat { [CmdletBinding()] param() throw 'NAT mutation crossed the 
     assert.equal(result.exitCode, 1);
     assert.match(result.stderr, /owned network interface did not become ready/u);
     assert.doesNotMatch(result.stderr, /crossed the interface frontier|<Obj S="progress"/u);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Windows network setup rejects an occupied translation slot before any mutation', { skip: process.platform !== 'win32' }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage2-hv-nat-occupied-'));
+  let request;
+  try {
+    const adapter = new HyperVEnvironment({
+      directory: path.join(root, 'control'), assetRoot: path.join(root, 'images'),
+      identity: '0123456789abcdef0123456789abcdef',
+      invoke: async (received) => { request = received; return success({ ready: true }); },
+    });
+    await adapter.ensureNetwork();
+    const networkScript = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
+    const mocks = String.raw`
+function Import-Module { [CmdletBinding()] param([Parameter(Position=0)]$Name) }
+function Get-NetNat { [CmdletBinding()] param() @([pscustomobject]@{ Name = 'occupied'; InternalIPInterfaceAddressPrefix = '10.77.0.0/24' }) }
+function Get-VMSwitch { [CmdletBinding()] param() @() }
+function Get-NetRoute { [CmdletBinding()] param([string]$AddressFamily) @() }
+function New-VMSwitch { [CmdletBinding()] param() throw 'switch mutation crossed the translation preflight' }
+function Set-VMSwitch { [CmdletBinding()] param() throw 'switch marker mutation crossed the translation preflight' }
+function New-NetIPAddress { [CmdletBinding()] param() throw 'gateway mutation crossed the translation preflight' }
+function New-NetNat { [CmdletBinding()] param() throw 'translation mutation crossed the translation preflight' }
+`;
+    const result = await invokeCommand({
+      ...request,
+      arguments: [...request.arguments.slice(0, -1), Buffer.from(`${mocks}\n${networkScript}`, 'utf16le').toString('base64')],
+      timeoutMs: 20_000,
+    });
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /another network translation already occupies the host/u);
+    assert.doesNotMatch(result.stderr, /mutation crossed the translation preflight/u);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Windows network setup reuses the exact planned translation during partial-state recovery', { skip: process.platform !== 'win32' }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage2-hv-nat-recovery-'));
+  let request;
+  try {
+    const adapter = new HyperVEnvironment({
+      directory: path.join(root, 'control'), assetRoot: path.join(root, 'images'),
+      identity: '0123456789abcdef0123456789abcdef',
+      invoke: async (received) => { request = received; return success({ ready: true }); },
+    });
+    await adapter.ensureNetwork();
+    const networkScript = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
+    const mocks = String.raw`
+function Import-Module { [CmdletBinding()] param([Parameter(Position=0)]$Name) }
+function Get-NetNat { [CmdletBinding()] param() @([pscustomobject]@{ Name = $data.name; InternalIPInterfaceAddressPrefix = $data.prefix }) }
+function Get-VMSwitch { [CmdletBinding()] param() @() }
+function Get-NetRoute { [CmdletBinding()] param([string]$AddressFamily) @() }
+function New-VMSwitch { [CmdletBinding()] param([string]$Name, [string]$SwitchType) [pscustomobject]@{ Name = $Name; SwitchType = $SwitchType } }
+function Set-VMSwitch { [CmdletBinding()] param([string]$Name, [string]$Notes) }
+function Get-NetIPInterface { [CmdletBinding()] param([string]$AddressFamily, [string]$InterfaceAlias) [pscustomobject]@{ InterfaceIndex = 71; InterfaceAlias = $InterfaceAlias } }
+function Get-NetIPAddress { [CmdletBinding()] param([string]$AddressFamily) @() }
+function New-NetIPAddress { [CmdletBinding()] param([uint32]$InterfaceIndex, [string]$IPAddress, [byte]$PrefixLength) }
+function New-NetNat { [CmdletBinding()] param() throw 'exact translation was recreated' }
+`;
+    const result = await invokeCommand({
+      ...request,
+      arguments: [...request.arguments.slice(0, -1), Buffer.from(`${mocks}\n${networkScript}`, 'utf16le').toString('base64')],
+      timeoutMs: 20_000,
+    });
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), { ready: true });
+    assert.doesNotMatch(result.stderr, /exact translation was recreated/u);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Windows network setup rejects ambiguous translation observation before any mutation', { skip: process.platform !== 'win32' }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage2-hv-nat-ambiguous-'));
+  let request;
+  try {
+    const adapter = new HyperVEnvironment({
+      directory: path.join(root, 'control'), assetRoot: path.join(root, 'images'),
+      identity: '0123456789abcdef0123456789abcdef',
+      invoke: async (received) => { request = received; return success({ ready: true }); },
+    });
+    await adapter.ensureNetwork();
+    const networkScript = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
+    const mocks = String.raw`
+function Import-Module { [CmdletBinding()] param([Parameter(Position=0)]$Name) }
+function Get-NetNat { [CmdletBinding()] param() @(
+  [pscustomobject]@{ Name = $data.name; InternalIPInterfaceAddressPrefix = $data.prefix },
+  [pscustomobject]@{ Name = 'additional'; InternalIPInterfaceAddressPrefix = '10.88.0.0/24' }
+) }
+function Get-VMSwitch { [CmdletBinding()] param() @() }
+function Get-NetRoute { [CmdletBinding()] param([string]$AddressFamily) @() }
+function New-VMSwitch { [CmdletBinding()] param() throw 'switch mutation crossed the translation preflight' }
+function Set-VMSwitch { [CmdletBinding()] param() throw 'switch marker mutation crossed the translation preflight' }
+function New-NetIPAddress { [CmdletBinding()] param() throw 'gateway mutation crossed the translation preflight' }
+function New-NetNat { [CmdletBinding()] param() throw 'translation mutation crossed the translation preflight' }
+`;
+    const result = await invokeCommand({
+      ...request,
+      arguments: [...request.arguments.slice(0, -1), Buffer.from(`${mocks}\n${networkScript}`, 'utf16le').toString('base64')],
+      timeoutMs: 20_000,
+    });
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /host network translation state is ambiguous/u);
+    assert.doesNotMatch(result.stderr, /mutation crossed the translation preflight/u);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Windows network inspection does not report readiness with additional translations', { skip: process.platform !== 'win32' }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage2-hv-nat-inspect-'));
+  const requests = [];
+  try {
+    const adapter = new HyperVEnvironment({
+      directory: path.join(root, 'control'), assetRoot: path.join(root, 'images'),
+      identity: '0123456789abcdef0123456789abcdef',
+      invoke: async (received) => { requests.push(received); return success({ ready: true }); },
+    });
+    await adapter.ensureNetwork();
+    await adapter.inspect();
+    assert.equal(requests.length, 3);
+    const request = requests[2];
+    const networkScript = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
+    const mocks = String.raw`
+function Import-Module { [CmdletBinding()] param([Parameter(Position=0)]$Name) }
+function Get-VMSwitch { [CmdletBinding()] param() [pscustomobject]@{ Name = $data.name; Notes = $data.marker; SwitchType = 'Internal' } }
+function Get-NetNat { [CmdletBinding()] param() @(
+  [pscustomobject]@{ Name = $data.name; InternalIPInterfaceAddressPrefix = $data.prefix },
+  [pscustomobject]@{ Name = 'additional'; InternalIPInterfaceAddressPrefix = '10.99.0.0/24' }
+) }
+function Get-NetIPAddress { [CmdletBinding()] param([string]$AddressFamily) throw 'gateway observation crossed the translation readiness frontier' }
+`;
+    const result = await invokeCommand({
+      ...request,
+      arguments: [...request.arguments.slice(0, -1), Buffer.from(`${mocks}\n${networkScript}`, 'utf16le').toString('base64')],
+      timeoutMs: 20_000,
+    });
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), { ready: false, reason: 'network translation state does not match' });
+    assert.doesNotMatch(result.stderr, /gateway observation crossed the translation readiness frontier/u);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
