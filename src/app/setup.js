@@ -10,6 +10,7 @@ import { readLocalIdentity } from '../runtime/local-identity.js';
 import { createUbuntuProductionImagePhysicalCanary, UBUNTU_PRODUCTION_IMAGE_PHYSICAL_CANARY_CONFIG_PROTOCOL } from './ubuntu-production-image-physical-canary.js';
 import { reconcileSetupEnvironmentActivation } from './setup-environment-activation.js';
 import { createSetupEnvironmentProfileConfiguration } from './setup-environment-profile-configuration.js';
+import { reconcileSetupProfileSelection } from './setup-profile-selection.js';
 import { discoverGitHubSetupScope } from '../setup/github-discovery.js';
 import { installStableDevBridgeCommand } from '../setup/path-installation.js';
 import { reconcileSetupPrerequisites } from '../setup/prerequisite-reconciliation.js';
@@ -38,6 +39,8 @@ const STATE_KEY = 'setup:v1';
 const DEFAULT_MEMORY_BYTES = 2 * 1024 * 1024 * 1024;
 const DEFAULT_DISK_BYTES = 32 * 1024 * 1024 * 1024;
 const DEFAULT_PROCESSORS = 2;
+const LINUX_PROFILE = 'linux-development';
+const WINDOWS_PROFILE = 'windows-development';
 
 function absoluteHome(value) {
   const selected = value ?? process.env.DEVBRIDGE_HOME ?? path.join(os.homedir(), '.devbridge');
@@ -67,11 +70,15 @@ async function resolveGitHubToken({ env = process.env, invoke = invokeCommand } 
 }
 
 function setupState(previous, { identity, repositories, snapshot }) {
+  const preservedSnapshot = typeof previous?.ubuntu?.snapshot === 'string' && /^\d{8}T\d{6}Z$/u.test(previous.ubuntu.snapshot)
+    ? previous.ubuntu.snapshot
+    : null;
+  const selectedSnapshot = snapshot ?? preservedSnapshot;
   return Object.freeze({
     protocol: PROTOCOL,
     identity: Object.freeze({ id: identity.id, login: identity.login }),
     repositories: Object.freeze({ selected: repositories.selected.map((entry) => ({ id: entry.id, fullName: entry.fullName, private: entry.private })) }),
-    ubuntu: Object.freeze({ snapshot }),
+    ubuntu: selectedSnapshot == null ? null : Object.freeze({ snapshot: selectedSnapshot }),
   });
 }
 
@@ -124,6 +131,60 @@ function publicOperationalConfiguration(value) {
   });
 }
 
+function normalizeProfileSelection(value) {
+  const allowedKeys = new Set(['protocol', 'state', 'revision', 'changed', 'profiles', 'pendingProfiles', 'source']);
+  if (!value || value.protocol !== 'devbridge/setup-profile-selection-status-v1'
+      || !['accepted', 'deferred'].includes(value.state)
+      || !Number.isSafeInteger(value.revision) || value.revision < 0
+      || typeof value.changed !== 'boolean'
+      || !Array.isArray(value.profiles)
+      || (value.pendingProfiles != null && !Array.isArray(value.pendingProfiles))
+      || !['default', 'accepted', 'working', 'explicit'].includes(value.source)) {
+    throw new TypeError('setup profile selection result is invalid');
+  }
+  for (const key of Object.keys(value)) if (!allowedKeys.has(key)) throw new TypeError(`setup profile selection result.${key} is not allowed`);
+  const allowed = new Set([LINUX_PROFILE, WINDOWS_PROFILE]);
+  const normalize = (profiles, name) => {
+    if (profiles.length > allowed.size || new Set(profiles).size !== profiles.length
+        || profiles.some((profile) => !allowed.has(profile))) {
+      throw new TypeError(`${name} is invalid`);
+    }
+    return Object.freeze([...profiles].sort((left, right) => left.localeCompare(right)));
+  };
+  const profiles = normalize(value.profiles, 'setup selected profiles');
+  const pendingProfiles = value.pendingProfiles == null ? null : normalize(value.pendingProfiles, 'setup pending profiles');
+  if (value.state === 'accepted' && pendingProfiles !== null) throw new TypeError('accepted setup profile selection cannot be pending');
+  if (value.state === 'deferred' && value.changed) throw new TypeError('deferred setup profile selection cannot report a change');
+  return Object.freeze({
+    protocol: value.protocol,
+    state: value.state,
+    revision: value.revision,
+    changed: value.changed,
+    profiles,
+    pendingProfiles,
+    source: value.source,
+  });
+}
+
+function hasProfile(selection, profile) {
+  return selection?.state === 'accepted' && selection.profiles.includes(profile);
+}
+
+function windowsReadinessBlocker(media, construction, platform) {
+  if (!media || media.state === 'platform-unavailable') {
+    return platform === 'win32'
+      ? 'Windows execution profile media status is unavailable; execution remains disabled'
+      : 'Windows execution profile requires a Windows host provider; execution remains disabled';
+  }
+  if (media.state === 'blocked') return media.blocker ?? 'Windows install media reconciliation is blocked';
+  if (media.state === 'source-required') return 'Windows execution profile requires an accepted install-media source';
+  if (media.state === 'selection-required') return 'Windows execution profile requires explicit approval of one exact install-media candidate';
+  if (media.state !== 'accepted') return 'Windows execution profile install-media state is not ready';
+  if (construction?.state === 'blocked') return construction.reason ?? 'Windows production image status is blocked';
+  if (construction?.state !== 'complete') return construction?.reason ?? 'Windows production image construction is incomplete';
+  return 'Windows environment activation is not yet available through setup; execution remains disabled';
+}
+
 async function createSetupResourceConflict({ stateDirectory, platform, invoke }) {
   if (platform !== 'win32') return createClearSetupResourceConflictPort();
   const identity = await readLocalIdentity({ directory: path.join(path.resolve(stateDirectory), 'environment-foundation') });
@@ -131,12 +192,21 @@ async function createSetupResourceConflict({ stateDirectory, platform, invoke })
   return createWindowsSetupResourceConflict({ identity, platform, invoke });
 }
 
-function setupResult({ home, pathStatus, repositories = null, identity = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, operationalConfiguration = null, windowsMedia = null, windowsConstruction = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
+function setupResult({ home, pathStatus, repositories = null, identity = null, profileSelection = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, operationalConfiguration = null, windowsMedia = null, windowsConstruction = null, blocker = null, constructionRequested = false, constructionAttempted = false }) {
   const readyForConstruction = constructionAttempted !== true && physical?.blocked === false && physical?.complete !== true;
+  const linuxRequested = profileSelection?.profiles.includes(LINUX_PROFILE) === true;
+  const windowsRequested = profileSelection?.profiles.includes(WINDOWS_PROFILE) === true;
   return Object.freeze({
     protocol: PROTOCOL,
     home,
-    phase: blocker ? 'blocked' : operationalConfiguration?.ready === true ? 'operational-ready' : environmentActivation?.ready === true ? 'environment-ready' : readyForConstruction ? 'ready-for-construction' : physical?.complete ? 'image-complete' : physical?.state ?? 'discovering',
+    phase: blocker ? 'blocked'
+      : profileSelection?.state === 'deferred' ? 'profile-selection-deferred'
+      : profileSelection?.profiles.length === 0 ? 'profiles-disabled'
+      : operationalConfiguration?.ready === true ? 'operational-ready'
+      : environmentActivation?.ready === true ? 'environment-ready'
+      : readyForConstruction ? 'ready-for-construction'
+      : physical?.complete ? 'image-complete'
+      : physical?.state ?? 'discovering',
     blocked: blocker != null || physical?.blocked === true,
     blocker: blocker ?? physical?.reason ?? null,
     readyForConstruction,
@@ -144,13 +214,14 @@ function setupResult({ home, pathStatus, repositories = null, identity = null, s
     path: pathStatus,
     github: identity ? Object.freeze({ id: identity.id, login: identity.login }) : null,
     repositories,
+    profileSelection,
     prerequisites,
     resourceConflict: publicResourceConflict(resourceConflict),
     lifecycleAuthority: publicLifecycleAuthority(lifecycleAuthority),
     environment: publicEnvironmentActivation(environmentActivation),
     operational: publicOperationalConfiguration(operationalConfiguration),
-    linuxProfile: Object.freeze({ profile: 'linux-development', snapshot, physicalStatus: physical }),
-    windowsProfile: Object.freeze({ profile: 'windows-development', media: windowsMedia, construction: windowsConstruction }),
+    linuxProfile: linuxRequested ? Object.freeze({ profile: LINUX_PROFILE, snapshot, physicalStatus: physical }) : null,
+    windowsProfile: windowsRequested ? Object.freeze({ profile: WINDOWS_PROFILE, media: windowsMedia, construction: windowsConstruction }) : null,
   });
 }
 
@@ -286,6 +357,12 @@ export function formatSetupHandoff(result) {
     );
     return lines.join('\n');
   }
+  if (result.phase === 'profile-selection-deferred') {
+    return 'DevBridge execution-profile setup was deferred.\n\nRepository selection was preserved, no profile setup work was performed, and execution remains fail-closed. Re-run devbridge setup --profiles <linux|windows|both|none> when ready.\n';
+  }
+  if (result.phase === 'profiles-disabled') {
+    return 'DevBridge setup saved an empty execution-profile selection.\n\nRepository selection was preserved, no VM profile setup work was performed, and repository execution remains unavailable.\n';
+  }
   if (result.phase === 'environment-ready') {
     const lines = [
       'DevBridge protected execution environment is ready.',
@@ -350,6 +427,7 @@ export function formatSetupHandoff(result) {
 export async function runDevBridgeSetup({
   home = null,
   requestedRepositories = null,
+  profileChoice = null,
   construct = false,
   retireConflict = null,
   discoverWindowsMedia = false,
@@ -380,6 +458,7 @@ export async function runDevBridgeSetup({
   releaseAuthority = establishUbuntuReleaseAuthority,
   authorityFactory = createUbuntuSetupAuthority,
   canaryFactory = createUbuntuProductionImagePhysicalCanary,
+  profileSelectionReconciler = reconcileSetupProfileSelection,
   windowsMediaReconciler = reconcileWindowsInstallMediaSetup,
   windowsConstructionReconciler = reconcileWindowsProductionImageSetup,
 } = {}) {
@@ -388,50 +467,66 @@ export async function runDevBridgeSetup({
   if (windowsMediaLocation != null && windowsMediaApproval != null) throw new TypeError('DevBridge Windows media discovery and approval must be separate setup invocations');
   const requestedConflictConsent = retireConflict == null ? null : setupResourceConflictConsent(retireConflict);
   const root = absoluteHome(home);
-  const store = storeFactory(path.join(root, 'state', 'setup.json'));
+  const stateDirectory = path.join(root, 'state');
+  const store = storeFactory(path.join(stateDirectory, 'setup.json'));
   const previous = await store.get(STATE_KEY);
+  let profileSelection = null;
   let windowsMedia = null;
   let windowsConstruction = null;
-  const publicResult = (value) => setupResult({ ...value, windowsMedia, windowsConstruction });
+  const publicResult = (value) => setupResult({ ...value, profileSelection, windowsMedia, windowsConstruction });
 
   try {
-    windowsMedia = await windowsMediaReconciler({
-      home: root,
-      stateDirectory: path.join(root, 'state'),
-      platform,
-      invoke,
-      discover: discoverWindowsMedia,
-      location: windowsMediaLocation,
-      approval: windowsMediaApproval,
-    });
-  } catch {
-    windowsMedia = Object.freeze({
-      protocol: 'devbridge/windows-install-media-selection-status-v1',
-      state: 'blocked',
-      blocker: 'Windows install media reconciliation failed; inspect the local setup evidence and retry',
-      candidates: Object.freeze([]),
-      rejectedCount: 0,
-      accepted: null,
-    });
+    profileSelection = normalizeProfileSelection(await profileSelectionReconciler({
+      stateDirectory,
+      choice: profileChoice,
+    }));
+  } catch (error) {
+    return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: `Execution-profile selection failed: ${error.message}` });
   }
-  if (windowsMedia?.state === 'blocked' && (windowsMediaLocation != null || windowsMediaApproval != null)) {
-    return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: windowsMedia.blocker });
+  const linuxRequested = hasProfile(profileSelection, LINUX_PROFILE);
+  const windowsRequested = hasProfile(profileSelection, WINDOWS_PROFILE);
+  if (construct && !linuxRequested) {
+    return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: 'Physical image construction requires the selected Linux execution profile' });
   }
-  if (windowsMedia?.state === 'accepted') {
+  if ((windowsMediaLocation != null || windowsMediaApproval != null) && !windowsRequested) {
+    return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: 'Windows media options require the selected Windows execution profile' });
+  }
+
+  if (windowsRequested) {
     try {
-      windowsConstruction = await windowsConstructionReconciler({
+      windowsMedia = await windowsMediaReconciler({
         home: root,
-        stateDirectory: path.join(root, 'state'),
+        stateDirectory,
         platform,
         invoke,
+        discover: discoverWindowsMedia,
+        location: windowsMediaLocation,
+        approval: windowsMediaApproval,
       });
     } catch {
-      windowsConstruction = Object.freeze({
-        protocol: 'devbridge/windows-production-image-setup-status-v1',
+      windowsMedia = Object.freeze({
+        protocol: 'devbridge/windows-install-media-selection-status-v1',
         state: 'blocked',
-        reason: 'Windows production image status reconciliation failed; inspect local setup evidence and retry',
-        physical: null,
+        blocker: 'Windows install media reconciliation failed; inspect the local setup evidence and retry',
+        candidates: Object.freeze([]),
+        rejectedCount: 0,
+        accepted: null,
       });
+    }
+    if (windowsMedia?.state === 'blocked' && (windowsMediaLocation != null || windowsMediaApproval != null)) {
+      return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: windowsMedia.blocker });
+    }
+    if (windowsMedia?.state === 'accepted') {
+      try {
+        windowsConstruction = await windowsConstructionReconciler({ home: root, stateDirectory, platform, invoke });
+      } catch {
+        windowsConstruction = Object.freeze({
+          protocol: 'devbridge/windows-production-image-setup-status-v1',
+          state: 'blocked',
+          reason: 'Windows production image status reconciliation failed; inspect local setup evidence and retry',
+          physical: null,
+        });
+      }
     }
   }
 
@@ -469,10 +564,24 @@ export async function runDevBridgeSetup({
     return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, constructionRequested: construct, blocker: repositories.reason });
   }
 
-  const snapshot = previous?.ubuntu?.snapshot ?? defaultUbuntuPackageSnapshot(now());
+  const snapshot = linuxRequested ? previous?.ubuntu?.snapshot ?? defaultUbuntuPackageSnapshot(now()) : null;
   await store.set(STATE_KEY, setupState(previous, { identity: scope.identity, repositories, snapshot }));
 
-  const stateDirectory = path.join(root, 'state');
+  if (profileSelection.state === 'deferred' || profileSelection.profiles.length === 0) {
+    return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, constructionRequested: construct });
+  }
+  if (!linuxRequested) {
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      constructionRequested: construct,
+      blocker: windowsReadinessBlocker(windowsMedia, windowsConstruction, platform),
+    });
+  }
+
   let prerequisites;
   try {
     prerequisites = await prerequisiteReconciler({ platform, invoke, fetchImpl, environment: env });

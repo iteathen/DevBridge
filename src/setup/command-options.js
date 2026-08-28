@@ -17,6 +17,7 @@ export function parseSetupCommandOptions(argv, {
   let construct = false;
   let trackRef = null;
   let retireConflict = null;
+  let profileChoice = null;
   let windowsMediaLocation = null;
   let windowsMediaCandidate = null;
   let windowsImageIndex = null;
@@ -41,7 +42,7 @@ export function parseSetupCommandOptions(argv, {
       entryNoUpdate = true;
       continue;
     }
-    if (option === '--home' || option === '--repository' || option === '--track-ref' || option === '--retire-conflict'
+    if (option === '--home' || option === '--repository' || option === '--track-ref' || option === '--retire-conflict' || option === '--profiles'
         || option === '--windows-media' || option === '--approve-windows-media' || option === '--windows-image-index' || option === '--windows-media-class') {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new PolicyError(`${option} requires a value`);
@@ -55,6 +56,12 @@ export function parseSetupCommandOptions(argv, {
         if (retireConflict != null) throw new PolicyError('--retire-conflict may be specified only once');
         if (!/^[0-9a-f]{64}$/u.test(value)) throw new PolicyError('--retire-conflict requires an exact conflict consent subject');
         retireConflict = value;
+      } else if (option === '--profiles') {
+        if (profileChoice != null) throw new PolicyError('--profiles may be specified only once');
+        if (!['linux', 'windows', 'both', 'none', 'defer'].includes(value)) {
+          throw new PolicyError('--profiles must be linux, windows, both, none, or defer');
+        }
+        profileChoice = value;
       } else if (option === '--windows-media') {
         if (windowsMediaLocation != null) throw new PolicyError('--windows-media may be specified only once');
         const pathApi = platform === 'win32' ? path.win32 : path.posix;
@@ -87,7 +94,13 @@ export function parseSetupCommandOptions(argv, {
   const approvalParts = [windowsMediaCandidate, windowsImageIndex, windowsMediaClass].filter((value) => value != null).length;
   if (windowsMediaLocation != null && approvalParts > 0) throw new PolicyError('discover Windows media before approving an exact candidate in a later setup invocation');
   if (approvalParts !== 0 && approvalParts !== 3) throw new PolicyError('Windows media approval requires --approve-windows-media, --windows-image-index, and --windows-media-class together');
-  if (lifecycleAuthorityChild && (construct || trackRef != null || retireConflict != null || windowsMediaLocation != null || approvalParts > 0 || repositories.length > 0)) {
+  if (construct && ['windows', 'none', 'defer'].includes(profileChoice)) {
+    throw new PolicyError('--construct requires the Linux execution profile');
+  }
+  if ((windowsMediaLocation != null || approvalParts > 0) && ['linux', 'none', 'defer'].includes(profileChoice)) {
+    throw new PolicyError('Windows media options require the Windows execution profile');
+  }
+  if (lifecycleAuthorityChild && (construct || trackRef != null || retireConflict != null || profileChoice != null || windowsMediaLocation != null || approvalParts > 0 || repositories.length > 0)) {
     throw new PolicyError('lifecycle-authority child accepts no setup capability arguments');
   }
   if (lifecycleAuthorityChild && home != null
@@ -102,6 +115,7 @@ export function parseSetupCommandOptions(argv, {
     construct,
     trackRef,
     retireConflict,
+    profileChoice,
     windowsMediaLocation,
     windowsMediaApproval: windowsMediaCandidate == null ? null : Object.freeze({
       candidate: windowsMediaCandidate,

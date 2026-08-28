@@ -46,12 +46,13 @@ function dependencies({
   resourceConflict = null,
   acceptedConflict = null,
   initialState = null,
+  profileSelection = null,
   windowsMedia = null,
   windowsConstruction = null,
 } = {}) {
   const store = memoryStore(initialState);
   let conflictConsent = acceptedConflict;
-  const calls = { windowsMedia: 0, windowsMediaRequest: null, windowsConstruction: 0, prerequisite: 0, profileConfiguration: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
+  const calls = { profileSelection: 0, profileSelectionRequest: null, windowsMedia: 0, windowsMediaRequest: null, windowsConstruction: 0, prerequisite: 0, profileConfiguration: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
   const discoveredRepositories = repositories ?? Array.from({ length: count }, (_, index) => repository(index));
   return {
     calls,
@@ -60,6 +61,19 @@ function dependencies({
       platform: 'win32',
       now: () => new Date('2026-08-23T20:00:00Z'),
       storeFactory: () => store,
+      profileSelectionReconciler: async (value) => {
+        calls.profileSelection += 1;
+        calls.profileSelectionRequest = structuredClone(value);
+        return structuredClone(profileSelection ?? {
+          protocol: 'devbridge/setup-profile-selection-status-v1',
+          state: 'accepted',
+          revision: 1,
+          changed: false,
+          profiles: ['linux-development'],
+          pendingProfiles: null,
+          source: 'accepted',
+        });
+      },
       pathInstaller: async ({ home }) => ({ protocol: 'test/path', command: path.join(home, 'bin', 'devbridge.cmd'), persisted: true, changed: false, requiresNewShell: false, temporaryCommand: null }),
       tokenResolver: async () => 'test-token',
       clientFactory: () => ({}),
@@ -146,7 +160,11 @@ test('setup reaches the physical status gate without invoking construction', asy
   assert.equal(result.readyForConstruction, true);
   assert.equal(result.phase, 'ready-for-construction');
   assert.equal(result.repositories.selectedCount, 2);
+  assert.deepEqual(result.profileSelection.profiles, ['linux-development']);
+  assert.equal(result.windowsProfile, null);
   assert.equal(result.lifecycleAuthority, null);
+  assert.equal(fixture.calls.profileSelection, 1);
+  assert.equal(fixture.calls.windowsMedia, 0);
   assert.equal(fixture.calls.prerequisite, 1);
   assert.equal(fixture.calls.profileConfiguration, 0);
   assert.equal(fixture.calls.lifecycleAuthority, 0);
@@ -178,9 +196,115 @@ test('setup composes protected configuration and environment activation only aft
   assert.equal(fixture.calls.canaryRun, 0);
 });
 
+test('deferred and empty profile selections preserve repository setup without crossing platform boundaries', async () => {
+  const deferredFixture = dependencies({
+    initialState: persistedState({
+      selected: [{ id: 1, fullName: 'owner/repo-0', private: false }],
+      snapshot: '20260820T170000Z',
+    }),
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'deferred', revision: 4, changed: false,
+      profiles: ['linux-development'], pendingProfiles: ['windows-development'], source: 'explicit',
+    },
+  });
+  const deferred = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-profiles-deferred'), profileChoice: 'defer', discoverWindowsMedia: true,
+  }, deferredFixture.deps);
+  assert.equal(deferred.phase, 'profile-selection-deferred');
+  assert.equal(deferred.blocked, false);
+  assert.equal(deferred.repositories.selectedCount, 1);
+  assert.equal(deferredFixture.store.value().ubuntu.snapshot, '20260820T170000Z');
+  assert.equal(deferredFixture.calls.profileSelectionRequest.choice, 'defer');
+  assert.equal(deferredFixture.calls.windowsMedia, 0);
+  assert.equal(deferredFixture.calls.prerequisite, 0);
+  assert.equal(deferredFixture.calls.authority, 0);
+  assert.equal(deferredFixture.calls.canaryStatus, 0);
+  assert.equal(deferredFixture.calls.lifecycleAuthority, 0);
+  assert.equal(deferredFixture.calls.operationalConfiguration, 0);
+  assert.match(formatSetupHandoff(deferred), /no profile setup work was performed/u);
+
+  const emptyFixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 5, changed: true,
+      profiles: [], pendingProfiles: null, source: 'explicit',
+    },
+  });
+  const empty = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-profiles-empty'), profileChoice: 'none', discoverWindowsMedia: true,
+  }, emptyFixture.deps);
+  assert.equal(empty.phase, 'profiles-disabled');
+  assert.equal(empty.blocked, false);
+  assert.equal(empty.linuxProfile, null);
+  assert.equal(empty.windowsProfile, null);
+  assert.equal(emptyFixture.calls.windowsMedia, 0);
+  assert.equal(emptyFixture.calls.prerequisite, 0);
+  assert.equal(emptyFixture.calls.operationalConfiguration, 0);
+  assert.match(formatSetupHandoff(empty), /repository execution remains unavailable/u);
+});
+
+test('Windows-only selection observes only its local setup boundary and remains fail-closed', async () => {
+  const fixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 2, changed: true,
+      profiles: ['windows-development'], pendingProfiles: null, source: 'explicit',
+    },
+    windowsMedia: {
+      protocol: 'devbridge/windows-install-media-selection-status-v1', state: 'source-required',
+      candidates: [], rejectedCount: 0, accepted: null,
+      acquisition: { officialOwned: 'https://example.invalid/owned', evaluation: 'https://example.invalid/evaluation' },
+      inbox: 'C:\\managed\\media',
+    },
+  });
+  const result = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-windows-only'), profileChoice: 'windows', discoverWindowsMedia: true,
+  }, fixture.deps);
+  assert.equal(result.blocked, true);
+  assert.match(result.blocker, /requires an accepted install-media source/u);
+  assert.equal(result.linuxProfile, null);
+  assert.equal(result.windowsProfile.media.state, 'source-required');
+  assert.equal(fixture.calls.windowsMedia, 1);
+  assert.equal(fixture.calls.prerequisite, 0);
+  assert.equal(fixture.calls.authority, 0);
+  assert.equal(fixture.calls.canaryStatus, 0);
+  assert.equal(fixture.calls.resourceConflict, 0);
+  assert.equal(fixture.calls.lifecycleAuthority, 0);
+  assert.equal(fixture.calls.operationalConfiguration, 0);
+});
+
+test('setup rejects platform-specific actions outside the selected profile before their adapters run', async () => {
+  const linux = dependencies();
+  const media = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-media-without-windows'),
+    windowsMediaLocation: 'C:\\media\\Windows.iso',
+  }, linux.deps);
+  assert.equal(media.blocked, true);
+  assert.match(media.blocker, /require the selected Windows execution profile/u);
+  assert.equal(linux.calls.windowsMedia, 0);
+  assert.equal(linux.calls.prerequisite, 0);
+
+  const windows = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 2, changed: false,
+      profiles: ['windows-development'], pendingProfiles: null, source: 'accepted',
+    },
+  });
+  const construction = await runDevBridgeSetup({
+    home: path.join(os.tmpdir(), 'db-setup-construction-without-linux'), construct: true,
+  }, windows.deps);
+  assert.equal(construction.blocked, true);
+  assert.match(construction.blocker, /requires the selected Linux execution profile/u);
+  assert.equal(windows.calls.windowsMedia, 0);
+  assert.equal(windows.calls.prerequisite, 0);
+  assert.equal(windows.calls.canaryStatus, 0);
+});
+
 test('setup discovers Windows media before presenting exact approval choices without blocking Linux', async () => {
   const candidate = 'candidate-0123456789abcdef0123456789abcdef';
   const fixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 1, changed: false,
+      profiles: ['linux-development', 'windows-development'], pendingProfiles: null, source: 'accepted',
+    },
     windowsMedia: {
       protocol: 'devbridge/windows-install-media-selection-status-v1',
       state: 'selection-required',
@@ -223,7 +347,11 @@ test('automatic Windows media failure remains profile-local while an explicit ap
     rejectedCount: 0,
     accepted: null,
   };
-  const automatic = dependencies({ windowsMedia: blockedMedia });
+  const bothProfiles = {
+    protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 1, changed: false,
+    profiles: ['linux-development', 'windows-development'], pendingProfiles: null, source: 'accepted',
+  };
+  const automatic = dependencies({ profileSelection: bothProfiles, windowsMedia: blockedMedia });
   const continued = await runDevBridgeSetup({
     home: path.join(os.tmpdir(), 'db-setup-windows-media-optional'),
     discoverWindowsMedia: true,
@@ -232,7 +360,7 @@ test('automatic Windows media failure remains profile-local while an explicit ap
   assert.equal(continued.readyForConstruction, true);
   assert.equal(continued.windowsProfile.media.state, 'blocked');
 
-  const explicit = dependencies({ windowsMedia: blockedMedia });
+  const explicit = dependencies({ profileSelection: bothProfiles, windowsMedia: blockedMedia });
   const stopped = await runDevBridgeSetup({
     home: path.join(os.tmpdir(), 'db-setup-windows-media-explicit'),
     windowsMediaApproval: {
@@ -248,6 +376,10 @@ test('automatic Windows media failure remains profile-local while an explicit ap
 
 test('accepted Windows media exposes only read-only construction status and never blocks Linux progress', async () => {
   const fixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 1, changed: false,
+      profiles: ['linux-development', 'windows-development'], pendingProfiles: null, source: 'accepted',
+    },
     windowsMedia: {
       protocol: 'devbridge/windows-install-media-selection-status-v1',
       state: 'accepted',

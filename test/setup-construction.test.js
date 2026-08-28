@@ -21,6 +21,10 @@ function fixture({ status, runResult } = {}) {
       platform: 'win32',
       now: () => new Date('2026-08-23T20:00:00Z'),
       storeFactory: () => store,
+      profileSelectionReconciler: async () => ({
+        protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 1, changed: false,
+        profiles: ['linux-development'], pendingProfiles: null, source: 'accepted',
+      }),
       pathInstaller: async ({ home }) => ({ protocol: 'test/path', command: path.join(home, 'bin', 'devbridge.cmd'), persisted: true, changed: false, requiresNewShell: false, temporaryCommand: null }),
       tokenResolver: async () => 'test-token',
       clientFactory: () => ({}),

@@ -26,6 +26,10 @@ test('setup carries the local signature-verifier binding through release verific
   }, {
     platform: 'win32',
     storeFactory: () => store,
+    profileSelectionReconciler: async () => ({
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 1, changed: false,
+      profiles: ['linux-development'], pendingProfiles: null, source: 'accepted',
+    }),
     pathInstaller: async () => ({ persisted: true, changed: false, requiresNewShell: false, temporaryCommand: null }),
     tokenResolver: async () => 'token',
     clientFactory: () => ({}),

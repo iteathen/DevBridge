@@ -857,6 +857,7 @@ test('lifecycle child admits only an exact entry-injected broker home', () => {
   ], { authorityHome, platform: 'win32' }), /exact broker-bound setup home/u);
   for (const capability of [
     ['--construct'],
+    ['--profiles', 'linux'],
     ['--track-ref', 'main'],
     ['--repository', 'owner/repository'],
     ['--retire-conflict', 'a'.repeat(64)],
@@ -894,6 +895,21 @@ test('ordinary setup keeps Windows media discovery separate from exact approval'
     '--windows-image-index', '6',
     '--windows-media-class', 'temporary',
   ]), /official-owned or evaluation/u);
+});
+
+test('ordinary setup accepts one bounded execution-profile choice and rejects contradictory effects', () => {
+  for (const choice of ['linux', 'windows', 'both', 'none', 'defer']) {
+    assert.equal(parseSetupCommandOptions(['--profiles', choice]).profileChoice, choice);
+  }
+  assert.throws(() => parseSetupCommandOptions(['--profiles', 'other']), /must be linux, windows, both, none, or defer/u);
+  assert.throws(() => parseSetupCommandOptions(['--profiles', 'linux', '--profiles', 'both']), /only once/u);
+  for (const choice of ['windows', 'none', 'defer']) {
+    assert.throws(() => parseSetupCommandOptions(['--profiles', choice, '--construct']), /requires the Linux execution profile/u);
+  }
+  assert.equal(parseSetupCommandOptions(['--profiles', 'both', '--construct']).construct, true);
+  assert.throws(() => parseSetupCommandOptions([
+    '--profiles', 'linux', '--windows-media', 'C:\\media\\Windows.iso',
+  ], { platform: 'win32' }), /require the Windows execution profile/u);
 });
 
 test('ordinary setup accepts only one exact opaque resource-conflict subject', () => {

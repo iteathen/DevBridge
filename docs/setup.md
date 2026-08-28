@@ -92,6 +92,20 @@ Eligibility and effective capabilities must still be verified. Archived/read-onl
 
 Repository count does not determine VM count. Repositories sharing a compatible execution profile share the physical profile VM through distinct workspace identities.
 
+## Execution-profile selection
+
+Setup accepts one bounded local profile choice:
+
+```text
+devbridge setup --profiles <linux|windows|both|none|defer>
+```
+
+With no accepted selection, omitting `--profiles` chooses the ordinary Linux profile. Re-entry without the option preserves the accepted selection. `none` accepts an empty selection and keeps repository execution unavailable. `defer` does not replace accepted state or an interrupted profile-selection transaction; it preserves repository setup and stops before platform-specific setup work.
+
+Selection is configuration intent only. It does not install or enable a provider, approve source media, construct an image, create or start a VM, activate an environment, or prove readiness. Windows media/status reconciliation is attached only when Windows is selected. Ubuntu prerequisite/authority/construction work is attached only when Linux is selected. `--construct` therefore requires a selected Linux profile, and Windows media options require a selected Windows profile. A selected but unavailable profile remains fail-closed without a host-execution fallback.
+
+The selection transaction is revisioned and restartable through the host-owned setup-authority record. Its application adapter resumes only its own interrupted operation and refuses to absorb an interrupted transaction owned by another setup component.
+
 ## Current requirements
 
 The **zero-state bootstrap boundary** requires only:

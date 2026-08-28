@@ -17,7 +17,7 @@ test('generic setup composes status and explicit construction only through the c
 
 test('public construction and runner tracking stay on the setup surface without exposing physical config paths', async () => {
   const source = await readFile(CLI, 'utf8');
-  assert.match(source, /devbridge setup \[--construct\] \[--track-ref <branch>\]/u);
+  assert.match(source, /devbridge setup \[--profiles <linux\|windows\|both\|none\|defer>\] \[--construct\] \[--track-ref <branch>\]/u);
   assert.match(source, /trackInstalledRunnerRef/u);
   assert.match(source, /construct: selected\.construct/u);
   assert.doesNotMatch(source, /ubuntu-production-image-canary-entry/u);
