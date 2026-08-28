@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 export const GUEST_IMAGE_PAYLOAD_PROTOCOL = 'devbridge/guest-image-payload-v1';
 
 const MEMBERS = Object.freeze([
+  'activity-store.mjs',
   'bridge-agent.mjs',
   'environment-bootstrap-agent.mjs',
   'linux-access-seed-agent.mjs',

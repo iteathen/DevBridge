@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 export const WINDOWS_GUEST_IMAGE_PAYLOAD_PROTOCOL = 'devbridge/windows-guest-image-payload-v1';
 
 const MEMBERS = Object.freeze([
+  'activity-store.mjs',
   'bridge-agent.mjs',
   'environment-bootstrap-agent.mjs',
   'network-seed-agent.mjs',

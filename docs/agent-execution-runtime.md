@@ -472,6 +472,7 @@ A target shape is conceptually:
 ```text
 src/guest/
   bridge-agent.mjs                 # bridge/protocol adapter
+  activity-store.mjs               # exact-attempt fence and bounded activity evidence
   execution/
     execution-runtime.js
     execution-ir.js

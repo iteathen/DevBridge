@@ -4,10 +4,12 @@ import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } f
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createActivityStore } from './activity-store.mjs';
 
 const PROTOCOL = 'devbridge/environment-bridge-v1';
 const VERSION = '1.0.0';
-const RECORD_PROTOCOL = 'devbridge/environment-bridge-operation-v1';
+const RECORD_PROTOCOL = 'devbridge/environment-bridge-operation-v2';
+const CANCELLATION_PROTOCOL = 'devbridge/environment-bridge-cancellation-v1';
 const TRANSFER_PROTOCOL = 'devbridge/environment-bridge-transfer-v1';
 const FEATURES = Object.freeze(['health', 'execute', 'observe', 'cancel', 'put', 'get']);
 const SAFE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
@@ -27,8 +29,9 @@ const MAX_STDIN_BYTES = 16 * 1024;
 const MAX_TIMEOUT_MS = 28_800_000;
 const ATOMIC_RENAME_RETRY_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
 const ATOMIC_RENAME_RETRY_DELAYS_MS = Object.freeze([5, 10, 20, 40, 80, 160]);
-const CLAIM_PUBLICATION_RETRY_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
-const CLAIM_PUBLICATION_RETRY_DELAYS_MS = Object.freeze([5, 10, 20, 40, 80, 160]);
+const ACTIVITY_REFRESH_MS = 250;
+const ACTIVITY_OBSERVATION_RETRY_DELAYS_MS = Object.freeze([5, 10, 20, 40, 80, 160]);
+const ACTIVITY_TOKEN = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
 const SELF = fileURLToPath(import.meta.url);
 
 function requireObject(value, name) {
@@ -140,6 +143,7 @@ export function selectStateRoot({ platform = process.platform, homeDirectory, va
 const ROOT = selectStateRoot();
 const OPERATIONS = path.join(ROOT, '.operations');
 const TRANSFERS = path.join(ROOT, '.transfers');
+let activityStore = null;
 
 async function ensureDirectory(directory, name) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -154,6 +158,12 @@ async function ensureRoot() {
   await ensureDirectory(OPERATIONS, 'bridge operation root');
   await ensureDirectory(TRANSFERS, 'bridge transfer root');
   return root;
+}
+
+async function localActivity() {
+  await ensureRoot();
+  if (!activityStore) activityStore = await createActivityStore({ directory: OPERATIONS });
+  return activityStore;
 }
 
 async function safeClassRoot(name) {
@@ -241,7 +251,6 @@ async function readJson(file, name) {
 
 function operationFile(request) { return path.join(OPERATIONS, `${safeRequest(request)}.json`); }
 function cancelFile(request) { return path.join(OPERATIONS, `${safeRequest(request)}.cancel.json`); }
-function monitorFile(request) { return path.join(OPERATIONS, `${safeRequest(request)}.monitor.json`); }
 function transferFile(request) { return path.join(TRANSFERS, `${safeRequest(request)}.part`); }
 function transferMeta(request) { return path.join(TRANSFERS, `${safeRequest(request)}.json`); }
 
@@ -253,29 +262,49 @@ async function loadOperation(request) {
 
 function validateOperationRecord(record, request, target, body = null) {
   const value = requireObject(record, 'bridge operation record');
+  onlyKeys(value, new Set([
+    'protocol', 'request', 'target', 'digest', 'body', 'state', 'createdAt', 'activityToken',
+    'result', 'reason', 'attemptedAt', 'startedAt', 'finishedAt',
+  ]), 'bridge operation record');
   if (value.protocol !== RECORD_PROTOCOL || value.request !== request || value.target !== target || !['planned', 'attempting', 'running', 'completed', 'failed'].includes(value.state)) throw new Error('bridge operation record identity is invalid');
+  if (typeof value.digest !== 'string' || !/^[a-f0-9]{64}$/u.test(value.digest)) throw new Error('bridge operation record digest is invalid');
+  boundedString(value.createdAt, 'bridge operation creation time', { maxBytes: 64 });
+  if (value.state === 'planned') {
+    if (value.activityToken !== null) throw new Error('planned bridge operation activity identity is invalid');
+  } else if (typeof value.activityToken !== 'string' || !ACTIVITY_TOKEN.test(value.activityToken)) {
+    throw new Error('bridge operation activity identity is invalid');
+  }
+  if (value.state === 'completed' && (!value.result || typeof value.result !== 'object' || Array.isArray(value.result))) throw new Error('completed bridge operation result is invalid');
+  if (value.state === 'failed') boundedString(value.reason ?? '', 'bridge operation failure', { maxBytes: 2_048 });
   if (body && value.digest !== digestObject(body)) throw new Error('bridge request identity was reused for a different operation');
   return value;
 }
 
-function resultState(record) {
+async function resultState(record) {
   if (record.state === 'completed') return { state: 'completed', result: record.result, reason: null };
   if (record.state === 'failed') return { state: 'failed', result: null, reason: boundedString(record.reason ?? 'bridge operation failed', 'bridge operation failure', { maxBytes: 2_048 }) };
-  if (record.state === 'planned') return { state: 'planned', result: null, reason: null };
-  const monitorPid = Number(record.monitorPid);
-  if (!Number.isSafeInteger(monitorPid) || monitorPid <= 0) return { state: 'indeterminate', result: null, reason: 'bridge operation monitor identity is unavailable' };
-  try { process.kill(monitorPid, 0); return { state: 'running', result: null, reason: null }; }
-  catch { return { state: 'indeterminate', result: null, reason: 'bridge operation monitor is no longer observable' }; }
+  const activity = await localActivity();
+  if (record.state === 'planned') {
+    if (await activity.attempted(record.request)) return { state: 'indeterminate', result: null, reason: 'bridge operation attempt identity is incomplete' };
+    return { state: 'planned', result: null, reason: null };
+  }
+  const observation = await activity.inspect(record.request, record.activityToken);
+  if (observation === 'current') return { state: 'running', result: null, reason: null };
+  return { state: 'indeterminate', result: null, reason: 'bridge operation activity is no longer current' };
 }
 
 async function observedState(request, target, record) {
-  const initial = resultState(record);
-  if (initial.state !== 'indeterminate' || initial.reason !== 'bridge operation monitor is no longer observable') return initial;
-  const refreshed = await loadOperation(request);
-  if (!refreshed) return initial;
-  validateOperationRecord(refreshed, request, target);
-  if (refreshed.state !== 'completed' && refreshed.state !== 'failed') return initial;
-  return resultState(refreshed);
+  let observed = await resultState(record);
+  if (observed.state !== 'indeterminate') return observed;
+  for (const delay of ACTIVITY_OBSERVATION_RETRY_DELAYS_MS) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    const refreshed = await loadOperation(request);
+    if (!refreshed) return observed;
+    validateOperationRecord(refreshed, request, target);
+    observed = await resultState(refreshed);
+    if (observed.state !== 'indeterminate') return observed;
+  }
+  return observed;
 }
 
 async function terminateTree(pid) {
@@ -302,11 +331,18 @@ async function terminateTree(pid) {
 async function cancellationReason(request) {
   try {
     const value = await readJson(cancelFile(request), 'bridge cancellation record');
-    return value?.reason === 'timeout' ? 'timeout' : value?.reason === 'abort' ? 'abort' : null;
+    requireObject(value, 'bridge cancellation record');
+    onlyKeys(value, new Set(['protocol', 'request', 'reason']), 'bridge cancellation record');
+    if (value.protocol !== CANCELLATION_PROTOCOL || value.request !== request || !['timeout', 'abort'].includes(value.reason)) throw new Error('bridge cancellation record identity is invalid');
+    return value.reason;
   } catch (error) {
     if (error?.code === 'ENOENT') return null;
     throw error;
   }
+}
+
+async function publishCancellation(request, reason) {
+  await atomicJson(cancelFile(request), { protocol: CANCELLATION_PROTOCOL, request, reason });
 }
 
 function baseEnvironment() {
@@ -318,67 +354,17 @@ function baseEnvironment() {
   return environment;
 }
 
-function processAlive(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; }
-  catch { return false; }
-}
-
-async function monitorClaim(request) {
-  for (let attempt = 0; ; attempt += 1) {
-    try { return await readJson(monitorFile(request), 'bridge operation monitor claim'); }
-    catch (error) {
-      if (error?.code === 'ENOENT') return null;
-      const publicationPending = error instanceof SyntaxError
-        || (process.platform === 'win32' && CLAIM_PUBLICATION_RETRY_CODES.has(error?.code));
-      if (!publicationPending || attempt >= CLAIM_PUBLICATION_RETRY_DELAYS_MS.length) throw error;
-      await new Promise((resolve) => setTimeout(resolve, CLAIM_PUBLICATION_RETRY_DELAYS_MS[attempt]));
-    }
-  }
-}
-
-async function reserveMonitor(request) {
-  const file = monitorFile(request);
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const token = randomUUID();
-    const createdAt = Date.now();
-    try {
-      const handle = await open(file, 'wx', 0o600);
-      try { await handle.writeFile(`${JSON.stringify({ token, state: 'starting', pid: process.pid, createdAt })}\n`, 'utf8'); }
-      finally { await handle.close(); }
-      return { token, reserved: true };
-    } catch (error) {
-      if (error?.code !== 'EEXIST') throw error;
-      const claim = await monitorClaim(request);
-      if (!claim) continue;
-      if (typeof claim !== 'object') throw new Error('bridge operation monitor claim is invalid');
-      const age = Date.now() - Number(claim.createdAt ?? 0);
-      if ((claim.state === 'active' && processAlive(Number(claim.pid))) || (claim.state === 'starting' && Number.isFinite(age) && age >= 0 && age < 10_000)) {
-        return { token: null, reserved: false };
-      }
-      const record = await loadOperation(request);
-      if (!record || record.state !== 'planned') return { token: null, reserved: false };
-      await rm(file, { force: true });
-    }
-  }
-  return { token: null, reserved: false };
-}
-
-async function activateMonitor(request, token) {
-  const claim = await monitorClaim(request);
-  if (!claim || claim.token !== token || claim.state !== 'starting') throw new Error('bridge operation monitor claim does not match');
-  await atomicJson(monitorFile(request), { token, state: 'active', pid: process.pid, createdAt: claim.createdAt });
-}
-
 async function runOperation(request, token) {
-  await activateMonitor(request, token);
+  const activity = await localActivity();
+  if (!await activity.claim(request, token)) return;
   const record = await loadOperation(request);
   if (!record) throw new Error('bridge operation record is absent');
   validateOperationRecord(record, request, record.target);
-  if (record.state === 'completed' || record.state === 'failed') { await rm(monitorFile(request), { force: true }); return; }
+  if (record.state !== 'planned') return;
   const body = normalizeOperation(record.body);
+  await activity.publish(request, token);
   record.state = 'attempting';
-  record.monitorPid = process.pid;
+  record.activityToken = token;
   record.attemptedAt = new Date().toISOString();
   await atomicJson(operationFile(request), record);
 
@@ -390,24 +376,24 @@ async function runOperation(request, token) {
     record.finishedAt = now;
     await atomicJson(operationFile(request), record);
     await rm(cancelFile(request), { force: true });
-    await rm(monitorFile(request), { force: true });
+    await activity.remove(request, token);
     return;
   }
 
-  const working = await resolveLocation(body.directory, EXECUTION_CLASSES, { allowRoot: true, createParents: true });
-  const argumentsList = [];
-  for (const argument of body.arguments) {
-    if (typeof argument === 'string') { argumentsList.push(argument); continue; }
-    const createParents = argument.class !== 'input';
-    const resolved = await resolveLocation(argument, ARGUMENT_CLASSES, { createParents, requireFile: argument.class === 'input' });
-    argumentsList.push(resolved.path);
-  }
   const stdout = [];
   const stderr = [];
   const capture = { bytes: 0, truncated: false, lastOutputAt: null };
-  let timedOut = false;
-  let spawnFailure = null;
-  let child;
+  let child = null;
+  let childSettled = false;
+  let terminationSent = false;
+  let stopReason = null;
+  let controlFailure = null;
+  let controlStopped = false;
+  let controlTimer = null;
+  let controlPending = null;
+  let timeoutTimer = null;
+  let timeoutPending = null;
+  let terminalRecorded = false;
   const append = (list, chunk) => {
     const bytes = Buffer.from(chunk);
     capture.lastOutputAt = new Date().toISOString();
@@ -417,7 +403,68 @@ async function runOperation(request, token) {
     list.push(bytes); capture.bytes += bytes.length;
   };
 
+  const terminateOwnedChild = async () => {
+    if (terminationSent || childSettled || !child || !Number.isSafeInteger(child.pid) || child.pid <= 0) return;
+    terminationSent = true;
+    await terminateTree(child.pid);
+  };
+
+  const controlCycle = async () => {
+    try {
+      await activity.publish(request, token);
+      const observed = await cancellationReason(request);
+      if (observed && !stopReason) stopReason = observed;
+      if (stopReason) await terminateOwnedChild();
+    } catch (error) {
+      controlFailure ??= error;
+      await terminateOwnedChild();
+    }
+  };
+
+  const scheduleControl = (delay = 0) => {
+    controlTimer = setTimeout(() => {
+      controlPending = controlCycle().finally(() => {
+        controlPending = null;
+        if (!controlStopped && !controlFailure) scheduleControl(ACTIVITY_REFRESH_MS);
+      });
+    }, delay);
+    controlTimer.unref?.();
+  };
+
+  const stopControl = async () => {
+    controlStopped = true;
+    if (controlTimer) clearTimeout(controlTimer);
+    const pending = controlPending;
+    if (pending) await pending;
+  };
+
+  const completeWithoutStart = async (reason) => {
+    const now = new Date().toISOString();
+    record.state = 'completed';
+    record.result = { exitCode: null, signal: null, timedOut: reason === 'timeout', aborted: reason === 'abort', outputTruncated: false, stdout: '', stderr: '', startedAt: null, finishedAt: now, lastOutputAt: null };
+    record.finishedAt = now;
+    await atomicJson(operationFile(request), record);
+    terminalRecorded = true;
+  };
+
+  scheduleControl();
   try {
+    const working = await resolveLocation(body.directory, EXECUTION_CLASSES, { allowRoot: true, createParents: true });
+    const argumentsList = [];
+    for (const argument of body.arguments) {
+      if (typeof argument === 'string') { argumentsList.push(argument); continue; }
+      const createParents = argument.class !== 'input';
+      const resolved = await resolveLocation(argument, ARGUMENT_CLASSES, { createParents, requireFile: argument.class === 'input' });
+      argumentsList.push(resolved.path);
+    }
+    if (controlFailure) throw controlFailure;
+    stopReason ??= await cancellationReason(request);
+    if (stopReason) {
+      await stopControl();
+      await completeWithoutStart(stopReason);
+      return;
+    }
+
     child = spawn(body.program, argumentsList, {
       cwd: working.path,
       env: { ...baseEnvironment(), ...body.environment },
@@ -426,99 +473,95 @@ async function runOperation(request, token) {
       windowsHide: true,
       detached: process.platform !== 'win32',
     });
+
+    let inputFailure = null;
+    let settleInput;
+    const inputCompletion = new Promise((resolve) => {
+      let inputSettled = false;
+      settleInput = (error = null) => {
+        if (inputSettled) return;
+        inputSettled = true;
+        inputFailure = body.input == null ? null : error;
+        resolve();
+      };
+      child.stdin.once('error', (error) => settleInput(error));
+      child.stdin.once('close', () => settleInput(body.input == null ? null : new Error('bridge operation input closed before delivery')));
+    });
+
+    const processCompletion = new Promise((resolve) => {
+      const settleProcess = (exitCode, signal, error = null) => {
+        if (childSettled) return;
+        childSettled = true;
+        resolve({ exitCode, signal, error });
+      };
+      child.stdout.on('data', (chunk) => append(stdout, chunk));
+      child.stderr.on('data', (chunk) => append(stderr, chunk));
+      child.once('error', (error) => settleProcess(null, null, error));
+      child.once('close', (code, signal) => settleProcess(code, signal));
+    });
+
+    record.state = 'running';
+    record.startedAt = new Date().toISOString();
+    await atomicJson(operationFile(request), record);
+    if (stopReason || controlFailure) await terminateOwnedChild();
+
+    timeoutTimer = setTimeout(() => {
+      timeoutPending = (async () => {
+        if (childSettled || stopReason) return;
+        stopReason = 'timeout';
+        try { await publishCancellation(request, 'timeout'); }
+        catch (error) { controlFailure ??= error; }
+        await terminateOwnedChild();
+      })();
+    }, body.timeoutMs);
+    timeoutTimer.unref?.();
+
+    child.stdin.end(body.input ?? undefined, () => settleInput(null));
+    const outcome = await processCompletion;
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    if (timeoutPending) await timeoutPending;
+    await inputCompletion;
+    await stopControl();
+
+    if (controlFailure) throw new Error('bridge operation activity could not be maintained');
+    if (outcome.error) throw outcome.error;
+    if (inputFailure) throw new Error('bridge operation input could not be delivered');
+
+    const reason = stopReason ?? await cancellationReason(request);
+    const finishedAt = new Date().toISOString();
+    record.state = 'completed';
+    record.finishedAt = finishedAt;
+    record.result = {
+      exitCode: outcome.exitCode == null ? null : Math.max(-1, Math.min(255, Number(outcome.exitCode))),
+      signal: outcome.signal == null ? null : String(outcome.signal).slice(0, 128),
+      timedOut: reason === 'timeout',
+      aborted: reason === 'abort',
+      outputTruncated: capture.truncated,
+      stdout: Buffer.concat(stdout).toString('base64'),
+      stderr: Buffer.concat(stderr).toString('base64'),
+      startedAt: record.startedAt,
+      finishedAt,
+      lastOutputAt: capture.lastOutputAt,
+    };
+    await atomicJson(operationFile(request), record);
+    terminalRecorded = true;
   } catch (error) {
-    spawnFailure = error;
-  }
-  if (spawnFailure) {
+    await stopControl();
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    if (timeoutPending) await timeoutPending;
+    await terminateOwnedChild();
     record.state = 'failed';
-    record.reason = String(spawnFailure.message ?? 'bridge operation could not start').slice(0, 2_048);
+    record.reason = String(error?.message ?? 'bridge operation failed').slice(0, 2_048);
     record.finishedAt = new Date().toISOString();
     await atomicJson(operationFile(request), record);
-    await rm(monitorFile(request), { force: true });
-    return;
+    terminalRecorded = true;
+  } finally {
+    await stopControl();
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    if (timeoutPending) await timeoutPending;
+    if (terminalRecorded) await rm(cancelFile(request), { force: true });
+    await activity.remove(request, token);
   }
-
-  let inputFailure = null;
-  let settleInput;
-  const inputCompletion = new Promise((resolve) => {
-    let inputSettled = false;
-    settleInput = (error = null) => {
-      if (inputSettled) return;
-      inputSettled = true;
-      inputFailure = body.input == null ? null : error;
-      resolve();
-    };
-    child.stdin.once('error', (error) => settleInput(error));
-    child.stdin.once('close', () => settleInput(body.input == null ? null : new Error('bridge operation input closed before delivery')));
-  });
-
-  const processCompletion = new Promise((resolve) => {
-    let processSettled = false;
-    const settleProcess = (exitCode, signal, error = null) => {
-      if (processSettled) return;
-      processSettled = true;
-      resolve({ exitCode, signal, error });
-    };
-    child.stdout.on('data', (chunk) => append(stdout, chunk));
-    child.stderr.on('data', (chunk) => append(stderr, chunk));
-    child.once('error', (error) => settleProcess(null, null, error));
-    child.once('close', (code, signal) => settleProcess(code, signal));
-  });
-
-  record.state = 'running';
-  record.childPid = child.pid;
-  record.startedAt = new Date().toISOString();
-  await atomicJson(operationFile(request), record);
-
-  const timer = setTimeout(async () => {
-    timedOut = true;
-    try { await atomicJson(cancelFile(request), { reason: 'timeout' }); } catch {}
-    await terminateTree(child.pid);
-  }, body.timeoutMs);
-  timer.unref?.();
-
-  child.stdin.end(body.input ?? undefined, () => settleInput(null));
-  const outcome = await processCompletion;
-  clearTimeout(timer);
-  await inputCompletion;
-
-  if (outcome.error) {
-    record.state = 'failed';
-    record.reason = String(outcome.error.message ?? 'bridge operation process failed').slice(0, 2_048);
-    record.finishedAt = new Date().toISOString();
-    await atomicJson(operationFile(request), record);
-    await rm(monitorFile(request), { force: true });
-    return;
-  }
-  if (inputFailure) {
-    record.state = 'failed';
-    record.reason = 'bridge operation input could not be delivered';
-    record.finishedAt = new Date().toISOString();
-    await atomicJson(operationFile(request), record);
-    await rm(cancelFile(request), { force: true });
-    await rm(monitorFile(request), { force: true });
-    return;
-  }
-
-  const reason = timedOut ? 'timeout' : await cancellationReason(request);
-  const finishedAt = new Date().toISOString();
-  record.state = 'completed';
-  record.finishedAt = finishedAt;
-  record.result = {
-    exitCode: outcome.exitCode == null ? null : Math.max(-1, Math.min(255, Number(outcome.exitCode))),
-    signal: outcome.signal == null ? null : String(outcome.signal).slice(0, 128),
-    timedOut: reason === 'timeout',
-    aborted: reason === 'abort',
-    outputTruncated: capture.truncated,
-    stdout: Buffer.concat(stdout).toString('base64'),
-    stderr: Buffer.concat(stderr).toString('base64'),
-    startedAt: record.startedAt,
-    finishedAt,
-    lastOutputAt: capture.lastOutputAt,
-  };
-  await atomicJson(operationFile(request), record);
-  await rm(cancelFile(request), { force: true });
-  await rm(monitorFile(request), { force: true });
 }
 
 async function execute(frame) {
@@ -526,7 +569,7 @@ async function execute(frame) {
   let record = await loadOperation(frame.request);
   if (record) {
     validateOperationRecord(record, frame.request, frame.target, body);
-    if (record.state === 'planned') return ensureMonitor(frame.request, record);
+    if (record.state === 'planned') return startAttempt(frame.request, record);
     return resultState(record);
   }
   record = {
@@ -537,20 +580,20 @@ async function execute(frame) {
     body,
     state: 'planned',
     createdAt: new Date().toISOString(),
-    monitorPid: null,
-    childPid: null,
+    activityToken: null,
     result: null,
     reason: null,
   };
   await atomicJson(operationFile(frame.request), record);
-  return ensureMonitor(frame.request, record);
+  return startAttempt(frame.request, record);
 }
 
-async function ensureMonitor(request, record) {
-  const reservation = await reserveMonitor(request);
-  if (!reservation.reserved) return resultState(record);
+async function startAttempt(request, record) {
+  const current = await resultState(record);
+  if (current.state !== 'planned') return current;
+  const token = randomUUID();
   try {
-    const monitor = spawn(process.execPath, [SELF, '--run-operation', request, reservation.token], {
+    const monitor = spawn(process.execPath, [SELF, '--run-operation', request, token], {
       stdio: 'ignore', shell: false, windowsHide: true, detached: true, env: process.env,
     });
     await new Promise((resolve, reject) => {
@@ -559,13 +602,9 @@ async function ensureMonitor(request, record) {
     });
     monitor.unref();
   } catch (error) {
-    await rm(monitorFile(request), { force: true });
-    record.state = 'failed';
-    record.reason = String(error.message ?? 'bridge operation monitor could not start').slice(0, 2_048);
-    await atomicJson(operationFile(request), record);
-    return resultState(record);
+    throw new Error(String(error?.message ?? 'bridge operation activity could not start').slice(0, 2_048));
   }
-  return resultState(record);
+  return observedState(request, record.target, record);
 }
 
 async function observe(frame) {
@@ -585,8 +624,10 @@ async function cancel(frame) {
   validateOperationRecord(record, frame.request, frame.target);
   if (record.state === 'completed') return { state: 'completed' };
   if (record.state === 'failed') return { state: 'indeterminate' };
-  await atomicJson(cancelFile(frame.request), { reason: body.reason });
-  if (Number.isSafeInteger(Number(record.childPid)) && Number(record.childPid) > 0) await terminateTree(Number(record.childPid));
+  await publishCancellation(frame.request, body.reason);
+  const current = await observedState(frame.request, frame.target, record);
+  if (current.state === 'completed') return { state: 'completed' };
+  if (current.state === 'indeterminate') return { state: 'indeterminate' };
   return { state: 'running' };
 }
 
@@ -764,7 +805,7 @@ async function commandMain(argv = process.argv) {
     const request = argv[3];
     const token = argv[4];
     try {
-      if (typeof token !== 'string' || token.length < 16 || token.length > 128 || token.includes('\0')) throw new TypeError('bridge operation monitor token is invalid');
+      if (typeof token !== 'string' || !ACTIVITY_TOKEN.test(token)) throw new TypeError('bridge operation activity token is invalid');
       await runOperation(safeRequest(request), token);
     }
     catch (error) { process.stderr.write(`${String(error?.message ?? error).slice(0, 2_048)}\n`); process.exitCode = 1; }

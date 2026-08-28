@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const genericFiles = [
   new URL('../src/runtime/environment-bridge.js', import.meta.url),
+  new URL('../src/guest/activity-store.mjs', import.meta.url),
   new URL('../src/guest/bridge-agent.mjs', import.meta.url),
 ];
 const edgeFiles = [
@@ -21,6 +22,13 @@ test('generic Stage 4 LEGO modules do not name provider or neighboring execution
   for (const file of genericFiles) {
     const source = await readFile(file, 'utf8');
     for (const pattern of forbidden) assert.doesNotMatch(source, pattern, `${file.pathname} leaked ${pattern}`);
+  }
+});
+
+test('durable guest execution state contains no process locator identity', async () => {
+  for (const file of genericFiles.slice(1)) {
+    const source = await readFile(file, 'utf8');
+    assert.doesNotMatch(source, /monitorPid|childPid/iu);
   }
 });
 

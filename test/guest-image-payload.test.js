@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createGuestImagePayload } from '../src/guest/image-payload.js';
 
 const MEMBERS = [
+  'activity-store.mjs',
   'bridge-agent.mjs',
   'environment-bootstrap-agent.mjs',
   'linux-access-seed-agent.mjs',

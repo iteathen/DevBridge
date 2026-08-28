@@ -41,18 +41,18 @@ async function safeJson(file) {
   catch { return null; }
 }
 
-async function monitorLossDiagnostic(root, request) {
+async function activityLossDiagnostic(root, request) {
   const directory = path.join(root, '.operations');
   const operation = await safeJson(path.join(directory, `${request}.json`));
-  const claim = await safeJson(path.join(directory, `${request}.monitor.json`));
   let names = [];
   try { names = await readdir(directory); } catch {}
   return {
     request,
     operationState: operation?.state ?? null,
-    monitorClaimState: claim?.state ?? null,
+    attemptExists: names.includes(`${request}.attempt.json`),
+    activityCount: names.filter((name) => name.startsWith(`${request}.activity.`) && name.endsWith('.json')).length,
     operationTempCount: names.filter((name) => name.startsWith(`${request}.json.`) && name.endsWith('.tmp')).length,
-    monitorTempCount: names.filter((name) => name.startsWith(`${request}.monitor.json.`) && name.endsWith('.tmp')).length,
+    activityTempCount: names.filter((name) => name.startsWith(`${request}.activity.`) && name.endsWith('.tmp')).length,
   };
 }
 
@@ -63,7 +63,7 @@ async function observeUntil(root, request, timeoutMs = 5_000) {
     assert.equal(observed.ok, true);
     if (observed.body.state === 'completed' || observed.body.state === 'failed') return observed.body;
     if (observed.body.state === 'indeterminate') {
-      const diagnostic = await monitorLossDiagnostic(root, request);
+      const diagnostic = await activityLossDiagnostic(root, request);
       throw new Error(`observation became indeterminate: ${observed.body.reason}; diagnostic=${JSON.stringify(diagnostic)}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -95,6 +95,6 @@ test('fast children cannot exit before their completion hooks become authoritati
       assert.equal(result.result.aborted, false);
     }
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 6, retryDelay: 50 });
   }
 });

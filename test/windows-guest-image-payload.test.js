@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createWindowsGuestImagePayload } from '../src/guest/windows-image-payload.js';
 
 const MEMBERS = [
+  'activity-store.mjs',
   'bridge-agent.mjs',
   'environment-bootstrap-agent.mjs',
   'network-seed-agent.mjs',
