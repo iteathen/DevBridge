@@ -1,6 +1,6 @@
 # DB-HO024 — issue #293 Linux service-definition composition
 
-Status: implemented and locally qualified from exact `cuda-target` baseline `d91fbeec0274fcd8ab4fe5c526c6ab7931d39b26` on isolated branch `security/293-linux-service-definition`; hosted CI is pending.
+Status: implemented, hosted-qualified, and integrated into `cuda-target` as exact squash commit `b306de2023dc616f27ee9a9e2628c9291baea9ea`.
 
 ## Assessment
 
@@ -61,4 +61,15 @@ All qualification below ran without elevation and without touching a real system
 - repository-execution architecture gates: 34 total, 33 passed, 1 expected Windows symlink-capability skip, 0 failed;
 - complete Windows suite: 1,267 total, 1,256 passed, 11 platform skips, 0 failed.
 
-Hosted Ubuntu and Windows CI must still prove this exact isolated head before integration. Issue #293 remains open because higher lifecycle composition, bounded one-command elevation, libvirt/qcow2 provider authorization, and physical Linux qualification are not part of this slice.
+## Hosted qualification and integration
+
+Isolated PR [#338](https://github.com/iteathen/DevBridge/pull/338) qualified exact head `5c8e99c6704743d4f479da7fc12a67d92b120ac8` in CI run [`33132044369`](https://github.com/iteathen/DevBridge/actions/runs/33132044369):
+
+- Ubuntu smoke/preflight passed in 17 seconds;
+- Ubuntu architecture gates, full suite, and doctor passed in 38 seconds;
+- Windows smoke/preflight passed in 51 seconds;
+- Windows architecture gates, full suite, and doctor passed in 2 minutes 1 second.
+
+The PR was squash-integrated as `b306de2023dc616f27ee9a9e2628c9291baea9ea`. The reviewed head and integrated commit both resolve to exact tree `d8fa6b25262e1f5cdd53e63eb68eceede0dd8610`; the integration therefore added no unreviewed tree content.
+
+Issue #293 remains open because higher lifecycle composition, bounded one-command elevation, libvirt/qcow2 provider authorization, and physical Linux qualification are not part of this slice.
