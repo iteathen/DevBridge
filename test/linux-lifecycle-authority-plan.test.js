@@ -51,12 +51,33 @@ test('Linux authority plan derives one exact runtime and split local capabilitie
   assert.equal(value.runtime.generationDirectory, `${value.runtime.generationsDirectory}/${value.runtime.generation}`);
   assert.equal(value.endpoints.read.endpoint, `/run/devbridge/${value.authorityIdentity}/read/environment-v1.sock`);
   assert.equal(value.endpoints.mutation.endpoint, `/run/devbridge/${value.authorityIdentity}/mutation/environment-v1.sock`);
+  assert.equal(value.endpoints.parentDirectory, '/run/devbridge');
+  assert.equal(value.endpoints.definition.path, `/etc/tmpfiles.d/devbridge-lifecycle-authority-${value.authorityIdentity.slice(0, 12)}.conf`);
+  assert.equal(value.endpoints.definition.content, [
+    'd /run/devbridge 0755 root root -',
+    `d /run/devbridge/${value.authorityIdentity} 0755 root root -`,
+    `d /run/devbridge/${value.authorityIdentity}/read 0750 ${value.service.user} ${value.service.readGroup} -`,
+    `d /run/devbridge/${value.authorityIdentity}/mutation 0700 ${value.service.user} root -`,
+    '',
+  ].join('\n'));
+  assert.equal(Object.hasOwn(value.endpoints.read, 'owner'), false);
+  assert.equal(Object.hasOwn(value.endpoints.read, 'group'), false);
+  assert.equal(value.endpoints.read.directoryOwner, value.service.user);
+  assert.equal(value.endpoints.read.directoryGroup, value.service.readGroup);
+  assert.equal(value.endpoints.read.socketOwner, value.service.user);
+  assert.equal(value.endpoints.read.socketGroup, value.service.readGroup);
   assert.equal(value.endpoints.read.directoryMode, 0o750);
   assert.equal(value.endpoints.read.socketMode, 0o770);
+  assert.equal(value.endpoints.mutation.directoryOwner, value.service.user);
+  assert.equal(value.endpoints.mutation.directoryGroup, 'root');
+  assert.equal(value.endpoints.mutation.socketOwner, value.service.user);
+  assert.equal(value.endpoints.mutation.socketGroup, value.service.readGroup);
   assert.equal(value.endpoints.mutation.directoryMode, 0o700);
+  assert.equal(value.endpoints.mutation.socketMode, 0o770);
   assert.equal(value.access.storageRoot.mode, 0o755);
   assert.equal(value.access.protectedRuntime.serviceWrite, false);
   assert.equal(value.access.refreshJournal.mode, 0o600);
+  assert.equal(value.access.volatileDefinition.mode, 0o644);
   assert.equal(value.access.authorityState.serviceWrite, true);
 });
 
@@ -121,6 +142,10 @@ test('Linux plan rejects nonportable names, unsafe paths, and percent specifier 
   assert.throws(() => basePlan({ operatorName: 'alice.example' }), /portable bounded/u);
   assert.throws(() => basePlan({ managementGroup: '../control' }), /portable bounded/u);
   assert.throws(() => basePlan({ managementGroup: 'a'.repeat(32) }), /portable bounded/u);
+  assert.throws(() => basePlan({ runDirectory: '/run/dev bridge' }), /unsupported definition syntax/u);
+  assert.throws(() => basePlan({ runDirectory: '/run/dev%bridge' }), /unsupported definition syntax/u);
+  assert.throws(() => basePlan({ runDirectory: '/tmp/devbridge' }), /unsupported definition syntax/u);
+  assert.throws(() => basePlan({ runDirectory: '/run/devbridge/../foreign' }), /unsupported definition syntax/u);
   const value = plan({ stateDirectory: '/srv/dev%bridge/state' });
   assert.match(value.service.unit, /\/srv\/dev%%bridge\/state/u);
   assert.equal(value.service.unit.includes('/srv/dev%bridge/state'), false);

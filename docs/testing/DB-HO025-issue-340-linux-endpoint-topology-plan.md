@@ -1,6 +1,6 @@
 # DB-HO025 — issue #340 Linux volatile endpoint topology
 
-Status: planned from exact `cuda-target` baseline `58570958ca4e8ebd3c6fd979265a62624e8360de` on isolated branch `security/340-linux-endpoint-topology`.
+Status: implemented and locally qualified from exact `cuda-target` baseline `58570958ca4e8ebd3c6fd979265a62624e8360de` on isolated branch `security/340-linux-endpoint-topology`; clean-checkout Ubuntu/Windows CI is pending.
 
 ## Assessment
 
@@ -47,3 +47,27 @@ The composition receives neutral state, inspect, load, save, and apply studs. It
 6. Add focused suites to repository preflight; run related Linux authority tests, repository preflight, repository-execution architecture gates, and the full suite before isolated publication.
 
 No real filesystem, account, system manager, tmpfiles, service, provider, VM, sudo, or UAC action belongs to hosted qualification. Issue #293 remains open after this prerequisite for lifecycle mechanics, one-command elevation, provider authorization, state migration, ordinary-negative/protected-positive evidence, and physical KVM/libvirt/qcow2 qualification.
+
+## Implementation
+
+The Linux lifecycle plan now owns a deterministic root-owned `0644` definition beneath `/etc/tmpfiles.d`. Its pathname vocabulary is normalized, specifier-free, whitespace-free, and restricted to an exact descendant of `/run`. The definition declares only the shared runtime parent, the authority-specific root, the read parent, and the mutation parent. Directory policy and process-created socket policy are separate facts; no compatibility `owner`/`group` fields remain.
+
+The mutation endpoint now records the physically producible service/read-group `0770` socket inode created under the unit's single `UMask=0007`. Its service/root `0700` parent is the mutation capability boundary. Read access can traverse the service/read `0750` read parent but cannot search the mutation parent.
+
+`linux-directory-definition-applicator.js` owns one fixed operation: apply one safe basename directly beneath `/etc/tmpfiles.d` with `/usr/bin/systemd-tmpfiles --create`. The executable, argument prefix, locale, input, timeout, output bound, and failure text are local constants. The caller cannot supply rule bytes, target directories, identities, commands, environment, or executable selection.
+
+`linux-lifecycle-authority-endpoint-topology.js` owns only the lifecycle-local composition. It requires the already-established ownership record and immutable numeric identity, observes the definition parent and every target before an effect, admits only the exact rendered bytes, publishes through protected storage, invokes the neutral `apply` stud only for absent volatile directories, and re-observes all postconditions. Existing wrong policy or foreign bytes fail before mutation. A lost response after definition publication resumes by observing the installed bytes; a reboot with an exact persistent definition but absent `/run` directories applies without rewriting it.
+
+The broad read-only lifecycle inspection now includes independent definition-file policy, exact definition bytes, the shared runtime parent, and realistic socket inode evidence. A stopped endpoint remains distinct from runtime identity readiness.
+
+## Local qualification
+
+No elevated command, UAC prompt, system-manager mutation, tmpfiles mutation, account change, service change, or VM/provider effect was executed.
+
+- Focused and related Linux boundary selection: 104 total, 101 passed, 3 expected non-Linux skips, 0 failed.
+- Repository preflight: 45 syntax files, 2 JSON files, 47 targeted test files, passed.
+- Repository-execution architecture gates: 34 total, 33 passed, 1 expected Windows symlink-capability skip, 0 failed.
+- Full suite: 1,283 total, 1,272 passed, 11 expected platform skips, 0 failed, with a normal TAP exit in 53.2 seconds.
+- Doctor smoke: `ok: true`; repository execution remained explicitly unavailable/fail-closed because no persistent-environment route is configured.
+
+Hosted CI and physical Linux qualification remain distinct gates. This slice can prove the deterministic contracts on Windows and later through clean Ubuntu CI, but it cannot claim real tmpfiles creation, boot recreation, ordinary-user denial, or protected-service access until the bounded elevated Linux setup and dedicated physical qualification are implemented.

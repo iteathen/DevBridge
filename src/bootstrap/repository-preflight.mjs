@@ -48,6 +48,8 @@ const SYNTAX_FILES = [
   'src/bootstrap/runtime-transition.mjs',
   'src/bootstrap/secure-bootstrap.mjs',
   'src/bootstrap/transactional-bootstrap.mjs',
+  'src/setup/linux-directory-definition-applicator.js',
+  'src/setup/linux-lifecycle-authority-endpoint-topology.js',
 ];
 
 const JSON_FILES = ['package.json', 'config/devbridge.example.json'];
@@ -99,6 +101,8 @@ const TARGETED_TESTS = [
   'test/linux-service-manager.test.js',
   'test/linux-service-observation.test.js',
   'test/linux-service-definition.test.js',
+  'test/linux-directory-definition-applicator.test.js',
+  'test/linux-lifecycle-authority-endpoint-topology.test.js',
 ];
 
 function cleanOutput(value) {
