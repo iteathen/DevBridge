@@ -63,3 +63,43 @@ Verification from the exact working tree on 2026-08-28:
 - `git diff --cached --check`: no whitespace errors; Git emitted only the repository's expected LF-to-CRLF checkout notices.
 
 Physical consent/elevation remains the next gate. The direct shell-elevation attempt was rejected before reaching Windows and made no change; the installed product path remains the only accepted mutation route.
+
+## Physical reassessment — 2026-08-28
+
+The exact approved translation retirement subsequently completed through the installed one-shot elevated setup path. The protected runtime refreshed successfully and the translation is now absent. Protected profile reconciliation then failed closed before network readiness because an older partial setup attempt had left the deterministic target internal switch present with an empty ownership marker. It has no guest adapters and only one automatically assigned link-local IPv4 address. No declaration, persistent profile environment, route, operational configuration, or guest execution was created.
+
+The original implementation deliberately preserved the translation's switch. That is correct for a foreign translation, but it exposed a second independent conflict: the deterministic target name is occupied without provider-verifiable ownership. Protected planned state is not sufficient authority to seize or stamp that object because it does not prove the object was absent before the historical creation attempt.
+
+Current Microsoft provider contracts confirm the bounded recovery surface:
+
+- [`Remove-VMSwitch`](https://learn.microsoft.com/en-us/powershell/module/hyper-v/remove-vmswitch?view=windowsserver2025-ps) removes an exact virtual switch;
+- [`Get-VMNetworkAdapter`](https://learn.microsoft.com/en-us/powershell/module/hyper-v/get-vmnetworkadapter?view=windowsserver2025-ps) provides the attachment observation required before switch retirement; and
+- [`Get-NetIPAddress`](https://learn.microsoft.com/en-us/powershell/module/nettcpip/get-netipaddress?view=windowsserver2025-ps) provides exact interface-address observation so setup does not discard a configured operator network under an apparently idle switch.
+
+The conflict owner therefore needs one additional provider-local candidate class behind the unchanged neutral stud. When no translation occupies the host, an exact-name internal switch with an empty marker may expose an opaque approval subject only when it has zero guest attachments and no configured non-link-local IPv4 address. The subject binds the candidate class, switch name/ID/type/marker, attachment count, and sorted address evidence. A non-empty foreign marker, external/private switch, guest attachment, configured address, multiple candidate, changed subject, or observation failure remains blocked without consent.
+
+After exact subject consent, the same elevated setup child re-observes every bound field, removes only that exact switch, verifies absence, and resumes the normal provider path, which recreates and marks its own switch before address/NAT reconciliation. No caller supplies a switch name, provider object, command, or path. No manual marker adoption or ordinary-process Hyper-V mutation is permitted.
+
+Dependency-ordered amendment:
+
+1. Generalize the Windows-local conflict classifier to distinguish translation and unclaimed-switch candidates without changing the neutral public contract.
+2. Fingerprint and re-observe bounded switch attachment/address evidence.
+3. Retire only the exact approved candidate kind and verify its kind-specific absence.
+4. Test clear owned/absent state, safe switch consent/retirement, configured address, attachment, marker/type mismatch, changed subject, and preservation of the existing translation cases.
+5. Run focused tests, preflight, and the complete suite before requesting the final host elevation transaction.
+
+## Partial-switch implementation checkpoint — 2026-08-28
+
+The Windows-local adapter now classifies two independent candidate kinds behind the same neutral conflict contract. Translation behavior is preserved. With no translation present, an exact-name unmarked internal switch is eligible for an opaque approval subject only when guest-only adapter enumeration reports zero attachments and every observed IPv4 address is link-local. The subject binds sorted address evidence as well as exact switch identity and state.
+
+Retirement re-observes the subject inside the existing elevated child, dispatches only on the locally derived candidate kind, removes the exact approved switch, verifies absence, and exposes no provider identity. Owned/absent state remains a no-op. Foreign marker/type, configured address, guest attachment, drift, ambiguity, or invalid evidence remains fail-closed.
+
+The first live read-only probe exposed that Hyper-V's all-adapter inventory includes the mandatory management-OS vNIC for an internal switch. The implementation therefore retains the guest-only `-VMName *` query and includes a regression test proving the host vNIC is not misclassified as a guest dependency. The corrected live probe returns one `approval-required` neutral observation with subject `00dbc6dd7feff1861a435eb45c715739819ce3d1ec75e044bc50919e9d8b67ef`; it performed no mutation.
+
+Verification:
+
+- focused real-Windows PowerShell tests: 18/18 passed;
+- repository preflight: 99 syntax files, two JSON files, and 95 targeted tests passed;
+- complete suite: 1,541 total, 1,526 passed, 15 platform-specific skips, and zero failures.
+
+The code checkpoint must be committed/pushed before the exact subject is supplied to the installed selector. Physical switch retirement, owned network reconciliation, declaration publication, environment activation, and guest execution remain unclaimed.

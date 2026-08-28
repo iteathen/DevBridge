@@ -13,7 +13,13 @@ const POWERSHELL = 'powershell.exe';
 const POWERSHELL_ARGS = Object.freeze(['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand']);
 
 const OBSERVATION_FUNCTIONS = String.raw`
-function Get-Subject($nat, $switch, [int]$mappingCount, [int]$sessionCount, [int]$adapterCount) {
+function Get-Subject([string[]]$parts) {
+  $bytes = [Text.Encoding]::UTF8.GetBytes(($parts -join [char]0))
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
+  finally { $sha.Dispose() }
+}
+function Get-TranslationSubject($nat, $switch, [int]$mappingCount, [int]$sessionCount, [int]$adapterCount) {
   $domain = 'devbridge/setup-resource-conflict-subject-v1'
   $parts = @(
     $domain,
@@ -26,14 +32,49 @@ function Get-Subject($nat, $switch, [int]$mappingCount, [int]$sessionCount, [int
     [string]$sessionCount,
     [string]$adapterCount
   )
-  $bytes = [Text.Encoding]::UTF8.GetBytes(($parts -join [char]0))
-  $sha = [Security.Cryptography.SHA256]::Create()
-  try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
-  finally { $sha.Dispose() }
+  return Get-Subject $parts
+}
+function Get-SwitchSubject($switch, [int]$adapterCount, $addresses) {
+  $addressEvidence = @($addresses | ForEach-Object {
+    '{0}/{1}|{2}|{3}|{4}' -f [string]$_.IPAddress, [int]$_.PrefixLength, [string]$_.PrefixOrigin, [string]$_.SuffixOrigin, [string]$_.AddressState
+  } | Sort-Object) -join [char]1
+  $parts = @(
+    'devbridge/setup-resource-conflict-switch-subject-v1',
+    [string]$switch.Name,
+    ([string]$switch.Id).ToLowerInvariant(),
+    [string]$switch.SwitchType,
+    [string]$switch.Notes,
+    [string]$adapterCount,
+    [string]$addressEvidence
+  )
+  return Get-Subject $parts
 }
 function Get-Conflict($data) {
   $translations = @(Get-NetNat -ErrorAction Stop)
-  if ($translations.Count -eq 0) { return [pscustomobject]@{ state = 'clear'; reason = $null; subject = $null; name = $null } }
+  if ($translations.Count -eq 0) {
+    $switches = @(Get-VMSwitch -ErrorAction Stop | Where-Object { [string]$_.Name -eq [string]$data.expected.name })
+    if ($switches.Count -eq 0) { return [pscustomobject]@{ state = 'clear'; reason = $null; subject = $null; kind = $null; name = $null } }
+    if ($switches.Count -ne 1) { return [pscustomobject]@{ state = 'blocked'; reason = 'local resource conflict is ambiguous'; subject = $null; kind = $null; name = $null } }
+    $switch = $switches[0]
+    if ([string]$switch.Notes -eq [string]$data.expected.marker -and [string]$switch.SwitchType -eq 'Internal') {
+      return [pscustomobject]@{ state = 'clear'; reason = $null; subject = $null; kind = $null; name = $null }
+    }
+    if (-not [string]::IsNullOrEmpty([string]$switch.Notes) -or [string]$switch.SwitchType -ne 'Internal') {
+      return [pscustomobject]@{ state = 'blocked'; reason = 'local resource conflicts with accepted ownership'; subject = $null; kind = $null; name = $null }
+    }
+    $adapterCount = @(Get-VMNetworkAdapter -VMName * -ErrorAction SilentlyContinue | Where-Object { $_.SwitchId -eq $switch.Id }).Count
+    $alias = "vEthernet ($([string]$switch.Name))"
+    $addresses = @(Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias $alias -ErrorAction Stop | Select-Object IPAddress,PrefixLength,PrefixOrigin,SuffixOrigin,AddressState)
+    $configuredAddresses = @($addresses | Where-Object { [string]$_.IPAddress -notmatch '^169\.254\.' })
+    if ($adapterCount -ne 0) {
+      return [pscustomobject]@{ state = 'blocked'; reason = 'local resource conflict has active dependants'; subject = $null; kind = $null; name = $null }
+    }
+    if ($configuredAddresses.Count -ne 0) {
+      return [pscustomobject]@{ state = 'blocked'; reason = 'local resource conflict has configured address state'; subject = $null; kind = $null; name = $null }
+    }
+    $subject = Get-SwitchSubject $switch $adapterCount $addresses
+    return [pscustomobject]@{ state = 'approval-required'; reason = 'one inactive local resource blocks protected setup'; subject = $subject; kind = 'switch'; name = [string]$switch.Name }
+  }
   if ($translations.Count -ne 1) { return [pscustomobject]@{ state = 'blocked'; reason = 'local resource conflict is ambiguous'; subject = $null; name = $null } }
   $nat = $translations[0]
   $switches = @(Get-VMSwitch -ErrorAction Stop | Where-Object { [string]$_.Name -eq [string]$nat.Name })
@@ -54,8 +95,8 @@ function Get-Conflict($data) {
   if ($mappingCount -ne 0 -or $sessionCount -ne 0 -or $adapterCount -ne 0) {
     return [pscustomobject]@{ state = 'blocked'; reason = 'local resource conflict has active dependants'; subject = $null; name = $null }
   }
-  $subject = Get-Subject $nat $switches[0] $mappingCount $sessionCount $adapterCount
-  return [pscustomobject]@{ state = 'approval-required'; reason = 'one inactive local resource blocks protected setup'; subject = $subject; name = [string]$nat.Name }
+  $subject = Get-TranslationSubject $nat $switches[0] $mappingCount $sessionCount $adapterCount
+  return [pscustomobject]@{ state = 'approval-required'; reason = 'one inactive local resource blocks protected setup'; subject = $subject; kind = 'translation'; name = [string]$nat.Name }
 }
 `;
 
@@ -88,8 +129,15 @@ if ([string]$observed.subject -ne [string]$data.subject) {
   @{ ready = $false; changed = $false; reason = 'approved local resource subject changed before retirement' } | ConvertTo-Json -Compress
   exit 0
 }
-Remove-NetNat -Name ([string]$observed.name) -Confirm:$false -ErrorAction Stop
-if (@(Get-NetNat -Name ([string]$observed.name) -ErrorAction SilentlyContinue).Count -ne 0) { throw 'retired local resource remains present' }
+if ([string]$observed.kind -eq 'translation') {
+  Remove-NetNat -Name ([string]$observed.name) -Confirm:$false -ErrorAction Stop
+  if (@(Get-NetNat -Name ([string]$observed.name) -ErrorAction SilentlyContinue).Count -ne 0) { throw 'retired local resource remains present' }
+} elseif ([string]$observed.kind -eq 'switch') {
+  Remove-VMSwitch -Name ([string]$observed.name) -Force -Confirm:$false -ErrorAction Stop
+  if (@(Get-VMSwitch -ErrorAction Stop | Where-Object { [string]$_.Name -eq [string]$observed.name }).Count -ne 0) { throw 'retired local resource remains present' }
+} else {
+  throw 'approved local resource kind is invalid'
+}
 @{ ready = $true; changed = $true; reason = $null } | ConvertTo-Json -Compress
 `;
 

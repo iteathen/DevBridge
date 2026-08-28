@@ -177,6 +177,10 @@ Multi-profile route assessment 2026-08-28: `docs/testing/DB-HO041-issue-360-mult
 
 Multi-profile route implementation checkpoint 2026-08-28: first-admitted preference is now stable, sole non-preferred policy is normalized only when topology expands, ambiguous existing topology fails closed, and health/put/execute proof binds to the exact subject/profile workspace before policy publication. Focused 21/21, preflight, and the complete 1,531-total / 1,516-pass / 15-skip / zero-failure suite are green. Commit this primitive, then resume the UAC-gated physical Linux activation without changing its accepted image or profile.
 
+Physical conflict reassessment 2026-08-28: the approved one-shot host elevation refreshed the protected runtime and retired the exact stale translation, then failed closed on a separate unmarked deterministic target switch left by an earlier partial attempt. Extend the existing neutral conflict stud with one provider-local, exact-subject retirement for an unattached internal switch with only link-local address state. Never stamp/adopt the unmarked object from planned state alone. Test and push this correction before spending the final available UAC transaction.
+
+Partial-switch implementation checkpoint 2026-08-28: the unchanged neutral conflict stud now classifies an exact unmarked target switch only when it is internal, guest-unattached, and has no configured non-link-local IPv4 state. Subject-bound re-observation/removal remains inside the one-shot elevated child. A live read-only probe produced subject `00dbc6dd7feff1861a435eb45c715739819ce3d1ec75e044bc50919e9d8b67ef`; focused 18/18, preflight 99/2/95, and full 1,541-total / 1,526-pass / 15-skip / zero-failure evidence are green. Commit and push before requesting the last available UAC transaction.
+
 ## Phase 5 — complete permanent-entry and recovery composition
 
 Owners: permanent entry, runner, accepted runtime, recovery control plane, and application manager.

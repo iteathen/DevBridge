@@ -32,6 +32,16 @@ function Get-VMNetworkAdapter { [CmdletBinding()] param([string]$VMName) @() }
 function Remove-NetNat { [CmdletBinding()] param([string]$Name, [switch]$Confirm) $script:removed = $true }
 `;
 
+const SAFE_SWITCH = String.raw`
+function Import-Module { [CmdletBinding()] param([Parameter(Position=0)]$Name) }
+$script:removed = $false
+function Get-NetNat { [CmdletBinding()] param([string]$Name) @() }
+function Get-VMSwitch { [CmdletBinding()] param() if ($script:removed) { @() } else { @([pscustomobject]@{ Name = [string]$data.expected.name; Id = [guid]'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'; SwitchType = 'Internal'; Notes = '' }) } }
+function Get-VMNetworkAdapter { [CmdletBinding()] param([string]$VMName) @() }
+function Get-NetIPAddress { [CmdletBinding()] param([string]$AddressFamily, [string]$InterfaceAlias) @([pscustomobject]@{ IPAddress = '169.254.20.4'; PrefixLength = 16; PrefixOrigin = 'WellKnown'; SuffixOrigin = 'Link'; AddressState = 'Preferred' }) }
+function Remove-VMSwitch { [CmdletBinding()] param([string]$Name, [switch]$Force, [switch]$Confirm) $script:removed = $true }
+`;
+
 test('Windows conflict inspection returns an opaque subject without exposing provider identities', { skip: process.platform !== 'win32' }, async () => {
   const adapter = createWindowsSetupResourceConflict({
     identity: IDENTITY,
@@ -124,6 +134,90 @@ function Get-VMSwitch { [CmdletBinding()] param() @([pscustomobject]@{ Name = [s
     reason: null,
   });
 });
+
+test('Windows conflict inspection projects an exact safe unclaimed switch only as an opaque subject', { skip: process.platform !== 'win32' }, async () => {
+  const adapter = createWindowsSetupResourceConflict({
+    identity: IDENTITY,
+    platform: 'win32',
+    invoke: (request) => withMocks(request, SAFE_SWITCH),
+  });
+  const observed = await adapter.inspect();
+  assert.equal(observed.state, 'approval-required');
+  assert.match(observed.subject, /^[0-9a-f]{64}$/u);
+  assert.equal(JSON.stringify(observed).includes('db-network-'), false);
+  assert.equal(JSON.stringify(observed).includes('169.254.20.4'), false);
+});
+
+test('Windows conflict inspection queries guest adapters without counting the internal host vNIC', { skip: process.platform !== 'win32' }, async () => {
+  const mocks = SAFE_SWITCH.replace(
+    'function Get-VMNetworkAdapter { [CmdletBinding()] param([string]$VMName) @() }',
+    "function Get-VMNetworkAdapter { [CmdletBinding()] param([string]$VMName, [switch]$All) if ($All -or [string]::IsNullOrEmpty($VMName)) { throw 'guest-only adapter query is required' }; @() }",
+  );
+  const adapter = createWindowsSetupResourceConflict({ identity: IDENTITY, platform: 'win32', invoke: (request) => withMocks(request, mocks) });
+  assert.equal((await adapter.inspect()).state, 'approval-required');
+});
+
+test('Windows conflict retirement re-observes and removes only the exact approved unclaimed switch', { skip: process.platform !== 'win32' }, async () => {
+  const adapter = createWindowsSetupResourceConflict({
+    identity: IDENTITY,
+    platform: 'win32',
+    invoke: (request) => withMocks(request, SAFE_SWITCH),
+  });
+  const observed = await adapter.inspect();
+  assert.deepEqual(await adapter.retire({ protocol: 'devbridge/setup-resource-conflict-consent-v1', subject: observed.subject }), {
+    protocol: 'devbridge/setup-resource-conflict-retirement-v1',
+    ready: true,
+    changed: true,
+    reason: null,
+  });
+});
+
+test('Windows unclaimed switch retirement refuses address drift after approval', { skip: process.platform !== 'win32' }, async () => {
+  let invocation = 0;
+  const adapter = createWindowsSetupResourceConflict({
+    identity: IDENTITY,
+    platform: 'win32',
+    invoke: (request) => withMocks(request, invocation++ === 0 ? SAFE_SWITCH : SAFE_SWITCH.replace('169.254.20.4', '169.254.20.5')),
+  });
+  const observed = await adapter.inspect();
+  const result = await adapter.retire({ protocol: 'devbridge/setup-resource-conflict-consent-v1', subject: observed.subject });
+  assert.equal(result.ready, false);
+  assert.equal(result.changed, false);
+  assert.match(result.reason, /subject changed/u);
+});
+
+for (const [kind, mocks, reason] of [
+  ['guest attachment', SAFE_SWITCH.replace(
+    'function Get-VMNetworkAdapter { [CmdletBinding()] param([string]$VMName) @() }',
+    "function Get-VMNetworkAdapter { [CmdletBinding()] param([string]$VMName) @([pscustomobject]@{ SwitchId = [guid]'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' }) }",
+  ), /active dependants/u],
+  ['configured address', SAFE_SWITCH.replace("IPAddress = '169.254.20.4'", "IPAddress = '192.168.90.1'"), /configured address/u],
+  ['foreign marker', SAFE_SWITCH.replace("Notes = ''", "Notes = 'operator-owned'"), /accepted ownership/u],
+  ['wrong switch type', SAFE_SWITCH.replace("SwitchType = 'Internal'", "SwitchType = 'Private'"), /accepted ownership/u],
+]) {
+  test(`Windows conflict inspection refuses an unclaimed switch with ${kind}`, { skip: process.platform !== 'win32' }, async () => {
+    const adapter = createWindowsSetupResourceConflict({ identity: IDENTITY, platform: 'win32', invoke: (request) => withMocks(request, mocks) });
+    const observed = await adapter.inspect();
+    assert.equal(observed.state, 'blocked');
+    assert.equal(observed.subject, null);
+    assert.match(observed.reason, reason);
+  });
+}
+
+for (const [kind, switches] of [
+  ['absent target', '@()'],
+  ['already owned target', "@([pscustomobject]@{ Name = [string]$data.expected.name; Id = [guid]'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'; SwitchType = 'Internal'; Notes = [string]$data.expected.marker })"],
+]) {
+  test(`Windows conflict inspection treats ${kind} with no translation as clear`, { skip: process.platform !== 'win32' }, async () => {
+    const mocks = String.raw`
+function Import-Module { [CmdletBinding()] param([Parameter(Position=0)]$Name) }
+function Get-NetNat { [CmdletBinding()] param() @() }
+function Get-VMSwitch { [CmdletBinding()] param() ${switches} }
+`;
+    const adapter = createWindowsSetupResourceConflict({ identity: IDENTITY, platform: 'win32', invoke: (request) => withMocks(request, mocks) });
+    assert.equal((await adapter.inspect()).state, 'clear');
+  });
+}
 
 test('Windows conflict adapter fails closed on invalid subprocess evidence', async () => {
   const adapter = createWindowsSetupResourceConflict({ identity: IDENTITY, platform: 'win32', invoke: async () => success({ state: 'approval-required', subject: 'bad', reason: 'bad' }) });
