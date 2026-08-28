@@ -2,6 +2,7 @@ import {
   createExecutionProfileRouting,
   createWorkspaceScopedChannel,
   executionWorkspaceIdentity,
+  executionWorkspaceTarget,
 } from './execution-profile-routing.js';
 import {
   ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL,
@@ -41,6 +42,26 @@ function observed(outcome, name) {
   }
 }
 
+function admitRoute(routes, { subject, profile }) {
+  const matches = routes.filter((route) => route.subject === subject);
+  const exact = matches.filter((route) => route.profile === profile);
+  if (exact.length > 1) throw new Error('environment workspace route is ambiguous');
+  const preferred = matches.filter((route) => route.preferred);
+  if (preferred.length > 1) throw new Error('environment workspace route preference is ambiguous');
+  if (matches.length > 1 && preferred.length === 0) throw new Error('environment workspace routes have no unique preferred profile');
+
+  let changed = false;
+  if (matches.length === 1 && preferred.length === 0) {
+    matches[0].preferred = true;
+    changed = true;
+  }
+  if (exact.length === 0) {
+    routes.push({ subject, profile, preferred: matches.length === 0, validation: false });
+    changed = true;
+  }
+  return changed;
+}
+
 export function createEnvironmentConstructionWorkspaces({
   stateDirectory,
   state,
@@ -65,18 +86,14 @@ export function createEnvironmentConstructionWorkspaces({
       const subject = String(await resolveAuthority(workspace.authority));
       if (!STABLE_SUBJECT.test(subject)) throw new Error('environment workspace authority did not resolve to a stable subject');
       if (executionWorkspaceIdentity(subject, declaration.profile) !== workspace.identity) throw new Error('environment workspace identity does not match host authority');
-      selected.push(Object.freeze({ subject, workspace }));
+      selected.push(Object.freeze({ subject, workspace, target: executionWorkspaceTarget(subject, declaration.profile) }));
     }
 
     const existing = await loadEnvironmentActivityPolicy(stateDirectory);
     const routes = existing ? existing.routes.map((route) => structuredClone(route)) : [];
     let changed = false;
     for (const entry of selected) {
-      const matches = routes.filter((route) => route.subject === entry.subject && route.profile === declaration.profile);
-      if (matches.length > 1) throw new Error('environment workspace route is ambiguous');
-      if (matches.length === 1) continue;
-      routes.push({ subject: entry.subject, profile: declaration.profile, preferred: false, validation: false });
-      changed = true;
+      if (admitRoute(routes, { subject: entry.subject, profile: declaration.profile })) changed = true;
     }
     const policy = normalizeEnvironmentActivityPolicy({ protocol: ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL, routes });
     const selectedChannel = assertChannel(channel ?? await resolveChannel(Object.freeze({ declaration })));
@@ -87,8 +104,7 @@ export function createEnvironmentConstructionWorkspaces({
 
   const inspectRoots = async (resolved) => {
     for (const entry of resolved.selected) {
-      const target = resolved.routing.targetForSubject(entry.subject);
-      const health = await resolved.scoped.health(target);
+      const health = await resolved.scoped.health(entry.target);
       if (health?.ready !== true) throw new Error(health?.reason ?? 'environment workspace exchange is unavailable');
     }
     return Object.freeze({ ready: true, count: resolved.selected.length });
@@ -97,9 +113,8 @@ export function createEnvironmentConstructionWorkspaces({
   const verifyRoots = async (resolved) => {
     await inspectRoots(resolved);
     for (const entry of resolved.selected) {
-      const target = resolved.routing.targetForSubject(entry.subject);
-      await resolved.scoped.put(target, sourceFor(READY_BYTES), { class: 'input', path: 'lifecycle/ready' }, { maxBytes: READY_BYTES.length });
-      const outcome = await resolved.scoped.execute(target, {
+      await resolved.scoped.put(entry.target, sourceFor(READY_BYTES), { class: 'input', path: 'lifecycle/ready' }, { maxBytes: READY_BYTES.length });
+      const outcome = await resolved.scoped.execute(entry.target, {
         program: 'node',
         arguments: [
           '-e',

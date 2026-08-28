@@ -173,6 +173,10 @@ Persistent-access reassessment 2026-08-28: `docs/testing/DB-HO040-issue-198-wind
 
 Persistent-access implementation checkpoint 2026-08-28: the Windows-owned adapter is implemented with fixed `devbridge` material, exact transient seed cleanup, provider-owned PowerShell Direct proof, and default protected-runtime composition. The unused injected-access compatibility path is deleted. Focused tests and repository preflight pass. One unrelated liveness test failed only during the first concurrent complete-suite run and passed in isolation; the clean complete-suite repeat then passed 1,529 total / 1,514 passed / 15 platform skips / zero failures. Commit this checkpoint and resume physical activation.
 
+Multi-profile route assessment 2026-08-28: `docs/testing/DB-HO041-issue-360-multi-profile-route-admission.md` records a dual-guest blocker found while UAC activation waits. Construction currently leaves every route non-preferred and verifies a subject's preferred route rather than the exact subject/profile route being admitted. Preserve first-admitted preference and bind pre-publication verification to the exact derived workspace target before attempting a second guest profile.
+
+Multi-profile route implementation checkpoint 2026-08-28: first-admitted preference is now stable, sole non-preferred policy is normalized only when topology expands, ambiguous existing topology fails closed, and health/put/execute proof binds to the exact subject/profile workspace before policy publication. Focused 21/21, preflight, and the complete 1,531-total / 1,516-pass / 15-skip / zero-failure suite are green. Commit this primitive, then resume the UAC-gated physical Linux activation without changing its accepted image or profile.
+
 ## Phase 5 — complete permanent-entry and recovery composition
 
 Owners: permanent entry, runner, accepted runtime, recovery control plane, and application manager.
