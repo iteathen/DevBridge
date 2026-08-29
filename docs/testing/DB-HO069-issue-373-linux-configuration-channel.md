@@ -95,4 +95,6 @@ The Linux service composes the protected configuration port into the existing ne
 - Complete local suite passed: 1,772 total, 1,757 passed, 15 expected platform skips, zero failures.
 - `git diff --check` passed; only the repository's normal Windows line-ending notices were emitted.
 
-The remaining acceptance step for this checkpoint is exact-head hosted Windows/Ubuntu qualification. Real tmpfiles/systemd socket ownership and connectivity, service refresh/elevation, libvirt management denial/positive capability, image/domain/overlay state, and dual-guest C execution remain explicitly unclaimed.
+Exact implementation commit `abbdb31242d02ab2725094da7d44006bee6fa1ef` passed all four jobs in [GitHub Actions run 33226235422](https://github.com/iteathen/DevBridge/actions/runs/33226235422): Windows serialized complete-suite/doctor, Windows bounded preflight/identity/installer, Ubuntu complete-suite/doctor, and Ubuntu bounded preflight/identity/installer.
+
+Real tmpfiles/systemd socket ownership and connectivity, service refresh/elevation, libvirt management denial/positive capability, image/domain/overlay state, and dual-guest C execution remain explicitly unclaimed. Issue #373 therefore remains open for the real Linux gates rather than treating hosted mechanics as physical readiness.
