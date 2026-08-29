@@ -182,7 +182,7 @@ test('explicit branch install resolves the component exactly while persisting th
 
   const args = parseInstallArgs(['--ref', 'main', '--home', home], { environment: {}, homeDirectory: root });
   assert.equal(args.selectedRunnerRef, 'main');
-  assert.equal(args.pinSelectedRunner, false);
+  assert.equal(Object.hasOwn(args, 'pinSelectedRunner'), false);
   const installed = installDevBridge(args, { sourceRepository: fixture.source, allowLocalSource: true });
   assert.equal(installed.componentHead, fixture.head);
   assert.equal(installed.selectedRunnerRef, 'main');
@@ -233,7 +233,7 @@ test('explicit exact install remains exact-pinned and track migration accepts br
   const exactHome = path.join(root, 'exact-home');
   const exactArgs = parseInstallArgs(['--ref', fixture.head, '--home', exactHome], { environment: {}, homeDirectory: root });
   assert.equal(exactArgs.selectedRunnerRef, fixture.head);
-  assert.equal(exactArgs.pinSelectedRunner, true);
+  assert.equal(Object.hasOwn(exactArgs, 'pinSelectedRunner'), false);
   const exact = installDevBridge(exactArgs, { sourceRepository: fixture.source, allowLocalSource: true });
   assert.equal(exact.selectedRunnerRef, fixture.head);
   assert.equal(exact.pinnedRunnerHead, fixture.head);
@@ -287,7 +287,7 @@ test('wrapper activation preserves the prior authority before any replacement ca
   mkdirSync(previous);
   assert.throws(
     () => installDevBridge(args, { sourceRepository: fixture.source, allowLocalSource: true }),
-    /unsafe installer target/u,
+    /unsafe target/u,
   );
   assert.deepEqual(readFileSync(first.wrappers.javascript), firstWrapper);
 
@@ -316,7 +316,7 @@ test('installer lock fails closed for a live owner and reclaims only a dead owne
   })}\n`);
   assert.throws(
     () => installDevBridge(args, { sourceRepository: fixture.source, allowLocalSource: true }),
-    /installer is active/u,
+    /installation mutation is active/u,
   );
 
   rmSync(lockPath, { force: true });
@@ -337,5 +337,5 @@ test('default install leaves stable selection active while explicit exact pinnin
   const args = parseInstallArgs(['--home', path.join(root, 'home')], { environment: {}, homeDirectory: root });
   assert.deepEqual(args.selector, { kind: 'branch', value: 'main' });
   assert.equal(args.selectedRunnerRef, null);
-  assert.equal(args.pinSelectedRunner, false);
+  assert.equal(Object.hasOwn(args, 'pinSelectedRunner'), false);
 });

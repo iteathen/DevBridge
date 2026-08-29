@@ -10,16 +10,16 @@ test('standalone installer enters setup by default and install-only is explicit'
   const normal = parseInstallArgs(['--ref', 'cuda-target', '--home', root], { environment: {}, homeDirectory: root });
   assert.equal(normal.runSetup, true);
   assert.equal(normal.selectedRunnerRef, 'cuda-target');
-  assert.equal(normal.pinSelectedRunner, false);
+  assert.equal(Object.hasOwn(normal, 'pinSelectedRunner'), false);
 
   const installOnly = parseInstallArgs(['--install-only', '--ref', 'cuda-target', '--home', root], { environment: {}, homeDirectory: root });
   assert.equal(installOnly.runSetup, false);
   assert.equal(installOnly.selectedRunnerRef, 'cuda-target');
-  assert.equal(installOnly.pinSelectedRunner, false);
+  assert.equal(Object.hasOwn(installOnly, 'pinSelectedRunner'), false);
 
   const exact = parseInstallArgs(['--ref', HEAD, '--home', root], { environment: {}, homeDirectory: root });
   assert.equal(exact.selectedRunnerRef, HEAD);
-  assert.equal(exact.pinSelectedRunner, true);
+  assert.equal(Object.hasOwn(exact, 'pinSelectedRunner'), false);
 });
 
 test('installer handoff keeps an explicitly selected install on its exact resolved subject', () => {

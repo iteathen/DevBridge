@@ -6,6 +6,22 @@ import process from 'node:process';
 
 const SYNTAX_FILES = [
   'devbridge.mjs',
+  'install-devbridge.mjs',
+  'bootstrap-devbridge.mjs',
+  'scripts/build-standalone-artifacts.mjs',
+  'src/bootstrap/standalone-artifact.mjs',
+  'src/install/permanent-entry-installer.mjs',
+  'src/install/permanent-entry-installer/input-contract.mjs',
+  'src/install/permanent-entry-installer/source-channel.mjs',
+  'src/install/permanent-entry-installer/component-store.mjs',
+  'src/install/permanent-entry-installer/mutation-lease.mjs',
+  'src/install/permanent-entry-installer/entry-publication.mjs',
+  'src/install/permanent-entry-installer/continuation.mjs',
+  'src/bootstrap/zero-state-bootstrap.mjs',
+  'src/bootstrap/zero-state-bootstrap/input-contract.mjs',
+  'src/bootstrap/zero-state-bootstrap/selection-state.mjs',
+  'src/bootstrap/zero-state-bootstrap/source-channel.mjs',
+  'src/bootstrap/zero-state-bootstrap/temporary-materialization.mjs',
   'src/cli.js',
   'src/config.js',
   'src/app/runtime.js',
@@ -194,6 +210,12 @@ const JSON_FILES = ['package.json', 'config/devbridge.example.json'];
 const MAX_FAILURE_EVIDENCE_CHARS = 4000;
 
 const TARGETED_TESTS = [
+  'test/standalone-artifact.test.js',
+  'test/installer-stage0-nested-lego.test.js',
+  'test/self-install-entry.test.js',
+  'test/zero-state-bootstrap.test.js',
+  'test/zero-state-exact-source.test.js',
+  'test/zero-state-installer-handoff.test.js',
   'test/config.test.js',
   'test/setup-authority-nested-lego.test.js',
   'test/setup-authority-state-store-lego.test.js',
@@ -441,6 +463,11 @@ export function assertCandidateStage0Compatibility(root = process.cwd(), environ
 export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync, environment = process.env) {
   const cwd = path.resolve(root);
   const compatibility = assertCandidateStage0Compatibility(cwd, environment);
+  checked(runner, ['scripts/build-standalone-artifacts.mjs', '--check'], {
+    cwd,
+    label: 'standalone artifact regeneration check',
+    timeoutMs: 60_000,
+  });
   for (const relative of SYNTAX_FILES) {
     const file = path.join(cwd, relative);
     if (!existsSync(file)) throw new Error(`preflight required file is missing: ${relative}`);
@@ -458,7 +485,7 @@ export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync,
     throw new Error(`preflight targeted tests are missing: ${missing.join(', ')}`);
   }
   checked(runner, ['--test', ...targeted], { cwd, label: 'targeted preflight tests', timeoutMs: 180_000 });
-  return { syntaxFiles: SYNTAX_FILES.length, jsonFiles: JSON_FILES.length, targetedTests: targeted.length, compatibility };
+  return { standaloneArtifacts: 2, syntaxFiles: SYNTAX_FILES.length, jsonFiles: JSON_FILES.length, targetedTests: targeted.length, compatibility };
 }
 
 const thisFile = path.resolve(fileURLToPath(import.meta.url));

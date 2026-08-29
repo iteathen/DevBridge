@@ -111,7 +111,7 @@ test('bootstrap selection is durable before activation and clears only after per
     assert.equal(result.status, 0);
     assert.equal(observed.selector.value, HEAD_A);
     assert.equal(observed.selectedRunnerRef, 'cuda-target');
-    assert.equal(observed.pinSelectedRunner, false);
+    assert.equal(Object.hasOwn(observed, 'pinSelectedRunner'), false);
     assert.equal(readBootstrapSelection(home), null);
   } finally {
     rmSync(home, { recursive: true, force: true });
