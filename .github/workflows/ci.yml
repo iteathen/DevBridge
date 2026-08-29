@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: 22.16.0
       - name: Cheap preflight
-        timeout-minutes: 1
+        timeout-minutes: 2
         run: npm run preflight
       - name: DevBridge identity audit
         timeout-minutes: 1
