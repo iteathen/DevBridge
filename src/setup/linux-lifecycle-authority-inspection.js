@@ -244,6 +244,10 @@ export async function inspectLinuxLifecycleAuthorityState({
     configurationEndpointDirectory: plan.configuration.endpoint.directory,
     configurationHandoffDirectory: plan.configuration.handoff.directory,
     configurationEndpoint: plan.configuration.endpoint.endpoint,
+    activityRoot: plan.activity.root,
+    activityEndpointDirectory: plan.activity.endpoint.directory,
+    activityHandoffDirectory: plan.activity.handoff.directory,
+    activityEndpoint: plan.activity.endpoint.endpoint,
   };
   const entries = new Map(await Promise.all(Object.entries(paths).map(async ([name, file]) => [name, await optionalLstat(file, stat)])));
   const unitText = entries.get('unit') == null
@@ -309,6 +313,10 @@ export async function inspectLinuxLifecycleAuthorityState({
     configurationEndpointDirectory: filePolicy(entries.get('configurationEndpointDirectory'), { uid: serviceUid, gid: coordinationGid, expectedMode: plan.configuration.endpoint.directoryMode, kind: 'directory' }),
     configurationHandoffDirectory: filePolicy(entries.get('configurationHandoffDirectory'), { uid: rootUid, gid: coordinationGid, expectedMode: plan.configuration.handoff.directoryMode, kind: 'directory' }),
     configurationEndpoint: filePolicy(entries.get('configurationEndpoint'), { uid: serviceUid, gid: coordinationGid, expectedMode: plan.configuration.endpoint.socketMode, kind: 'socket' }),
+    activityRoot: filePolicy(entries.get('activityRoot'), { uid: rootUid, gid: rootGid, expectedMode: 0o755, kind: 'directory' }),
+    activityEndpointDirectory: filePolicy(entries.get('activityEndpointDirectory'), { uid: serviceUid, gid: readGid, expectedMode: plan.activity.endpoint.directoryMode, kind: 'directory' }),
+    activityHandoffDirectory: filePolicy(entries.get('activityHandoffDirectory'), { uid: rootUid, gid: readGid, expectedMode: plan.activity.handoff.directoryMode, kind: 'directory' }),
+    activityEndpoint: filePolicy(entries.get('activityEndpoint'), { uid: serviceUid, gid: readGid, expectedMode: plan.activity.endpoint.socketMode, kind: 'socket' }),
   });
 
   let runtime = Object.freeze({ ready: false, exact: false, generation: null });

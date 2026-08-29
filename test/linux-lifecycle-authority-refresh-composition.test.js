@@ -199,6 +199,7 @@ test('health retries local IPC and requires the exact operator protocol', async 
       },
     }),
     configurationClientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ ready: true }) }),
+    activityClientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ ready: false, identity: 'foundation-a', reason: 'environment activity is unavailable' }) }),
     waitForRetry: async (delay) => { waits.push(delay); },
   });
   assert.equal(result.protocol, 'devbridge/environment-operator-v1');
@@ -206,13 +207,21 @@ test('health retries local IPC and requires the exact operator protocol', async 
   await assert.rejects(() => probeLinuxLifecycleAuthority({ plan: selected.plan }, {
     clientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ protocol: 'foreign' }) }),
     configurationClientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ ready: true }) }),
+    activityClientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ ready: true, identity: 'foundation-a', reason: null }) }),
     waitForRetry: async () => {},
   }), /invalid inspection evidence/u);
   await assert.rejects(() => probeLinuxLifecycleAuthority({ plan: selected.plan }, {
     clientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ protocol: 'devbridge/environment-operator-v1' }) }),
     configurationClientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ ready: true, widened: true }) }),
+    activityClientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ ready: true, identity: 'foundation-a', reason: null }) }),
     waitForRetry: async () => {},
   }), /configuration authority returned invalid inspection evidence/u);
+  await assert.rejects(() => probeLinuxLifecycleAuthority({ plan: selected.plan }, {
+    clientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ protocol: 'devbridge/environment-operator-v1' }) }),
+    configurationClientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ ready: true }) }),
+    activityClientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ ready: true, identity: 'foundation-a', reason: null, widened: true }) }),
+    waitForRetry: async () => {},
+  }), /activity authority returned invalid inspection evidence/u);
 });
 
 test('composition connects concrete ownership to neutral mechanics and reaches exact fresh/no-op reconciliation', async () => {

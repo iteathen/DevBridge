@@ -26,6 +26,7 @@ import { establishUbuntuReleaseAuthority } from '../setup/ubuntu-release-authori
 import { requestWindowsLifecycleAuthorityElevation } from '../setup/windows-lifecycle-authority-elevation.js';
 import { reconcileWindowsLifecycleAuthorityReadiness } from '../setup/windows-lifecycle-authority-readiness.js';
 import { createLinuxEnvironmentProfileConfiguration } from '../setup/linux-environment-profile-configuration.js';
+import { createLinuxEnvironmentActivityProjection } from '../setup/linux-environment-activity-projection.js';
 import { createWindowsEnvironmentProfileConfiguration } from '../setup/windows-environment-profile-configuration.js';
 import { createWindowsEnvironmentProfileSource } from '../setup/windows-environment-profile-source.js';
 import {
@@ -49,6 +50,13 @@ const DEFAULT_MEMORY_BYTES = 2 * 1024 * 1024 * 1024;
 function createPlatformEnvironmentProfileConfiguration(options) {
   if (options?.platform === 'linux') return createLinuxEnvironmentProfileConfiguration(options);
   return createWindowsEnvironmentProfileConfiguration(options);
+}
+
+function createPlatformEnvironmentActivityProjection(options) {
+  if (options?.platform === 'linux') return createLinuxEnvironmentActivityProjection(options);
+  return Object.freeze({
+    async reconcile() { return Object.freeze({ ready: true, changed: false }); },
+  });
 }
 const DEFAULT_DISK_BYTES = 32 * 1024 * 1024 * 1024;
 const DEFAULT_PROCESSORS = 2;
@@ -658,6 +666,7 @@ export async function runDevBridgeSetup({
   elevationRequester = requestWindowsLifecycleAuthorityElevation,
   lifecycleClientFactory = createConfiguredLifecycleAuthorityClient,
   environmentActivationReconciler = reconcileSetupEnvironmentActivation,
+  activityProjectionFactory = createPlatformEnvironmentActivityProjection,
   serialReconciler = reconcileSerialSelection,
   operationalConfigurationFactory = createSetupOperationalConfiguration,
   releaseAuthority = establishUbuntuReleaseAuthority,
@@ -1213,6 +1222,30 @@ export async function runDevBridgeSetup({
       blocker: environmentActivation?.state === 'pending'
         ? 'Additional accepted environment profile activation remains; re-run devbridge setup'
         : environmentActivation?.blocker ?? 'Protected environment did not verify ready after setup activation',
+    });
+  }
+
+  try {
+    const projection = activityProjectionFactory({ stateDirectory, platform });
+    if (!projection || typeof projection.reconcile !== 'function') throw new TypeError('environment route projection is incomplete');
+    const projected = await projection.reconcile();
+    if (projected?.ready !== true || typeof projected.changed !== 'boolean') {
+      throw new Error('environment route projection evidence is invalid');
+    }
+  } catch (error) {
+    return publicResult({
+      home: root,
+      pathStatus,
+      identity: scope.identity,
+      repositories,
+      snapshot,
+      prerequisites,
+      lifecycleAuthority,
+      physical,
+      environmentActivation,
+      constructionRequested: construct,
+      constructionAttempted,
+      blocker: `Environment route projection failed: ${error.message}`,
     });
   }
 

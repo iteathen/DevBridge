@@ -111,3 +111,4 @@ export function validationEnvironmentActivityRoute(rawPolicy) {
   return matches[0];
 }
 
+export { MAX_POLICY_BYTES as ENVIRONMENT_ACTIVITY_POLICY_MAX_BYTES };

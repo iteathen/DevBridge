@@ -56,6 +56,12 @@ test('Linux authority plan derives one exact runtime and split local capabilitie
   assert.equal(value.configuration.root, `/run/devbridge/${value.configuration.authorityIdentity}`);
   assert.equal(value.configuration.endpoint.endpoint, `${value.configuration.root}/configuration/environment-v1.sock`);
   assert.equal(value.configuration.handoff.record, `${value.configuration.root}/handoff/state.json`);
+  assert.match(value.activity.authorityIdentity, /^[0-9a-f]{32}$/u);
+  assert.notEqual(value.activity.authorityIdentity, value.authorityIdentity);
+  assert.notEqual(value.activity.authorityIdentity, value.configuration.authorityIdentity);
+  assert.equal(value.activity.root, `/run/devbridge/${value.activity.authorityIdentity}`);
+  assert.equal(value.activity.endpoint.endpoint, `${value.activity.root}/activity/environment-v1.sock`);
+  assert.equal(value.activity.handoff.record, `${value.activity.root}/handoff/policy.json`);
   assert.equal(value.endpoints.parentDirectory, '/run/devbridge');
   assert.equal(value.endpoints.definition.path, `/etc/tmpfiles.d/devbridge-lifecycle-authority-${value.authorityIdentity.slice(0, 12)}.conf`);
   assert.equal(value.endpoints.definition.content, [
@@ -67,6 +73,9 @@ test('Linux authority plan derives one exact runtime and split local capabilitie
     `d /run/devbridge/${value.configuration.authorityIdentity} 0755 root root -`,
     `d /run/devbridge/${value.configuration.authorityIdentity}/configuration 2750 ${value.service.user} ${value.service.coordinationGroup} -`,
     `d /run/devbridge/${value.configuration.authorityIdentity}/handoff 3770 root ${value.service.coordinationGroup} -`,
+    `d /run/devbridge/${value.activity.authorityIdentity} 0755 root root -`,
+    `d /run/devbridge/${value.activity.authorityIdentity}/activity 2750 ${value.service.user} ${value.service.readGroup} -`,
+    `d /run/devbridge/${value.activity.authorityIdentity}/handoff 3770 root ${value.service.readGroup} -`,
     `f /run/devbridge/${value.authorityIdentity}/governance/activity.lock 0660 root ${value.service.coordinationGroup} -`,
     '',
   ].join('\n'));
@@ -114,6 +123,27 @@ test('Linux authority plan derives one exact runtime and split local capabilitie
     recordGroup: value.service.coordinationGroup,
     recordMode: 0o640,
   });
+  assert.deepEqual(value.activity.endpoint, {
+    endpoint: `${value.activity.root}/activity/environment-v1.sock`,
+    directory: `${value.activity.root}/activity`,
+    directoryOwner: value.service.user,
+    directoryGroup: value.service.readGroup,
+    directoryMode: 0o2750,
+    socketOwner: value.service.user,
+    socketGroup: value.service.readGroup,
+    socketMode: 0o770,
+  });
+  assert.deepEqual(value.activity.handoff, {
+    directory: `${value.activity.root}/handoff`,
+    record: `${value.activity.root}/handoff/policy.json`,
+    source: `${value.authorityDirectory}/environment-activity/policy.json`,
+    directoryOwner: 'root',
+    directoryGroup: value.service.readGroup,
+    directoryMode: 0o3770,
+    recordOwner: value.service.user,
+    recordGroup: value.service.readGroup,
+    recordMode: 0o640,
+  });
   assert.equal(value.access.storageRoot.mode, 0o755);
   assert.equal(value.access.protectedRuntime.serviceWrite, false);
   assert.equal(value.access.refreshJournal.mode, 0o600);
@@ -148,6 +178,8 @@ test('systemd unit binds the exact protected generation and narrow writable stud
     value.endpoints.read.directory,
     value.endpoints.mutation.directory,
     value.configuration.endpoint.directory,
+    value.activity.endpoint.directory,
+    value.activity.handoff.directory,
   ];
   for (const target of writable) assert.match(unit, new RegExp(`"${target.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}"`, 'u'));
   assert.equal(unit.includes(`ReadWritePaths="${value.protectedRoot}"`), false);
@@ -202,6 +234,13 @@ test('Linux service entry accepts only local directories and composes the existi
   const admission = { acquire: async () => { throw new Error('not exercised'); } };
   const fence = { acquire: async () => { throw new Error('not exercised'); } };
   const configuration = { inspect: async () => ({ ready: true }), reconcile: async () => ({ ready: true }) };
+  const operator = {};
+  const activity = {};
+  const routeState = {
+    async load() { return null; },
+    async publish(value) { return value; },
+    async reconcile() { calls.push({ routeReconcile: true }); return { ready: true, changed: false }; },
+  };
   const service = await runLinuxLifecycleAuthorityService({
     argv: [
       '--state-directory', '/home/alice/.devbridge/state',
@@ -213,6 +252,10 @@ test('Linux service entry accepts only local directories and composes the existi
       calls.push({ configuration: options });
       return configuration;
     },
+    routeStateFactory: (options) => {
+      calls.push({ routeState: options });
+      return routeState;
+    },
     admissionFactory: async (options) => {
       calls.push({ admission: options });
       return admission;
@@ -221,6 +264,20 @@ test('Linux service entry accepts only local directories and composes the existi
       assert.deepEqual(options, { admission });
       return fence;
     },
+    operatorFactory: async (options) => {
+      calls.push({ operator: options });
+      return operator;
+    },
+    activityFactory: async (options) => {
+      calls.push({ activity: options });
+      assert.equal(await options.policyLoader(), null);
+      return activity;
+    },
+    socketPreparation: async (request) => {
+      calls.push({ socket: request });
+      return { ready: true, changed: false, endpoint: request.endpoint };
+    },
+    identityFactory: () => ({ userId: 995, primaryGroupId: 994, groupIds: [994, 993, 108] }),
     hostFactory: async (options) => {
       calls.push(options);
       return {
@@ -232,27 +289,54 @@ test('Linux service entry accepts only local directories and composes the existi
   });
   assert.equal(starts, 1);
   assert.equal(service.authorityIdentity, 'a'.repeat(32));
-  assert.deepEqual(calls, [{
+  assert.deepEqual(calls.slice(0, 2), [{
+    routeState: {
+      stateDirectory: '/home/alice/.devbridge/state',
+      authorityDirectory: '/var/lib/devbridge/lifecycle-authority/test/state',
+      platform: 'linux',
+      runDirectory: '/run/devbridge',
+      serviceUserId: 995,
+    },
+  }, { routeReconcile: true }]);
+  assert.deepEqual(calls[2], {
     configuration: {
       stateDirectory: '/home/alice/.devbridge/state',
       authorityDirectory: '/var/lib/devbridge/lifecycle-authority/test/state',
       platform: 'linux',
       runDirectory: '/run/devbridge',
     },
-  }, { admission: {
+  });
+  assert.deepEqual(calls[3], { admission: {
     access: 'exclusive',
     stateDirectory: '/home/alice/.devbridge/state',
     authorityDirectory: '/var/lib/devbridge/lifecycle-authority/test/state',
     platform: 'linux',
     runDirectory: '/run/devbridge',
-  } }, {
+  } });
+  assert.deepEqual(calls[4], { operator: {
+    stateDirectory: '/home/alice/.devbridge/state',
+    authorityDirectory: '/var/lib/devbridge/lifecycle-authority/test/state',
+    platform: 'linux',
+    fence,
+    routeState,
+  } });
+  assert.equal(calls[5].activity.stateDirectory, '/home/alice/.devbridge/state');
+  assert.equal(calls[5].activity.authorityDirectory, '/var/lib/devbridge/lifecycle-authority/test/state');
+  assert.equal(calls[5].activity.platform, 'linux');
+  assert.equal(typeof calls[5].activity.policyLoader, 'function');
+  const sockets = calls.slice(6, 10).map(({ socket }) => socket);
+  assert.equal(sockets.length, 4);
+  assert.deepEqual(sockets.map((entry) => entry.directoryMode), [0o750, 0o700, 0o2750, 0o2750]);
+  assert.deepEqual(sockets.map((entry) => entry.socketGroupId), [994, 994, null, 994]);
+  assert.deepEqual(calls[10], {
     stateDirectory: '/home/alice/.devbridge/state',
     authorityDirectory: '/var/lib/devbridge/lifecycle-authority/test/state',
     platform: 'linux',
     runDirectory: '/run/devbridge',
-    fence,
+    operator,
     configuration,
-  }]);
+    activity,
+  });
   await service.close();
   await service.close();
   assert.equal(closes, 1);

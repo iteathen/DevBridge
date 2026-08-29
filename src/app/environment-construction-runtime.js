@@ -16,6 +16,7 @@ import { createEnvironmentRecreateMaterialization, createEnvironmentRecreateReti
 import { createEnvironmentRecovery } from './environment-recovery.js';
 import { createEnvironmentResetMaterialization, createEnvironmentResetRetirement } from './environment-reset.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
+import { createEnvironmentActivityPolicyState } from '../runtime/environment-activity-policy-state.js';
 
 function assertAvailability(value) {
   if (!value || typeof value.ensure !== 'function') throw new TypeError('environment construction image availability contract is incomplete');
@@ -34,6 +35,7 @@ export async function createEnvironmentConstructionRuntime({
   invoke = invokeCommand,
   foundation = null,
   lifecycle = null,
+  routeState = null,
   fence = null,
   resetAuthorization = null,
   recreateAuthorization = null,
@@ -67,9 +69,10 @@ export async function createEnvironmentConstructionRuntime({
     platform,
     invoke,
   });
+  const localRouteState = routeState ?? createEnvironmentActivityPolicyState({ stateDirectory });
   const workspaces = createEnvironmentConstructionWorkspaces({
-    stateDirectory,
     state: localFoundation,
+    routeState: localRouteState,
     resolveAuthority,
     resolveChannel: async ({ declaration }) => createEnvironmentBridge({
       stateDirectory,

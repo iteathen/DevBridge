@@ -1,5 +1,6 @@
 import process from 'node:process';
 import { createLocalEnvironmentOperator } from './environment-operator-runtime.js';
+import { createEnvironmentActivitySocketServer } from '../runtime/environment-activity-authority-transport.js';
 import { createEnvironmentConfigurationSocketServer } from '../runtime/environment-configuration-authority-transport.js';
 import { createLifecycleAuthoritySocketServers } from '../runtime/environment-lifecycle-authority-transport.js';
 
@@ -30,6 +31,14 @@ function assertConfiguration(value) {
   return value;
 }
 
+function assertActivity(value) {
+  if (value == null) return null;
+  if (['inspect', 'list', 'observe', 'prepare', 'exchange'].some((name) => typeof value[name] !== 'function')) {
+    throw new TypeError('environment activity host contract is incomplete');
+  }
+  return value;
+}
+
 function assertServerFactory(value, name) {
   if (typeof value !== 'function') throw new TypeError(`${name} must be a function`);
   return value;
@@ -42,18 +51,24 @@ export async function createEnvironmentLifecycleAuthorityHost({
   runDirectory = '/run/devbridge',
   operator = null,
   configuration = null,
+  activity = null,
   fence = null,
 } = {}, {
   lifecycleServerFactory = createLifecycleAuthoritySocketServers,
   configurationServerFactory = createEnvironmentConfigurationSocketServer,
+  activityServerFactory = createEnvironmentActivitySocketServer,
 } = {}) {
   const state = requireStateDirectory(stateDirectory);
   const authority = requireAuthorityDirectory(authorityDirectory, state);
   const selectedConfiguration = assertConfiguration(configuration);
+  const selectedActivity = assertActivity(activity);
   const createLifecycleServers = assertServerFactory(lifecycleServerFactory, 'environment lifecycle authority server factory');
   const createConfigurationServer = selectedConfiguration == null
     ? null
     : assertServerFactory(configurationServerFactory, 'environment configuration authority server factory');
+  const createActivityServer = selectedActivity == null
+    ? null
+    : assertServerFactory(activityServerFactory, 'environment activity authority server factory');
   if (operator == null && platform === 'linux' && (!fence || typeof fence.acquire !== 'function')) {
     throw new TypeError('Linux environment lifecycle authority host requires an activity fence');
   }
@@ -74,25 +89,32 @@ export async function createEnvironmentLifecycleAuthorityHost({
       platform,
       runDirectory,
     });
+  const activityServer = selectedActivity == null
+    ? null
+    : createActivityServer({
+      activity: selectedActivity,
+      stateDirectory: state,
+      platform,
+      runDirectory,
+    });
+  const attached = [servers.read, servers.mutation, configurationServer, activityServer].filter(Boolean);
 
   let started = false;
   return Object.freeze({
     authorityIdentity: servers.authorityIdentity,
     async start() {
       if (started) return this;
-      await servers.read.start();
+      const active = [];
       try {
-        await servers.mutation.start();
-      } catch (error) {
-        await servers.read.close();
-        throw error;
-      }
-      try {
-        await configurationServer?.start();
+        for (const server of attached) {
+          await server.start();
+          active.push(server);
+        }
       } catch (error) {
         let rollbackFailure = null;
-        try { await servers.mutation.close(); } catch (failure) { rollbackFailure = failure; }
-        try { await servers.read.close(); } catch (failure) { rollbackFailure ??= failure; }
+        for (const server of active.reverse()) {
+          try { await server.close(); } catch (failure) { rollbackFailure ??= failure; }
+        }
         throw rollbackFailure ?? error;
       }
       started = true;
@@ -102,9 +124,9 @@ export async function createEnvironmentLifecycleAuthorityHost({
       if (!started) return;
       started = false;
       let failure = null;
-      try { await configurationServer?.close(); } catch (error) { failure = error; }
-      try { await servers.mutation.close(); } catch (error) { failure ??= error; }
-      try { await servers.read.close(); } catch (error) { failure ??= error; }
+      for (const server of [...attached].reverse()) {
+        try { await server.close(); } catch (error) { failure ??= error; }
+      }
       if (failure) throw failure;
     },
   });

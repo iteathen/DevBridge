@@ -33,8 +33,11 @@ test('workspace inspection performs health checks only', async () => {
       async execute() { events.push(['execute']); throw new Error('inspect must not execute guest code'); },
     };
     const port = createEnvironmentConstructionWorkspaces({
-      stateDirectory: directory,
       state: stateFor(profile),
+      routeState: {
+        async load() { return null; },
+        async publish() { throw new Error('inspect must not publish route state'); },
+      },
       channel,
       resolveAuthority: async () => subject,
     });

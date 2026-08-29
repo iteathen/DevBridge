@@ -84,3 +84,27 @@ After protected environment activation, ordinary setup imports the fixed service
 ## Explicit nonclaims
 
 This slice does not invoke sudo/UAC, install or restart a real service, change local group membership, grant libvirt authority, mutate Hyper-V, create or start a VM/domain, construct or adopt an image, transfer repository source, execute guest code, or establish either provider's physical readiness. It does not implement GPU/CUDA behavior. Those effects remain behind their existing protected and physical gates.
+
+## Implementation checkpoint — 2026-08-29
+
+The workspace construction owner now depends on a neutral `load`/`publish` route-state port. Its ordinary filesystem adapter remains the default at the application composition root, while the Linux service injects a protected adapter. Route publication occurs only after every exact workspace root passes the existing scoped guest-bridge verification. Publication is intentionally repeated for an unchanged normalized policy so a lost volatile export can be repaired without changing the durable route subject.
+
+The Linux protected adapter persists `environment-activity/policy.json` below the service-owned authority state and exports the exact normalized bytes through a distinct fixed activity handoff. The descriptor-bound publisher verifies the protected file before and after transfer and checks root, endpoint, handoff, file type, owner, group, mode, link count, size, normalized content, and digest evidence. The ordinary reader needs only the canonical ordinary state identity and `/run` root; it neither accepts nor learns the protected authority path. The setup projection imports the service-owned export through the ordinary route-state port and rereads both sides before operational configuration can enable execution.
+
+The Linux lifecycle plan now derives a separate activity authority identity, root, endpoint, socket, handoff, and policy-export contract. Its exact tmpfiles definition adds root `0755`, endpoint `02750`, and sticky/SGID handoff `03770`. The systemd unit adds only the activity endpoint and handoff directories to `ReadWritePaths`; it does not add the authority root, operator home, ordinary state, provider storage, or generation tree. Exact endpoint topology and read-only inspection now cover the activity directories and socket independently from lifecycle and configuration.
+
+The neutral authority host accepts activity as another optional local contract. It starts attached servers in a fixed sequence and rolls back or closes only the successfully started servers in reverse sequence. Lifecycle, configuration, and activity keep independent protocols and server factories. Linux generation health now requires a syntactically exact activity inspection response but does not misclassify unavailable workload prerequisites as a failed service endpoint.
+
+The Linux service composes one protected route state, injects it into its local lifecycle operator, supplies the same load port to protected activity, and attaches the resulting activity contract to the host. It reconciles any durable route export before serving. Before binding, the new neutral pathname-socket preparation owner inspects each fixed parent and removes a present path only when it is a real, single-link, exact-owner/group/mode socket below an exact service-owned non-group-writable directory. Absence is a no-op; symlink, regular file, link-count, identity, permission, or replacement drift fails closed. No recursive or caller-selected cleanup exists.
+
+Windows-hosted testing exposed one implementation defect during this work: the Linux handoff topology initially called a host-native path helper and produced a Windows path during cross-platform plan validation. The Linux adapter now derives its protected source with `path.posix`, while the neutral ordinary filesystem adapter remains host-native. No compatibility branch was retained.
+
+Qualification evidence on the uncommitted exact working tree:
+
+- focused route-state, handoff, projection, socket, construction, host, topology, inspection, health, and setup integration: 117 passed, zero failed;
+- repository preflight: 183 syntax files, 2 JSON files, and 154 targeted test files passed;
+- complete local suite: 1,793 total, 1,777 passed, 16 expected platform skips, zero failed; the added real crash-retained pathname-socket proof is one Windows-side skip and will execute on hosted Ubuntu;
+- `git diff --check`: passed;
+- source isolation searches found no provider, repository, guest identity, credential, direct-host fallback, sudo, or UAC mechanics in the new neutral children.
+
+No setup, sudo/UAC request or bypass, service/systemd mutation, libvirt/Hyper-V operation, image/environment/VM/guest action, or repository-controlled execution occurred. Hosted Windows/Ubuntu qualification is the next gate. Real Linux tmpfiles/systemd/socket permissions, libvirt/qcow2 execution, the installed Windows service refresh, and dual-guest C acceptance remain physical gates and are not claimed here.

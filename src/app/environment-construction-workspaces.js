@@ -6,9 +6,7 @@ import {
 } from './execution-profile-routing.js';
 import {
   ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL,
-  loadEnvironmentActivityPolicy,
   normalizeEnvironmentActivityPolicy,
-  publishEnvironmentActivityPolicy,
 } from '../runtime/environment-activity-policy.js';
 
 const STABLE_SUBJECT = /^\d+$/u;
@@ -21,6 +19,13 @@ function requireObject(value, name) {
 
 function assertChannel(value) {
   if (!value || ['health', 'execute', 'put', 'get'].some((name) => typeof value[name] !== 'function')) throw new TypeError('environment workspace channel contract is incomplete');
+  return value;
+}
+
+function assertRouteState(value) {
+  if (!value || typeof value.load !== 'function' || typeof value.publish !== 'function') {
+    throw new TypeError('environment workspace route-state contract is incomplete');
+  }
   return value;
 }
 
@@ -63,14 +68,14 @@ function admitRoute(routes, { subject, profile }) {
 }
 
 export function createEnvironmentConstructionWorkspaces({
-  stateDirectory,
   state,
+  routeState,
   channel = null,
   resolveChannel = null,
   resolveAuthority,
 } = {}) {
-  if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('environment workspace stateDirectory is required');
   if (!state || typeof state.listEnvironments !== 'function' || typeof state.observeEnvironment !== 'function' || typeof state.inspect !== 'function') throw new TypeError('environment workspace state contract is incomplete');
+  const selectedRoutes = assertRouteState(routeState);
   if (channel == null && typeof resolveChannel !== 'function') throw new TypeError('environment workspace channel contract is incomplete');
   if (channel != null) assertChannel(channel);
   if (resolveChannel != null && typeof resolveChannel !== 'function') throw new TypeError('environment workspace channel resolver is invalid');
@@ -89,7 +94,7 @@ export function createEnvironmentConstructionWorkspaces({
       selected.push(Object.freeze({ subject, workspace, target: executionWorkspaceTarget(subject, declaration.profile) }));
     }
 
-    const existing = await loadEnvironmentActivityPolicy(stateDirectory);
+    const existing = await selectedRoutes.load();
     const routes = existing ? existing.routes.map((route) => structuredClone(route)) : [];
     let changed = false;
     for (const entry of selected) {
@@ -138,7 +143,7 @@ export function createEnvironmentConstructionWorkspaces({
     async ensure(request) {
       const resolved = await resolve(request);
       await verifyRoots(resolved);
-      if (resolved.changed) await publishEnvironmentActivityPolicy(stateDirectory, resolved.policy);
+      await selectedRoutes.publish(resolved.policy);
       return Object.freeze({ ready: true, implementationGeneration: request.implementationGeneration, routesChanged: resolved.changed, workspaceCount: resolved.selected.length });
     },
     async inspect(request) {

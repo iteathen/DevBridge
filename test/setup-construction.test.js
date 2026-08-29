@@ -66,6 +66,7 @@ function fixture({ status, runResult } = {}) {
       }),
       lifecycleClientFactory: () => ({}),
       environmentActivationReconciler: async () => ({ ready: true, changed: true, state: 'ready', environmentCount: 1 }),
+      activityProjectionFactory: () => ({ reconcile: async () => ({ ready: true, changed: true }) }),
       operationalConfigurationFactory: () => ({
         async reconcile() { return { ready: true, changed: true, executionEnabled: true, blocker: null }; },
       }),

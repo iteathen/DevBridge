@@ -6,6 +6,11 @@ import path from 'node:path';
 import { createEnvironmentConstructionWorkspaces } from '../src/app/environment-construction-workspaces.js';
 import { executionProfileSubject, executionWorkspaceIdentity } from '../src/app/execution-profile-routing.js';
 import { loadEnvironmentActivityPolicy, publishEnvironmentActivityPolicy } from '../src/runtime/environment-activity-policy.js';
+import { createEnvironmentActivityPolicyState } from '../src/runtime/environment-activity-policy-state.js';
+
+function routes(directory) {
+  return createEnvironmentActivityPolicyState({ stateDirectory: directory });
+}
 
 function stateFor(profile) {
   const physical = {
@@ -37,8 +42,8 @@ test('construction workspaces publish exact routes and prepare scoped roots', as
     const declaration = { profile, workspaces: [workspace] };
     const events = [];
     const port = createEnvironmentConstructionWorkspaces({
-      stateDirectory: directory,
       state: stateFor(profile),
+      routeState: routes(directory),
       channel: channel(events),
       resolveAuthority: async (authority) => { assert.equal(authority, 'authority-a'); return subject; },
     });
@@ -72,8 +77,8 @@ test('construction workspaces may resolve a request-scoped channel without persi
     const declaration = { profile, workspaces: [workspace] };
     let resolved = 0;
     const port = createEnvironmentConstructionWorkspaces({
-      stateDirectory: directory,
       state: stateFor(profile),
+      routeState: routes(directory),
       resolveChannel: async ({ declaration: selected }) => { assert.equal(selected, declaration); resolved += 1; return channel([]); },
       resolveAuthority: async () => subject,
     });
@@ -93,8 +98,8 @@ test('construction workspaces refuse identity authority drift', async () => {
     const workspace = { identity: executionWorkspaceIdentity(subject, profile), authority: 'authority-a' };
     const declaration = { profile, workspaces: [workspace] };
     const port = createEnvironmentConstructionWorkspaces({
-      stateDirectory: directory,
       state: stateFor(profile),
+      routeState: routes(directory),
       channel: channel([]),
       resolveAuthority: async () => subject,
     });
@@ -125,8 +130,8 @@ test('adding a second profile preserves the first preference and verifies only t
     };
     const events = [];
     const makePort = () => createEnvironmentConstructionWorkspaces({
-      stateDirectory: directory,
       state,
+      routeState: routes(directory),
       channel: channel(events),
       resolveAuthority: async () => subject,
     });
@@ -166,8 +171,8 @@ test('expanding a sole non-preferred route promotes it and rejects pre-existing 
     const declaration = { profile, workspaces: [workspace] };
     const request = { declaration, workspaces: declaration.workspaces, implementationGeneration: 'env-0123456789abcdef0123456789abcdef' };
     const port = createEnvironmentConstructionWorkspaces({
-      stateDirectory: directory,
       state: stateFor(profile),
+      routeState: routes(directory),
       channel: channel([]),
       resolveAuthority: async () => subject,
     });
@@ -200,8 +205,8 @@ test('construction workspaces do not publish admission before scoped-root verifi
     const failing = channel([]);
     failing.execute = async () => ({ completion: 'observed', result: { exitCode: 1, timedOut: false, aborted: false, outputTruncated: false, stdout: '', stderr: 'verification failed' } });
     const port = createEnvironmentConstructionWorkspaces({
-      stateDirectory: directory,
       state: stateFor(profile),
+      routeState: routes(directory),
       channel: failing,
       resolveAuthority: async () => subject,
     });

@@ -96,6 +96,7 @@ function dependencies({
   environmentActivationByProfile = null,
   activationProfiles = null,
   operationalConfiguration = null,
+  activityProjection = null,
   resourceConflict = null,
   acceptedConflict = null,
   initialState = null,
@@ -109,7 +110,7 @@ function dependencies({
 } = {}) {
   const store = memoryStore(initialState);
   let conflictConsent = acceptedConflict;
-  const calls = { profileSelection: 0, profileSelectionRequest: null, windowsDistribution: 0, windowsDistributionRequest: null, windowsActivation: 0, windowsActivationRequest: null, windowsMedia: 0, windowsMediaRequest: null, windowsConstruction: 0, windowsConstructionActions: [], prerequisite: 0, profileConfiguration: 0, profileSourceCount: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, environmentActivationProfiles: [], operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
+  const calls = { profileSelection: 0, profileSelectionRequest: null, windowsDistribution: 0, windowsDistributionRequest: null, windowsActivation: 0, windowsActivationRequest: null, windowsMedia: 0, windowsMediaRequest: null, windowsConstruction: 0, windowsConstructionActions: [], prerequisite: 0, profileConfiguration: 0, profileSourceCount: 0, resourceConflict: 0, conflictSaved: 0, conflictCleared: 0, lifecycleAuthority: 0, lifecycleClient: 0, environmentActivation: 0, environmentActivationProfiles: [], activityProjection: 0, operationalConfiguration: 0, operationalRequest: null, authority: 0, canaryStatus: 0, canaryRun: 0 };
   const discoveredRepositories = repositories ?? Array.from({ length: count }, (_, index) => repository(index));
   const configuredProfiles = activationProfiles ?? profileSelection?.profiles ?? ['linux-development'];
   return {
@@ -214,6 +215,12 @@ function dependencies({
           ?? environmentActivation
           ?? { ready: true, changed: true, state: 'ready', environmentCount: 1 };
       },
+      activityProjectionFactory: () => ({
+        async reconcile() {
+          calls.activityProjection += 1;
+          return activityProjection ?? { ready: true, changed: true };
+        },
+      }),
       operationalConfigurationFactory: () => ({
         async reconcile(value) {
           calls.operationalConfiguration += 1;
@@ -974,6 +981,19 @@ test('setup fails closed when publication omits an accepted profile', async () =
   assert.equal(fixture.calls.operationalConfiguration, 0);
 });
 
+test('setup projects protected routes after activation and before enabling ordinary execution', async () => {
+  const fixture = dependencies({
+    physical: { state: 'completed', blocked: false, complete: true, reason: null, preflight: { ready: true } },
+    activityProjection: { ready: false, changed: false },
+  });
+  const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-route-projection-blocked') }, fixture.deps);
+  assert.equal(result.blocked, true);
+  assert.match(result.blocker, /route projection evidence is invalid/u);
+  assert.equal(fixture.calls.environmentActivation, 1);
+  assert.equal(fixture.calls.activityProjection, 1);
+  assert.equal(fixture.calls.operationalConfiguration, 0);
+});
+
 test('setup does not report completion when operational configuration fails after route readiness', async () => {
   const fixture = dependencies({
     physical: { state: 'completed', blocked: false, complete: true, reason: null, preflight: { ready: true } },
@@ -992,6 +1012,7 @@ test('setup does not report completion when operational configuration fails afte
     profileCount: 1,
   });
   assert.deepEqual(result.operational, { ready: false, changed: false, executionEnabled: false });
+  assert.equal(fixture.calls.activityProjection, 1);
   assert.equal(fixture.calls.operationalConfiguration, 1);
 });
 

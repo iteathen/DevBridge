@@ -117,6 +117,10 @@ function fixture({ extraServiceGroup = false, serviceType = 'exec' } = {}) {
   add(selected.configuration.endpoint.directory, 'directory', serviceUid, coordinationGid, 0o2750);
   add(selected.configuration.handoff.directory, 'directory', 0, coordinationGid, 0o3770);
   add(selected.configuration.endpoint.endpoint, 'socket', serviceUid, coordinationGid, 0o770);
+  add(selected.activity.root, 'directory', 0, 0, 0o755);
+  add(selected.activity.endpoint.directory, 'directory', serviceUid, readGid, 0o2750);
+  add(selected.activity.handoff.directory, 'directory', 0, readGid, 0o3770);
+  add(selected.activity.endpoint.endpoint, 'socket', serviceUid, readGid, 0o770);
 
   const loads = new Map([
     [selected.service.unitPath, selected.service.unit],
@@ -291,6 +295,25 @@ test('configuration access is separately observable and the protected host canno
   values.stats.set(values.plan.configuration.handoff.directory, info('directory', { uid: 995, gid: 993, mode: 0o3770 }));
   observed = await inspect(values);
   assert.equal(observed.filesystem.configurationHandoffDirectory.owner, false);
+});
+
+test('activity access and its service-owned export directory are separately observable', async () => {
+  const values = fixture();
+  let observed = await inspect(values);
+  assert.equal(observed.filesystem.activityRoot.owner, true);
+  assert.equal(observed.filesystem.activityEndpointDirectory.owner, true);
+  assert.equal(observed.filesystem.activityEndpointDirectory.group, true);
+  assert.equal(observed.filesystem.activityEndpointDirectory.mode, true);
+  assert.equal(observed.filesystem.activityHandoffDirectory.owner, true);
+  assert.equal(observed.filesystem.activityHandoffDirectory.group, true);
+  assert.equal(observed.filesystem.activityHandoffDirectory.mode, true);
+  assert.equal(observed.filesystem.activityEndpoint.owner, true);
+  assert.equal(observed.filesystem.activityEndpoint.group, true);
+  assert.equal(observed.filesystem.activityEndpoint.mode, true);
+
+  values.stats.set(values.plan.activity.handoff.directory, info('directory', { uid: 995, gid: 994, mode: 0o3770 }));
+  observed = await inspect(values);
+  assert.equal(observed.filesystem.activityHandoffDirectory.owner, false);
 });
 
 test('volatile directory definition bytes remain independently observable', async () => {
