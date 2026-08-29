@@ -174,3 +174,9 @@ The source and committed Git-object bytes are LF. With no repository attributes,
 Source: [Git attributes — Effects (`eol`)](https://git-scm.com/docs/gitattributes#_effects).
 
 A local `checkout-index` qualification forced `core.autocrlf=true` and `core.eol=crlf`; both attributed artifact copies retained canonical LF with zero CRLF sequences and their exact expected byte lengths (24,241 and 46,817 bytes). Hosted Windows remains the acceptance authority for the correction.
+
+## Accepted hosted checkpoint
+
+[GitHub Actions run 33281315853](https://github.com/iteathen/DevBridge/actions/runs/33281315853) passed all four jobs on exact correction commit `0eb21769cf7f3898fb85ac698f6dd67abad195e2`: Windows and Ubuntu bounded smoke/preflight/identity/standalone-installer checks, plus Windows serialized and Ubuntu complete-suite/doctor jobs. This proves that the path-scoped LF contract preserves byte-exact artifact regeneration on both hosted platforms without weakening the checker.
+
+Issue #253 is complete at this checkpoint. It does not claim protected service activation, physical Hyper-V or KVM/libvirt operation, either guest C canary, repository execution, or GPU/CUDA readiness.
