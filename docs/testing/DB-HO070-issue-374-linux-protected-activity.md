@@ -107,4 +107,10 @@ Qualification evidence on the uncommitted exact working tree:
 - `git diff --check`: passed;
 - source isolation searches found no provider, repository, guest identity, credential, direct-host fallback, sudo, or UAC mechanics in the new neutral children.
 
-No setup, sudo/UAC request or bypass, service/systemd mutation, libvirt/Hyper-V operation, image/environment/VM/guest action, or repository-controlled execution occurred. Hosted Windows/Ubuntu qualification is the next gate. Real Linux tmpfiles/systemd/socket permissions, libvirt/qcow2 execution, the installed Windows service refresh, and dual-guest C acceptance remain physical gates and are not claimed here.
+No setup, sudo/UAC request or bypass, service/systemd mutation, libvirt/Hyper-V operation, image/environment/VM/guest action, or repository-controlled execution occurred. Real Linux tmpfiles/systemd/socket permissions, libvirt/qcow2 execution, the installed Windows service refresh, and dual-guest C acceptance remain physical gates and are not claimed here.
+
+## Hosted acceptance checkpoint — 2026-08-29
+
+[GitHub Actions run 33228024953](https://github.com/iteathen/DevBridge/actions/runs/33228024953) completed successfully on exact implementation commit `28bbb55184310fc44c92a7f41610158c90b3c894`. Windows serialized complete-suite/doctor, Windows bounded preflight/identity/installer, Ubuntu complete-suite/doctor, and Ubuntu bounded preflight/identity/installer all passed. The Ubuntu complete-suite job executed and passed the real crash-retained Unix-domain-socket restart proof that is intentionally skipped on Windows.
+
+This hosted result qualifies the cross-platform software boundary and Linux socket-recovery behavior available to an unprivileged CI process. It does not prove a real tmpfiles/systemd installation, service/socket ownership under the dedicated principals, libvirt/qcow2 provider readiness, repository execution in a guest, the installed Windows service refresh, or either physical guest C canary. Keep those gates open.
