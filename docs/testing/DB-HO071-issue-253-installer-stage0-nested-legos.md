@@ -164,3 +164,13 @@ All evidence below was collected on Windows without setup, UAC, protected servic
 - exact artifact regeneration check and `git diff --check`: passed.
 
 The next acceptance step is exact-head hosted Windows/Ubuntu CI. Close #253 only after all four jobs pass on the committed implementation. This structural checkpoint does not change the physical readiness gates listed under the explicit nonclaims.
+
+## Hosted attempt 1 and line-ending correction
+
+[GitHub Actions run 33281103991](https://github.com/iteathen/DevBridge/actions/runs/33281103991) on implementation commit `6a8efc9cf0d494d034210b6b6dd7a2ce6dfac081` passed both Ubuntu jobs. Windows smoke failed immediately and correctly at the exact artifact check: both generated root launchers were reported stale after checkout. The Windows full suite continued separately.
+
+The source and committed Git-object bytes are LF. With no repository attributes, the hosted Windows checkout was free to materialize CRLF working-tree bytes, while the deterministic compiler deliberately emits canonical LF. Git's `gitattributes` documentation defines `eol=lf` as LF line endings in the working tree and requires the path to be treated as text. Add that contract only to the two generated root artifacts. Do not weaken exact comparison, normalize the artifact during verification, or impose a broad repository-wide line-ending policy.
+
+Source: [Git attributes — Effects (`eol`)](https://git-scm.com/docs/gitattributes#_effects).
+
+A local `checkout-index` qualification forced `core.autocrlf=true` and `core.eol=crlf`; both attributed artifact copies retained canonical LF with zero CRLF sequences and their exact expected byte lengths (24,241 and 46,817 bytes). Hosted Windows remains the acceptance authority for the correction.
