@@ -87,3 +87,14 @@ Local evidence:
 - the dedicated topology test and `git diff --check` pass.
 
 No setup invocation, UAC/elevation request or bypass, protected operation, physical provider/VM/guest action, repository execution, or product publication occurred. Commit and push the exact implementation, then require the real hosted Windows and Ubuntu jobs before closing #371.
+
+## Accepted qualification
+
+GitHub Actions run `33222140918` passed all four jobs on exact implementation commit `614c373f6c5fbe5950590126b61bf8dcf961e930`:
+
+- Ubuntu complete suite, repository-execution architecture gates, and doctor passed in 41 seconds;
+- Windows serialized complete suite, repository-execution architecture gates, and doctor passed in 2 minutes 17 seconds;
+- Ubuntu bounded preflight, identity audit, and standalone-installer regression passed in 23 seconds; and
+- Windows bounded preflight, identity audit, and standalone-installer regression passed in 1 minute 16 seconds.
+
+The exact cross-process test therefore ran successfully with the Linux abstract-socket implementation and the Windows named-pipe implementation. The exact killed-owner recovery test also passed on both platforms. This satisfies #371 without a persistent lock file, stale-owner guess, setup invocation, elevation, or weaker host fallback. Close #371 and continue #253 under the no-UAC boundary.
