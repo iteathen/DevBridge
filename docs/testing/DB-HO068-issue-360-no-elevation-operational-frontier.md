@@ -1,6 +1,6 @@
 # DB-HO068 — issue #360 no-elevation operational frontier
 
-Status: live state assessed, primary-source constraints rechecked, the safe continuation planned from exact branch head `0ace83bd47323c43602ef8e31fe08883d7740830`, and the distinct configuration-channel implementation locally qualified on `stage8/362-protected-activity-channel`. This checkpoint authorizes no setup invocation, elevation request or bypass, protected mutation, provider/VM/guest operation, or repository-controlled execution.
+Status: live state assessed, primary-source constraints rechecked, the safe continuation planned from exact branch head `0ace83bd47323c43602ef8e31fe08883d7740830`, and the distinct configuration-channel implementation locally and remotely qualified on `stage8/362-protected-activity-channel`. This checkpoint authorizes no setup invocation, elevation request or bypass, protected mutation, provider/VM/guest operation, or repository-controlled execution.
 
 ## Question and exact live assessment
 
@@ -87,4 +87,17 @@ Exact local qualification after the final hardening pass:
 - `npm test`: passed, 1,757 tests total, 1,742 passed, 15 platform-capability skips, 0 failed; and
 - Windows PowerShell 5.1 compiled the updated C# service host and proved its one-instance named-pipe behavior inside the test suite.
 
-No installed setup command, elevation broker, SCM mutation, Hyper-V mutation, VM/guest operation, or repository-controlled execution was invoked. Hosted qualification and the later one-time installed service refresh/physical canaries remain separate evidence gates.
+No installed setup command, elevation broker, SCM mutation, Hyper-V mutation, VM/guest operation, or repository-controlled execution was invoked. The later one-time installed service refresh and physical canaries remain separate evidence gates.
+
+## Hosted qualification checkpoint — 2026-08-29
+
+The implementation commit `7ea9a65b35907fd7d4b828118453f2a6a468019a` and the measured CI-budget correction `5b1c4d5803fa462f3d867d69f4be81c9a8721a11` were pushed to `stage8/362-protected-activity-channel`. [GitHub Actions run 33224503523](https://github.com/iteathen/DevBridge/actions/runs/33224503523), bound to exact head `5b1c4d5803fa462f3d867d69f4be81c9a8721a11`, passed all four jobs:
+
+- Ubuntu smoke: passed;
+- Ubuntu full test: passed;
+- Windows smoke: passed; and
+- Windows full test: passed.
+
+The immediately preceding run failed only because Windows cheap preflight exceeded its one-minute outer CI timeout. Its test output did not report a product failure. The final run measured Windows cheap preflight at 47 seconds and the whole Windows smoke job at 1 minute 18 seconds under the corrected two-minute step budget; the enclosing smoke job remains capped at three minutes. This is a bounded scheduling correction, not a skipped or weakened test.
+
+Hosted runners do not prove this workstation's protected service refresh, Hyper-V environment creation, guest bridge, persistent-environment restart, or C canary. Those remain physical acceptance gates. Because the currently installed service predates the new configuration endpoint, exactly one future administrator-authorized service refresh is still required on this workstation. After that refresh, the accepted configuration can be reconciled through the separately ACL-bound ordinary-user channel without repeated UAC.
