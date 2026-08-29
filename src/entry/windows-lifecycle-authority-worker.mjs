@@ -13,11 +13,19 @@ import {
   ENVIRONMENT_ACTIVITY_AUTHORITY_MAX_RESULT_BYTES,
   ENVIRONMENT_ACTIVITY_AUTHORITY_RESULT_PROTOCOL,
 } from '../runtime/environment-activity-authority.js';
+import {
+  createEnvironmentConfigurationHandler,
+  ENVIRONMENT_CONFIGURATION_AUTHORITY_MAX_REQUEST_BYTES,
+  ENVIRONMENT_CONFIGURATION_AUTHORITY_MAX_RESULT_BYTES,
+  ENVIRONMENT_CONFIGURATION_AUTHORITY_RESULT_PROTOCOL,
+} from '../runtime/environment-configuration-authority.js';
 
 const LIFECYCLE_MAX_WIRE_BYTES = ENVIRONMENT_LIFECYCLE_AUTHORITY_MAX_ENVELOPE_BYTES + 1024;
 const ACTIVITY_MAX_REQUEST_WIRE_BYTES = ENVIRONMENT_ACTIVITY_AUTHORITY_MAX_REQUEST_BYTES + 1024;
 const ACTIVITY_MAX_RESULT_WIRE_BYTES = ENVIRONMENT_ACTIVITY_AUTHORITY_MAX_RESULT_BYTES + 1024;
-const ACCESS = new Set(['read', 'mutation', 'acceptance', 'activity']);
+const CONFIGURATION_MAX_REQUEST_WIRE_BYTES = ENVIRONMENT_CONFIGURATION_AUTHORITY_MAX_REQUEST_BYTES + 1024;
+const CONFIGURATION_MAX_RESULT_WIRE_BYTES = ENVIRONMENT_CONFIGURATION_AUTHORITY_MAX_RESULT_BYTES + 1024;
+const ACCESS = new Set(['read', 'mutation', 'acceptance', 'activity', 'configuration']);
 const ARGUMENTS = new Set(['--access', '--state-directory', '--authority-directory']);
 const WINDOWS_DRIVE_ROOT = /^[A-Za-z]:\\$/u;
 const WINDOWS_UNC_ROOT = /^\\\\[^\\]+\\[^\\]+\\$/u;
@@ -67,12 +75,16 @@ function workerInitializationFailure(request, error, access) {
     ? request.requestId
     : '00000000-0000-4000-8000-000000000000';
   return Object.freeze({
-    protocol: access === 'activity' ? ENVIRONMENT_ACTIVITY_AUTHORITY_RESULT_PROTOCOL : ENVIRONMENT_LIFECYCLE_AUTHORITY_RESULT_PROTOCOL,
+    protocol: access === 'activity'
+      ? ENVIRONMENT_ACTIVITY_AUTHORITY_RESULT_PROTOCOL
+      : access === 'configuration'
+        ? ENVIRONMENT_CONFIGURATION_AUTHORITY_RESULT_PROTOCOL
+        : ENVIRONMENT_LIFECYCLE_AUTHORITY_RESULT_PROTOCOL,
     requestId,
     ok: false,
     error: Object.freeze({
       code: 'WORKER_INITIALIZATION_FAILED',
-      message: `environment ${access === 'activity' ? 'activity' : 'lifecycle'} authority worker initialization failed (${errorClass})`,
+      message: `environment ${access === 'activity' ? 'activity' : access === 'configuration' ? 'configuration' : 'lifecycle'} authority worker initialization failed (${errorClass})`,
     }),
   });
 }
@@ -81,6 +93,7 @@ export async function handleWindowsLifecycleAuthorityWorkerRequest({
   access,
   operator = null,
   activity = null,
+  configuration = null,
   request,
   authorityDirectory = null,
 } = {}, {
@@ -92,6 +105,7 @@ export async function handleWindowsLifecycleAuthorityWorkerRequest({
     return acceptanceHandler({ request, authorityDirectory });
   }
   if (access === 'activity') return createEnvironmentActivityHandler({ activity })(request);
+  if (access === 'configuration') return createEnvironmentConfigurationHandler({ configuration })(request);
   const handler = access === 'read'
     ? createLifecycleAuthorityReadHandler({ operator })
     : createLifecycleAuthorityMutationHandler({ operator });
@@ -116,10 +130,16 @@ export async function runWindowsLifecycleAuthorityWorker({
   output = process.stdout,
   operatorFactory = null,
   activityFactory = null,
+  configurationFactory = null,
   acceptanceHandler = null,
 } = {}) {
   const options = parseWindowsLifecycleAuthorityWorkerArguments(argv);
-  const request = await readSingleRequest(input, options.access === 'activity' ? ACTIVITY_MAX_REQUEST_WIRE_BYTES : LIFECYCLE_MAX_WIRE_BYTES);
+  const requestLimit = options.access === 'activity'
+    ? ACTIVITY_MAX_REQUEST_WIRE_BYTES
+    : options.access === 'configuration'
+      ? CONFIGURATION_MAX_REQUEST_WIRE_BYTES
+      : LIFECYCLE_MAX_WIRE_BYTES;
+  const request = await readSingleRequest(input, requestLimit);
   let response;
   try {
     if (options.access === 'acceptance') {
@@ -138,6 +158,15 @@ export async function runWindowsLifecycleAuthorityWorker({
         platform: 'win32',
       });
       response = await handleWindowsLifecycleAuthorityWorkerRequest({ access: options.access, activity, request });
+    } else if (options.access === 'configuration') {
+      const selectedConfigurationFactory = configurationFactory ?? (await import('../app/windows-environment-configuration-host.js')).createWindowsProtectedEnvironmentConfiguration;
+      if (typeof selectedConfigurationFactory !== 'function') throw new TypeError('Windows environment configuration factory is invalid');
+      const configuration = await selectedConfigurationFactory({
+        stateDirectory: options.stateDirectory,
+        authorityDirectory: options.authorityDirectory,
+        platform: 'win32',
+      });
+      response = await handleWindowsLifecycleAuthorityWorkerRequest({ access: options.access, configuration, request });
     } else {
       const selectedOperatorFactory = operatorFactory ?? (await import('../app/environment-operator-runtime.js')).createLocalEnvironmentOperator;
       if (typeof selectedOperatorFactory !== 'function') throw new TypeError('Windows lifecycle authority operator factory is invalid');
@@ -152,7 +181,11 @@ export async function runWindowsLifecycleAuthorityWorker({
     response = workerInitializationFailure(request, error, options.access);
   }
   const wire = `${JSON.stringify(response)}\n`;
-  const responseLimit = options.access === 'activity' ? ACTIVITY_MAX_RESULT_WIRE_BYTES : LIFECYCLE_MAX_WIRE_BYTES;
+  const responseLimit = options.access === 'activity'
+    ? ACTIVITY_MAX_RESULT_WIRE_BYTES
+    : options.access === 'configuration'
+      ? CONFIGURATION_MAX_RESULT_WIRE_BYTES
+      : LIFECYCLE_MAX_WIRE_BYTES;
   if (Buffer.byteLength(wire, 'utf8') > responseLimit) throw new Error('Windows lifecycle authority worker response exceeded the transport bound');
   output.write(wire);
 }

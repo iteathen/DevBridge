@@ -15,6 +15,10 @@ import {
   ENVIRONMENT_ACTIVITY_AUTHORITY_RESULT_PROTOCOL,
 } from '../src/runtime/environment-activity-authority.js';
 import {
+  ENVIRONMENT_CONFIGURATION_AUTHORITY_REQUEST_PROTOCOL,
+  ENVIRONMENT_CONFIGURATION_AUTHORITY_RESULT_PROTOCOL,
+} from '../src/runtime/environment-configuration-authority.js';
+import {
   WINDOWS_LIFECYCLE_AUTHORITY_ACCEPTANCE_REQUEST_PROTOCOL,
   WINDOWS_LIFECYCLE_AUTHORITY_ACCEPTANCE_RESULT_PROTOCOL,
 } from '../src/setup/windows-lifecycle-authority-acceptance.js';
@@ -89,6 +93,15 @@ test('worker accepts only fixed access and protected state arguments', () => {
     '--authority-directory', AUTHORITY,
   ]), {
     access: 'activity',
+    stateDirectory: STATE,
+    authorityDirectory: AUTHORITY,
+  });
+  assert.deepEqual(parseWindowsLifecycleAuthorityWorkerArguments([
+    '--access', 'configuration',
+    '--state-directory', STATE,
+    '--authority-directory', AUTHORITY,
+  ]), {
+    access: 'configuration',
     stateDirectory: STATE,
     authorityDirectory: AUTHORITY,
   });
@@ -220,6 +233,53 @@ test('activity worker initialization failures use the activity response contract
   });
   const response = JSON.parse(wire);
   assert.equal(response.protocol, ENVIRONMENT_ACTIVITY_AUTHORITY_RESULT_PROTOCOL);
+  assert.equal(response.requestId, selected.requestId);
+  assert.equal(response.ok, false);
+  assert.equal(response.error.code, 'WORKER_INITIALIZATION_FAILED');
+  assert.doesNotMatch(wire, /protected|C:\\/iu);
+});
+
+test('worker routes configuration access only to the exact configuration contract', async () => {
+  const selected = {
+    protocol: ENVIRONMENT_CONFIGURATION_AUTHORITY_REQUEST_PROTOCOL,
+    requestId: '00000000-0000-4000-8000-000000000005',
+    operation: 'reconcile',
+    payload: { revision: 3, subject: 'b'.repeat(64) },
+  };
+  const calls = [];
+  const response = await handleWindowsLifecycleAuthorityWorkerRequest({
+    access: 'configuration',
+    configuration: {
+      async inspect() { return { ready: true }; },
+      async reconcile(value) {
+        calls.push(value);
+        return { ready: true, changed: true, revision: value.revision, subject: value.subject };
+      },
+    },
+    request: selected,
+  });
+  assert.equal(response.protocol, ENVIRONMENT_CONFIGURATION_AUTHORITY_RESULT_PROTOCOL);
+  assert.equal(response.requestId, selected.requestId);
+  assert.equal(response.ok, true);
+  assert.deepEqual(calls, [{ revision: 3, subject: 'b'.repeat(64) }]);
+});
+
+test('configuration worker initialization failures use the configuration response contract', async () => {
+  const selected = {
+    protocol: ENVIRONMENT_CONFIGURATION_AUTHORITY_REQUEST_PROTOCOL,
+    requestId: '00000000-0000-4000-8000-000000000006',
+    operation: 'reconcile',
+    payload: { revision: 3, subject: 'c'.repeat(64) },
+  };
+  let wire = '';
+  await runWindowsLifecycleAuthorityWorker({
+    argv: ['--access', 'configuration', '--state-directory', STATE, '--authority-directory', AUTHORITY],
+    input: Readable.from([`${JSON.stringify(selected)}\n`]),
+    output: { write(value) { wire += String(value); } },
+    configurationFactory: async () => { throw new Error('C:\\protected\\detail'); },
+  });
+  const response = JSON.parse(wire);
+  assert.equal(response.protocol, ENVIRONMENT_CONFIGURATION_AUTHORITY_RESULT_PROTOCOL);
   assert.equal(response.requestId, selected.requestId);
   assert.equal(response.ok, false);
   assert.equal(response.error.code, 'WORKER_INITIALIZATION_FAILED');

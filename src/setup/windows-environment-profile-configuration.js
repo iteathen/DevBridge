@@ -1,153 +1,70 @@
-import { lstat, readFile, realpath } from 'node:fs/promises';
-import path from 'node:path';
-import { createEnvironmentFoundation } from '../app/environment-foundation.js';
-import { createEnvironmentLifecycle } from '../app/environment-lifecycle.js';
+import process from 'node:process';
 import { createConfiguredEnvironmentActivityClient } from '../runtime/environment-activity-authority-transport.js';
-import {
-  ENVIRONMENT_PROFILE_CONFIGURATION_MAX_BYTES,
-  inspectEnvironmentProfileConfiguration,
-  normalizeEnvironmentProfileConfigurationRecord,
-  reconcileEnvironmentProfileConfiguration,
-} from '../runtime/environment-profile-configuration.js';
-import { ENVIRONMENT_PROFILE_CONFIGURATION_STATE_KEY } from '../state/environment-profile-configuration-state-store.js';
-import { createSetupResourceConflictConsentStore } from '../state/setup-resource-conflict-consent-store.js';
-import { reconcileWindowsLifecycleAuthorityImages } from './windows-lifecycle-authority-image-adoption.js';
-import { WINDOWS_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL } from './windows-lifecycle-authority.js';
-import { assertSetupResourceConflictPort, normalizeSetupResourceConflictObservation } from './resource-conflict.js';
-import { createWindowsSetupResourceConflict } from './windows-resource-conflict.js';
+import { createConfiguredEnvironmentConfigurationClient } from '../runtime/environment-configuration-authority-transport.js';
+import { inspectEnvironmentProfileConfiguration } from '../runtime/environment-profile-configuration.js';
+import { readEnvironmentProfileConfigurationRecord } from './environment-profile-configuration-record.js';
 
-const MAX_STATE_BYTES = ENVIRONMENT_PROFILE_CONFIGURATION_MAX_BYTES + 64 * 1024;
-
-function inside(root, candidate) {
-  const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
-async function boundedAcceptedRecord(stateDirectory) {
-  const root = path.resolve(stateDirectory);
-  const directory = path.join(root, 'environment-profile-configuration');
-  const file = path.join(directory, 'state.json');
-  let values;
-  try { values = await Promise.all([lstat(root), lstat(directory), lstat(file)]); }
-  catch (error) {
-    if (error?.code === 'ENOENT') return null;
-    throw error;
-  }
-  if (!values[0].isDirectory() || values[0].isSymbolicLink()
-      || !values[1].isDirectory() || values[1].isSymbolicLink()
-      || !values[2].isFile() || values[2].isSymbolicLink()
-      || values[2].size < 2 || values[2].size > MAX_STATE_BYTES) {
-    throw new Error('accepted environment profile configuration is not one bounded real file');
-  }
-  const [canonicalRoot, canonicalDirectory, canonicalFile] = await Promise.all([realpath(root), realpath(directory), realpath(file)]);
-  if (!inside(canonicalRoot, canonicalDirectory) || !inside(canonicalRoot, canonicalFile) || path.dirname(canonicalFile) !== canonicalDirectory) {
-    throw new Error('accepted environment profile configuration escaped its state boundary');
-  }
-  const document = JSON.parse(await readFile(canonicalFile, 'utf8'));
-  if (!document || typeof document !== 'object' || Array.isArray(document)) throw new Error('accepted environment profile configuration state is invalid');
-  const raw = document[ENVIRONMENT_PROFILE_CONFIGURATION_STATE_KEY];
-  return raw == null ? null : normalizeEnvironmentProfileConfigurationRecord(raw);
-}
-
-function configurationResult({ ready, changed = false, blocker = null }) {
+function result({ ready, changed = false, blocker = null }) {
   return Object.freeze({ ready, changed, blocker });
+}
+
+function lifecycle(value) {
+  if (!value || typeof value.list !== 'function') throw new TypeError('environment profile setup observation contract is incomplete');
+  return value;
+}
+
+function configuration(value) {
+  if (!value || typeof value.reconcile !== 'function') throw new TypeError('environment profile setup configuration contract is incomplete');
+  return value;
 }
 
 export function createWindowsEnvironmentProfileConfiguration({
   stateDirectory,
   platform = process.platform,
-  invoke,
 } = {}, {
-  adoptImages = reconcileWindowsLifecycleAuthorityImages,
-  foundationFactory = createEnvironmentFoundation,
-  lifecycleFactory = createEnvironmentLifecycle,
+  recordReader = readEnvironmentProfileConfigurationRecord,
   activityFactory = createConfiguredEnvironmentActivityClient,
-  conflictFactory = createWindowsSetupResourceConflict,
-  consentStoreFactory = createSetupResourceConflictConsentStore,
+  configurationFactory = createConfiguredEnvironmentConfigurationClient,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('environment profile setup stateDirectory is required');
   if (typeof platform !== 'string' || platform.length === 0) throw new TypeError('environment profile setup platform is invalid');
-  if (invoke != null && typeof invoke !== 'function') throw new TypeError('environment profile setup invocation contract is invalid');
-  if (typeof adoptImages !== 'function' || typeof foundationFactory !== 'function' || typeof lifecycleFactory !== 'function'
-      || typeof activityFactory !== 'function' || typeof conflictFactory !== 'function' || typeof consentStoreFactory !== 'function') {
+  if (typeof recordReader !== 'function' || typeof activityFactory !== 'function' || typeof configurationFactory !== 'function') {
     throw new TypeError('environment profile setup composition is incomplete');
   }
+
+  const accepted = () => recordReader({ stateDirectory });
+
   return Object.freeze({
     async inspect({ client } = {}) {
-      if (platform !== 'win32') return configurationResult({ ready: true });
-      if (!client || typeof client.list !== 'function') throw new TypeError('environment profile setup observation contract is incomplete');
-      const record = await boundedAcceptedRecord(stateDirectory);
-      if (record == null || record.configuration.declarations.length === 0) return configurationResult({ ready: true });
+      if (platform !== 'win32') return result({ ready: true });
+      const selected = lifecycle(client);
+      const record = await accepted();
+      if (record == null || record.configuration.declarations.length === 0) return result({ ready: true });
       try {
         const [declarations, resources] = await Promise.all([
-          client.list(),
+          selected.list(),
           activityFactory({ stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 }).inspect(),
         ]);
-        const result = inspectEnvironmentProfileConfiguration(record, declarations);
-        if (!result.ready) return configurationResult({ ready: false, blocker: result.blocker });
-        if (resources?.ready !== true) {
-          return configurationResult({ ready: false, blocker: 'protected environment resources do not match accepted profile requirements' });
-        }
-        return configurationResult({ ready: true });
+        const inspected = inspectEnvironmentProfileConfiguration(record, declarations);
+        if (!inspected.ready) return result({ ready: false, blocker: inspected.blocker });
+        if (resources?.ready !== true) return result({ ready: false, blocker: 'protected environment resources do not match accepted profile requirements' });
+        return result({ ready: true });
       } catch {
-        return configurationResult({ ready: false, blocker: 'protected profile state could not be verified against accepted configuration' });
+        return result({ ready: false, blocker: 'protected profile state could not be verified against accepted configuration' });
       }
     },
 
-    async reconcile({ plan } = {}) {
-      if (platform !== 'win32') return configurationResult({ ready: true });
-      if (!plan || plan.protocol !== WINDOWS_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL || typeof plan.authorityDirectory !== 'string'
-          || typeof plan.stateDirectory !== 'string'
-          || plan.stateDirectory.toLowerCase() !== path.win32.resolve(stateDirectory).toLowerCase()) {
-        throw new TypeError('environment profile setup authority plan is invalid');
+    async reconcile() {
+      if (platform !== 'win32') return result({ ready: true });
+      const record = await accepted();
+      if (record == null || record.configuration.declarations.length === 0) return result({ ready: true });
+      const client = configuration(configurationFactory({ stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 }));
+      const reconciled = await client.reconcile({ revision: record.revision, subject: record.digest });
+      if (reconciled?.ready !== true || reconciled.revision !== record.revision || reconciled.subject !== record.digest
+          || typeof reconciled.changed !== 'boolean') {
+        throw new Error('protected environment configuration evidence changed');
       }
-      const record = await boundedAcceptedRecord(stateDirectory);
-      if (record == null || record.configuration.declarations.length === 0) return configurationResult({ ready: true });
-      await adoptImages({
-        stateDirectory: plan.stateDirectory,
-        authorityDirectory: plan.authorityDirectory,
-        platform,
-        ...(invoke ? { invoke } : {}),
-      });
-      const foundation = await foundationFactory({
-        stateDirectory: plan.authorityDirectory,
-        platform,
-        ...(invoke ? { invoke } : {}),
-      });
-      const before = await foundation.inspect();
-      if (before?.capabilities?.management?.ready !== true) throw new Error('protected environment management is unavailable');
-      const conflict = assertSetupResourceConflictPort(conflictFactory({ identity: before.identity, platform, ...(invoke ? { invoke } : {}) }));
-      const observedConflict = normalizeSetupResourceConflictObservation(await conflict.inspect());
-      let conflictChanged = false;
-      if (observedConflict.state === 'blocked') throw new Error(observedConflict.reason);
-      if (observedConflict.state === 'approval-required') {
-        const consent = await consentStoreFactory({ stateDirectory }).load();
-        if (consent?.subject !== observedConflict.subject) throw new Error('local resource conflict requires exact operator consent');
-        const retired = await conflict.retire(consent);
-        if (retired?.ready !== true) throw new Error(retired?.reason ?? 'approved local resource conflict did not retire');
-        conflictChanged = retired.changed === true;
-      }
-      const storage = await foundation.ensureStorage();
-      if (storage?.ready !== true) throw new Error('protected environment storage did not reconcile');
-      const network = await foundation.ensureNetwork();
-      if (network?.ready !== true) throw new Error('protected environment networking did not reconcile');
-      const after = await foundation.inspect();
-      if (after?.identity !== before.identity
-          || after?.capabilities?.management?.ready !== true
-          || after?.capabilities?.storage?.ready !== true
-          || after?.capabilities?.networking?.ready !== true) {
-        throw new Error('protected environment resources did not verify after reconciliation');
-      }
-      const lifecycle = lifecycleFactory({ stateDirectory: plan.authorityDirectory });
-      const result = await reconcileEnvironmentProfileConfiguration(record, {
-        declarations: lifecycle.declarations,
-        images: Object.freeze({
-          list: () => foundation.listImages(),
-          verify: (identity) => foundation.verifyImage(identity),
-        }),
-      });
-      const resourcesChanged = conflictChanged || before.capabilities.storage?.ready !== true || before.capabilities.networking?.ready !== true;
-      return configurationResult({ ready: result.ready, changed: result.changed || resourcesChanged });
+      return result({ ready: true, changed: reconciled.changed });
     },
   });
 }

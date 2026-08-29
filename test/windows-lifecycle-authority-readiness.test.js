@@ -38,6 +38,18 @@ function clientFactory(calls) {
   };
 }
 
+function configurationClientFactory(calls) {
+  return (options) => {
+    calls.push(['configuration-client', options]);
+    return Object.freeze({
+      async inspect() {
+        calls.push(['configuration-inspect']);
+        return Object.freeze({ ready: true });
+      },
+    });
+  };
+}
+
 function portableMigration() {
   return Object.freeze({ protocol: 'migration', ready: true, blocker: null, classification: 'portable' });
 }
@@ -92,6 +104,7 @@ test('provider-aware image adoption reaches the protected service path and accep
     }),
     inspectHost: async () => { calls.push(['host']); return host(false); },
     clientFactory: clientFactory(calls),
+    configurationClientFactory: configurationClientFactory(calls),
     verifyService: async () => { calls.push(['service-proof']); return { ready: true }; },
     verifyProtection: async () => { calls.push(['protection']); return { ready: true }; },
     serviceReconciler: async (_options, dependencies) => {
@@ -101,7 +114,7 @@ test('provider-aware image adoption reaches the protected service path and accep
     },
   });
   assert.equal(result.ready, true);
-  assert.deepEqual(calls.map((entry) => entry[0]), ['host', 'service-proof', 'client', 'inspect', 'protection']);
+  assert.deepEqual(calls.map((entry) => entry[0]), ['host', 'service-proof', 'client', 'inspect', 'configuration-client', 'configuration-inspect', 'protection']);
 });
 
 test('ordinary readiness requires SCM identity, read inspection, and negative-capability proof in that order', async () => {
@@ -110,6 +123,7 @@ test('ordinary readiness requires SCM identity, read inspection, and negative-ca
     migrationSafety: async () => portableMigration(),
     inspectHost: async () => { calls.push(['host']); return host(false); },
     clientFactory: clientFactory(calls),
+    configurationClientFactory: configurationClientFactory(calls),
     verifyService: async ({ operatorSid }) => { calls.push(['service-proof', operatorSid]); return { ready: true }; },
     verifyProtection: async ({ plan, elevated }) => { calls.push(['protection', elevated, plan]); return { ready: true, mode: 'ordinary-negative' }; },
     serviceReconciler: async (options, dependencies) => {
@@ -121,9 +135,48 @@ test('ordinary readiness requires SCM identity, read inspection, and negative-ca
   });
   assert.equal(result.ready, true);
   assert.equal(result.service, 'ready');
-  assert.deepEqual(calls.map((entry) => entry[0]), ['host', 'service-proof', 'client', 'inspect', 'protection']);
+  assert.deepEqual(calls.map((entry) => entry[0]), ['host', 'service-proof', 'client', 'inspect', 'configuration-client', 'configuration-inspect', 'protection']);
   assert.equal(calls[1][1], host(false).operatorSid);
   assert.equal(calls.at(-1)[1], false);
+});
+
+test('missing configuration capability is stale service health and receives one structural refresh', async () => {
+  let services = 0;
+  let elevations = 0;
+  let capabilityCurrent = false;
+  const result = await reconcileWindowsLifecycleAuthorityReadiness({
+    stateDirectory: STATE,
+    platform: 'win32',
+    invoke: async () => {},
+    requestElevation: async () => {
+      elevations += 1;
+      capabilityCurrent = true;
+      return { completed: true };
+    },
+  }, {
+    migrationSafety: async () => portableMigration(),
+    inspectHost: async () => host(false),
+    clientFactory: () => Object.freeze({ inspect: async () => ({ protocol: 'devbridge/environment-operator-v1' }) }),
+    configurationClientFactory: () => Object.freeze({
+      async inspect() {
+        if (!capabilityCurrent) throw new Error('configuration capability unavailable');
+        return { ready: true };
+      },
+    }),
+    verifyService: async () => ({ ready: true }),
+    verifyProtection: async () => ({ ready: true }),
+    verifyAcceptance: async () => ({ ready: true }),
+    serviceReconciler: async (_options, dependencies) => {
+      services += 1;
+      await dependencies.inspectHost({});
+      try { await dependencies.probe({ ...PLAN, protocol: 'devbridge/windows-lifecycle-authority-plan-v1' }); }
+      catch { return Object.freeze({ ...readyService(), ready: false, service: 'unavailable', protectedState: 'unknown' }); }
+      return readyService();
+    },
+  });
+  assert.equal(result.ready, true);
+  assert.equal(services, 2);
+  assert.equal(elevations, 1);
 });
 
 test('SCM identity failure blocks before any same-named read pipe can be trusted', async () => {
@@ -151,6 +204,7 @@ test('elevated structural proof never publishes final readiness before ordinary 
     migrationSafety: async () => portableMigration(),
     inspectHost: async () => host(true),
     clientFactory: clientFactory(calls),
+    configurationClientFactory: configurationClientFactory(calls),
     verifyService: async () => { calls.push(['service-proof']); return { ready: true }; },
     verifyProtection: async ({ elevated }) => { calls.push(['protection', elevated]); return { ready: true, mode: 'structural' }; },
     serviceReconciler: async (_options, dependencies) => {
@@ -163,7 +217,7 @@ test('elevated structural proof never publishes final readiness before ordinary 
   assert.equal(result.changed, true);
   assert.equal(result.service, 'ready');
   assert.match(result.blocker, /non-elevated PowerShell/u);
-  assert.deepEqual(calls.map((entry) => entry[0]), ['service-proof', 'client', 'inspect', 'protection']);
+  assert.deepEqual(calls.map((entry) => entry[0]), ['service-proof', 'client', 'inspect', 'configuration-client', 'configuration-inspect', 'protection']);
   assert.equal(calls.at(-1)[1], true);
 });
 
@@ -172,6 +226,7 @@ test('ordinary protection failure is a bounded elevation blocker rather than rea
     migrationSafety: async () => portableMigration(),
     inspectHost: async () => host(false),
     clientFactory: () => Object.freeze({ inspect: async () => ({ protocol: 'devbridge/environment-operator-v1' }) }),
+    configurationClientFactory: () => Object.freeze({ inspect: async () => ({ ready: true }) }),
     verifyService: async () => ({ ready: true }),
     verifyProtection: async () => { throw new Error('sensitive ACL detail must not escape'); },
     serviceReconciler: async (_options, dependencies) => {
@@ -190,6 +245,7 @@ test('elevated protection failure remains on the service-owned failed-health pat
     migrationSafety: async () => portableMigration(),
     inspectHost: async () => host(true),
     clientFactory: () => Object.freeze({ inspect: async () => ({ protocol: 'devbridge/environment-operator-v1' }) }),
+    configurationClientFactory: () => Object.freeze({ inspect: async () => ({ ready: true }) }),
     verifyService: async () => ({ ready: true }),
     verifyProtection: async () => { throw new Error('protection mismatch'); },
     serviceReconciler: async (_options, dependencies) => {

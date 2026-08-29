@@ -3,7 +3,6 @@ import path from 'node:path';
 import process from 'node:process';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { reconcileWindowsLifecycleAuthorityReadiness } from '../setup/windows-lifecycle-authority-readiness.js';
-import { createWindowsEnvironmentProfileConfiguration } from '../setup/windows-environment-profile-configuration.js';
 
 const PROTOCOL = 'devbridge/windows-lifecycle-authority-elevated-child-v1';
 
@@ -27,13 +26,12 @@ export async function runWindowsLifecycleAuthoritySetupChild({
   homeDirectory = os.homedir(),
   invoke = invokeCommand,
   reconciler = reconcileWindowsLifecycleAuthorityReadiness,
-  configurationFactory = createWindowsEnvironmentProfileConfiguration,
 } = {}) {
   if (platform !== 'win32') throw new Error('Windows lifecycle authority elevated child is only valid on Windows');
   if (env.DEVBRIDGE_LIFECYCLE_AUTHORITY_ELEVATED_CHILD !== '1') {
     throw new Error('Windows lifecycle authority elevated child requires the bounded UAC parent contract');
   }
-  if (typeof invoke !== 'function' || typeof reconciler !== 'function' || typeof configurationFactory !== 'function') throw new TypeError('Windows lifecycle authority elevated child composition is invalid');
+  if (typeof invoke !== 'function' || typeof reconciler !== 'function') throw new TypeError('Windows lifecycle authority elevated child composition is invalid');
   const root = childHome(home, env, homeDirectory);
   const stateDirectory = path.join(root, 'state');
   const result = await reconciler({
@@ -43,7 +41,6 @@ export async function runWindowsLifecycleAuthoritySetupChild({
     environment: env,
     mode: 'elevated-child',
     requestElevation: null,
-    configuration: configurationFactory({ stateDirectory, platform, invoke }),
     onDiagnostic: output && typeof output.write === 'function'
       ? (event) => output.write(`${JSON.stringify(event)}\n`)
       : null,

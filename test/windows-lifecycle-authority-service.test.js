@@ -188,6 +188,7 @@ test('Windows lifecycle authority health uses one bounded startup-readiness wind
       },
     }),
     activityClientFactory: () => ({ async inspect() { return { ready: true, identity: 'a'.repeat(32) }; } }),
+    configurationClientFactory: () => ({ async inspect() { return { ready: true }; } }),
     waitForRetry: async (delay) => { delays.push(delay); },
   });
   assert.equal(result.protocol, 'devbridge/environment-operator-v1');
@@ -199,6 +200,7 @@ test('Windows lifecycle authority generation health separates endpoint readiness
   const result = await probeWindowsLifecycleAuthority({ stateDirectory: STATE }, {
     clientFactory: () => ({ async inspect() { return { protocol: 'devbridge/environment-operator-v1' }; } }),
     activityClientFactory: () => ({ async inspect() { return { ready: false, identity: 'a'.repeat(32), reason: 'environment activity is unavailable' }; } }),
+    configurationClientFactory: () => ({ async inspect() { return { ready: true }; } }),
     waitForRetry: async () => { throw new Error('structural endpoint should be accepted immediately'); },
   });
   assert.equal(result.protocol, 'devbridge/environment-operator-v1');
@@ -215,6 +217,7 @@ test('Windows lifecycle authority health stops at its bounded readiness deadline
       },
     }),
     activityClientFactory: () => ({ async inspect() { return { ready: true, identity: 'a'.repeat(32) }; } }),
+    configurationClientFactory: () => ({ async inspect() { return { ready: true }; } }),
     waitForRetry: async (delay) => { delays.push(delay); },
   }), /unavailable-6/u);
   assert.equal(attempts, 6);

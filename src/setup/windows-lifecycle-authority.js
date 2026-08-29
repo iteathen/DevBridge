@@ -8,6 +8,10 @@ import {
   environmentActivityAuthorityEndpoint,
   environmentActivityAuthorityIdentity,
 } from '../runtime/environment-activity-authority-transport.js';
+import {
+  environmentConfigurationAuthorityEndpoint,
+  environmentConfigurationAuthorityIdentity,
+} from '../runtime/environment-configuration-authority-transport.js';
 
 const PROTOCOL = 'devbridge/windows-lifecycle-authority-plan-v1';
 const WINDOWS_SID = /^S-1-(?:\d+-)+\d+$/u;
@@ -20,10 +24,12 @@ const RUNTIME_GENERATION_DOMAIN = 'devbridge/windows-lifecycle-authority-runtime
 
 export const WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1 = 'legacy-read-mutation-v1';
 export const WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACCEPTANCE_V1 = 'read-mutation-acceptance-v1';
-export const WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1 = 'read-mutation-acceptance-activity-v1';
+export const WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACTIVITY_V1 = 'read-mutation-acceptance-activity-v1';
+export const WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1 = 'read-mutation-acceptance-activity-configuration-v1';
 const HOST_COMMAND_PROTOCOLS = new Set([
   WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1,
   WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACCEPTANCE_V1,
+  WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACTIVITY_V1,
   WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1,
 ]);
 
@@ -136,6 +142,10 @@ function commandForRuntime(plan, runtime, protocol) {
   if (protocol === WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1) {
     fields.push('--acceptance-pipe', plan.endpoints.acceptance.pipeName);
     fields.push('--activity-pipe', plan.endpoints.activity.pipeName);
+    fields.push('--configuration-pipe', plan.endpoints.configuration.pipeName);
+  } else if (protocol === WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACTIVITY_V1) {
+    fields.push('--acceptance-pipe', plan.endpoints.acceptance.pipeName);
+    fields.push('--activity-pipe', plan.endpoints.activity.pipeName);
   } else if (protocol === WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACCEPTANCE_V1) {
     fields.push('--acceptance-pipe', plan.endpoints.acceptance.pipeName);
   }
@@ -152,6 +162,7 @@ export function createWindowsLifecycleAuthorityPlan({
   const operator = windowsSid(operatorSid, 'Windows lifecycle authority operatorSid');
   const authorityIdentity = environmentLifecycleAuthorityIdentity(state, { platform: 'win32' });
   const activityAuthorityIdentity = environmentActivityAuthorityIdentity(state, { platform: 'win32' });
+  const configurationAuthorityIdentity = environmentConfigurationAuthorityIdentity(state, { platform: 'win32' });
   const serviceName = `${SERVICE_PREFIX}${authorityIdentity}`;
   const serviceAccount = `NT SERVICE\\${serviceName}`;
   const protectedRoot = under(programData, 'DevBridge', 'lifecycle-authority', authorityIdentity);
@@ -162,10 +173,12 @@ export function createWindowsLifecycleAuthorityPlan({
   const mutationEndpoint = environmentLifecycleAuthorityEndpoint({ authorityIdentity, access: 'mutation', platform: 'win32' });
   const boundedAcceptanceEndpoint = acceptanceEndpoint(authorityIdentity);
   const boundedActivityEndpoint = environmentActivityAuthorityEndpoint({ authorityIdentity: activityAuthorityIdentity, platform: 'win32' });
+  const boundedConfigurationEndpoint = environmentConfigurationAuthorityEndpoint({ authorityIdentity: configurationAuthorityIdentity, platform: 'win32' });
   const readPipeName = path.win32.basename(readEndpoint);
   const mutationPipeName = path.win32.basename(mutationEndpoint);
   const acceptancePipeName = path.win32.basename(boundedAcceptanceEndpoint);
   const activityPipeName = path.win32.basename(boundedActivityEndpoint);
+  const configurationPipeName = path.win32.basename(boundedConfigurationEndpoint);
 
   return Object.freeze({
     protocol: PROTOCOL,
@@ -192,6 +205,7 @@ export function createWindowsLifecycleAuthorityPlan({
       mutation: Object.freeze({ endpoint: mutationEndpoint, pipeName: mutationPipeName }),
       acceptance: Object.freeze({ endpoint: boundedAcceptanceEndpoint, pipeName: acceptancePipeName }),
       activity: Object.freeze({ endpoint: boundedActivityEndpoint, pipeName: activityPipeName }),
+      configuration: Object.freeze({ endpoint: boundedConfigurationEndpoint, pipeName: configurationPipeName }),
     }),
     acl: Object.freeze({
       protectedRoot: Object.freeze({
@@ -222,6 +236,11 @@ export function createWindowsLifecycleAuthorityPlan({
         clients: Object.freeze([clientAce(operator), clientAce(WINDOWS_ADMINISTRATORS_SID)]),
       }),
       activityPipe: Object.freeze({
+        owner: serviceAccount,
+        servers: Object.freeze([serverAce(serviceAccount), serverAce(WINDOWS_SYSTEM_SID)]),
+        clients: Object.freeze([clientAce(operator), clientAce(WINDOWS_ADMINISTRATORS_SID)]),
+      }),
+      configurationPipe: Object.freeze({
         owner: serviceAccount,
         servers: Object.freeze([serverAce(serviceAccount), serverAce(WINDOWS_SYSTEM_SID)]),
         clients: Object.freeze([clientAce(operator), clientAce(WINDOWS_ADMINISTRATORS_SID)]),

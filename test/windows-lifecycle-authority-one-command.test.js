@@ -76,6 +76,7 @@ function readinessDeps({ elevated = false, serviceReconciler, legacyRuntimeMigra
     legacyRuntimeMigration,
     inspectHost: async () => host(elevated),
     clientFactory: () => Object.freeze({ inspect: async () => ({ protocol: 'devbridge/environment-operator-v1' }) }),
+    configurationClientFactory: () => Object.freeze({ inspect: async () => ({ ready: true }) }),
     verifyService: async () => ({ ready: true }),
     verifyProtection: async () => ({ ready: true }),
     verifyAcceptance: async () => ({ ready: true }),
@@ -125,18 +126,19 @@ test('ordinary stale authority uses one elevation and resumes ordinary proof in 
   assert.equal(probes, 1);
 });
 
-test('ordinary exact service uses one elevation when accepted profile configuration is pending', async () => {
+test('ordinary exact service reconciles accepted profile configuration through its bounded capability without elevation', async () => {
   let services = 0;
   let elevations = 0;
+  let reconciliations = 0;
   let configured = false;
   const result = await reconcileWindowsLifecycleAuthorityReadiness({
     stateDirectory: STATE,
     platform: 'win32',
     configuration: {
       async inspect() { return { ready: configured, blocker: configured ? null : 'configuration pending' }; },
-      async reconcile() { throw new Error('ordinary parent must not reconcile protected configuration'); },
+      async reconcile() { reconciliations += 1; configured = true; return { ready: true, changed: true }; },
     },
-    requestElevation: async () => { elevations += 1; configured = true; return { completed: true, exitCode: 0 }; },
+    requestElevation: async () => { elevations += 1; return { completed: true, exitCode: 0 }; },
   }, readinessDeps({
     serviceReconciler: async (_options, dependencies) => {
       services += 1;
@@ -146,11 +148,51 @@ test('ordinary exact service uses one elevation when accepted profile configurat
     },
   }));
   assert.equal(result.ready, true);
+  assert.equal(result.changed, true);
+  assert.equal(services, 1);
+  assert.equal(reconciliations, 1);
+  assert.equal(elevations, 0);
+});
+
+test('stale configuration capability receives one structural refresh before ordinary reconciliation resumes', async () => {
+  let services = 0;
+  let elevations = 0;
+  let reconciliations = 0;
+  let capabilityCurrent = false;
+  let configured = false;
+  const result = await reconcileWindowsLifecycleAuthorityReadiness({
+    stateDirectory: STATE,
+    platform: 'win32',
+    configuration: {
+      async inspect() { return { ready: configured, blocker: configured ? null : 'configuration pending' }; },
+      async reconcile() {
+        reconciliations += 1;
+        if (!capabilityCurrent) {
+          const error = new Error('stale capability');
+          error.code = 'ENVIRONMENT_CONFIGURATION_AUTHORITY_UNAVAILABLE';
+          throw error;
+        }
+        configured = true;
+        return { ready: true, changed: true };
+      },
+    },
+    requestElevation: async () => { elevations += 1; capabilityCurrent = true; return { completed: true, exitCode: 0 }; },
+  }, readinessDeps({
+    serviceReconciler: async (_options, dependencies) => {
+      services += 1;
+      await dependencies.inspectHost({});
+      await dependencies.probe(PLAN);
+      return serviceResult({ ready: true, changed: services > 1 });
+    },
+  }));
+  assert.equal(result.ready, true);
+  assert.equal(result.changed, true);
   assert.equal(services, 2);
+  assert.equal(reconciliations, 2);
   assert.equal(elevations, 1);
 });
 
-test('elevated child reconciles accepted profile configuration after protected service health', async () => {
+test('elevated child refreshes service structure but never reconciles accepted profile configuration', async () => {
   let reconciliations = 0;
   const result = await reconcileWindowsLifecycleAuthorityReadiness({
     stateDirectory: STATE,
@@ -158,19 +200,19 @@ test('elevated child reconciles accepted profile configuration after protected s
     mode: 'elevated-child',
     configuration: {
       async inspect() { throw new Error('elevated child must not use ordinary inspection'); },
-      async reconcile({ plan }) { assert.equal(plan, PLAN); reconciliations += 1; return { ready: true, changed: true }; },
+      async reconcile() { reconciliations += 1; throw new Error('elevated child must not reconcile desired state'); },
     },
   }, readinessDeps({
     elevated: true,
     serviceReconciler: async (_options, dependencies) => {
       await dependencies.inspectHost({});
       await dependencies.probe(PLAN);
-      return serviceResult({ ready: true });
+      return serviceResult({ ready: true, changed: true });
     },
   }));
   assert.equal(result.ready, true);
   assert.equal(result.changed, true);
-  assert.equal(reconciliations, 1);
+  assert.equal(reconciliations, 0);
 });
 
 test('UAC refusal stops after one attempt and does not repeat service reconciliation', async () => {
@@ -837,6 +879,7 @@ test('elevated child entry requires the parent marker and accepts no constructio
   assert.equal(result.ready, true);
   assert.equal(request.mode, 'elevated-child');
   assert.equal(request.requestElevation, null);
+  assert.equal(Object.hasOwn(request, 'configuration'), false);
   assert.equal(Object.hasOwn(request, 'construct'), false);
 });
 

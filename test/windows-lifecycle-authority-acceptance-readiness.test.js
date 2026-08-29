@@ -50,6 +50,7 @@ function dependencies({ elevated = false, serviceReconciler, verifyService = asy
     clientFactory: () => Object.freeze({
       inspect: async () => ({ protocol: 'devbridge/environment-operator-v1' }),
     }),
+    configurationClientFactory: () => Object.freeze({ inspect: async () => ({ ready: true }) }),
     verifyService,
     verifyProtection,
     verifyAcceptance,
