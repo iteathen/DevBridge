@@ -240,6 +240,10 @@ export async function inspectLinuxLifecycleAuthorityState({
     mutationDirectory: plan.endpoints.mutation.directory,
     readEndpoint: plan.endpoints.read.endpoint,
     mutationEndpoint: plan.endpoints.mutation.endpoint,
+    configurationRoot: plan.configuration.root,
+    configurationEndpointDirectory: plan.configuration.endpoint.directory,
+    configurationHandoffDirectory: plan.configuration.handoff.directory,
+    configurationEndpoint: plan.configuration.endpoint.endpoint,
   };
   const entries = new Map(await Promise.all(Object.entries(paths).map(async ([name, file]) => [name, await optionalLstat(file, stat)])));
   const unitText = entries.get('unit') == null
@@ -301,6 +305,10 @@ export async function inspectLinuxLifecycleAuthorityState({
     mutationDirectory: filePolicy(entries.get('mutationDirectory'), { uid: serviceUid, gid: rootGid, expectedMode: plan.endpoints.mutation.directoryMode, kind: 'directory' }),
     readEndpoint: filePolicy(entries.get('readEndpoint'), { uid: serviceUid, gid: readGid, expectedMode: plan.endpoints.read.socketMode, kind: 'socket' }),
     mutationEndpoint: filePolicy(entries.get('mutationEndpoint'), { uid: serviceUid, gid: readGid, expectedMode: plan.endpoints.mutation.socketMode, kind: 'socket' }),
+    configurationRoot: filePolicy(entries.get('configurationRoot'), { uid: rootUid, gid: rootGid, expectedMode: 0o755, kind: 'directory' }),
+    configurationEndpointDirectory: filePolicy(entries.get('configurationEndpointDirectory'), { uid: serviceUid, gid: coordinationGid, expectedMode: plan.configuration.endpoint.directoryMode, kind: 'directory' }),
+    configurationHandoffDirectory: filePolicy(entries.get('configurationHandoffDirectory'), { uid: rootUid, gid: coordinationGid, expectedMode: plan.configuration.handoff.directoryMode, kind: 'directory' }),
+    configurationEndpoint: filePolicy(entries.get('configurationEndpoint'), { uid: serviceUid, gid: coordinationGid, expectedMode: plan.configuration.endpoint.socketMode, kind: 'socket' }),
   });
 
   let runtime = Object.freeze({ ready: false, exact: false, generation: null });

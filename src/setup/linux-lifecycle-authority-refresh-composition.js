@@ -3,6 +3,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { setTimeout as wait } from 'node:timers/promises';
 import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment-lifecycle-authority-transport.js';
+import { createConfiguredEnvironmentConfigurationClient } from '../runtime/environment-configuration-authority-transport.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { applyLinuxDirectoryDefinition } from './linux-directory-definition-applicator.js';
 import { bindLinuxLifecycleAuthorityIdentity } from './linux-lifecycle-authority-identity-binding.js';
@@ -385,13 +386,16 @@ export function createLinuxLifecycleAuthorityActivity({ plan, state, subjects, s
 
 export async function probeLinuxLifecycleAuthority({ plan, ...unknownRequest } = {}, {
   clientFactory = createConfiguredLifecycleAuthorityClient,
+  configurationClientFactory = createConfiguredEnvironmentConfigurationClient,
   waitForRetry = wait,
   ...unknownPorts
 } = {}) {
   if (Object.keys(unknownRequest).length > 0) throw new TypeError('Linux lifecycle authority health request contains an unknown field');
   if (Object.keys(unknownPorts).length > 0) throw new TypeError('Linux lifecycle authority health ports contain an unknown field');
   const selected = exactPlan(plan, 'Linux lifecycle authority health plan', { bound: true });
-  if (typeof clientFactory !== 'function' || typeof waitForRetry !== 'function') throw new TypeError('Linux lifecycle authority health ports are invalid');
+  if (typeof clientFactory !== 'function' || typeof configurationClientFactory !== 'function' || typeof waitForRetry !== 'function') {
+    throw new TypeError('Linux lifecycle authority health ports are invalid');
+  }
   let lastError = null;
   for (let attempt = 0; ; attempt += 1) {
     try {
@@ -403,6 +407,16 @@ export async function probeLinuxLifecycleAuthority({ plan, ...unknownRequest } =
       });
       const result = await client.inspect();
       if (!result || result.protocol !== 'devbridge/environment-operator-v1') throw new Error('protected lifecycle authority returned invalid inspection evidence');
+      const configurationClient = configurationClientFactory({
+        stateDirectory: selected.stateDirectory,
+        platform: 'linux',
+        runDirectory: selected.endpoints.parentDirectory,
+        connectTimeoutMs: 3_000,
+      });
+      const configuration = await configurationClient.inspect();
+      if (configuration?.ready !== true || Object.keys(configuration).length !== 1) {
+        throw new Error('protected environment configuration authority returned invalid inspection evidence');
+      }
       return result;
     } catch (error) {
       lastError = error;

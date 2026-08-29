@@ -129,12 +129,10 @@ test('configuration intake rejects an unbounded ordinary state file before parsi
   }
 });
 
-test('non-Windows composition has no configuration endpoint dependency', async () => {
-  const configuration = createWindowsEnvironmentProfileConfiguration({ stateDirectory: '/state', platform: 'linux' }, {
+test('Windows configuration adapter rejects a foreign platform before attaching ports', () => {
+  assert.throws(() => createWindowsEnvironmentProfileConfiguration({ stateDirectory: '/state', platform: 'linux' }, {
     recordReader: async () => { throw new Error('must not read'); },
     activityFactory: () => { throw new Error('must not attach'); },
     configurationFactory: () => { throw new Error('must not attach'); },
-  });
-  assert.deepEqual(await configuration.inspect(), { ready: true, changed: false, blocker: null });
-  assert.deepEqual(await configuration.reconcile(), { ready: true, changed: false, blocker: null });
+  }), /requires a Windows host/u);
 });

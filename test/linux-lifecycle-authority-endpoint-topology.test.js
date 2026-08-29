@@ -57,6 +57,9 @@ function fixture({
       selected.coordination.lock.path,
       selected.endpoints.read.directory,
       selected.endpoints.mutation.directory,
+      selected.configuration.root,
+      selected.configuration.endpoint.directory,
+      selected.configuration.handoff.directory,
     ] : []),
   };
   const calls = [];
@@ -112,6 +115,9 @@ function fixture({
         selected.coordination.lock.path,
         selected.endpoints.read.directory,
         selected.endpoints.mutation.directory,
+        selected.configuration.root,
+        selected.configuration.endpoint.directory,
+        selected.configuration.handoff.directory,
       ]) state.readyPaths.add(target);
       return true;
     },
@@ -148,7 +154,7 @@ test('fresh endpoint topology publishes exact bytes and applies exact local defi
     changed: true,
   });
   assert.equal(values.state.content, values.plan.endpoints.definition.content);
-  assert.equal(values.state.readyPaths.size, 6);
+  assert.equal(values.state.readyPaths.size, 9);
   assert.deepEqual(effects(values).map(([name]) => name), ['save', 'apply']);
   const save = effects(values)[0];
   assert.deepEqual(save.slice(1), [values.plan.endpoints.definition.path, '/etc/tmpfiles.d', 64 * 1024]);

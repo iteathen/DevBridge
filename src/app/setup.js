@@ -25,6 +25,7 @@ import { createUbuntuEnvironmentProfileSource } from '../setup/ubuntu-environmen
 import { establishUbuntuReleaseAuthority } from '../setup/ubuntu-release-authority.js';
 import { requestWindowsLifecycleAuthorityElevation } from '../setup/windows-lifecycle-authority-elevation.js';
 import { reconcileWindowsLifecycleAuthorityReadiness } from '../setup/windows-lifecycle-authority-readiness.js';
+import { createLinuxEnvironmentProfileConfiguration } from '../setup/linux-environment-profile-configuration.js';
 import { createWindowsEnvironmentProfileConfiguration } from '../setup/windows-environment-profile-configuration.js';
 import { createWindowsEnvironmentProfileSource } from '../setup/windows-environment-profile-source.js';
 import {
@@ -44,6 +45,11 @@ import { reconcileWindowsProductionImageSetup } from './windows-production-image
 const PROTOCOL = 'devbridge/setup-status-v1';
 const STATE_KEY = 'setup:v1';
 const DEFAULT_MEMORY_BYTES = 2 * 1024 * 1024 * 1024;
+
+function createPlatformEnvironmentProfileConfiguration(options) {
+  if (options?.platform === 'linux') return createLinuxEnvironmentProfileConfiguration(options);
+  return createWindowsEnvironmentProfileConfiguration(options);
+}
 const DEFAULT_DISK_BYTES = 32 * 1024 * 1024 * 1024;
 const DEFAULT_PROCESSORS = 2;
 const LINUX_PROFILE = 'linux-development';
@@ -646,7 +652,7 @@ export async function runDevBridgeSetup({
   prerequisiteReconciler = reconcileSetupPrerequisites,
   lifecycleAuthorityReconciler = reconcileWindowsLifecycleAuthorityReadiness,
   profileConfigurationPublisher = createSetupEnvironmentProfileConfiguration,
-  profileConfigurationFactory = createWindowsEnvironmentProfileConfiguration,
+  profileConfigurationFactory = createPlatformEnvironmentProfileConfiguration,
   resourceConflictFactory = createSetupResourceConflict,
   resourceConflictConsentStoreFactory = createSetupResourceConflictConsentStore,
   elevationRequester = requestWindowsLifecycleAuthorityElevation,

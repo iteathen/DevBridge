@@ -4,8 +4,9 @@ import { pathToFileURL } from 'node:url';
 import { createEnvironmentLifecycleAuthorityHost } from '../app/environment-lifecycle-authority-host.js';
 import { createEnvironmentLifecycleFence } from '../app/environment-lifecycle-fence.js';
 import { createLinuxActivityAdmission } from '../app/linux-activity-admission.js';
+import { createLinuxProtectedEnvironmentConfiguration } from '../app/linux-environment-configuration-host.js';
 
-const ARGUMENTS = new Set(['--state-directory', '--authority-directory']);
+const ARGUMENTS = new Set(['--state-directory', '--authority-directory', '--run-directory']);
 
 function absoluteLinuxPath(value, name) {
   if (typeof value !== 'string' || value.length === 0 || /[\0\r\n]/u.test(value) || !path.posix.isAbsolute(value)) {
@@ -29,39 +30,47 @@ export function parseLinuxLifecycleAuthorityServiceArguments(argv) {
   return Object.freeze({
     stateDirectory: absoluteLinuxPath(values.get('--state-directory'), 'Linux lifecycle authority service stateDirectory'),
     authorityDirectory: absoluteLinuxPath(values.get('--authority-directory'), 'Linux lifecycle authority service authorityDirectory'),
+    runDirectory: absoluteLinuxPath(values.get('--run-directory'), 'Linux lifecycle authority service runDirectory'),
   });
 }
 
 export async function runLinuxLifecycleAuthorityService({
   argv = process.argv.slice(2),
-  runDirectory = '/run/devbridge',
   hostFactory = createEnvironmentLifecycleAuthorityHost,
   admissionFactory = createLinuxActivityAdmission,
   fenceFactory = createEnvironmentLifecycleFence,
+  configurationFactory = createLinuxProtectedEnvironmentConfiguration,
   signalTarget = process,
 } = {}) {
-  if (typeof hostFactory !== 'function' || typeof admissionFactory !== 'function' || typeof fenceFactory !== 'function') {
+  if (typeof hostFactory !== 'function' || typeof admissionFactory !== 'function' || typeof fenceFactory !== 'function'
+      || typeof configurationFactory !== 'function') {
     throw new TypeError('Linux lifecycle authority service composition is invalid');
   }
   if (!signalTarget || typeof signalTarget.once !== 'function' || typeof signalTarget.off !== 'function') {
     throw new TypeError('Linux lifecycle authority service signalTarget is invalid');
   }
   const options = parseLinuxLifecycleAuthorityServiceArguments(argv);
-  const run = absoluteLinuxPath(runDirectory, 'Linux lifecycle authority service runDirectory');
+  const configuration = configurationFactory({
+    stateDirectory: options.stateDirectory,
+    authorityDirectory: options.authorityDirectory,
+    platform: 'linux',
+    runDirectory: options.runDirectory,
+  });
   const admission = await admissionFactory({
     access: 'exclusive',
     stateDirectory: options.stateDirectory,
     authorityDirectory: options.authorityDirectory,
     platform: 'linux',
-    runDirectory: run,
+    runDirectory: options.runDirectory,
   });
   const fence = fenceFactory({ admission });
   const host = await hostFactory({
     stateDirectory: options.stateDirectory,
     authorityDirectory: options.authorityDirectory,
     platform: 'linux',
-    runDirectory: run,
+    runDirectory: options.runDirectory,
     fence,
+    configuration,
   });
   if (!host || typeof host.start !== 'function' || typeof host.close !== 'function') {
     throw new TypeError('Linux lifecycle authority service host contract is invalid');

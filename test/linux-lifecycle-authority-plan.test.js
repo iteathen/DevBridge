@@ -51,6 +51,11 @@ test('Linux authority plan derives one exact runtime and split local capabilitie
   assert.equal(value.runtime.generationDirectory, `${value.runtime.generationsDirectory}/${value.runtime.generation}`);
   assert.equal(value.endpoints.read.endpoint, `/run/devbridge/${value.authorityIdentity}/read/environment-v1.sock`);
   assert.equal(value.endpoints.mutation.endpoint, `/run/devbridge/${value.authorityIdentity}/mutation/environment-v1.sock`);
+  assert.match(value.configuration.authorityIdentity, /^[0-9a-f]{32}$/u);
+  assert.notEqual(value.configuration.authorityIdentity, value.authorityIdentity);
+  assert.equal(value.configuration.root, `/run/devbridge/${value.configuration.authorityIdentity}`);
+  assert.equal(value.configuration.endpoint.endpoint, `${value.configuration.root}/configuration/environment-v1.sock`);
+  assert.equal(value.configuration.handoff.record, `${value.configuration.root}/handoff/state.json`);
   assert.equal(value.endpoints.parentDirectory, '/run/devbridge');
   assert.equal(value.endpoints.definition.path, `/etc/tmpfiles.d/devbridge-lifecycle-authority-${value.authorityIdentity.slice(0, 12)}.conf`);
   assert.equal(value.endpoints.definition.content, [
@@ -59,6 +64,9 @@ test('Linux authority plan derives one exact runtime and split local capabilitie
     `d /run/devbridge/${value.authorityIdentity}/governance 3770 root ${value.service.coordinationGroup} -`,
     `d /run/devbridge/${value.authorityIdentity}/read 0750 ${value.service.user} ${value.service.readGroup} -`,
     `d /run/devbridge/${value.authorityIdentity}/mutation 0700 ${value.service.user} root -`,
+    `d /run/devbridge/${value.configuration.authorityIdentity} 0755 root root -`,
+    `d /run/devbridge/${value.configuration.authorityIdentity}/configuration 2750 ${value.service.user} ${value.service.coordinationGroup} -`,
+    `d /run/devbridge/${value.configuration.authorityIdentity}/handoff 3770 root ${value.service.coordinationGroup} -`,
     `f /run/devbridge/${value.authorityIdentity}/governance/activity.lock 0660 root ${value.service.coordinationGroup} -`,
     '',
   ].join('\n'));
@@ -86,6 +94,26 @@ test('Linux authority plan derives one exact runtime and split local capabilitie
   assert.equal(value.endpoints.mutation.socketGroup, value.service.readGroup);
   assert.equal(value.endpoints.mutation.directoryMode, 0o700);
   assert.equal(value.endpoints.mutation.socketMode, 0o770);
+  assert.deepEqual(value.configuration.endpoint, {
+    endpoint: `${value.configuration.root}/configuration/environment-v1.sock`,
+    directory: `${value.configuration.root}/configuration`,
+    directoryOwner: value.service.user,
+    directoryGroup: value.service.coordinationGroup,
+    directoryMode: 0o2750,
+    socketOwner: value.service.user,
+    socketGroup: value.service.coordinationGroup,
+    socketMode: 0o770,
+  });
+  assert.deepEqual(value.configuration.handoff, {
+    directory: `${value.configuration.root}/handoff`,
+    record: `${value.configuration.root}/handoff/state.json`,
+    directoryOwner: 'root',
+    directoryGroup: value.service.coordinationGroup,
+    directoryMode: 0o3770,
+    recordOwner: 'alice',
+    recordGroup: value.service.coordinationGroup,
+    recordMode: 0o640,
+  });
   assert.equal(value.access.storageRoot.mode, 0o755);
   assert.equal(value.access.protectedRuntime.serviceWrite, false);
   assert.equal(value.access.refreshJournal.mode, 0o600);
@@ -119,9 +147,11 @@ test('systemd unit binds the exact protected generation and narrow writable stud
     value.coordination.directory,
     value.endpoints.read.directory,
     value.endpoints.mutation.directory,
+    value.configuration.endpoint.directory,
   ];
   for (const target of writable) assert.match(unit, new RegExp(`"${target.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}"`, 'u'));
   assert.equal(unit.includes(`ReadWritePaths="${value.protectedRoot}"`), false);
+  assert.equal(unit.includes(`ReadWritePaths="${value.configuration.handoff.directory}"`), false);
   assert.equal(unit.includes(value.runtime.generationDirectory) && unit.includes('ReadWritePaths=' + `"${value.runtime.generationDirectory}"`), false);
   assert.equal(unit.includes('sudo'), false);
   assert.equal(unit.includes('sh -c'), false);
@@ -171,10 +201,18 @@ test('Linux service entry accepts only local directories and composes the existi
   let closes = 0;
   const admission = { acquire: async () => { throw new Error('not exercised'); } };
   const fence = { acquire: async () => { throw new Error('not exercised'); } };
+  const configuration = { inspect: async () => ({ ready: true }), reconcile: async () => ({ ready: true }) };
   const service = await runLinuxLifecycleAuthorityService({
-    argv: ['--state-directory', '/home/alice/.devbridge/state', '--authority-directory', '/var/lib/devbridge/lifecycle-authority/test/state'],
-    runDirectory: '/tmp/devbridge-authority-test',
+    argv: [
+      '--state-directory', '/home/alice/.devbridge/state',
+      '--authority-directory', '/var/lib/devbridge/lifecycle-authority/test/state',
+      '--run-directory', '/run/devbridge',
+    ],
     signalTarget: events,
+    configurationFactory: (options) => {
+      calls.push({ configuration: options });
+      return configuration;
+    },
     admissionFactory: async (options) => {
       calls.push({ admission: options });
       return admission;
@@ -194,18 +232,26 @@ test('Linux service entry accepts only local directories and composes the existi
   });
   assert.equal(starts, 1);
   assert.equal(service.authorityIdentity, 'a'.repeat(32));
-  assert.deepEqual(calls, [{ admission: {
+  assert.deepEqual(calls, [{
+    configuration: {
+      stateDirectory: '/home/alice/.devbridge/state',
+      authorityDirectory: '/var/lib/devbridge/lifecycle-authority/test/state',
+      platform: 'linux',
+      runDirectory: '/run/devbridge',
+    },
+  }, { admission: {
     access: 'exclusive',
     stateDirectory: '/home/alice/.devbridge/state',
     authorityDirectory: '/var/lib/devbridge/lifecycle-authority/test/state',
     platform: 'linux',
-    runDirectory: '/tmp/devbridge-authority-test',
+    runDirectory: '/run/devbridge',
   } }, {
     stateDirectory: '/home/alice/.devbridge/state',
     authorityDirectory: '/var/lib/devbridge/lifecycle-authority/test/state',
     platform: 'linux',
-    runDirectory: '/tmp/devbridge-authority-test',
+    runDirectory: '/run/devbridge',
     fence,
+    configuration,
   }]);
   await service.close();
   await service.close();
@@ -214,13 +260,13 @@ test('Linux service entry accepts only local directories and composes the existi
 
 test('Linux service entry rejects caller-selected topology and contains no provider mechanics', async () => {
   assert.throws(() => parseLinuxLifecycleAuthorityServiceArguments([
-    '--state-directory', '/state', '--authority-directory', '/authority', '--provider', 'anything',
+    '--state-directory', '/state', '--authority-directory', '/authority', '--run-directory', '/run/devbridge', '--provider', 'anything',
   ]), /arguments are invalid/u);
   assert.throws(() => parseLinuxLifecycleAuthorityServiceArguments([
-    '--state-directory', 'relative', '--authority-directory', '/authority',
+    '--state-directory', 'relative', '--authority-directory', '/authority', '--run-directory', '/run/devbridge',
   ]), /absolute Linux path/u);
   assert.throws(() => parseLinuxLifecycleAuthorityServiceArguments([
-    '--state-directory', '/state', '--state-directory', '/other',
+    '--state-directory', '/state', '--state-directory', '/other', '--run-directory', '/run/devbridge',
   ]), /arguments are invalid/u);
 
   const file = fileURLToPath(new URL('../src/entry/linux-lifecycle-authority-service.mjs', import.meta.url));

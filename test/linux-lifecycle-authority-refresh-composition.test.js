@@ -198,14 +198,21 @@ test('health retries local IPC and requires the exact operator protocol', async 
         return Object.freeze({ protocol: 'devbridge/environment-operator-v1', ready: true });
       },
     }),
+    configurationClientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ ready: true }) }),
     waitForRetry: async (delay) => { waits.push(delay); },
   });
   assert.equal(result.protocol, 'devbridge/environment-operator-v1');
   assert.deepEqual(waits, [100, 250]);
   await assert.rejects(() => probeLinuxLifecycleAuthority({ plan: selected.plan }, {
     clientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ protocol: 'foreign' }) }),
+    configurationClientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ ready: true }) }),
     waitForRetry: async () => {},
   }), /invalid inspection evidence/u);
+  await assert.rejects(() => probeLinuxLifecycleAuthority({ plan: selected.plan }, {
+    clientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ protocol: 'devbridge/environment-operator-v1' }) }),
+    configurationClientFactory: () => Object.freeze({ inspect: async () => Object.freeze({ ready: true, widened: true }) }),
+    waitForRetry: async () => {},
+  }), /configuration authority returned invalid inspection evidence/u);
 });
 
 test('composition connects concrete ownership to neutral mechanics and reaches exact fresh/no-op reconciliation', async () => {

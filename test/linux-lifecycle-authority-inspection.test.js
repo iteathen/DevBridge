@@ -113,6 +113,10 @@ function fixture({ extraServiceGroup = false, serviceType = 'exec' } = {}) {
   add(selected.endpoints.mutation.directory, 'directory', serviceUid, 0, 0o700);
   add(selected.endpoints.read.endpoint, 'socket', serviceUid, readGid, 0o770);
   add(selected.endpoints.mutation.endpoint, 'socket', serviceUid, readGid, 0o770);
+  add(selected.configuration.root, 'directory', 0, 0, 0o755);
+  add(selected.configuration.endpoint.directory, 'directory', serviceUid, coordinationGid, 0o2750);
+  add(selected.configuration.handoff.directory, 'directory', 0, coordinationGid, 0o3770);
+  add(selected.configuration.endpoint.endpoint, 'socket', serviceUid, coordinationGid, 0o770);
 
   const loads = new Map([
     [selected.service.unitPath, selected.service.unit],
@@ -268,6 +272,25 @@ test('mutation access is bounded by its private parent while the process-created
   assert.equal(observed.filesystem.mutationEndpoint.owner, false);
   assert.equal(observed.filesystem.mutationEndpoint.group, false);
   assert.equal(observed.filesystem.mutationEndpoint.mode, false);
+});
+
+test('configuration access is separately observable and the protected host cannot write the handoff', async () => {
+  const values = fixture();
+  let observed = await inspect(values);
+  assert.equal(observed.filesystem.configurationRoot.owner, true);
+  assert.equal(observed.filesystem.configurationEndpointDirectory.owner, true);
+  assert.equal(observed.filesystem.configurationEndpointDirectory.group, true);
+  assert.equal(observed.filesystem.configurationEndpointDirectory.mode, true);
+  assert.equal(observed.filesystem.configurationHandoffDirectory.owner, true);
+  assert.equal(observed.filesystem.configurationHandoffDirectory.group, true);
+  assert.equal(observed.filesystem.configurationHandoffDirectory.mode, true);
+  assert.equal(observed.filesystem.configurationEndpoint.owner, true);
+  assert.equal(observed.filesystem.configurationEndpoint.group, true);
+  assert.equal(observed.filesystem.configurationEndpoint.mode, true);
+
+  values.stats.set(values.plan.configuration.handoff.directory, info('directory', { uid: 995, gid: 993, mode: 0o3770 }));
+  observed = await inspect(values);
+  assert.equal(observed.filesystem.configurationHandoffDirectory.owner, false);
 });
 
 test('volatile directory definition bytes remain independently observable', async () => {

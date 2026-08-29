@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import {
+  readLinuxTransferredFile,
   transferLinuxProtectedFile,
   verifyLinuxProtectedFile,
 } from '../src/setup/linux-protected-storage.js';
@@ -199,11 +200,58 @@ test('streamed protected transfer installs exact bytes and reconciles an exact n
     digest: sha256(content),
   }, values.ports);
   assert.equal(verified.ready, true);
+  const loaded = await readLinuxTransferredFile({
+    contract: request(content).output,
+    size: content.length,
+    maximumBytes: content.length,
+  }, values.ports);
+  assert.deepEqual(loaded, {
+    protocol: 'devbridge/linux-protected-storage-v1',
+    path: '/protected/output.bin',
+    kind: 'file',
+    size: content.length,
+    digest: sha256(content),
+    content,
+  });
   await assert.rejects(() => verifyLinuxProtectedFile({
     contract: request(content).output,
     size: content.length,
     digest: sha256('wrong'),
   }, values.ports), /digest is invalid/u);
+});
+
+test('descriptor-bound transferred read rejects linked, foreign, and changing state', async () => {
+  const content = Buffer.from('read subject');
+  for (const state of [
+    { uid: 777, gid: 994, mode: 0o440, nlink: 1 },
+    { uid: 995, gid: 777, mode: 0o440, nlink: 1 },
+    { uid: 995, gid: 994, mode: 0o444, nlink: 1 },
+    { uid: 995, gid: 994, mode: 0o440, nlink: 2 },
+  ]) {
+    const values = fixture();
+    values.put('/protected/output.bin', 'file', { ...state, content });
+    await assert.rejects(() => readLinuxTransferredFile({
+      contract: request(content).output,
+      size: content.length,
+      maximumBytes: content.length,
+    }, values.ports), /policy is invalid/u);
+  }
+
+  let changed = false;
+  const drift = fixture({
+    afterRead({ target, entry, tick }) {
+      if (target === '/protected/output.bin' && !changed) {
+        entry.ctimeMs = tick();
+        changed = true;
+      }
+    },
+  });
+  drift.put('/protected/output.bin', 'file', { uid: 995, gid: 994, mode: 0o440, content });
+  await assert.rejects(() => readLinuxTransferredFile({
+    contract: request(content).output,
+    size: content.length,
+    maximumBytes: content.length,
+  }, drift.ports), /changed while open/u);
 });
 
 test('digest failure leaves only an admitted pending state that the exact retry recovers', async () => {
