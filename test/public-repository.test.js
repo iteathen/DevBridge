@@ -97,7 +97,7 @@ test("Windows smoke preflight selects a closed concurrency bound while other pla
   const ordinary = workflowStep(workflow, "Cheap preflight (non-Windows default)");
   const windows = workflowStep(workflow, "Cheap preflight (Windows bounded)");
 
-  assert.match(workflow, /^  smoke:\n    timeout-minutes: 4$/mu);
+  assert.match(workflow.replaceAll("\r\n", "\n"), /^  smoke:\n    timeout-minutes: 4$/mu);
   assert.match(ordinary, /^        if: runner\.os != 'Windows'$/mu);
   assert.match(ordinary, /^        timeout-minutes: 2$/mu);
   assert.match(ordinary, /^        run: npm run preflight$/mu);
