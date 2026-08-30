@@ -97,7 +97,7 @@ test('filesystem indirection and explicit reparse evidence cannot enter a plan',
   const flagged = await fixture();
   try {
     const api = createExactArtifactSet({
-      platform: 'win32',
+      platform: process.platform,
       inspectReparse: async (location, info) => info.isSymbolicLink() || location.endsWith('first.bin'),
     });
     await assert.rejects(() => api.plan(request(flagged.root)), /shape is unsafe/u);
