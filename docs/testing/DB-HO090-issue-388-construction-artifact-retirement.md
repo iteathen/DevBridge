@@ -217,4 +217,32 @@ The final real ordinary-token read-only product invocation reports no active lea
 
 Ten superseded subjects are exact-plan eligible. Seven have external artifacts and the path-free plan estimates `67,500,791,071` reclaimable bytes; three contain terminal records only. No retirement, provider removal, file deletion, record deletion, UAC, protected-service call, VM start, guest action, repository execution, model invocation, or GPU/CUDA action has occurred.
 
-The two earlier hosted runs are diagnostic evidence only; neither accepts the corrected head. Next: commit and push the correction, require the exact-head hosted Ubuntu/Windows matrix, repeat the read-only plan to obtain its then-current digest, and retire only subjects still reported eligible through the product CLI. Re-observe the final plan and rerun the exact Windows protected-image storage preflight rather than treating estimated reclaimed bytes as capacity proof.
+The two earlier hosted runs are diagnostic evidence only. Corrected implementation head `4c994a80a06159fcdb6f146a8ad146cf4a76197f` then passed Ubuntu smoke/full and Windows bounded-smoke/serialized-full plus doctor in [GitHub Actions run 33304058711](https://github.com/iteathen/DevBridge/actions/runs/33304058711). The previously failing Windows serialized job passed on the exact correction.
+
+## Live retirement and capacity result
+
+After exact-head hosted acceptance, a new ordinary-token read-only invocation reproduced plan digest `73ffa049ac5c4eee9036d4993352b56792757de14c0a171e38832a14e91aba9e`, the same three protected subjects, ten eligible obsolete subjects, and no active lease. Each retirement was invoked separately through `devbridge construction-retention retire` with its exact current subject and current plan digest. A new read-only plan followed every completion; no digest was reused for another subject.
+
+Seven data-bearing transactions completed all six effects at durable revision 25:
+
+- `subject-7d53b430cc49c26753d9eb090be633f0`: `15,610,866,729` reconciled bytes;
+- `subject-1a3e4a19173f0f6c75fd0758e287bcaf`: `12,993,621,033` reconciled bytes;
+- `subject-fe14f9b653441f6b383bc45fe38754e5`: `12,255,423,529` reconciled bytes;
+- `subject-a527ba4de198188473c3f22c7f4778af`: `11,852,770,345` reconciled bytes;
+- `subject-b75a87f28715720d2e51d6547f868753`: `7,859,792,937` reconciled bytes;
+- `subject-d0e6aff6b40f76e5c30da4bb7fc9588b`: `4,001,033,257` reconciled bytes; and
+- `subject-99742e1c94397011d72b6c08523c09c5`: `2,927,283,241` reconciled bytes.
+
+The exact total is `67,500,791,071` bytes. Three terminal-record-only transactions (`subject-71742489ee3651210994274965b2b408`, `subject-e4d1e03ebb5b42081f75cb84ed51f021`, and `subject-f2dea2d4d98423b96aa7949ba7fc60e8`) each completed their one effect at durable revision 5.
+
+Final read-only plan digest `ccf36efc59e4011d9c965e84a80408596aa0737477c57fe0fb6a4d67814ef15b` reports no active lease and no eligible obsolete subject. It contains only:
+
+- current `subject-72966b2f91318dd756cf932aba63b87a`;
+- accepted `subject-8a7a9afe109534b2c128f272ab586bcf`; and
+- retained recovery frontier `subject-f7fc5e9be52e957f1b08dff05431a0b3`.
+
+Two consecutive real ordinary-token invocations of `devbridge/windows-protected-image-construction-preflight-v1` then passed provider, system-managed automatic connectivity, 4 GiB memory, and exact Windows storage admission. Both used the fixed 64 GiB disk, 40 GiB allocation, and 8 GiB source bound. They required `118,111,600,640` bytes including reserve and observed respectively `169,682,202,624` and `169,682,096,128` bytes available. Capacity is therefore proven by the owning preflight, not inferred from the retirement estimate.
+
+The live data-bearing commands were I/O-bound and returned only a terminal JSON result after several minutes. Durable phase/effect state remained observable through their final receipts, but the local CLI did not emit bounded path-free liveness while running. Issue [#389](https://github.com/iteathen/DevBridge/issues/389) separately tracks that DB-019 operator-observability gap; do not weaken exact hashing or effect ordering to make the command appear faster.
+
+No UAC, protected-service mutation, provider bypass, VM start, guest action, repository execution, model invocation, or GPU/CUDA action occurred. Issue #388 is complete once this exact implementation record passes the hosted matrix.
