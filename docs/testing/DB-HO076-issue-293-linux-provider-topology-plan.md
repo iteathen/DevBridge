@@ -1,6 +1,6 @@
 # DB-HO076 — issue #293 Linux provider-authority topology plan
 
-Status: issue #376 implementation and local qualification complete from exact baseline `e00d2ae6281fa6b67a8734bc2389c2c470d1eb84`; exact-head hosted qualification is pending.
+Status: issue #376 accepted on exact implementation commit `08f41f13037d5ceb4d2aa064a63325439f604bbd` after local qualification and four-job hosted Windows/Ubuntu qualification.
 
 This checkpoint owns one read-only Linux/provider primitive. It does not install or refresh the protected service, elevate, edit accounts or groups, change systemd or polkit policy, connect to libvirt, inspect or mutate qcow2 state, run a VM, or claim Linux readiness.
 
@@ -95,4 +95,10 @@ Qualification completed in dependency order:
 - doctor: `ok: true`, with repository execution still unavailable/fail-closed because no local persistent-environment route is configured; and
 - `git diff --check`: passed apart from Git's informational line-ending warning for the pre-existing Windows working-copy policy.
 
-No setup, elevation, account/group mutation, systemd action, polkit change, provider connection, qcow2/VM/guest action, repository execution, or model invocation occurred. Exact-head Ubuntu and Windows CI remain required before issue #376 can close.
+No setup, elevation, account/group mutation, systemd action, polkit change, provider connection, qcow2/VM/guest action, repository execution, or model invocation occurred.
+
+## Hosted acceptance
+
+[GitHub Actions run 33286712099](https://github.com/iteathen/DevBridge/actions/runs/33286712099) passed the complete serialized Windows suite plus doctor, bounded Windows preflight/identity/standalone-installer smoke, complete Ubuntu suite plus doctor, and bounded Ubuntu preflight/identity/standalone-installer smoke on exact implementation commit `08f41f13037d5ceb4d2aa064a63325439f604bbd`.
+
+This accepts only the read-only topology-classification brick and closes #376. Parent #293 remains open for neutral capability-policy composition, configured and effective ordinary-principal denial, bounded protected setup, positive noninteractive provider access, protected storage, and real libvirt/qcow2/guest qualification. Hosted CI does not constitute physical provider evidence.
