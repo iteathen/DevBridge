@@ -7,6 +7,7 @@ const sources = [
   '../src/app/application-removal/contract.js',
   '../src/app/application-removal/planner.js',
   '../src/app/application-removal/coordinator.js',
+  '../src/app/application-removal/source.js',
 ];
 
 test('application removal is one isolated module with neutral local contracts', async () => {
@@ -28,6 +29,7 @@ test('the public stud exposes only its local contract and coordinator', async ()
     [
       "export { APPLICATION_REMOVAL_PROTOCOL } from './application-removal/contract.js';",
       "export { ApplicationRemoval, createApplicationRemoval } from './application-removal/coordinator.js';",
+      "export { createApplicationRemovalSource } from './application-removal/source.js';",
     ],
   );
 });

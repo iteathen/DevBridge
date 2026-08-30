@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: assessment/research/reassessment and implementation plan; no production removal route exists
+Status: implementation candidate locally qualified; exact-head hosted acceptance pending and no production removal route exists
 
 Coordinates with: #116, #159, #391, DB-003, DB-009, DB-011, DB-020, DB-HO095, and DB-HO098.
 
@@ -68,3 +68,33 @@ Production composition remains intentionally absent. The first integration uses 
 - This slice does not inventory every permanent-entry, runner, runtime, service, PATH, configuration, provider, image, environment, or VM resource.
 - Hosted tests do not qualify provider/environment purge.
 - No failure enables repository-code host execution.
+
+## Implementation
+
+`ExactArtifactSet` now hashes every discovered regular single-link file through its held file handle and records the measured SHA-256 in the immutable descriptor. Planning also measures and rejects a caller-supplied digest that does not match the current bytes before a descriptor can become effect evidence. Existing real-directory, canonical-identity, reparse, hard-link, bounded-tree, non-recursive removal, and post-effect observation rules remain unchanged.
+
+The application-removal owner now exposes one contributor-source stud. Locally configured contributor identities and required mode sets remain composition data. Each contributor returns only its neutral snapshot; the owner validates every fragment through its own contract, derives a deterministic generation from required and observed generations, unions items/references/activity, and claims a mode complete only when every required contributor is present and independently claims it. Missing or malformed contributors create no removal readiness.
+
+Two import-isolated runtime bricks attach below those studs:
+
+- the bound-action bridge validates the exact protocol, mode, item, effect, and plan digest; persists or reloads a private exact-JSON descriptor through an injected catalog; returns only the neutral binding fields to the coordinator; and delegates observation/removal without learning descriptor meaning; and
+- the exact-artifact inventory contributor consumes only locally injected source, activity, record, discovery, and observation ports. It projects absent/created/adopted/foreign state, blocks discovery while mutation is active, double-observes provenance/activity around discovery, re-observes the exact action before binding, and writes the complete private descriptor plus neutral plan input to a revisioned record before reporting the binding.
+
+After a partial or complete effect, a fresh contributor instance projects the same frozen neutral fragment from the durable record. It does not reconstruct deletion authority from the remaining live tree. A changed source, active mutation, changed descriptor, conflicting plan, corrupt record, or substituted content fails closed before removal. The application coordinator still owns literal `REMOVE`, plan-digest acceptance, durable planned/attempted/observed/reconciled phases, and bounded restart behavior.
+
+The integration proof installs the exact current committed subject only into a disposable temporary home, independently verifies that fixture, composes the neutral bricks, removes only that fixture's exact component tree, and recreates every process-local object to prove durable absence reconciliation. Public plans/results contain no path. Separate tests prove same-size content substitution is ambiguous and preserved; foreign state is preserved; active mutation prevents discovery; source drift before binding creates no durable record; missing contributors keep coverage incomplete; non-JSON private descriptors and substituted bindings fail closed; and the new modules contain no neighboring topology or higher-level owner identity.
+
+There is deliberately no production contributor registration, application/purge completeness claim, CLI route, live installation effect, or receipt-retirement/operation-rotation mechanism in this candidate.
+
+## Local qualification
+
+Final-byte qualification under the exact supported minimum Node 22.16.0 passes:
+
+- focused inventory/removal/state/LEGO tests on current Node and exact Node 22.16.0: 44 passed, 0 failed on each runtime;
+- bounded repository preflight: 2 standalone artifacts, 230 syntax files, 2 JSON files, and 188 targeted test files, including every source and regression changed by this slice;
+- repository-execution architecture plus product/standalone gates: 37 total, 36 passed, 1 expected Windows symlink-capability skip, 0 failed;
+- complete serialized suite: 1,995 total, 1,974 passed, 21 expected platform skips, 0 failed in 193.5 seconds;
+- doctor: exit zero and `ok: true`, coding adapters disabled, repository execution unavailable/fail-closed because no persistent-environment route is configured, and lifecycle still `setup-reentry-required`; and
+- standalone regeneration check and diff hygiene: clean.
+
+No setup, elevation/UAC, protected service, provider, image, environment, VM, guest, repository-code execution, model-adapter, live installation-removal, or GPU/CUDA effect occurred. Commit and push this candidate on the isolated branch, then require exact-head Ubuntu/Windows smoke/full plus doctor before accepting it or beginning the next producer-composition assessment.

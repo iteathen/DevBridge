@@ -82,6 +82,15 @@ test('replacement, hard-link, and digest drift fail closed', async () => {
   } finally { await rm(changed.parent, { recursive: true, force: true }); }
 });
 
+test('planning validates caller-supplied content digests before creating authority', async () => {
+  const state = await fixture();
+  try {
+    const changed = request(state.root);
+    changed.files[0].sha256 = sha256('wrong');
+    await assert.rejects(() => state.api.plan(changed), /digest does not match authority/u);
+  } finally { await rm(state.parent, { recursive: true, force: true }); }
+});
+
 test('filesystem indirection and explicit reparse evidence cannot enter a plan', async (t) => {
   const state = await fixture();
   try {
@@ -121,6 +130,10 @@ test('bounded discovery inventories one already-authorized tree without widening
   try {
     const manifest = await state.api.discover({ identity: 'set-discovered-1111', root: state.root });
     assert.equal(manifest.entries.length, 3);
+    assert.deepEqual(
+      manifest.entries.filter((entry) => entry.kind === 'file').map((entry) => entry.expectedSha256).sort(),
+      [sha256('first'), sha256('second')].sort(),
+    );
     await writeFile(path.join(state.root, 'later.bin'), 'later');
     assert.equal((await state.api.observe(manifest)).state, 'ambiguous');
     await assert.rejects(() => state.api.remove(manifest), /ambiguous/u);

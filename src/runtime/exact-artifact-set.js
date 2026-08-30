@@ -256,9 +256,10 @@ export class ExactArtifactSet {
     const entries = [];
     for (const expected of request.files) {
       const location = this.#location(root, expected.relative);
-      const observed = await this.#inspectFile(location, null, { measure: false });
+      const observed = await this.#inspectFile(location, null, { measure: expected.sha256 != null });
       try {
         if (expected.bytes != null && observed.info.size !== BigInt(expected.bytes)) throw new Error('artifact set file byte count does not match authority');
+        if (expected.sha256 != null && observed.measured.digest !== expected.sha256) throw new Error('artifact set file digest does not match authority');
         entries.push(Object.freeze({
           relative: expected.relative,
           kind: 'file',
@@ -323,7 +324,19 @@ export class ExactArtifactSet {
         if (info.isDirectory()) {
           directories.push(selected);
           pending.push(selected);
-        } else if (info.isFile()) files.push(Object.freeze({ relative: selected, bytes: Number(info.size), sha256: null }));
+        } else if (info.isFile()) {
+          const observed = await this.#inspectFile(child, null, { measure: true });
+          try {
+            if (observed.info.size > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('artifact set discovered file exceeds its byte bound');
+            files.push(Object.freeze({
+              relative: selected,
+              bytes: Number(observed.info.size),
+              sha256: observed.measured.digest,
+            }));
+          } finally {
+            await observed.handle.close();
+          }
+        }
         else throw new Error('artifact set discovery found an unsupported entry');
       }
     }
