@@ -556,19 +556,22 @@ function Add-VMDvdDrive {
       return invokeCommand({
         ...prepareRequest,
         arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
-        timeoutMs: 20_000,
+        timeoutMs: 60_000,
       });
     };
 
     const exact = await run(mocks());
+    assert.equal(exact.timedOut, false, 'exact partial reconciliation timed out');
     assert.equal(exact.exitCode, 0, exact.stderr);
     assert.deepEqual(JSON.parse(exact.stdout), { ready: true, providerIdentity });
 
     const foreignConfig = await run(mocks({ foreignConfig: true }));
+    assert.equal(foreignConfig.timedOut, false, 'foreign configuration rejection timed out');
     assert.equal(foreignConfig.exitCode, 1);
     assert.match(foreignConfig.stderr, /occupied without matching ownership evidence/u);
 
     const foreignAdapter = await run(mocks({ foreignAdapter: true }));
+    assert.equal(foreignAdapter.timedOut, false, 'foreign adapter rejection timed out');
     assert.equal(foreignAdapter.exitCode, 1);
     assert.match(foreignAdapter.stderr, /occupied without matching ownership evidence/u);
   } finally { await rm(data.directory, { recursive: true, force: true }); }
