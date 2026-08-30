@@ -1,6 +1,6 @@
 # DB-HO082 — issue #382 Linux ordinary readiness and re-observation
 
-Status: implementation accepted on branch `stage8/362-protected-activity-channel` at exact commit `70635a51ad208f71dee25a7d3d852b1fcf5c7904`; documentation-head acceptance remains pending.
+Status: accepted on exact implementation `70635a51ad208f71dee25a7d3d852b1fcf5c7904`, with documentation head `ca8ee61875d5429066d48777be896468677f91ae` accepted by [GitHub Actions run 33294600094](https://github.com/iteathen/DevBridge/actions/runs/33294600094).
 
 This is a no-elevation prerequisite under #293. It must not invoke `sudo`, `pkexec`, UAC, a protected setup child, a service mutation, a provider, protected storage mutation, a VM or guest, repository execution, or a coding model.
 
