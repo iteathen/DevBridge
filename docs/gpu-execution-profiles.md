@@ -1,169 +1,251 @@
 # GPU execution profiles
 
-Status: roadmap architecture for post-recovery GPU support. This document does not claim that DevBridge currently exposes a qualified GPU to repository guests.
+Status: active roadmap architecture for post-recovery GPU support. DevBridge does not yet claim a qualified CUDA backend for repository guests.
 
-Implementation tracker: #186 owns the first real-CUDA Level 0–2 path. Issue #162 owns later generalized compute routing.
+Architecture owner for ordinary CUDA execution: #395 and `docs/host-retained-accelerator-execution.md`.
+General compute requirement/evidence owner: #162.
 
-## Sequencing rule
+## Governing decision
 
-GPU/CUDA work follows the installer/runtime-recovery and reconstructable-VM work. It must not displace the active recovery path needed to make DevBridge installable, recoverable, and able to reconstruct missing execution environments.
+**Normal CUDA development uses a host-retained accelerator capability.** DevBridge must not make whole-device PCIe detach/reassignment a prerequisite for ordinary repository CUDA tests.
 
-The intended order is:
-
-1. finish the application-management/install/re-entry path sufficiently that a configured installation can recover its accepted runtime and services without manual source or hypervisor surgery;
-2. finish the reconstructable execution-profile lifecycle sufficiently that `create`, diagnosis, `rebuild`, supported operator UX, and exact image recovery work on the target host;
-3. under #186, prove one real supported GPU virtualization/device-assignment path with a deliberately small host/guest canary;
-4. under #186, add one real CUDA-capable execution profile and qualify actual kernel execution;
-5. under #162 and follow-ons, generalize compute-requirement detection, alternate software backends, automatic matching, and additional hardware/provider adapters afterward.
-
-This is deliberately different from building a broad GPU abstraction first. CUDA-dependent repositories need truthful real-device execution more urgently than they need CPU emulation of unrelated GPU APIs.
-
-## Relationship to the execution-profile model
-
-The existing ownership rule remains unchanged:
+The existing execution ownership rule remains normative:
 
 > **Execution profiles own persistent VMs. Repositories own isolated workspaces inside compatible execution-profile VMs.**
 
-GPU support is therefore a profile capability, not a repository-owned device or VM.
+DB-020 remains the host-security boundary. Repository-controlled CPU/control code executes inside an admitted untrusted profile VM. Missing GPU support never causes direct-host repository execution.
 
-Examples such as `windows+cuda` and `linux+cuda` are useful operator/profile labels. Generic lifecycle, routing, workspace, recovery, and evidence contracts should reason about neutral capability requirements and device/resource state rather than hard-coding current repositories or current downstream consumers.
+The intended normal topology is:
 
-A repository may require a CUDA-capable profile. It may not select a host PCI address, physical device identifier, provider command, driver package path, VM attachment object, or another provider-native identity.
+```text
+repository workspace in profile VM
+  -> neutral compute requirement
+  -> exact qualified profile accelerator capability
+  -> replaceable backend adapter
+  -> host-retained accelerator
+  -> bounded result/evidence
+```
 
-## First milestone: feasibility before framework
+The host may continue using the physical accelerator for display/desktop work while DevBridge uses a separately qualified compute path. A backend that requires the host display device to be dismounted or transferred does not satisfy the normal `host-retained` topology.
 
-Before significant implementation, #186 runs one bounded feasibility canary on the actual target host/GPU/provider combination.
+## Why the roadmap changed
 
-The canary must establish all of the following before architecture is committed around a platform mechanism:
+The direct-assignment work under #383 proved an important negative requirement on the target Windows host: the candidate NVIDIA GPU is also the active host display adapter. Whole-device ownership transfer would make ordinary CUDA testing operationally disruptive and would force users to provision an alternate display/control path merely to run development code.
 
-- the host/provider has a supported or deliberately accepted mechanism for exposing the physical GPU to the selected guest family;
-- the selected device can be assigned/partitioned/exposed without granting repository code provider-management authority;
-- the guest can observe the expected device through a reproducible driver/runtime configuration;
-- a minimal CUDA program can allocate device memory, execute a kernel, synchronize, and return a verified result;
-- shutdown/start and one reconstruction cycle do not require manual hypervisor surgery to restore device readiness.
+That is the wrong default product behavior.
 
-A successful `nvidia-smi` probe alone is insufficient. The milestone requires real CUDA kernel execution.
+The direct-assignment evidence remains historical research, but #383 is superseded as the normal CUDA architecture. Exclusive physical-device execution may be reconsidered later only as an explicitly requested specialized capability whose operational constraints are acceptable to the user.
 
-If the intended Windows/Hyper-V path is unsupported or materially unsuitable for the actual hardware/host version, stop and select another supported execution path rather than hiding the constraint behind a generic `gpu: true` capability.
+## Research constraints on concrete mechanisms
 
-## Minimal real-CUDA path
+### Shared CUDA behavior exists
 
-The first useful GPU implementation should be intentionally narrow.
+NVIDIA/Microsoft CUDA-on-WSL demonstrates the desired host-retained behavior: Windows owns the display GPU/driver while Linux applications use CUDA through GPU paravirtualization.
 
-### Profile image/toolchain
+That does not make an ordinary WSL distribution a drop-in DB-020 repository VM. DevBridge assumes repository code can obtain root in its execution environment and must not gain host authority as a consequence. WSL may be evaluated as a trusted accelerator-side adapter/broker implementation, but repository-controlled execution remains behind DB-020 unless another security specification deliberately replaces that boundary.
 
-Provide one reproducible CUDA-capable profile image/tooling generation with the minimum supported compiler/runtime/development tools required by the target repositories.
+### GPU partitioning/vGPU are platform-specific adapters
 
-The profile owns shared driver/runtime/toolchain state where that state is genuinely profile-wide. Repository-local build outputs, dependency trees, generated kernels, caches with project semantics, and scratch remain workspace-local.
+Hardware partition/vGPU mechanisms are useful where the exact host OS, GPU, firmware, driver, and provider combination is supported and qualified. They are not the core contract and must not be inferred from feature names on unsupported consumer hardware.
 
-### Provider attachment
+### API mediation/remoting is a candidate, not an assumption
 
-Provider adapters own host-specific device discovery, assignment/partitioning, provider lifecycle, and provider-native identifiers.
+A bounded CUDA/accelerator broker may eventually connect the DB-020 VM to host-retained hardware. That broker must be qualified as a narrow accelerator service, not a general remote shell. Current research demonstrates feasibility of API forwarding but does not justify claiming a production backend before semantic/security/recovery qualification.
 
-Generic environment lifecycle consumes only bounded neutral state such as:
+## Neutral compute connection studs
 
-- requested capability class;
-- device availability/readiness;
-- assignment generation/identity handle;
-- exclusivity/share policy where relevant;
-- compatibility result;
-- recoverability/readiness state.
+Issue #162 remains the generalized semantic owner. The first contract slice is implemented in `src/runtime/compute-capabilities.js`.
 
-Do not manufacture one false cross-platform GPU mechanism. Hyper-V and libvirt/QEMU may expose materially different capabilities and failure semantics behind the same local contract.
+A compute requirement states only:
 
-### Guest qualification
+- API/semantic family;
+- required semantic feature IDs;
+- required independent evidence claims;
+- required neutral topology class.
 
-A CUDA-ready claim requires runtime evidence from inside the exact profile environment, including at least:
+Protocol v1 topology classes are deliberately bounded and provider-neutral:
 
-- compiler/runtime availability as applicable;
-- actual device visibility;
-- driver/runtime compatibility;
-- device class / compute capability or equivalent bounded compatibility evidence;
-- successful memory transfer plus kernel execution;
-- exact profile/image/environment generation used for the result.
+- `host-retained`;
+- `exclusive`;
+- `emulated-local`;
+- `remote`.
 
-The first milestone does not need automatic repository source inspection. Explicit locally configured profile requirements are sufficient to prove the execution path.
+For normal CUDA under #395 the required topology is `host-retained`. Exact topology equality prevents the other neutral classes from satisfying that request. Provider/backend names are not topology values and adding a genuinely new topology class requires a protocol decision rather than accepting arbitrary strings.
 
-### Lifecycle and recovery
+An exact observed capability binds:
 
-GPU device state must compose with the same execution-environment lifecycle used for ordinary profiles.
+- opaque capability subject/generation;
+- execution profile identity;
+- environment identity/generation;
+- API/semantic family;
+- supported semantic features;
+- independent evidence claims;
+- neutral topology class;
+- qualified/unknown/unsupported status;
+- exact opaque qualification evidence or exact blocker.
+
+Generic schemas do not contain device IDs, provider commands, host paths, backend sockets, partition handles, VM provider objects, or implementation-specific names.
+
+Matching is deterministic set/identity comparison. Evidence is not a numeric quality score: one claim never silently implies another. An unsatisfied request returns `COMPUTE_REQUIREMENT_UNSATISFIED`; it does not choose a weaker backend.
+
+## Provider/backend boundary
+
+Provider/backend adapters may differ materially. One system may expose shared local acceleration, another a supported hardware partition, another a bounded remote accelerator.
+
+The neutral lifecycle/routing layers do not manufacture false symmetry. A backend owns its exact transport/device/provider details and reports only bounded capability/evidence facts upward.
+
+If a trusted host-side helper is required, it must:
+
+- accept only a versioned accelerator-specific protocol;
+- treat guest input as hostile;
+- expose no arbitrary host executable/path/environment/provider-management authority;
+- bind operations to exact sessions/capability generations;
+- bound input/output and result identities;
+- provide observed timeout/cancel/recovery behavior;
+- reconcile ambiguous effects before repeat where DB-009 applies.
+
+A design that requires arbitrary host code execution to support CUDA fails the architecture rather than weakening DB-020.
+
+## Profile lifecycle
+
+GPU/accelerator capability composes with the ordinary execution-profile lifecycle.
 
 At minimum:
 
-- `create` can materialize the CUDA-capable profile from approved durable configuration;
-- `doctor` distinguishes host GPU presence, provider assignment readiness, guest CUDA readiness, and repository execution readiness;
-- deleting/replacing the guest system disk and using supported `rebuild` returns the logical GPU profile to qualified CUDA readiness without manual device reconfiguration outside DevBridge;
-- provider/device unavailability produces a typed blocker and never falls back to host execution or CPU execution while claiming CUDA evidence;
-- reset/recreate semantics, when those lifecycle operations are production-ready, preserve the same local authority split.
+- profile creation/rebuild may prepare guest-side toolchain/runtime state without claiming a backend is qualified;
+- accelerator capability is observed and qualified separately from VM existence;
+- relevant profile/environment/backend/driver generation change invalidates stale capability evidence;
+- reset/recreate does not grow a second CUDA-specific VM lifecycle;
+- unavailable accelerator capability produces a typed blocker with no direct-host fallback.
 
-## Truthful evidence
+A repository may require a CUDA-capable profile. It may not select a host GPU, provider partition, backend process, socket, host driver object, or provider-native VM identity.
 
-GPU evidence must distinguish what was actually proved.
+## Qualification levels
 
-At minimum keep separate:
+Keep conclusions independent rather than compressing them into `gpu: true`.
 
-- **compile validity** — CUDA source/toolchain can compile for a declared target;
-- **functional device validity** — the workload executed on a real compatible CUDA device and produced the expected result;
-- **hardware-specific validity** — claims tied to a particular device/driver/compute-capability class;
-- **performance validity** — timing/throughput claims gathered under a qualified hardware/resource configuration.
+### Compile validity
 
-A CPU fallback, software Vulkan/OpenCL implementation, compile-only pass, or mocked device is never evidence of real CUDA execution or performance.
+The requested toolchain produced the requested CUDA target artifact. This does not prove device execution.
 
-## LEGO boundaries
+### Functional validity
 
-Preserve the existing module-isolation rule.
+A qualified accelerator path executed the required memory/launch/synchronize/result semantics and produced the expected result.
 
-- Execution-profile lifecycle does not name or depend on current downstream consumers.
-- Repository requirement/routing logic does not know provider-native GPU identities.
-- Provider adapters do not know repository names or project-specific build semantics.
-- CUDA toolchain/image code owns CUDA-specific package/runtime details but not provider lifecycle.
-- Device/runtime attestation reports bounded local facts; it does not become routing authority by itself.
-- Composition decides the temporary topology: repository requirement -> compatible profile -> physical environment -> provider/device attachment.
+### Hardware-backed validity
 
-## Follow-on generalized compute routing
+The functional execution is bound to qualified physical accelerator evidence rather than simulation-only evidence.
 
-Issue #162 remains useful, but it follows #186 rather than blocking it.
+### Hardware-specific validity
 
-After one real device path is proven, #162 can generalize:
+The conclusion is bound to a qualified device/driver/architecture compatibility domain where required.
 
-- deterministic repository requirement detection;
-- compile-only versus device-execution versus performance requirements;
-- automatic capability matching;
-- CPU-backed OpenCL/Vulkan functional qualification where useful;
-- framework CPU fallback only when the workload is semantically compatible;
-- additional real-hardware or remote/cloud adapters;
-- common result-validity vocabulary.
+### Performance validity
 
-The generalized routing layer must be able to consume the already-qualified #186 real-CUDA profile without changing its provider or lifecycle implementation.
+Timing/throughput/resource conclusions were gathered under separately qualified hardware/resource conditions. Functional success alone does not establish this.
 
-## Completion levels
+These facts remain independent. For example, performance evidence does not automatically imply some other unrecorded hardware or semantic claim.
 
-### Level 0 — feasibility proved
+## First real backend gate
 
-#186 proves one actual host/GPU/provider/guest combination runs a real CUDA kernel through a bounded canary and its device lifecycle constraints are understood.
+Before host mutation, #395 performs read-only observation of the exact target Windows installation:
 
-### Level 1 — usable CUDA profile
+- shared-CUDA prerequisites and driver support;
+- exact candidate backend availability;
+- whether any supported partition/vGPU path exists for this exact hardware/OS combination;
+- the narrow transport/security boundary between the DB-020 VM and an accelerator-side adapter;
+- exact blockers and relevant generations.
 
-#186 provides one execution profile that can be created, started, diagnosed, rebuilt, and used by repository workspaces for real CUDA compile + kernel execution with truthful evidence.
+No candidate becomes authority merely because documentation says the technology exists.
 
-### Level 2 — integrated GPU support
+## First CUDA canary
 
-#186 integrates setup/reconfiguration discovery/proposal, explicit routing into the profile, `doctor` readiness/failure, and verification evidence bound to exact device/profile/environment identity.
+The first production-relevant proof must run a real CUDA operation while preserving host ownership:
 
-### Level 3 — generalized compute routing
+```text
+untrusted repository workload in exact profile VM
+  -> bounded accelerator request
+  -> qualified host-retained backend
+  -> device allocation/transfer
+  -> kernel launch
+  -> synchronization
+  -> result transfer
+  -> exact result verification
+```
 
-#162-style detection and alternative compute backends can automatically select among qualified execution implementations without weakening evidence semantics.
+The canary must additionally prove:
+
+- the host display remains active;
+- the physical accelerator remains host-owned;
+- no general host command/filesystem/provider authority is exposed;
+- malformed/stale requests fail closed;
+- backend loss and timeout/cancel are bounded and observable;
+- no weaker backend or direct-host execution is silently substituted;
+- evidence binds exact profile/environment/capability/qualification generations.
+
+A successful device-listing utility alone is insufficient.
+
+## Semantic expansion
+
+After the minimum canary, qualify only the CUDA semantics actual consumers require. Potential features include memory operations, kernel launch, streams/events, synchronization, atomics, warp operations, dynamic/device-side launch, CUDA Graph semantics, and error propagation.
+
+Partial support is reported as partial support. Tests are not rewritten merely to fit backend limitations.
+
+## Resource and fault behavior
+
+A host-retained shared GPU avoids voluntary display-device removal; it does not guarantee that a pathological kernel or driver defect cannot affect the shared GPU/desktop.
+
+DevBridge must qualify and report separately:
+
+- functional semantic coverage;
+- host-retained topology;
+- resource limits actually enforceable by the backend;
+- timeout/cancellation behavior;
+- concurrency behavior;
+- backend/driver restart recovery;
+- hardware/performance evidence.
+
+Do not advertise perfect fault isolation or quotas that have not been demonstrated.
+
+## Setup and doctor
+
+`doctor` remains read-only. It eventually reports independent facts such as:
+
+- compute API requested/observed;
+- exact profile/environment generation;
+- accelerator capability status;
+- topology (`host-retained` when qualified for normal CUDA);
+- semantic coverage;
+- qualification generation;
+- functional/hardware/performance evidence;
+- exact blocker.
+
+Setup/re-entry owns any locally approved backend installation/configuration changes.
+
+## LEGO requirements
+
+- Compute requirement/capability matching contains no provider/backend implementation identity.
+- Repository routing contains no physical device identity.
+- Provider/backend adapters contain no repository-specific build semantics or routing policy.
+- VM lifecycle does not grow separate CUDA provisioning implementations.
+- A backend can be replaced without changing the neutral contracts.
+- Capability/evidence observation does not become authority to install or mutate a backend.
+- Unsupported compute fails explicitly and never falls back to direct host execution.
 
 ## Current coordination
 
-Primary owners:
+- #395 — host-retained CUDA architecture, backend feasibility, canary, and operational integration.
+- #162 — neutral generalized compute semantics/evidence and later automatic routing.
+- #138 / `docs/execution-profile-environments.md` — execution-profile VM/workspace ownership.
+- #169 and lifecycle follow-ons — common create/rebuild/reset/recreate behavior.
+- #115 — real provider/security/resource qualification.
+- #116 / #103 — setup/re-entry/doctor UX.
+- DB-003 — local authority/security.
+- DB-009 — ambiguous-effect reconciliation.
+- DB-018 — resource/lifecycle governance.
+- DB-019 — exact verification/evidence identity.
+- DB-020 — VM-only repository execution boundary.
 
-- #186 — first real-CUDA Level 0–2 implementation/qualification;
-- #138 — execution-profile VM/workspace ownership;
-- #169–#178 — reconstructable environment/image/lifecycle and backing-store authority;
-- #116 / #103 — setup, re-entry, provider/profile discovery and operator UX;
-- #115 — real provider/security/resource qualification;
-- #180 / #182 — whole-stack application/runtime recovery needed before VM-dependent work is dependable;
-- #162 — later generalized compute-capability detection/routing and alternate backends.
+## Completion definition
 
-#186 remains blocked behind the active recovery/install work rather than competing with it.
+GPU support is usable for normal CUDA development when repository code stays in an admitted DevBridge VM, a qualified `host-retained` accelerator capability executes the required real CUDA semantics on physical hardware, results/evidence are exact and bounded, and ordinary execution/recovery does not require dismounting the user's display GPU or granting repository code general host/provider authority.
