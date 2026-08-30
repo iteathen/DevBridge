@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: assessed and planned; user-owned installation update pending
+Status: exact user-owned candidate staged and independently observed; documentation-head acceptance pending
 
 ## Scope and authority
 
@@ -46,3 +46,27 @@ If installation succeeds, independently re-read wrapper-owned status and verify 
 6. Record exact installation and doctor evidence in a documentation-only commit and require the hosted matrix again.
 
 No setup continuation, UAC, protected service/provider/storage action, VM/guest operation, repository execution, physical canary, or model invocation is authorized by this plan.
+
+## Hosted plan-head acceptance
+
+[GitHub Actions run 33298603332](https://github.com/iteathen/DevBridge/actions/runs/33298603332) passed Ubuntu smoke/full and Windows bounded-smoke/serialized-full plus doctor on exact plan head `8cf98654170a7265052481436ecd8e5607cf1c4b`. Both smoke jobs also passed the standalone installer regression before the physical install-only transaction began.
+
+## Installation and observation
+
+The checked-in zero-state bootstrap was invoked with:
+
+- exact selector `8cf98654170a7265052481436ecd8e5607cf1c4b`;
+- canonical home `C:\Users\josho\.devbridge`; and
+- explicit `--install-only`.
+
+It exited zero and returned one bounded `devbridge/entry-install-v1` result. The result bound component head, selected runner ref, and pinned runner head to the exact selector and named only the three manifest-owned wrapper outputs.
+
+An independent `devbridge-entry entry-install-status` observation returned `devbridge/entry-install-status-v1` with the same home and all three exact identities equal to `8cf98654170a7265052481436ecd8e5607cf1c4b`. `Get-Command` continued to resolve both `devbridge-entry` and `devbridge` to their owned launchers under the canonical home.
+
+Installed read-only doctor, supplied with the repository's verified example configuration, exited zero with `ok: true`. It reported GitHub CLI authentication available, controller-plan infrastructure enabled, coding-model adapters disabled, and fault injection disabled. Repository execution and every repository-code operation remained unavailable because no local persistent-environment route is configured. Protected lifecycle evidence remained `setup-reentry-required` with zero declarations and environments. Static/control-plane observations remained available without being promoted to repository-execution authority.
+
+The install-only transaction did not invoke setup, display or request UAC, refresh the protected service, mutate Hyper-V/provider/image/environment/VM/guest state, execute repository code, run either physical C canary, or invoke a coding model. The exact next physical action remains one later administrator-authorized protected refresh/re-entry.
+
+## Remaining acceptance
+
+Require this documentation-only head to pass the same Ubuntu/Windows matrix. This checkpoint does not close #293, #360, #362, #364, #372, #373, #374, #115, or #116 because their protected and physical acceptance remains unproved.
