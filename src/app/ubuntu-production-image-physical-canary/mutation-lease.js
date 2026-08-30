@@ -6,11 +6,25 @@ const TOKEN = /^[a-f0-9-]{16,128}$/u;
 const MAX_RECORD_BYTES = 512;
 
 function identityOf(info) {
-  return Object.freeze({ device: info.dev, inode: info.ino });
+  return Object.freeze({
+    device: info.dev,
+    inode: info.ino,
+    birthtimeNanoseconds: info.birthtimeNs,
+    changeTimeNanoseconds: info.ctimeNs,
+  });
 }
 
-function sameIdentity(left, right) {
-  return left.device === right.device && left.inode === right.inode;
+function sameHandleIdentity(left, right) {
+  return left.device === right.device
+    && left.inode === right.inode
+    && left.birthtimeNanoseconds === right.birthtimeNanoseconds
+    && left.changeTimeNanoseconds === right.changeTimeNanoseconds;
+}
+
+function samePathIdentity(info, identity) {
+  return info.ino === identity.inode
+    && info.birthtimeNs === identity.birthtimeNanoseconds
+    && info.ctimeNs === identity.changeTimeNanoseconds;
 }
 
 function ownerValue(protocol, token) {
@@ -21,14 +35,14 @@ async function releaseOwned(location, owner, acquiredIdentity) {
   let observed;
   try { observed = await lstat(location, { bigint: true }); }
   catch (error) { if (error?.code === 'ENOENT') return false; throw error; }
-  if (!observed.isFile() || observed.isSymbolicLink() || observed.size < 1n || observed.size > BigInt(MAX_RECORD_BYTES) || !sameIdentity(identityOf(observed), acquiredIdentity)) return false;
+  if (!observed.isFile() || observed.isSymbolicLink() || observed.size < 1n || observed.size > BigInt(MAX_RECORD_BYTES) || !samePathIdentity(observed, acquiredIdentity)) return false;
 
   let handle;
   try { handle = await open(location, 'r'); }
   catch (error) { if (error?.code === 'ENOENT') return false; throw error; }
   try {
     const throughHandle = await handle.stat({ bigint: true });
-    if (!throughHandle.isFile() || throughHandle.size !== BigInt(Buffer.byteLength(owner, 'utf8')) || !sameIdentity(identityOf(throughHandle), acquiredIdentity)) return false;
+    if (!throughHandle.isFile() || throughHandle.size !== BigInt(Buffer.byteLength(owner, 'utf8')) || !sameHandleIdentity(identityOf(throughHandle), acquiredIdentity)) return false;
     if (await handle.readFile('utf8') !== owner) return false;
   } finally {
     await handle.close();
@@ -36,7 +50,7 @@ async function releaseOwned(location, owner, acquiredIdentity) {
 
   try { observed = await lstat(location, { bigint: true }); }
   catch (error) { if (error?.code === 'ENOENT') return false; throw error; }
-  if (!observed.isFile() || observed.isSymbolicLink() || observed.size !== BigInt(Buffer.byteLength(owner, 'utf8')) || !sameIdentity(identityOf(observed), acquiredIdentity)) return false;
+  if (!observed.isFile() || observed.isSymbolicLink() || observed.size !== BigInt(Buffer.byteLength(owner, 'utf8')) || !samePathIdentity(observed, acquiredIdentity)) return false;
   await unlink(location);
   return true;
 }

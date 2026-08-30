@@ -126,7 +126,7 @@ The parent is now a 514-line public/configuration/topology composition module ar
 
 Every child imports only Node built-ins or no module at all. No child imports or names a sibling. Source enforcement rejects current Ubuntu, Hyper-V, VHDX, VM, guest, or provider identities inside children. Only the parent imports and names the complete current construction/provider/source/access/state topology. The externally visible configuration protocol/status protocol, request/status results, runtime-factory config/path shape, preflight behavior, and run admission order remain unchanged. The old local helpers and phase loop were deleted; no forwarding wrappers or alternate implementation remain.
 
-Issue #375's correction is part of the mutation child. The owner now publishes `devbridge/local-mutation-lease-v1` with an unpredictable token and current PID through exclusive create, syncs the bytes, and retains the opened regular-file identity. Release closes the acquired handle, then validates a non-symlink regular pathname, exact device/inode identity, bounded size, and exact owner bytes through a separately opened handle before a final identity observation and unlink. A pre-existing PID-only, malformed, foreign, or replacement record is preserved and still produces the established conflict diagnostic. There is no compatibility reader and no stale-record reclamation.
+Issue #375's correction is part of the mutation child. The owner now publishes `devbridge/local-mutation-lease-v1` with an unpredictable token and current PID through exclusive create, syncs the bytes, and retains the opened regular-file identity. Release closes the acquired handle, then validates a non-symlink regular pathname, bounded size, exact owner bytes, and the same opened/path identity before a final identity observation and unlink. A pre-existing PID-only, malformed, foreign, or replacement record is preserved and still produces the established conflict diagnostic. There is no compatibility reader and no stale-record reclamation.
 
 The release sequence deliberately remains conservative and non-authoritative: cleanup failure does not replace the completed work result, and no atomic compare-delete or hostile writable-directory guarantee is claimed. The state root is still host-control-owned.
 
@@ -142,3 +142,13 @@ All evidence below was collected on Windows without setup, UAC/elevation, protec
 - child-topology scans, deleted-helper scans, and `git diff --check`: passed.
 
 The next acceptance step is exact-head hosted Windows/Ubuntu CI. Close #375 and #254 only after all four jobs qualify the committed implementation. This checkpoint does not satisfy the physical gates listed under the explicit nonclaims.
+
+## Hosted attempt 1 and Node 22 Windows identity correction
+
+[GitHub Actions run 33282648657](https://github.com/iteathen/DevBridge/actions/runs/33282648657) on implementation commit `1749d59412c050ffacd76490a6e396367c80f9e3` passed both Ubuntu jobs. Windows smoke and the complete serialized Windows suite failed only the two normal-release assertions in the new mutation-lease test: the exact owner record was conservatively retained rather than removed. All other tests passed.
+
+The failure reproduces locally under the supported Node 22.16.0 runtime and not under the workstation's Node 24 runtime. Direct observation on the same NTFS file shows Node 22.16.0 returning a nonzero `dev` through `FileHandle.stat()` and `0` through pathname `lstat()`, while inode, birth time, change time, size, and reopened-handle identity agree. Treating cross-API `dev` equality as a Windows identity invariant was therefore unsupported.
+
+Keep exact opened-handle identity as device + inode + birth/change nanoseconds. For the non-following pathname observations, compare inode + birth/change nanoseconds; the pathname remains in the same parent directory and must still be a non-symlink regular file of the exact bounded size. A separately reopened handle must match the complete opened-handle identity and exact owner bytes. This preserves replacement-record refusal while permitting normal cleanup on the supported Windows runtime.
+
+The corrected direct nested/parent set passes 20/20 under exact Node 22.16.0 and 20/20 under Node 24. The focused ownership/composition set passes 39/39, repository preflight passes with the same 200/2/162 inventory, and the complete corrected local suite again passes 1,806 total / 1,790 passed / 16 expected skips / zero failures. Requalify the exact correction in all four hosted jobs before acceptance.
