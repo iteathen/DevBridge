@@ -179,6 +179,7 @@ const SYNTAX_FILES = [
   'src/state/windows-install-media-source-state-store.js',
   'src/state/windows-production-qualification-state-store.js',
   'src/state/windows-production-image-authority-state-store.js',
+  'src/app/ubuntu-production-image-physical-canary.js',
   'src/app/windows-production-image-physical-canary.js',
   'src/entry/windows-production-image-canary-entry.mjs',
   'src/runtime/worker-exchange.js',
@@ -368,6 +369,8 @@ const TARGETED_TESTS = [
   'test/windows-production-image-authority.test.js',
   'test/windows-production-image-authority-catalog.test.js',
   'test/windows-protected-image-construction-preflight.test.js',
+  'test/ubuntu-production-image-physical-canary-nested-lego.test.js',
+  'test/ubuntu-production-image-physical-canary.test.js',
   'test/windows-production-image-physical-canary.test.js',
   'test/windows-production-image-canary-entry.test.js',
 ];
