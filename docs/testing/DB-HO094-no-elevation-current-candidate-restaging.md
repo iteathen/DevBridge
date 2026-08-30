@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: plan recorded; exact plan-head acceptance and install-only transaction pending
+Status: exact candidate staged and independently observed; documentation-head acceptance pending
 
 Coordinates with: #116, #360, #362, #372–#374, DB-003, DB-008, DB-009, DB-011, DB-019, DB-020, and DB-HO091.
 
@@ -48,3 +48,29 @@ Reassessment: first publish this plan and accept its exact head in all four host
 7. Document the exact effect and nonclaims, commit and push that record, and require its hosted matrix.
 
 This checkpoint cannot close the protected-service, provider, environment, guest, physical C-canary, or Stage 7 gates. It merely prepares their exact already-qualified user-owned controller subject without elevation.
+
+## Hosted plan-head acceptance
+
+[GitHub Actions run 33308965436](https://github.com/iteathen/DevBridge/actions/runs/33308965436) passed Ubuntu smoke/full and Windows bounded-smoke/serialized-full plus doctor on exact plan head `b535a5d2ce04a420ac3e0f559be712009747c8e2`.
+
+## Installation and independent observation
+
+The checked-in zero-state bootstrap was invoked with exact selector `b535a5d2ce04a420ac3e0f559be712009747c8e2`, the canonical user installation home, and explicit `--install-only`. It exited zero and returned one bounded `devbridge/entry-install-v1` result binding component head, selected runner ref, and pinned runner head to that exact selector. It named only the three manifest-owned Permanent Entry wrapper outputs and did not enter setup.
+
+Wrapper-owned `entry-install-status` independently exited zero with `devbridge/entry-install-status-v1` and the same three exact identities. Command discovery resolves `devbridge-entry` and `devbridge` to the canonical installation's manifest-owned command wrappers. Invoking the installed command materialized and reverified one clean exact checkout at the accepted head before launching its control-plane entry.
+
+The first doctor check supplied the old Stage-0 runtime subtree's example configuration. Current parsing rejected that file's removed singular `github.queueRepository` field and exited one. This was a fail-closed verification-path mistake, not a candidate fallback: the installed command still launched the exact selected head, no setup or execution occurred, and the obsolete runtime subtree was not selected as code. It was not removed because this checkpoint has no exact manifest-owned retirement authorization for that pre-existing data.
+
+Doctor was then supplied with `config/devbridge.example.json` from the clean exact selected checkout. It exited zero with `ok: true` and reported:
+
+- GitHub CLI authentication available;
+- execution disabled by local configuration;
+- repository execution `unavailable`/not ready because no persistent-environment route is configured;
+- lifecycle `setup-reentry-required`, zero declarations, and zero environments; and
+- coding-model adapters disabled.
+
+The transaction and observations did not invoke setup or authentication, display or request UAC, refresh the protected service, mutate provider/image/environment/VM/guest state, execute repository code, run a physical canary, invoke a model adapter, or touch GPU/CUDA work. The exact next physical dependency remains one later administrator-authorized protected-service refresh/re-entry.
+
+## Remaining acceptance
+
+Require this documentation-only head to pass the same four hosted jobs plus doctor. This staging checkpoint does not close #116, #360, #362, #372, #373, or #374 because their protected-service and physical canary evidence remains incomplete.
