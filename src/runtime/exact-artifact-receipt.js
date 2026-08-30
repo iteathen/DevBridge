@@ -147,6 +147,36 @@ function comparable(location) {
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
+function sameObservedObject(left, right) {
+  if (left.ino === 0n || left.ino !== right.ino) return false;
+  if (process.platform === 'win32' && (left.dev === 0n || right.dev === 0n)) return true;
+  return left.dev === right.dev;
+}
+
+async function containsSymbolicEntry(location) {
+  const resolved = path.resolve(location);
+  const root = path.parse(resolved).root;
+  let current = root;
+  for (const segment of resolved.slice(root.length).split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    if ((await lstat(current, { bigint: true })).isSymbolicLink()) return true;
+  }
+  return false;
+}
+
+async function sameDirectoryObject(left, right) {
+  const a = path.resolve(left);
+  const b = path.resolve(right);
+  const sameSpelling = comparable(a) === comparable(b);
+  if (process.platform !== 'win32' && !sameSpelling) return false;
+  if (comparable(path.parse(a).root) !== comparable(path.parse(b).root)) return false;
+  if (await containsSymbolicEntry(a) || (!sameSpelling && await containsSymbolicEntry(b))) return false;
+  if (sameSpelling) return true;
+  const [aInfo, bInfo] = await Promise.all([lstat(a, { bigint: true }), lstat(b, { bigint: true })]);
+  return aInfo.isDirectory() && bInfo.isDirectory() && !aInfo.isSymbolicLink() && !bInfo.isSymbolicLink()
+    && sameObservedObject(aInfo, bInfo);
+}
+
 async function realDirectory(directory, { create = false } = {}) {
   if (create) {
     try { await lstat(directory); }
@@ -162,7 +192,7 @@ async function realDirectory(directory, { create = false } = {}) {
   const info = await lstat(directory, { bigint: true });
   if (!info.isDirectory() || info.isSymbolicLink()) fail('artifact receipt directory must be a real directory');
   const actual = await realpath(directory);
-  if (comparable(actual) !== comparable(directory)) fail('artifact receipt directory uses filesystem indirection');
+  if (!(await sameDirectoryObject(directory, actual))) fail('artifact receipt directory uses filesystem indirection');
   return path.resolve(actual);
 }
 
