@@ -1,6 +1,6 @@
 # DB-HO055: deterministic Windows CI test-file concurrency
 
-Status: preflight correction implemented and locally qualified; repeated exact-head hosted acceptance pending
+Status: implemented and accepted through repeated exact-head hosted Windows qualification
 
 Issue: [#290](https://github.com/iteathen/DevBridge/issues/290)
 
@@ -138,3 +138,11 @@ All checks ran on Windows without UAC/elevation, setup, installed-state mutation
 - syntax checks and `git diff --check`: passed.
 
 Commit and push the exact candidate, then require multiple complete hosted runs. Each accepted run must pass Windows serialized smoke preflight, Windows serialized full-suite/doctor, and both default Ubuntu jobs without rerunning failed jobs or widening a deadline. Close #290 only after that repeated exact policy evidence.
+
+## Accepted repeated hosted checkpoint
+
+[GitHub Actions run 33283831485 attempt 1](https://github.com/iteathen/DevBridge/actions/runs/33283831485/attempts/1) passed all four jobs on exact implementation commit `146539b3b6decac3de680c255cd394c882485082`. The Windows smoke job selected only the serialized preflight and completed in 1 minute 19 seconds; the Windows serialized full-suite/doctor job completed in 2 minutes 20 seconds. Both default Ubuntu jobs passed.
+
+[GitHub Actions run 33283831485 attempt 2](https://github.com/iteathen/DevBridge/actions/runs/33283831485/attempts/2) reran the complete four-job matrix on the same exact commit. Windows smoke again selected only the serialized preflight and passed in 1 minute 28 seconds; Windows serialized full-suite/doctor passed in 2 minutes 24 seconds; both default Ubuntu jobs passed again.
+
+Neither attempt reran only a failed job, widened a workflow/product/tool timeout, removed a test, skipped a platform, or changed production behavior. The repeated clean matrix satisfies #290's deterministic Windows CI acceptance. Close #290; keep the protected service refresh and physical Stage-7/Stage-8 gates independently open.
