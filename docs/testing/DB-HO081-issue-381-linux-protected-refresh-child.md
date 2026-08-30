@@ -1,6 +1,6 @@
 # DB-HO081 — issue #381 Linux protected-refresh child
 
-Status: implemented and locally qualified from exact baseline `8aac871906b68a6c03c03bbef042236b3b9166ad`. Hosted exact-head acceptance is pending.
+Status: accepted on exact implementation `06fbc494cca82e741adf9c3d9bddf43792339231` from baseline `8aac871906b68a6c03c03bbef042236b3b9166ad`.
 
 This checkpoint is one no-elevation prerequisite under #293. It does not make the Linux lifecycle authority reachable from setup, select an elevation program, install or refresh a service, authorize a provider, touch protected storage physically, run a VM or guest, execute repository code, or claim Linux readiness.
 
@@ -86,3 +86,7 @@ No CLI/setup route imports the child. No broker, elevation, service, provider, p
 ## Explicit next gates
 
 After #381, a separate issue may implement broker discovery plus one closed `sudo` or `pkexec` adapter, a platform-neutral child dispatcher, and ordinary-parent automatic re-observation. That later work must use the #381 request/result unchanged and must not add a generic privileged helper. Positive protected provider access, protected qcow2 storage, physical libvirt/systemd permission evidence, and the Linux guest C canary remain later #293/#115/#116 gates.
+
+## Hosted acceptance
+
+[GitHub Actions run 33293225945](https://github.com/iteathen/DevBridge/actions/runs/33293225945) passed Ubuntu smoke/full and Windows bounded-smoke/serialized-full plus doctor on exact implementation `06fbc494cca82e741adf9c3d9bddf43792339231`. The Ubuntu full job executed—not skipped—the real-filesystem state observer canary and rejected filesystem indirection and group-writable state while accepting the exact ordinary-owned directory. This accepts only the broker-independent child software boundary; it does not establish a broker route, invoke elevation, install or refresh a service, prove provider/storage access, run a VM/guest, or enable repository execution. Close #381 and keep parent #293 open.
