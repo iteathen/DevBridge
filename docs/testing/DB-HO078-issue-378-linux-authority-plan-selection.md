@@ -1,6 +1,6 @@
 # DB-HO078 — issue #378 Linux authority-plan selection
 
-Status: implementation and local qualification complete from exact baseline `18d630e1f33f5bafcacc0657406a4571d9a8e172`; exact-head hosted qualification is pending.
+Status: accepted on exact implementation commit `ddda1fc4248db505d8be2941fb83f13f8e4c8697` after complete local and hosted qualification.
 
 This checkpoint owns one read-only pre-setup composition boundary. It does not create or refresh an account, group, service, policy, provider, image, disk, environment, VM, or guest. It performs no elevation, provider connection, repository execution, publication, or model invocation.
 
@@ -90,3 +90,9 @@ Qualification completed in dependency order:
 One initial `npx node@22.16.0` preflight probe reproduced the documented npm-wrapper environment alteration in `environment-bootstrap-agent.test.js`: two unrelated child-runtime checks failed while the new focused selection tests passed. Running the same materialized exact Node executable directly removed the wrapper environment and passed the complete preflight inventory. The wrapper run is diagnostic context only and is not candidate evidence; no product code or test was changed to accommodate it.
 
 No setup, elevation, account/group/service/policy mutation, provider connection, protected-storage/VM/guest action, repository execution, or model invocation occurred. Commit and push the exact implementation, then require hosted Windows and Ubuntu smoke/full acceptance before closing #378. Parent #293 remains open afterward.
+
+## Accepted hosted checkpoint
+
+[GitHub Actions run 33289229145](https://github.com/iteathen/DevBridge/actions/runs/33289229145) passed all four jobs on exact implementation commit `ddda1fc4248db505d8be2941fb83f13f8e4c8697`: Ubuntu smoke in 26 seconds, Ubuntu full-suite/doctor in 40 seconds, Windows bounded smoke in 1 minute 27 seconds, and Windows serialized full-suite/doctor in 2 minutes 17 seconds.
+
+Close #378. This accepts only the read-only capability-to-plan selection boundary. Parent #293 remains open for protected Linux identity/service reconciliation, bounded setup/elevation, positive provider access, protected storage, and real libvirt/qcow2/guest qualification. No protected or physical effect occurred.
