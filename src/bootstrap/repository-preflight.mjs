@@ -10,6 +10,7 @@ const SYNTAX_FILES = [
   'bootstrap-devbridge.mjs',
   'scripts/build-standalone-artifacts.mjs',
   'src/bootstrap/standalone-artifact.mjs',
+  'src/bootstrap/standalone-source-loader.mjs',
   'src/install/permanent-entry-installer.mjs',
   'src/install/permanent-entry-installer/input-contract.mjs',
   'src/install/permanent-entry-installer/source-channel.mjs',

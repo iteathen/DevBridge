@@ -4,23 +4,21 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { compileStandaloneArtifact } from '../src/bootstrap/standalone-artifact.mjs';
+import { createStandaloneSourceLoader } from '../src/bootstrap/standalone-source-loader.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const plans = Object.freeze([
   Object.freeze({ source: 'src/install/permanent-entry-installer.mjs', target: 'install-devbridge.mjs' }),
   Object.freeze({ source: 'src/bootstrap/zero-state-bootstrap.mjs', target: 'bootstrap-devbridge.mjs' }),
 ]);
-const LOCAL_IMPORT = /(?:\bfrom\s*|(?:^|\n)\s*import\s*)['"](\.{1,2}\/[^'"]+)['"]/gu;
+const sourceLoader = createStandaloneSourceLoader({ root });
 
 function build(plan) {
-  const sourcePath = path.join(root, ...plan.source.split('/'));
-  const source = readFileSync(sourcePath, 'utf8').replace(/\r\n/gu, '\n');
-  const specifiers = [...source.matchAll(LOCAL_IMPORT)].map((match) => match[1]);
-  const modules = specifiers.map((specifier) => Object.freeze({
-    specifier,
-    bytes: readFileSync(path.resolve(path.dirname(sourcePath), specifier)),
-  }));
-  return compileStandaloneArtifact({ source, modules, provenance: plan.source });
+  return compileStandaloneArtifact({
+    entry: sourceLoader.read(plan.source),
+    load: sourceLoader.load,
+    provenance: plan.source,
+  });
 }
 
 const check = process.argv.slice(2).includes('--check');

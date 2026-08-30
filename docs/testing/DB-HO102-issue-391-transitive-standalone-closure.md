@@ -67,3 +67,15 @@ No compatibility overload for the old flat input remains. The builder and focuse
 - [ ] Nested/shared graph compilation is deterministic on current and exact Node 22.16.
 - [ ] Both generated entry stages remain directly executable and reproducible.
 - [ ] No installer API, production receipt/adoption, removal, setup/elevation, protected/provider/VM/guest, repository-code, model, or GPU/CUDA effect occurs.
+
+## Implementation candidate and local qualification
+
+The compiler now consumes only one logical entry record, one topology-free local-edge loader, and one bounded provenance line. It recursively compiles every relative edge bottom-up, reuses one exact logical identity for shared dependencies, and rejects cycles, byte conflicts, duplicate local specifiers, missing sources, extensionless relative edges, bare/package imports, and unsupported URL schemes. Module count, source bytes, compiled-module bytes, final artifact bytes, identities, and provenance are bounded. The old flat `source` plus direct `modules` contract was removed rather than retained as a compatibility path.
+
+Filesystem ownership is isolated in `standalone-source-loader.mjs`. That adapter alone maps slash-separated logical identities beneath one canonical absolute root, walks every component without following links, requires intermediate directories and a final regular file, rejects escape and filesystem indirection, and returns only logical identity plus exact bytes. The graph compiler contains no imports and no repository, installer, receipt, provider, VM, guest, or host-path identity.
+
+The real standalone builder now uses that adapter. Both generated entry stages are byte-identical to their accepted versions because their current graphs have only one level; regeneration and `--check` agree exactly. Tests execute a deterministic nested graph with a shared dependency and pin missing, cyclic, conflicting, duplicate, package/bare, unsupported-scheme, extensionless, root-escape, missing-file, directory-target, and link-indirection failures.
+
+Final local evidence on the exact supported Node 22.16.0 runtime passes the focused graph tests 4/4, bounded preflight at 2 standalone artifacts / 232 syntax files / 2 JSON files / 190 targeted tests, the architecture/product/standalone gates at 37 total / 36 passed / one expected Windows symlink skip, and the complete serialized suite at 2,015 total / 1,994 passed / 21 expected skips / zero failures in 197.2 seconds. The same focused test and preflight pass on the current runtime. Exact doctor reports `ok: true`, execution disabled, repository execution unavailable with no configured persistent-environment route, repository-code operations unusable, and coding-model adapters disabled. Diff and standalone reproducibility hygiene pass.
+
+Commit and push this isolated implementation candidate, then require all four hosted Ubuntu/Windows jobs plus doctor on its exact head before checking acceptance. No installer API, receipt, adoption, removal, setup/UAC, protected/provider/VM/guest mutation, repository execution, model invocation, or GPU/CUDA action occurred.
