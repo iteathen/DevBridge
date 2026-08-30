@@ -3,16 +3,19 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createPublicationFileOwnership } from '../src/install/permanent-entry-installer/publication-file-ownership.mjs';
 import { createPublicationTreeOwnership } from '../src/install/permanent-entry-installer/publication-tree-ownership.mjs';
+import { createOwnershipInventorySource } from '../src/install/permanent-entry-installer/ownership-inventory-source.mjs';
 
 test('publication ownership bricks expose only local port contracts', () => {
   assert.throws(() => createPublicationTreeOwnership(), /configuration/u);
   assert.throws(() => createPublicationFileOwnership(), /configuration/u);
+  assert.throws(() => createOwnershipInventorySource(), /identity/u);
 });
 
 test('publication ownership bricks remain free of neighboring topology identities', async () => {
   for (const relative of [
     '../src/install/permanent-entry-installer/publication-tree-ownership.mjs',
     '../src/install/permanent-entry-installer/publication-file-ownership.mjs',
+    '../src/install/permanent-entry-installer/ownership-inventory-source.mjs',
   ]) {
     const source = await readFile(new URL(relative, import.meta.url), 'utf8');
     assert.doesNotMatch(source, /(?:entry|wrapper|component|repository|provider|virtual machine|guest|uninstall|quarantine)/iu);

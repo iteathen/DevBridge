@@ -31,6 +31,11 @@ import {
   verifyInstalledComponent,
 } from '../install-devbridge.mjs';
 import { createOwnershipState } from '../src/install/permanent-entry-installer/ownership-state.mjs';
+import {
+  createPermanentEntryInventory,
+  ENTRY_PAYLOAD_INVENTORY_IDENTITY,
+} from '../src/install/permanent-entry-inventory.js';
+import { createApplicationRemovalSource } from '../src/app/application-removal.js';
 import { createConditionalItemSet } from '../src/runtime/conditional-item-set.js';
 import { createExactArtifactReceiptJournal } from '../src/runtime/exact-artifact-receipt.js';
 
@@ -411,6 +416,38 @@ test('production ownership receipts are exact, idempotent, and retain older comp
   assert.equal([...advanced.keys()].some((identity) => identity.includes('quarantine')), false);
 });
 
+test('production ownership receipts project a private read-only payload inventory without completing the application', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'devbridge-install-inventory-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fixture = fixtureRepository(root);
+  const home = path.join(root, 'home');
+  const args = parseInstallArgs(['--ref', 'main', '--home', home], { environment: {}, homeDirectory: root });
+  await installDevBridge(args, installDependencies(fixture.source));
+
+  const inventory = createPermanentEntryInventory({ home }, {
+    attributeObserverFactory: () => ({ async isReparse() { return false; } }),
+  });
+  const fragment = await inventory.snapshot();
+  const wrappers = ['entry.command', 'entry.primary', 'entry.shell'];
+  assert.equal(inventory.identity, ENTRY_PAYLOAD_INVENTORY_IDENTITY);
+  assert.deepEqual(fragment.coverage, ['application']);
+  assert.equal(fragment.mutationActive, false);
+  assert.deepEqual(fragment.items.map((item) => item.identity), [`component.${fixture.head}`, ...wrappers]);
+  assert.deepEqual(fragment.items[0].after, wrappers);
+  assert.equal(fragment.items.every((item) => item.scope === 'payload' && item.effects.length === 1), true);
+  assert.doesNotMatch(JSON.stringify(fragment), /[A-Z]:\\|ownership-receipts|\.devbridge-entry-install/u);
+  assert.equal(existsSync(path.join(home, 'entry', 'ownership-bindings.json')), false);
+
+  const source = createApplicationRemovalSource({
+    contributors: [{ identity: inventory.identity, snapshot: () => inventory.snapshot() }],
+    required: {
+      application: [ENTRY_PAYLOAD_INVENTORY_IDENTITY, 'runtime-payload'],
+      purge: ['authority-state'],
+    },
+  });
+  assert.deepEqual((await source.snapshot()).coverage, []);
+});
+
 test('an exact pre-receipt installation is adopted while foreign entry state is preserved', async (t) => {
   const root = mkdtempSync(path.join(tmpdir(), 'devbridge-install-adoption-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -513,6 +550,13 @@ test('installation activity is observable while receipt publication is pending a
   const installing = installDevBridge(args, { ...installDependencies(fixture.source), receiptJournalFactory });
   await entered;
   assert.deepEqual(observeInstallActivity({ home }), { active: true });
+  const inventory = createPermanentEntryInventory({ home }, {
+    receiptJournalFactory,
+    attributeObserverFactory: () => ({ async isReparse() { return false; } }),
+  });
+  const fragment = await inventory.snapshot();
+  assert.equal(fragment.mutationActive, true);
+  assert.deepEqual(fragment.coverage, []);
   resume();
   await installing;
   assert.deepEqual(observeInstallActivity({ home }), { active: false });

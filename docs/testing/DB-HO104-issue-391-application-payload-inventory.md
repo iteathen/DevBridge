@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: assessment, primary-source research, reassessment, and primitive-to-high-level plan; production removal remains unavailable
+Status: first implementation candidate locally qualified; hosted acceptance pending; production removal remains unavailable
 
 Coordinates with: #116, #159, #180, #391, DB-003, DB-009, DB-011, DB-020, DB-HO095, DB-HO098, DB-HO099, DB-HO100, DB-HO101, DB-HO102, and DB-HO103.
 
@@ -94,3 +94,13 @@ Pending reservations, active publication, corrupt history, unknown items, ambigu
 ## Nonclaims
 
 This plan does not authorize removal of the canonical installation or any disposable fixture. It does not claim complete application coverage before every required payload producer or exact-absence gate lands. It does not establish terminal receipt retirement, reinstall/uninstall operation rotation, a mutual exclusion boundary between removal and publication, a supported uninstall CLI, Stage-0 retirement, PATH/service/configuration purge, or real provider/environment destruction. It changes no VM, guest, setup, UAC/elevation, repository-execution, model-adapter, or GPU/CUDA state.
+
+## First implementation checkpoint
+
+The first primitive boundary is implemented without exposing a removal command. `exact-value-inventory` is one import-isolated, topology-neutral dynamic owner over injected source, activity, record, and action-observation ports. It validates and sorts a bounded acyclic item set, keeps private exact-JSON descriptors behind opaque effect identities, withholds coverage for an incomplete source, withholds binding during active mutation, preserves ambiguous state as a protection, re-observes source/activity/action state before accepting a binding, and persists one exact revisioned binding per item for restart and partial-absence reconciliation.
+
+The Permanent Entry-local source reads the accepted immutable ownership receipt journal, validates its protected control and selected reservation/completion values, ignores unrelated receipt values without learning their protocols, maps only completed component/entry payloads, and reports any selected reservation as incomplete. The production composition assigns wrapper-before-component removal relationships locally and uses the accepted installer activity observation and exact artifact action adapter. A disposable real-installation test proves the projection is read-only, path/private-descriptor free, and incapable of completing application coverage while the independently required runtime-payload contributor is absent.
+
+Final-byte local qualification on current Node 24.15.0 and exact minimum Node 22.16.0 passes the focused boundary set (31/31 on exact Node), both bounded preflights at 2 standalone artifacts / 239 syntax files / 2 JSON files / 196 targeted test files, and the exact architecture/product/standalone gate at 45 total / 44 passed / one expected Windows symlink skip. The complete exact serialized suite passes 2,046 total / 2,025 passed / 21 expected platform skips / zero failures in 234.8 seconds. Exact doctor reports `ok: true`, coding adapters disabled, and repository execution unavailable/fail-closed because no persistent-environment route is configured. Standalone regeneration and diff hygiene pass.
+
+Commit and push this isolated candidate, then require exact-head Ubuntu/Windows smoke/full plus doctor before accepting the boundary. Keep #391 open and proceed next to runner/cache ownership receipts. Application and purge coverage remain incomplete. No canonical installation or payload was removed, and no CLI, setup/elevation, protected service/provider/image/environment/VM/guest effect, repository execution, model invocation, or GPU/CUDA action occurred.

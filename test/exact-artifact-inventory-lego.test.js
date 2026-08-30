@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const isolated = [
   '../src/runtime/exact-artifact-inventory.js',
+  '../src/runtime/exact-value-inventory.js',
   '../src/runtime/bound-effect-actions.js',
 ];
 
