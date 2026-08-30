@@ -1,169 +1,124 @@
 # GPU execution profiles
 
-Status: roadmap architecture for post-recovery GPU support. This document does not claim that DevBridge currently exposes a qualified GPU to repository guests.
+Status: active roadmap architecture. DevBridge does not yet claim that a production execution profile has a physically qualified GPU.
 
-Implementation tracker: #186 owns the first real-CUDA Level 0–2 path. Issue #162 owns later generalized compute routing.
+Primary ownership:
+
+- #383 — exclusive whole-physical-device claim/release authority, provider assignment adapters, transfer recovery, and native-device handoff qualification;
+- #186 — CUDA-specific compile/emulation/compatibility/native semantic qualification and tooling that consumes device/profile capabilities but does not own physical assignment;
+- #162 — later generalized compute requirement detection and routing.
 
 ## Sequencing rule
 
-GPU/CUDA work follows the installer/runtime-recovery and reconstructable-VM work. It must not displace the active recovery path needed to make DevBridge installable, recoverable, and able to reconstruct missing execution environments.
-
-The intended order is:
-
-1. finish the application-management/install/re-entry path sufficiently that a configured installation can recover its accepted runtime and services without manual source or hypervisor surgery;
-2. finish the reconstructable execution-profile lifecycle sufficiently that `create`, diagnosis, `rebuild`, supported operator UX, and exact image recovery work on the target host;
-3. under #186, prove one real supported GPU virtualization/device-assignment path with a deliberately small host/guest canary;
-4. under #186, add one real CUDA-capable execution profile and qualify actual kernel execution;
-5. under #162 and follow-ons, generalize compute-requirement detection, alternate software backends, automatic matching, and additional hardware/provider adapters afterward.
-
-This is deliberately different from building a broad GPU abstraction first. CUDA-dependent repositories need truthful real-device execution more urgently than they need CPU emulation of unrelated GPU APIs.
-
-## Relationship to the execution-profile model
-
-The existing ownership rule remains unchanged:
+GPU-capable profiles remain specializations of the existing execution-profile VM architecture:
 
 > **Execution profiles own persistent VMs. Repositories own isolated workspaces inside compatible execution-profile VMs.**
 
-GPU support is therefore a profile capability, not a repository-owned device or VM.
+Repository selection never grants physical-device authority. A repository may require a neutral capability such as native CUDA execution, but it may not select a PCI/PnP/device identifier, hypervisor partition, assignment handle, reset method, provider command, host driver, or another provider-native object.
 
-Examples such as `windows+cuda` and `linux+cuda` are useful operator/profile labels. Generic lifecycle, routing, workspace, recovery, and evidence contracts should reason about neutral capability requirements and device/resource state rather than hard-coding current repositories or current downstream consumers.
+For the native physical-device route, #383 is the first ownership layer. It proves safe exclusive assignment and return-to-root before CUDA-specific code may treat the device as usable. #186 then proves the requested CUDA semantics on the exact claimed environment/device generations. #162 can later route among those already-qualified capabilities.
 
-A repository may require a CUDA-capable profile. It may not select a host PCI address, physical device identifier, provider command, driver package path, VM attachment object, or another provider-native identity.
+Emulation or compatibility backends may still be useful CUDA evidence under #186, but they are separate capability classes. They never satisfy a requirement for native physical hardware or performance evidence and never become a fallback for a failed #383 direct-assignment canary.
 
-## First milestone: feasibility before framework
+## Persistent and ephemeral GPU state
 
-Before significant implementation, #186 runs one bounded feasibility canary on the actual target host/GPU/provider combination.
+A GPU-prepared profile remains prepared while it does not own the physical device.
 
-The canary must establish all of the following before architecture is committed around a platform mechanism:
+Persistent profile state may include:
 
-- the host/provider has a supported or deliberately accepted mechanism for exposing the physical GPU to the selected guest family;
-- the selected device can be assigned/partitioned/exposed without granting repository code provider-management authority;
-- the guest can observe the expected device through a reproducible driver/runtime configuration;
-- a minimal CUDA program can allocate device memory, execute a kernel, synchronize, and return a verified result;
-- shutdown/start and one reconstruction cycle do not require manual hypervisor surgery to restore device readiness.
+- guest OS and profile identity;
+- installed vendor driver package/module state;
+- CUDA runtime/toolkit and compiler state;
+- profile-level configuration;
+- qualification tooling and compatible software generations.
 
-A successful `nvidia-smi` probe alone is insufficient. The milestone requires real CUDA kernel execution.
+Exclusive physical claim state is separate and ephemeral:
 
-If the intended Windows/Hyper-V path is unsupported or materially unsuitable for the actual hardware/host version, stop and select another supported execution path rather than hiding the constraint behind a generic `gpu: true` capability.
+- physical function/device assignment;
+- live device instance;
+- DMA/IOMMU ownership;
+- MMIO and interrupt mappings;
+- runtime contexts, kernels, allocations, and device memory.
 
-## Minimal real-CUDA path
+Normal release must not uninstall the guest driver/toolkit. Runtime/device state is not preserved across ownership transfer.
 
-The first useful GPU implementation should be intentionally narrow.
+## Native physical-device path — #383
 
-### Profile image/toolchain
+The neutral authority is documented in `exclusive-physical-device-authority.md`. It owns the stable local device generation, exclusivity fence, exact claim handle, transition journal, provider observation reconciliation, quarantine, and recovery state.
 
-Provide one reproducible CUDA-capable profile image/tooling generation with the minimum supported compiler/runtime/development tools required by the target repositories.
+Provider adapters own the actual host-specific mechanics. The generic authority and execution-profile lifecycle do not learn provider identities or commands.
 
-The profile owns shared driver/runtime/toolchain state where that state is genuinely profile-wide. Repository-local build outputs, dependency trees, generated kernels, caches with project semantics, and scratch remain workspace-local.
+A native claim is not ready merely because a device is enumerated. Readiness requires all relevant gates to be true, including:
 
-### Provider attachment
+1. exact locally approved, non-host-critical physical-device generation;
+2. complete safe assignment unit / isolation boundary;
+3. exact admitted execution-environment generation;
+4. compatible durable guest preparation generation;
+5. provider-observed exclusive assignment to that environment;
+6. guest rebind or controlled restart using the already-installed driver;
+7. independent native-device qualification;
+8. exact assignment/device/environment generations bound to the evidence.
 
-Provider adapters own host-specific device discovery, assignment/partitioning, provider lifecycle, and provider-native identifiers.
+Release must drain/fence guest work, remove the exact assignment, and observe ownerless root-safe state before another environment may claim the device. Ambiguous release is quarantine, not availability.
 
-Generic environment lifecycle consumes only bounded neutral state such as:
+Live hot-remove/hot-add is not required for the first implementation. A controlled guest stop/start around transfer is acceptable when that is the proven safe provider boundary.
 
-- requested capability class;
-- device availability/readiness;
-- assignment generation/identity handle;
-- exclusivity/share policy where relevant;
-- compatibility result;
-- recoverability/readiness state.
+## CUDA qualification — #186
 
-Do not manufacture one false cross-platform GPU mechanism. Hyper-V and libvirt/QEMU may expose materially different capabilities and failure semantics behind the same local contract.
+CUDA-specific qualification remains independent of physical assignment. For a native NVIDIA claim it must prove, at minimum, real device visibility through the ordinary guest driver, compatible runtime/driver state, memory allocation/transfer, kernel launch, synchronization, result transfer, and exact result verification.
 
-### Guest qualification
+`nvidia-smi`, compiler presence, or device enumeration alone is insufficient.
 
-A CUDA-ready claim requires runtime evidence from inside the exact profile environment, including at least:
+#186 may also qualify emulated or compatibility/translated CUDA backends. Evidence must state which class was actually proved:
 
-- compiler/runtime availability as applicable;
-- actual device visibility;
-- driver/runtime compatibility;
-- device class / compute capability or equivalent bounded compatibility evidence;
-- successful memory transfer plus kernel execution;
-- exact profile/image/environment generation used for the result.
+- compile validity;
+- emulated functional validity;
+- compatibility/translated-device validity;
+- native-device functional validity;
+- hardware-specific validity;
+- performance validity.
 
-The first milestone does not need automatic repository source inspection. Explicit locally configured profile requirements are sufficient to prove the execution path.
+No lower evidence class silently implies a higher one.
 
-### Lifecycle and recovery
+## Execution-environment composition
 
-GPU device state must compose with the same execution-environment lifecycle used for ordinary profiles.
+The shared execution-environment lifecycle is a composition consumer, not another device owner.
 
-At minimum:
+`create`, `rebuild`, `reset`, and `recreate` must use the same device authority and provider adapter studs rather than growing separate GPU/PCI implementations. A physical-device claim may be composed before start or through a proven live-rebind path, but the lifecycle sees only neutral requirement/claim/evidence handles.
 
-- `create` can materialize the CUDA-capable profile from approved durable configuration;
-- `doctor` distinguishes host GPU presence, provider assignment readiness, guest CUDA readiness, and repository execution readiness;
-- deleting/replacing the guest system disk and using supported `rebuild` returns the logical GPU profile to qualified CUDA readiness without manual device reconfiguration outside DevBridge;
-- provider/device unavailability produces a typed blocker and never falls back to host execution or CPU execution while claiming CUDA evidence;
-- reset/recreate semantics, when those lifecycle operations are production-ready, preserve the same local authority split.
+Profile rebuild must reconstruct durable GPU preparation from approved inputs. It must not assume ownership of a physical device merely because the profile is GPU-capable.
 
-## Truthful evidence
+## Setup, doctor, and routing truth
 
-GPU evidence must distinguish what was actually proved.
+Setup is allowed to propose explicit local device/profile changes; read-only diagnosis is not.
 
-At minimum keep separate:
+Operator-visible evidence should keep these facts separate:
 
-- **compile validity** — CUDA source/toolchain can compile for a declared target;
-- **functional device validity** — the workload executed on a real compatible CUDA device and produced the expected result;
-- **hardware-specific validity** — claims tied to a particular device/driver/compute-capability class;
-- **performance validity** — timing/throughput claims gathered under a qualified hardware/resource configuration.
+- physical device observed and locally eligible;
+- provider direct-assignment mechanism qualified;
+- current physical claim owner/availability/recovery state;
+- guest software preparation ready/stale/blocked;
+- native device rebind ready;
+- CUDA semantic qualification ready;
+- performance evidence available only when separately qualified.
 
-A CPU fallback, software Vulkan/OpenCL implementation, compile-only pass, or mocked device is never evidence of real CUDA execution or performance.
+A generic `gpu: true` or `cuda: true` flag is not evidence of any of these.
 
-## LEGO boundaries
+Routing consumes neutral capabilities and exact evidence. It never receives provider-native device identities and never falls back to direct-host repository execution when a required GPU capability is absent.
 
-Preserve the existing module-isolation rule.
+## Stop conditions
 
-- Execution-profile lifecycle does not name or depend on current downstream consumers.
-- Repository requirement/routing logic does not know provider-native GPU identities.
-- Provider adapters do not know repository names or project-specific build semantics.
-- CUDA toolchain/image code owns CUDA-specific package/runtime details but not provider lifecycle.
-- Device/runtime attestation reports bounded local facts; it does not become routing authority by itself.
-- Composition decides the temporary topology: repository requirement -> compatible profile -> physical environment -> provider/device attachment.
+Do not broaden architecture to hide a failed direct-assignment canary. Stop at the owning decision boundary if evidence shows, for example:
 
-## Follow-on generalized compute routing
+- the target host/provider cannot expose the required physical function safely;
+- the device's assignment unit includes a host-critical sibling;
+- reset/root-return cannot prove the previous environment lost DMA/device authority;
+- the ordinary guest driver cannot rebind without unsupported surgery;
+- repeated transfer wedges the device/host;
+- implementing the path would require provider-native identities in generic lifecycle/routing code.
 
-Issue #162 remains useful, but it follows #186 rather than blocking it.
+GPU-P/PV, vGPU/mediated sharing, SR-IOV sharing, translation layers, and CUDA emulation are separate designs/capability classes, not automatic fallbacks for those failures.
 
-After one real device path is proven, #162 can generalize:
+## Current completion boundary
 
-- deterministic repository requirement detection;
-- compile-only versus device-execution versus performance requirements;
-- automatic capability matching;
-- CPU-backed OpenCL/Vulkan functional qualification where useful;
-- framework CPU fallback only when the workload is semantically compatible;
-- additional real-hardware or remote/cloud adapters;
-- common result-validity vocabulary.
-
-The generalized routing layer must be able to consume the already-qualified #186 real-CUDA profile without changing its provider or lifecycle implementation.
-
-## Completion levels
-
-### Level 0 — feasibility proved
-
-#186 proves one actual host/GPU/provider/guest combination runs a real CUDA kernel through a bounded canary and its device lifecycle constraints are understood.
-
-### Level 1 — usable CUDA profile
-
-#186 provides one execution profile that can be created, started, diagnosed, rebuilt, and used by repository workspaces for real CUDA compile + kernel execution with truthful evidence.
-
-### Level 2 — integrated GPU support
-
-#186 integrates setup/reconfiguration discovery/proposal, explicit routing into the profile, `doctor` readiness/failure, and verification evidence bound to exact device/profile/environment identity.
-
-### Level 3 — generalized compute routing
-
-#162-style detection and alternative compute backends can automatically select among qualified execution implementations without weakening evidence semantics.
-
-## Current coordination
-
-Primary owners:
-
-- #186 — first real-CUDA Level 0–2 implementation/qualification;
-- #138 — execution-profile VM/workspace ownership;
-- #169–#178 — reconstructable environment/image/lifecycle and backing-store authority;
-- #116 / #103 — setup, re-entry, provider/profile discovery and operator UX;
-- #115 — real provider/security/resource qualification;
-- #180 / #182 — whole-stack application/runtime recovery needed before VM-dependent work is dependable;
-- #162 — later generalized compute-capability detection/routing and alternate backends.
-
-#186 remains blocked behind the active recovery/install work rather than competing with it.
+The neutral exclusive physical-device authority and fake-provider recovery qualification are implemented on the #383 feature branch. Real Windows WHP/VPCI and Linux libvirt/VFIO assignment adapters, target-host feasibility canaries, guest rebind proof, and real CUDA qualification remain outstanding and must be demonstrated on the actual hardware before DevBridge reports native GPU readiness.
