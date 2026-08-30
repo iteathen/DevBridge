@@ -1,6 +1,6 @@
 # DB-HO084 — issue #384 fixed Linux CLI authentication broker
 
-Status: implementation planned on branch `stage8/362-protected-activity-channel` from accepted #382 documentation head `ca8ee61875d5429066d48777be896468677f91ae`.
+Status: implemented and locally software-qualified on branch `stage8/362-protected-activity-channel` from accepted #382 documentation head `ca8ee61875d5429066d48777be896468677f91ae`; exact-head hosted Ubuntu/Windows acceptance remains required.
 
 This is a no-elevation software prerequisite under #293. Development and qualification must not invoke `sudo`, `pkexec`, UAC, the protected refresh child, a service mutation, a provider or protected-storage operation, a VM or guest, repository execution, or a coding model.
 
@@ -64,6 +64,36 @@ No setup or CLI module imports the new brick in this issue. This keeps authentic
 6. Add the new sources/tests to repository preflight. On Ubuntu, execute the real read-only `/usr/bin/sudo` identity canary but never invoke it.
 7. Run current and exact Node 22.16.0 focused tests, wider Linux authority tests, preflight, repository-execution architecture gates, the complete serialized suite, doctor, generated-artifact identity, and diff hygiene.
 8. Commit/push the isolated implementation and require exact-head Ubuntu/Windows smoke/full CI. Close only #384 after durable acceptance; keep #293 open.
+
+## Implementation checkpoint
+
+The implementation preserves four separate owners:
+
+- `protected-operation-dispatcher.js` is import-free and owns only bounded UTF-8 framing, one JSON object, one `perform(subject)` call, JSON-safe bounded output, and path-free failure normalization. It has no platform, authentication, setup, service, provider, repository, VM, or child identity.
+- `linux-cli-authentication-origin.js` owns only exact effective-root invocation evidence and the three `SUDO_USER`, `SUDO_UID`, and `SUDO_GID` data properties. It projects one frozen non-root principal and never performs NSS lookup or grants capability.
+- `linux-cli-authentication.js` owns the fixed CLI authentication topology. Observation accepts only the canonical root/root set-user-ID `/usr/bin/sudo` file beneath fixed root-owned non-writable parents. Attempt construction accepts one deeply frozen bounded JSON subject, verifies the fixed executable and launch identities before and after the attempt, rebuilds a fixed non-secret environment, and invokes only `/usr/bin/sudo -- <current-node> <fixed-entry>` through the existing no-shell runner. The result is path-free and non-authoritative; child stdout cannot establish success.
+- `linux-cli-authenticated-entry.js` is the sole explicit composition edge. It attaches the dispatcher to the unchanged #381 protected child and the submitter observer, validates both contracts at the seam, emits only bounded dispatcher output, and exits successfully only for an exact ready child result whose serialized bytes match the dispatched bytes.
+
+All new public requests and injected port bags are exact plain data objects with no hidden, accessor, symbol, or unknown properties. JSON values reject mutable graphs, cycles, accessors, custom prototypes, non-finite/non-integer values where applicable, symbolic properties, over-depth/over-count data, NUL text, and oversized frames. Fixed-file observation uses canonical `lstat`/`realpath`, a no-follow read handle, before/descriptor/after identity comparison, a single link, bounded size, and explicit close failure handling. Executable mode is required for `sudo` and Node, while the Node-loaded JavaScript entry is correctly treated as non-executable source.
+
+No setup or CLI module imports these bricks, so this commit cannot reach authentication in production. There is no legacy request, caller-selected program/argv/environment, password channel, `sudo` option, `pkexec` fallback, shell, generic privileged helper, or second attempt path.
+
+## Local qualification evidence
+
+The supported exact runtime was the official Node.js `v22.16.0` Windows x64 archive with SHA-256 `21c2d9735c80b8f86dab19305aa6a9f6f59bbc808f68de3eef09d5832e3bfbbd`, verified against Node's published `SHASUMS256.txt` before use.
+
+- Direct new-module tests: 22 total, 21 passed, one expected Windows skip, zero failures.
+- Exact-Node wider Linux authority boundary: 69 total, 67 passed, two expected Windows skips, zero failures.
+- Current and exact-Node repository preflight: two standalone artifacts, 215 syntax files, two JSON files, and 176 targeted test files passed.
+- Exact-Node repository-execution architecture gate: 34 total, 33 passed, one expected Windows symlink skip, zero failures.
+- Exact-Node complete serialized suite: 1,899 total, 1,879 passed, 20 expected platform skips, zero failures in 189 seconds.
+- Exact-Node doctor passed and truthfully reported repository execution unavailable because no local persistent-environment execution route is configured. The standalone artifact regeneration check and diff hygiene passed.
+
+The Windows host skipped the production Linux observation as designed. Hosted Ubuntu must execute—not skip—the read-only `/usr/bin/sudo` identity canary on the exact implementation head. No test invoked `sudo`, `pkexec`, UAC, an authenticated child, protected mutation, service/provider/storage effects, a VM or guest, repository execution, or a coding model.
+
+## Remaining acceptance and downstream boundary
+
+Commit and push the isolated implementation, require the exact-head Ubuntu/Windows smoke/full matrix, and inspect Ubuntu output for the real fixed-program canary. Only then document hosted acceptance and close #384. Parent #293 remains open: a later issue must attach configuration-selected authentication observation/attempt to #382 from setup, preserve one-attempt/fresh-reobservation policy, and eventually obtain physical Linux protected provider/storage and guest C-canary evidence. This software checkpoint does not make DevBridge operational for repository code.
 
 ## Explicit downstream gates
 
