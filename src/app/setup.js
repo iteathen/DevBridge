@@ -13,6 +13,7 @@ import { createSetupEnvironmentProfileConfiguration } from './setup-environment-
 import { reconcileSetupImageDistributionPolicy } from './setup-image-distribution-policy.js';
 import { reconcileSetupProfileSelection } from './setup-profile-selection.js';
 import { reconcileSetupWindowsActivationPolicy } from './setup-windows-activation-policy.js';
+import { reconcileSetupLifecycleAuthority } from './setup-lifecycle-authority.js';
 import { executionWorkspaceIdentity } from './execution-profile-routing.js';
 import { discoverGitHubSetupScope } from '../setup/github-discovery.js';
 import { installStableDevBridgeCommand } from '../setup/path-installation.js';
@@ -24,7 +25,6 @@ import { createUbuntuSetupAuthority, defaultUbuntuPackageSnapshot } from '../set
 import { createUbuntuEnvironmentProfileSource } from '../setup/ubuntu-environment-profile-source.js';
 import { establishUbuntuReleaseAuthority } from '../setup/ubuntu-release-authority.js';
 import { requestWindowsLifecycleAuthorityElevation } from '../setup/windows-lifecycle-authority-elevation.js';
-import { reconcileWindowsLifecycleAuthorityReadiness } from '../setup/windows-lifecycle-authority-readiness.js';
 import { createLinuxEnvironmentProfileConfiguration } from '../setup/linux-environment-profile-configuration.js';
 import { createLinuxEnvironmentActivityProjection } from '../setup/linux-environment-activity-projection.js';
 import { createWindowsEnvironmentProfileConfiguration } from '../setup/windows-environment-profile-configuration.js';
@@ -715,7 +715,7 @@ export async function runDevBridgeSetup({
   discover = discoverGitHubSetupScope,
   selectRepositories = selectRepositoryDefaults,
   prerequisiteReconciler = reconcileSetupPrerequisites,
-  lifecycleAuthorityReconciler = reconcileWindowsLifecycleAuthorityReadiness,
+  lifecycleAuthorityReconciler = reconcileSetupLifecycleAuthority,
   profileConfigurationPublisher = createSetupEnvironmentProfileConfiguration,
   profileConfigurationFactory = createPlatformEnvironmentProfileConfiguration,
   resourceConflictFactory = createSetupResourceConflict,

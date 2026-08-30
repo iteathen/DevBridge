@@ -53,3 +53,33 @@ The setup-local result remains bounded and path-free. It may report readiness, w
 ## Explicit nonclaims
 
 This slice cannot prove an installed Linux systemd service, real authentication success, protected libvirt/qcow2 access, provider/storage separation, VM/guest operation, repository execution, or the Linux C canary. Physical Linux and Windows acceptance remain separate Stage 7/8 gates. No fallback to host repository execution or model execution is introduced.
+
+## Implementation checkpoint
+
+The implementation preserves four independent ownership layers:
+
+- `current-principal-observation.js` is import-free and owns only exact principal evidence. Its request is empty; its five neutral observation ports project one local name/UID/GID record plus real/effective numeric credentials. Root, credential drift, widened/hidden/symbolic/accessor evidence, invalid names/IDs, and observation failures return bounded unavailable evidence.
+- `local-principal-observation.js` is the sole fixed Node/OS edge. It projects only `os.userInfo()` username/UID/GID and the current real/effective process UID/GID calls. It reads no environment or GitHub identity and grants no capability.
+- `linux-setup-lifecycle-authority.js` is the sole Linux setup topology root. It accepts only state identity and the exact two-method configuration contract. It attaches principal observation, accepted #382 readiness, the neutral one-attempt policy, and accepted #384 authentication through narrow replaceable ports. The attempt receives only `{ subject }`; its result is ignored. Only the fresh policy observation can establish authority readiness. Protected configuration is inspected through a fresh neutral lifecycle client, reconciled only when inspection is not ready, and inspected again through a new client. Inspection cannot claim mutation.
+- `setup-lifecycle-authority.js` is the application composition edge. It maps the complete existing setup request to the existing Windows adapter unchanged or projects only Linux-local state/configuration into the Linux root. Unsupported platforms return a fixed fail-closed result. `setup.js` now defaults to this root and no longer imports the Windows implementation directly.
+
+All new public requests, result records, injected port bags, and adapter records reject unknown, hidden, accessor, or symbolic fields at their owning seam. Setup output contains no principal, subject, executable, authentication output, path, provider/service object, or child result. No broker discovery, `pkexec`, fallback, password channel, caller-selected command/argv/environment/path, compatibility route, or direct host execution was added.
+
+## Local qualification evidence
+
+The exact supported runtime was the official Node.js `v22.16.0` Windows x64 archive with SHA-256 `21c2d9735c80b8f86dab19305aa6a9f6f59bbc808f68de3eef09d5832e3bfbbd`, verified before each use.
+
+- Final exact-Node focused setup/authentication/configuration boundary: 89 total, 87 passed, two expected Windows skips, zero failures.
+- Current and final exact-Node repository preflight: two standalone artifacts, 219 syntax files, two JSON files, and 178 targeted test files passed.
+- Current repository-execution/setup/product integrity gate: 31/31 passed.
+- Final exact-Node complete serialized suite: 1,912 total, 1,891 passed, 21 expected platform skips, zero failures in 189 seconds.
+- Final exact-Node doctor passed and truthfully reported repository execution unavailable because no persistent-environment route is configured; coding-model adapters remained disabled.
+- Diff hygiene passed. Both uniquely named checksum-verified temporary Node trees were removed after qualification.
+
+A final semantic review tightened configuration observation to require `changed: false`. That byte change invalidated the first complete-suite evidence, so focused, preflight, and the complete exact-runtime suite were rerun on the final candidate rather than reusing stale evidence.
+
+No test or development command invoked `sudo`, `pkexec`, UAC, the authenticated entry, protected service/provider/storage mutation, a VM or guest, repository execution, or a coding model. Hosted Ubuntu must execute—not skip—the production read-only current-principal canary, while authentication remains mocked and uninvoked.
+
+## Remaining acceptance
+
+Commit and push the exact implementation, require Ubuntu/Windows smoke/full CI, then add the hosted evidence in a documentation-only commit. Close only #385 after that exact documentation head is green. Parent #293 and physical issues #372/#373 remain open.
