@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: implemented candidate; no production producer or removal route exists
+Status: accepted primitive; no production producer or removal route exists
 
 Coordinates with: #116, #159, #391, DB-003, DB-009, DB-011, DB-020, DB-HO095, DB-HO098, and DB-HO099.
 
@@ -120,3 +120,9 @@ Microsoft's [file-name contract](https://learn.microsoft.com/en-us/windows/win32
 Reassessment and scoped plan: keep the receipt module import-isolated. For Windows only, require equal volume roots, inspect every component of both spellings with `lstat`, reject any symbolic-link/junction evidence, and accept a different spelling only when both directory endpoints carry the same nonzero inode plus compatible device identity. Preserve strict canonical spelling equality on non-Windows platforms. Re-run focused current/exact tests, preflight, architecture/product/standalone, complete exact serialized suite, doctor, regeneration/diff hygiene, and a fresh exact-head hosted matrix. Do not rerun the rejected workflow as though it were acceptance.
 
 Corrected local candidate evidence passes 15/15 focused tests on current and exact Node 22.16.0, preflight at 2 artifacts / 231 syntax / 2 JSON / 190 targeted files, architecture/product/standalone at 37 total / 36 passed / one expected Windows symlink skip, and the complete exact-Node serialized suite at 2,010 total / 1,989 passed / 21 expected skips / zero failures in 194.9 seconds. Exact doctor remains green and VM-route fail-closed; standalone regeneration and diff hygiene pass. Require a fresh exact-head hosted matrix to prove the `RUNNER~1` regression itself before accepting the candidate.
+
+## Hosted acceptance
+
+Exact corrected implementation `a4fa9b1b9a9aadebeb524af35b630dc3701574bf` passed Ubuntu smoke/full and Windows bounded-smoke/serialized-full plus doctor in [GitHub Actions run 33318685645](https://github.com/iteathen/DevBridge/actions/runs/33318685645). The Windows bounded preflight ran the receipt tests below the same `RUNNER~1` temp spelling that rejected the predecessor, so this run directly accepts the short/long same-object correction rather than merely relying on a local path without an alias.
+
+Accept the neutral receipt-journal primitive. Keep #391 open. The next cycle must assess the production Permanent Entry producer and installer-lock composition; adoption policy, receipt self-inventory/retirement, removal-operation rotation, complete application/purge coverage, supported CLI, and protected/physical/GPU work remain unimplemented or separately gated. Require the documentation-only head to pass the complete matrix before starting that cycle.
