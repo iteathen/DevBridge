@@ -99,3 +99,13 @@ The fake-provider suite proves the control semantics independent of a physical p
 - cross-instance lifecycle locking.
 
 Physical Windows/Linux provider qualification is intentionally still outstanding.
+
+The first non-elevating Windows host checkpoint is recorded in
+[`testing/issue-383-windows-vpci-read-only-host-checkpoint-2026-08-30.md`](testing/issue-383-windows-vpci-read-only-host-checkpoint-2026-08-30.md).
+It proves that the target host has a working WHP partition surface, the VPCI API exports,
+and platform DMA-protection capability. It does **not** prove physical assignment. The
+observed GPU is currently host-critical because it is the only display adapter and drives
+the attached display, and VPCI resource allocation is denied to the current medium-integrity
+process even for an explicitly empty resource. Production assignment therefore remains
+fail-closed pending a safe alternate host display/control path and an explicitly authorized
+privileged provider boundary.
