@@ -86,3 +86,7 @@ Focused Linux qualification passes 214 total / 208 passed / 6 expected Windows s
 ## Stop conditions
 
 Stop rather than implement if the correction requires caller-selected group authority, a generic privileged helper, a provider object/path/unit in the identity components, a second refresh state machine, compatibility with the unsafe name-only contract, or any real privileged/provider/VM effect during hosted qualification.
+
+## Hosted acceptance
+
+[GitHub Actions run 33291463555](https://github.com/iteathen/DevBridge/actions/runs/33291463555) passed Ubuntu smoke/full and Windows bounded-smoke/serialized-full plus doctor on exact implementation commit `39392f00a15a97bee43270e9cb2e80025bbcf88f`. Close #380. This accepts the required-group identity software boundary only; #293 remains open for bounded protected setup/elevation, positive provider access, protected storage, and physical libvirt/qcow2/guest evidence. No privileged or physical effect occurred.
