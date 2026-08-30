@@ -152,3 +152,9 @@ The failure reproduces locally under the supported Node 22.16.0 runtime and not 
 Keep exact opened-handle identity as device + inode + birth/change nanoseconds. For the non-following pathname observations, compare inode + birth/change nanoseconds; the pathname remains in the same parent directory and must still be a non-symlink regular file of the exact bounded size. A separately reopened handle must match the complete opened-handle identity and exact owner bytes. This preserves replacement-record refusal while permitting normal cleanup on the supported Windows runtime.
 
 The corrected direct nested/parent set passes 20/20 under exact Node 22.16.0 and 20/20 under Node 24. The focused ownership/composition set passes 39/39, repository preflight passes with the same 200/2/162 inventory, and the complete corrected local suite again passes 1,806 total / 1,790 passed / 16 expected skips / zero failures. Requalify the exact correction in all four hosted jobs before acceptance.
+
+## Accepted hosted checkpoint
+
+[GitHub Actions run 33282936714](https://github.com/iteathen/DevBridge/actions/runs/33282936714) qualified exact correction commit `c546075d7e5525817cf4b46ba68a11607f4b3e82` on the supported hosted matrix. Ubuntu smoke, Ubuntu full-suite/doctor, Windows smoke/preflight/identity/installer, and the serialized Windows full-suite/doctor jobs all passed.
+
+This closes the structural contract in #254 and the exact-owner cleanup defect in #375. The accepted evidence does not broaden the explicit nonclaims: the protected service was not refreshed, no provider or VM was mutated, no guest was contacted, no repository-controlled code was executed, and the physical Windows/Linux C canaries remain pending.
