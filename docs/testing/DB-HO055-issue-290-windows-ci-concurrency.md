@@ -1,6 +1,6 @@
 # DB-HO055: deterministic Windows CI test-file concurrency
 
-Status: implemented and accepted on hosted Windows
+Status: reopened after a distinct Windows preflight recurrence; correction assessed, researched, and planned
 
 Issue: [#290](https://github.com/iteathen/DevBridge/issues/290)
 
@@ -84,3 +84,32 @@ No test path, assertion, skip, product timeout, provider behavior, guest behavio
 - no setup, UAC request, provider/service/VM operation, guest transport, installed-state mutation, or host repository-code execution occurred.
 
 Hosted CI run `33204210686` on exact implementation commit `60182c978f4d97c9d03b631258cc617d35fc5252` passed the complete Windows suite through the committed serialized step in 2 minutes 14 seconds, then passed the doctor smoke. The same run also passed Windows preflight/installer smoke and both Ubuntu jobs. No product timeout, test assertion, test file, or Windows coverage was removed. This satisfies #290 acceptance; #367 remains open independently because reusable process identity is a separate product problem.
+
+## Reopened preflight assessment
+
+The full-suite correction did not own the smoke preflight's test-file scheduling. Run `33212636105` attempt 1 on exact head `9cf4155df5887d8df1120dbf13b43a110ab7c420` failed the real CMake capability probe in `environment-bootstrap-agent.test.js` under the smoke preflight's machine-derived test-file concurrency; the same file passed in the serialized full suite on that SHA, and the unchanged smoke rerun passed. Run `33219166402` then reached the smoke job's fixed boundary twice under the same parallel preflight shape. Removing five redundant direct child syntax launches corrected that local composition cost, but it did not bind the remaining targeted-test phase to a deterministic Windows policy.
+
+Assessment is now bound to `stage8/362-protected-activity-channel` at `fd1d6e6536331fa7229d5a7e5a4ff6f188166ec6`. Repository preflight launches 162 selected test files in one Node test-runner process without a concurrency option. Many of those files launch their own Node, Git, compiler, or PowerShell children. The later Windows full suite is serialized, but the earlier Windows smoke preflight is not. This leaves the same external-process resource pressure independently reproducible at two verification tiers.
+
+## Refreshed primary research
+
+- Node.js 22.16.0 documents that `--test-concurrency` is the maximum number of test files run concurrently and otherwise defaults to `os.availableParallelism() - 1`: <https://nodejs.org/download/release/v22.16.0/docs/api/cli.html#--test-concurrency>.
+- Node.js 22.16.0 documents that process-isolated matching test files each run in a separate child process and that the concurrency option bounds those children: <https://nodejs.org/download/release/v22.16.0/docs/api/test.html#test-runner-execution-model>.
+- GitHub currently documents four processors and 16 GiB of RAM for public-repository `windows-latest` runners: <https://docs.github.com/en/actions/reference/runners/github-hosted-runners#supported-runners-and-hardware-resources>.
+
+Consequently the current Windows smoke preflight normally admits three test-file processes, before counting any children those files launch. This is still a test-resource ownership problem, not evidence for changing a product, compiler, PowerShell, Hyper-V, or guest timeout.
+
+An exact Node 22.16.0 timing probe forced the entire selected test-file phase to concurrency one without editing the repository. The targeted phase completed all 842 tests in 66.4 seconds and the complete preflight reached its result in approximately 101 seconds, within the existing two-minute step and three-minute job ceilings. That probe used an `npx`-materialized runtime and reproduced the already known two environment-bootstrap fixture failures caused by that wrapper's child-runtime environment; it is timing data only, not passing candidate evidence. Exact hosted Node 22 qualification remains the acceptance authority.
+
+## Reassessment and correction plan
+
+Keep scheduling at the CI/preflight composition edge. Production command, provider, guest, bridge, and lifecycle modules must remain unaware of Windows, GitHub Actions, or test-runner topology.
+
+1. Add one closed, neutral preflight option named `serializeTargetedTests`. Its CLI stud is exactly `--serialize-targeted-tests`; no raw concurrency number, environment field, executable, path, or arbitrary Node argument is accepted.
+2. Translate that local option inside repository preflight to Node's fixed `--test-concurrency=1` argument for the existing complete targeted-test list. Preserve process isolation, every selected test file, assertions, and the existing three-minute process bound.
+3. Reject duplicate, unknown, or value-bearing preflight arguments instead of silently ignoring them. Default callers retain the current machine-derived test-file scheduling.
+4. Split only the workflow smoke preflight into mutually exclusive Windows-serialized and non-Windows-default steps. Keep the existing two-minute step and three-minute job ceilings unless exact evidence disproves the measured margin.
+5. Add direct option/argument contract tests plus a static workflow proof. Keep the later full-suite policy unchanged.
+6. Run focused argument/workflow tests, repeated Windows serialized preflight, default preflight, the complete suite, exact diff checks, and hosted Windows/Ubuntu qualification. Require multiple accepted hosted Windows runs before closing #290 because one prior accepted run did not expose the separate smoke path.
+
+This correction performs no setup, elevation, service/provider/image/environment/VM/guest operation, repository execution through DevBridge, or physical canary.
