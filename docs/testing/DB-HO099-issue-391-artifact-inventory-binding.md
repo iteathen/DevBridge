@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: implementation candidate locally qualified; exact-head hosted acceptance pending and no production removal route exists
+Status: accepted primitive; no production removal route exists
 
 Coordinates with: #116, #159, #391, DB-003, DB-009, DB-011, DB-020, DB-HO095, and DB-HO098.
 
@@ -98,3 +98,9 @@ Final-byte qualification under the exact supported minimum Node 22.16.0 passes:
 - standalone regeneration check and diff hygiene: clean.
 
 No setup, elevation/UAC, protected service, provider, image, environment, VM, guest, repository-code execution, model-adapter, live installation-removal, or GPU/CUDA effect occurred. Commit and push this candidate on the isolated branch, then require exact-head Ubuntu/Windows smoke/full plus doctor before accepting it or beginning the next producer-composition assessment.
+
+## Hosted acceptance
+
+Exact implementation `34cdada887a8f327e77e08c5ea380c06ecb01a42` passed Ubuntu smoke/full and Windows bounded-smoke/serialized-full plus doctor in [GitHub Actions run 33316264686](https://github.com/iteathen/DevBridge/actions/runs/33316264686). The artifact inventory, bound-action bridge, aggregator, exact discovery digest, and their registered smoke coverage are accepted as lower bricks.
+
+Keep #391 open. Next assess exact production composition for the Permanent Entry ownership surface: installer mutation admission/activity, wrapper and selected/current generation receipts, staging/quarantine and retained-generation boundaries, and durable receipt retirement/operation rotation. Do not expose application removal until required producer coverage is complete; do not infer full purge or provider/environment cleanup from this acceptance.
