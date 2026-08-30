@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: assessed and planned; no production producer or removal route exists
+Status: implemented candidate; no production producer or removal route exists
 
 Coordinates with: #116, #159, #391, DB-003, DB-009, DB-011, DB-020, DB-HO095, DB-HO098, and DB-HO099.
 
@@ -82,3 +82,31 @@ The first production composition must separately design exact adoption. It may a
 - It does not make application or purge coverage complete.
 - It does not solve receipt retirement or completed-removal journal rotation by itself; the epoch merely provides the primitive identity needed by that later design.
 - No failure enables repository-code host execution.
+
+## Implementation
+
+`src/runtime/exact-artifact-receipt.js` now supplies the planned import-isolated journal through two neutral ports: `read()` and `accept(items)`. It validates bounded exact-JSON private values, safe unique item identities, explicit `created`/`adopted` provenance, canonical item ordering, one UUID epoch, strict contiguous revisions, previous-record SHA-256 chaining, and deterministic generation identity. Returned records and all nested values are frozen.
+
+Reading never creates state. It accepts only one real non-indirected journal directory containing canonical immutable numbered regular files with a single link, bounded size/count, and an exact complete digest chain. Extra entries, gaps, non-canonical bytes, malformed records, link aliases, structural overflow, and changed held-file observations fail closed.
+
+Acceptance requires a separate caller-created real scratch directory. It writes one exclusive temporary file, flushes its held descriptor, creates the never-replaced revision through a hard link, removes only a temporary file actually created by that attempt, and rereads the journal. Identical input is idempotent. Concurrent identical proposals reconcile one accepted revision; different proposals serialize through immutable revisions within a fixed retry bound. Deleting and recreating the disposable journal rotates its epoch and therefore its generation even when item bytes are identical.
+
+Node 22.16.0 on this Windows host reports a zero device identity through one of the path/held-handle APIs even when inode, size, link count, shape, and stable path observations match. The implementation therefore requires device equality everywhere except on Windows when either API reports zero; it never relaxes inode, size, link-count, regular-file, or before/after stability checks. A bounded five-millisecond retry permits readers to wait through the journal's own short hard-link publication interval while persistent link aliases remain rejected.
+
+The publication mechanism does not claim filesystem-independent power-loss atomicity or directory-metadata durability. A process or machine failure after target-link creation but before temporary-link removal can leave a two-link accepted file that subsequently fails closed and requires exact operator reconciliation. This slice deliberately does not infer cleanup authority for an unrecorded scratch name.
+
+The explicit repository preflight inventory includes the new source, functional tests, and LEGO regression. The LEGO test imports the source as a standalone data module and rejects local project imports or names belonging to an installer, component, service, repository, provider, VM, disk, or purge topology.
+
+## Local qualification
+
+Final candidate bytes passed:
+
+- focused functional and LEGO tests on exact Node 22.16.0: 15/15;
+- the same focused tests on the current Node runtime: 15/15;
+- exact Node 22.16.0 bounded repository preflight: 2 standalone artifacts, 231 syntax files, 2 JSON files, and 190 targeted test files;
+- repository-execution architecture plus product/standalone gates: 37 total, 36 passed, 1 expected Windows symlink-capability skip, 0 failed;
+- exact Node 22.16.0 complete serialized suite: 2,010 total, 1,989 passed, 21 expected platform skips, 0 failed in 192.6 seconds;
+- exact Node 22.16.0 doctor: `ok: true`, coding adapters disabled, repository execution unavailable/fail-closed because no routes are configured, and lifecycle `setup-reentry-required`;
+- standalone artifact regeneration and Git diff hygiene: clean.
+
+No setup, authentication/elevation, protected service/provider/storage, VM/guest, repository-code execution, model invocation, live installation/removal, or GPU/CUDA effect occurred. Commit and push this candidate only on the isolated branch, then require the exact-head Ubuntu/Windows smoke/full matrix plus doctor before accepting the primitive. Keep #391 open and do not wire a production producer or removal command from lower-brick test success alone.
