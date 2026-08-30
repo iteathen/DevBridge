@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: implemented and locally qualified; exact-head hosted acceptance pending
+Status: accepted; production removal remains unavailable
 
 Coordinates with: #391, DB-003, DB-009, DB-011, DB-020, and DB-HO095.
 
@@ -88,4 +88,4 @@ The argument-driven process fixture initially failed the complete suite because 
 - standalone artifact regeneration check and diff hygiene: clean; and
 - exact Node doctor: `ok: true`, coding adapters disabled, environment setup re-entry still required, and repository execution unavailable/fail-closed because no route is configured.
 
-Plan head `12f3a37e14b979fc3eda47fa3f4f55078f952ffd` passed all four hosted Ubuntu/Windows smoke/full jobs plus doctor in [run 33312776472](https://github.com/iteathen/DevBridge/actions/runs/33312776472). Commit and push the exact implementation, then require its complete hosted matrix before treating this slice as accepted. #391 remains open; no production composition, inventory producer, artifact effect, CLI route, or live removal authority exists.
+Plan head `12f3a37e14b979fc3eda47fa3f4f55078f952ffd` passed all four hosted Ubuntu/Windows smoke/full jobs plus doctor in [run 33312776472](https://github.com/iteathen/DevBridge/actions/runs/33312776472). Exact implementation `5ed56c5752e10a48cf5cd4a61f6dab5fb0805140` passed the same complete matrix in [run 33314309896](https://github.com/iteathen/DevBridge/actions/runs/33314309896), including Windows bounded preflight, serialized full suite, and doctor. The durable-journal slice is accepted. #391 remains open; no production composition, inventory producer, artifact effect, CLI route, or live removal authority exists.
