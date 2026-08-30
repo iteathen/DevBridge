@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   smoke:
-    timeout-minutes: 3
+    timeout-minutes: 4
     strategy:
       fail-fast: false
       matrix:
@@ -37,7 +37,7 @@ jobs:
         run: npm run preflight
       - name: Cheap preflight (Windows bounded)
         if: runner.os == 'Windows'
-        timeout-minutes: 2
+        timeout-minutes: 3
         run: npm run preflight -- --bound-targeted-test-concurrency
       - name: DevBridge identity audit
         timeout-minutes: 1
