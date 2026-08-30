@@ -1,4 +1,3 @@
-import { lstat, realpath } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import process from 'node:process';
@@ -14,6 +13,10 @@ import {
 import { reconcileLinuxLifecycleAuthorityRefresh } from './linux-lifecycle-authority-refresh-adapter.js';
 import { LINUX_LOCAL_IDENTITIES_PROTOCOL, observeLinuxLocalIdentities } from './linux-local-identities.js';
 import {
+  LINUX_LOCAL_STATE_IDENTITY_PROTOCOL,
+  observeLinuxLocalStateIdentity,
+} from './linux-local-state-identity.js';
+import {
   LINUX_PROVIDER_MANAGEMENT_TOPOLOGY_PROTOCOL,
   observeLinuxProviderManagementTopology,
 } from './linux-provider-management-topology.js';
@@ -26,7 +29,6 @@ import {
 } from './protected-refresh-child-contract.js';
 
 const PACKAGE_ROOT = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
-const STATE_IDENTITY_PROTOCOL = 'devbridge/local-state-identity-v1';
 const MAX_LOCAL_ID = 0xffff_fffe;
 const TOPOLOGY_KEYS = new Set([
   'protocol',
@@ -55,24 +57,9 @@ function exactStateIdentity(value) {
   return value;
 }
 
-async function observeLocalStateIdentity({ identity }) {
-  const before = await lstat(identity);
-  const canonical = await realpath(identity);
-  const after = await lstat(identity);
-  if (canonical !== identity || before.isSymbolicLink() || !before.isDirectory()
-      || after.isSymbolicLink() || !after.isDirectory()
-      || !Number.isSafeInteger(before.uid) || before.uid < 1
-      || !Number.isSafeInteger(before.mode) || (before.mode & 0o022) !== 0
-      || !Number.isSafeInteger(after.mode) || (after.mode & 0o022) !== 0
-      || before.dev !== after.dev || before.ino !== after.ino || before.uid !== after.uid || before.mode !== after.mode) {
-    throw new Error('Linux protected refresh child state identity is untrusted');
-  }
-  return Object.freeze({ protocol: STATE_IDENTITY_PROTOCOL, identity: canonical, ownerId: after.uid });
-}
-
 function exactStateEvidence(value, stateIdentity, principal) {
   exactKeys(value, new Set(['protocol', 'identity', 'ownerId']), 'Linux protected refresh child state evidence');
-  if (value.protocol !== STATE_IDENTITY_PROTOCOL || value.identity !== stateIdentity || value.ownerId !== principal.identityId) {
+  if (value.protocol !== LINUX_LOCAL_STATE_IDENTITY_PROTOCOL || value.identity !== stateIdentity || value.ownerId !== principal.identityId) {
     throw new Error('Linux protected refresh child state identity changed');
   }
   return stateIdentity;
@@ -212,7 +199,7 @@ export async function runLinuxLifecycleAuthorityRefreshChild(rawRequest, provide
     observeOrigin: providedPorts.observeOrigin,
     observeTopology: providedPorts.observeTopology ?? observeLinuxProviderManagementTopology,
     observeIdentities: providedPorts.observeIdentities ?? observeLinuxLocalIdentities,
-    observeStateIdentity: providedPorts.observeStateIdentity ?? observeLocalStateIdentity,
+    observeStateIdentity: providedPorts.observeStateIdentity ?? observeLinuxLocalStateIdentity,
     measureCandidate: providedPorts.measureCandidate ?? measureProtectedAuthorityRuntimeCandidate,
     createPlan: providedPorts.createPlan ?? createLinuxLifecycleAuthorityPlan,
     bindRuntime: providedPorts.bindRuntime ?? bindLinuxLifecycleAuthorityRuntime,
