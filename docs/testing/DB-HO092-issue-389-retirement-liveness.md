@@ -67,3 +67,21 @@ This design covers slow read-only planning as well as mutation because the timer
 ## Non-goals
 
 No recursive deletion, compatibility route, timeout-policy expansion, concurrency, GitHub heartbeat, setup/doctor mutation, elevation/UAC, protected service/provider/VM/guest action, repository execution, model invocation, or GPU/CUDA work belongs in this checkpoint.
+
+## Implementation and verification
+
+Plan commit `5cd8372960f3667d4c0919c4e7cd1cf937c3c403` passed Ubuntu/Windows smoke and full jobs plus doctor in [GitHub Actions run 33307245004](https://github.com/iteathen/DevBridge/actions/runs/33307245004) before implementation began.
+
+Implementation `a061110bc37f926b802f09e7e384dcd1860c9f26` adds three deliberately separate surfaces:
+
+- the neutral retention owner accepts one optional callback and publishes only `phase`, `completed`, `total`, and `attempt`; it emits before awaited plan construction and after durable non-terminal phase saves, and contains observer failures;
+- an import-free local liveness owner rebuilds one fixed `devbridge/local-liveness-v1` record, starts immediately, uses one 15-second unref'ed interval, clears it in `finally`, ignores malformed updates, and permanently suppresses further writes after backpressure or output failure;
+- a thin CLI composition attaches the status output to stderr and writes exactly one terminal JSON result to stdout after success. The command and concrete construction composition only forward the neutral callback.
+
+No completion claim is emitted through liveness. Exact plan authorization, held-handle hashing, effect binding/order, durable phases, ambiguity handling, and bounded retry remain owned by the existing transaction.
+
+Focused tests pass 27/27 across normal status, awaited slow planning, no-progress elapsed observation, output backpressure/failure, exact operation failure, malformed/foreign-field projection, one-result output separation, observer failure, interrupted-journal restart, and LEGO isolation. Repository preflight passes two standalone artifacts, 219 syntax files, two JSON files, and 178 targeted tests. Repository-execution architecture plus product/standalone gates pass 37 total / 36 passed / one expected Windows symlink skip. The complete serialized suite passes 1,957 total / 1,936 passed / 21 expected platform skips / zero failures in 190 seconds. Doctor is green and truthfully reports repository execution unavailable/fail-closed with model adapters disabled.
+
+A real ordinary-token read-only `construction-retention inspect` emitted bounded local liveness before its one terminal plan. The plan retained digest `ccf36efc59e4011d9c965e84a80408596aa0737477c57fe0fb6a4d67814ef15b`, no lease, the same protected current/accepted/retained subjects, and no eligible obsolete subject. It performed no mutation and required no UAC.
+
+[GitHub Actions run 33307730400](https://github.com/iteathen/DevBridge/actions/runs/33307730400) passed the exact implementation across Ubuntu/Windows smoke and full jobs plus doctor. This accepts the software liveness boundary only; it proves no protected-service, provider, VM, guest, route, repository-execution, or Stage 7 readiness.
