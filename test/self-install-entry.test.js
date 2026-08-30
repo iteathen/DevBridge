@@ -38,6 +38,10 @@ import {
 import { createApplicationRemovalSource } from '../src/app/application-removal.js';
 import { createConditionalItemSet } from '../src/runtime/conditional-item-set.js';
 import { createExactArtifactReceiptJournal } from '../src/runtime/exact-artifact-receipt.js';
+import {
+  createRunnerCacheInventory,
+  RUNNER_CACHE_INVENTORY_IDENTITY,
+} from '../src/entry/runner-cache-inventory.mjs';
 
 const EXPECTED_COMPONENT_FILES = Object.freeze([
   'devbridge-entry.mjs',
@@ -52,8 +56,20 @@ const EXPECTED_COMPONENT_FILES = Object.freeze([
   'src/entry/installation-identity.mjs',
   'src/entry/permanent-entry.mjs',
   'src/entry/production-stable-subject-authority.mjs',
+  'src/entry/runner-cache-composition.mjs',
+  'src/entry/runner-cache-ownership.mjs',
   'src/entry/stable-entry.mjs',
   'src/entry/stable-runner-state.mjs',
+  'src/runtime/command-invocation.js',
+  'src/runtime/conditional-item-set.js',
+  'src/runtime/exact-artifact-receipt.js',
+  'src/runtime/exact-artifact-set.js',
+  'src/runtime/exact-directory.js',
+  'src/runtime/exact-value-state.js',
+  'src/runtime/local-filesystem-identity.js',
+  'src/runtime/process-activity-lease.js',
+  'src/runtime/providers/windows-filesystem-entry-observer.js',
+  'src/runtime/receipt-item-collection.js',
 ]);
 
 function run(executable, args, options = {}) {
@@ -438,10 +454,16 @@ test('production ownership receipts project a private read-only payload inventor
   assert.doesNotMatch(JSON.stringify(fragment), /[A-Z]:\\|ownership-receipts|\.devbridge-entry-install/u);
   assert.equal(existsSync(path.join(home, 'entry', 'ownership-bindings.json')), false);
 
+  const cacheInventory = createRunnerCacheInventory({ home });
+  assert.deepEqual((await cacheInventory.snapshot()).coverage, ['application']);
+
   const source = createApplicationRemovalSource({
-    contributors: [{ identity: inventory.identity, snapshot: () => inventory.snapshot() }],
+    contributors: [
+      { identity: inventory.identity, snapshot: () => inventory.snapshot() },
+      { identity: cacheInventory.identity, snapshot: () => cacheInventory.snapshot() },
+    ],
     required: {
-      application: [ENTRY_PAYLOAD_INVENTORY_IDENTITY, 'runtime-payload'],
+      application: [ENTRY_PAYLOAD_INVENTORY_IDENTITY, RUNNER_CACHE_INVENTORY_IDENTITY, 'runtime-payload'],
       purge: ['authority-state'],
     },
   });

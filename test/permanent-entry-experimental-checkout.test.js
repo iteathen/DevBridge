@@ -8,6 +8,10 @@ import process from 'node:process';
 import { DevelopmentCheckoutRunnerProvider } from '../src/entry/development-checkout-runner-provider.mjs';
 import { ExperimentalCheckoutRunnerProvider } from '../src/entry/experimental-checkout-runner-provider.mjs';
 import { RUNNER_SUBJECT_PROTOCOL } from '../src/entry/permanent-entry.mjs';
+import { createRunnerCacheOwnership } from '../src/entry/runner-cache-ownership.mjs';
+import { createRunnerCacheInventory } from '../src/entry/runner-cache-inventory.mjs';
+import { createExactArtifactSet } from '../src/runtime/exact-artifact-set.js';
+import { createExactDirectory } from '../src/runtime/exact-directory.js';
 
 const fixedRemote = 'https://github.com/iteathen/DevBridge.git';
 
@@ -61,6 +65,18 @@ function fetchCalls(calls) {
   return calls.filter((entry) => entry.args[2] === 'fetch');
 }
 
+function cachePorts(root) {
+  const reparse = process.platform === 'win32'
+    ? { inspectReparse: async (_location, info) => info.isSymbolicLink() }
+    : {};
+  const directories = createExactDirectory({ platform: process.platform, ...reparse });
+  return {
+    cacheRoot: path.join(root, 'entry', 'cache'),
+    artifacts: createExactArtifactSet({ platform: process.platform, ...reparse }),
+    ownership: createRunnerCacheOwnership({ stateRoot: path.join(root, 'entry', 'state'), directories }),
+  };
+}
+
 test('provider fetches only the exact head from the fixed source and launches the selected control-plane tree', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-entry-checkout-'));
   const previous = process.env.DEVBRIDGE_ENTRY_TEST_VALUE;
@@ -72,7 +88,7 @@ test('provider fetches only the exact head from the fixed source and launches th
     const git = fakeGit({ head, artifactBytes: bytes });
     const launches = [];
     const provider = new ExperimentalCheckoutRunnerProvider({
-      cacheRoot: root,
+      ...cachePorts(root),
       run: git.run,
       launch(entry, argv, context) {
         launches.push({ entry, argv, context });
@@ -84,17 +100,22 @@ test('provider fetches only the exact head from the fixed source and launches th
     assert.equal(await prepared.launch(['doctor', '--config', 'local.json']), 23);
     assert.deepEqual(prepared.subject, exact);
 
-    const remote = git.calls.find((entry) => entry.args[2] === 'remote');
-    assert.deepEqual(remote.args.slice(2), ['remote', 'add', 'origin', fixedRemote]);
     assert.equal(fetchCalls(git.calls).length, 1);
-    assert.deepEqual(fetchCalls(git.calls)[0].args.slice(2), ['fetch', '--no-tags', '--depth', '1', 'origin', head]);
+    assert.deepEqual(fetchCalls(git.calls)[0].args.slice(2), ['fetch', '--no-tags', '--depth', '1', fixedRemote, head]);
     assert.match(launches[0].entry.replaceAll('\\', '/'), /\/src\/cli\.js$/u);
     assert.deepEqual(launches[0].argv, ['doctor', '--config', 'local.json']);
     assert.equal(launches[0].context.env.DEVBRIDGE_ENTRY_TEST_VALUE, 'present');
 
-    const gitEnvironment = remote.context.env;
+    const gitEnvironment = fetchCalls(git.calls)[0].context.env;
     assert.equal(gitEnvironment.GIT_CONFIG_NOSYSTEM, '1');
     assert.equal(gitEnvironment.GIT_TERMINAL_PROMPT, '0');
+    assert.equal(gitEnvironment.GIT_CONFIG_COUNT, '3');
+    assert.equal(gitEnvironment.GIT_CONFIG_KEY_0, 'core.hooksPath');
+    assert.equal(gitEnvironment.GIT_CONFIG_VALUE_0, gitEnvironment.GIT_CONFIG_GLOBAL);
+    assert.equal(gitEnvironment.GIT_CONFIG_KEY_1, 'core.fsmonitor');
+    assert.equal(gitEnvironment.GIT_CONFIG_VALUE_1, 'false');
+    assert.equal(gitEnvironment.GIT_CONFIG_KEY_2, 'credential.helper');
+    assert.equal(gitEnvironment.GIT_CONFIG_VALUE_2, '');
     assert.equal(gitEnvironment.DEVBRIDGE_ENTRY_TEST_VALUE, undefined);
   } finally {
     if (previous == null) delete process.env.DEVBRIDGE_ENTRY_TEST_VALUE;
@@ -115,7 +136,7 @@ test('provider verifies committed runner bytes independently of working-tree tex
       committedArtifactBytes: committed,
       worktreeArtifactBytes: materialized,
     });
-    const provider = new ExperimentalCheckoutRunnerProvider({ cacheRoot: root, run: git.run, launch() { return 0; } });
+    const provider = new ExperimentalCheckoutRunnerProvider({ ...cachePorts(root), run: git.run, launch() { return 0; } });
 
     await provider.prepare(subject(head, committed));
 
@@ -134,7 +155,7 @@ test('provider keeps transient and accepted checkout names compact and subject-b
     const bytes = Buffer.from('runner');
     const exact = subject(head, bytes);
     const git = fakeGit({ head, artifactBytes: bytes });
-    const provider = new ExperimentalCheckoutRunnerProvider({ cacheRoot: root, run: git.run, launch() { return 0; } });
+    const provider = new ExperimentalCheckoutRunnerProvider({ ...cachePorts(root), run: git.run, launch() { return 0; } });
 
     await provider.prepare(exact);
 
@@ -169,7 +190,7 @@ test('verified exact checkout is reused without repeating the network fetch', as
     const head = 'b'.repeat(40);
     const bytes = Buffer.from('runner');
     const git = fakeGit({ head, artifactBytes: bytes });
-    const provider = new ExperimentalCheckoutRunnerProvider({ cacheRoot: root, run: git.run, launch() { return 0; } });
+    const provider = new ExperimentalCheckoutRunnerProvider({ ...cachePorts(root), run: git.run, launch() { return 0; } });
     const exact = subject(head, bytes);
     await provider.prepare(exact);
     await provider.prepare(exact);
@@ -185,11 +206,11 @@ test('provider rejects a checkout whose exact head or standalone artifact differ
     const head = 'c'.repeat(40);
     const bytes = Buffer.from('expected');
     const wrongHeadGit = fakeGit({ head, artifactBytes: bytes, wrongHead: 'd'.repeat(40) });
-    const wrongHeadProvider = new ExperimentalCheckoutRunnerProvider({ cacheRoot: path.join(root, 'head'), run: wrongHeadGit.run, launch() { return 0; } });
+    const wrongHeadProvider = new ExperimentalCheckoutRunnerProvider({ ...cachePorts(path.join(root, 'head')), run: wrongHeadGit.run, launch() { return 0; } });
     await assert.rejects(() => wrongHeadProvider.prepare(subject(head, bytes)), /different exact head/u);
 
     const wrongBytesGit = fakeGit({ head, artifactBytes: Buffer.from('different') });
-    const wrongBytesProvider = new ExperimentalCheckoutRunnerProvider({ cacheRoot: path.join(root, 'bytes'), run: wrongBytesGit.run, launch() { return 0; } });
+    const wrongBytesProvider = new ExperimentalCheckoutRunnerProvider({ ...cachePorts(path.join(root, 'bytes')), run: wrongBytesGit.run, launch() { return 0; } });
     await assert.rejects(() => wrongBytesProvider.prepare(subject(head, bytes)), /artifact digest differs/u);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -205,7 +226,7 @@ test('prepared launch re-verifies cleanliness and exact identity before every ex
     const git = fakeGit({ head, artifactBytes: bytes, dirty: () => dirty });
     let launches = 0;
     const provider = new ExperimentalCheckoutRunnerProvider({
-      cacheRoot: root,
+      ...cachePorts(root),
       run: git.run,
       launch() { launches += 1; return 0; },
     });
@@ -224,7 +245,7 @@ test('experimental checkout provider cannot become stable runner authority', asy
     const head = 'f'.repeat(40);
     const bytes = Buffer.from('runner');
     const git = fakeGit({ head, artifactBytes: bytes });
-    const provider = new ExperimentalCheckoutRunnerProvider({ cacheRoot: root, run: git.run, launch() { return 0; } });
+    const provider = new ExperimentalCheckoutRunnerProvider({ ...cachePorts(root), run: git.run, launch() { return 0; } });
     await assert.rejects(() => provider.prepare(subject(head, bytes, { channel: 'stable' })), /refuses non-experimental authority/u);
     assert.equal(git.calls.length, 0);
   } finally {
@@ -244,7 +265,7 @@ test('development checkout provider launches the exact stable development contro
     const git = fakeGit({ head, artifactBytes: bytes });
     const launches = [];
     const provider = new DevelopmentCheckoutRunnerProvider({
-      cacheRoot: root,
+      ...cachePorts(root),
       run: git.run,
       launch(entry, argv) {
         launches.push({ entry, argv });
@@ -255,9 +276,16 @@ test('development checkout provider launches the exact stable development contro
     const prepared = await provider.prepare(exact);
     assert.equal(await prepared.launch(['--home', root, 'setup']), 47);
     assert.equal(fetchCalls(git.calls).length, 1);
-    assert.deepEqual(fetchCalls(git.calls)[0].args.slice(2), ['fetch', '--no-tags', '--depth', '1', 'origin', head]);
+    assert.deepEqual(fetchCalls(git.calls)[0].args.slice(2), ['fetch', '--no-tags', '--depth', '1', fixedRemote, head]);
     assert.match(launches[0].entry.replaceAll('\\', '/'), /\/src\/cli\.js$/u);
     assert.deepEqual(launches[0].argv, ['--home', root, 'setup']);
+    const fragment = await createRunnerCacheInventory({ home: root }).snapshot();
+    assert.deepEqual(fragment.coverage, ['application']);
+    assert.equal(fragment.items.some((item) => item.identity.startsWith('cache.checkout.')), true);
+    assert.deepEqual(
+      fragment.items.find((item) => item.identity === 'cache.directory.control').after,
+      ['cache.file.control'],
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -270,7 +298,7 @@ test('development checkout provider refuses production-like subjects and disable
     const bytes = Buffer.from('development-runner');
     const git = fakeGit({ head, artifactBytes: bytes });
     const provider = new DevelopmentCheckoutRunnerProvider({
-      cacheRoot: root,
+      ...cachePorts(root),
       run: git.run,
       launch() { throw new Error('must not launch'); },
     });
@@ -281,7 +309,7 @@ test('development checkout provider refuses production-like subjects and disable
     assert.equal(git.calls.length, 0);
 
     const offline = new DevelopmentCheckoutRunnerProvider({
-      cacheRoot: path.join(root, 'offline'),
+      ...cachePorts(path.join(root, 'offline')),
       allowFetch: false,
       run: git.run,
       launch() { throw new Error('must not launch'); },

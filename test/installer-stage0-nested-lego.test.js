@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as installerArtifact from '../install-devbridge.mjs';
 import * as installerSource from '../src/install/permanent-entry-installer.mjs';
 import * as bootstrapArtifact from '../bootstrap-devbridge.mjs';
@@ -17,19 +17,28 @@ const suites = Object.freeze([
       'input-contract.mjs': 'parseInstallArgs',
       'source-channel.mjs': 'createSourceChannel',
       'component-store.mjs': 'createComponentStore',
-      'mutation-lease.mjs': 'createMutationLease',
       'entry-publication.mjs': 'createEntryPublication',
       'continuation.mjs': 'createContinuation',
-      'ownership-state.mjs': 'createOwnershipState',
       'publication-tree-ownership.mjs': 'createPublicationTreeOwnership',
       'publication-file-ownership.mjs': 'createPublicationFileOwnership',
     }),
+    compositions: Object.freeze({
+      'ownership-state.mjs': Object.freeze({
+        export: 'createOwnershipState',
+        dependencies: Object.freeze(['../../runtime/exact-value-state.js']),
+      }),
+      'mutation-lease.mjs': Object.freeze({
+        export: 'createMutationLease',
+        dependencies: Object.freeze(['../../runtime/process-activity-lease.js']),
+      }),
+    }),
     dependencies: Object.freeze([
       '../runtime/command-invocation.js',
-      '../runtime/conditional-item-set.js',
       '../runtime/exact-artifact-receipt.js',
       '../runtime/exact-artifact-set.js',
+      '../runtime/receipt-item-collection.js',
       '../runtime/providers/windows-filesystem-entry-observer.js',
+      './permanent-entry-components.mjs',
     ]),
   }),
   Object.freeze({
@@ -41,6 +50,7 @@ const suites = Object.freeze([
       'source-channel.mjs': 'createSourceChannel',
       'temporary-materialization.mjs': 'createTemporaryMaterialization',
     }),
+    compositions: Object.freeze({}),
     dependencies: Object.freeze([]),
   }),
 ]);
@@ -63,12 +73,29 @@ test('installer and Stage 0 children import independently and never name sibling
   }
 });
 
+test('nested composition wrappers depend only on declared neutral bricks and never name peers', async () => {
+  for (const suite of suites) {
+    const peerNames = [...Object.keys(suite.children), ...Object.keys(suite.compositions)];
+    for (const [name, contract] of Object.entries(suite.compositions)) {
+      const source = readFileSync(path.join(root, suite.directory, name), 'utf8');
+      const imports = [...source.matchAll(LOCAL_IMPORT)].map((match) => match[1]).sort();
+      assert.deepEqual(imports, [...contract.dependencies].sort(), `${name} must expose only declared neutral dependencies`);
+      for (const peer of peerNames.filter((value) => value !== name)) {
+        assert.equal(source.includes(peer), false, `${name} must not name peer ${peer}`);
+      }
+      const module = await import(pathToFileURL(path.join(root, suite.directory, name)).href);
+      assert.equal(typeof module[contract.export], 'function', `${name} must expose its local contract`);
+    }
+  }
+});
+
 test('only composition parents know the complete child topology', () => {
   for (const suite of suites) {
     const source = readFileSync(path.join(root, suite.parent), 'utf8');
     const imports = [...source.matchAll(LOCAL_IMPORT)].map((match) => match[1]).sort();
     const expected = [
       ...Object.keys(suite.children).map((name) => `./${path.basename(suite.directory)}/${name}`),
+      ...Object.keys(suite.compositions).map((name) => `./${path.basename(suite.directory)}/${name}`),
       ...suite.dependencies,
     ]
       .sort();

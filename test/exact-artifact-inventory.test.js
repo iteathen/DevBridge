@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
   installDevBridge,
+  INSTALLED_COMPONENT_FILES,
   parseInstallArgs,
   verifyInstalledComponent,
 } from '../install-devbridge.mjs';
@@ -21,6 +22,26 @@ import { createExactArtifactSet } from '../src/runtime/exact-artifact-set.js';
 import { createRevisionedRecordStateStore } from '../src/state/revisioned-record-state-store.js';
 
 const repository = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
+
+function git(args, cwd) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', shell: false, windowsHide: true }).trim();
+}
+
+async function fixtureRepository(parent) {
+  const source = path.join(parent, 'source');
+  await mkdir(source, { recursive: true });
+  for (const relative of INSTALLED_COMPONENT_FILES) {
+    const target = path.join(source, ...relative.split('/'));
+    await mkdir(path.dirname(target), { recursive: true });
+    await copyFile(path.join(repository, ...relative.split('/')), target);
+  }
+  git(['init', '-q'], source);
+  git(['config', 'user.name', 'DevBridge Test'], source);
+  git(['config', 'user.email', 'devbridge-test@example.invalid'], source);
+  git(['add', '.'], source);
+  git(['commit', '-q', '-m', 'entry fixture'], source);
+  return Object.freeze({ source, head: git(['rev-parse', 'HEAD'], source) });
+}
 
 function artifactActions() {
   return createExactArtifactSet({
@@ -61,15 +82,16 @@ test('a verified installed payload is bound before exact removal and remains res
   const parent = await mkdtemp(path.join(os.tmpdir(), 'devbridge-inventory-installed-'));
   t.after(() => rm(parent, { recursive: true, force: true }));
   const home = path.join(parent, 'home');
-  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8', shell: false, windowsHide: true }).trim();
+  const fixture = await fixtureRepository(parent);
+  const head = fixture.head;
   const args = parseInstallArgs(['--install-only', '--ref', head, '--home', home], { environment: {}, homeDirectory: parent });
   await installDevBridge(args, {
-    sourceRepository: repository,
+    sourceRepository: fixture.source,
     allowLocalSource: true,
     attributeObserverFactory: () => ({ async isReparse() { return false; } }),
   });
   const root = path.join(home, 'entry', 'components', head);
-  assert.equal(verifyInstalledComponent(root, head, repository), true);
+  assert.equal(verifyInstalledComponent(root, head, fixture.source), true);
 
   const artifacts = artifactActions();
   const bindingFile = path.join(parent, 'state', 'bindings.json');
@@ -80,7 +102,7 @@ test('a verified installed payload is bound before exact removal and remains res
       return {
         identity,
         generation: `subject-${head}`,
-        state: verifyInstalledComponent(root, head, repository) ? 'created' : 'foreign',
+        state: verifyInstalledComponent(root, head, fixture.source) ? 'created' : 'foreign',
       };
     },
   };

@@ -5,6 +5,10 @@ import test from 'node:test';
 const isolated = [
   '../src/runtime/exact-artifact-inventory.js',
   '../src/runtime/exact-value-inventory.js',
+  '../src/runtime/exact-value-state.js',
+  '../src/runtime/receipt-value-source.js',
+  '../src/runtime/exact-action-router.js',
+  '../src/runtime/process-activity-lease.js',
   '../src/runtime/bound-effect-actions.js',
 ];
 

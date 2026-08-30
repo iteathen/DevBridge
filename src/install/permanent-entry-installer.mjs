@@ -18,33 +18,19 @@ import { createContinuation } from './permanent-entry-installer/continuation.mjs
 import { createOwnershipState } from './permanent-entry-installer/ownership-state.mjs';
 import { createPublicationTreeOwnership } from './permanent-entry-installer/publication-tree-ownership.mjs';
 import { createPublicationFileOwnership } from './permanent-entry-installer/publication-file-ownership.mjs';
-import { createConditionalItemSet } from '../runtime/conditional-item-set.js';
 import { createExactArtifactReceiptJournal } from '../runtime/exact-artifact-receipt.js';
 import { createExactArtifactSet } from '../runtime/exact-artifact-set.js';
+import { createReceiptItemCollection } from '../runtime/receipt-item-collection.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { createWindowsFilesystemEntryObserver } from '../runtime/providers/windows-filesystem-entry-observer.js';
+import { PERMANENT_ENTRY_COMPONENT_FILES } from './permanent-entry-components.mjs';
 
 export const INSTALL_PROTOCOL = 'devbridge/entry-install-v1';
 export const INSTALL_STATUS_PROTOCOL = 'devbridge/entry-install-status-v1';
 export const INSTALL_LOCK_PROTOCOL = 'devbridge/entry-install-lock-v1';
 export const INSTALL_OWNERSHIP_REQUEST_PROTOCOL = 'devbridge/entry-install-ownership-request-v1';
 export const SOURCE_REPOSITORY = 'https://github.com/iteathen/DevBridge.git';
-export const INSTALLED_COMPONENT_FILES = Object.freeze([
-  'devbridge-entry.mjs',
-  'src/entry/content-addressed-runner-provider.mjs',
-  'src/entry/development-checkout-runner-provider.mjs',
-  'src/entry/development-stable-subject-authority.mjs',
-  'src/entry/exact-checkout-runner-provider.mjs',
-  'src/entry/experimental-checkout-runner-provider.mjs',
-  'src/entry/experimental-entry.mjs',
-  'src/entry/experimental-subject-authority.mjs',
-  'src/entry/github-runner-source.mjs',
-  'src/entry/installation-identity.mjs',
-  'src/entry/permanent-entry.mjs',
-  'src/entry/production-stable-subject-authority.mjs',
-  'src/entry/stable-entry.mjs',
-  'src/entry/stable-runner-state.mjs',
-]);
+export const INSTALLED_COMPONENT_FILES = PERMANENT_ENTRY_COMPONENT_FILES;
 
 const sourceChannel = createSourceChannel({ normalizeSelector: normalizeInstallRef, defaultEndpoint: SOURCE_REPOSITORY });
 const componentStore = createComponentStore({
@@ -92,29 +78,6 @@ function ensureChildDirectory(parent, name) {
   const candidate = path.join(parent, name);
   if (!existsSync(candidate)) mkdirSync(candidate, { mode: 0o700 });
   return ensureRealDirectory(candidate, `${name} directory`);
-}
-
-function receiptCollection(journal) {
-  return createConditionalItemSet({
-    records: Object.freeze({
-      async read() {
-        const record = await journal.read();
-        return record == null
-          ? Object.freeze({ revision: null, items: Object.freeze([]) })
-          : Object.freeze({ revision: record.generation, items: record.items });
-      },
-      async compare({ revision, items }) {
-        const result = await journal.compareAndAccept({ generation: revision, items });
-        const record = result.record;
-        return Object.freeze({
-          accepted: result.accepted,
-          snapshot: record == null
-            ? Object.freeze({ revision: null, items: Object.freeze([]) })
-            : Object.freeze({ revision: record.generation, items: record.items }),
-        });
-      },
-    }),
-  });
 }
 
 function componentItemIdentity(head) { return `component.${head}`; }
@@ -166,7 +129,7 @@ export async function installDevBridge(options, {
     const receiptScratch = ensureChildDirectory(entryRoot, 'ownership-scratch');
     const receiptDirectory = path.join(entryRoot, 'ownership-receipts');
     const journal = receiptJournalFactory({ directory: receiptDirectory, scratch: receiptScratch });
-    const ownership = createOwnershipState({ collection: receiptCollection(journal) });
+    const ownership = createOwnershipState({ collection: createReceiptItemCollection({ journal }) });
     await ownership.open();
     const attributeObserver = process.platform === 'win32' ? attributeObserverFactory({ invoke }) : null;
     const artifacts = artifactSetFactory({

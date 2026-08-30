@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: assessed, researched, reassessed, and planned; implementation not yet accepted
+Status: implementation locally qualified; hosted exact-head acceptance pending
 
 Coordinates with: #116, #159, #180, #391, DB-003, DB-009, DB-011, DB-020, DB-HO100, DB-HO101, DB-HO103, and DB-HO104.
 
@@ -67,3 +67,29 @@ The first activity lease covers provider preparation/materialization. It makes r
 ## Acceptance boundary
 
 Acceptance requires no legacy unreceipted provider path, no recursive deletion of an unowned/corrupt cache object, no external producer identities inside neutral modules, and no user-reachable removal. Application and purge coverage remain incomplete. No VM, guest, setup/elevation, protected service/provider/image/environment, repository-execution safety, model-adapter, or GPU/CUDA behavior changes.
+
+## Implementation checkpoint
+
+The local candidate implements the planned boundary without retaining parallel legacy mechanisms:
+
+- topology-neutral runtime bricks now own exact value state, receipt collection/projection, process activity leases, exact empty-directory actions, and exact-action routing; the installer-local state, projection, and lease modules are thin protocol compositions over those bricks;
+- both runner providers receive neutral subject, ownership, and artifact ports from one stable-entry composition, share one cache-local preparation lease, reserve before materialization, and complete exact receipts before returning a launch surface;
+- content objects use operation-bound temporary files and exact hard-link publication, adopt only an exact single-link pre-receipt object, revalidate before launch, and preserve corrupt, unowned, conflicting, or ambiguous material;
+- checkout trees use operation-bound temporary directories, fixed source fetches, credentials-free Git configuration with hooks/fsmonitor/credential helpers disabled, exact clean-subject verification, exact tree discovery, and exact non-recursive cleanup of only a discovered owned temporary tree;
+- structural cache directories have independent exact identities and empty-only removal actions, while the cache inventory validates a bounded sorted topology against completed receipts and withholds coverage for pending state, unknown residue, indirection, or unsupported identities;
+- cache receipt/control state and stable runner authority remain outside payload; the read-only cache contributor supplies only `application` coverage, and the aggregate deliberately remains incomplete while `runtime-payload` and the other audited contributors are absent; and
+- candidate qualification and the installer now consume one permanent-entry component manifest. The complete suite caught the stale candidate-staging list after the transitive cache dependency was added; the duplicate list was removed and the regression is now part of bounded preflight.
+
+Preparation activity does not claim launch-to-removal exclusion. No removal command is exposed, so terminal receipt retirement, operation rotation, and launch/removal mutual exclusion remain the next primitive dependency rather than an implied capability.
+
+## Local qualification
+
+All final checks used exact Node.js 22.16.0 on Windows without elevation:
+
+- bounded repository preflight: 2 standalone artifacts, 253 syntax files, 2 JSON files, and 203 targeted test files;
+- authoritative complete serialized suite from unchanged implementation bytes: 2,057 tests, 2,036 passed, 21 expected platform skips, and zero failures in 272.5 seconds;
+- focused post-review cache/provider tests: 11/11; focused installer/candidate closure tests: 19/19;
+- standalone artifact regeneration/check and `git diff --check`: passed; and
+- doctor: `ok: true`, coding-model adapters disabled, execution disabled, and repository execution unavailable/fail-closed because no persistent-environment route is configured.
+
+No setup/UAC request, protected service/provider/image/environment mutation, VM start, guest operation, repository-code execution, model invocation, publication/removal action, or GPU/CUDA work occurred. Hosted Ubuntu/Windows exact-head qualification is still required before this checkpoint is accepted.
