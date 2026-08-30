@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: assessment, research, reassessment, and implementation plan recorded
+Status: implemented and accepted through repeated exact-head hosted qualification; documentation-head acceptance pending
 
 Coordinates with: #290, #393, DB-015, DB-018, DB-019, DB-020, DB-HO055, and DB-HO096.
 
@@ -46,3 +46,27 @@ The smallest complete repair is local and topology-free: preserve state and netw
 6. Require repeated complete hosted matrices before closing #393 and re-closing #290. The same accepted exact head may satisfy #392 if all four jobs pass.
 
 No compatibility alias, raw concurrency input, retry, timeout widening, or production fallback is permitted.
+
+## Implementation
+
+Exact implementation `39e676b7491eb9c5f6bd5ae6ec6461624b67554a` adds one 12-line import-free `observeSequence` stud inside the standalone guest helper. The stud accepts only a bounded local value array and observation function, awaits exactly one observation at a time, preserves order, and stops on rejection. Capability inspection uses it in place of the nested `Promise.all`. State loading and network observation remain independent. The export exposes no capability registry, executable, argument, path, provider, host, CI, or process authority.
+
+Direct tests prove maximum active observation count one, exact input/output order, rejection before later work, and strict local contract validation. Existing integration tests continue to prove restart persistence, protected-name value non-exposure, unknown-capability fail-closed behavior, and the real Git/Node/CMake/CTest/compiler/npm baseline. No response protocol, tool identity/argument, executable search, eight-second probe timeout, Windows two-file preflight policy, workflow deadline, or host/guest execution boundary changed.
+
+## Local qualification
+
+- focused helper tests on current and exact Node 22.16.0: 6/6 each;
+- exact-Node bounded preflight twice and ordinary preflight once: each passed 2 standalone artifacts / 223 syntax / 2 JSON / 180 targeted files;
+- architecture/product/standalone gates: 37 total / 36 passed / 1 expected Windows symlink skip;
+- complete exact-Node serialized suite: 1,975 total / 1,954 passed / 21 expected platform skips / zero failures in 189.8 seconds;
+- doctor: exit zero, coding adapters disabled, repository execution unavailable/fail-closed; and
+- generated-artifact and diff hygiene: clean.
+
+## Hosted acceptance
+
+The plan head passed all four hosted jobs in [run 33311849489](https://github.com/iteathen/DevBridge/actions/runs/33311849489). The exact implementation then passed the complete matrix twice in run 33312155273:
+
+- [attempt 1](https://github.com/iteathen/DevBridge/actions/runs/33312155273/attempts/1): Windows bounded smoke 1m32s, Windows serialized full/doctor 2m29s, Ubuntu smoke 27s, Ubuntu full/doctor 42s;
+- [attempt 2](https://github.com/iteathen/DevBridge/actions/runs/33312155273/attempts/2): Windows bounded smoke 1m36s, Windows serialized full/doctor 2m30s, Ubuntu smoke 26s, Ubuntu full/doctor 42s.
+
+Both attempts reran the entire four-job matrix on the same exact commit. No failed-job-only retry, deadline widening, test removal, skip, fallback, setup/elevation, provider/VM/guest mutation, repository execution through DevBridge, model invocation, or GPU/CUDA work occurred. Require the documentation head to pass, then close #393 and re-close #290. The same evidence accepts #392's included correction.
