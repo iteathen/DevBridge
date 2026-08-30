@@ -295,8 +295,10 @@ async function resultState(record) {
   if (record.state === 'failed') return { state: 'failed', result: null, reason: boundedString(record.reason ?? 'bridge operation failed', 'bridge operation failure', { maxBytes: 2_048 }) };
   const activity = await localActivity();
   if (record.state === 'planned') {
-    if (await activity.attempted(record.request)) return { state: 'indeterminate', result: null, reason: 'bridge operation attempt identity is incomplete' };
-    return { state: 'planned', result: null, reason: null };
+    const observation = await activity.observe(record.request);
+    if (observation === 'absent') return { state: 'planned', result: null, reason: null };
+    if (observation === 'current') return { state: 'running', result: null, reason: null };
+    return { state: 'indeterminate', result: null, reason: 'bridge operation attempt identity is incomplete' };
   }
   const observation = await activity.inspect(record.request, record.activityToken);
   if (observation === 'current') return { state: 'running', result: null, reason: null };

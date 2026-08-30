@@ -60,6 +60,27 @@ export async function createActivityStore({ directory }) {
   const attemptFile = (identity) => path.join(root, `${validIdentity(identity)}.attempt.json`);
   const activityFile = (identity, token) => path.join(root, `${validIdentity(identity)}.activity.${validToken(token)}.json`);
 
+  async function inspectActivity(identity, token) {
+    const file = activityFile(identity, token);
+    try {
+      const info = await lstat(file);
+      if (!info.isFile() || info.isSymbolicLink() || info.size < 1 || info.size > MAX_RECORD_BYTES) return 'invalid';
+      const value = JSON.parse(await readFile(file, 'utf8'));
+      if (!value || typeof value !== 'object' || Array.isArray(value)
+        || !exactKeys(value, ['identity', 'protocol', 'token', 'updatedAt'])
+        || value.protocol !== ACTIVITY_PROTOCOL
+        || value.identity !== identity
+        || value.token !== token
+        || !Number.isSafeInteger(value.updatedAt)) return 'invalid';
+      const age = Date.now() - value.updatedAt;
+      if (age < 0) return 'invalid';
+      return age <= MAX_ACTIVITY_AGE_MS ? 'current' : 'stale';
+    } catch (error) {
+      if (error?.code === 'ENOENT') return 'absent';
+      return 'invalid';
+    }
+  }
+
   return Object.freeze({
     async claim(identity, token) {
       const file = attemptFile(identity);
@@ -78,13 +99,23 @@ export async function createActivityStore({ directory }) {
       return true;
     },
 
-    async attempted(identity) {
+    async observe(identity) {
+      const file = attemptFile(identity);
       try {
-        await lstat(attemptFile(identity));
-        return true;
+        const info = await lstat(file);
+        if (!info.isFile() || info.isSymbolicLink() || info.size < 1 || info.size > MAX_RECORD_BYTES) return 'indeterminate';
+        const value = JSON.parse(await readFile(file, 'utf8'));
+        if (!value || typeof value !== 'object' || Array.isArray(value)
+          || !exactKeys(value, ['createdAt', 'identity', 'protocol', 'token'])
+          || value.protocol !== ATTEMPT_PROTOCOL
+          || value.identity !== identity
+          || typeof value.token !== 'string'
+          || !TOKEN.test(value.token)
+          || !Number.isSafeInteger(value.createdAt)) return 'indeterminate';
+        return await inspectActivity(identity, value.token) === 'current' ? 'current' : 'indeterminate';
       } catch (error) {
-        if (error?.code === 'ENOENT') return false;
-        throw error;
+        if (error?.code === 'ENOENT') return 'absent';
+        return 'indeterminate';
       }
     },
 
@@ -100,24 +131,7 @@ export async function createActivityStore({ directory }) {
     },
 
     async inspect(identity, token) {
-      const file = activityFile(identity, token);
-      try {
-        const info = await lstat(file);
-        if (!info.isFile() || info.isSymbolicLink() || info.size < 1 || info.size > MAX_RECORD_BYTES) return 'invalid';
-        const value = JSON.parse(await readFile(file, 'utf8'));
-        if (!value || typeof value !== 'object' || Array.isArray(value)
-          || !exactKeys(value, ['identity', 'protocol', 'token', 'updatedAt'])
-          || value.protocol !== ACTIVITY_PROTOCOL
-          || value.identity !== identity
-          || value.token !== token
-          || !Number.isSafeInteger(value.updatedAt)) return 'invalid';
-        const age = Date.now() - value.updatedAt;
-        if (age < 0) return 'invalid';
-        return age <= MAX_ACTIVITY_AGE_MS ? 'current' : 'stale';
-      } catch (error) {
-        if (error?.code === 'ENOENT') return 'absent';
-        return 'invalid';
-      }
+      return inspectActivity(identity, token);
     },
 
     async remove(identity, token) {

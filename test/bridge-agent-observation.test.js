@@ -69,6 +69,39 @@ async function seedRunning(root, request, token, extra = {}) {
   return { operations, store: await createActivityStore({ directory: operations }) };
 }
 
+async function seedPlanned(root, request) {
+  const operations = path.join(root, '.operations');
+  await mkdir(operations, { recursive: true });
+  const body = operation();
+  await writeFile(path.join(operations, `${request}.json`), `${JSON.stringify({
+    protocol: recordProtocol,
+    request,
+    target,
+    digest: createHash('sha256').update(JSON.stringify(body), 'utf8').digest('hex'),
+    body,
+    state: 'planned',
+    createdAt: new Date().toISOString(),
+    activityToken: null,
+    result: null,
+    reason: null,
+  })}\n`, 'utf8');
+  return { operations, store: await createActivityStore({ directory: operations }) };
+}
+
+test('planned observation recognizes the exact current attempt while journal publication catches up', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-bridge-current-attempt-'));
+  const request = 'b'.repeat(32);
+  const token = randomUUID();
+  try {
+    const { store } = await seedPlanned(root, request);
+    assert.equal(await store.claim(request, token), true);
+    await store.publish(request, token);
+    const observed = await exchange(root, request, 'observe');
+    assert.equal(observed.ok, true);
+    assert.deepEqual(observed.body, { state: 'running', result: null, reason: null });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('running observation requires the exact current activity token', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-bridge-current-activity-'));
   const request = 'e'.repeat(32);
