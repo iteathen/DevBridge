@@ -203,6 +203,7 @@ const SYNTAX_FILES = [
   'src/setup/linux-directory-definition-applicator.js',
   'src/setup/linux-lifecycle-authority-generation.js',
   'src/setup/linux-lifecycle-authority-inspection.js',
+  'src/setup/linux-lifecycle-authority-refresh-child.js',
   'src/setup/linux-lifecycle-authority-refresh-composition.js',
   'src/setup/linux-lifecycle-authority-refresh-mechanics.js',
   'src/setup/linux-lifecycle-authority-endpoint-topology.js',
@@ -210,6 +211,7 @@ const SYNTAX_FILES = [
   'src/setup/linux-provider-authority-preflight.js',
   'src/setup/linux-lifecycle-authority-plan-selection.js',
   'src/setup/linux-protected-tree.js',
+  'src/setup/protected-refresh-child-contract.js',
 ];
 
 const JSON_FILES = ['package.json', 'config/devbridge.example.json'];
@@ -296,6 +298,7 @@ const TARGETED_TESTS = [
   'test/linux-protected-tree.test.js',
   'test/linux-lifecycle-authority-generation.test.js',
   'test/linux-lifecycle-authority-inspection.test.js',
+  'test/linux-lifecycle-authority-refresh-child.test.js',
   'test/linux-lifecycle-authority-refresh-composition.test.js',
   'test/linux-lifecycle-authority-refresh-mechanics.test.js',
   'test/linux-lifecycle-authority-identity-binding.test.js',
