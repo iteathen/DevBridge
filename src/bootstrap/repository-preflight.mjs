@@ -207,6 +207,7 @@ const SYNTAX_FILES = [
   'src/setup/linux-lifecycle-authority-refresh-mechanics.js',
   'src/setup/linux-lifecycle-authority-endpoint-topology.js',
   'src/setup/linux-provider-management-topology.js',
+  'src/setup/linux-provider-authority-preflight.js',
   'src/setup/linux-protected-tree.js',
 ];
 
@@ -297,6 +298,7 @@ const TARGETED_TESTS = [
   'test/linux-lifecycle-authority-refresh-mechanics.test.js',
   'test/linux-lifecycle-authority-identity-binding.test.js',
   'test/linux-provider-management-topology.test.js',
+  'test/linux-provider-authority-preflight.test.js',
   'test/definition-reconciliation.test.js',
   'test/linux-service-manager.test.js',
   'test/linux-service-observation.test.js',
