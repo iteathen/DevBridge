@@ -60,13 +60,13 @@ No compatibility overload for the old flat input remains. The builder and focuse
 
 ## Acceptance
 
-- [ ] Every transitive local import is encoded; no generated standalone artifact retains a relative import.
-- [ ] The compiler receives no host path, repository, installer, receipt, artifact-owner, provider, VM, or guest identity.
-- [ ] The filesystem adapter rejects dependency escape and unsupported filesystem shape before reading bytes.
-- [ ] Missing, cyclic, conflicting, duplicate, bare/package, and unsupported-scheme graphs fail closed.
-- [ ] Nested/shared graph compilation is deterministic on current and exact Node 22.16.
-- [ ] Both generated entry stages remain directly executable and reproducible.
-- [ ] No installer API, production receipt/adoption, removal, setup/elevation, protected/provider/VM/guest, repository-code, model, or GPU/CUDA effect occurs.
+- [x] Every transitive local import is encoded; no generated standalone artifact retains a relative import.
+- [x] The compiler receives no host path, repository, installer, receipt, artifact-owner, provider, VM, or guest identity.
+- [x] The filesystem adapter rejects dependency escape and unsupported filesystem shape before reading bytes.
+- [x] Missing, cyclic, conflicting, duplicate, bare/package, and unsupported-scheme graphs fail closed.
+- [x] Nested/shared graph compilation is deterministic on current and exact Node 22.16.
+- [x] Both generated entry stages remain directly executable and reproducible.
+- [x] No installer API, production receipt/adoption, removal, setup/elevation, protected/provider/VM/guest, repository-code, model, or GPU/CUDA effect occurs.
 
 ## Implementation candidate and local qualification
 
@@ -79,3 +79,7 @@ The real standalone builder now uses that adapter. Both generated entry stages a
 Final local evidence on the exact supported Node 22.16.0 runtime passes the focused graph tests 4/4, bounded preflight at 2 standalone artifacts / 232 syntax files / 2 JSON files / 190 targeted tests, the architecture/product/standalone gates at 37 total / 36 passed / one expected Windows symlink skip, and the complete serialized suite at 2,015 total / 1,994 passed / 21 expected skips / zero failures in 197.2 seconds. The same focused test and preflight pass on the current runtime. Exact doctor reports `ok: true`, execution disabled, repository execution unavailable with no configured persistent-environment route, repository-code operations unusable, and coding-model adapters disabled. Diff and standalone reproducibility hygiene pass.
 
 Commit and push this isolated implementation candidate, then require all four hosted Ubuntu/Windows jobs plus doctor on its exact head before checking acceptance. No installer API, receipt, adoption, removal, setup/UAC, protected/provider/VM/guest mutation, repository execution, model invocation, or GPU/CUDA action occurred.
+
+## Hosted acceptance
+
+Exact implementation `f26982c0477276c1ee555bda9abea6647a8d7f79` passed Ubuntu smoke/full and Windows bounded-smoke/serialized-full, repository-execution architecture gates, standalone regression, and doctor in [run 33321350511](https://github.com/iteathen/DevBridge/actions/runs/33321350511). Accept this packaging prerequisite and proceed to asynchronous Permanent Entry installation plus production receipt composition through the intact accepted module boundaries. Keep #391 open; this acceptance creates no uninstall route or live removal authority.
