@@ -208,6 +208,7 @@ const SYNTAX_FILES = [
   'src/setup/linux-lifecycle-authority-endpoint-topology.js',
   'src/setup/linux-provider-management-topology.js',
   'src/setup/linux-provider-authority-preflight.js',
+  'src/setup/linux-lifecycle-authority-plan-selection.js',
   'src/setup/linux-protected-tree.js',
 ];
 

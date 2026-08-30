@@ -12,6 +12,11 @@ import {
 } from '../src/setup/current-principal-capabilities.js';
 import { LINUX_LOCAL_IDENTITIES_PROTOCOL } from '../src/setup/linux-local-identities.js';
 import {
+  LINUX_LIFECYCLE_AUTHORITY_PLAN_SELECTION_PROTOCOL,
+  selectLinuxLifecycleAuthorityPlan,
+} from '../src/setup/linux-lifecycle-authority-plan-selection.js';
+import { createLinuxLifecycleAuthorityPlan } from '../src/setup/linux-lifecycle-authority.js';
+import {
   LINUX_PROVIDER_AUTHORITY_PREFLIGHT_PROTOCOL,
   observeLinuxProviderAuthorityPreflight,
 } from '../src/setup/linux-provider-authority-preflight.js';
@@ -92,6 +97,44 @@ function principal(overrides = {}) {
     activeCapabilityIds: Object.freeze([27, 1000]),
     ...overrides,
   });
+}
+
+function eligibility(overrides = {}) {
+  return Object.freeze({
+    protocol: LINUX_PROVIDER_AUTHORITY_PREFLIGHT_PROTOCOL,
+    platform: 'linux',
+    applicable: true,
+    observable: true,
+    exact: true,
+    separation: 'verified',
+    selectedCapability: CAPABILITIES[0],
+    capabilities: CAPABILITIES,
+    reason: null,
+    ...overrides,
+  });
+}
+
+function planSelectionFixture(overrides = {}) {
+  const calls = [];
+  const ports = Object.freeze({
+    readPlatform: async () => {
+      calls.push(['platform']);
+      if (overrides.platformError) throw overrides.platformError;
+      return overrides.platform ?? 'linux';
+    },
+    observeEligibility: async (request) => { calls.push(['eligibility', request]); return overrides.eligibility ?? eligibility(); },
+    projectPlan: async (request) => {
+      calls.push(['plan', request]);
+      if (overrides.projectionError) throw overrides.projectionError;
+      if (overrides.projected) return overrides.projected(request);
+      return createLinuxLifecycleAuthorityPlan({
+        stateDirectory: request.stateDirectory,
+        operatorName: request.principal,
+        managementGroup: request.capability.name,
+      });
+    },
+  });
+  return Object.freeze({ calls, ports });
 }
 
 test('native current-principal observation reports exact active numeric credentials', () => {
@@ -246,5 +289,114 @@ test('children are isolated and the composition root exposes no mutation or conc
   const parent = await readFile(fileURLToPath(new URL('../src/setup/linux-provider-authority-preflight.js', import.meta.url)), 'utf8');
   for (const forbidden of ['/run/', '/etc/', 'virtqemud', 'libvirtd', 'virtproxyd', 'virsh', 'systemctl', 'useradd', 'usermod', 'groupadd', 'sudo', 'pkexec']) {
     assert.equal(parent.includes(forbidden), false, `composition root gained concrete or mutation authority through ${forbidden}`);
+  }
+});
+
+test('authority-plan selection binds one exact observed capability into the canonical plan', async () => {
+  const selected = planSelectionFixture();
+  const observed = await selectLinuxLifecycleAuthorityPlan({ stateDirectory: '/var/lib/devbridge-state', principal: 'alice' }, selected.ports);
+  assert.equal(observed.protocol, LINUX_LIFECYCLE_AUTHORITY_PLAN_SELECTION_PROTOCOL);
+  assert.equal(observed.ready, true);
+  assert.equal(observed.reason, null);
+  assert.equal(observed.plan.stateDirectory, '/var/lib/devbridge-state');
+  assert.equal(observed.plan.service.operator, 'alice');
+  assert.equal(observed.plan.service.managementGroup, 'primary_control');
+  assert.deepEqual(observed.plan.access.management, {
+    group: 'primary_control',
+    members: [observed.plan.service.user],
+    ordinaryUserMember: false,
+  });
+  assert.deepEqual(selected.calls.map(([name]) => name), ['platform', 'eligibility', 'plan']);
+  assert.deepEqual(selected.calls[1][1], { principal: 'alice', platform: 'linux' });
+  assert.deepEqual(selected.calls[2][1], {
+    stateDirectory: '/var/lib/devbridge-state',
+    principal: 'alice',
+    capability: { name: 'primary_control', id: 980 },
+  });
+});
+
+test('authority-plan selection observes platform locally and exposes no caller capability selection', async () => {
+  const selected = planSelectionFixture({ platform: 'win32' });
+  const observed = await selectLinuxLifecycleAuthorityPlan({ stateDirectory: '/var/lib/devbridge-state', principal: 'alice' }, selected.ports);
+  assert.deepEqual(observed, {
+    protocol: LINUX_LIFECYCLE_AUTHORITY_PLAN_SELECTION_PROTOCOL,
+    platform: 'win32',
+    applicable: false,
+    ready: false,
+    reason: 'not-applicable',
+    plan: null,
+  });
+  assert.deepEqual(selected.calls.map(([name]) => name), ['platform']);
+  await assert.rejects(() => selectLinuxLifecycleAuthorityPlan({
+    stateDirectory: '/var/lib/devbridge-state',
+    principal: 'alice',
+    capability: 'primary_control',
+  }, selected.ports), /unknown field/u);
+  assert.deepEqual(selected.calls.map(([name]) => name), ['platform']);
+
+  const failed = planSelectionFixture({ platformError: new Error('/sensitive/platform') });
+  assert.deepEqual(await selectLinuxLifecycleAuthorityPlan({ stateDirectory: '/var/lib/devbridge-state', principal: 'alice' }, failed.ports), {
+    protocol: LINUX_LIFECYCLE_AUTHORITY_PLAN_SELECTION_PROTOCOL,
+    platform: null,
+    applicable: false,
+    ready: false,
+    reason: 'platform-observation-unavailable',
+    plan: null,
+  });
+  assert.deepEqual(failed.calls.map(([name]) => name), ['platform']);
+  await assert.rejects(() => selectLinuxLifecycleAuthorityPlan(
+    { stateDirectory: '/var/lib/devbridge-state', principal: 'alice' },
+    { ...failed.ports, provider: Object.freeze({}) },
+  ), /unknown field/u);
+});
+
+test('unverified, widened, aliased, and forged eligibility produce no plan', async () => {
+  const cases = [
+    eligibility({ exact: false, separation: 'unverified', selectedCapability: null, reason: 'active-capability-present' }),
+    eligibility({ path: '/sensitive/value' }),
+    eligibility({ capabilities: Object.freeze([CAPABILITIES[0], Object.freeze({ name: 'primary_control', id: 981 })]) }),
+    eligibility({ selectedCapability: Object.freeze({ name: 'foreign_control', id: 982 }) }),
+  ];
+  for (const evidence of cases) {
+    const selected = planSelectionFixture({ eligibility: evidence });
+    const observed = await selectLinuxLifecycleAuthorityPlan({ stateDirectory: '/var/lib/devbridge-state', principal: 'alice' }, selected.ports);
+    assert.equal(observed.ready, false);
+    assert.equal(observed.plan, null);
+    assert.equal(['eligibility-unverified', 'eligibility-evidence-invalid'].includes(observed.reason), true);
+    assert.deepEqual(selected.calls.map(([name]) => name), ['platform', 'eligibility']);
+    assert.equal(JSON.stringify(observed).includes('/sensitive/'), false);
+  }
+});
+
+test('failed, widened, or identity-changing plan projection fails closed', async () => {
+  const cases = [
+    planSelectionFixture({ projectionError: new Error('/sensitive/projection') }),
+    planSelectionFixture({ projected: (request) => ({
+      ...createLinuxLifecycleAuthorityPlan({
+        stateDirectory: request.stateDirectory,
+        operatorName: request.principal,
+        managementGroup: request.capability.name,
+      }),
+      foreign: true,
+    }) }),
+    planSelectionFixture({ projected: (request) => createLinuxLifecycleAuthorityPlan({
+      stateDirectory: request.stateDirectory,
+      operatorName: request.principal,
+      managementGroup: 'foreign_control',
+    }) }),
+  ];
+  for (const selected of cases) {
+    const observed = await selectLinuxLifecycleAuthorityPlan({ stateDirectory: '/var/lib/devbridge-state', principal: 'alice' }, selected.ports);
+    assert.equal(observed.ready, false);
+    assert.equal(observed.plan, null);
+    assert.equal(['plan-projection-unavailable', 'plan-evidence-invalid'].includes(observed.reason), true);
+    assert.equal(JSON.stringify(observed).includes('/sensitive/'), false);
+  }
+});
+
+test('authority-plan selection root retains only its composition topology', async () => {
+  const source = await readFile(fileURLToPath(new URL('../src/setup/linux-lifecycle-authority-plan-selection.js', import.meta.url)), 'utf8');
+  for (const forbidden of ['/run/', '/etc/', 'virtqemud', 'libvirtd', 'virtproxyd', 'virsh', 'systemctl', 'useradd', 'usermod', 'groupadd', 'sudo', 'pkexec', 'execFile', 'spawn']) {
+    assert.equal(source.includes(forbidden), false, `authority-plan selection gained concrete or mutation authority through ${forbidden}`);
   }
 });
