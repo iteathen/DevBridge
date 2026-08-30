@@ -2,7 +2,7 @@
 
 Date: 2026-08-29
 
-Status: implementation and local qualification complete; hosted Windows/Ubuntu qualification pending
+Status: accepted
 
 ## Scope and authority
 
@@ -108,8 +108,17 @@ No legacy result reader, alias, implementation-entry workaround, PATH guess, pri
 - Exact Node 22.16.0 serialized repository preflight: the same 202/2/166 inventory; passed in approximately 71 seconds.
 - Complete serialized Windows suite on the final implementation bytes: 1,820 total, 1,804 passed, 16 expected platform skips, 0 failed in approximately 195 seconds.
 - Read-only doctor: `ok: true`; repository execution remained explicitly unavailable because no local persistent-environment routes are configured; coding-model adapters remained disabled.
-- `git diff --check` passed before documentation completion; repeat it after the documentation change.
+- `git diff --check` passed on the implementation head and after documentation completion.
 
 No setup command, package installation, elevation request, protected-service mutation, provider/VM lifecycle mutation, guest access, repository execution, or coding-model invocation occurred. The doctor performed read-only host capability observation only.
 
-Commit and push the exact implementation, then require hosted Windows and Ubuntu smoke/full acceptance before closing #291.
+## Hosted acceptance
+
+[GitHub Actions run 33285239052](https://github.com/iteathen/DevBridge/actions/runs/33285239052) passed all four required jobs on exact implementation commit `e87abc6681924ce0af46fd24b7f8cd130fa8d2dc`:
+
+- Ubuntu smoke: passed in 26 seconds.
+- Ubuntu complete suite and doctor: passed in 34 seconds.
+- Windows serialized smoke preflight, identity audit, and standalone-installer regression: passed in 1 minute 23 seconds.
+- Windows serialized complete suite and doctor: passed in 2 minutes 22 seconds.
+
+Issue #291 is accepted and may be closed. Hosted software evidence does not claim protected-service freshness, VM-provider readiness, guest readiness, or repository-execution availability. The remaining non-GPU operational frontier is still the one-shot protected Windows service refresh followed by exact Windows and Linux guest C canaries.
