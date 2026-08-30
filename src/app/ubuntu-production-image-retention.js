@@ -163,7 +163,7 @@ function exactPath(left, right, platform) {
   return platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
-export async function createUbuntuProductionImageRetention({ stateDirectory, currentSubject } = {}, {
+export async function createUbuntuProductionImageRetention({ stateDirectory, currentSubject, onProgress = null } = {}, {
   platform = process.platform,
   invoke = invokeCommand,
   identityReader = readLocalIdentity,
@@ -174,7 +174,7 @@ export async function createUbuntuProductionImageRetention({ stateDirectory, cur
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0 || stateDirectory.includes('\0')) throw new TypeError('production image retention state directory is invalid');
   const selectedSubject = subjectId(currentSubject, 'current production image subject');
-  if (typeof invoke !== 'function' || typeof identityReader !== 'function' || typeof constructionFactory !== 'function'
+  if ((onProgress != null && typeof onProgress !== 'function') || typeof invoke !== 'function' || typeof identityReader !== 'function' || typeof constructionFactory !== 'function'
       || typeof imageLibraryFactory !== 'function' || typeof artifactSetFactory !== 'function' || typeof attributeObserverFactory !== 'function') {
     throw new TypeError('production image retention composition contract is incomplete');
   }
@@ -487,6 +487,6 @@ export async function createUbuntuProductionImageRetention({ stateDirectory, cur
     },
   });
 
-  const retention = createConstructionRetention({ source: Object.freeze({ snapshot: buildSnapshot }), journal: retentionStore, effects });
+  const retention = createConstructionRetention({ source: Object.freeze({ snapshot: buildSnapshot }), journal: retentionStore, effects, onProgress });
   return Object.freeze({ inspect: () => retention.inspect(), retire: (request) => retention.retire(request) });
 }

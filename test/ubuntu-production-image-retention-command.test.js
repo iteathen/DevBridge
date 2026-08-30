@@ -67,6 +67,17 @@ test('construction retention command forwards only exact subject and current pla
   assert.deepEqual(state.calls.find((entry) => entry.operation === 'retire').request, { identity: obsolete, planDigest });
 });
 
+test('construction retention command forwards a neutral observer without interpreting it', async () => {
+  const state = harness();
+  const onProgress = () => {};
+  await runUbuntuProductionImageRetentionCommand([], { ...state.dependencies, onProgress });
+  assert.equal(state.calls.find((entry) => entry.operation === 'compose').request.onProgress, onProgress);
+  await assert.rejects(
+    () => runUbuntuProductionImageRetentionCommand([], { ...state.dependencies, onProgress: { write() {} } }),
+    /composition is incomplete/u,
+  );
+});
+
 test('construction retention command rejects implicit, partial, repeated, and inspection mutation authority', () => {
   assert.throws(() => parseUbuntuProductionImageRetentionArguments(['retire', '--subject', obsolete]), /requires exact/u);
   assert.throws(() => parseUbuntuProductionImageRetentionArguments(['inspect', '--subject', obsolete, '--confirm', planDigest]), /does not accept/u);

@@ -43,7 +43,7 @@ function snapshot(changes = {}) {
   };
 }
 
-function harness(initial = snapshot()) {
+function harness(initial = snapshot(), onProgress = null) {
   let currentSnapshot = structuredClone(initial);
   const records = new Map();
   const present = new Set(currentSnapshot.subjects.flatMap((entry) => entry.effects.map((item) => item.identity)));
@@ -65,6 +65,7 @@ function harness(initial = snapshot()) {
         present.delete(item.identity);
       },
     },
+    onProgress,
   });
   return {
     api,
@@ -117,6 +118,46 @@ test('retirement requires the exact current plan and crosses every effect in dur
   assert.equal(state.attempts.length, 2);
 });
 
+test('progress stud reports bounded neutral phases and cannot affect retirement authority', async () => {
+  const progress = [];
+  const state = harness(snapshot(), (event) => {
+    progress.push(structuredClone(event));
+    if (event.phase === 'attempted') throw new Error('observer unavailable');
+    if (event.phase === 'observed') return Promise.reject(new Error('observer rejected'));
+    return null;
+  });
+  const plan = await state.api.inspect();
+  const result = await state.api.retire({ identity: obsolete, planDigest: plan.digest });
+  assert.equal(result.complete, true);
+  assert.ok(progress.some((entry) => entry.phase === 'planning' && entry.total == null));
+  assert.ok(progress.some((entry) => entry.phase === 'binding' && entry.total === 2));
+  assert.ok(progress.some((entry) => entry.phase === 'attempted' && entry.attempt === 1));
+  assert.ok(progress.some((entry) => entry.phase === 'reconciled' && entry.completed === 1 && entry.total === 2));
+  assert.equal(progress.some((entry) => entry.phase === 'completed'), false);
+  for (const entry of progress) assert.deepEqual(Object.keys(entry).sort(), ['attempt', 'completed', 'phase', 'total']);
+  assert.doesNotMatch(JSON.stringify(progress), /subject-|effect-|path|identity|digest/u);
+});
+
+test('progress begins before an awaited source snapshot completes', async () => {
+  const progress = [];
+  let release;
+  const waiting = new Promise((resolve) => { release = resolve; });
+  const api = createConstructionRetention({
+    source: { async snapshot() { await waiting; return snapshot(); } },
+    journal: { load: async () => null, save: async () => {} },
+    effects: {
+      bind: async ({ identity, planDigest }) => ({ identity, planDigest, bound: true }),
+      observe: async ({ effect: item }) => ({ identity: item.identity, state: 'absent', retryable: false }),
+      remove: async () => {},
+    },
+    onProgress: (event) => progress.push(event),
+  });
+  const inspection = api.inspect();
+  assert.deepEqual(progress, [{ phase: 'planning', completed: 0, total: null, attempt: 0 }]);
+  release();
+  await inspection;
+});
+
 test('current, accepted, recoverable, retained, and ambiguous subjects cannot cross retirement', async () => {
   for (const identity of [current, accepted, recoverable, retained, ambiguous]) {
     const state = harness();
@@ -165,7 +206,8 @@ test('plan, protection, and effect drift fail before the next effect', async () 
 });
 
 test('interrupted attempted effects are observed before one bounded exact retry', async () => {
-  const state = harness();
+  const progress = [];
+  const state = harness(snapshot(), (event) => progress.push(event));
   const plan = await state.api.inspect();
   const selected = snapshot().subjects.find((entry) => entry.identity === obsolete);
   state.records.set(obsolete, {
@@ -182,6 +224,7 @@ test('interrupted attempted effects are observed before one bounded exact retry'
   const result = await state.api.retire({ identity: obsolete, planDigest: plan.digest });
   assert.equal(result.complete, true);
   assert.equal(state.attempts.length, 2);
+  assert.ok(progress.some((entry) => entry.phase === 'attempted' && entry.attempt === 1));
 });
 
 test('ambiguous effect observation fails closed without another removal', async () => {

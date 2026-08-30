@@ -55,10 +55,12 @@ export async function runUbuntuProductionImageRetentionCommand(argv, {
   authoritySelector = deriveCurrentUbuntuSetupAuthority,
   subjectFactory = ubuntuConstructionAuthoritySubject,
   retentionFactory = createUbuntuProductionImageRetention,
+  onProgress = null,
 } = {}) {
   const selected = parseArguments(argv);
   if (!environment || typeof environment !== 'object' || typeof homeDirectory !== 'function' || typeof setupStoreFactory !== 'function'
       || typeof authorityStoreFactory !== 'function' || typeof authoritySelector !== 'function' || typeof subjectFactory !== 'function'
+      || (onProgress != null && typeof onProgress !== 'function')
       || typeof retentionFactory !== 'function') throw new TypeError('construction retention command composition is incomplete');
   const home = absoluteHome(selected.home, environment, homeDirectory);
   const stateDirectory = path.join(home, 'state');
@@ -74,7 +76,7 @@ export async function runUbuntuProductionImageRetentionCommand(argv, {
   });
   const currentSubject = subjectFactory(authority);
   if (!SUBJECT.test(currentSubject)) throw new Error('construction retention current subject is invalid');
-  const retention = await retentionFactory({ stateDirectory, currentSubject });
+  const retention = await retentionFactory({ stateDirectory, currentSubject, onProgress });
   if (!retention || typeof retention.inspect !== 'function' || typeof retention.retire !== 'function') {
     throw new TypeError('construction retention command target is incomplete');
   }

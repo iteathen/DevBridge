@@ -226,34 +226,72 @@ function normalizeBinding(raw, identity, planDigest) {
   return Object.freeze({ identity, planDigest, bound: true });
 }
 
+function progressObserver(value) {
+  if (value == null) return null;
+  if (typeof value !== 'function') throw new TypeError('retention progress observer is invalid');
+  return value;
+}
+
+function publishProgress(observer, value) {
+  if (!observer) return;
+  try {
+    const pending = observer(Object.freeze(value));
+    pending?.catch?.(() => {});
+  } catch {
+    // Observation is deliberately unable to affect retention authority or effects.
+  }
+}
+
 export class ConstructionRetention {
   #source;
   #journal;
   #effects;
+  #onProgress;
 
-  constructor({ source, journal, effects } = {}) {
+  constructor({ source, journal, effects, onProgress = null } = {}) {
     this.#source = assertPort(source, ['snapshot'], 'retention source');
     this.#journal = assertPort(journal, ['load', 'save'], 'retention journal');
     this.#effects = assertPort(effects, ['bind', 'observe', 'remove'], 'retention effects');
+    this.#onProgress = progressObserver(onProgress);
   }
 
-  async #plan() {
+  #emit(phase, record = null, total = null) {
+    const effectTotal = record?.effects.length ?? total;
+    const completed = record == null
+      ? 0
+      : record.cursor + (record.phase === 'reconciled' ? 1 : 0);
+    publishProgress(this.#onProgress, {
+      phase,
+      completed,
+      total: effectTotal,
+      attempt: record?.attempts ?? 0,
+    });
+  }
+
+  #emitRecord(record) {
+    if (record.phase !== 'completed') this.#emit(record.phase, record);
+  }
+
+  async #plan(record = null) {
+    this.#emit('planning', record);
     return createPlan(normalizeSnapshot(await this.#source.snapshot()));
   }
 
   async #save(record, changes) {
     const next = { ...record, ...changes, revision: record.revision + 1 };
     await this.#journal.save(record.identity, next);
+    this.#emitRecord(next);
     return next;
   }
 
   async #requireStable(record) {
-    const plan = await this.#plan();
+    const plan = await this.#plan(record);
     if (plan.digest !== record.planDigest || plan.authority.generation !== record.generation) throw new Error('retention plan changed before effect reconciliation');
     if (plan.authority.leaseActive) throw new Error('retention mutation lease is active');
     const subject = plan.authority.subjects.find((entry) => entry.identity === record.identity);
     if (!subject || subject.classification !== 'obsolete') throw new Error('retention subject is no longer obsolete');
     if (JSON.stringify(subject.effects) !== JSON.stringify(record.effects)) throw new Error('retention effect plan changed');
+    this.#emitRecord(record);
     return subject;
   }
 
@@ -279,6 +317,7 @@ export class ConstructionRetention {
     if (!CLASSIFICATIONS.has(subject.classification) || subject.classification !== 'obsolete') {
       throw new Error(`retention subject is protected as ${subject.classification}`);
     }
+    this.#emit('binding', null, subject.effects.length);
     normalizeBinding(await this.#effects.bind(Object.freeze({
       identity,
       planDigest: plan.digest,
@@ -298,6 +337,7 @@ export class ConstructionRetention {
         effects: subject.effects,
       };
       await this.#journal.save(identity, record);
+      this.#emitRecord(record);
     } else {
       if (record.planDigest !== plan.digest || record.generation !== plan.authority.generation) throw new Error('retention journal does not match the current plan');
       await this.#requireStable(record);

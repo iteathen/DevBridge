@@ -72,8 +72,9 @@ test('production image retention composes current, accepted, superseded, and obs
       { identity: recoverable, phase: 'planned' },
       { identity: obsolete, phase: 'completed' },
     ]);
+    const progress = [];
     const retention = await createUbuntuProductionImageRetention(
-      { stateDirectory: stores.stateDirectory, currentSubject: current },
+      { stateDirectory: stores.stateDirectory, currentSubject: current, onProgress: (event) => progress.push(event) },
       dependencies([{ identity: image, provenance: { authority: accepted } }]),
     );
     const plan = await retention.inspect();
@@ -95,6 +96,9 @@ test('production image retention composes current, accepted, superseded, and obs
     assert.equal(await authorities.get(`authority:${obsolete}`), undefined);
     assert.equal(await journals.get(`canonical-image-canary:${obsolete}`), undefined);
     assert.notEqual(await authorities.get(`authority:${current}`), undefined);
+    assert.ok(progress.some((entry) => entry.phase === 'planning'));
+    assert.ok(progress.some((entry) => entry.phase === 'binding'));
+    assert.doesNotMatch(JSON.stringify(progress), /subject-|path|identity|digest/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

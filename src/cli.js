@@ -14,7 +14,7 @@ import { createConfiguredLifecycleAuthorityClient } from './runtime/environment-
 import { chatHandoffSeed, chatHandoffStatus } from './app/chat-handoff.js';
 import { formatSetupHandoff, runDevBridgeSetup } from './app/setup.js';
 import { runWindowsLifecycleAuthoritySetupChild } from './app/windows-lifecycle-authority-setup-child.js';
-import { runUbuntuProductionImageRetentionCommand } from './app/ubuntu-production-image-retention-command.js';
+import { runConstructionRetentionCli } from './app/construction-retention-cli.js';
 import { PolicyError } from './errors.js';
 import { parseSetupCommandOptions } from './setup/command-options.js';
 import { logicalEnvironmentIdentity } from './runtime/environment-declaration.js';
@@ -150,7 +150,7 @@ async function main() {
   }
 
   if (command === 'construction-retention') {
-    console.log(JSON.stringify(await runUbuntuProductionImageRetentionCommand(args), null, 2));
+    await runConstructionRetentionCli(args);
     return;
   }
 
