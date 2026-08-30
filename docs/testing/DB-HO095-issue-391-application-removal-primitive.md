@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: assessment, research, reassessment, and implementation plan recorded; no removal effect authorized
+Status: first neutral implementation slice accepted; production removal remains unavailable and no removal effect is authorized
 
 Coordinates with: #116, #159, #180, #391, DB-003, DB-009, DB-011, DB-020, and DB-HO094.
 
@@ -68,3 +68,26 @@ After that slice passes local and hosted qualification, attach one exact-artifac
 - a durable implementation record naming remaining unregistered producers and nonclaims.
 
 No current live artifact is authorized for removal by this plan.
+
+## First-slice implementation and acceptance
+
+Exact implementation `2bbc9d71acb4cdd1a2299e4a2781d4fb30421879` adds the isolated `devbridge/application-removal-v1` owner. Its public stud exposes only the local protocol and coordinator. Nested contract, planner, and coordinator files import no sibling owner and contain no provider, repository, setup, service, path, VM, disk, domain, operating-system, or downstream component identity.
+
+The contract strictly bounds snapshot items, total effects, identifiers, dependencies, and journal attempts. It distinguishes `created`, locally `adopted`, and `foreign` provenance; `application` and `purge` scopes; explicit protections and protected references; and complete per-mode producer coverage. Foreign state cannot carry an effect. Every selected non-foreign item ends in exactly one terminal effect, effect identities are globally unique, dependencies must be present and acyclic, and journal effect groups cannot be split or reintroduced after another item.
+
+Planning is deterministic across input order. Incomplete coverage, active mutation, foreign provenance, out-of-mode scope, protection, protected reference, and a dependency on preserved state all preserve the item with a bounded neutral reason. Public inspection exposes counts and byte estimates but not effect identities or protected-reference identities. Apply requires exact literal `REMOVE` and the current SHA-256 plan digest.
+
+The coordinator owns the DB-009 phase sequence and restart semantics behind injected local ports: persist planned intent, bind and observe the exact effect, persist attempted before mutation, observe, reconcile, and advance. It rebuilds and compares the complete plan before each effect; rejects generation, coverage, ordering, or protection drift; never acts on ambiguous observation; performs at most one exact retry after the first attempt; re-observes absence before advancement; and returns an idempotent terminal receipt. Interrupted effects that are already absent reconcile without replay. This slice deliberately supplies only fake test ports: no production journal store, filesystem effect adapter, inventory producer, CLI route, or live deletion authority exists.
+
+Local qualification on the final bytes passes:
+
+- focused removal/LEGO tests on both current Node and exact Node 22.16.0: 15/15 each;
+- exact-Node preflight: 2 standalone artifacts, 223 syntax files, 2 JSON files, and 180 targeted test files;
+- repository-execution architecture plus product/standalone gates: 37 total / 36 passed / 1 expected Windows symlink skip;
+- complete exact-Node serialized suite: 1,973 total / 1,952 passed / 21 expected platform skips / zero failures in 189.6 seconds;
+- standalone generated-artifact check and diff hygiene: clean; and
+- doctor: exit zero, coding adapters disabled, repository execution unavailable/fail-closed, lifecycle still `setup-reentry-required`.
+
+Resolve the exact Node 22.16.0 executable first and invoke it directly for qualification. Calling it as `npx node@22.16.0 ...` prepends an npm package shim to `PATH`; the guest bootstrap tests correctly discover and reject that transient shim. Direct exact-executable invocation under the ordinary process environment passes. This is test-launcher contamination, not a product fallback and not evidence of guest readiness.
+
+[GitHub Actions run 33310910845](https://github.com/iteathen/DevBridge/actions/runs/33310910845) passed Ubuntu smoke/full and Windows bounded-smoke/serialized-full plus doctor on the exact implementation. The next primitive is the production durable journal adapter, followed by one exact artifact-effect adapter and its first neutral producer. Keep #391 open until mode coverage is complete and the supported CLI is qualified. No live removal, setup/elevation, protected/provider/VM/guest effect, repository execution, model invocation, or GPU/CUDA work occurred.
