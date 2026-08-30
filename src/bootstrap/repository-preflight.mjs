@@ -209,6 +209,7 @@ const SYNTAX_FILES = [
 
 const JSON_FILES = ['package.json', 'config/devbridge.example.json'];
 const MAX_FAILURE_EVIDENCE_CHARS = 4000;
+const SERIALIZE_TARGETED_TESTS_ARGUMENT = '--serialize-targeted-tests';
 
 const TARGETED_TESTS = [
   'test/standalone-artifact.test.js',
@@ -276,6 +277,7 @@ const TARGETED_TESTS = [
   'test/runtime-transition.test.js',
   'test/rate-budget.test.js',
   'test/repository-preflight-diagnostics.test.js',
+  'test/repository-preflight-options.test.js',
   'test/linux-protected-transfer.test.js',
   'test/linux-environment-configuration-handoff.test.js',
   'test/linux-environment-configuration-host.test.js',
@@ -447,6 +449,29 @@ function protocolNumber(value, name) {
   return parsed;
 }
 
+export function parseRepositoryPreflightArguments(args = []) {
+  if (!Array.isArray(args)) throw new TypeError('repository preflight arguments must be an array');
+  if (args.length === 0) return Object.freeze({ serializeTargetedTests: false });
+  if (args.length === 1 && args[0] === SERIALIZE_TARGETED_TESTS_ARGUMENT) {
+    return Object.freeze({ serializeTargetedTests: true });
+  }
+  throw new Error(`repository preflight accepts only ${SERIALIZE_TARGETED_TESTS_ARGUMENT}`);
+}
+
+function normalizeRepositoryPreflightOptions(options) {
+  if (options == null || typeof options !== 'object' || Array.isArray(options)) {
+    throw new TypeError('repository preflight options must be an object');
+  }
+  const keys = Object.keys(options);
+  if (keys.some((key) => key !== 'serializeTargetedTests')) {
+    throw new TypeError('repository preflight options contain an unsupported field');
+  }
+  if (options.serializeTargetedTests != null && typeof options.serializeTargetedTests !== 'boolean') {
+    throw new TypeError('serializeTargetedTests must be boolean');
+  }
+  return Object.freeze({ serializeTargetedTests: options.serializeTargetedTests === true });
+}
+
 export function assertCandidateStage0Compatibility(root = process.cwd(), environment = process.env) {
   const candidateValidation = environment.CI === '1' && environment.DEVBRIDGE_NONINTERACTIVE === '1';
   if (!candidateValidation) return Object.freeze({ checked: false, activeStage0Protocol: null, requiredStage0Protocol: null });
@@ -463,8 +488,9 @@ export function assertCandidateStage0Compatibility(root = process.cwd(), environ
   return Object.freeze({ checked: true, activeStage0Protocol: active, requiredStage0Protocol: required });
 }
 
-export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync, environment = process.env) {
+export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync, environment = process.env, options = {}) {
   const cwd = path.resolve(root);
+  const scheduling = normalizeRepositoryPreflightOptions(options);
   const compatibility = assertCandidateStage0Compatibility(cwd, environment);
   checked(runner, ['scripts/build-standalone-artifacts.mjs', '--check'], {
     cwd,
@@ -487,7 +513,12 @@ export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync,
     const missing = TARGETED_TESTS.filter((relative) => !targeted.includes(relative));
     throw new Error(`preflight targeted tests are missing: ${missing.join(', ')}`);
   }
-  checked(runner, ['--test', ...targeted], { cwd, label: 'targeted preflight tests', timeoutMs: 180_000 });
+  const testArguments = [
+    '--test',
+    ...(scheduling.serializeTargetedTests ? ['--test-concurrency=1'] : []),
+    ...targeted,
+  ];
+  checked(runner, testArguments, { cwd, label: 'targeted preflight tests', timeoutMs: 180_000 });
   return { standaloneArtifacts: 2, syntaxFiles: SYNTAX_FILES.length, jsonFiles: JSON_FILES.length, targetedTests: targeted.length, compatibility };
 }
 
@@ -495,7 +526,8 @@ const thisFile = path.resolve(fileURLToPath(import.meta.url));
 const entryFile = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (entryFile === thisFile) {
   try {
-    const result = runRepositoryPreflight();
+    const options = parseRepositoryPreflightArguments(process.argv.slice(2));
+    const result = runRepositoryPreflight(process.cwd(), spawnSync, process.env, options);
     process.stdout.write(`${JSON.stringify({ status: 'passed', ...result })}\n`);
   } catch (error) {
     process.stderr.write(`[devbridge-preflight] ${error.name}: ${error.message}\n`);

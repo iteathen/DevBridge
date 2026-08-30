@@ -1,6 +1,6 @@
 # DB-HO055: deterministic Windows CI test-file concurrency
 
-Status: reopened after a distinct Windows preflight recurrence; correction assessed, researched, and planned
+Status: preflight correction implemented and locally qualified; repeated exact-head hosted acceptance pending
 
 Issue: [#290](https://github.com/iteathen/DevBridge/issues/290)
 
@@ -113,3 +113,28 @@ Keep scheduling at the CI/preflight composition edge. Production command, provid
 6. Run focused argument/workflow tests, repeated Windows serialized preflight, default preflight, the complete suite, exact diff checks, and hosted Windows/Ubuntu qualification. Require multiple accepted hosted Windows runs before closing #290 because one prior accepted run did not expose the separate smoke path.
 
 This correction performs no setup, elevation, service/provider/image/environment/VM/guest operation, repository execution through DevBridge, or physical canary.
+
+## Preflight correction implementation
+
+Repository preflight now exposes one closed local option, `serializeTargetedTests`, through the sole CLI argument `--serialize-targeted-tests`. The default remains false. The parser rejects duplicated, value-bearing, raw-concurrency, and unknown arguments. The programmatic contract rejects non-boolean or foreign option fields before running any check.
+
+When selected, the preflight parent adds the fixed Node argument `--test-concurrency=1` only to the existing complete targeted-test invocation. No test file is reclassified, removed, skipped, merged into a shared process, or given a different assertion or timeout. The preflight's syntax, JSON, artifact, compatibility, failure-evidence, and three-minute targeted-process contracts are unchanged.
+
+The workflow is the only Windows-aware composition edge. Its smoke job now selects the closed option only for `runner.os == 'Windows'`; non-Windows smoke keeps the exact default `npm run preflight` command. The existing two-minute step and three-minute job ceilings are unchanged. The already serialized Windows full suite and default non-Windows full suite are unchanged.
+
+Direct option tests prove both invocation shapes contain the same 163 targeted files and differ by only the fixed scheduling argument. Static workflow tests prove mutually exclusive Windows/non-Windows selection and the unchanged deadlines. No generic scheduler, arbitrary concurrency input, production fallback, or legacy argument reader was added.
+
+## Local correction evidence
+
+All checks ran on Windows without UAC/elevation, setup, installed-state mutation, service/provider/image/environment/VM/guest access, DevBridge repository execution, or a physical canary:
+
+- focused parser, programmatic option, workflow, compatibility, and bounded-diagnostic contracts: 12/12 passed under Node 24 and 12/12 passed under exact Node 22.16.0;
+- direct exact Node 22.16.0 environment-bootstrap suite: 4/4 passed, confirming the earlier `npx`-wrapped timing probe was not candidate evidence;
+- exact Node 22.16.0 serialized repository preflight attempt 1: 200 syntax files, 2 JSON files, 163 targeted test files, passed in 79,282 ms;
+- exact Node 22.16.0 serialized repository preflight attempt 2: the same 200/2/163 inventory passed in 77,887 ms;
+- exact Node 22.16.0 default repository preflight: the same 200/2/163 inventory passed in 27,082 ms;
+- direct unsupported raw-concurrency CLI input failed closed before preflight work;
+- complete default-concurrency local suite: 1,810 total, 1,794 passed, 16 expected Windows platform skips, zero failures in 53,984 ms;
+- syntax checks and `git diff --check`: passed.
+
+Commit and push the exact candidate, then require multiple complete hosted runs. Each accepted run must pass Windows serialized smoke preflight, Windows serialized full-suite/doctor, and both default Ubuntu jobs without rerunning failed jobs or widening a deadline. Close #290 only after that repeated exact policy evidence.

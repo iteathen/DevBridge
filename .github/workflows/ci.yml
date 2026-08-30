@@ -29,9 +29,14 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.16.0
-      - name: Cheap preflight
+      - name: Cheap preflight (non-Windows default)
+        if: runner.os != 'Windows'
         timeout-minutes: 2
         run: npm run preflight
+      - name: Cheap preflight (Windows serialized)
+        if: runner.os == 'Windows'
+        timeout-minutes: 2
+        run: npm run preflight -- --serialize-targeted-tests
       - name: DevBridge identity audit
         timeout-minutes: 1
         run: node --test test/product-identity.test.js
