@@ -72,10 +72,17 @@ The existing unconditional `accept(items)` remains the explicit complete-list co
 
 ## Acceptance
 
-- [ ] Conditional acceptance requires exact current generation or explicit empty state.
-- [ ] A stale writer cannot publish a later revision that erases the observed winner.
-- [ ] Same-list conditional acceptance is idempotent only when the expected generation is current.
-- [ ] Corrupt, gapped, aliased, noncanonical, or otherwise ambiguous history still fails closed.
-- [ ] The journal source remains import-isolated and contains no topology identities.
-- [ ] No production producer, CLI, live adoption, deletion, setup/elevation, protected/provider/VM/guest, repository-code, model, or GPU/CUDA effect occurs.
+- [x] Conditional acceptance requires exact current generation or explicit empty state.
+- [x] A stale writer cannot publish a later revision that erases the observed winner.
+- [x] Same-list conditional acceptance is idempotent only when the expected generation is current.
+- [x] Corrupt, gapped, aliased, noncanonical, or otherwise ambiguous history still fails closed.
+- [x] The journal source remains import-isolated and contains no topology identities.
+- [x] No production producer, CLI, live adoption, deletion, setup/elevation, protected/provider/VM/guest, repository-code, model, or GPU/CUDA effect occurs.
 
+## Implementation and qualification
+
+Exact implementation `2df65cd999b817f32e9025c673af9cc3c3d1f62f` adds one strict `compareAndAccept({ generation, items })` operation and factors the existing immutable revision publication mechanics without adding merge callbacks or topology knowledge. A generation mismatch returns the exact observed record without writing. A matching generation permits at most one next-revision create-if-absent attempt; a losing contender returns the exact winner without retrying over it. Exact-current identical input is accepted without publishing another revision. The existing `accept(items)` retains its explicitly narrower complete-list convergence contract.
+
+Focused tests pass 18/18 on both the current runtime and exact Node 22.16.0. Both bounded preflights pass 2 standalone artifacts, 231 syntax files, 2 JSON files, and 190 targeted test files. The exact architecture/product/standalone gate reports 40 total, 39 passed, and one expected Windows symlink skip. The exact serialized complete suite reports 2,013 total, 1,992 passed, 21 expected skips, and zero failures in 193.5 seconds. Exact doctor is green, coding adapters remain disabled, and repository execution remains unavailable/fail-closed because no persistent-environment routes are configured. Standalone regeneration and diff hygiene pass.
+
+The plan head passed all four Ubuntu/Windows jobs plus doctor in [run 33319303628](https://github.com/iteathen/DevBridge/actions/runs/33319303628). Exact implementation `2df65cd999b817f32e9025c673af9cc3c3d1f62f` passed all four Ubuntu/Windows smoke/full jobs plus doctor in [run 33319623210](https://github.com/iteathen/DevBridge/actions/runs/33319623210). This accepts only the conditional receipt primitive. Issue #391 remains open for production producers, coverage, supported removal, and lifecycle rotation.
