@@ -51,10 +51,14 @@ function harness(initial = snapshot(), { removeEffect = null, observeEffect = nu
   const api = createApplicationRemoval({
     source: { async snapshot() { return structuredClone(current); } },
     journal: {
-      async load(mode) { return structuredClone(records.get(mode)); },
-      async save(mode, value) {
-        records.set(mode, structuredClone(value));
-        saves.push(structuredClone(value));
+      async run(mode, operation) {
+        return operation({
+          async load() { return structuredClone(records.get(mode)); },
+          async save(value) {
+            records.set(mode, structuredClone(value));
+            saves.push(structuredClone(value));
+          },
+        });
       },
     },
     effects: {

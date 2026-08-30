@@ -62,7 +62,7 @@ export class ApplicationRemoval {
 
   constructor({ source, journal, effects } = {}) {
     this.#source = requirePort(source, ['snapshot'], 'removal source');
-    this.#journal = requirePort(journal, ['load', 'save'], 'removal journal');
+    this.#journal = requirePort(journal, ['run'], 'removal journal');
     this.#effects = requirePort(effects, ['bind', 'observe', 'remove'], 'removal effects');
   }
 
@@ -70,9 +70,9 @@ export class ApplicationRemoval {
     return createRemovalPlan(await this.#source.snapshot(), mode);
   }
 
-  async #save(record, changes) {
+  async #save(journal, record, changes) {
     const next = normalizeRemovalRecord({ ...record, ...changes, revision: record.revision + 1 });
-    await this.#journal.save(record.mode, next);
+    await journal.save(next);
     return next;
   }
 
@@ -103,7 +103,14 @@ export class ApplicationRemoval {
 
   async remove(rawRequest) {
     const request = normalizeRemovalRequest(rawRequest);
-    let record = normalizeRemovalRecord(await this.#journal.load(request.mode));
+    return this.#journal.run(request.mode, async (rawJournal) => {
+      const journal = requirePort(rawJournal, ['load', 'save'], 'removal journal session');
+      return this.#removeWithinSession(request, journal);
+    });
+  }
+
+  async #removeWithinSession(request, journal) {
+    let record = normalizeRemovalRecord(await journal.load());
     if (record?.phase === 'completed') {
       if (record.planDigest !== request.planDigest) throw new Error('completed removal receipt does not match the requested plan');
       return publicStatus(record);
@@ -128,7 +135,7 @@ export class ApplicationRemoval {
         preserved: plan.preserved.map(({ identity, reasons }) => ({ identity, reasons })),
         outcomes: plan.effects.map(() => null),
       });
-      await this.#journal.save(request.mode, record);
+      await journal.save(record);
       if (record.phase === 'completed') return publicStatus(record);
     } else {
       if (record.mode !== request.mode || record.planDigest !== plan.digest || record.generation !== plan.authority.generation) {
@@ -148,9 +155,9 @@ export class ApplicationRemoval {
         if (observed.state === 'absent') {
           const outcomes = [...record.outcomes];
           outcomes[record.cursor] = 'absent';
-          record = await this.#save(record, { phase: 'observed', outcomes });
+          record = await this.#save(journal, record, { phase: 'observed', outcomes });
         } else {
-          record = await this.#save(record, { phase: 'attempted', attempts: 1 });
+          record = await this.#save(journal, record, { phase: 'attempted', attempts: 1 });
           await this.#requireStable(record);
           input = await this.#bind(record, effect);
           await this.#effects.remove(input);
@@ -165,7 +172,7 @@ export class ApplicationRemoval {
           if (!observed.retryable || record.attempts >= maximumRemovalAttempts()) {
             throw new Error('removal effect remains present after bounded reconciliation');
           }
-          record = await this.#save(record, { attempts: record.attempts + 1 });
+          record = await this.#save(journal, record, { attempts: record.attempts + 1 });
           await this.#requireStable(record);
           input = await this.#bind(record, effect);
           await this.#effects.remove(input);
@@ -174,21 +181,21 @@ export class ApplicationRemoval {
         }
         const outcomes = [...record.outcomes];
         outcomes[record.cursor] = 'removed';
-        record = await this.#save(record, { phase: 'observed', outcomes });
+        record = await this.#save(journal, record, { phase: 'observed', outcomes });
       }
 
       if (record.phase === 'observed') {
         const input = await this.#bind(record, effect);
         const observed = normalizeRemovalObservation(await this.#effects.observe(input), effect);
         if (observed.state !== 'absent') throw new Error('removal effect absence evidence changed');
-        record = await this.#save(record, { phase: 'reconciled' });
+        record = await this.#save(journal, record, { phase: 'reconciled' });
       }
 
       if (record.phase === 'reconciled') {
         const nextCursor = record.cursor + 1;
         record = nextCursor === record.effects.length
-          ? await this.#save(record, { cursor: nextCursor, phase: 'completed', attempts: 0 })
-          : await this.#save(record, { cursor: nextCursor, phase: 'planned', attempts: 0 });
+          ? await this.#save(journal, record, { cursor: nextCursor, phase: 'completed', attempts: 0 })
+          : await this.#save(journal, record, { cursor: nextCursor, phase: 'planned', attempts: 0 });
       }
     }
     return publicStatus(record);

@@ -3,7 +3,10 @@ import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 function normalizeDocument(value) {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('record file root must be an object');
+  }
+  return value;
 }
 
 async function readDocument(target) {
@@ -33,7 +36,6 @@ export function createJsonRecordFile(target, { identifier = randomUUID } = {}) {
     read: () => readDocument(resolved),
     async replace(value) {
       const document = normalizeDocument(value);
-      if (document !== value) throw new TypeError('record file value must be an object');
       const suffix = identifier();
       if (typeof suffix !== 'string' || !/^[A-Za-z0-9-]{1,128}$/u.test(suffix)) throw new TypeError('record file temporary identity is invalid');
       await mkdir(path.dirname(resolved), { recursive: true });

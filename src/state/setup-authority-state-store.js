@@ -1,6 +1,6 @@
 import path from 'node:path';
-import { createExclusiveMutation } from './setup-authority-state-store/exclusive-mutation.js';
-import { createJsonRecordFile } from './setup-authority-state-store/json-record-file.js';
+import { createExclusiveMutation } from './exclusive-mutation.js';
+import { createJsonRecordFile } from './json-record-file.js';
 
 const RECORD_KEY = 'setup:authority';
 

@@ -9,7 +9,7 @@ import { reconcileSetupImageDistributionPolicy } from '../src/app/setup-image-di
 import { reconcileSetupProfileSelection } from '../src/app/setup-profile-selection.js';
 import { reconcileSetupWindowsActivationPolicy } from '../src/app/setup-windows-activation-policy.js';
 import { SetupAuthorityManager, createSetupAuthoritySnapshot } from '../src/runtime/setup-authority.js';
-import { createExclusiveMutation } from '../src/state/setup-authority-state-store/exclusive-mutation.js';
+import { createExclusiveMutation } from '../src/state/exclusive-mutation.js';
 import { createSetupAuthorityStateStore } from '../src/state/setup-authority-state-store.js';
 
 const FIXTURE = fileURLToPath(new URL('./fixtures/setup-authority-process.mjs', import.meta.url));

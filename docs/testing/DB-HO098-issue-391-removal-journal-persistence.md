@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: assessed, researched, and planned; implementation not started
+Status: implemented and locally qualified; exact-head hosted acceptance pending
 
 Coordinates with: #391, DB-003, DB-009, DB-011, DB-020, and DB-HO095.
 
@@ -61,3 +61,31 @@ Holding local admission across the whole effect loop is intentional. It does not
 - It does not make application or purge mode available to users.
 - It does not refresh the protected service or touch a provider, VM, guest, repository workload, model adapter, or GPU/CUDA feature.
 
+## Implementation
+
+The implementation moves `exclusive-mutation.js` and `json-record-file.js` from the setup-specific child path to neutral `src/state` ownership and updates the setup authority adapter to consume those same studs. The old files are deleted; no forwarding modules or compatibility copies remain. The JSON record reader now rejects a valid JSON scalar, array, or null root instead of converting corrupt state to an empty document.
+
+`revisioned-record-state-store.js` is a generic local component. Its only public stud is `run(subject, operation)`. It validates a bounded neutral subject, acquires one OS-local exclusive mutation lease for the exact record file, and supplies a subject-bound session with `load()` and `save(record)`. Records must be exact JSON objects with positive safe-integer revisions. The store accepts only absent-to-revision-1 or exact +1 transitions, reconciles an identical already-accepted revision, and rejects conflicting, stale, skipped, non-JSON, or corrupt records. Each changed record uses the existing unique create, file flush, close, rename, exact reread, and temporary cleanup sequence.
+
+The application-removal journal stud now requires `run(mode, operation)` rather than free-standing `load/save`. The coordinator performs the complete plan revalidation and observe/attempt/observe/reconcile loop inside the injected session. This keeps the coordinator free of filesystem/locking identity while preventing two local processes from entering the same effect loop concurrently. A crash still releases only the local lease; recovery meaning remains in the durable DB-009 record and the next caller re-observes before acting.
+
+Boundary tests prove:
+
+- exact revision advancement, accepted-write idempotency, stale/skipped/conflicting rejection, subject isolation, and corrupt-root fail-closed behavior;
+- local cross-instance serialization, bounded lock release after failure, and exact temporary-file cleanup;
+- an exact record written by one process and loaded by a fresh process;
+- a fresh removal coordinator reconciling an interrupted attempted effect from durable state without replay; and
+- two independent coordinators producing only one exact effect attempt while the second waits and returns the terminal receipt.
+
+The argument-driven process fixture initially failed the complete suite because Node's default test discovery executes `.mjs` files beneath `test/`. The fixture now follows the repository's existing fixture convention: no arguments means import-safe no-op, while an explicit action enters the bounded fixture path and invalid actions fail. This is test topology only and does not change product behavior.
+
+## Local qualification
+
+- current and exact Node 22.16.0 focused removal/state/setup qualification: 33/33 passed;
+- exact Node 22.16.0 bounded preflight: 2 standalone artifacts, 226 syntax files, 2 JSON files, and 183 targeted test files;
+- exact Node architecture/product/standalone gates: 37 total / 36 passed / 1 expected Windows symlink skip;
+- complete exact Node 22.16.0 serialized suite on final bytes: 1,983 total / 1,962 passed / 21 expected platform skips / zero failures in 189.3 seconds;
+- standalone artifact regeneration check and diff hygiene: clean; and
+- exact Node doctor: `ok: true`, coding adapters disabled, environment setup re-entry still required, and repository execution unavailable/fail-closed because no route is configured.
+
+Plan head `12f3a37e14b979fc3eda47fa3f4f55078f952ffd` passed all four hosted Ubuntu/Windows smoke/full jobs plus doctor in [run 33312776472](https://github.com/iteathen/DevBridge/actions/runs/33312776472). Commit and push the exact implementation, then require its complete hosted matrix before treating this slice as accepted. #391 remains open; no production composition, inventory producer, artifact effect, CLI route, or live removal authority exists.
