@@ -30,7 +30,7 @@ test('setup carries the local signature-verifier binding through release verific
       protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 1, changed: false,
       profiles: ['linux-development'], pendingProfiles: null, source: 'accepted',
     }),
-    pathInstaller: async () => ({ persisted: true, changed: false, requiresNewShell: false, temporaryCommand: null }),
+    pathInstaller: async () => ({ protocol: 'test/path-v2', command: 'devbridge', invocation: 'devbridge', persisted: true, changed: false, visibility: 'available' }),
     tokenResolver: async () => 'token',
     clientFactory: () => ({}),
     discover: async () => ({ identity: { id: 1, login: 'owner' }, repositories: [] }),

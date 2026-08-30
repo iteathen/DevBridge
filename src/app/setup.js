@@ -520,6 +520,43 @@ function activeConstructionLabel(result) {
   return result.construction?.profile === WINDOWS_PROFILE ? 'Windows' : 'Linux';
 }
 
+function commandInvocation(status, suffix = '') {
+  const root = status?.visibility === 'available' ? 'devbridge' : status?.invocation;
+  if (typeof root !== 'string' || root.length === 0) return `devbridge${suffix}`;
+  return `${root}${suffix}`;
+}
+
+function appendCommandAvailability(lines, status, { showAvailable = false } = {}) {
+  if (status == null) return;
+  if (status.visibility === 'available') {
+    if (showAvailable) lines.push('The devbridge command is available on the current PATH.');
+    return;
+  }
+  if (typeof status.invocation !== 'string' || status.invocation.length === 0) {
+    throw new TypeError('setup path status exact invocation is unavailable');
+  }
+  if (status.visibility === 'refresh-required') {
+    lines.push(
+      'User PATH was updated, but this process tree still has its earlier PATH.',
+      `Use the exact installed command now: ${status.invocation}`,
+      'An independently refreshed shell should discover devbridge by name.',
+    );
+    return;
+  }
+  if (status.visibility === 'caller-omitted') {
+    lines.push(
+      "User PATH is persisted, but this caller's effective PATH omits the installed command directory.",
+      `Child processes normally inherit that omission. Use the exact installed command: ${status.invocation}`,
+    );
+    return;
+  }
+  if (status.visibility === 'not-persisted') {
+    lines.push(`User PATH persistence is unverified. Use the exact installed command: ${status.invocation}`);
+    return;
+  }
+  throw new TypeError('setup path visibility is unsupported');
+}
+
 export function formatSetupHandoff(result) {
   if (!result || result.protocol !== PROTOCOL) throw new TypeError('setup handoff result is invalid');
   if (result.blocked) {
@@ -538,7 +575,10 @@ export function formatSetupHandoff(result) {
     }
     appendWindowsMedia(lines, result.windowsProfile, { constructionActive: result.construction?.profile === WINDOWS_PROFILE });
     if (constructionBlocked) lines.push('', 'Preserve the canary state; resolve only this blocker, then re-run devbridge setup --construct.');
-    if (result.path?.requiresNewShell) lines.push('', `PATH is persisted; until a new shell is opened use: ${result.path.temporaryCommand}`);
+    if (result.path?.visibility !== 'available') {
+      lines.push('');
+      appendCommandAvailability(lines, result.path);
+    }
     return `${lines.join('\n')}\n`;
   }
   if (result.readyForConstruction) {
@@ -558,18 +598,28 @@ export function formatSetupHandoff(result) {
       lines.push('Physical construction connectivity: verified host-managed DHCP; not claimed as DevBridge-owned network state');
     }
     appendWindowsMedia(lines, result.windowsProfile);
-    lines.push('',
-      'The setup path performed no image or VM construction.',
-      result.path?.requiresNewShell ? `Open a new shell for devbridge on PATH. Until then: ${result.path.temporaryCommand}` : 'The devbridge command is available on PATH.',
-      '',
-    );
+    lines.push('', 'The setup path performed no image or VM construction.');
+    appendCommandAvailability(lines, result.path, { showAvailable: true });
+    lines.push('');
     return lines.join('\n');
   }
   if (result.phase === 'profile-selection-deferred') {
-    return 'DevBridge execution-profile setup was deferred.\n\nRepository selection was preserved, no profile setup work was performed, and execution remains fail-closed. Re-run devbridge setup --profiles <linux|windows|both|none> when ready.\n';
+    const lines = [
+      'DevBridge execution-profile setup was deferred.',
+      '',
+      'Repository selection was preserved, no profile setup work was performed, and execution remains fail-closed. Re-run devbridge setup --profiles <linux|windows|both|none> when ready.',
+    ];
+    appendCommandAvailability(lines, result.path);
+    return `${lines.join('\n')}\n`;
   }
   if (result.phase === 'profiles-disabled') {
-    return 'DevBridge setup saved an empty execution-profile selection.\n\nRepository selection was preserved, no VM profile setup work was performed, and repository execution remains unavailable.\n';
+    const lines = [
+      'DevBridge setup saved an empty execution-profile selection.',
+      '',
+      'Repository selection was preserved, no VM profile setup work was performed, and repository execution remains unavailable.',
+    ];
+    appendCommandAvailability(lines, result.path);
+    return `${lines.join('\n')}\n`;
   }
   if (result.phase === 'environment-ready') {
     const lines = [
@@ -582,6 +632,7 @@ export function formatSetupHandoff(result) {
       'Operational configuration and execution opt-in remain pending; setup has not started task polling.',
     ];
     appendWindowsMedia(lines, result.windowsProfile);
+    appendCommandAvailability(lines, result.path);
     lines.push('');
     return lines.join('\n');
   }
@@ -596,21 +647,24 @@ export function formatSetupHandoff(result) {
       'Coding-model adapters: disabled (opt-in only)',
     ];
     appendWindowsMedia(lines, result.windowsProfile);
+    appendCommandAvailability(lines, result.path);
     lines.push(
       '',
-      'Setup did not start task polling. Start DevBridge with: devbridge',
-      'Check health with: devbridge doctor',
-      'Check runtime state with: devbridge status',
-      'Change local setup later with: devbridge setup',
+      `Setup did not start task polling. Start DevBridge with: ${commandInvocation(result.path)}`,
+      `Check health with: ${commandInvocation(result.path, ' doctor')}`,
+      `Check runtime state with: ${commandInvocation(result.path, ' status')}`,
+      `Change local setup later with: ${commandInvocation(result.path, ' setup')}`,
       '',
     );
     return lines.join('\n');
   }
   if (result.phase === 'image-complete') {
     const label = activeConstructionLabel(result);
-    return result.construction?.attempted
-      ? `DevBridge ${label} physical image construction canary completed.\n`
-      : 'Welcome to DevBridge — the Linux production image is already complete.\n';
+    const lines = [result.construction?.attempted
+      ? `DevBridge ${label} physical image construction canary completed.`
+      : 'Welcome to DevBridge — the Linux production image is already complete.'];
+    appendCommandAvailability(lines, result.path);
+    return `${lines.join('\n')}\n`;
   }
   if (result.construction?.attempted) {
     const physical = activeConstructionPhysical(result);
@@ -626,12 +680,15 @@ export function formatSetupHandoff(result) {
     appendConstructionReadiness(lines, physical);
     appendConstructionDiagnostics(lines, physical);
     appendWindowsMedia(lines, result.windowsProfile, { constructionActive: result.construction?.profile === WINDOWS_PROFILE });
+    appendCommandAvailability(lines, result.path);
     const nextObservationAt = physical?.liveness?.nextObservationAt ?? physical?.readiness?.nextObservationAt;
     if (nextObservationAt) lines.push('', `Re-run devbridge setup --construct at or after ${nextObservationAt} to record the next bounded observation.`, '');
     else lines.push('', 'Do not retry construction automatically; resolve the reported bounded frontier first.', '');
     return lines.join('\n');
   }
-  return `DevBridge setup state: ${result.phase}\n`;
+  const lines = [`DevBridge setup state: ${result.phase}`];
+  appendCommandAvailability(lines, result.path);
+  return `${lines.join('\n')}\n`;
 }
 
 export async function runDevBridgeSetup({

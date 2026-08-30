@@ -143,7 +143,7 @@ function dependencies({
         calls.windowsActivationRequest = structuredClone(value);
         return structuredClone(windowsActivation ?? windowsActivationPolicy());
       },
-      pathInstaller: async ({ home }) => ({ protocol: 'test/path', command: path.join(home, 'bin', 'devbridge.cmd'), persisted: true, changed: false, requiresNewShell: false, temporaryCommand: null }),
+      pathInstaller: async ({ home }) => ({ protocol: 'test/path-v2', command: path.join(home, 'bin', 'devbridge.cmd'), invocation: `& '${path.join(home, 'bin', 'devbridge.cmd')}'`, persisted: true, changed: false, visibility: 'available' }),
       tokenResolver: async () => 'test-token',
       clientFactory: () => ({}),
       discover: async () => ({ identity, repositories: discoveredRepositories }),

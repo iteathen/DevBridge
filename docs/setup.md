@@ -74,7 +74,11 @@ Successful setup must leave a stable `devbridge` command available on the user's
 - Setup owns a stable launcher/shim under the DevBridge installation and adds its bin directory to the appropriate user PATH using platform-appropriate persistent configuration.
 - Do not overwrite an unrelated existing `devbridge` executable. A collision is a focused blocker that identifies the conflicting command and offers a safe resolution.
 - PATH mutation must be installation-owned and reversible by uninstall/reconfiguration.
-- Before reporting success, setup verifies both the launcher target and command resolution. Where the current shell cannot observe a newly persisted PATH value, the completion message must say that a new shell is required and show the temporary exact command needed only until then.
+- Before reporting success, setup verifies the exact stable launcher content and rereads the persistent PATH result. Persistent User PATH and the current process environment are separate observations.
+- When setup added the persistent entry during the current invocation, an already-running process tree is reported as `refresh-required`; an independently refreshed operator shell should discover the command.
+- When persistent PATH was already correct but the current caller omits the directory, setup reports `caller-omitted`. Children normally inherit that omission, so spawning another child shell is not presented as a repair.
+- Whenever bare discovery is unavailable, setup displays the exact verified stable launcher invocation. It never recommends the Node implementation entry as a PATH workaround.
+- An integration that knows the canonical installation home resolves and verifies the exact owned command through the installation contract. It does not guess PATH, require the invoking model process to inherit the operator's full environment, or move privileged behavior into the integration.
 
 After successful installation, normal operator documentation uses commands such as `devbridge setup`, `devbridge status`, and `devbridge doctor`, not internal Node file paths.
 

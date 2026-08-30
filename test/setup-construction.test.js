@@ -12,7 +12,7 @@ function memoryStore(initial = null) {
   };
 }
 
-function fixture({ status, runResult } = {}) {
+function fixture({ status, runResult, pathStatus = null } = {}) {
   const calls = { status: 0, run: 0 };
   const store = memoryStore();
   return {
@@ -25,7 +25,7 @@ function fixture({ status, runResult } = {}) {
         protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 1, changed: false,
         profiles: ['linux-development'], pendingProfiles: null, source: 'accepted',
       }),
-      pathInstaller: async ({ home }) => ({ protocol: 'test/path', command: path.join(home, 'bin', 'devbridge.cmd'), persisted: true, changed: false, requiresNewShell: false, temporaryCommand: null }),
+      pathInstaller: async ({ home }) => pathStatus ?? ({ protocol: 'test/path-v2', command: path.join(home, 'bin', 'devbridge.cmd'), invocation: `& '${path.join(home, 'bin', 'devbridge.cmd')}'`, persisted: true, changed: false, visibility: 'available' }),
       tokenResolver: async () => 'test-token',
       clientFactory: () => ({}),
       discover: async () => ({
@@ -127,6 +127,52 @@ test('plain setup remains read-only at the construction gate', async () => {
   const handoff = formatSetupHandoff(result);
   assert.match(handoff, /authorized by status gate, not started/u);
   assert.match(handoff, /host-managed DHCP; not claimed as DevBridge-owned/u);
+});
+
+test('setup handoff distinguishes a caller-omitted PATH and exposes the exact command', async () => {
+  const command = 'C:\\Users\\operator\\.devbridge\\bin\\devbridge.cmd';
+  const invocation = `& '${command}'`;
+  const selected = fixture({
+    pathStatus: {
+      protocol: 'test/path-v2',
+      command,
+      invocation,
+      persisted: true,
+      changed: false,
+      visibility: 'caller-omitted',
+    },
+  });
+  const result = await runDevBridgeSetup({ home: home('db-setup-caller-omitted-path') }, selected.deps);
+  const handoff = formatSetupHandoff(result);
+  assert.match(handoff, /User PATH is persisted, but this caller's effective PATH omits/u);
+  assert.match(handoff, /Child processes normally inherit that omission/u);
+  assert.match(handoff, /C:\\Users\\operator\\\.devbridge\\bin\\devbridge\.cmd/u);
+  assert.doesNotMatch(handoff, /Open a new shell/u);
+});
+
+test('operational handoff uses the exact command while the current process needs refresh', () => {
+  const command = 'C:\\Users\\operator\\.devbridge\\bin\\devbridge.cmd';
+  const invocation = `& '${command}'`;
+  const handoff = formatSetupHandoff({
+    protocol: 'devbridge/setup-status-v1',
+    blocked: false,
+    phase: 'operational-ready',
+    path: {
+      protocol: 'test/path-v2',
+      command,
+      invocation,
+      persisted: true,
+      changed: true,
+      visibility: 'refresh-required',
+    },
+    environment: { profileCount: 1, environmentCount: 1 },
+    repositories: { selectedCount: 1 },
+    windowsProfile: null,
+  });
+  assert.match(handoff, /User PATH was updated, but this process tree still has its earlier PATH/u);
+  assert.match(handoff, /Start DevBridge with: & 'C:\\Users\\operator\\\.devbridge\\bin\\devbridge\.cmd'/u);
+  assert.match(handoff, /Check health with: & 'C:\\Users\\operator\\\.devbridge\\bin\\devbridge\.cmd' doctor/u);
+  assert.doesNotMatch(handoff, /Start DevBridge with: devbridge(?:\r?\n|$)/u);
 });
 
 test('plain setup reauthorizes a non-complete durable canary at the construction gate', async () => {

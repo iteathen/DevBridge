@@ -2,7 +2,7 @@
 
 Date: 2026-08-29
 
-Status: assessment, research, reassessment, and implementation plan accepted; implementation pending
+Status: implementation and local qualification complete; hosted Windows/Ubuntu qualification pending
 
 ## Scope and authority
 
@@ -85,3 +85,31 @@ The exact owned command remains the stable launcher under the canonical installa
 ## Safety boundary
 
 This slice invokes no setup command, package installer, UAC/sudo flow, protected service, provider, image constructor, VM, guest, repository execution, or coding-model adapter. It changes only host-control installation observation and presentation contracts. GPU/CUDA work remains deferred.
+
+## Implementation checkpoint
+
+The old v1 `requiresNewShell` and Node-entry `temporaryCommand` fields are deleted. The v2 path result now carries only exact installed command identity, exact human invocation, verified persistence/change observations, and one closed visibility state.
+
+- `src/setup/path-visibility.js` is a dependency-free closed LEGO. It accepts exactly three neutral booleans, rejects widened input, and returns only `not-persisted`, `available`, `refresh-required`, or `caller-omitted`.
+- The Windows persistence adapter rereads User PATH after its fixed write and accepts only the exact two-boolean subprocess result. Unverified persistence blocks setup.
+- The POSIX adapter verifies the exact managed profile record and rejects a marker whose owned record is absent.
+- `resolveInstalledCommand()` derives the canonical command from the installation home, requires a non-link regular file, reconstructs the exact expected wrapper bytes around the currently installed Permanent Entry or owned Stage 0 source, and rejects content substitution.
+- Setup installation calls that same resolver after writing the launcher. Agent/controller integrations can call it when installation identity is known rather than guessing the caller's PATH.
+- Every relevant handoff now distinguishes persistent state from current visibility. Operational success uses the exact stable invocation for start, doctor, status, and setup whenever the current caller cannot resolve bare `devbridge`.
+- Repository preflight now explicitly includes both path source modules plus the classifier, installer, and topology tests.
+
+No legacy result reader, alias, implementation-entry workaround, PATH guess, privilege expansion, or host repository-execution fallback remains.
+
+## Local qualification
+
+- Current Node focused setup/path/architecture/preflight-options suite: 64 passed, 0 failed.
+- Exact Node 22.16.0 focused setup/path/architecture/preflight-options suite: 64 passed, 0 failed.
+- Default repository preflight: 2 standalone artifacts, 202 syntax files, 2 JSON files, 166 targeted tests; passed.
+- Exact Node 22.16.0 serialized repository preflight: the same 202/2/166 inventory; passed in approximately 71 seconds.
+- Complete serialized Windows suite on the final implementation bytes: 1,820 total, 1,804 passed, 16 expected platform skips, 0 failed in approximately 195 seconds.
+- Read-only doctor: `ok: true`; repository execution remained explicitly unavailable because no local persistent-environment routes are configured; coding-model adapters remained disabled.
+- `git diff --check` passed before documentation completion; repeat it after the documentation change.
+
+No setup command, package installation, elevation request, protected-service mutation, provider/VM lifecycle mutation, guest access, repository execution, or coding-model invocation occurred. The doctor performed read-only host capability observation only.
+
+Commit and push the exact implementation, then require hosted Windows and Ubuntu smoke/full acceptance before closing #291.
