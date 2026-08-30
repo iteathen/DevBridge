@@ -4,7 +4,7 @@ Date: 2026-08-29
 
 Issue: #379
 
-Status: locally implemented and qualified; hosted acceptance pending. No setup, elevation, protected-service, provider, VM, guest-transport, repository-execution, product-release, or model effect is authorized by this document.
+Status: accepted. No setup, elevation, protected-service, provider, VM, guest-transport, repository-execution, product-release, or model effect is authorized by this document.
 
 ## Assessment
 
@@ -73,3 +73,5 @@ The activity store now owns one closed aggregate observation. It validates the c
 Direct tests cover absent, partial, widened, non-string-token, symbolic, missing-activity, mismatched-token, stale, invalid, exact-current, removal, and bridge-level planned/current evidence. Focused current-Node and exact Node 22.16.0 bridge/activity tests pass 29 total / 28 passed / 1 expected Windows symbolic-link skip. The full payload/LEGO set passes 41 total / 40 passed / 1 expected skip. Twenty additional sixteen-request fast-child repetitions pass.
 
 Current and exact Node 22.16.0 repository preflights both pass the unchanged 2 standalone artifacts / 205 syntax files / 2 JSON files / 168 targeted-test files. Architecture gates pass 34 total / 33 passed / 1 expected Windows skip. The complete serialized suite passes 1,849 total / 1,832 passed / 17 expected platform skips / zero failures in 193.8 seconds. Doctor reports `ok: true`, coding adapters remain disabled, and repository execution remains explicitly unavailable because no persistent-environment routes are configured. Standalone/identity tests pass 3/3 and diff hygiene passes. Commit and push the exact checkpoint, then require all four hosted Windows/Ubuntu jobs before closing #379.
+
+Hosted CI run `33289991127` passed all four jobs on exact implementation commit `3c6a579ea0ae64c970bccb25f6cc1eb453e451d6`: Ubuntu smoke in 24 seconds, Ubuntu full plus doctor in 38 seconds, Windows bounded smoke in 1 minute 22 seconds, and Windows serialized full plus doctor in 2 minutes 12 seconds. This accepts the software correction. The documentation-only acceptance head must also remain four-job green before #379 is closed because an equivalent documentation-only run exposed the original timing recurrence.
