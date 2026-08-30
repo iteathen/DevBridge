@@ -2,7 +2,7 @@
 
 Date: 2026-08-29
 
-Status: assessed and planned; exact installation effect pending
+Status: exact user-owned candidate staged; protected activation pending
 
 ## Scope and authority
 
@@ -50,3 +50,28 @@ No manual state edit, direct component copy, legacy launcher path, or setup invo
 ## Stop conditions
 
 Stop without workaround if the bootstrap cannot bind the exact remote commit, component admission fails, the owned wrapper cannot be proved, doctor attempts setup/elevation, or observed state is ambiguous. Provider absence or stale protected generation remains a truthful blocker, never permission for direct host execution.
+
+## Implementation and observation
+
+The plan commit `ef70f581d8eeb5b39fd378548091de9ba34a16bd` passed all four hosted jobs in [GitHub Actions run 33285925567](https://github.com/iteathen/DevBridge/actions/runs/33285925567). The exact checked-in zero-state bootstrap was then invoked with `--install-only`, that exact commit, and the canonical installation home.
+
+The transaction exited zero and returned `devbridge/entry-install-v1` with:
+
+- component head `ef70f581d8eeb5b39fd378548091de9ba34a16bd`;
+- selected runner ref `ef70f581d8eeb5b39fd378548091de9ba34a16bd`;
+- pinned runner head `ef70f581d8eeb5b39fd378548091de9ba34a16bd`;
+- the expected JavaScript, Windows command, and POSIX shell wrappers under the canonical installation home.
+
+Independent wrapper-owned `entry-install-status` returned the same component, selected ref, and pinned head. The installation-owned `resolveInstalledCommand()` then reverified the stable Windows command, command directory, and Permanent Entry launcher. Bare `devbridge` discovery resolves that owned command in the current PowerShell process.
+
+The first installed `doctor` invocation intentionally omitted `--config`. The exact runner loaded, rejected the incomplete invocation, printed its bounded usage, and exited one rather than guessing a configuration path. The normal generated installation config does not yet exist, which is consistent with incomplete protected profile activation.
+
+Installed doctor was then invoked with the repository's verified example config for read-only capability observation. It exited zero with `ok: true`, GitHub CLI authentication available, controller-plan infrastructure enabled, coding-model adapters disabled, and fault injection disabled. It reported:
+
+- repository execution `unavailable` because no local persistent-environment routes are configured;
+- every repository-code operation unusable through that same fail-closed reason;
+- environment lifecycle `setup-reentry-required`, with zero declarations and zero environments;
+- the configured example repository admission ready;
+- host-control/static tool observation available without projecting execution authority.
+
+No setup continuation, UAC prompt, elevated child, protected-service change, provider/image/VM/guest operation, repository execution, or model invocation occurred. Existing installation, construction, image, and environment evidence was preserved. The exact next Windows operational action remains one future operator-approved `devbridge setup` refresh/re-entry; this checkpoint deliberately does not bypass it.
