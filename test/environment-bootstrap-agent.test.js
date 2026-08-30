@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { observeSequence } from '../src/guest/environment-bootstrap-agent.mjs';
 
 const agent = fileURLToPath(new URL('../src/guest/environment-bootstrap-agent.mjs', import.meta.url));
 const target = 'env-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -45,6 +46,38 @@ async function exchange(root, frame, extraEnv = {}) {
     child.stdin.end(JSON.stringify(frame));
   });
 }
+
+test('ordered observation admits one local operation at a time and preserves input order', async () => {
+  let active = 0;
+  let maximum = 0;
+  const started = [];
+  const results = await observeSequence(['first', 'second', 'third'], async (value) => {
+    active += 1;
+    maximum = Math.max(maximum, active);
+    started.push(value);
+    await new Promise((resolve) => setImmediate(resolve));
+    active -= 1;
+    return `${value}-observed`;
+  });
+  assert.equal(maximum, 1);
+  assert.deepEqual(started, ['first', 'second', 'third']);
+  assert.deepEqual(results, ['first-observed', 'second-observed', 'third-observed']);
+});
+
+test('ordered observation stops at rejection and validates only its local contract', async () => {
+  const started = [];
+  await assert.rejects(
+    () => observeSequence(['first', 'second', 'third'], async (value) => {
+      started.push(value);
+      if (value === 'second') throw new Error('observation failed');
+      return value;
+    }),
+    /observation failed/u,
+  );
+  assert.deepEqual(started, ['first', 'second']);
+  await assert.rejects(() => observeSequence('first', async () => null), /values are invalid/u);
+  await assert.rejects(() => observeSequence([], null), /function is invalid/u);
+});
 
 test('guest bootstrap state persists across helper process restart and records exact generation', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-bootstrap-agent-'));
