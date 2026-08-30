@@ -80,6 +80,10 @@ A final semantic review tightened configuration observation to require `changed:
 
 No test or development command invoked `sudo`, `pkexec`, UAC, the authenticated entry, protected service/provider/storage mutation, a VM or guest, repository execution, or a coding model. Hosted Ubuntu must execute—not skip—the production read-only current-principal canary, while authentication remains mocked and uninvoked.
 
+## Hosted implementation checkpoint
+
+[GitHub Actions run 33297374805](https://github.com/iteathen/DevBridge/actions/runs/33297374805) passed the complete Ubuntu/Windows smoke and full-test matrix plus doctor on exact implementation commit `db5cc6a88a98efd34ff0b2bac7a0f0626ff45975`. The Ubuntu full suite executed the production current-principal observation canary as test 218 rather than skipping it and reported 1,912 tests with zero failures. Authentication remained mocked and uninvoked; this is software-boundary evidence, not proof of an installed protected service, successful authentication, provider/storage readiness, a VM, a guest, or repository execution.
+
 ## Remaining acceptance
 
-Commit and push the exact implementation, require Ubuntu/Windows smoke/full CI, then add the hosted evidence in a documentation-only commit. Close only #385 after that exact documentation head is green. Parent #293 and physical issues #372/#373 remain open.
+Require this documentation-only acceptance head to pass the same Ubuntu/Windows smoke/full matrix plus doctor. Close only #385 after that exact head is green. Parent #293 and physical issues #372/#373 remain open.
