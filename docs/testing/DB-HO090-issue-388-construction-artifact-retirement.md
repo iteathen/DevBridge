@@ -170,3 +170,41 @@ No real cleanup occurs before the implementation and its failure/recovery tests 
 ## Current decision
 
 Proceed with issue #388 before Windows media construction. Preserve the accepted source, retained current frontier, shared cache, dirty retired fast-track checkout, protected service state, and every object that the exact plan cannot prove obsolete. No UAC or GPU/CUDA work is required for this slice.
+
+## Implementation checkpoint
+
+The complete retirement boundary is implemented without a compatibility path:
+
+- `devbridge/construction-retention-v1` is a standard-library-only neutral owner. It accepts bounded opaque subjects, references, protection facts, and effects; emits one deterministic path-free plan; requires exact subject plus plan digest; and persists `planned -> attempted -> observed -> reconciled -> completed` evidence. An attempted effect is observed before at most one exact retry, while ambiguous observation fails closed.
+- `devbridge/exact-artifact-set-v1` binds real-directory and regular-file identity, byte and optional digest authority, single-link shape, reparse/symbolic-link denial, exact expected membership, and explicit file/empty-directory effects. It performs no recursive removal.
+- the Windows filesystem observer uses one fixed encoded PowerShell attribute query to prove `FILE_ATTRIBUTE_REPARSE_POINT` without admitting caller commands or environment;
+- Hyper-V construction now separates exact powered-off owned-provider retirement, independent disk observation, and terminal construction-record retirement. The old combined provider/disk/recursive-directory `discard()` path is removed rather than retained as legacy behavior;
+- the concrete production-image parent alone composes authority, journal, preparation, provider ledger/status, exact artifacts, active lease, admitted image references, and the neutral owner. Provider, configuration, output, source, access, and terminal record effects remain separately observable;
+- `devbridge construction-retention` is read-only by default. Mutation accepts only `retire --subject <opaque-subject> --confirm <current-plan-digest>` and does not pass through setup, doctor, a repository task, a guest, a model adapter, or elevation.
+
+The current setup authority is derived locally without network access. The resolver combines the persisted exact setup snapshot and the one unambiguous durable package-pin set with the current local recipe/payload/output policy. The derived current subject remains protected even before its first construction registration. Conflicting package-pin histories fail closed. This avoids incorrectly treating "not yet built from this code" as permission to select an older subject.
+
+### Recovery-selection reassessment
+
+The first real read-only plan safely exposed an over-retention error: treating every unfinished canonical phase as `recoverable` made every historical attempt ineligible. Durable `planned`, `running`, or `active` phase records describe where work stopped; they do not select that superseded authority for supported recovery. The documented protection rule is selection-based.
+
+The concrete mapping now protects recovery only when exact provider observation shows a non-off provider. It independently protects the derived current subject, every admitted image reference, `retained` state, active mutation lease, finalization-attempt ambiguity, malformed/incomplete topology, and any changed artifact. Superseded early-phase subjects may become obsolete only after the exact provider and artifact plan succeeds. The neutral owner and its classification order did not change.
+
+### Qualification and real read-only evidence
+
+Final local qualification passes:
+
+- repository preflight: 2 standalone artifacts, 219 syntax files, 2 JSON files, and 178 targeted tests;
+- complete serialized suite: 1,944 total, 1,923 passed, 21 expected platform skips, zero failures;
+- focused normal/failure/boundary coverage includes deterministic classification, plan drift, active lease, ambiguous observation, bounded retry, durable restart, path escape, unexpected entry, replacement, hard-link, digest drift, symlink/reparse denial, partial deletion, shared-root preservation, exact Hyper-V ownership, absent-provider reconciliation, CLI mutation separation, derived-current pre-registration, and concrete provider/artifact/record ordering;
+- diff hygiene passes; only line-ending notices remain for existing Windows checkout policy.
+
+The final real ordinary-token read-only product invocation reports no active lease and plan digest `73ffa049ac5c4eee9036d4993352b56792757de14c0a171e38832a14e91aba9e`. It protects:
+
+- derived current subject `subject-72966b2f91318dd756cf932aba63b87a`;
+- admitted source `subject-8a7a9afe109534b2c128f272ab586bcf`;
+- retained frontier `subject-f7fc5e9be52e957f1b08dff05431a0b3`.
+
+Ten superseded subjects are exact-plan eligible. Seven have external artifacts and the path-free plan estimates `67,500,791,071` reclaimable bytes; three contain terminal records only. No retirement, provider removal, file deletion, record deletion, UAC, protected-service call, VM start, guest action, repository execution, model invocation, or GPU/CUDA action has occurred.
+
+Next: commit and push the implementation, require the exact-head hosted Ubuntu/Windows matrix, repeat the read-only plan to obtain its then-current digest, and retire only subjects still reported eligible through the product CLI. Re-observe the final plan and rerun the exact Windows protected-image storage preflight rather than treating estimated reclaimed bytes as capacity proof.

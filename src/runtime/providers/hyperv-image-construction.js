@@ -1,4 +1,4 @@
-import { lstat, rm } from 'node:fs/promises';
+import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { normalizeBootProtection } from '../../values/boot-protection.js';
 import { HyperVConstructionRequest } from './hyperv-image-construction/request-contract.js';
@@ -232,19 +232,76 @@ export class HyperVImageConstruction {
     };
   }
 
-  async discard(rawIdentity) {
+  async retirementStatus(rawIdentity) {
     const identity = this.#request.subject(rawIdentity);
     const state = await this.#ledger.load();
     const record = state.records[identity];
-    if (!record) return { identity, discarded: false, absent: true };
+    if (!record) return Object.freeze({ identity, exists: false, provider: null, disk: null, key: null, diskName: null });
+    const [provider, disk] = await Promise.all([
+      this.status(identity),
+      this.#channel.observeDisk(this.#descriptor(record)),
+    ]);
+    if (!disk || typeof disk !== 'object' || Array.isArray(disk)) throw new Error('construction disk retirement observation is invalid');
+    if (disk.exists === true) {
+      if (disk.compatible !== true) throw new Error('construction disk retirement shape changed');
+      const allocatedBytes = Number(disk.allocatedBytes);
+      const virtualBytes = Number(disk.virtualBytes);
+      if (!Number.isSafeInteger(allocatedBytes) || allocatedBytes < 0 || !Number.isSafeInteger(virtualBytes) || virtualBytes !== record.diskBytes) {
+        throw new Error('construction disk retirement size changed');
+      }
+      if (record.disk?.identity && String(disk.diskIdentity ?? '') !== record.disk.identity) throw new Error('construction disk retirement identity changed');
+    }
+    return Object.freeze({
+      identity,
+      exists: true,
+      provider: Object.freeze({ ...provider }),
+      disk: Object.freeze({
+        exists: disk.exists === true,
+        attached: disk.attached === true,
+        allocatedBytes: Number(disk.allocatedBytes ?? 0),
+        virtualBytes: Number(disk.virtualBytes ?? 0),
+        identity: disk.diskIdentity == null ? null : String(disk.diskIdentity),
+      }),
+      key: record.key,
+      diskName: record.diskName,
+    });
+  }
+
+  async listRetirementRecords() {
+    const state = await this.#ledger.load();
+    return Object.freeze(Object.values(state.records).map((record) => Object.freeze({
+      identity: this.#request.subject(record.identity),
+      phase: String(record.phase),
+      key: String(record.key),
+      diskName: String(record.diskName),
+      diskBytes: Number(record.diskBytes),
+    })).sort((left, right) => left.identity.localeCompare(right.identity)));
+  }
+
+  async retireProvider(rawIdentity) {
+    const identity = this.#request.subject(rawIdentity);
+    const state = await this.#ledger.load();
+    const record = state.records[identity];
+    if (!record) return Object.freeze({ identity, retired: false, absent: true });
     const observed = await this.status(identity);
-    if (observed.exists && observed.state !== 'off') throw new Error('construction must be stopped before discard');
-    const result = await this.#channel.discard(this.#descriptor(record));
-    if (result.discarded !== true) throw new Error('construction discard did not reconcile');
+    if (observed.exists && observed.state !== 'off') throw new Error('construction must be stopped before provider retirement');
+    const result = await this.#channel.retireProvider(this.#descriptor(record));
+    if (result?.retired !== true) throw new Error('construction provider retirement did not reconcile');
+    const after = await this.status(identity);
+    if (after.exists) throw new Error('construction provider remains after retirement');
+    return Object.freeze({ identity, retired: true, absent: result.absent === true });
+  }
+
+  async retireRecord(rawIdentity) {
+    const identity = this.#request.subject(rawIdentity);
+    const state = await this.#ledger.load();
+    const record = state.records[identity];
+    if (!record) return Object.freeze({ identity, retired: false, absent: true });
+    const observed = await this.retirementStatus(identity);
+    if (observed.provider?.exists === true || observed.disk?.exists === true || observed.disk?.attached === true) throw new Error('construction record remains referenced by provider artifacts');
     delete state.records[identity];
     await this.#ledger.save(state);
-    await rm(path.join(this.#outputRoot, record.key + '-vm'), { recursive: true, force: true }).catch(() => {});
-    return { identity, discarded: true, absent: false };
+    return Object.freeze({ identity, retired: true, absent: false });
   }
 }
 

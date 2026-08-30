@@ -8,6 +8,7 @@ export function createUbuntuConstructionAuthorityStateStore(filePath) {
   return Object.freeze({
     load: (subjectRef) => store.get(`${KEY_PREFIX}${subjectRef}`),
     save: (subjectRef, value) => store.set(`${KEY_PREFIX}${subjectRef}`, value),
+    delete: (subjectRef) => store.delete(`${KEY_PREFIX}${subjectRef}`),
     async list() {
       const entries = await store.entries(KEY_PREFIX);
       return entries.map(([key, value]) => Object.freeze({ subjectRef: key.slice(KEY_PREFIX.length), value }));

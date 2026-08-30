@@ -1,5 +1,6 @@
 import { gunzipSync } from 'node:zlib';
 import { createGuestImagePayload } from '../guest/image-payload.js';
+import { normalizeUbuntuConstructionAuthority } from '../runtime/image-builders/ubuntu-construction-authority.js';
 import { comparePackageVersions } from './package-version.js';
 
 const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
@@ -21,6 +22,8 @@ const SOURCE = Object.freeze({
 });
 
 const OUTPUT = Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v5', bootstrap: 'guest-image-v1' });
+const RECIPE_GENERATION = 'ubuntu-2604-autoinstall-v10';
+const PACKAGE_GENERATION = 'ubuntu-2604-tools-v4';
 
 const BOOT_PATCH = Object.freeze({
   before: 'Try or Install Ubuntu Server" {\n    set gfxpayload=keep\n    linux  /casper/vmlinuz ',
@@ -89,20 +92,7 @@ export async function resolveUbuntuPackagePins({ snapshot, fetchImpl = globalThi
   return Object.freeze(PACKAGE_NAMES.map((name) => Object.freeze({ name, version: versions.get(name) })));
 }
 
-export async function createUbuntuSetupAuthority({
-  snapshot,
-  fetchImpl = globalThis.fetch,
-  payloadFactory = createGuestImagePayload,
-} = {}) {
-  if (typeof payloadFactory !== 'function') throw new TypeError('Ubuntu setup payload factory is invalid');
-  if (Buffer.byteLength(BOOT_PATCH.before, 'utf8') !== 83 || Buffer.byteLength(BOOT_PATCH.after, 'utf8') !== 83) {
-    throw new Error('Ubuntu setup boot recipe no longer preserves the verified 83-byte patch length');
-  }
-  const [packages, payload] = await Promise.all([
-    resolveUbuntuPackagePins({ snapshot, fetchImpl }),
-    payloadFactory(),
-  ]);
-  if (!payload || typeof payload.generation !== 'string' || payload.generation.length === 0) throw new Error('current guest payload generation is unavailable');
+function authorityFrom({ snapshot, packages, payloadGeneration }) {
   return Object.freeze({
     protocol: 'devbridge/ubuntu-construction-authority-v1',
     source: Object.freeze({
@@ -124,18 +114,61 @@ export async function createUbuntuSetupAuthority({
     recipe: Object.freeze({
       protocol: 'devbridge/ubuntu-autoinstall-recipe-v1',
       sourceSha256: SOURCE.mediaSha256,
-      generation: 'ubuntu-2604-autoinstall-v10',
+      generation: RECIPE_GENERATION,
       patches: Object.freeze([Object.freeze({ id: 'boot-trigger', occurrences: 2, before: BOOT_PATCH.before, after: BOOT_PATCH.after })]),
     }),
     packages: Object.freeze({
-      generation: 'ubuntu-2604-tools-v4',
+      generation: PACKAGE_GENERATION,
       snapshot,
-      packages,
+      packages: Object.freeze(packages.map((entry) => Object.freeze({ ...entry }))),
     }),
-    payload: Object.freeze({ generation: payload.generation }),
+    payload: Object.freeze({ generation: payloadGeneration }),
     qualification: Object.freeze({ commands: Object.freeze(['hv_kvp_daemon', 'make']) }),
     output: OUTPUT,
   });
+}
+
+export async function createUbuntuSetupAuthority({
+  snapshot,
+  fetchImpl = globalThis.fetch,
+  payloadFactory = createGuestImagePayload,
+} = {}) {
+  if (typeof payloadFactory !== 'function') throw new TypeError('Ubuntu setup payload factory is invalid');
+  if (Buffer.byteLength(BOOT_PATCH.before, 'utf8') !== 83 || Buffer.byteLength(BOOT_PATCH.after, 'utf8') !== 83) {
+    throw new Error('Ubuntu setup boot recipe no longer preserves the verified 83-byte patch length');
+  }
+  const [packages, payload] = await Promise.all([
+    resolveUbuntuPackagePins({ snapshot, fetchImpl }),
+    payloadFactory(),
+  ]);
+  if (!payload || typeof payload.generation !== 'string' || payload.generation.length === 0) throw new Error('current guest payload generation is unavailable');
+  return authorityFrom({ snapshot, packages, payloadGeneration: payload.generation });
+}
+
+export async function deriveCurrentUbuntuSetupAuthority({
+  snapshot,
+  authorities,
+  payloadFactory = createGuestImagePayload,
+} = {}) {
+  if (typeof snapshot !== 'string' || !SNAPSHOT.test(snapshot)) throw new TypeError('Ubuntu package snapshot is invalid');
+  if (!Array.isArray(authorities) || authorities.length > 4096) throw new TypeError('Ubuntu setup authority inventory is invalid');
+  if (typeof payloadFactory !== 'function') throw new TypeError('Ubuntu setup payload factory is invalid');
+  const payload = await payloadFactory();
+  if (!payload || typeof payload.generation !== 'string' || payload.generation.length === 0) throw new Error('current guest payload generation is unavailable');
+  const expectedNames = JSON.stringify(PACKAGE_NAMES);
+  const packageSets = new Map();
+  for (const raw of authorities) {
+    const authority = normalizeUbuntuConstructionAuthority(raw);
+    if (authority.packages.snapshot !== snapshot || authority.packages.generation !== PACKAGE_GENERATION
+        || JSON.stringify(authority.packages.packages.map((entry) => entry.name)) !== expectedNames) continue;
+    packageSets.set(JSON.stringify(authority.packages.packages), authority.packages.packages);
+  }
+  if (packageSets.size !== 1) throw new Error(`current Ubuntu setup package authority expected one exact stored set but observed ${packageSets.size}`);
+  return normalizeUbuntuConstructionAuthority(authorityFrom({
+    snapshot,
+    packages: packageSets.values().next().value,
+    payloadGeneration: payload.generation,
+  }));
 }
 
 export { BOOT_PATCH as UBUNTU_SETUP_BOOT_PATCH, OUTPUT as UBUNTU_SETUP_OUTPUT, SOURCE as UBUNTU_SETUP_SOURCE_POLICY };

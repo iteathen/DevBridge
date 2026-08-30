@@ -247,7 +247,7 @@ $disk = Get-VHD -Path ([string]$data.diskPath) -ErrorAction Stop
 @{ retained = $true; virtualBytes = [long]$disk.Size; allocatedBytes = [long]$disk.FileSize; diskIdentity = [string]$disk.DiskIdentifier } | ConvertTo-Json -Compress
 `;
 
-const DISCARD_SCRIPT = String.raw`
+const RETIRE_PROVIDER_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
@@ -256,11 +256,42 @@ $item = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq [string]$data.name
 if ($null -ne $item) {
   if ([string]$item.Notes -ne [string]$data.marker) { throw 'construction machine ownership proof does not match' }
   if (-not [string]::IsNullOrWhiteSpace([string]$data.providerIdentity) -and ([string]$item.Id).ToLowerInvariant() -ne ([string]$data.providerIdentity).ToLowerInvariant()) { throw 'construction provider identity changed' }
-  if ([string]$item.State -ne 'Off') { throw 'construction machine must be stopped before discard' }
+  if ([string]$item.State -ne 'Off') { throw 'construction machine must be stopped before retirement' }
   Remove-VM -Name ([string]$data.name) -Force -ErrorAction Stop
 }
-if (Test-Path -LiteralPath ([string]$data.diskPath) -PathType Leaf) { Remove-Item -LiteralPath ([string]$data.diskPath) -Force -ErrorAction Stop }
-@{ discarded = $true } | ConvertTo-Json -Compress
+$remaining = @(Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq [string]$data.name })
+if ($remaining.Count -ne 0) { throw 'construction machine remains after retirement' }
+@{ retired = $true; absent = ($null -eq $item) } | ConvertTo-Json -Compress
+`;
+
+const OBSERVE_DISK_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$data = [Console]::In.ReadToEnd() | ConvertFrom-Json
+Import-Module Hyper-V -ErrorAction Stop
+$item = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq [string]$data.name } | Select-Object -First 1
+if ($null -ne $item) {
+  if ([string]$item.Notes -ne [string]$data.marker) { throw 'construction machine ownership proof does not match' }
+  if (-not [string]::IsNullOrWhiteSpace([string]$data.providerIdentity) -and ([string]$item.Id).ToLowerInvariant() -ne ([string]$data.providerIdentity).ToLowerInvariant()) { throw 'construction provider identity changed' }
+}
+if (-not (Test-Path -LiteralPath ([string]$data.diskPath) -PathType Leaf)) {
+  @{ exists = $false; attached = $false; compatible = $true; allocatedBytes = 0; virtualBytes = 0; diskIdentity = $null } | ConvertTo-Json -Compress
+  exit 0
+}
+$attachments = @(
+  Get-VM -ErrorAction Stop | ForEach-Object { Get-VMHardDiskDrive -VM $_ -ErrorAction Stop } |
+    Where-Object { [IO.Path]::GetFullPath([string]$_.Path) -eq [IO.Path]::GetFullPath([string]$data.diskPath) }
+)
+$disk = Get-VHD -Path ([string]$data.diskPath) -ErrorAction Stop
+$compatible = [string]$disk.VhdType -eq 'Dynamic' -and [string]::IsNullOrWhiteSpace([string]$disk.ParentPath)
+@{
+  exists = $true
+  attached = $attachments.Count -ne 0
+  compatible = $compatible
+  allocatedBytes = [long]$disk.FileSize
+  virtualBytes = [long]$disk.Size
+  diskIdentity = [string]$disk.DiskIdentifier
+} | ConvertTo-Json -Compress
 `;
 
 export class HyperVConstructionChannel {
@@ -289,6 +320,6 @@ export class HyperVConstructionChannel {
   bootInstalled(payload) { return this.#run(BOOT_INSTALLED_SCRIPT, payload, 60_000); }
   stop(payload) { return this.#run(STOP_SCRIPT, payload, 120_000); }
   retain(payload) { return this.#run(RETAIN_SCRIPT, payload, 60_000); }
-  discard(payload) { return this.#run(DISCARD_SCRIPT, payload, 60_000); }
+  retireProvider(payload) { return this.#run(RETIRE_PROVIDER_SCRIPT, payload, 60_000); }
+  observeDisk(payload) { return this.#run(OBSERVE_DISK_SCRIPT, payload, 60_000); }
 }
-

@@ -14,6 +14,7 @@ import { createConfiguredLifecycleAuthorityClient } from './runtime/environment-
 import { chatHandoffSeed, chatHandoffStatus } from './app/chat-handoff.js';
 import { formatSetupHandoff, runDevBridgeSetup } from './app/setup.js';
 import { runWindowsLifecycleAuthoritySetupChild } from './app/windows-lifecycle-authority-setup-child.js';
+import { runUbuntuProductionImageRetentionCommand } from './app/ubuntu-production-image-retention-command.js';
 import { PolicyError } from './errors.js';
 import { parseSetupCommandOptions } from './setup/command-options.js';
 import { logicalEnvironmentIdentity } from './runtime/environment-declaration.js';
@@ -27,6 +28,8 @@ function usage() {
   console.error('       devbridge setup [--windows-media <absolute-iso>] [--approve-windows-media <candidate> --windows-image-index <index> --windows-media-class <official-owned|evaluation>]');
   console.error('       devbridge <doctor|poll-once|run-once|daemon|status|pause|resume|stop|restart|handoff-status|handoff-seed|handoff-project|environment> --config <path> [options]');
   console.error('       devbridge environment <list|show|plan|create|repair|rebuild|reset|recreate|resume|setup-reentry> --config <path> [--identity id|--profile name] [--operation op] [--confirm subject]');
+  console.error('       devbridge construction-retention [inspect] [--home <path>]');
+  console.error('       devbridge construction-retention retire --subject <subject> --confirm <plan-digest> [--home <path>]');
 }
 
 function optionValue(argv, name) {
@@ -143,6 +146,11 @@ async function main() {
     });
     process.stdout.write(formatSetupHandoff(result));
     if (result.blocked) process.exitCode = 3;
+    return;
+  }
+
+  if (command === 'construction-retention') {
+    console.log(JSON.stringify(await runUbuntuProductionImageRetentionCommand(args), null, 2));
     return;
   }
 

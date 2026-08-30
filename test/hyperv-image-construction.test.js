@@ -107,14 +107,22 @@ function fakeHost() {
           return { exitCode: 1, stdout: '', stderr: 'simulated transport loss after VM removal', timedOut: false, aborted: false, outputTruncated: false };
         }
         body = { retained: true, virtualBytes: 34359738368, allocatedBytes: 4294967296, diskIdentity: 'disk-subject' };
-      } else if (script.includes('discarded = $true')) {
+      } else if (script.includes('construction machine remains after retirement')) {
         state.exists = false;
         state.owned = false;
         state.machineState = 'absent';
-        state.diskPresent = false;
         state.diskAttached = false;
         state.mediaCount = 0;
-        body = { discarded: true };
+        body = { retired: true, absent: false };
+      } else if (script.includes('diskIdentity = [string]$disk.DiskIdentifier')) {
+        body = {
+          exists: state.diskPresent,
+          attached: state.exists && state.diskAttached,
+          compatible: true,
+          allocatedBytes: state.diskPresent ? state.diskAllocatedBytes : 0,
+          virtualBytes: state.diskPresent ? 32 * 1024 * 1024 * 1024 : 0,
+          diskIdentity: state.diskPresent ? 'disk-subject' : null,
+        };
       } else {
         throw new Error('unexpected construction script');
       }
@@ -193,6 +201,35 @@ test('Hyper-V image construction resumes exact intent through install, qualifica
     assert.equal(location.reference, preparePayload.name);
     assert.equal(location.proof, preparePayload.marker);
     assert.equal(preparePayload.diskPath, retained.location);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('Hyper-V construction retirement separates provider, disk, and durable record effects', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const construction = constructor(data, host);
+    await construction.prepare(data.request);
+    const records = await construction.listRetirementRecords();
+    assert.deepEqual(records.map((entry) => entry.identity), [data.request.identity]);
+    const before = await construction.retirementStatus(data.request.identity);
+    assert.equal(before.provider.exists, true);
+    assert.equal(before.provider.state, 'off');
+    assert.equal(before.disk.exists, true);
+    assert.equal(before.disk.attached, true);
+
+    await construction.retireProvider(data.request.identity);
+    const after = await construction.retirementStatus(data.request.identity);
+    assert.equal(after.provider.exists, false);
+    assert.equal(after.disk.exists, true);
+    assert.equal(after.disk.attached, false);
+    await assert.rejects(() => construction.retireRecord(data.request.identity), /provider artifacts/u);
+
+    host.state.diskPresent = false;
+    const retired = await construction.retireRecord(data.request.identity);
+    assert.equal(retired.retired, true);
+    assert.equal((await construction.listRetirementRecords()).length, 0);
+    assert.equal((await construction.retirementStatus(data.request.identity)).exists, false);
   } finally { await rm(data.directory, { recursive: true, force: true }); }
 });
 

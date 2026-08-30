@@ -5,6 +5,7 @@ import {
   createUbuntuSetupAuthority,
   defaultUbuntuPackageSnapshot,
   resolveUbuntuPackagePins,
+  deriveCurrentUbuntuSetupAuthority,
   UBUNTU_SETUP_BOOT_PATCH,
 } from '../src/setup/ubuntu-authority.js';
 
@@ -63,6 +64,32 @@ test('setup authority binds source policy, exact snapshot and current payload ge
   assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v10');
   assert.equal(authority.output.generation, 'ubuntu-2604-production-v5');
   assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 2, ...UBUNTU_SETUP_BOOT_PATCH }]);
+});
+
+test('setup derives the exact current authority from one durable local package set without network resolution', async () => {
+  const authority = await createUbuntuSetupAuthority({
+    snapshot: SNAPSHOT,
+    fetchImpl: async (url) => responseFor(String(url)),
+    payloadFactory: async () => ({ generation: 'guest-image-current' }),
+  });
+  const historical = structuredClone(authority);
+  historical.output.generation = 'ubuntu-2604-production-v4';
+  const selected = await deriveCurrentUbuntuSetupAuthority({
+    snapshot: SNAPSHOT,
+    authorities: [historical, authority],
+    payloadFactory: async () => ({ generation: 'guest-image-current' }),
+  });
+  assert.deepEqual(selected, authority);
+  const conflicting = structuredClone(authority);
+  conflicting.packages.packages[0].version = `${conflicting.packages.packages[0].version}.1`;
+  await assert.rejects(
+    () => deriveCurrentUbuntuSetupAuthority({
+      snapshot: SNAPSHOT,
+      authorities: [authority, conflicting],
+      payloadFactory: async () => ({ generation: 'guest-image-current' }),
+    }),
+    /observed 2/u,
+  );
 });
 
 test('setup uses an exact 83-byte invariant boot prefix without changing ISO length', () => {
