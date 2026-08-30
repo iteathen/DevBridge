@@ -109,6 +109,72 @@ test('concurrent journals reconcile identical proposals and serialize different 
   assert.deepEqual(await readdir(different.directory), ['000000000001.json', '000000000002.json']);
 });
 
+test('conditional receipt acceptance binds the exact observed generation', async (t) => {
+  const selected = await fixture('conditional');
+  t.after(() => rm(selected.root, { recursive: true, force: true }));
+  const journal = selected.journal();
+
+  const first = await journal.compareAndAccept({ generation: null, items: items('first') });
+  assert.equal(first.accepted, true);
+  assert.equal(first.record.revision, 1);
+  assert.equal(Object.isFrozen(first), true);
+
+  const idempotent = await journal.compareAndAccept({
+    generation: first.record.generation,
+    items: [...items('first')].reverse(),
+  });
+  assert.deepEqual(idempotent, first);
+  assert.deepEqual(await readdir(selected.directory), ['000000000001.json']);
+
+  const stale = await journal.compareAndAccept({ generation: null, items: items('stale') });
+  assert.equal(stale.accepted, false);
+  assert.deepEqual(stale.record, first.record);
+  assert.deepEqual(await readdir(selected.directory), ['000000000001.json']);
+
+  const second = await selected.journal().compareAndAccept({
+    generation: first.record.generation,
+    items: items('second'),
+  });
+  assert.equal(second.accepted, true);
+  assert.equal(second.record.revision, 2);
+  assert.notEqual(second.record.generation, first.record.generation);
+  assert.deepEqual(await journal.read(), second.record);
+});
+
+test('conditional receipt contenders preserve the exact winning revision without later overwrite', async (t) => {
+  const selected = await fixture('conditional-contention');
+  t.after(() => rm(selected.root, { recursive: true, force: true }));
+  const results = await Promise.all([
+    selected.journal().compareAndAccept({ generation: null, items: items('left') }),
+    selected.journal().compareAndAccept({ generation: null, items: items('right') }),
+  ]);
+  assert.deepEqual(results.map((entry) => entry.accepted).sort(), [false, true]);
+  assert.equal(results[0].record.revision, 1);
+  assert.deepEqual(results[0].record, results[1].record);
+  assert.deepEqual(await selected.journal().read(), results[0].record);
+  assert.deepEqual(await readdir(selected.directory), ['000000000001.json']);
+});
+
+test('conditional receipt input and corrupt history fail closed', async (t) => {
+  const selected = await fixture('conditional-invalid');
+  t.after(() => rm(selected.root, { recursive: true, force: true }));
+  const journal = selected.journal();
+  await assert.rejects(
+    () => journal.compareAndAccept({ generation: 'not-a-generation', items: items() }),
+    /comparison\.generation is invalid/u,
+  );
+  await assert.rejects(
+    () => journal.compareAndAccept({ generation: null, items: items(), extra: true }),
+    /comparison\.extra is not allowed/u,
+  );
+  await journal.accept(items());
+  await writeFile(path.join(selected.directory, 'foreign.txt'), 'foreign\n');
+  await assert.rejects(
+    () => journal.compareAndAccept({ generation: null, items: items('other') }),
+    /unsupported entry/u,
+  );
+});
+
 test('receipt readers reject extra, gapped, noncanonical, changed-chain, and hard-linked history', async (t) => {
   await t.test('extra entry', async (nested) => {
     const selected = await accepted('extra');

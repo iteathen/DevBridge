@@ -98,6 +98,15 @@ function normalizeItems(raw) {
   return Object.freeze(items);
 }
 
+function normalizeComparison(raw) {
+  const value = exactObject(raw, new Set(['generation', 'items']), 'artifact receipt comparison');
+  if (value.generation != null
+      && (typeof value.generation !== 'string' || !/^generation-[0-9a-f]{64}$/u.test(value.generation))) {
+    throw new TypeError('artifact receipt comparison.generation is invalid');
+  }
+  return Object.freeze({ generation: value.generation ?? null, items: normalizeItems(value.items) });
+}
+
 function digestBytes(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
@@ -287,6 +296,45 @@ function isWithin(parent, child) {
   return relative !== '' && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative);
 }
 
+async function publishRevision({ before, items, directory, scratch, identifier }) {
+  const next = nextRecord(before.current, before.digest, items, identifier);
+  const bytes = encode(next);
+  if (bytes.length > MAX_RECORD_BYTES) throw new TypeError('artifact receipt record exceeds its byte bound');
+  const root = await realDirectory(directory, { create: true });
+  const token = identifier();
+  if (typeof token !== 'string' || !UUID.test(token)) throw new TypeError('artifact receipt identity dependency returned an invalid value');
+  const temporary = path.join(scratch, `.exact-receipt-${token}.tmp`);
+  const target = path.join(root, revisionName(next.revision));
+  let handle = null;
+  let temporaryCreated = false;
+  let published = false;
+  try {
+    handle = await open(temporary, 'wx', 0o600);
+    temporaryCreated = true;
+    await handle.writeFile(bytes);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    try {
+      await link(temporary, target);
+      published = true;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+    }
+  } finally {
+    await handle?.close();
+    if (temporaryCreated) await rm(temporary, { force: true });
+  }
+  if (published) {
+    const acceptedBytes = await exactFile(target);
+    if (!acceptedBytes.equals(bytes)) fail('artifact receipt accepted revision changed after publication');
+    return Object.freeze({ published: true, record: next });
+  }
+  const observed = await readJournal(directory);
+  if (!observed.current) fail('artifact receipt conflicting revision is unavailable');
+  return Object.freeze({ published: false, record: observed.current });
+}
+
 export function createExactArtifactReceiptJournal({ directory, scratch, identifier = randomUUID } = {}) {
   if (typeof directory !== 'string' || !path.isAbsolute(directory) || directory.includes('\0')) {
     throw new TypeError('artifact receipt directory must be an absolute local path');
@@ -312,42 +360,35 @@ export function createExactArtifactReceiptJournal({ directory, scratch, identifi
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
         const before = await readJournal(selectedDirectory);
         if (before.current && isDeepStrictEqual(before.current.items, items)) return before.current;
-        const next = nextRecord(before.current, before.digest, items, identifier);
-        const bytes = encode(next);
-        if (bytes.length > MAX_RECORD_BYTES) throw new TypeError('artifact receipt record exceeds its byte bound');
-        await realDirectory(selectedDirectory, { create: true });
-        const token = identifier();
-        if (typeof token !== 'string' || !UUID.test(token)) throw new TypeError('artifact receipt identity dependency returned an invalid value');
-        const temporary = path.join(selectedScratch, `.exact-receipt-${token}.tmp`);
-        let handle = null;
-        let temporaryCreated = false;
-        let published = false;
-        try {
-          handle = await open(temporary, 'wx', 0o600);
-          temporaryCreated = true;
-          await handle.writeFile(bytes);
-          await handle.sync();
-          await handle.close();
-          handle = null;
-          try {
-            await link(temporary, path.join(selectedDirectory, revisionName(next.revision)));
-            published = true;
-          } catch (error) {
-            if (error?.code !== 'EEXIST') throw error;
-          }
-        } finally {
-          await handle?.close();
-          if (temporaryCreated) await rm(temporary, { force: true });
-        }
-        const observed = await readJournal(selectedDirectory);
-        if (published) {
-          const acceptedBytes = await exactFile(path.join(selectedDirectory, revisionName(next.revision)));
-          if (!acceptedBytes.equals(bytes)) fail('artifact receipt accepted revision changed after publication');
-          return next;
-        }
-        if (observed.current && isDeepStrictEqual(observed.current.items, items)) return observed.current;
+        const result = await publishRevision({
+          before,
+          items,
+          directory: selectedDirectory,
+          scratch: selectedScratch,
+          identifier,
+        });
+        if (result.published || isDeepStrictEqual(result.record.items, items)) return result.record;
       }
       fail('artifact receipt journal changed continuously during bounded acceptance');
+    },
+    async compareAndAccept(rawComparison) {
+      const comparison = normalizeComparison(rawComparison);
+      await realDirectory(selectedScratch);
+      const before = await readJournal(selectedDirectory);
+      if ((before.current?.generation ?? null) !== comparison.generation) {
+        return Object.freeze({ accepted: false, record: before.current });
+      }
+      if (before.current && isDeepStrictEqual(before.current.items, comparison.items)) {
+        return Object.freeze({ accepted: true, record: before.current });
+      }
+      const result = await publishRevision({
+        before,
+        items: comparison.items,
+        directory: selectedDirectory,
+        scratch: selectedScratch,
+        identifier,
+      });
+      return Object.freeze({ accepted: result.published, record: result.record });
     },
   });
 }
