@@ -1,6 +1,6 @@
 # DB-HO084 — issue #384 fixed Linux CLI authentication broker
 
-Status: implemented and locally software-qualified on branch `stage8/362-protected-activity-channel` from accepted #382 documentation head `ca8ee61875d5429066d48777be896468677f91ae`; exact-head hosted Ubuntu/Windows acceptance remains required.
+Status: implementation commit `712ad50a76459aa90e31bd51966642c9a7f02e6a` passed exact-head hosted Ubuntu/Windows acceptance; documentation-head acceptance remains required before closing #384.
 
 This is a no-elevation software prerequisite under #293. Development and qualification must not invoke `sudo`, `pkexec`, UAC, the protected refresh child, a service mutation, a provider or protected-storage operation, a VM or guest, repository execution, or a coding model.
 
@@ -91,9 +91,15 @@ The supported exact runtime was the official Node.js `v22.16.0` Windows x64 arch
 
 The Windows host skipped the production Linux observation as designed. Hosted Ubuntu must execute—not skip—the read-only `/usr/bin/sudo` identity canary on the exact implementation head. No test invoked `sudo`, `pkexec`, UAC, an authenticated child, protected mutation, service/provider/storage effects, a VM or guest, repository execution, or a coding model.
 
+## Hosted implementation checkpoint
+
+[GitHub Actions run 33295960616](https://github.com/iteathen/DevBridge/actions/runs/33295960616) passed Ubuntu smoke/full and Windows bounded-smoke/serialized-full plus doctor on exact implementation commit `712ad50a76459aa90e31bd51966642c9a7f02e6a`. The Ubuntu full log explicitly records `ok 693 - production Linux observation proves the fixed sudo identity without invoking it`; it was not skipped. The hosted complete suite reported 1,899 tests and zero failures.
+
+This accepts only fixed-broker software behavior. The GitHub Actions deprecation annotation concerns the JavaScript runtime used internally by pinned `actions/checkout` and `actions/setup-node`; the workflow still installed and tested DevBridge on its pinned Node.js 22.16.0 runtime, and the annotation did not fail a job.
+
 ## Remaining acceptance and downstream boundary
 
-Commit and push the isolated implementation, require the exact-head Ubuntu/Windows smoke/full matrix, and inspect Ubuntu output for the real fixed-program canary. Only then document hosted acceptance and close #384. Parent #293 remains open: a later issue must attach configuration-selected authentication observation/attempt to #382 from setup, preserve one-attempt/fresh-reobservation policy, and eventually obtain physical Linux protected provider/storage and guest C-canary evidence. This software checkpoint does not make DevBridge operational for repository code.
+Require the documentation-only acceptance head to pass Ubuntu/Windows smoke/full CI, then close #384. Parent #293 remains open: a later issue must attach configuration-selected authentication observation/attempt to #382 from setup, preserve one-attempt/fresh-reobservation policy, and eventually obtain physical Linux protected provider/storage and guest C-canary evidence. This software checkpoint does not make DevBridge operational for repository code.
 
 ## Explicit downstream gates
 
