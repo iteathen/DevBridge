@@ -35,9 +35,12 @@ function reserved(identity) {
 function source(items) {
   return createOwnershipInventorySource({
     identity: 'payload',
-    collection: { async read() {
-      return { protocol: COLLECTION, revision: 1, epoch: 'epoch', previousDigest: null, generation: GENERATION, items };
-    } },
+    collection: {
+      async readRecord() {
+        return { protocol: COLLECTION, revision: 1, epoch: 'epoch', previousDigest: null, generation: GENERATION, items };
+      },
+      async apply() { throw new Error('unexpected mutation'); },
+    },
     collectionProtocol: COLLECTION,
     valueProtocol: VALUE,
     controlIdentity: 'control',
@@ -72,7 +75,7 @@ test('pending selected ownership withholds completeness without claiming its val
 test('an absent receipt withholds coverage while private descriptor validation remains downstream', async () => {
   const absent = createOwnershipInventorySource({
     identity: 'payload',
-    collection: { async read() { return null; } },
+    collection: { async readRecord() { return null; }, async apply() { throw new Error('unexpected mutation'); } },
     collectionProtocol: COLLECTION,
     valueProtocol: VALUE,
     controlIdentity: 'control',
@@ -80,7 +83,7 @@ test('an absent receipt withholds coverage while private descriptor validation r
     relate: () => ({ protections: [], references: [], after: [] }),
   });
   assert.deepEqual(await absent.observe({ identity: 'payload' }), {
-    identity: 'payload', generation: 'generation-absent', complete: false, items: [],
+    identity: 'payload', generation: 'generation-absent', complete: false, consistent: true, items: [],
   });
   const malformed = completed('owned.file');
   malformed.value.value.digest = 'wrong';
@@ -100,4 +103,71 @@ test('control and selected value protocols are strict while unrelated values rem
   const badSelected = completed('owned.file');
   badSelected.value.protocol = 'wrong';
   await assert.rejects(() => source([control(), badSelected]).observe({ identity: 'payload' }), /selected item/u);
+});
+
+test('exact retirement removes only the unchanged completed receipt and preserves a changed generation', async () => {
+  let record = { protocol: COLLECTION, revision: 1, epoch: 'epoch', previousDigest: null, generation: GENERATION, items: [control(), completed('owned.file')] };
+  const collection = {
+    async readRecord() { return structuredClone(record); },
+    async apply({ changes }) {
+      assert.equal(changes.length, 1);
+      assert.deepEqual(changes[0].before, record.items[1]);
+      record = { ...record, items: record.items.filter((entry) => entry.identity !== changes[0].identity) };
+      return { revision: `generation-${'c'.repeat(64)}`, items: structuredClone(record.items) };
+    },
+  };
+  const selected = createOwnershipInventorySource({
+    identity: 'payload',
+    collection,
+    collectionProtocol: COLLECTION,
+    valueProtocol: VALUE,
+    controlIdentity: 'control',
+    include: (identity) => identity.startsWith('owned.'),
+    relate: () => ({ protections: [], references: [], after: [] }),
+  });
+  const observed = await selected.observe({ identity: 'payload' });
+  assert.deepEqual(await selected.retire({ identity: 'payload', generation: GENERATION, item: observed.items[0] }), {
+    identity: 'owned.file', retired: true, absent: false,
+  });
+  assert.deepEqual(record.items.map((entry) => entry.identity), ['control']);
+
+  record = { ...record, generation: `generation-${'d'.repeat(64)}`, items: [control(), completed('owned.file')] };
+  await assert.rejects(
+    () => selected.retire({ identity: 'payload', generation: GENERATION, item: observed.items[0] }),
+    /generation changed/u,
+  );
+  assert.deepEqual(record.items.map((entry) => entry.identity), ['control', 'owned.file']);
+});
+
+test('retirement rejects malformed projected authority before collection mutation', async () => {
+  let mutations = 0;
+  const selected = createOwnershipInventorySource({
+    identity: 'payload',
+    collection: {
+      async readRecord() { return null; },
+      async apply() { mutations += 1; throw new Error('unexpected mutation'); },
+    },
+    collectionProtocol: COLLECTION,
+    valueProtocol: VALUE,
+    controlIdentity: 'control',
+    include: () => true,
+    relate: () => ({ protections: [], references: [], after: [] }),
+  });
+  await assert.rejects(
+    () => selected.retire({
+      identity: 'payload',
+      generation: GENERATION,
+      item: {
+        identity: 'owned.file',
+        provenance: 'created',
+        protections: [],
+        references: [],
+        after: [],
+        value: { identity: 'set-owned.file', digest: 'b'.repeat(64), bytes: 1 },
+        foreign: true,
+      },
+    }),
+    /foreign is not allowed/u,
+  );
+  assert.equal(mutations, 0);
 });

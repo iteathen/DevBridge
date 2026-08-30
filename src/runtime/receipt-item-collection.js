@@ -4,7 +4,7 @@ export function createReceiptItemCollection({ journal } = {}) {
   if (!journal || typeof journal.read !== 'function' || typeof journal.compareAndAccept !== 'function') {
     throw new TypeError('receipt item journal contract is incomplete');
   }
-  return createConditionalItemSet({
+  const items = createConditionalItemSet({
     records: Object.freeze({
       async read() {
         const record = await journal.read();
@@ -23,5 +23,10 @@ export function createReceiptItemCollection({ journal } = {}) {
         });
       },
     }),
+  });
+  return Object.freeze({
+    read: items.read,
+    apply: items.apply,
+    readRecord: journal.read,
   });
 }

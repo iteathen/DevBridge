@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: planned
+Status: local implementation candidate; hosted exact-head acceptance pending
 
 Coordinates with: #116, #159, #180, #391, DB-003, DB-009, DB-011, DB-019, DB-020, DB-HO095, DB-HO098, DB-HO099, DB-HO100, DB-HO101, DB-HO103, DB-HO104, and DB-HO105.
 
@@ -63,3 +63,33 @@ The application coordinator owns DB-009 sequencing. It removes and reconciles ev
 ## Acceptance boundary
 
 Acceptance proves that a launch cannot overlap the complete application-removal transaction for the same local owner, terminal receipts and bindings retire only after exact absence, interrupted retirement reconciles without deleting a changed reinstall, and a later exact plan can rotate completed operation state. It still does not make application coverage complete or authorize a live uninstall. Legacy Stage-0, setup/PATH/configuration, protected service, provider/environment, VM/guest, and every unregistered or ambiguous subject remain preserved.
+
+## Implementation
+
+The neutral process activity lease now owns one awaited callback transaction. It acquires before invoking the callback, permits re-entry only from the same still-active asynchronous operation, and releases in `finally`. A leaked asynchronous context loses re-entry authority when the awaited operation ends. Raw observation continues to report the physical lease as active; transaction-local suppression belongs to the exact inventory that owns the callback, so another module or asynchronous context cannot mistake a live operation for inactivity.
+
+Permanent Entry moved its activity file to the stable installation root and runs the complete install under that transaction. Runner-cache preparation uses the same callback primitive, and both exact runner providers hold the cache-local transaction across launch-time revalidation and the complete awaited launch callback. Provider subjects, paths, process details, and cache topology remain inside their owning adapters.
+
+The application-removal source now requires each contributor to expose the same neutral `run(operation)` stud. It nests only the contributors required by the requested mode in deterministic identity order, and the coordinator holds all of those transactions for the complete journal session. Inspection remains read-only. A journal record from another mode is rejected before it can satisfy or rotate the requested operation. After the confirmed journal intent is durable, every opaque effect is bound before the first deletion; a late binding failure therefore cannot strand a partially removed payload.
+
+Receipt-backed sources now expose exact terminal retirement through the conditional item collection. Retirement validates the complete projected item, original source generation, and exact collection member, removes only that unchanged receipt, re-observes its absence, and preserves changed or reinstalled state. Exact value and artifact bindings persist `bound` and `retired` phases. Retired evidence remains loadable for interrupted recovery but cannot issue a fresh binding; only a distinct later source generation can replace it at the next revision.
+
+The dynamic source contract distinguishes complete ownership evidence from consistency with current local materialization. Before binding, both are required. Once every currently projected item has an exact same-generation binding, intended payload effects may change consistency while the bound generation remains stable; incomplete/pending receipts, new items, missing items, changed items, or disagreeing binding generations still invalidate the plan. The runner-cache topology adapter translates its topology-derived generation back to the exact current receipt generation only after re-observing the unchanged projected item.
+
+The bound-effect bridge exposes one opaque retirement action without returning its private descriptor. The removal journal now persists a separate terminal-retirement cursor and planned/attempted/observed phases after every payload effect is reconciled absent. Terminal receipts retire in reverse dependency order so each item's original dependency projection remains present until that item retires. Restart repeats only the idempotent retirement whose intent was already durable. Completion requires the entire retirement frontier, and a completed record rotates only after the caller confirms a different exact current plan. Empty exact plans remain terminal without inventing effects.
+
+The standalone installer was regenerated from its source graph. No compatibility path, alternate lock, host repository-execution fallback, provider identity, VM lifecycle behavior, uninstall command, or GPU/CUDA behavior was added.
+
+## Verification and reassessment
+
+- The focused interlock/removal/installer/provider set passed 78/78. After preflight exposed two broader contracts, the physical-observation/transaction-local-suppression and bound-action regression set passed 40/40. The later review-driven multi-item, completeness/consistency, installer, and receipt set passed 49/49; a final inventory/cache subset passed 19/19.
+- Current Node 24.15.0 preflight and exact Node 22.16.0 preflight both passed: two standalone artifacts, 253 syntax files, two JSON files, and 203 dependency-selected tests.
+- The complete repository suite passed serially with exit 0 under exact Node 22.16.0 after the multi-item fixes. It was not retried on another runtime.
+- Exact Node 22.16.0 doctor with `config/devbridge.example.json` returned `ok: true`, detected the expected host control tools, kept coding adapters disabled, and truthfully reported repository execution unavailable because no persistent-environment route is configured. Environment lifecycle remains `setup-reentry-required`; this checkpoint therefore does not claim operational DevBridge or VM qualification.
+- Standalone freshness and `git diff --check` passed. Planning head `8383dbce9433df62d1033af63045b913f8b21aa1` passed all four hosted jobs in [run 33332054305](https://github.com/iteathen/DevBridge/actions/runs/33332054305).
+
+The first implementation used same-operation lease observation as the suppression mechanism. Repository preflight showed that this weakened the lease owner's established observable-activity contract. The final ownership is narrower: the lease always reports physical state, while each exact inventory discounts only its own live `run` context. This preserves raw observability, keeps the aggregate source topology-free, and still closes the observation-to-effect admission race.
+
+The first receipt-retirement pass also assumed every binding could retain the collection's original generation while receipts retired in forward order. A disposable real runner-cache removal proved that assumption false: each exact CAS advances the receipt generation, dependency projections shrink in forward order, and physical topology changes as effects succeed. The accepted reassessment pre-binds the entire plan, separates producer completeness from materialization consistency, re-observes the exact current receipt at retirement, translates topology-local generations inside the topology adapter, and retires terminal receipts in reverse dependency order. The disposable transaction removed the exact object, structural directories, and root, retired every receipt, and projected complete empty application coverage.
+
+Hosted acceptance is still required for the exact implementation commit. Issue #391 remains open. Application and purge producer coverage, the user-facing uninstall/reconfiguration surface, setup completion, protected-service/provider/environment work, and real Hyper-V plus KVM/libvirt qualification remain later dependency-ordered work. No UAC/elevation, live canonical removal, protected/provider/VM/guest mutation, repository execution, model invocation, or GPU/CUDA action occurred.

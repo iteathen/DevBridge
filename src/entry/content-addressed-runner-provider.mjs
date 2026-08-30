@@ -87,7 +87,7 @@ export class ContentAddressedRunnerProvider {
     this.#source = source;
     this.#root = path.resolve(cacheRoot);
     this.#launch = launch;
-    this.#ownership = requirePort(ownership, ['withActivity', 'observe'], 'runner provider ownership');
+    this.#ownership = requirePort(ownership, ['withActivity', 'duringActivity', 'observe'], 'runner provider ownership');
     this.#artifacts = requirePort(artifacts, ['plan', 'observe'], 'runner provider artifact action');
     this.#normalize = normalizeSubject;
   }
@@ -208,9 +208,11 @@ export class ContentAddressedRunnerProvider {
       subject: Object.freeze({ ...subject }),
       async launch(argv) {
         if (!Array.isArray(argv) || argv.some((entry) => typeof entry !== 'string')) fail('runner launch argv must be an array of strings');
-        const current = await objectObservation(file, subject.sha256);
-        if (current.state !== 'valid') fail('runner provider cached object changed before launch');
-        return provider.#launch(file, [...argv]);
+        return provider.#ownership.duringActivity(async () => {
+          const current = await objectObservation(file, subject.sha256);
+          if (current.state !== 'valid') fail('runner provider cached object changed before launch');
+          return await provider.#launch(file, [...argv]);
+        });
       },
     });
   }

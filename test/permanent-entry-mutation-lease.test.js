@@ -50,6 +50,44 @@ test('mutation lease observation rejects corrupt and indirect state', () => {
   } finally { selected.close(); }
 });
 
-test('mutation lease observer exposes only lease-local operations', () => {
-  assert.deepEqual(Object.keys(lease()).sort(), ['acquire', 'observe']);
+test('mutation lease exposes only lease-local operations', () => {
+  assert.deepEqual(Object.keys(lease()).sort(), ['acquire', 'observe', 'run']);
+});
+
+test('mutation transaction is reentrant only while its awaited operation remains active', async () => {
+  const selected = fixture();
+  try {
+    const owner = lease();
+    const peer = lease();
+    let enter;
+    let resume;
+    let late;
+    let releaseLate;
+    const entered = new Promise((resolve) => { enter = resolve; });
+    const gate = new Promise((resolve) => { resume = resolve; });
+    const lateObservation = new Promise((resolve) => { late = resolve; });
+    const lateGate = new Promise((resolve) => { releaseLate = resolve; });
+    const running = owner.run(selected.root, async () => {
+      assert.deepEqual(owner.observe(selected.root), { active: true });
+      assert.equal(await owner.run(selected.root, async () => 'nested'), 'nested');
+      setImmediate(async () => {
+        await lateGate;
+        late(owner.observe(selected.root));
+      });
+      enter();
+      await gate;
+      return 'complete';
+    });
+    await entered;
+    assert.deepEqual(peer.observe(selected.root), { active: true });
+    await assert.rejects(() => peer.run(selected.root, async () => {}), /installation mutation is active/u);
+    resume();
+    assert.equal(await running, 'complete');
+    assert.deepEqual(peer.observe(selected.root), { active: false });
+    const releasePeer = peer.acquire(selected.root);
+    try {
+      releaseLate();
+      assert.deepEqual(await lateObservation, { active: true });
+    } finally { releasePeer(); }
+  } finally { selected.close(); }
 });

@@ -41,15 +41,19 @@ function snapshot(changes = {}) {
   };
 }
 
-function harness(initial = snapshot(), { removeEffect = null, observeEffect = null, bindEffect = null } = {}) {
+function harness(initial = snapshot(), { removeEffect = null, observeEffect = null, bindEffect = null, retireEffect = null } = {}) {
   let current = structuredClone(initial);
   const records = new Map();
   const present = new Set(current.items.flatMap((entry) => entry.effects.map((selected) => selected.identity)));
   const removals = [];
   const bindings = [];
+  const retirements = [];
   const saves = [];
   const api = createApplicationRemoval({
-    source: { async snapshot() { return structuredClone(current); } },
+    source: {
+      async snapshot() { return structuredClone(current); },
+      async run(_mode, operation) { return operation(); },
+    },
     journal: {
       async run(mode, operation) {
         return operation({
@@ -84,6 +88,11 @@ function harness(initial = snapshot(), { removeEffect = null, observeEffect = nu
         present.delete(input.effect.identity);
         return undefined;
       },
+      async retire(input) {
+        retirements.push(structuredClone(input));
+        if (retireEffect) return retireEffect(input, present);
+        return { identity: input.effect.identity, retired: true };
+      },
     },
   });
   return {
@@ -92,6 +101,7 @@ function harness(initial = snapshot(), { removeEffect = null, observeEffect = nu
     present,
     removals,
     bindings,
+    retirements,
     saves,
     setSnapshot(value) { current = structuredClone(value); },
   };
@@ -120,6 +130,80 @@ test('plans are deterministic, bounded, mode-specific, and effect-opaque', async
   assert.deepEqual(preserved(application, 'item-foreign').reasons, ['foreign']);
   assert.equal(JSON.stringify(application).includes('effect-'), false);
   assert.equal(JSON.stringify(application).includes('reference-active'), false);
+});
+
+test('terminal retirement starts only after every selected effect is reconciled absent', async () => {
+  const selected = snapshot({ items: [item('item-core'), item('item-entry', { after: ['item-core'] })] });
+  const state = harness(selected, {
+    retireEffect(input, present) {
+      assert.equal(present.size, 0);
+      return { identity: input.effect.identity, retired: true };
+    },
+  });
+  const plan = await state.api.inspect({ mode: 'application' });
+  const result = await state.api.remove({ mode: 'application', planDigest: plan.digest, confirmation: 'REMOVE' });
+  assert.equal(result.complete, true);
+  assert.deepEqual(state.retirements.map((entry) => entry.effect.identity), [
+    'effect-item-entry-receipt',
+    'effect-item-core-receipt',
+  ]);
+});
+
+test('interrupted terminal retirement resumes without replaying payload deletion', async () => {
+  const selected = snapshot({ items: [item('item-core')] });
+  let interrupt = true;
+  const state = harness(selected, {
+    retireEffect(input) {
+      if (interrupt) throw new Error('simulated retirement interruption');
+      return { identity: input.effect.identity, retired: true };
+    },
+  });
+  const plan = await state.api.inspect({ mode: 'application' });
+  await assert.rejects(
+    () => state.api.remove({ mode: 'application', planDigest: plan.digest, confirmation: 'REMOVE' }),
+    /retirement interruption/u,
+  );
+  assert.equal(state.records.get('application').phase, 'retirement-attempted');
+  const removalCount = state.removals.length;
+  interrupt = false;
+  const result = await state.api.remove({ mode: 'application', planDigest: plan.digest, confirmation: 'REMOVE' });
+  assert.equal(result.complete, true);
+  assert.equal(state.removals.length, removalCount);
+  assert.equal(state.retirements.length, 2);
+});
+
+test('a completed operation rotates only for a newly confirmed exact plan', async () => {
+  const firstSnapshot = snapshot({ generation: 'generation-first', items: [item('item-core')] });
+  const state = harness(firstSnapshot);
+  const first = await state.api.inspect({ mode: 'application' });
+  await state.api.remove({ mode: 'application', planDigest: first.digest, confirmation: 'REMOVE' });
+  const firstRevision = state.records.get('application').revision;
+
+  const nextSnapshot = snapshot({ generation: 'generation-second', items: [item('item-core')] });
+  state.setSnapshot(nextSnapshot);
+  for (const selected of nextSnapshot.items[0].effects) state.present.add(selected.identity);
+  const next = await state.api.inspect({ mode: 'application' });
+  assert.notEqual(next.digest, first.digest);
+  const repeated = await state.api.remove({ mode: 'application', planDigest: first.digest, confirmation: 'REMOVE' });
+  assert.equal(repeated.planDigest, first.digest);
+  assert.equal(state.records.get('application').revision, firstRevision);
+  const result = await state.api.remove({ mode: 'application', planDigest: next.digest, confirmation: 'REMOVE' });
+  assert.equal(result.complete, true);
+  assert.ok(state.records.get('application').revision > firstRevision);
+  assert.equal(state.records.get('application').planDigest, next.digest);
+});
+
+test('a journal receipt for another mode cannot satisfy the requested operation', async () => {
+  const state = harness();
+  const application = await state.api.inspect({ mode: 'application' });
+  await state.api.remove({ mode: 'application', planDigest: application.digest, confirmation: 'REMOVE' });
+  const substituted = structuredClone(state.records.get('application'));
+  state.records.set('purge', substituted);
+
+  await assert.rejects(
+    () => state.api.remove({ mode: 'purge', planDigest: application.digest, confirmation: 'REMOVE' }),
+    /journal mode/u,
+  );
 });
 
 test('exact REMOVE plus current digest crosses selected effects in dependency order', async () => {

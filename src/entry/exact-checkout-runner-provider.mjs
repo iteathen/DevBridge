@@ -180,7 +180,7 @@ export class ExactCheckoutRunnerProvider {
     this.#launch = launch;
     this.#allowFetch = allowFetch;
     this.#admitSubject = admitSubject;
-    this.#ownership = requirePort(ownership, ['withActivity', 'observe'], 'exact checkout ownership');
+    this.#ownership = requirePort(ownership, ['withActivity', 'duringActivity', 'observe'], 'exact checkout ownership');
     this.#artifacts = requirePort(artifacts, ['plan', 'discover', 'observe', 'remove'], 'exact checkout artifact action');
     this.#normalize = normalizeSubject;
   }
@@ -338,8 +338,10 @@ export class ExactCheckoutRunnerProvider {
       subject,
       async launch(argv) {
         if (!Array.isArray(argv) || argv.some((entry) => typeof entry !== 'string')) fail('exact checkout launch argv must be an array of strings');
-        const current = await provider.#verify(prepared.destination, subject, prepared.context);
-        return provider.#launch(current.entry, [...argv], { cwd: current.root, env: { ...process.env } });
+        return provider.#ownership.duringActivity(async () => {
+          const current = await provider.#verify(prepared.destination, subject, prepared.context);
+          return await provider.#launch(current.entry, [...argv], { cwd: current.root, env: { ...process.env } });
+        });
       },
     });
   }

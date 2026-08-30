@@ -5,7 +5,16 @@ export const REMOVAL_MODES = Object.freeze(['application', 'purge']);
 const MODE_SET = new Set(REMOVAL_MODES);
 const SCOPES = new Set(['payload', 'authority', 'managed']);
 const PROVENANCE = new Set(['created', 'adopted', 'foreign']);
-const PHASES = new Set(['planned', 'attempted', 'observed', 'reconciled', 'completed']);
+const PHASES = new Set([
+  'planned',
+  'attempted',
+  'observed',
+  'reconciled',
+  'retirement-planned',
+  'retirement-attempted',
+  'retirement-observed',
+  'completed',
+]);
 const OUTCOMES = new Set(['absent', 'removed']);
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -205,12 +214,15 @@ export function normalizeRemovalRecord(raw) {
   if (raw == null) return null;
   const value = exactObject(
     raw,
-    new Set(['protocol', 'mode', 'planDigest', 'generation', 'revision', 'cursor', 'phase', 'attempts', 'effects', 'preserved', 'outcomes']),
+    new Set(['protocol', 'mode', 'planDigest', 'generation', 'revision', 'cursor', 'retirementCursor', 'phase', 'attempts', 'effects', 'preserved', 'outcomes']),
     'removal journal record',
   );
   if (value.protocol !== APPLICATION_REMOVAL_PROTOCOL) throw new TypeError('removal journal protocol is unsupported');
   if (!Number.isSafeInteger(value.revision) || value.revision < 1) throw new TypeError('removal journal revision is invalid');
   if (!Number.isSafeInteger(value.cursor) || value.cursor < 0) throw new TypeError('removal journal cursor is invalid');
+  if (!Number.isSafeInteger(value.retirementCursor) || value.retirementCursor < 0) {
+    throw new TypeError('removal journal retirement cursor is invalid');
+  }
   if (!PHASES.has(value.phase)) throw new TypeError('removal journal phase is invalid');
   if (!Number.isSafeInteger(value.attempts) || value.attempts < 0 || value.attempts > MAX_ATTEMPTS) {
     throw new TypeError('removal journal attempt count is invalid');
@@ -229,12 +241,22 @@ export function normalizeRemovalRecord(raw) {
     throw new TypeError('removal journal outcomes are invalid');
   }
   if (value.cursor > effects.length) throw new TypeError('removal journal cursor exceeds its effects');
+  const terminalEffects = effects.filter((effect) => effect.terminal);
+  if (value.retirementCursor > terminalEffects.length) throw new TypeError('removal journal retirement cursor exceeds its effects');
   if (value.phase === 'completed') {
-    if (value.cursor !== effects.length || value.attempts !== 0 || value.outcomes.some((entry) => entry == null)) {
+    if (value.cursor !== effects.length || value.retirementCursor !== terminalEffects.length
+        || value.attempts !== 0 || value.outcomes.some((entry) => entry == null)) {
       throw new TypeError('completed removal journal position is invalid');
     }
+  } else if (value.phase.startsWith('retirement-')) {
+    if (terminalEffects.length === 0 || value.cursor !== effects.length || value.retirementCursor >= terminalEffects.length
+        || value.attempts !== 0 || value.outcomes.some((entry) => entry == null)) {
+      throw new TypeError('removal journal retirement position is invalid');
+    }
   } else {
-    if (effects.length === 0 || value.cursor >= effects.length) throw new TypeError('removal journal current effect is unavailable');
+    if (effects.length === 0 || value.cursor >= effects.length || value.retirementCursor !== 0) {
+      throw new TypeError('removal journal current effect is unavailable');
+    }
     if (value.outcomes.slice(0, value.cursor).some((entry) => entry == null)
         || value.outcomes.slice(value.cursor + 1).some((entry) => entry != null)) {
       throw new TypeError('removal journal outcome frontier is invalid');
@@ -253,6 +275,7 @@ export function normalizeRemovalRecord(raw) {
     generation: safeIdentity(value.generation, 'removal journal generation'),
     revision: value.revision,
     cursor: value.cursor,
+    retirementCursor: value.retirementCursor,
     phase: value.phase,
     attempts: value.attempts,
     effects,
@@ -279,6 +302,14 @@ export function normalizeRemovalBinding(raw, input) {
     throw new TypeError('removal effect binding did not preserve exact authority');
   }
   return Object.freeze({ ...value });
+}
+
+export function normalizeRemovalRetirement(raw, effect) {
+  const value = exactObject(raw, new Set(['identity', 'retired']), 'removal effect retirement');
+  if (value.identity !== effect.identity || value.retired !== true) {
+    throw new TypeError('removal effect retirement did not preserve exact authority');
+  }
+  return Object.freeze({ identity: value.identity, retired: true });
 }
 
 export function maximumRemovalAttempts() {

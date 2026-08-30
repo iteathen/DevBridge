@@ -370,7 +370,7 @@ test('installer lock fails closed for a live owner and reclaims only a dead owne
   const home = path.join(root, 'home');
   const entry = path.join(home, 'entry');
   mkdirSync(entry, { recursive: true });
-  const lockPath = path.join(entry, '.install.lock');
+  const lockPath = path.join(home, '.install.lock');
   const args = parseInstallArgs(['--ref', 'main', '--home', home], { environment: {}, homeDirectory: root });
 
   writeFileSync(lockPath, `${JSON.stringify({
@@ -394,7 +394,7 @@ test('installer lock fails closed for a live owner and reclaims only a dead owne
   })}\n`);
   const installed = await installDevBridge(args, installDependencies(fixture.source));
   assert.equal(installed.componentHead, fixture.head);
-  assert.equal(readdirSync(entry).includes('.install.lock'), false);
+  assert.equal(readdirSync(home).includes('.install.lock'), false);
 });
 
 test('production ownership receipts are exact, idempotent, and retain older component generations', async (t) => {
@@ -459,8 +459,16 @@ test('production ownership receipts project a private read-only payload inventor
 
   const source = createApplicationRemovalSource({
     contributors: [
-      { identity: inventory.identity, snapshot: () => inventory.snapshot() },
-      { identity: cacheInventory.identity, snapshot: () => cacheInventory.snapshot() },
+      {
+        identity: inventory.identity,
+        snapshot: () => inventory.snapshot(),
+        run: (_mode, operation) => inventory.run(operation),
+      },
+      {
+        identity: cacheInventory.identity,
+        snapshot: () => cacheInventory.snapshot(),
+        run: (_mode, operation) => cacheInventory.run(operation),
+      },
     ],
     required: {
       application: [ENTRY_PAYLOAD_INVENTORY_IDENTITY, RUNNER_CACHE_INVENTORY_IDENTITY, 'runtime-payload'],

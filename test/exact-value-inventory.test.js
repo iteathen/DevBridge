@@ -32,7 +32,8 @@ function recordStore() {
       return operation(Object.freeze({
         async load() { return structuredClone(values.get(subject)); },
         async save(value) {
-          if (values.has(subject)) throw new Error('unexpected replacement');
+          const current = values.get(subject);
+          if (value.revision !== (current?.revision ?? 0) + 1) throw new Error('unexpected revision');
           values.set(subject, structuredClone(value));
         },
       }));
@@ -42,7 +43,7 @@ function recordStore() {
 
 function fixture({ complete = true, active = false, items = [item('one', 'a'), item('two', 'b')] } = {}) {
   const state = {
-    source: { identity: 'owner', generation: `generation-${'c'.repeat(64)}`, complete, items },
+    source: { identity: 'owner', generation: `generation-${'c'.repeat(64)}`, complete, consistent: true, items },
     active,
     observations: new Map(items.map((entry) => [entry.value.identity, 'present'])),
     removed: [],
@@ -66,8 +67,25 @@ function fixture({ complete = true, active = false, items = [item('one', 'a'), i
     identity: 'owner',
     scope: 'payload',
     coverage: ['application'],
-    source: { async observe() { return structuredClone(state.source); } },
-    activity: { async observe() { return { identity: 'owner', active: state.active }; } },
+    source: {
+      async observe() { return structuredClone(state.source); },
+      async retire({ generation, item: selected }) {
+        const current = state.source.items.find((entry) => entry.identity === selected.identity);
+        if (state.source.generation !== generation || JSON.stringify(current) !== JSON.stringify(selected)) {
+          throw new Error('source changed');
+        }
+        state.source = {
+          ...state.source,
+          generation: `generation-${'e'.repeat(64)}`,
+          items: state.source.items.filter((entry) => entry.identity !== selected.identity),
+        };
+        return { identity: selected.identity, retired: true, absent: false };
+      },
+    },
+    activity: {
+      async observe() { return { identity: 'owner', active: state.active }; },
+      async run(_request, operation) { return operation(); },
+    },
     records,
     actions,
   });
@@ -153,4 +171,58 @@ test('duplicate, missing, and cyclic dependencies fail before projection', async
   ]) {
     await assert.rejects(() => fixture({ items }).make().snapshot(), /duplicate|dependency/u);
   }
+});
+
+test('terminal retirement preserves recovery evidence and a later source generation can rebind', async () => {
+  const selected = fixture();
+  const inventory = selected.make();
+  const fragment = await inventory.snapshot();
+  const request = input(fragment);
+  const bridge = createBoundEffectActions({ catalog: inventory, actions: selected.actions });
+  await bridge.bind(request);
+  await bridge.remove(request);
+  await assert.rejects(() => bridge.retire(request), /active transaction/u);
+  assert.deepEqual(await inventory.run(() => bridge.retire(request)), { identity: request.effect.identity, retired: true });
+  const record = [...selected.records.values.values()][0];
+  assert.equal(record.phase, 'retired');
+  assert.equal(record.revision, 2);
+  assert.equal((await bridge.observe(request)).state, 'absent');
+  await assert.rejects(() => bridge.bind(request), /changed before acceptance/u);
+  assert.deepEqual((await selected.make().snapshot()).items.map((entry) => entry.identity), ['two']);
+
+  selected.state.source = {
+    identity: 'owner',
+    generation: `generation-${'f'.repeat(64)}`,
+    complete: true,
+    consistent: true,
+    items: [item('one', 'a'), item('two', 'b')],
+  };
+  selected.state.observations.set('set-one', 'present');
+  const reinstalled = selected.make();
+  const nextFragment = await reinstalled.snapshot();
+  const next = Object.freeze({ ...input(nextFragment), planDigest: 'f'.repeat(64) });
+  await reinstalled.bind(next);
+  const rebound = [...selected.records.values.values()][0];
+  assert.equal(rebound.phase, 'bound');
+  assert.equal(rebound.revision, 3);
+  assert.equal(rebound.source.generation, selected.state.source.generation);
+});
+
+test('one held transaction retires multiple original-generation bindings through exact current receipt CAS', async () => {
+  const selected = fixture();
+  const inventory = selected.make();
+  const fragment = await inventory.snapshot();
+  const bridge = createBoundEffectActions({ catalog: inventory, actions: selected.actions });
+  const requests = ['one', 'two'].map((identity) => input(fragment, identity));
+
+  await inventory.run(async () => {
+    for (const request of requests) await bridge.bind(request);
+    for (const request of requests) await bridge.remove(request);
+    for (const request of requests) {
+      assert.deepEqual(await bridge.retire(request), { identity: request.effect.identity, retired: true });
+    }
+  });
+
+  assert.deepEqual(selected.state.source.items, []);
+  assert.equal([...selected.records.values.values()].every((record) => record.phase === 'retired'), true);
 });

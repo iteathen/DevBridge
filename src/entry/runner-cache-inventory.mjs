@@ -6,6 +6,7 @@ import { createExactActionRouter } from '../runtime/exact-action-router.js';
 import { EXACT_DIRECTORY_PROTOCOL } from '../runtime/exact-directory.js';
 import { createExactValueInventory } from '../runtime/exact-value-inventory.js';
 import { createReceiptValueSource } from '../runtime/receipt-value-source.js';
+import { createReceiptItemCollection } from '../runtime/receipt-item-collection.js';
 import { createRevisionedRecordStateStore } from '../state/revisioned-record-state-store.js';
 import { createRunnerCacheComposition } from './runner-cache-composition.mjs';
 import {
@@ -36,7 +37,7 @@ export function createRunnerCacheInventory({ home = null } = {}, {
   const journal = journalFactory({ directory: receiptPaths.receipts, scratch: receiptPaths.scratch });
   const receiptSource = valueSourceFactory({
     identity: RUNNER_CACHE_INVENTORY_IDENTITY,
-    collection: journal,
+    collection: createReceiptItemCollection({ journal }),
     collectionProtocol: EXACT_ARTIFACT_RECEIPT_PROTOCOL,
     valueProtocol: RUNNER_CACHE_OWNERSHIP_VALUE_PROTOCOL,
     controlIdentity: 'control',
@@ -55,6 +56,11 @@ export function createRunnerCacheInventory({ home = null } = {}, {
       const observed = cache.ownership.observe();
       if (!observed || typeof observed.active !== 'boolean') throw new TypeError('runner-cache inventory activity observation is invalid');
       return Object.freeze({ identity, active: observed.active });
+    },
+    async run({ identity }, operation) {
+      if (identity !== RUNNER_CACHE_INVENTORY_IDENTITY) throw new TypeError('runner-cache inventory activity identity changed');
+      if (typeof operation !== 'function') throw new TypeError('runner-cache inventory activity operation must be a function');
+      return cache.ownership.duringActivity(operation);
     },
   });
   const actions = routerFactory({ actions: [

@@ -29,11 +29,14 @@ function normalizeRequired(raw) {
 }
 
 function normalizeContributor(raw, index) {
-  const value = exactObject(raw, new Set(['identity', 'snapshot']), `removal source contributor ${index}`);
-  if (typeof value.snapshot !== 'function') throw new TypeError(`removal source contributor ${index}.snapshot must be a function`);
+  const value = exactObject(raw, new Set(['identity', 'snapshot', 'run']), `removal source contributor ${index}`);
+  if (typeof value.snapshot !== 'function' || typeof value.run !== 'function') {
+    throw new TypeError(`removal source contributor ${index} contract is incomplete`);
+  }
   return Object.freeze({
     identity: safeIdentity(value.identity, `removal source contributor ${index}.identity`),
     snapshot: value.snapshot.bind(value),
+    run: value.run.bind(value),
   });
 }
 
@@ -77,6 +80,20 @@ export function createApplicationRemovalSource({ contributors, required } = {}) 
         protectedReferences: [...new Set(fragments.flatMap((entry) => entry.value.protectedReferences))],
         items: fragments.flatMap((entry) => entry.value.items),
       });
+    },
+    async run(rawMode, operation) {
+      const mode = REMOVAL_MODES.includes(rawMode) ? rawMode : null;
+      if (!mode || typeof operation !== 'function') throw new TypeError('removal source operation is invalid');
+      const byIdentity = new Map(selected.map((entry) => [entry.identity, entry]));
+      const requiredIdentities = requirements[mode];
+      if (requiredIdentities.some((identity) => !byIdentity.has(identity))) {
+        throw new Error('removal mode coverage is incomplete');
+      }
+      async function enter(index) {
+        if (index === requiredIdentities.length) return operation();
+        return byIdentity.get(requiredIdentities[index]).run(() => enter(index + 1));
+      }
+      return enter(0);
     },
   });
 }

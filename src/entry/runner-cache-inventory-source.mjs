@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, readdir } from 'node:fs/promises';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 const MAX_ENTRIES = 4096;
 const OBJECT = /^cache\.object\.([0-9a-f]{64})$/u;
@@ -12,6 +13,14 @@ const FIXED = new Set([
   'cache.directory.control',
   'cache.file.control',
 ]);
+const GENERATION = /^generation-[a-f0-9]{64}$/u;
+const SOURCE_GENERATION = /^generation-(?:absent|[a-f0-9]{64})$/u;
+
+function exactObject(raw, allowed, name) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError(`${name} must be an object`);
+  for (const key of Object.keys(raw)) if (!allowed.has(key)) throw new TypeError(`${name}.${key} is not allowed`);
+  return raw;
+}
 
 function stable(value) {
   if (Array.isArray(value)) return value.map(stable);
@@ -97,7 +106,8 @@ export function createRunnerCacheInventorySource({
   list = readdir,
   inspectReparse = async (_location, info) => info.isSymbolicLink(),
 } = {}) {
-  if (typeof identity !== 'string' || !identity || !source || typeof source.observe !== 'function'
+  if (typeof identity !== 'string' || !identity || !source
+      || typeof source.observe !== 'function' || typeof source.retire !== 'function'
       || typeof cacheRoot !== 'string' || !path.isAbsolute(cacheRoot)
       || typeof inspect !== 'function' || typeof list !== 'function' || typeof inspectReparse !== 'function') {
     throw new TypeError('runner-cache inventory source contract is incomplete');
@@ -105,35 +115,60 @@ export function createRunnerCacheInventorySource({
   const root = path.resolve(cacheRoot);
   const ports = Object.freeze({ inspect, list, isReparse: inspectReparse });
 
+  async function snapshot(rawRequest) {
+    request(rawRequest, identity);
+    const receipts = await source.observe(Object.freeze({ identity }));
+    if (!receipts || receipts.identity !== identity || !SOURCE_GENERATION.test(receipts.generation)
+        || typeof receipts.complete !== 'boolean' || typeof receipts.consistent !== 'boolean'
+        || !Array.isArray(receipts.items)) {
+      throw new TypeError('runner-cache receipt projection is invalid');
+    }
+    if (receipts.items.some((item) => !knownIdentity(item.identity))) {
+      throw new Error('runner-cache receipt contains an unsupported local identity');
+    }
+    const items = new Set(receipts.items.map((item) => item.identity));
+    const count = { value: 0 };
+    const rootState = await entryList(root, ports, count);
+    const child = async (name) => rootState.state === 'present'
+      ? entryList(path.join(root, name), ports, count)
+      : Object.freeze({ state: 'absent', entries: Object.freeze([]) });
+    const topology = Object.freeze({
+      root: rootState,
+      objects: await child('objects'),
+      checkouts: await child('checkouts'),
+      control: await child('control-home'),
+    });
+    const absentWithoutReceipts = receipts.generation === 'generation-absent' && rootState.state === 'absent';
+    const projection = Object.freeze({
+      identity,
+      generation: generation({ receipt: receipts.generation, topology }),
+      complete: absentWithoutReceipts || receipts.complete,
+      consistent: absentWithoutReceipts || topologyComplete(topology, items),
+      items: Object.freeze([...receipts.items]),
+    });
+    return Object.freeze({ projection, receipts });
+  }
+
   return Object.freeze({
     async observe(rawRequest) {
-      request(rawRequest, identity);
-      const receipts = await source.observe(Object.freeze({ identity }));
-      if (!receipts || receipts.identity !== identity || !Array.isArray(receipts.items)) {
-        throw new TypeError('runner-cache receipt projection is invalid');
+      return (await snapshot(rawRequest)).projection;
+    },
+    async retire(raw) {
+      const value = exactObject(raw, new Set(['identity', 'generation', 'item']), 'runner-cache inventory retirement');
+      request({ identity: value.identity }, identity);
+      if (!GENERATION.test(value.generation) || !value.item || typeof value.item !== 'object' || Array.isArray(value.item)) {
+        throw new TypeError('runner-cache inventory retirement is invalid');
       }
-      if (receipts.items.some((item) => !knownIdentity(item.identity))) {
-        throw new Error('runner-cache receipt contains an unsupported local identity');
+      const current = await snapshot(Object.freeze({ identity }));
+      const observed = current.projection.items.find((item) => item.identity === value.item.identity) ?? null;
+      if (observed && (current.projection.generation !== value.generation || !isDeepStrictEqual(observed, value.item))) {
+        throw new Error('runner-cache inventory retirement changed');
       }
-      const items = new Set(receipts.items.map((item) => item.identity));
-      const count = { value: 0 };
-      const rootState = await entryList(root, ports, count);
-      const child = async (name) => rootState.state === 'present'
-        ? entryList(path.join(root, name), ports, count)
-        : Object.freeze({ state: 'absent', entries: Object.freeze([]) });
-      const topology = Object.freeze({
-        root: rootState,
-        objects: await child('objects'),
-        checkouts: await child('checkouts'),
-        control: await child('control-home'),
-      });
-      const absentWithoutReceipts = receipts.generation === 'generation-absent' && rootState.state === 'absent';
-      return Object.freeze({
+      return source.retire(Object.freeze({
         identity,
-        generation: generation({ receipt: receipts.generation, topology }),
-        complete: absentWithoutReceipts || (receipts.complete === true && topologyComplete(topology, items)),
-        items: Object.freeze([...receipts.items]),
-      });
+        generation: current.receipts.generation,
+        item: observed ?? value.item,
+      }));
     },
   });
 }

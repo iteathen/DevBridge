@@ -103,7 +103,7 @@ function requirePort(value, methods, name) {
 }
 
 export function createBoundEffectActions({ catalog, actions } = {}) {
-  const selectedCatalog = requirePort(catalog, ['bind', 'load'], 'effect catalog');
+  const selectedCatalog = requirePort(catalog, ['bind', 'load', 'retire'], 'effect catalog');
   const selectedActions = requirePort(actions, ['observe', 'remove'], 'effect actions');
 
   return Object.freeze({
@@ -124,6 +124,14 @@ export function createBoundEffectActions({ catalog, actions } = {}) {
       const selected = input(raw);
       const bound = binding(await selectedCatalog.load(selected), selected);
       return selectedActions.remove(bound.value);
+    },
+    async retire(raw) {
+      const selected = input(raw);
+      const retired = exactObject(await selectedCatalog.retire(selected), new Set(['identity', 'retired']), 'effect action retirement');
+      if (retired.identity !== selected.effect.identity || retired.retired !== true) {
+        throw new TypeError('effect action retirement did not preserve exact input');
+      }
+      return Object.freeze({ identity: retired.identity, retired: true });
     },
   });
 }

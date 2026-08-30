@@ -1,12 +1,13 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { observeInstallActivity } from './permanent-entry-installer.mjs';
+import { observeInstallActivity, runInstallActivity } from './permanent-entry-installer.mjs';
 import { createOwnershipInventorySource } from './permanent-entry-installer/ownership-inventory-source.mjs';
 import { OWNERSHIP_VALUE_PROTOCOL } from './permanent-entry-installer/ownership-state.mjs';
 import { EXACT_ARTIFACT_RECEIPT_PROTOCOL, createExactArtifactReceiptJournal } from '../runtime/exact-artifact-receipt.js';
 import { createExactArtifactSet } from '../runtime/exact-artifact-set.js';
 import { createExactValueInventory } from '../runtime/exact-value-inventory.js';
+import { createReceiptItemCollection } from '../runtime/receipt-item-collection.js';
 import { createWindowsFilesystemEntryObserver } from '../runtime/providers/windows-filesystem-entry-observer.js';
 import { createRevisionedRecordStateStore } from '../state/revisioned-record-state-store.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
@@ -35,6 +36,7 @@ export function createPermanentEntryInventory({ home = null } = {}, {
   recordStoreFactory = createRevisionedRecordStateStore,
   artifactSetFactory = (options) => createExactArtifactSet(options),
   activityObserver = observeInstallActivity,
+  activityRunner = runInstallActivity,
   attributeObserverFactory = createWindowsFilesystemEntryObserver,
   invoke = invokeCommand,
 } = {}) {
@@ -46,7 +48,7 @@ export function createPermanentEntryInventory({ home = null } = {}, {
   });
   const source = createOwnershipInventorySource({
     identity: ENTRY_PAYLOAD_INVENTORY_IDENTITY,
-    collection: journal,
+    collection: createReceiptItemCollection({ journal }),
     collectionProtocol: EXACT_ARTIFACT_RECEIPT_PROTOCOL,
     valueProtocol: OWNERSHIP_VALUE_PROTOCOL,
     controlIdentity: 'control',
@@ -59,6 +61,11 @@ export function createPermanentEntryInventory({ home = null } = {}, {
       const observed = await activityObserver({ home: selectedHome });
       if (!observed || typeof observed.active !== 'boolean') throw new TypeError('entry payload activity observation is invalid');
       return Object.freeze({ identity, active: observed.active });
+    },
+    async run({ identity }, operation) {
+      if (identity !== ENTRY_PAYLOAD_INVENTORY_IDENTITY) throw new TypeError('entry payload activity identity changed');
+      if (typeof operation !== 'function') throw new TypeError('entry payload activity operation must be a function');
+      return activityRunner({ home: selectedHome }, operation);
     },
   });
   const attributeObserver = process.platform === 'win32' ? attributeObserverFactory({ invoke }) : null;

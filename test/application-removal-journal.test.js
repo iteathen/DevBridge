@@ -33,7 +33,10 @@ function snapshot() {
 
 function removal(file, state) {
   return createApplicationRemoval({
-    source: { async snapshot() { return snapshot(); } },
+    source: {
+      async snapshot() { return snapshot(); },
+      async run(_mode, operation) { return operation(); },
+    },
     journal: createRevisionedRecordStateStore(file),
     effects: {
       async bind(input) {
@@ -52,6 +55,9 @@ function removal(file, state) {
       async remove(input) {
         state.calls += 1;
         await state.remove(input);
+      },
+      async retire(input) {
+        return { identity: input.effect.identity, retired: true };
       },
     },
   });

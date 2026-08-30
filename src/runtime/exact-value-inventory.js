@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { isDeepStrictEqual } from 'node:util';
 
 export const EXACT_VALUE_INVENTORY_PROTOCOL = 'devbridge/exact-value-inventory-v1';
@@ -9,6 +10,7 @@ const PROVENANCE = new Set(['created', 'adopted']);
 const MAX_ITEMS = 4096;
 const MAX_VALUE_BYTES = 32 * 1024 * 1024;
 const AMBIGUOUS_PROTECTION = 'state-ambiguous';
+const BINDING_PHASES = new Set(['bound', 'retired']);
 
 function exactObject(raw, allowed, name) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError(`${name} must be an object`);
@@ -85,8 +87,8 @@ function sourceItem(raw, index) {
 }
 
 function sourceObservation(raw, expectedIdentity) {
-  const value = exactObject(raw, new Set(['identity', 'generation', 'complete', 'items']), 'value inventory source observation');
-  if (value.identity !== expectedIdentity || typeof value.complete !== 'boolean'
+  const value = exactObject(raw, new Set(['identity', 'generation', 'complete', 'consistent', 'items']), 'value inventory source observation');
+  if (value.identity !== expectedIdentity || typeof value.complete !== 'boolean' || typeof value.consistent !== 'boolean'
       || !Array.isArray(value.items) || value.items.length > MAX_ITEMS) {
     throw new TypeError('value inventory source observation is invalid');
   }
@@ -114,6 +116,7 @@ function sourceObservation(raw, expectedIdentity) {
     identity: expectedIdentity,
     generation: identity(value.generation, 'value inventory source generation'),
     complete: value.complete,
+    consistent: value.consistent,
     items: Object.freeze(items),
   });
 }
@@ -172,10 +175,10 @@ function publicItem(ownerIdentity, item, extraProtections = []) {
 function storedRecord(raw, ownerIdentity, expectedItem) {
   const value = exactObject(
     raw,
-    new Set(['protocol', 'revision', 'owner', 'source', 'item', 'plan']),
+    new Set(['protocol', 'revision', 'phase', 'owner', 'source', 'item', 'plan']),
     'value inventory record',
   );
-  if (value.protocol !== EXACT_VALUE_INVENTORY_PROTOCOL || value.owner !== ownerIdentity
+  if (value.protocol !== EXACT_VALUE_INVENTORY_PROTOCOL || value.owner !== ownerIdentity || !BINDING_PHASES.has(value.phase)
       || !Number.isSafeInteger(value.revision) || value.revision < 1) {
     throw new TypeError('value inventory record identity is invalid');
   }
@@ -211,6 +214,7 @@ function storedRecord(raw, ownerIdentity, expectedItem) {
   return Object.freeze({
     protocol: EXACT_VALUE_INVENTORY_PROTOCOL,
     revision: value.revision,
+    phase: value.phase,
     owner: ownerIdentity,
     source: selectedSource,
     item: selectedItem,
@@ -243,6 +247,17 @@ function withScope(item, scope) {
   return Object.freeze({ ...item, scope });
 }
 
+function withoutScope(item) {
+  return Object.freeze({
+    identity: item.identity,
+    provenance: item.provenance,
+    protections: item.protections,
+    references: item.references,
+    after: item.after,
+    value: structuredClone(item.value),
+  });
+}
+
 export function createExactValueInventory({
   identity: rawIdentity,
   scope,
@@ -256,10 +271,11 @@ export function createExactValueInventory({
   const selectedScope = identity(scope, 'value inventory scope');
   const selectedCoverage = identities(rawCoverage, 'value inventory coverage');
   if (selectedCoverage.length === 0) throw new TypeError('value inventory coverage must not be empty');
-  const selectedSource = requirePort(source, ['observe'], 'value inventory source');
-  const selectedActivity = requirePort(activity, ['observe'], 'value inventory activity');
+  const selectedSource = requirePort(source, ['observe', 'retire'], 'value inventory source');
+  const selectedActivity = requirePort(activity, ['observe', 'run'], 'value inventory activity');
   const selectedRecords = requirePort(records, ['run'], 'value inventory records');
   const selectedActions = requirePort(actions, ['observe'], 'value inventory actions');
+  const transaction = new AsyncLocalStorage();
   let pending = new Map();
 
   async function readRecord(itemIdentity) {
@@ -275,26 +291,39 @@ export function createExactValueInventory({
   }
 
   async function observeActivity() {
-    return activityObservation(await selectedActivity.observe(Object.freeze({ identity: ownerIdentity })), ownerIdentity);
+    const observed = activityObservation(await selectedActivity.observe(Object.freeze({ identity: ownerIdentity })), ownerIdentity);
+    return transaction.getStore()?.active === true
+      ? Object.freeze({ identity: ownerIdentity, active: false })
+      : observed;
   }
 
   async function snapshot() {
     const [before, observedActivity] = await Promise.all([observeSource(), observeActivity()]);
     const recordsByIdentity = new Map(await Promise.all(before.items.map(async (item) => [item.identity, await readRecord(item.identity)])));
+    const boundRecords = before.items.map((item) => recordsByIdentity.get(item.identity));
+    const allBound = before.items.length > 0 && boundRecords.every((record) => record?.phase === 'bound');
+    const boundGenerations = new Set(allBound ? boundRecords.map((record) => record.source.generation) : []);
+    if (boundGenerations.size > 1) throw new Error('value inventory bindings disagree on source generation');
+    const stableSource = allBound && before.complete
+      ? Object.freeze({ ...before, generation: [...boundGenerations][0], consistent: true })
+      : before;
     const projected = [];
     const nextPending = new Map();
 
     for (const rawItem of before.items) {
       const item = withScope(rawItem, selectedScope);
       const record = recordsByIdentity.get(item.identity);
-      if (record) {
-        if (record.source.generation !== before.generation || !isDeepStrictEqual(record.item, item)) {
+      if (record?.phase === 'bound') {
+        if ((!allBound && record.source.generation !== before.generation) || !isDeepStrictEqual(record.item, item)) {
           throw new Error('value inventory source changed after durable binding');
         }
         projected.push(publicItem(ownerIdentity, record.item));
         continue;
       }
-      if (!before.complete || observedActivity.active) {
+      if (record?.phase === 'retired' && record.source.generation === before.generation) {
+        throw new Error('value inventory retired source generation remains active');
+      }
+      if (!stableSource.complete || !stableSource.consistent || observedActivity.active) {
         projected.push(publicItem(ownerIdentity, item));
         continue;
       }
@@ -304,7 +333,7 @@ export function createExactValueInventory({
       if (observed.state !== 'ambiguous') nextPending.set(item.identity, Object.freeze({ source: before, item }));
     }
 
-    if (before.complete && !observedActivity.active) {
+    if (stableSource.complete && stableSource.consistent && !observedActivity.active) {
       const [after, afterActivity] = await Promise.all([observeSource(), observeActivity()]);
       if (!isDeepStrictEqual(after, before) || afterActivity.active) {
         throw new Error('value inventory source changed during observation');
@@ -312,8 +341,8 @@ export function createExactValueInventory({
     }
     pending = nextPending;
     const fragment = Object.freeze({
-      generation: `generation-${digest({ ownerIdentity, source: before, active: observedActivity.active, items: projected })}`,
-      coverage: before.complete ? selectedCoverage : Object.freeze([]),
+      generation: `generation-${digest({ ownerIdentity, source: stableSource, active: observedActivity.active, items: projected })}`,
+      coverage: stableSource.complete && stableSource.consistent ? selectedCoverage : Object.freeze([]),
       mutationActive: observedActivity.active,
       protectedReferences: Object.freeze([]),
       items: Object.freeze(projected.sort((left, right) => left.identity.localeCompare(right.identity))),
@@ -324,9 +353,9 @@ export function createExactValueInventory({
   async function bindAction(rawInput) {
     const input = actionInput(rawInput);
     let current = await readRecord(input.item);
-    if (current) {
-      if (!sameInput(current, input)) throw new Error('value inventory binding conflicts with durable evidence');
-      return binding(current);
+    if (current?.phase === 'bound') {
+      if (sameInput(current, input)) return binding(current);
+      throw new Error('value inventory binding conflicts with durable evidence');
     }
     if (!pending.has(input.item)) await snapshot();
     const selected = pending.get(input.item);
@@ -348,13 +377,17 @@ export function createExactValueInventory({
       requirePort(session, ['load', 'save'], 'value inventory record session');
       const raw = await session.load();
       current = raw == null ? null : storedRecord(raw, ownerIdentity, input.item);
-      if (current) {
-        if (!sameInput(current, input)) throw new Error('value inventory binding conflicts with durable evidence');
-        return binding(current);
+      if (current?.phase === 'bound') {
+        if (sameInput(current, input)) return binding(current);
+        throw new Error('value inventory binding conflicts with durable evidence');
+      }
+      if (current?.phase === 'retired' && current.source.generation === selected.source.generation) {
+        throw new Error('value inventory retired source generation cannot be rebound');
       }
       const next = storedRecord({
         protocol: EXACT_VALUE_INVENTORY_PROTOCOL,
-        revision: 1,
+        revision: (current?.revision ?? 0) + 1,
+        phase: 'bound',
         owner: ownerIdentity,
         source: { identity: ownerIdentity, generation: selected.source.generation, complete: true },
         item: selected.item,
@@ -372,5 +405,52 @@ export function createExactValueInventory({
     return binding(current);
   }
 
-  return Object.freeze({ identity: ownerIdentity, snapshot, bind: bindAction, load: loadAction });
+  async function retireAction(rawInput) {
+    const input = actionInput(rawInput);
+    let current = await readRecord(input.item);
+    if (!current || !sameInput(current, input)) throw new Error('value inventory retirement binding is unavailable');
+    if (current.phase === 'retired') return Object.freeze({ identity: input.effect.identity, retired: true });
+    if (transaction.getStore()?.active !== true) {
+      throw new Error('value inventory retirement requires an active transaction');
+    }
+    const observed = actionObservation(await selectedActions.observe(structuredClone(current.item.value)), current.item.value.identity);
+    if (observed.state !== 'absent') throw new Error('value inventory retirement requires exact action absence');
+    const expectedItem = withoutScope(current.item);
+    const latestSource = await observeSource();
+    const latestItem = latestSource.items.find((item) => item.identity === current.item.identity) ?? null;
+    if (latestItem && !isDeepStrictEqual(latestItem, expectedItem)) {
+      throw new Error('value inventory retirement source item changed');
+    }
+    const retired = await selectedSource.retire(Object.freeze({
+      identity: ownerIdentity,
+      generation: latestItem ? latestSource.generation : current.source.generation,
+      item: latestItem ?? expectedItem,
+    }));
+    if (!retired || retired.identity !== current.item.identity || retired.retired !== true || typeof retired.absent !== 'boolean') {
+      throw new TypeError('value inventory source retirement result is invalid');
+    }
+    return selectedRecords.run(recordSubject(ownerIdentity, input.item), async (session) => {
+      requirePort(session, ['load', 'save'], 'value inventory record session');
+      const raw = await session.load();
+      current = raw == null ? null : storedRecord(raw, ownerIdentity, input.item);
+      if (!current || !sameInput(current, input)) throw new Error('value inventory retirement binding changed');
+      if (current.phase === 'retired') return Object.freeze({ identity: input.effect.identity, retired: true });
+      const next = storedRecord({ ...current, revision: current.revision + 1, phase: 'retired' }, ownerIdentity, input.item);
+      await session.save(next);
+      return Object.freeze({ identity: input.effect.identity, retired: true });
+    });
+  }
+
+  async function run(operation) {
+    if (typeof operation !== 'function') throw new TypeError('value inventory operation must be a function');
+    return selectedActivity.run(Object.freeze({ identity: ownerIdentity }), async () => {
+      const owner = { active: true };
+      return transaction.run(owner, async () => {
+        try { return await operation(); }
+        finally { owner.active = false; }
+      });
+    });
+  }
+
+  return Object.freeze({ identity: ownerIdentity, snapshot, bind: bindAction, load: loadAction, retire: retireAction, run });
 }

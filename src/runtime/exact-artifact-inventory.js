@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { isDeepStrictEqual } from 'node:util';
 
 export const EXACT_ARTIFACT_INVENTORY_PROTOCOL = 'devbridge/exact-artifact-inventory-v1';
@@ -6,6 +7,7 @@ export const EXACT_ARTIFACT_INVENTORY_PROTOCOL = 'devbridge/exact-artifact-inven
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const STATES = new Set(['absent', 'created', 'adopted', 'foreign']);
+const BINDING_PHASES = new Set(['bound', 'retired']);
 
 function exactObject(raw, allowed, name) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError(`${name} must be an object`);
@@ -155,10 +157,10 @@ function actionInput(raw) {
 function storedRecord(raw, expectedIdentity) {
   const value = exactObject(
     raw,
-    new Set(['protocol', 'revision', 'identity', 'source', 'plan', 'value']),
+    new Set(['protocol', 'revision', 'phase', 'identity', 'source', 'plan', 'value']),
     'artifact inventory record',
   );
-  if (value.protocol !== EXACT_ARTIFACT_INVENTORY_PROTOCOL || value.identity !== expectedIdentity
+  if (value.protocol !== EXACT_ARTIFACT_INVENTORY_PROTOCOL || value.identity !== expectedIdentity || !BINDING_PHASES.has(value.phase)
       || !Number.isSafeInteger(value.revision) || value.revision < 1) {
     throw new TypeError('artifact inventory record identity is invalid');
   }
@@ -172,7 +174,7 @@ function storedRecord(raw, expectedIdentity) {
   if (plan.effect.identity !== expectedEffect || plan.effect.bytes !== selectedValue.bytes || plan.effect.terminal !== true) {
     throw new TypeError('artifact inventory record effect changed');
   }
-  return Object.freeze({ ...value, source, plan, value: selectedValue });
+  return Object.freeze({ ...value, phase: value.phase, source, plan, value: selectedValue });
 }
 
 function binding(record) {
@@ -214,9 +216,10 @@ export function createExactArtifactInventory({
   const selectedAfter = identities(rawAfter, 'artifact inventory dependencies');
   if (selectedAfter.includes(itemIdentity)) throw new TypeError('artifact inventory cannot depend on itself');
   const selectedSource = requirePort(source, ['observe'], 'artifact inventory source');
-  const selectedActivity = requirePort(activity, ['observe'], 'artifact inventory activity');
+  const selectedActivity = requirePort(activity, ['observe', 'run'], 'artifact inventory activity');
   const selectedRecords = requirePort(records, ['run'], 'artifact inventory records');
   const selectedActions = requirePort(actions, ['discover', 'observe'], 'artifact inventory actions');
+  const transaction = new AsyncLocalStorage();
   let pending = null;
 
   async function readRecord() {
@@ -242,11 +245,14 @@ export function createExactArtifactInventory({
   }
 
   async function snapshot() {
-    const [record, observedActivity] = await Promise.all([
+    const [record, rawActivity] = await Promise.all([
       readRecord(),
       selectedActivity.observe(Object.freeze({ identity: itemIdentity })).then((value) => activityObservation(value, itemIdentity)),
     ]);
-    if (record) return fromRecord(record, observedActivity.active);
+    const observedActivity = transaction.getStore()?.active === true
+      ? Object.freeze({ identity: itemIdentity, active: false })
+      : rawActivity;
+    if (record?.phase === 'bound') return fromRecord(record, observedActivity.active);
     if (observedActivity.active) {
       pending = null;
       return fragment({
@@ -262,6 +268,10 @@ export function createExactArtifactInventory({
     }
 
     const before = sourceObservation(await selectedSource.observe(Object.freeze({ identity: itemIdentity })), itemIdentity);
+    if (record?.phase === 'retired' && before.generation === record.source.generation
+        && ['created', 'adopted'].includes(before.state)) {
+      throw new Error('artifact inventory retired source generation remains active');
+    }
     if (['absent', 'foreign'].includes(before.state)) {
       pending = null;
       return fragment({
@@ -304,7 +314,12 @@ export function createExactArtifactInventory({
     const input = actionInput(rawInput);
     if (input.item !== itemIdentity) throw new Error('artifact inventory binding selected another item');
     let current = await readRecord();
+    if (current?.phase === 'bound') {
+      if (sameInput(current, input)) return binding(current);
+      throw new Error('artifact inventory binding conflicts with durable evidence');
+    }
     if (!current && !pending) await snapshot();
+    if (current?.phase === 'retired' && !pending) await snapshot();
     if (!current && pending) {
       const [observedSource, observedActivity, observedAction] = await Promise.all([
         selectedSource.observe(Object.freeze({ identity: itemIdentity })).then((entry) => sourceObservation(entry, itemIdentity)),
@@ -319,9 +334,12 @@ export function createExactArtifactInventory({
       requirePort(session, ['load', 'save'], 'artifact inventory record session');
       const raw = await session.load();
       current = raw == null ? null : storedRecord(raw, itemIdentity);
-      if (current) {
-        if (!sameInput(current, input)) throw new Error('artifact inventory binding conflicts with durable evidence');
-        return binding(current);
+      if (current?.phase === 'bound') {
+        if (sameInput(current, input)) return binding(current);
+        throw new Error('artifact inventory binding conflicts with durable evidence');
+      }
+      if (current?.phase === 'retired' && current.source.generation === pending?.source.generation) {
+        throw new Error('artifact inventory retired source generation cannot be rebound');
       }
       const effect = pending?.fragment.items[0]?.effects[0];
       if (!pending || input.effect.identity !== effect?.identity || input.effect.bytes !== effect.bytes || input.effect.terminal !== true) {
@@ -329,7 +347,8 @@ export function createExactArtifactInventory({
       }
       const next = storedRecord({
         protocol: EXACT_ARTIFACT_INVENTORY_PROTOCOL,
-        revision: 1,
+        revision: (current?.revision ?? 0) + 1,
+        phase: 'bound',
         identity: itemIdentity,
         source: pending.source,
         plan: input,
@@ -348,5 +367,44 @@ export function createExactArtifactInventory({
     return binding(current);
   }
 
-  return Object.freeze({ identity: itemIdentity, snapshot, bind: bindAction, load: loadAction });
+  async function retireAction(rawInput) {
+    const input = actionInput(rawInput);
+    if (input.item !== itemIdentity) throw new Error('artifact inventory retirement selected another item');
+    let current = await readRecord();
+    if (!current || !sameInput(current, input)) throw new Error('artifact inventory retirement binding is unavailable');
+    if (current.phase === 'retired') return Object.freeze({ identity: input.effect.identity, retired: true });
+    if (transaction.getStore()?.active !== true) {
+      throw new Error('artifact inventory retirement requires an active transaction');
+    }
+    const [observedAction, observedSource] = await Promise.all([
+      selectedActions.observe(structuredClone(current.value)).then((entry) => actionObservation(entry, current.value.identity)),
+      selectedSource.observe(Object.freeze({ identity: itemIdentity })).then((entry) => sourceObservation(entry, itemIdentity)),
+    ]);
+    if (observedAction.state !== 'absent' || observedSource.state !== 'absent') {
+      throw new Error('artifact inventory retirement requires exact source and action absence');
+    }
+    return selectedRecords.run(itemIdentity, async (session) => {
+      requirePort(session, ['load', 'save'], 'artifact inventory record session');
+      const raw = await session.load();
+      current = raw == null ? null : storedRecord(raw, itemIdentity);
+      if (!current || !sameInput(current, input)) throw new Error('artifact inventory retirement binding changed');
+      if (current.phase === 'retired') return Object.freeze({ identity: input.effect.identity, retired: true });
+      const next = storedRecord({ ...current, revision: current.revision + 1, phase: 'retired' }, itemIdentity);
+      await session.save(next);
+      return Object.freeze({ identity: input.effect.identity, retired: true });
+    });
+  }
+
+  async function run(operation) {
+    if (typeof operation !== 'function') throw new TypeError('artifact inventory operation must be a function');
+    return selectedActivity.run(Object.freeze({ identity: itemIdentity }), async () => {
+      const owner = { active: true };
+      return transaction.run(owner, async () => {
+        try { return await operation(); }
+        finally { owner.active = false; }
+      });
+    });
+  }
+
+  return Object.freeze({ identity: itemIdentity, snapshot, bind: bindAction, load: loadAction, retire: retireAction, run });
 }

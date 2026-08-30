@@ -51,11 +51,14 @@ function artifactActions() {
 }
 
 function activity(active = false) {
-  return { async observe({ identity }) { return { identity, active }; } };
+  return {
+    async observe({ identity }) { return { identity, active }; },
+    async run(_request, operation) { return operation(); },
+  };
 }
 
 function contributor(value) {
-  return { identity: value.identity, snapshot: value.snapshot };
+  return { identity: value.identity, snapshot: value.snapshot, run: value.run };
 }
 
 function completeSource(value) {
@@ -119,6 +122,7 @@ test('a verified installed payload is bound before exact removal and remains res
 
   const inventory = makeInventory();
   const api = application({ inventory, artifacts, journalFile });
+  const beforeRemoval = await inventory.snapshot();
   const plan = await api.inspect({ mode: 'application' });
   assert.equal(plan.complete, true);
   assert.equal(plan.ready, true);
@@ -131,6 +135,16 @@ test('a verified installed payload is bound before exact removal and remains res
   assert.equal(await exists(root), false);
 
   const restarted = makeInventory();
+  const retiredInput = {
+    protocol: APPLICATION_REMOVAL_PROTOCOL,
+    mode: 'application',
+    item: inventory.identity,
+    planDigest: plan.digest,
+    effect: beforeRemoval.items[0].effects[0],
+  };
+  const retiredBridge = createBoundEffectActions({ catalog: restarted, actions: artifacts });
+  assert.equal((await retiredBridge.observe(retiredInput)).state, 'absent');
+  await assert.rejects(() => retiredBridge.bind(retiredInput), /changed after observation/u);
   const after = await completeSource(restarted).snapshot();
   const before = await completeSource(inventory).snapshot();
   assert.equal(after.generation, before.generation);

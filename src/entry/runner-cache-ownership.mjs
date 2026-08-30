@@ -87,8 +87,7 @@ export function createRunnerCacheOwnership({ stateRoot, directories } = {}, {
   async function withActivity(work) {
     if (typeof work !== 'function') throw new TypeError('runner-cache activity work must be a function');
     await mkdir(paths.scratch, { recursive: true, mode: 0o700 });
-    const release = lease.acquire(paths.root);
-    try {
+    return lease.run(paths.root, async () => {
       await state.open();
       const session = Object.freeze({
         read: state.read,
@@ -99,13 +98,18 @@ export function createRunnerCacheOwnership({ stateRoot, directories } = {}, {
         directory(raw) { return ensureDirectory(state, raw); },
       });
       return await work(session);
-    } finally {
-      release();
-    }
+    });
+  }
+
+  async function duringActivity(work) {
+    if (typeof work !== 'function') throw new TypeError('runner-cache activity work must be a function');
+    await mkdir(paths.root, { recursive: true, mode: 0o700 });
+    return lease.run(paths.root, work);
   }
 
   return Object.freeze({
     withActivity,
+    duringActivity,
     observe() { return lease.observe(paths.root); },
   });
 }

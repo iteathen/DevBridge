@@ -111,10 +111,8 @@ export async function installDevBridge(options, {
   assertSupportedNode();
   const requestedHome = path.resolve(String(options?.home ?? path.join(homedir(), '.devbridge')));
   const home = ensureRealDirectory(requestedHome, 'DevBridge installation home', { create: true, recursive: true });
-  const entryRoot = ensureChildDirectory(home, 'entry');
-  const release = mutationLease.acquire(entryRoot);
-
-  try {
+  return mutationLease.run(home, async () => {
+    const entryRoot = ensureChildDirectory(home, 'entry');
     const selector = normalizeInstallRef(options?.selector?.value ?? options?.selector ?? 'main');
     const requestedRunnerRef = options?.selectedRunnerRef == null ? null : normalizeInstallRef(options.selectedRunnerRef).value;
     const subject = sourceChannel.resolve(selector, { endpoint: sourceRepository, runner, allowLocalSource, environment });
@@ -186,9 +184,7 @@ export async function installDevBridge(options, {
       pinnedRunnerHead,
       wrappers,
     });
-  } finally {
-    release();
-  }
+  });
 }
 
 export async function trackInstalledRunnerRef({ home = null, ref } = {}, dependencies = {}) {
@@ -201,9 +197,14 @@ export function observeInstallActivity({ home = null } = {}) {
   const requestedHome = path.resolve(String(home ?? path.join(homedir(), '.devbridge')));
   if (!existsSync(requestedHome)) return Object.freeze({ active: false });
   const selectedHome = ensureRealDirectory(requestedHome, 'DevBridge installation home');
-  const entryRoot = path.join(selectedHome, 'entry');
-  if (!existsSync(entryRoot)) return Object.freeze({ active: false });
-  return mutationLease.observe(ensureRealDirectory(entryRoot, 'entry directory'));
+  return mutationLease.observe(selectedHome);
+}
+
+export function runInstallActivity({ home = null } = {}, operation) {
+  if (typeof operation !== 'function') throw new TypeError('installation activity operation must be a function');
+  const requestedHome = path.resolve(String(home ?? path.join(homedir(), '.devbridge')));
+  const selectedHome = ensureRealDirectory(requestedHome, 'DevBridge installation home');
+  return mutationLease.run(selectedHome, operation);
 }
 
 export function runInstalledSetup(installed, dependencies = {}) {

@@ -6,6 +6,7 @@ import {
   normalizeRemovalObservation,
   normalizeRemovalRecord,
   normalizeRemovalRequest,
+  normalizeRemovalRetirement,
 } from './contract.js';
 import { createRemovalPlan, publicRemovalPlan } from './planner.js';
 
@@ -45,7 +46,7 @@ function publicStatus(record) {
     phase: record.phase,
     revision: record.revision,
     complete: record.phase === 'completed',
-    completedEffects: record.phase === 'completed'
+    completedEffects: record.phase === 'completed' || record.phase.startsWith('retirement-')
       ? record.effects.length
       : record.cursor + (['observed', 'reconciled'].includes(record.phase) ? 1 : 0),
     effectCount: record.effects.length,
@@ -61,9 +62,9 @@ export class ApplicationRemoval {
   #effects;
 
   constructor({ source, journal, effects } = {}) {
-    this.#source = requirePort(source, ['snapshot'], 'removal source');
+    this.#source = requirePort(source, ['snapshot', 'run'], 'removal source');
     this.#journal = requirePort(journal, ['run'], 'removal journal');
-    this.#effects = requirePort(effects, ['bind', 'observe', 'remove'], 'removal effects');
+    this.#effects = requirePort(effects, ['bind', 'observe', 'remove', 'retire'], 'removal effects');
   }
 
   async #plan(mode) {
@@ -96,6 +97,32 @@ export class ApplicationRemoval {
     return input;
   }
 
+  async #retire(record, effect) {
+    const input = effectInput(record, effect);
+    normalizeRemovalRetirement(await this.#effects.retire(input), effect);
+  }
+
+  async #start(journal, plan, revision) {
+    const terminalCount = plan.effects.filter((effect) => effect.terminal).length;
+    const record = normalizeRemovalRecord({
+      protocol: APPLICATION_REMOVAL_PROTOCOL,
+      mode: plan.authority.mode,
+      planDigest: plan.digest,
+      generation: plan.authority.generation,
+      revision,
+      cursor: 0,
+      retirementCursor: 0,
+      phase: plan.effects.length === 0 ? 'completed' : 'planned',
+      attempts: 0,
+      effects: plan.effects,
+      preserved: plan.preserved.map(({ identity, reasons }) => ({ identity, reasons })),
+      outcomes: plan.effects.map(() => null),
+    });
+    if (record.phase === 'completed' && terminalCount !== 0) throw new Error('empty removal operation has terminal effects');
+    await journal.save(record);
+    return record;
+  }
+
   async inspect(rawRequest) {
     const request = normalizeInspectionRequest(rawRequest);
     return publicRemovalPlan(await this.#plan(request.mode));
@@ -103,48 +130,61 @@ export class ApplicationRemoval {
 
   async remove(rawRequest) {
     const request = normalizeRemovalRequest(rawRequest);
-    return this.#journal.run(request.mode, async (rawJournal) => {
+    return this.#source.run(request.mode, () => this.#journal.run(request.mode, async (rawJournal) => {
       const journal = requirePort(rawJournal, ['load', 'save'], 'removal journal session');
       return this.#removeWithinSession(request, journal);
-    });
+    }));
   }
 
   async #removeWithinSession(request, journal) {
     let record = normalizeRemovalRecord(await journal.load());
+    if (record && record.mode !== request.mode) {
+      throw new Error('removal journal mode does not match the requested mode');
+    }
     if (record?.phase === 'completed') {
-      if (record.planDigest !== request.planDigest) throw new Error('completed removal receipt does not match the requested plan');
-      return publicStatus(record);
+      if (record.planDigest === request.planDigest) return publicStatus(record);
+    } else if (record && record.planDigest !== request.planDigest) {
+      throw new Error('removal journal does not match the requested plan');
     }
 
-    const plan = await this.#plan(request.mode);
-    if (plan.digest !== request.planDigest) throw new Error('removal authorization does not match the current plan');
-    if (!plan.complete) throw new Error('removal mode coverage is incomplete');
-    if (!plan.ready) throw new Error('removal mutation is not ready');
-
-    if (!record) {
-      record = normalizeRemovalRecord({
-        protocol: APPLICATION_REMOVAL_PROTOCOL,
-        mode: request.mode,
-        planDigest: plan.digest,
-        generation: plan.authority.generation,
-        revision: 1,
-        cursor: 0,
-        phase: plan.effects.length === 0 ? 'completed' : 'planned',
-        attempts: 0,
-        effects: plan.effects,
-        preserved: plan.preserved.map(({ identity, reasons }) => ({ identity, reasons })),
-        outcomes: plan.effects.map(() => null),
-      });
-      await journal.save(record);
-      if (record.phase === 'completed') return publicStatus(record);
-    } else {
-      if (record.mode !== request.mode || record.planDigest !== plan.digest || record.generation !== plan.authority.generation) {
+    if (!record || record.phase === 'completed' || !record.phase.startsWith('retirement-')) {
+      const plan = await this.#plan(request.mode);
+      if (plan.digest !== request.planDigest) throw new Error('removal authorization does not match the current plan');
+      if (!plan.complete) throw new Error('removal mode coverage is incomplete');
+      if (!plan.ready) throw new Error('removal mutation is not ready');
+      if (!record || record.phase === 'completed') {
+        record = await this.#start(journal, plan, (record?.revision ?? 0) + 1);
+      } else if (record.generation !== plan.authority.generation) {
         throw new Error('removal journal does not match the current plan');
       }
+      if (record.phase === 'completed') return publicStatus(record);
+    }
+
+    if (!record.phase.startsWith('retirement-')) {
       await this.#requireStable(record);
+      for (const effect of record.effects) await this.#bind(record, effect);
     }
 
     while (record.phase !== 'completed') {
+      if (record.phase.startsWith('retirement-')) {
+        const terminalEffects = record.effects.filter((effect) => effect.terminal).reverse();
+        const effect = terminalEffects[record.retirementCursor];
+        if (record.phase === 'retirement-planned') {
+          record = await this.#save(journal, record, { phase: 'retirement-attempted' });
+        }
+        if (record.phase === 'retirement-attempted') {
+          await this.#retire(record, effect);
+          record = await this.#save(journal, record, { phase: 'retirement-observed' });
+        }
+        if (record.phase === 'retirement-observed') {
+          const nextRetirement = record.retirementCursor + 1;
+          record = nextRetirement === terminalEffects.length
+            ? await this.#save(journal, record, { retirementCursor: nextRetirement, phase: 'completed' })
+            : await this.#save(journal, record, { retirementCursor: nextRetirement, phase: 'retirement-planned' });
+        }
+        continue;
+      }
+
       await this.#requireStable(record);
       const effect = record.effects[record.cursor];
 
@@ -194,7 +234,7 @@ export class ApplicationRemoval {
       if (record.phase === 'reconciled') {
         const nextCursor = record.cursor + 1;
         record = nextCursor === record.effects.length
-          ? await this.#save(journal, record, { cursor: nextCursor, phase: 'completed', attempts: 0 })
+          ? await this.#save(journal, record, { cursor: nextCursor, phase: 'retirement-planned', attempts: 0 })
           : await this.#save(journal, record, { cursor: nextCursor, phase: 'planned', attempts: 0 });
       }
     }

@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
 const GENERATION = /^generation-[a-f0-9]{64}$/u;
 const PROVENANCE = new Set(['created', 'adopted']);
@@ -28,6 +30,37 @@ function relationship(raw, name) {
     protections: identities(value.protections, `${name}.protections`),
     references: identities(value.references, `${name}.references`),
     after: identities(value.after, `${name}.after`),
+  });
+}
+
+function exactJson(raw, name) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError(`${name} must be an object`);
+  try {
+    const value = structuredClone(raw);
+    const encoded = JSON.stringify(value);
+    if (encoded == null || encoded.length > 32 * 1024 * 1024 || !isDeepStrictEqual(JSON.parse(encoded), value)) {
+      throw new Error('not bounded exact JSON');
+    }
+    return Object.freeze(value);
+  } catch (error) {
+    throw new TypeError(`${name} must be exact JSON data`, { cause: error });
+  }
+}
+
+function retirementItem(raw) {
+  const value = exactObject(
+    raw,
+    new Set(['identity', 'provenance', 'protections', 'references', 'after', 'value']),
+    'receipt-value retirement item',
+  );
+  if (!PROVENANCE.has(value.provenance)) throw new TypeError('receipt-value retirement item provenance is invalid');
+  return Object.freeze({
+    identity: identity(value.identity, 'receipt-value retirement item identity'),
+    provenance: value.provenance,
+    protections: identities(value.protections, 'receipt-value retirement item protections'),
+    references: identities(value.references, 'receipt-value retirement item references'),
+    after: identities(value.after, 'receipt-value retirement item dependencies'),
+    value: exactJson(value.value, 'receipt-value retirement item value'),
   });
 }
 
@@ -99,7 +132,9 @@ export function createReceiptValueSource({
   relate,
 } = {}) {
   const selectedIdentity = identity(rawIdentity, 'receipt-value identity');
-  if (!collection || typeof collection.read !== 'function') throw new TypeError('receipt-value collection contract is incomplete');
+  if (!collection || typeof collection.readRecord !== 'function' || typeof collection.apply !== 'function') {
+    throw new TypeError('receipt-value collection contract is incomplete');
+  }
   if (typeof collectionProtocol !== 'string' || collectionProtocol.length === 0
       || typeof valueProtocol !== 'string' || valueProtocol.length === 0) {
     throw new TypeError('receipt-value protocol configuration is invalid');
@@ -109,19 +144,8 @@ export function createReceiptValueSource({
     throw new TypeError('receipt-value projection contract is incomplete');
   }
 
-  return Object.freeze({
-    async observe(rawRequest) {
-      request(rawRequest, selectedIdentity);
-      const current = receipt(await collection.read(), collectionProtocol, valueProtocol, selectedControl);
-      if (!current) {
-        return Object.freeze({
-          identity: selectedIdentity,
-          generation: 'generation-absent',
-          complete: false,
-          items: Object.freeze([]),
-        });
-      }
-      const selected = current.items.filter((member) => {
+  function projected(current) {
+    const selected = current.items.filter((member) => {
         if (member.identity === selectedControl) return false;
         const included = select(member.identity);
         if (typeof included !== 'boolean') throw new TypeError('receipt-value selection result is invalid');
@@ -130,9 +154,9 @@ export function createReceiptValueSource({
         ...member,
         value: stateValue(member, valueProtocol, selectedControl, `receipt-value selected item ${index}`),
       }));
-      const completeItems = selected.filter((member) => member.value.phase === 'complete');
-      const available = Object.freeze(completeItems.map((member) => member.identity).sort((left, right) => left.localeCompare(right)));
-      const items = completeItems.map((member, index) => {
+    const completeItems = selected.filter((member) => member.value.phase === 'complete');
+    const available = Object.freeze(completeItems.map((member) => member.identity).sort((left, right) => left.localeCompare(right)));
+    const items = completeItems.map((member, index) => {
         const selectedRelationships = relationship(
           relate(Object.freeze({ identity: member.identity, available })),
           `receipt-value relationship ${index}`,
@@ -143,13 +167,58 @@ export function createReceiptValueSource({
           ...selectedRelationships,
           value: structuredClone(member.value.value),
         });
-      }).sort((left, right) => left.identity.localeCompare(right.identity));
+    }).sort((left, right) => left.identity.localeCompare(right.identity));
+    return Object.freeze({ selected, items: Object.freeze(items) });
+  }
+
+  return Object.freeze({
+    async observe(rawRequest) {
+      request(rawRequest, selectedIdentity);
+      const current = receipt(await collection.readRecord(), collectionProtocol, valueProtocol, selectedControl);
+      if (!current) {
+        return Object.freeze({
+          identity: selectedIdentity,
+          generation: 'generation-absent',
+          complete: false,
+          consistent: true,
+          items: Object.freeze([]),
+        });
+      }
+      const selected = projected(current);
       return Object.freeze({
         identity: selectedIdentity,
         generation: current.generation,
-        complete: selected.every((member) => member.value.phase === 'complete'),
-        items: Object.freeze(items),
+        complete: selected.selected.every((member) => member.value.phase === 'complete'),
+        consistent: true,
+        items: selected.items,
       });
+    },
+    async retire(raw) {
+      const value = exactObject(raw, new Set(['identity', 'generation', 'item']), 'receipt-value retirement');
+      request({ identity: value.identity }, selectedIdentity);
+      if (typeof value.generation !== 'string' || !GENERATION.test(value.generation)) {
+        throw new TypeError('receipt-value retirement is invalid');
+      }
+      const selectedItem = retirementItem(value.item);
+      const current = receipt(await collection.readRecord(), collectionProtocol, valueProtocol, selectedControl);
+      if (!current) return Object.freeze({ identity: selectedItem.identity, retired: true, absent: true });
+      const projection = projected(current);
+      const observed = projection.items.find((item) => item.identity === selectedItem.identity) ?? null;
+      if (observed == null) {
+        return Object.freeze({ identity: selectedItem.identity, retired: true, absent: true });
+      }
+      if (current.generation !== value.generation) {
+        throw new Error('receipt-value retirement source generation changed');
+      }
+      if (!isDeepStrictEqual(observed, selectedItem)) {
+        throw new Error('receipt-value retirement item changed');
+      }
+      const before = current.items.find((item) => item.identity === observed.identity);
+      const accepted = await collection.apply({ changes: [{ identity: observed.identity, before, after: null }] });
+      if (accepted.items.some((item) => item.identity === observed.identity)) {
+        throw new Error('receipt-value retirement did not re-observe exact absence');
+      }
+      return Object.freeze({ identity: observed.identity, retired: true, absent: false });
     },
   });
 }

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   closeSync,
   fstatSync,
@@ -35,6 +36,13 @@ function sameFileIdentity(left, right) {
 export function createProcessActivityLease({ protocol, fileName }) {
   if (typeof protocol !== 'string' || protocol.length < 1) throw new TypeError('activity protocol must be non-empty text');
   if (typeof fileName !== 'string' || path.basename(fileName) !== fileName) throw new TypeError('activity fileName must be one safe name');
+  const activity = new AsyncLocalStorage();
+
+  function rootIdentity(root) {
+    if (typeof root !== 'string' || !path.isAbsolute(root)) throw new TypeError('activity root must be an absolute local path');
+    const selected = path.resolve(root);
+    return Object.freeze({ selected, identity: process.platform === 'win32' ? selected.toLowerCase() : selected });
+  }
 
   function read(lockPath) {
     let descriptor;
@@ -69,10 +77,11 @@ export function createProcessActivityLease({ protocol, fileName }) {
   }
 
   function acquire(root) {
-    const lockPath = path.join(root, fileName);
+    const selectedRoot = rootIdentity(root).selected;
+    const lockPath = path.join(selectedRoot, fileName);
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const token = randomUUID();
-      const temporary = path.join(root, `.activity-lease-${process.pid}-${token}.tmp`);
+      const temporary = path.join(selectedRoot, `.activity-lease-${process.pid}-${token}.tmp`);
       const record = Object.freeze({ protocol, pid: process.pid, startedAt: Date.now(), token });
       writeFileSync(temporary, `${JSON.stringify(record)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
       try {
@@ -114,7 +123,8 @@ export function createProcessActivityLease({ protocol, fileName }) {
   }
 
   function observe(root) {
-    const lockPath = path.join(root, fileName);
+    const selectedRoot = rootIdentity(root);
+    const lockPath = path.join(selectedRoot.selected, fileName);
     try {
       const occupied = read(lockPath);
       return Object.freeze({ active: processIsLive(occupied.record.pid) });
@@ -124,5 +134,21 @@ export function createProcessActivityLease({ protocol, fileName }) {
     }
   }
 
-  return Object.freeze({ acquire, observe });
+  async function run(root, operation) {
+    if (typeof operation !== 'function') throw new TypeError('activity operation must be a function');
+    const selectedRoot = rootIdentity(root);
+    const currentActivity = activity.getStore();
+    if (currentActivity?.active === true && currentActivity.identity === selectedRoot.identity) return await operation();
+    const release = acquire(selectedRoot.selected);
+    const owner = { identity: selectedRoot.identity, active: true };
+    return activity.run(owner, async () => {
+      try { return await operation(); }
+      finally {
+        owner.active = false;
+        release();
+      }
+    });
+  }
+
+  return Object.freeze({ acquire, observe, run });
 }

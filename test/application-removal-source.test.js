@@ -27,7 +27,11 @@ function contributor(identity, changes = {}) {
     items: [item(`item-${identity}`)],
     ...changes,
   };
-  return { identity, async snapshot() { return structuredClone(value); } };
+  return {
+    identity,
+    async snapshot() { return structuredClone(value); },
+    async run(operation) { return operation(); },
+  };
 }
 
 test('source aggregation is deterministic and mode coverage requires every configured contributor', async () => {
@@ -52,7 +56,7 @@ test('a missing required contributor leaves every affected mode explicitly incom
   const api = createApplicationRemoval({
     source,
     journal: { async run(_subject, operation) { return operation({ async load() {}, async save() {} }); } },
-    effects: { async bind() {}, async observe() {}, async remove() {} },
+    effects: { async bind() {}, async observe() {}, async remove() {}, async retire() {} },
   });
   const plan = await api.inspect({ mode: 'application' });
   assert.equal(plan.complete, false);
@@ -88,4 +92,29 @@ test('duplicate contributor and malformed fragment identities fail before creati
     required: { application: ['first'], purge: ['first'] },
   });
   await assert.rejects(() => source.snapshot(), /generation is invalid/u);
+});
+
+test('source transaction acquires every required contributor in deterministic identity order', async () => {
+  const events = [];
+  function guarded(identity) {
+    const base = contributor(identity);
+    return {
+      ...base,
+      async run(operation) {
+        events.push(`enter:${identity}`);
+        try { return await operation(); }
+        finally { events.push(`exit:${identity}`); }
+      },
+    };
+  }
+  const source = createApplicationRemovalSource({
+    contributors: [guarded('second'), guarded('first')],
+    required: { application: ['second', 'first'], purge: ['second', 'first'] },
+  });
+  const result = await source.run('application', async () => {
+    events.push('operation');
+    return 'complete';
+  });
+  assert.equal(result, 'complete');
+  assert.deepEqual(events, ['enter:first', 'enter:second', 'operation', 'exit:second', 'exit:first']);
 });
