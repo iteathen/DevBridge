@@ -1,4 +1,5 @@
 import process from 'node:process';
+import { createConfiguredEnvironmentActivityClient } from '../runtime/environment-activity-authority-transport.js';
 import { createConfiguredEnvironmentConfigurationClient } from '../runtime/environment-configuration-authority-transport.js';
 import { readEnvironmentProfileConfigurationRecord } from './environment-profile-configuration-record.js';
 import { createEnvironmentProfileConfigurationProxy } from './environment-profile-configuration-proxy.js';
@@ -13,11 +14,13 @@ export function createLinuxEnvironmentProfileConfiguration({
   recordReader = readEnvironmentProfileConfigurationRecord,
   publisher = publishLinuxEnvironmentConfigurationHandoff,
   configurationFactory = createConfiguredEnvironmentConfigurationClient,
+  resourceFactory = createConfiguredEnvironmentActivityClient,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('environment profile setup stateDirectory is required');
   if (platform !== 'linux') throw new Error('Linux environment profile configuration requires a Linux host');
   if (!Number.isSafeInteger(userId) || userId < 1) throw new TypeError('environment profile setup user identity is invalid');
-  if (typeof recordReader !== 'function' || typeof publisher !== 'function' || typeof configurationFactory !== 'function') {
+  if (typeof recordReader !== 'function' || typeof publisher !== 'function' || typeof configurationFactory !== 'function'
+      || typeof resourceFactory !== 'function') {
     throw new TypeError('environment profile setup composition is incomplete');
   }
 
@@ -25,6 +28,12 @@ export function createLinuxEnvironmentProfileConfiguration({
     readAccepted: () => recordReader({ stateDirectory }),
     publishAccepted: (record) => publisher({ stateDirectory, runDirectory, userId, record }),
     createConfigurationClient: () => configurationFactory({
+      stateDirectory,
+      platform: 'linux',
+      runDirectory,
+      connectTimeoutMs: 3_000,
+    }),
+    createResourceObserver: () => resourceFactory({
       stateDirectory,
       platform: 'linux',
       runDirectory,

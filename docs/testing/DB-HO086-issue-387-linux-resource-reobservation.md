@@ -44,3 +44,28 @@ An empty accepted configuration remains a no-op before resource observation, bec
 5. Run focused Linux/Windows configuration and setup tests, repository preflight, architecture gates, the complete serialized suite on exact Node 22.16.0, doctor, diff hygiene, and exact-head hosted Ubuntu/Windows CI.
 
 Close only #387 after the documentation acceptance head is green. Keep #293, #372, #373, #374, #360, #116, and the physical Windows/Linux canary gates open.
+
+## Implementation checkpoint
+
+`linux-environment-profile-configuration.js` now supplies the generic configuration proxy's existing neutral `createResourceObserver` port with the already-configured protected activity client. The fixed client construction uses only the local state identity, Linux platform selection, fixed run-directory input, and a three-second connection bound. The adapter contains no provider, VM/domain, image/storage path, process, or credential logic.
+
+The generic proxy and protected configuration owner were not changed. With accepted declarations, Linux inspection now requires both exact declaration evidence and aggregate protected resource readiness. Unready, malformed, or unavailable resource evidence returns the existing bounded unready result, so the setup-owned lifecycle root invokes the existing protected configuration reconciliation and fresh verification path. Empty configuration still returns ready before constructing either a lifecycle listing or resource observer.
+
+Tests cover ready-to-no-op, unready-to-reconcile, null/forged/throwing evidence, path-free failure projection, exact fixed client construction, empty-configuration non-attachment, foreign-platform refusal, and source isolation. No compatibility reader, second endpoint, alternate repair owner, or fallback was added.
+
+## Local qualification evidence
+
+- Current focused activity/configuration/setup boundary: 81 total, 80 passed, one expected Windows symlink skip, zero failures.
+- Exact Node 22.16.0 focused configuration/setup boundary: 82 total, 81 passed, one expected Windows symlink skip, zero failures.
+- Current and exact-Node repository preflight: two standalone artifacts, 219 syntax files, two JSON files, and 178 targeted test files passed.
+- Current and exact-Node repository-execution architecture gate: 34 total, 33 passed, one expected Windows symlink skip, zero failures.
+- Exact-Node product/setup/standalone integrity set: 14/14 passed.
+- Exact-Node complete serialized suite: 1,915 total, 1,894 passed, 21 expected platform skips, zero failures in 192 seconds.
+- Exact-Node doctor passed and truthfully reported repository execution unavailable/fail-closed because no local persistent-environment route is configured; coding-model adapters remained disabled.
+- `git diff --check` passed apart from Git's informational existing Windows line-ending policy warnings.
+
+The exact Node archive SHA-256 was `21c2d9735c80b8f86dab19305aa6a9f6f59bbc808f68de3eef09d5832e3bfbbd`. Remove the temporary runtime tree after final local checks. No authentication, `sudo`, UAC, protected service/provider/storage mutation, VM/guest action, repository execution, or coding-model invocation occurred.
+
+## Remaining acceptance
+
+Commit and push the exact implementation, require Ubuntu/Windows smoke/full CI, then record hosted evidence in a documentation-only commit. Close only #387 after that exact documentation head is green. The parent and physical issues remain open.
