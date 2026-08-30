@@ -1,6 +1,6 @@
 # DB-HO093 — Issue #390 Node 24 GitHub Actions supply-chain checkpoint
 
-Status: assessment, primary-source research, reassessment, and implementation plan recorded; no workflow change yet
+Status: implementation and exact-head local/hosted qualification complete; documentation-head acceptance pending
 
 Date: 2026-08-30
 
@@ -58,3 +58,26 @@ This is smaller and safer than suppressing the warning or opting back into an in
 ## Required nonclaims
 
 This checkpoint does not prove VM/provider/guest readiness, protected service refresh, environment activation, physical C acceptance, Stage 7 qualification, a main-branch merge, or GPU/CUDA capability. It invokes no setup, elevation, service/provider/VM/guest mutation, DevBridge repository execution, or model adapter.
+
+## Implementation and evidence
+
+Plan commit `4e539578e161619252fcecd0fdf789b28b0fe4eb` passed all four hosted jobs in [run `33308240607`](https://github.com/iteathen/DevBridge/actions/runs/33308240607) before the workflow changed. That run reproduced the Node-20 action annotation and established the exact pre-change baseline.
+
+Implementation commit `1254170582f849429a45c3a1ea0b415f16cb7d06`:
+
+- pins checkout v7.0.1 and setup-node v7.0.0 to the researched immutable commit subjects in both jobs;
+- explicitly sets `persist-credentials: false` for both checkout steps;
+- explicitly sets `package-manager-cache: false` for both setup-node steps;
+- keeps exact tested Node `22.16.0`, read-only workflow permission, events, matrices, timeouts, ref/depth selection, and commands unchanged; and
+- adds one workflow-contract test alongside the existing immutable-action identity test.
+
+Local qualification on the exact implementation:
+
+- focused public-repository/workflow contracts: 5 passed, 0 failed;
+- bounded Windows preflight: 2 standalone artifacts, 219 syntax files, 2 JSON files, and 178 targeted test files passed;
+- repository-execution architecture plus product/standalone gates: 37 total, 36 passed, 1 expected Windows symlink skip, 0 failed;
+- complete serialized suite: 1,958 total, 1,937 passed, 21 expected platform skips, 0 failed in 189 seconds;
+- doctor: green, coding-model adapters disabled, repository execution unavailable/fail-closed; and
+- diff hygiene: clean.
+
+[Hosted implementation run `33308595425`](https://github.com/iteathen/DevBridge/actions/runs/33308595425) passed Ubuntu and Windows smoke/full-test jobs. All four exact check runs report `annotations_count: 0`; the former Node-20 warning is absent, and the job records show the two new immutable action subjects. Require the documentation-only head to pass the same matrix before closing #390.
