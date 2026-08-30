@@ -213,7 +213,8 @@ const SYNTAX_FILES = [
 
 const JSON_FILES = ['package.json', 'config/devbridge.example.json'];
 const MAX_FAILURE_EVIDENCE_CHARS = 4000;
-const SERIALIZE_TARGETED_TESTS_ARGUMENT = '--serialize-targeted-tests';
+const BOUND_TARGETED_TEST_CONCURRENCY_ARGUMENT = '--bound-targeted-test-concurrency';
+const TARGETED_TEST_CONCURRENCY_LIMIT = 2;
 
 const TARGETED_TESTS = [
   'test/standalone-artifact.test.js',
@@ -460,11 +461,11 @@ function protocolNumber(value, name) {
 
 export function parseRepositoryPreflightArguments(args = []) {
   if (!Array.isArray(args)) throw new TypeError('repository preflight arguments must be an array');
-  if (args.length === 0) return Object.freeze({ serializeTargetedTests: false });
-  if (args.length === 1 && args[0] === SERIALIZE_TARGETED_TESTS_ARGUMENT) {
-    return Object.freeze({ serializeTargetedTests: true });
+  if (args.length === 0) return Object.freeze({ boundTargetedTestConcurrency: false });
+  if (args.length === 1 && args[0] === BOUND_TARGETED_TEST_CONCURRENCY_ARGUMENT) {
+    return Object.freeze({ boundTargetedTestConcurrency: true });
   }
-  throw new Error(`repository preflight accepts only ${SERIALIZE_TARGETED_TESTS_ARGUMENT}`);
+  throw new Error(`repository preflight accepts only ${BOUND_TARGETED_TEST_CONCURRENCY_ARGUMENT}`);
 }
 
 function normalizeRepositoryPreflightOptions(options) {
@@ -472,13 +473,13 @@ function normalizeRepositoryPreflightOptions(options) {
     throw new TypeError('repository preflight options must be an object');
   }
   const keys = Object.keys(options);
-  if (keys.some((key) => key !== 'serializeTargetedTests')) {
+  if (keys.some((key) => key !== 'boundTargetedTestConcurrency')) {
     throw new TypeError('repository preflight options contain an unsupported field');
   }
-  if (options.serializeTargetedTests != null && typeof options.serializeTargetedTests !== 'boolean') {
-    throw new TypeError('serializeTargetedTests must be boolean');
+  if (options.boundTargetedTestConcurrency != null && typeof options.boundTargetedTestConcurrency !== 'boolean') {
+    throw new TypeError('boundTargetedTestConcurrency must be boolean');
   }
-  return Object.freeze({ serializeTargetedTests: options.serializeTargetedTests === true });
+  return Object.freeze({ boundTargetedTestConcurrency: options.boundTargetedTestConcurrency === true });
 }
 
 export function assertCandidateStage0Compatibility(root = process.cwd(), environment = process.env) {
@@ -524,7 +525,7 @@ export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync,
   }
   const testArguments = [
     '--test',
-    ...(scheduling.serializeTargetedTests ? ['--test-concurrency=1'] : []),
+    ...(scheduling.boundTargetedTestConcurrency ? [`--test-concurrency=${TARGETED_TEST_CONCURRENCY_LIMIT}`] : []),
     ...targeted,
   ];
   checked(runner, testArguments, { cwd, label: 'targeted preflight tests', timeoutMs: 180_000 });

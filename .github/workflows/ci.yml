@@ -33,10 +33,10 @@ jobs:
         if: runner.os != 'Windows'
         timeout-minutes: 2
         run: npm run preflight
-      - name: Cheap preflight (Windows serialized)
+      - name: Cheap preflight (Windows bounded)
         if: runner.os == 'Windows'
         timeout-minutes: 2
-        run: npm run preflight -- --serialize-targeted-tests
+        run: npm run preflight -- --bound-targeted-test-concurrency
       - name: DevBridge identity audit
         timeout-minutes: 1
         run: node --test test/product-identity.test.js

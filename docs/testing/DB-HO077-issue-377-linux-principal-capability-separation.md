@@ -92,3 +92,9 @@ Qualification completed in dependency order:
 - `git diff --check`: passed apart from informational Windows working-copy line-ending warnings.
 
 No setup, elevation, account/group mutation, service/systemd/polkit action, provider connection, protected-storage/VM/guest action, repository execution, or model invocation occurred. Exact-head Ubuntu and Windows CI remain required before issue #377 can close. Parent #293 remains open afterward.
+
+## Hosted qualification correction
+
+Exact implementation run [33287528755](https://github.com/iteathen/DevBridge/actions/runs/33287528755) passed Ubuntu smoke/full and Windows serialized full-suite/doctor. The Windows smoke job alone was killed at its exact 120-second boundary while the fully serialized preflight was running, with no test failure output. This is a recurrence of #290's verification-scheduler problem, not accepted evidence for this issue. #290 was reopened and the complete reassessment is recorded in `DB-HO055-issue-290-windows-ci-concurrency.md`.
+
+The serialize-only preflight selection is replaced on the same candidate branch by one closed two-worker bound. No #377 source, test, assertion, or capability contract changed. Requalification on the corrected bytes preserves the exact #377 focused behavior and complete 204/2/168 preflight inventory while the bounded exact-Node-22 preflight passes twice in 49.3 and 48.5 seconds. The complete suite remains 1,840 total / 1,824 passed / 16 expected skips / zero failures. Do not close #377 until the corrected exact head passes all four hosted jobs repeatedly.

@@ -16,16 +16,17 @@ function successfulRunner(calls) {
   };
 }
 
-test('preflight arguments expose only the closed targeted-test serialization option', () => {
-  assert.deepEqual(parseRepositoryPreflightArguments([]), { serializeTargetedTests: false });
-  assert.deepEqual(parseRepositoryPreflightArguments(['--serialize-targeted-tests']), { serializeTargetedTests: true });
-  assert.throws(() => parseRepositoryPreflightArguments('--serialize-targeted-tests'), /must be an array/u);
-  assert.throws(() => parseRepositoryPreflightArguments(['--serialize-targeted-tests=1']), /accepts only/u);
-  assert.throws(() => parseRepositoryPreflightArguments(['--serialize-targeted-tests', '--serialize-targeted-tests']), /accepts only/u);
+test('preflight arguments expose only the closed targeted-test concurrency bound', () => {
+  assert.deepEqual(parseRepositoryPreflightArguments([]), { boundTargetedTestConcurrency: false });
+  assert.deepEqual(parseRepositoryPreflightArguments(['--bound-targeted-test-concurrency']), { boundTargetedTestConcurrency: true });
+  assert.throws(() => parseRepositoryPreflightArguments('--bound-targeted-test-concurrency'), /must be an array/u);
+  assert.throws(() => parseRepositoryPreflightArguments(['--bound-targeted-test-concurrency=1']), /accepts only/u);
+  assert.throws(() => parseRepositoryPreflightArguments(['--bound-targeted-test-concurrency', '--bound-targeted-test-concurrency']), /accepts only/u);
+  assert.throws(() => parseRepositoryPreflightArguments(['--serialize-targeted-tests']), /accepts only/u);
   assert.throws(() => parseRepositoryPreflightArguments(['--test-concurrency=8']), /accepts only/u);
 });
 
-test('serialized scheduling changes only the complete targeted-test runner invocation', () => {
+test('bounded scheduling changes only the complete targeted-test runner invocation', () => {
   const ordinaryCalls = [];
   const ordinary = runRepositoryPreflight(root, successfulRunner(ordinaryCalls), {}, {});
   const ordinaryTestCalls = ordinaryCalls.filter(({ args }) => args[0] === '--test');
@@ -33,17 +34,17 @@ test('serialized scheduling changes only the complete targeted-test runner invoc
   assert.equal(ordinaryTestCalls[0].args[1], 'test/standalone-artifact.test.js');
   assert.doesNotMatch(ordinaryTestCalls[0].args.join(' '), /test-concurrency/u);
 
-  const serializedCalls = [];
-  const serialized = runRepositoryPreflight(root, successfulRunner(serializedCalls), {}, { serializeTargetedTests: true });
-  const serializedTestCalls = serializedCalls.filter(({ args }) => args[0] === '--test');
-  assert.equal(serializedTestCalls.length, 1);
-  assert.deepEqual(serializedTestCalls[0].args.slice(0, 3), [
+  const boundedCalls = [];
+  const bounded = runRepositoryPreflight(root, successfulRunner(boundedCalls), {}, { boundTargetedTestConcurrency: true });
+  const boundedTestCalls = boundedCalls.filter(({ args }) => args[0] === '--test');
+  assert.equal(boundedTestCalls.length, 1);
+  assert.deepEqual(boundedTestCalls[0].args.slice(0, 3), [
     '--test',
-    '--test-concurrency=1',
+    '--test-concurrency=2',
     'test/standalone-artifact.test.js',
   ]);
-  assert.equal(serialized.targetedTests, ordinary.targetedTests);
-  assert.equal(serializedTestCalls[0].args.length, ordinaryTestCalls[0].args.length + 1);
+  assert.equal(bounded.targetedTests, ordinary.targetedTests);
+  assert.equal(boundedTestCalls[0].args.length, ordinaryTestCalls[0].args.length + 1);
 });
 
 test('programmatic preflight scheduling rejects open or malformed options before work', () => {
@@ -52,7 +53,7 @@ test('programmatic preflight scheduling rejects open or malformed options before
     /unsupported field/u,
   );
   assert.throws(
-    () => runRepositoryPreflight(root, successfulRunner([]), {}, { serializeTargetedTests: 'yes' }),
+    () => runRepositoryPreflight(root, successfulRunner([]), {}, { boundTargetedTestConcurrency: 'yes' }),
     /must be boolean/u,
   );
   assert.throws(

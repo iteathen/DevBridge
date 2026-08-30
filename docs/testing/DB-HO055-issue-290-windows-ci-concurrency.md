@@ -146,3 +146,52 @@ Commit and push the exact candidate, then require multiple complete hosted runs.
 [GitHub Actions run 33283831485 attempt 2](https://github.com/iteathen/DevBridge/actions/runs/33283831485/attempts/2) reran the complete four-job matrix on the same exact commit. Windows smoke again selected only the serialized preflight and passed in 1 minute 28 seconds; Windows serialized full-suite/doctor passed in 2 minutes 24 seconds; both default Ubuntu jobs passed again.
 
 Neither attempt reran only a failed job, widened a workflow/product/tool timeout, removed a test, skipped a platform, or changed production behavior. The repeated clean matrix satisfies #290's deterministic Windows CI acceptance. Close #290; keep the protected service refresh and physical Stage-7/Stage-8 gates independently open.
+
+## Post-acceptance recurrence and replacement plan
+
+The accepted serialize-only policy was not reliable across the supported hosted-runner performance range. Exact candidate run [33287528755](https://github.com/iteathen/DevBridge/actions/runs/33287528755) on commit `975ad16b047e83e9ee9df4210e5885327f0ef84a` passed both Ubuntu jobs and the Windows serialized complete-suite/doctor job. The Windows smoke job alone was killed at its exact 120-second step boundary while the fully buffered serialized preflight was running. It emitted no test failure. The same runner took 37 seconds to provision the requested Node runtime and 3 minutes 3 seconds to run the complete serialized suite, materially slower than the runners used for the earlier acceptance.
+
+The newer candidate adds one focused test file and one syntax-checked source to the unchanged preflight topology. That work measures below 0.1 seconds locally and cannot account for the approximately 40-second hosted regression. The failure therefore invalidates the timing assumption behind the accepted serialize-only policy; it does not invalidate the test assertions or identify a product/provider timeout.
+
+Refreshed primary-source facts remain decisive:
+
+- Node 22.16.0 defines `--test-concurrency` as a maximum number of test files, with an ordinary default of `os.availableParallelism() - 1`: <https://nodejs.org/download/release/v22.16.0/docs/api/cli.html#--test-concurrency>.
+- With process isolation, each matching test file runs in a child process and the concurrency setting bounds those children: <https://nodejs.org/download/release/v22.16.0/docs/api/test.html#test-runner-execution-model>.
+- GitHub documents four processors and 16 GiB for public-repository standard Windows runners, but each job still runs on a fresh hosted VM and the observed execution time varies: <https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#choosing-github-hosted-runners>.
+- GitHub defines the workflow timeout as a cancellation boundary, not passing evidence: <https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idtimeout-minutes>.
+
+Full serialization solved the earlier external-process contention but traded it for linear wall-clock fragility. Returning to the machine-derived default would recreate the earlier CMake/process-pressure failures. Widening the two-minute step would preserve an unnecessarily slow policy and weaken the cheap-gate signal. Removing files would weaken candidate validation. The corrected local contract is a fixed bounded policy: admit at most two targeted test-file processes. This remains below the documented three-child default on the four-processor hosted runner while retaining enough parallel progress to tolerate a slow VM.
+
+An unmodified-source exact Node 22.16.0 probe replaced only the serialized runner argument with `--test-concurrency=2`. It passed the complete current inventory of two standalone artifacts, 204 syntax files, two JSON files, and 168 targeted test files in 48,702 ms. This is planning evidence; the committed contract and hosted qualification remain the acceptance authority.
+
+Replacement plan:
+
+1. Delete the serialize-only CLI/programmatic interface and its workflow label. Do not retain an alias or compatibility reader.
+2. Add one closed neutral boolean named `boundTargetedTestConcurrency`, exposed only as `--bound-targeted-test-concurrency`.
+3. Translate that selection locally to the fixed `--test-concurrency=2` policy for the unchanged targeted-test list. Do not accept a number, raw runner argument, executable, path, environment value, or foreign option.
+4. Keep the default preflight, non-Windows workflow, test inventory, process isolation, assertions, and every existing deadline unchanged.
+5. Update direct option and static workflow contracts, then run repeated exact Node 22.16.0 bounded preflights, default preflight, focused tests, the complete suite, doctor, syntax/generated/diff hygiene, and all four hosted jobs.
+6. Require repeated complete hosted acceptance before re-closing #290. Accept #377 only after its exact implementation head, including this correction, is four-job green.
+
+This replacement is owned wholly by the verification composition boundary. It performs no setup, elevation, service/provider/image/environment/VM/guest operation, repository execution through DevBridge, or physical canary.
+
+## Replacement implementation and local qualification
+
+The serialize-only interface and workflow label are deleted. Repository preflight now exposes only `boundTargetedTestConcurrency` through `--bound-targeted-test-concurrency`; the selected policy is the locally fixed `--test-concurrency=2`. The parser rejects the removed flag, all value-bearing/duplicate forms, raw concurrency inputs, and foreign programmatic fields. Default callers remain unchanged.
+
+The Windows smoke composition selects that closed policy and no other workflow edge knows its implementation. Direct tests prove the bounded and ordinary invocations contain the same 168 files and differ by exactly one fixed runner argument. No compatibility alias, scheduler number, test reclassification, skip, timeout change, or production behavior was added.
+
+Local exact-candidate evidence:
+
+- focused parser/workflow/failure/compatibility contracts passed 8/8 on current Node 24 and 8/8 on exact Node 22.16.0;
+- the pre-implementation exact Node 22.16.0 two-worker probe passed the complete 204 syntax / 2 JSON / 168 targeted-test inventory in 48,702 ms;
+- exact Node 22.16.0 committed bounded preflight attempt 1 passed the same inventory in 49,309 ms;
+- exact Node 22.16.0 committed bounded preflight attempt 2 passed the same inventory in 48,521 ms;
+- unchanged default preflight passed the same inventory in 27,926 ms;
+- exact Node 22.16.0 Linux topology/principal focused contracts passed 20/20;
+- repository-execution architecture gates passed 33 with one expected Windows symlink-capability skip;
+- the complete serialized Windows suite passed 1,840 total / 1,824 passed / 16 expected platform skips / zero failures in 193,900 ms;
+- doctor returned `ok: true` with coding adapters disabled and repository execution unavailable/fail-closed;
+- standalone regeneration, syntax, and `git diff --check` passed apart from informational Windows line-ending warnings.
+
+Commit and push the exact replacement, then require repeated complete four-job hosted acceptance before re-closing #290. The same accepted head is required before #377 can close.

@@ -53,17 +53,17 @@ test("Windows full CI coverage serializes test files while other platforms retai
   assert.match(windows, /^        run: npm test -- --test-concurrency=1$/mu);
 });
 
-test("Windows smoke preflight selects closed serialization while other platforms retain default scheduling", async () => {
+test("Windows smoke preflight selects a closed concurrency bound while other platforms retain default scheduling", async () => {
   const workflow = await read(".github/workflows/ci.yml");
   const ordinary = workflowStep(workflow, "Cheap preflight (non-Windows default)");
-  const windows = workflowStep(workflow, "Cheap preflight (Windows serialized)");
+  const windows = workflowStep(workflow, "Cheap preflight (Windows bounded)");
 
   assert.match(ordinary, /^        if: runner\.os != 'Windows'$/mu);
   assert.match(ordinary, /^        timeout-minutes: 2$/mu);
   assert.match(ordinary, /^        run: npm run preflight$/mu);
-  assert.doesNotMatch(ordinary, /serialize-targeted-tests/u);
+  assert.doesNotMatch(ordinary, /bound-targeted-test-concurrency/u);
 
   assert.match(windows, /^        if: runner\.os == 'Windows'$/mu);
   assert.match(windows, /^        timeout-minutes: 2$/mu);
-  assert.match(windows, /^        run: npm run preflight -- --serialize-targeted-tests$/mu);
+  assert.match(windows, /^        run: npm run preflight -- --bound-targeted-test-concurrency$/mu);
 });
