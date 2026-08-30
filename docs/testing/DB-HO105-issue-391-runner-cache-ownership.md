@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: implementation locally qualified; hosted exact-head acceptance pending
+Status: accepted
 
 Coordinates with: #116, #159, #180, #391, DB-003, DB-009, DB-011, DB-020, DB-HO100, DB-HO101, DB-HO103, and DB-HO104.
 
@@ -94,4 +94,10 @@ All final checks used exact Node.js 22.16.0 on Windows without elevation:
 
 Initial hosted run [33330536875](https://github.com/iteathen/DevBridge/actions/runs/33330536875) passed Ubuntu smoke/full and Windows serialized-full plus doctor, but the Windows smoke step was killed at its exact two-minute bound before preflight emitted a result. The full Windows suite completed successfully in 2m50s, and the same 203-file bounded preflight completed locally in about 98 seconds. GitHub documents that a step `timeout-minutes` is the maximum duration before the process is killed and that the enclosing job has its own independent timeout. Reassessment: preserve every targeted test and the concurrency-two Windows resource bound, raise only the Windows preflight step to three minutes, and raise its enclosing smoke job to four minutes so setup and the remaining smoke checks have a real budget. Do not remove tests, increase concurrency, suppress failure, or treat the timed-out run as acceptance. Require the corrected exact-head matrix. See [GitHub Actions workflow timeout syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepstimeout-minutes).
 
-No setup/UAC request, protected service/provider/image/environment mutation, VM start, guest operation, repository-code execution, model invocation, publication/removal action, or GPU/CUDA work occurred. Hosted Ubuntu/Windows exact-head qualification is still required before this checkpoint is accepted.
+No setup/UAC request, protected service/provider/image/environment mutation, VM start, guest operation, repository-code execution, model invocation, publication/removal action, or GPU/CUDA work occurred. The local evidence is supplemented by the hosted exact-head acceptance below.
+
+## Hosted acceptance
+
+Exact implementation and CI-contract head `5497c46e4f55a9ab734538eb79bac138ddc6baf8` passed Ubuntu smoke/full and Windows bounded-smoke/serialized-full, repository-execution architecture gates, standalone regression, and doctor in [run 33331176770](https://github.com/iteathen/DevBridge/actions/runs/33331176770). Windows bounded preflight completed inside the corrected three-minute step budget without dropping tests or changing concurrency.
+
+Accept this runner-cache receipt/inventory checkpoint and keep #391 open. Application and purge coverage remain incomplete, removal remains unreachable, and the next primitive dependency is launch/removal mutual exclusion with terminal receipt retirement and operation rotation. Do not infer setup, provider/VM/guest, repository-execution, model-adapter, uninstall, or GPU/CUDA readiness from this acceptance.
