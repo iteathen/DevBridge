@@ -75,12 +75,42 @@ The mutation lease adds only a read-only local activity observation. It does not
 
 ## Acceptance
 
-- [ ] Unrelated receipt items survive conditional installer updates; same-item drift fails closed.
-- [ ] Every production-artifact staging/preservation name is durably reserved before creation and cleared only after exact absence; the accepted journal keeps ownership of its own self-publication scratch contract.
-- [ ] Exact component and sparse wrapper receipts distinguish created, adopted, and retained state without inferring authority from names.
-- [ ] Older accepted component-generation receipts remain current; unverified historical/quarantine state remains unregistered and preserved.
-- [ ] Arbitrary, ambiguous, or indirect wrapper state is not overwritten or adopted.
-- [ ] Installer activity is observable without granting removal or installer authority.
-- [ ] Installation is async end-to-end with no synchronous/unreceipted compatibility path.
-- [ ] Neutral collection/receipt/artifact modules contain no installer, wrapper, component, repository, provider, VM, guest, or removal topology.
-- [ ] No uninstall contributor/CLI, application/purge deletion, canonical-install mutation, setup/UAC, protected/provider/VM/guest effect, repository execution, model, or GPU/CUDA action occurs.
+- [x] Unrelated receipt items survive conditional installer updates; same-item drift fails closed.
+- [x] Every production-artifact staging/preservation name is durably reserved before creation and cleared only after exact absence; the accepted journal keeps ownership of its own self-publication scratch contract.
+- [x] Exact component and sparse wrapper receipts distinguish created, adopted, and retained state without inferring authority from names.
+- [x] Older accepted component-generation receipts remain current; unverified historical/quarantine state remains unregistered and preserved.
+- [x] Arbitrary, ambiguous, or indirect wrapper state is not overwritten or adopted.
+- [x] Installer activity is observable without granting removal or installer authority.
+- [x] Installation is async end-to-end with no synchronous/unreceipted compatibility path.
+- [x] Neutral collection/receipt/artifact modules contain no installer, wrapper, component, repository, provider, VM, guest, or removal topology.
+- [x] No uninstall contributor/CLI, application/purge deletion, canonical-install mutation, setup/UAC, protected/provider/VM/guest effect, repository execution, model, or GPU/CUDA action occurs.
+
+## Implementation and local qualification
+
+The production installer now creates one protected immutable ownership journal below its installation control root and edits it only through `conditional-item-set.js`. That neutral brick performs bounded item-level compare-and-accept: unrelated concurrent items survive, exact replay is idempotent, touched-item drift fails closed, an empty accepted set is impossible, and malformed port responses create no authority. `ownership-state.mjs` owns only the private control/reservation/completion value protocol. Its protected control item establishes the journal epoch before any artifact receipt, and an exact completed `record` retry publishes no extra revision.
+
+Two import-independent ownership bricks keep workflow logic out of the executable root:
+
+- `publication-tree-ownership.mjs` accepts only state, artifact, and publication ports. It adopts a complete exactly verified pre-receipt tree, retains only a still-present exact descriptor, or records exact work and preservation names before publication. A completed tree descriptor is written only after the work name is absent and the final tree is rediscovered exactly.
+- `publication-file-ownership.mjs` accepts only state, artifact, publication, and reference-acceptance ports plus caller-supplied local identities. It records one sparse non-root-removing descriptor per file, adopts only statically recognized exact bytes, verifies every generated reference through the composition callback, reserves every exact stage name before `wx` creation, publishes the primary file last, and completes only after the stage is absent and the final file is remeasured. The two bricks contain none of the current installer, entry, wrapper, component, repository, provider, VM, guest, quarantine, or removal identities.
+
+The Permanent Entry root is now only the topology edge. It supplies installation-local identities and paths, composes the accepted immutable journal/conditional collection/exact artifact set, uses the existing Windows reparse-point observer in production, and connects locally recognized generated references to exact retained component verification. A new component generation adds one receipt without removing older accepted generation receipts. Invalid same-subject component state is moved to the pre-reserved preservation name but is never registered as removable. Arbitrary or indirect command-entry state fails before replacement and remains untouched.
+
+`component-store.mjs` and `entry-publication.mjs` no longer generate hidden random staging names. The tree publisher receives exact neutral work/preservation names. The file publisher exposes separate open, inspect, plan, and apply operations; inspect is read-only, apply re-observes the complete plan, creates only the caller-reserved exact stage names with exclusive creation, and publishes support/previous files before the primary authority. Both leaves read security-relevant bytes through a held file descriptor and revalidate non-link shape, bounded size where applicable, and the same filesystem identity after reading. Surviving occupied work/stage state or path substitution fails closed rather than being guessed-owned or deleted.
+
+Installation is asynchronous through `installDevBridge`, tracked selection, zero-state bootstrap, CLI setup tracking, direct standalone invocation, and tests. There is no synchronous compatibility path. The installer lease now exposes only a side-effect-free `{ active }` observation, reads its bounded record through the same before/held/after identity discipline, rejects corrupt or multiply linked state, and grants no mutation/removal authority.
+
+Production acceptance tests prove fresh created receipts, exact no-op retry without a new journal revision, exact static adoption, branch advancement with older component receipt retention, restart reconciliation of a completed publication whose receipt remained reserved, unknown and multiply linked wrapper refusal/preservation, invalid component preservation, empty stage/scratch cleanup, sparse file ownership, and live/inactive installer activity. The Windows test suite injects a no-reparse observer only for its disposable ordinary-file fixtures; the production default remains the existing bounded Windows attribute observer.
+
+Final local evidence on exact Node.js 22.16.0 is:
+
+- focused receipt/installer/bootstrap/inventory qualification: 40/40 passed;
+- focused primitive/ownership/LEGO/installer qualification after the final split: 27/27 passed;
+- current Node.js 24.15.0 and exact Node.js 22.16.0 bounded repository preflight: the same 2 standalone artifacts, 236 syntax files, 2 JSON files, and 194 targeted test files;
+- repository-execution architecture plus product/standalone/LEGO gates: 46 total, 45 passed, 1 expected Windows symlink-capability skip, and 0 failed;
+- complete serialized suite: 2,036 total, 2,015 passed, 21 expected platform skips, and 0 failed in 232.8 seconds; and
+- doctor: green, coding adapters disabled, and repository execution unavailable/fail-closed because no persistent-environment route is configured.
+
+Both standalone artifacts were regenerated twice from the modular source graph with stable SHA-256 (`install-devbridge.mjs` `64ffe63323231542a3c39a498cb297d80d6dc6dd3e94d45434e9537c726f0936`; `bootstrap-devbridge.mjs` `90875e8206ecc6a51a41b68b1ba4d74b9be057d9461322e8a83308b62af3c69d`). Diff hygiene passes. No canonical installation was inspected or mutated, and no setup, UAC/elevation, authentication, protected service/provider/storage, VM/guest, repository-code execution, model, removal, or GPU/CUDA effect occurred.
+
+Keep #391 open. The next primitive-first slice is the receipt-backed read-only application-removal contributor and complete application-mode coverage, followed by a separate terminal receipt-retirement/removal-operation rotation design before any uninstall CLI or deletion is exposed. Exact-head hosted Ubuntu/Windows smoke/full plus doctor remains required before this implementation is accepted.

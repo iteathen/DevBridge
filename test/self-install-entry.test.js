@@ -1,13 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   copyFileSync,
+  existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,14 +20,19 @@ import { pathToFileURL } from 'node:url';
 import {
   INSTALL_LOCK_PROTOCOL,
   INSTALL_STATUS_PROTOCOL,
+  INSTALL_OWNERSHIP_REQUEST_PROTOCOL,
   INSTALLED_COMPONENT_FILES,
   installDevBridge,
   normalizeInstallRef,
   parseInstallArgs,
   resolveInstallSubject,
+  observeInstallActivity,
   trackInstalledRunnerRef,
   verifyInstalledComponent,
 } from '../install-devbridge.mjs';
+import { createOwnershipState } from '../src/install/permanent-entry-installer/ownership-state.mjs';
+import { createConditionalItemSet } from '../src/runtime/conditional-item-set.js';
+import { createExactArtifactReceiptJournal } from '../src/runtime/exact-artifact-receipt.js';
 
 const EXPECTED_COMPONENT_FILES = Object.freeze([
   'devbridge-entry.mjs',
@@ -55,6 +64,47 @@ function run(executable, args, options = {}) {
 
 function git(args, cwd) {
   return run('git', args, { cwd }).stdout.trim();
+}
+
+function installDependencies(sourceRepository) {
+  return {
+    sourceRepository,
+    allowLocalSource: true,
+    attributeObserverFactory: () => ({ async isReparse() { return false; } }),
+  };
+}
+
+function latestOwnershipRecord(home) {
+  const directory = path.join(home, 'entry', 'ownership-receipts');
+  const files = readdirSync(directory).sort();
+  assert.ok(files.length > 0);
+  return JSON.parse(readFileSync(path.join(directory, files.at(-1)), 'utf8'));
+}
+
+function ownershipByIdentity(home) {
+  return new Map(latestOwnershipRecord(home).items.map((item) => [item.identity, item]));
+}
+
+function ownershipCollection(home) {
+  const journal = createExactArtifactReceiptJournal({
+    directory: path.join(home, 'entry', 'ownership-receipts'),
+    scratch: path.join(home, 'entry', 'ownership-scratch'),
+  });
+  return createConditionalItemSet({ records: {
+    async read() {
+      const record = await journal.read();
+      return record == null ? { revision: null, items: [] } : { revision: record.generation, items: record.items };
+    },
+    async compare({ revision, items }) {
+      const outcome = await journal.compareAndAccept({ generation: revision, items });
+      return {
+        accepted: outcome.accepted,
+        snapshot: outcome.record == null
+          ? { revision: null, items: [] }
+          : { revision: outcome.record.generation, items: outcome.record.items },
+      };
+    },
+  } });
 }
 
 function fixtureRepository(root) {
@@ -171,7 +221,7 @@ test('installer Git acquisition ignores inherited Git authority and preserves on
   ]);
 });
 
-test('explicit branch install resolves the component exactly while persisting the moving runner selector', () => {
+test('explicit branch install resolves the component exactly while persisting the moving runner selector', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'devbridge-self-install-'));
   const fixture = fixtureRepository(root);
   const home = path.join(root, 'home');
@@ -183,7 +233,7 @@ test('explicit branch install resolves the component exactly while persisting th
   const args = parseInstallArgs(['--ref', 'main', '--home', home], { environment: {}, homeDirectory: root });
   assert.equal(args.selectedRunnerRef, 'main');
   assert.equal(Object.hasOwn(args, 'pinSelectedRunner'), false);
-  const installed = installDevBridge(args, { sourceRepository: fixture.source, allowLocalSource: true });
+  const installed = await installDevBridge(args, installDependencies(fixture.source));
   assert.equal(installed.componentHead, fixture.head);
   assert.equal(installed.selectedRunnerRef, 'main');
   assert.equal(installed.pinnedRunnerHead, null);
@@ -212,7 +262,7 @@ test('explicit branch install resolves the component exactly while persisting th
   const degradedStatus = run(process.execPath, [installed.wrappers.javascript, 'entry-install-status']);
   assert.equal(JSON.parse(degradedStatus.stdout.trim()).componentHead, fixture.head);
 
-  const repaired = installDevBridge(args, { sourceRepository: fixture.source, allowLocalSource: true });
+  const repaired = await installDevBridge(args, installDependencies(fixture.source));
   assert.equal(repaired.componentHead, fixture.head);
   assert.equal(repaired.selectedRunnerRef, 'main');
   assert.equal(verifyInstalledComponent(component, fixture.head, fixture.source), true);
@@ -227,14 +277,14 @@ test('explicit branch install resolves the component exactly while persisting th
   );
 });
 
-test('explicit exact install remains exact-pinned and track migration accepts branches only', () => {
+test('explicit exact install remains exact-pinned and track migration accepts branches only', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'devbridge-exact-install-'));
   const fixture = fixtureRepository(root);
   const exactHome = path.join(root, 'exact-home');
   const exactArgs = parseInstallArgs(['--ref', fixture.head, '--home', exactHome], { environment: {}, homeDirectory: root });
   assert.equal(exactArgs.selectedRunnerRef, fixture.head);
   assert.equal(Object.hasOwn(exactArgs, 'pinSelectedRunner'), false);
-  const exact = installDevBridge(exactArgs, { sourceRepository: fixture.source, allowLocalSource: true });
+  const exact = await installDevBridge(exactArgs, installDependencies(fixture.source));
   assert.equal(exact.selectedRunnerRef, fixture.head);
   assert.equal(exact.pinnedRunnerHead, fixture.head);
   const status = JSON.parse(run(process.execPath, [exact.wrappers.javascript, 'entry-install-status']).stdout.trim());
@@ -242,28 +292,22 @@ test('explicit exact install remains exact-pinned and track migration accepts br
   assert.equal(status.pinnedRunnerHead, fixture.head);
 
   const trackedHome = path.join(root, 'tracked-home');
-  const tracked = trackInstalledRunnerRef({ home: trackedHome, ref: 'main' }, {
-    sourceRepository: fixture.source,
-    allowLocalSource: true,
-  });
+  const tracked = await trackInstalledRunnerRef({ home: trackedHome, ref: 'main' }, installDependencies(fixture.source));
   assert.equal(tracked.componentHead, fixture.head);
   assert.equal(tracked.selectedRunnerRef, 'main');
   assert.equal(tracked.pinnedRunnerHead, null);
-  assert.throws(
-    () => trackInstalledRunnerRef({ home: path.join(root, 'rejected-home'), ref: fixture.head }, {
-      sourceRepository: fixture.source,
-      allowLocalSource: true,
-    }),
+  await assert.rejects(
+    () => trackInstalledRunnerRef({ home: path.join(root, 'rejected-home'), ref: fixture.head }, installDependencies(fixture.source)),
     /must be a branch selector/u,
   );
 });
 
-test('unsafe manifest paths fail closed before they can become filesystem authority', () => {
+test('unsafe manifest paths fail closed before they can become filesystem authority', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'devbridge-manifest-path-'));
   const fixture = fixtureRepository(root);
   const home = path.join(root, 'home');
   const args = parseInstallArgs(['--ref', 'main', '--home', home], { environment: {}, homeDirectory: root });
-  installDevBridge(args, { sourceRepository: fixture.source, allowLocalSource: true });
+  await installDevBridge(args, installDependencies(fixture.source));
 
   const component = path.join(home, 'entry', 'components', fixture.head);
   const manifestPath = path.join(component, '.devbridge-entry-install.json');
@@ -273,26 +317,26 @@ test('unsafe manifest paths fail closed before they can become filesystem author
   assert.equal(verifyInstalledComponent(component, fixture.head, fixture.source), false);
 });
 
-test('wrapper activation preserves the prior authority before any replacement can become active', () => {
+test('wrapper activation preserves the prior authority before any replacement can become active', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'devbridge-wrapper-transaction-'));
   const fixture = fixtureRepository(root);
   const home = path.join(root, 'home');
   const args = parseInstallArgs(['--ref', 'main', '--home', home], { environment: {}, homeDirectory: root });
 
-  const first = installDevBridge(args, { sourceRepository: fixture.source, allowLocalSource: true });
+  const first = await installDevBridge(args, installDependencies(fixture.source));
   const firstWrapper = readFileSync(first.wrappers.javascript);
   const previous = path.join(home, 'bin', 'devbridge-entry.previous.mjs');
 
   const nextHead = fixture.advance();
   mkdirSync(previous);
-  assert.throws(
-    () => installDevBridge(args, { sourceRepository: fixture.source, allowLocalSource: true }),
-    /unsafe target/u,
+  await assert.rejects(
+    () => installDevBridge(args, installDependencies(fixture.source)),
+    /unsafe entry state/u,
   );
   assert.deepEqual(readFileSync(first.wrappers.javascript), firstWrapper);
 
   rmSync(previous, { recursive: true, force: true });
-  const second = installDevBridge(args, { sourceRepository: fixture.source, allowLocalSource: true });
+  const second = await installDevBridge(args, installDependencies(fixture.source));
   assert.equal(second.componentHead, nextHead);
   assert.equal(second.selectedRunnerRef, 'main');
   assert.notDeepEqual(readFileSync(second.wrappers.javascript), firstWrapper);
@@ -314,8 +358,8 @@ test('installer lock fails closed for a live owner and reclaims only a dead owne
     startedAt: Date.now(),
     token: '11111111-1111-4111-8111-111111111111',
   })}\n`);
-  assert.throws(
-    () => installDevBridge(args, { sourceRepository: fixture.source, allowLocalSource: true }),
+  await assert.rejects(
+    () => installDevBridge(args, installDependencies(fixture.source)),
     /installation mutation is active/u,
   );
 
@@ -327,9 +371,151 @@ test('installer lock fails closed for a live owner and reclaims only a dead owne
     startedAt: Date.now(),
     token: '22222222-2222-4222-8222-222222222222',
   })}\n`);
-  const installed = installDevBridge(args, { sourceRepository: fixture.source, allowLocalSource: true });
+  const installed = await installDevBridge(args, installDependencies(fixture.source));
   assert.equal(installed.componentHead, fixture.head);
   assert.equal(readdirSync(entry).includes('.install.lock'), false);
+});
+
+test('production ownership receipts are exact, idempotent, and retain older component generations', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'devbridge-install-ownership-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fixture = fixtureRepository(root);
+  const home = path.join(root, 'home');
+  const args = parseInstallArgs(['--ref', 'main', '--home', home], { environment: {}, homeDirectory: root });
+
+  await installDevBridge(args, installDependencies(fixture.source));
+  const first = latestOwnershipRecord(home);
+  const firstItems = new Map(first.items.map((item) => [item.identity, item]));
+  assert.equal(firstItems.get('control').value.phase, 'control');
+  for (const identity of [`component.${fixture.head}`, 'entry.primary', 'entry.command', 'entry.shell']) {
+    assert.equal(firstItems.get(identity).provenance, 'created');
+    assert.equal(firstItems.get(identity).value.phase, 'complete');
+  }
+  assert.equal(firstItems.has('entry.previous'), false);
+  const revisions = readdirSync(path.join(home, 'entry', 'ownership-receipts')).length;
+
+  await installDevBridge(args, installDependencies(fixture.source));
+  assert.equal(latestOwnershipRecord(home).generation, first.generation);
+  assert.equal(readdirSync(path.join(home, 'entry', 'ownership-receipts')).length, revisions);
+
+  const nextHead = fixture.advance();
+  await installDevBridge(args, installDependencies(fixture.source));
+  const advanced = ownershipByIdentity(home);
+  assert.equal(advanced.get(`component.${fixture.head}`).value.phase, 'complete');
+  assert.equal(advanced.get(`component.${nextHead}`).provenance, 'created');
+  assert.equal(advanced.get('entry.previous').provenance, 'created');
+  assert.equal(advanced.get('entry.primary').provenance, 'created');
+  assert.deepEqual(readdirSync(path.join(home, 'entry', 'staging')), []);
+  assert.deepEqual(readdirSync(path.join(home, 'entry', 'ownership-scratch')), []);
+  assert.equal(readdirSync(path.join(home, 'bin')).some((name) => name.includes('.next')), false);
+  assert.equal([...advanced.keys()].some((identity) => identity.includes('quarantine')), false);
+});
+
+test('an exact pre-receipt installation is adopted while foreign entry state is preserved', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'devbridge-install-adoption-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fixture = fixtureRepository(root);
+  const home = path.join(root, 'home');
+  const args = parseInstallArgs(['--ref', 'main', '--home', home], { environment: {}, homeDirectory: root });
+  await installDevBridge(args, installDependencies(fixture.source));
+  rmSync(path.join(home, 'entry', 'ownership-receipts'), { recursive: true, force: true });
+
+  await installDevBridge(args, installDependencies(fixture.source));
+  const adopted = ownershipByIdentity(home);
+  for (const identity of [`component.${fixture.head}`, 'entry.primary', 'entry.command', 'entry.shell']) {
+    assert.equal(adopted.get(identity).provenance, 'adopted');
+    assert.equal(adopted.get(identity).value.phase, 'complete');
+  }
+
+  const foreignHome = path.join(root, 'foreign-home');
+  const foreignBin = path.join(foreignHome, 'bin');
+  mkdirSync(foreignBin, { recursive: true });
+  const foreign = path.join(foreignBin, 'devbridge-entry.mjs');
+  writeFileSync(foreign, 'foreign-entry-sentinel\n');
+  const foreignArgs = parseInstallArgs(['--ref', 'main', '--home', foreignHome], { environment: {}, homeDirectory: root });
+  await assert.rejects(() => installDevBridge(foreignArgs, installDependencies(fixture.source)), /unrecognized entry state/u);
+  assert.equal(readFileSync(foreign, 'utf8'), 'foreign-entry-sentinel\n');
+  assert.equal(ownershipByIdentity(foreignHome).has('entry.primary'), false);
+
+  const linkedHome = path.join(root, 'linked-home');
+  const linkedBin = path.join(linkedHome, 'bin');
+  mkdirSync(linkedBin, { recursive: true });
+  const linkedSource = path.join(linkedBin, 'foreign-source');
+  const linkedEntry = path.join(linkedBin, 'devbridge-entry.mjs');
+  writeFileSync(linkedSource, 'multiply-linked-entry-sentinel\n');
+  linkSync(linkedSource, linkedEntry);
+  const linkedArgs = parseInstallArgs(['--ref', 'main', '--home', linkedHome], { environment: {}, homeDirectory: root });
+  await assert.rejects(() => installDevBridge(linkedArgs, installDependencies(fixture.source)), /unsafe entry state/u);
+  assert.equal(readFileSync(linkedSource, 'utf8'), 'multiply-linked-entry-sentinel\n');
+  assert.equal(readFileSync(linkedEntry, 'utf8'), 'multiply-linked-entry-sentinel\n');
+  assert.equal(ownershipByIdentity(linkedHome).has('entry.primary'), false);
+});
+
+test('an exact completed publication reconciles its durable pending reservation after restart', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'devbridge-install-recovery-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fixture = fixtureRepository(root);
+  const home = path.join(root, 'home');
+  const args = parseInstallArgs(['--ref', 'main', '--home', home], { environment: {}, homeDirectory: root });
+  const installed = await installDevBridge(args, installDependencies(fixture.source));
+  const target = installed.wrappers.javascript;
+  const bytes = readFileSync(target);
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  const state = createOwnershipState({ collection: ownershipCollection(home) });
+  const pending = await state.reserve({
+    identity: 'entry.primary',
+    provenance: 'created',
+    request: {
+      protocol: INSTALL_OWNERSHIP_REQUEST_PROTOCOL,
+      kind: 'file',
+      role: 'primary',
+      target,
+      stage: path.join(path.dirname(target), '.entry-primary-recovery.next'),
+      bytes: statSync(target).size,
+      sha256: digest,
+      beforeDigest: digest,
+    },
+  });
+  assert.equal(pending.value.phase, 'reserved');
+
+  await installDevBridge(args, installDependencies(fixture.source));
+  const recovered = ownershipByIdentity(home).get('entry.primary');
+  assert.equal(recovered.value.phase, 'complete');
+  assert.equal(recovered.value.operation, pending.value.operation);
+  assert.equal(existsSync(pending.value.request.stage), false);
+});
+
+test('installation activity is observable while receipt publication is pending and inactive afterward', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'devbridge-install-activity-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fixture = fixtureRepository(root);
+  const home = path.join(root, 'home');
+  const args = parseInstallArgs(['--ref', 'main', '--home', home], { environment: {}, homeDirectory: root });
+  let enter;
+  let resume;
+  const entered = new Promise((resolve) => { enter = resolve; });
+  const gate = new Promise((resolve) => { resume = resolve; });
+  let paused = false;
+  const receiptJournalFactory = (options) => {
+    const journal = createExactArtifactReceiptJournal(options);
+    return {
+      read: () => journal.read(),
+      async compareAndAccept(request) {
+        if (!paused) {
+          paused = true;
+          enter();
+          await gate;
+        }
+        return journal.compareAndAccept(request);
+      },
+    };
+  };
+  const installing = installDevBridge(args, { ...installDependencies(fixture.source), receiptJournalFactory });
+  await entered;
+  assert.deepEqual(observeInstallActivity({ home }), { active: true });
+  resume();
+  await installing;
+  assert.deepEqual(observeInstallActivity({ home }), { active: false });
 });
 
 test('default install leaves stable selection active while explicit exact pinning remains opt-in', () => {

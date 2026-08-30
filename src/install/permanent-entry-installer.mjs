@@ -15,10 +15,19 @@ import { createComponentStore } from './permanent-entry-installer/component-stor
 import { createMutationLease } from './permanent-entry-installer/mutation-lease.mjs';
 import { createEntryPublication } from './permanent-entry-installer/entry-publication.mjs';
 import { createContinuation } from './permanent-entry-installer/continuation.mjs';
+import { createOwnershipState } from './permanent-entry-installer/ownership-state.mjs';
+import { createPublicationTreeOwnership } from './permanent-entry-installer/publication-tree-ownership.mjs';
+import { createPublicationFileOwnership } from './permanent-entry-installer/publication-file-ownership.mjs';
+import { createConditionalItemSet } from '../runtime/conditional-item-set.js';
+import { createExactArtifactReceiptJournal } from '../runtime/exact-artifact-receipt.js';
+import { createExactArtifactSet } from '../runtime/exact-artifact-set.js';
+import { invokeCommand } from '../runtime/command-invocation.js';
+import { createWindowsFilesystemEntryObserver } from '../runtime/providers/windows-filesystem-entry-observer.js';
 
 export const INSTALL_PROTOCOL = 'devbridge/entry-install-v1';
 export const INSTALL_STATUS_PROTOCOL = 'devbridge/entry-install-status-v1';
 export const INSTALL_LOCK_PROTOCOL = 'devbridge/entry-install-lock-v1';
+export const INSTALL_OWNERSHIP_REQUEST_PROTOCOL = 'devbridge/entry-install-ownership-request-v1';
 export const SOURCE_REPOSITORY = 'https://github.com/iteathen/DevBridge.git';
 export const INSTALLED_COMPONENT_FILES = Object.freeze([
   'devbridge-entry.mjs',
@@ -85,6 +94,31 @@ function ensureChildDirectory(parent, name) {
   return ensureRealDirectory(candidate, `${name} directory`);
 }
 
+function receiptCollection(journal) {
+  return createConditionalItemSet({
+    records: Object.freeze({
+      async read() {
+        const record = await journal.read();
+        return record == null
+          ? Object.freeze({ revision: null, items: Object.freeze([]) })
+          : Object.freeze({ revision: record.generation, items: record.items });
+      },
+      async compare({ revision, items }) {
+        const result = await journal.compareAndAccept({ generation: revision, items });
+        const record = result.record;
+        return Object.freeze({
+          accepted: result.accepted,
+          snapshot: record == null
+            ? Object.freeze({ revision: null, items: Object.freeze([]) })
+            : Object.freeze({ revision: record.generation, items: record.items }),
+        });
+      },
+    }),
+  });
+}
+
+function componentItemIdentity(head) { return `component.${head}`; }
+
 export { assertSupportedNode, normalizeInstallRef, parseInstallArgs };
 
 export function resolveInstallSubject(selector, {
@@ -100,12 +134,16 @@ export function verifyInstalledComponent(root, expectedHead, sourceRepository = 
   return componentStore.verify(root, expectedHead, sourceRepository);
 }
 
-export function installDevBridge(options, {
+export async function installDevBridge(options, {
   sourceRepository = SOURCE_REPOSITORY,
   runner = undefined,
   allowLocalSource = false,
   environment = process.env,
   preparedSource = null,
+  invoke = invokeCommand,
+  receiptJournalFactory = createExactArtifactReceiptJournal,
+  artifactSetFactory = createExactArtifactSet,
+  attributeObserverFactory = createWindowsFilesystemEntryObserver,
 } = {}) {
   assertSupportedNode();
   const requestedHome = path.resolve(String(options?.home ?? path.join(homedir(), '.devbridge')));
@@ -125,19 +163,57 @@ export function installDevBridge(options, {
     const components = ensureChildDirectory(entryRoot, 'components');
     const stagingRoot = ensureChildDirectory(entryRoot, 'staging');
     const quarantineRoot = ensureChildDirectory(entryRoot, 'quarantine');
+    const receiptScratch = ensureChildDirectory(entryRoot, 'ownership-scratch');
+    const receiptDirectory = path.join(entryRoot, 'ownership-receipts');
+    const journal = receiptJournalFactory({ directory: receiptDirectory, scratch: receiptScratch });
+    const ownership = createOwnershipState({ collection: receiptCollection(journal) });
+    await ownership.open();
+    const attributeObserver = process.platform === 'win32' ? attributeObserverFactory({ invoke }) : null;
+    const artifacts = artifactSetFactory({
+      platform: process.platform,
+      ...(attributeObserver ? { inspectReparse: (location) => attributeObserver.isReparse(location) } : {}),
+    });
     const target = path.join(components, subject.head);
-    componentStore.publish({
+    const treeOwnership = createPublicationTreeOwnership({
+      protocol: INSTALL_OWNERSHIP_REQUEST_PROTOCOL,
+      state: ownership,
+      artifacts,
+      publication: componentStore,
+    });
+    await treeOwnership.install({
+      identity: componentItemIdentity(subject.head),
       target,
       stagingRoot,
-      quarantineRoot,
-      head: subject.head,
+      preservationRoot: quarantineRoot,
+      subject: subject.head,
       endpoint: sourceRepository,
       obtainSource: (destination) => preparedRoot ?? sourceChannel.materialize(subject, destination, {
         endpoint: sourceRepository, runner, allowLocalSource, environment,
       }),
     });
 
-    const published = entryPublication.publish({ root: home, subject: subject.head, selection: selectedRunnerRef });
+    const fileOwnership = createPublicationFileOwnership({
+      protocol: INSTALL_OWNERSHIP_REQUEST_PROTOCOL,
+      state: ownership,
+      artifacts,
+      publication: entryPublication,
+      acceptReference: (reference) => componentStore.verify(
+        path.join(components, reference.subject),
+        reference.subject,
+        sourceRepository,
+      ),
+    });
+    const published = await fileOwnership.install({
+      root: home,
+      subject: subject.head,
+      selection: selectedRunnerRef,
+      identities: Object.freeze({
+        primary: 'entry.primary',
+        previous: 'entry.previous',
+        command: 'entry.command',
+        shell: 'entry.shell',
+      }),
+    });
     const wrappers = Object.freeze({ javascript: published.primary, command: published.command, shell: published.shell });
     return Object.freeze({
       protocol: INSTALL_PROTOCOL,
@@ -152,10 +228,19 @@ export function installDevBridge(options, {
   }
 }
 
-export function trackInstalledRunnerRef({ home = null, ref } = {}, dependencies = {}) {
+export async function trackInstalledRunnerRef({ home = null, ref } = {}, dependencies = {}) {
   const selector = normalizeInstallRef(ref);
   if (selector.kind !== 'branch') fail('Tracked runner ref must be a branch selector.');
-  return installDevBridge({ home, selector, selectedRunnerRef: selector.value }, dependencies);
+  return await installDevBridge({ home, selector, selectedRunnerRef: selector.value }, dependencies);
+}
+
+export function observeInstallActivity({ home = null } = {}) {
+  const requestedHome = path.resolve(String(home ?? path.join(homedir(), '.devbridge')));
+  if (!existsSync(requestedHome)) return Object.freeze({ active: false });
+  const selectedHome = ensureRealDirectory(requestedHome, 'DevBridge installation home');
+  const entryRoot = path.join(selectedHome, 'entry');
+  if (!existsSync(entryRoot)) return Object.freeze({ active: false });
+  return mutationLease.observe(ensureRealDirectory(entryRoot, 'entry directory'));
 }
 
 export function runInstalledSetup(installed, dependencies = {}) {
@@ -198,7 +283,7 @@ if (invoked) {
     const args = parseInstallArgs(process.argv.slice(2));
     if (args.help) process.stdout.write(installHelp());
     else {
-      const installed = installDevBridge(args);
+      const installed = await installDevBridge(args);
       if (args.runSetup) process.exitCode = runInstalledSetup(installed);
       else process.stdout.write(`${JSON.stringify(installed)}\n`);
     }

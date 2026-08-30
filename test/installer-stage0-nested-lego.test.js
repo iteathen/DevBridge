@@ -20,7 +20,17 @@ const suites = Object.freeze([
       'mutation-lease.mjs': 'createMutationLease',
       'entry-publication.mjs': 'createEntryPublication',
       'continuation.mjs': 'createContinuation',
+      'ownership-state.mjs': 'createOwnershipState',
+      'publication-tree-ownership.mjs': 'createPublicationTreeOwnership',
+      'publication-file-ownership.mjs': 'createPublicationFileOwnership',
     }),
+    dependencies: Object.freeze([
+      '../runtime/command-invocation.js',
+      '../runtime/conditional-item-set.js',
+      '../runtime/exact-artifact-receipt.js',
+      '../runtime/exact-artifact-set.js',
+      '../runtime/providers/windows-filesystem-entry-observer.js',
+    ]),
   }),
   Object.freeze({
     parent: 'src/bootstrap/zero-state-bootstrap.mjs',
@@ -31,6 +41,7 @@ const suites = Object.freeze([
       'source-channel.mjs': 'createSourceChannel',
       'temporary-materialization.mjs': 'createTemporaryMaterialization',
     }),
+    dependencies: Object.freeze([]),
   }),
 ]);
 
@@ -56,8 +67,10 @@ test('only composition parents know the complete child topology', () => {
   for (const suite of suites) {
     const source = readFileSync(path.join(root, suite.parent), 'utf8');
     const imports = [...source.matchAll(LOCAL_IMPORT)].map((match) => match[1]).sort();
-    const expected = Object.keys(suite.children)
-      .map((name) => `./${path.basename(suite.directory)}/${name}`)
+    const expected = [
+      ...Object.keys(suite.children).map((name) => `./${path.basename(suite.directory)}/${name}`),
+      ...suite.dependencies,
+    ]
       .sort();
     assert.deepEqual(imports, expected);
   }

@@ -63,7 +63,11 @@ test('a verified installed payload is bound before exact removal and remains res
   const home = path.join(parent, 'home');
   const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8', shell: false, windowsHide: true }).trim();
   const args = parseInstallArgs(['--install-only', '--ref', head, '--home', home], { environment: {}, homeDirectory: parent });
-  installDevBridge(args, { sourceRepository: repository, allowLocalSource: true });
+  await installDevBridge(args, {
+    sourceRepository: repository,
+    allowLocalSource: true,
+    attributeObserverFactory: () => ({ async isReparse() { return false; } }),
+  });
   const root = path.join(home, 'entry', 'components', head);
   assert.equal(verifyInstalledComponent(root, head, repository), true);
 

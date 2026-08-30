@@ -130,7 +130,7 @@ export async function runZeroStateBootstrap(argv, {
     }
     const prepared = await prepareSource(stage, subject, { fetcher, bootstrapRoot });
     try {
-      const installed = stage.installDevBridge({
+      const installed = await stage.installDevBridge({
         home: subject.home,
         selector: Object.freeze({ kind: 'exact', value: subject.head }),
         selectedRunnerRef: options.explicitSelector ? options.selector.value : null,

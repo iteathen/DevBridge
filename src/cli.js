@@ -127,7 +127,7 @@ async function main() {
     let setupHome = selected.home;
     if (selected.trackRef != null) {
       try {
-        setupHome = trackInstalledRunnerRef({ home: selected.home, ref: selected.trackRef }).home;
+        setupHome = (await trackInstalledRunnerRef({ home: selected.home, ref: selected.trackRef })).home;
       } catch (error) {
         throw new PolicyError(`could not persist setup runner ref: ${error.message}`);
       }

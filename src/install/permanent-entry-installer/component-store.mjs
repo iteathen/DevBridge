@@ -1,9 +1,11 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import {
+  closeSync,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -12,12 +14,24 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import process from 'node:process';
 
 const EXACT_DIGEST = /^[0-9a-f]{64}$/u;
 const MAX_MANIFEST_BYTES = 128 * 1024;
 
 function fail(message) { throw new Error(message); }
 function digest(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
+
+function sameFile(left, right) {
+  if (left.ino === 0n || right.ino === 0n || left.ino !== right.ino) return false;
+  if (left.dev === 0n || right.dev === 0n) return process.platform === 'win32';
+  return left.dev === right.dev;
+}
+
+function inside(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
 
 function normalizedEndpoint(value) {
   return String(value ?? '').trim().replace(/\/$/u, '').replace(/\.git$/u, '').toLowerCase();
@@ -35,7 +49,7 @@ function normalizeRelativePath(value) {
   return segments;
 }
 
-function readContainedRegularFile(root, relative, name) {
+function readContainedRegularFile(root, relative, name, { minimum = 0, maximum = null } = {}) {
   const segments = normalizeRelativePath(relative);
   let current = root;
   for (let index = 0; index < segments.length - 1; index += 1) {
@@ -44,12 +58,29 @@ function readContainedRegularFile(root, relative, name) {
     if (!info.isDirectory() || info.isSymbolicLink()) fail(`${name} parent is unsafe.`);
   }
   const candidate = path.join(root, ...segments);
-  const info = lstatSync(candidate);
-  if (!info.isFile() || info.isSymbolicLink()) fail(`${name} must be a regular file.`);
-  const actual = realpathSync.native(candidate);
-  const relativeActual = path.relative(root, actual);
-  if (relativeActual.startsWith('..') || path.isAbsolute(relativeActual)) fail(`${name} escaped its component root.`);
-  return readFileSync(actual);
+  let descriptor;
+  try {
+    const before = lstatSync(candidate, { bigint: true });
+    const lower = BigInt(minimum);
+    const upper = maximum == null ? null : BigInt(maximum);
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.size < lower
+        || (upper != null && before.size > upper)) fail(`${name} must be a bounded regular file.`);
+    if (!inside(root, realpathSync.native(candidate))) fail(`${name} escaped its component root.`);
+    descriptor = openSync(candidate, 'r');
+    const held = fstatSync(descriptor, { bigint: true });
+    if (!held.isFile() || held.nlink !== 1n || held.size !== before.size || !sameFile(before, held)
+        || held.size < lower || (upper != null && held.size > upper)) fail(`${name} changed while opening.`);
+    const bytes = readFileSync(descriptor);
+    const heldAfter = fstatSync(descriptor, { bigint: true });
+    const after = lstatSync(candidate, { bigint: true });
+    if (!heldAfter.isFile() || heldAfter.nlink !== 1n || heldAfter.size !== held.size || !sameFile(held, heldAfter)
+        || !after.isFile() || after.isSymbolicLink() || after.nlink !== 1n || after.size !== held.size
+        || !sameFile(held, after) || BigInt(bytes.length) !== held.size
+        || !inside(root, realpathSync.native(candidate))) fail(`${name} changed during observation.`);
+    return bytes;
+  } finally {
+    if (descriptor != null) closeSync(descriptor);
+  }
 }
 
 function walkFiles(root, current = root, result = []) {
@@ -92,11 +123,10 @@ export function createComponentStore({ protocol, files, defaultEndpoint, manifes
       if (!info.isDirectory() || info.isSymbolicLink()) return false;
       const canonicalRoot = realpathSync.native(root);
       const manifestPath = path.join(canonicalRoot, manifestName);
-      const manifestInfo = lstatSync(manifestPath);
-      if (!manifestInfo.isFile() || manifestInfo.isSymbolicLink() ||
-          manifestInfo.size < 1 || manifestInfo.size > MAX_MANIFEST_BYTES) return false;
-
-      const record = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      const record = JSON.parse(readContainedRegularFile(canonicalRoot, manifestName, 'Component manifest', {
+        minimum: 1,
+        maximum: MAX_MANIFEST_BYTES,
+      }).toString('utf8'));
       if (record?.protocol !== protocol || record.head !== expectedHead ||
           record[endpointField] !== normalizedEndpoint(endpoint) ||
           !Array.isArray(record.files) || record.files.length !== componentFiles.length) return false;
@@ -144,36 +174,52 @@ export function createComponentStore({ protocol, files, defaultEndpoint, manifes
     }
   }
 
-  function quarantine(target, quarantineRoot, head) {
-    if (!existsSync(target)) return null;
-    const destination = path.join(quarantineRoot, `${head.slice(0, 12)}-${randomUUID()}`);
-    renameSync(target, destination);
-    return destination;
+  function exactChild(root, candidate, name) {
+    const selectedRoot = path.resolve(root);
+    const selected = path.resolve(candidate);
+    if (path.dirname(selected) !== selectedRoot || selected === selectedRoot) fail(`${name} is outside its owned root.`);
+    return selected;
   }
 
-  function publish({ target, stagingRoot, quarantineRoot, head, endpoint = defaultEndpoint, obtainSource }) {
+  function publish({ target, work, stagingRoot, preservation, preservationRoot, subject, endpoint = defaultEndpoint, obtainSource }) {
     if (typeof obtainSource !== 'function') throw new TypeError('obtainSource must be a function');
-    if (verify(target, head, endpoint)) return;
-    quarantine(target, quarantineRoot, head);
-    const work = mkdtempSync(path.join(stagingRoot, `${head.slice(0, 12)}-`));
+    const selectedWork = exactChild(stagingRoot, work, 'Component work path');
+    const selectedPreservation = exactChild(preservationRoot, preservation, 'Component preservation path');
+    if (verify(target, subject, endpoint)) {
+      if (existsSync(selectedWork)) fail('Component work path remains from an incomplete operation.');
+      return Object.freeze({ published: false, preserved: false, workAbsent: true });
+    }
+    let preserved = false;
+    if (existsSync(target)) {
+      if (existsSync(selectedPreservation)) fail('Component preservation path is already occupied.');
+      renameSync(target, selectedPreservation);
+      if (existsSync(target) || !existsSync(selectedPreservation)) fail('Component preservation did not reconcile exactly.');
+      preserved = true;
+    }
+    if (existsSync(selectedWork)) fail('Component work path is already occupied.');
+    let workCreated = false;
     try {
-      const component = path.join(work, 'component');
-      const source = obtainSource(path.join(work, 'source'));
+      mkdirSync(selectedWork, { mode: 0o700 });
+      workCreated = true;
+      const component = path.join(selectedWork, 'component');
+      const source = obtainSource(path.join(selectedWork, 'source'));
       if (typeof source !== 'string' || !path.isAbsolute(source)) fail('Source materialization returned an invalid root.');
       copy(source, component);
-      writeFileSync(path.join(component, manifestName), `${JSON.stringify(manifest(component, head, endpoint), null, 2)}\n`, {
+      writeFileSync(path.join(component, manifestName), `${JSON.stringify(manifest(component, subject, endpoint), null, 2)}\n`, {
         encoding: 'utf8', mode: 0o600, flag: 'wx',
       });
-      if (!verify(component, head, endpoint)) fail('Staged component failed self-verification.');
+      if (!verify(component, subject, endpoint)) fail('Staged component failed self-verification.');
       try {
         renameSync(component, target);
       } catch (error) {
-        if (!existsSync(target) || !verify(target, head, endpoint)) throw error;
+        if (!existsSync(target) || !verify(target, subject, endpoint)) throw error;
       }
     } finally {
-      try { rmSync(work, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 }); } catch {}
+      if (workCreated) rmSync(selectedWork, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 });
     }
-    if (!verify(target, head, endpoint)) fail('Installed component failed verification.');
+    if (!verify(target, subject, endpoint)) fail('Installed component failed verification.');
+    if (existsSync(selectedWork)) fail('Component work path remains after publication.');
+    return Object.freeze({ published: true, preserved, workAbsent: true });
   }
 
   return Object.freeze({ publish, verify });
