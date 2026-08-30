@@ -210,6 +210,7 @@ test('missing, unexplained, linked, non-socket, and foreign-owned surfaces fail 
     [new Map([[DIRECT, socket({ link: true })]]), 'invalid-surface'],
     [new Map([[DIRECT, socket({ kind: false })]]), 'invalid-surface'],
     [new Map([[DIRECT, socket({ uid: 1000 })]]), 'invalid-surface'],
+    [new Map([[DIRECT, socket({ gid: 0xffff_ffff })]]), 'invalid-surface'],
   ];
   for (const [surfaces, reason] of cases) {
     const observed = await observeLinuxProviderManagementTopology({ platform: 'linux' }, fixture({ surfaces }).ports);

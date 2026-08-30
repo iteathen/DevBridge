@@ -17,7 +17,7 @@ const PRIOR = '[Unit]\nDescription=prior\n';
 const EXPECTED = Object.freeze({
   user: 'service_user',
   group: 'service_read',
-  supplementaryGroups: Object.freeze(['service_coord', 'service_manage']),
+  supplementaryGroups: Object.freeze(['service_coord', '108']),
   type: 'exec',
 });
 
@@ -239,6 +239,9 @@ test('definition composition rejects widened inputs and contains no neighboring 
   const values = fixture();
   await assert.rejects(() => reconcile(values, { provider: 'forbidden' }), /unknown field/u);
   await assert.rejects(() => reconcile(values, { signal: {} }), /cancellation signal is invalid/u);
+  await assert.rejects(() => reconcile(values, {
+    expected: Object.freeze({ ...EXPECTED, supplementaryGroups: Object.freeze(['service_coord', '4294967295']) }),
+  }), /supplementary group is invalid/u);
   const source = await readFile(fileURLToPath(new URL('../src/setup/linux-service-definition.js', import.meta.url)), 'utf8');
   for (const forbidden of ['lifecycle', 'ownership', 'journal', 'provider', 'repository', 'virtualMachine', 'libvirt', 'qemu', 'qcow2', 'sudo', 'pkexec']) {
     assert.equal(source.includes(forbidden), false, `service definition gained neighboring authority through ${forbidden}`);

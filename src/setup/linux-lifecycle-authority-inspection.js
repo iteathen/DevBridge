@@ -276,7 +276,7 @@ export async function inspectLinuxLifecycleAuthorityState({
     throw new Error('Linux lifecycle authority service observation is invalid');
   }
   const processEvidence = await inspectProcess(plan, service, identity, load, link);
-  const expectedSupplements = [plan.service.coordinationGroup, plan.service.managementGroup];
+  const expectedSupplements = [plan.service.coordinationGroup, String(plan.service.managementGroupId)];
   const serviceEvidence = Object.freeze({
     ...service,
     unitExact: unitText === plan.service.unit,

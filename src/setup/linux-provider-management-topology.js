@@ -7,6 +7,7 @@ const SYSTEMCTL = '/usr/bin/systemctl';
 const GETENT = '/usr/bin/getent';
 const ENVIRONMENT = Object.freeze({ LANG: 'C', LC_ALL: 'C' });
 const LOCAL_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,30}$/u;
+const MAX_LOCAL_ID = 0xffff_fffe;
 const TOKEN = /^[a-z][a-z0-9-]{0,63}$/u;
 const UNIT_PROPERTIES = Object.freeze(['LoadState', 'ActiveState', 'NeedDaemonReload']);
 const SOCKET_PROPERTIES = Object.freeze([...UNIT_PROPERTIES, 'Listen']);
@@ -170,7 +171,7 @@ function surfacePolicy(info) {
   if (info == null) return null;
   if (typeof info.isSocket !== 'function' || typeof info.isSymbolicLink !== 'function'
       || !info.isSocket() || info.isSymbolicLink() || info.uid !== 0
-      || !Number.isSafeInteger(info.gid) || info.gid < 0 || !Number.isSafeInteger(info.mode)) return 'invalid';
+      || !Number.isSafeInteger(info.gid) || info.gid < 0 || info.gid > MAX_LOCAL_ID || !Number.isSafeInteger(info.mode)) return 'invalid';
   const mode = info.mode & 0o777;
   if ((mode & 0o007) !== 0) return 'policy-backed';
   if (info.gid > 0 && (mode & 0o660) === 0o660) return 'group-only';

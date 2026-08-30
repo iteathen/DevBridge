@@ -37,8 +37,10 @@ import { createLinuxServiceManager } from './linux-service-manager.js';
 import { LINUX_SERVICE_OBSERVATION_PROTOCOL, observeLinuxService } from './linux-service-observation.js';
 import { normalizeProtectedAuthorityReconciliationJournal } from './protected-authority-reconciliation.js';
 
-const PROTOCOL = 'devbridge/linux-lifecycle-authority-refresh-composition-v1';
+const PROTOCOL = 'devbridge/linux-lifecycle-authority-refresh-composition-v2';
 const GENERATION = /^[0-9a-f]{64}$/u;
+const LOCAL_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,30}$/u;
+const MAX_LOCAL_ID = 0xffff_fffe;
 const MAX_GENERATIONS = 11;
 const HEALTH_RETRY_DELAYS_MS = Object.freeze([100, 250, 500, 1_000, 2_000]);
 
@@ -57,6 +59,11 @@ function exactPlan(value, name, { bound }) {
   if (!value || value.protocol !== LINUX_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL) throw new TypeError(`${name} is invalid`);
   if (bound !== (value.runtimeEvidence != null && value.runtime?.generation != null && typeof value.service?.unit === 'string')) {
     throw new TypeError(`${name} binding is invalid`);
+  }
+  if (typeof value.service?.managementGroup !== 'string' || !LOCAL_NAME.test(value.service.managementGroup)
+      || !Number.isSafeInteger(value.service?.managementGroupId) || value.service.managementGroupId < 1
+      || value.service.managementGroupId > MAX_LOCAL_ID) {
+    throw new TypeError(`${name} required group identity is invalid`);
   }
   return value;
 }
@@ -166,7 +173,9 @@ export function createLinuxLifecycleAuthorityGenerationSubjects({
   if (Object.keys(unknownPorts).length > 0) throw new TypeError('Linux lifecycle authority subject ports contain an unknown field');
   const base = exactPlan(basePlan, 'Linux lifecycle authority subject base plan', { bound: false });
   const selected = exactPlan(candidatePlan, 'Linux lifecycle authority subject candidate plan', { bound: true });
-  if (base.authorityIdentity !== selected.authorityIdentity || base.protectedRoot !== selected.protectedRoot) {
+  if (base.authorityIdentity !== selected.authorityIdentity || base.protectedRoot !== selected.protectedRoot
+      || base.service.managementGroup !== selected.service.managementGroup
+      || base.service.managementGroupId !== selected.service.managementGroupId) {
     throw new Error('Linux lifecycle authority subject plans do not describe one installation');
   }
   if (!candidate || candidate.evidence?.packageDigest !== selected.runtimeEvidence.packageDigest
@@ -340,7 +349,7 @@ export function createLinuxLifecycleAuthorityActivity({ plan, state, subjects, s
       const expected = plans.get(configuredGeneration);
       if (service.fragmentPath !== selected.service.unitPath || service.user !== selected.service.user
           || service.group !== selected.service.readGroup
-          || !sameSet(service.supplementaryGroups, [selected.service.coordinationGroup, selected.service.managementGroup])
+          || !sameSet(service.supplementaryGroups, [selected.service.coordinationGroup, String(selected.service.managementGroupId)])
           || service.type !== 'exec' || service.dropIns) {
         throw new Error('Linux lifecycle authority loaded activity identity is foreign');
       }
@@ -469,7 +478,9 @@ export async function createLinuxLifecycleAuthorityRefreshComposition({
   const base = exactPlan(basePlan, 'Linux lifecycle authority composition base plan', { bound: false });
   const selected = exactPlan(candidatePlan, 'Linux lifecycle authority composition candidate plan', { bound: true });
   const cancellation = exactSignal(signal);
-  if (base.authorityIdentity !== selected.authorityIdentity || base.protectedRoot !== selected.protectedRoot) {
+  if (base.authorityIdentity !== selected.authorityIdentity || base.protectedRoot !== selected.protectedRoot
+      || base.service.managementGroup !== selected.service.managementGroup
+      || base.service.managementGroupId !== selected.service.managementGroupId) {
     throw new Error('Linux lifecycle authority composition plans do not describe one installation');
   }
   if (typeof admitClaim !== 'function' || typeof invoke !== 'function') throw new TypeError('Linux lifecycle authority composition authority ports are invalid');
@@ -545,7 +556,7 @@ export async function createLinuxLifecycleAuthorityRefreshComposition({
       expected: Object.freeze({
         user: selected.service.user,
         group: selected.service.readGroup,
-        supplementaryGroups: Object.freeze([selected.service.coordinationGroup, selected.service.managementGroup]),
+        supplementaryGroups: Object.freeze([selected.service.coordinationGroup, String(selected.service.managementGroupId)]),
         type: 'exec',
       }),
       platform: 'linux',

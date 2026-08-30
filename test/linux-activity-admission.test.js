@@ -21,7 +21,7 @@ function fixture({ governanceMode = 0o3770, ownershipTransform = (value) => valu
   const plan = createLinuxLifecycleAuthorityPlan({
     stateDirectory: '/home/alice/.devbridge/state',
     operatorName: 'alice',
-    managementGroup: 'provider-control',
+    managementGroup: Object.freeze({ name: 'provider-control', id: IDS.managementGid }),
   });
   const ownership = ownershipTransform({
     protocol: LINUX_LIFECYCLE_AUTHORITY_OWNERSHIP_PROTOCOL,
@@ -29,6 +29,7 @@ function fixture({ governanceMode = 0o3770, ownershipTransform = (value) => valu
     serviceName: plan.service.name,
     operatorName: plan.service.operator,
     managementGroup: plan.service.managementGroup,
+    managementGid: plan.service.managementGroupId,
     localIdentity: { ...IDS },
     activeGeneration: 'a'.repeat(64),
     stagedGeneration: null,
@@ -151,6 +152,24 @@ test('foreign topology, process identity, ownership bytes, and widened requests 
     access: 'exclusive', stateDirectory: foreignOwnership.plan.stateDirectory,
     authorityDirectory: foreignOwnership.plan.authorityDirectory, platform: 'linux',
   }, foreignOwnership.ports), /ownership record does not match/u);
+
+  const reboundOwnership = fixture({ ownershipTransform: (value) => ({
+    ...value,
+    managementGid: value.managementGid + 1,
+    localIdentity: { ...value.localIdentity, managementGid: value.localIdentity.managementGid + 1 },
+  }) });
+  Object.assign(reboundOwnership.ports, {
+    getUid: () => IDS.serviceUid,
+    getEffectiveUid: () => IDS.serviceUid,
+    getGid: () => IDS.readGid,
+    getEffectiveGid: () => IDS.readGid,
+    getGroups: () => [IDS.readGid, IDS.coordinationGid, IDS.managementGid],
+  });
+  await assert.rejects(createLinuxActivityAdmission({
+    access: 'exclusive', stateDirectory: reboundOwnership.plan.stateDirectory,
+    authorityDirectory: reboundOwnership.plan.authorityDirectory, platform: 'linux',
+  }, reboundOwnership.ports), /process lacks its bound identity/u);
+  assert.equal(reboundOwnership.intents.length, 0);
 
   await assert.rejects(createLinuxActivityAdmission({
     access: 'shared', stateDirectory: '/state', platform: 'linux', provider: 'foreign',

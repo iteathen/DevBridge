@@ -10,8 +10,9 @@ import {
   observeLinuxProviderAuthorityPreflight,
 } from './linux-provider-authority-preflight.js';
 
-const PROTOCOL = 'devbridge/linux-lifecycle-authority-plan-selection-v1';
+const PROTOCOL = 'devbridge/linux-lifecycle-authority-plan-selection-v2';
 const LOCAL_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,30}$/u;
+const MAX_LOCAL_ID = 0xffff_fffe;
 const BOUNDED_REASON = /^[a-z][a-z0-9-]{0,63}$/u;
 const PLATFORM = /^[a-z][a-z0-9_-]{0,31}$/u;
 const MAX_CAPABILITIES = 16;
@@ -57,7 +58,7 @@ function principalName(value) {
 function capability(value, name) {
   exactKeys(value, new Set(['name', 'id']), name);
   if (typeof value.name !== 'string' || !LOCAL_NAME.test(value.name)) throw new Error(`${name} name is invalid`);
-  if (!Number.isSafeInteger(value.id) || value.id < 1) throw new Error(`${name} id is invalid`);
+  if (!Number.isSafeInteger(value.id) || value.id < 1 || value.id > MAX_LOCAL_ID) throw new Error(`${name} id is invalid`);
   return Object.freeze({ name: value.name, id: value.id });
 }
 
@@ -120,7 +121,7 @@ function canonicalPlan({ stateDirectory, principal, capability }) {
   return createLinuxLifecycleAuthorityPlan({
     stateDirectory,
     operatorName: principal,
-    managementGroup: capability.name,
+    managementGroup: Object.freeze({ name: capability.name, id: capability.id }),
   });
 }
 

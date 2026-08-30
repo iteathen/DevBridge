@@ -50,10 +50,14 @@ function values(content = 'export const generation = 1;\n') {
   const base = createLinuxLifecycleAuthorityPlan({
     stateDirectory: '/state/devbridge',
     operatorName: 'operator',
-    managementGroup: 'virt_control',
+    managementGroup: Object.freeze({ name: 'virt_control', id: 1104 }),
   });
   const plan = bindLinuxLifecycleAuthorityRuntime(base, candidate.evidence);
-  return Object.freeze({ base, candidate, plan });
+  return Object.freeze({
+    base,
+    candidate,
+    plan,
+  });
 }
 
 function serviceObservation(plan, overrides = {}) {
@@ -72,7 +76,7 @@ function serviceObservation(plan, overrides = {}) {
     fragmentPath: exists ? plan.service.unitPath : '',
     user: exists ? plan.service.user : '',
     group: exists ? plan.service.readGroup : '',
-    supplementaryGroups: exists ? Object.freeze([plan.service.coordinationGroup, plan.service.managementGroup]) : Object.freeze([]),
+    supplementaryGroups: exists ? Object.freeze([plan.service.coordinationGroup, String(plan.service.managementGroupId)]) : Object.freeze([]),
     type: exists ? 'exec' : '',
     unitFileState: exists ? 'enabled' : '',
     needsReload: false,
@@ -235,6 +239,7 @@ test('composition connects concrete ownership to neutral mechanics and reaches e
   let journal = null;
   const installed = new Set();
   const effects = [];
+  let identityBinding = null;
   const localActivity = { exists: false, running: false, configuredGeneration: null, processGeneration: null };
   const records = Object.freeze({
     claim: Object.freeze({ ensure: async () => ownership }),
@@ -271,7 +276,8 @@ test('composition connects concrete ownership to neutral mechanics and reaches e
     admitClaim: async () => true,
   }, {
     createRecords: () => records,
-    bindIdentity: async () => {
+    bindIdentity: async (request) => {
+      identityBinding = structuredClone(request);
       ownership = Object.freeze({ ...ownership, localIdentity: Object.freeze({ serviceUid: 1101, operatorUid: 1100, readGid: 1102, coordinationGid: 1103, managementGid: 1104 }) });
     },
     reconcileIdentity: async () => ({}),
@@ -291,6 +297,7 @@ test('composition connects concrete ownership to neutral mechanics and reaches e
   });
   assert.equal(composition.protocol, LINUX_LIFECYCLE_AUTHORITY_REFRESH_COMPOSITION_PROTOCOL);
   assert.deepEqual(Object.keys(composition).sort(), ['generation', 'mechanics', 'protocol']);
+  assert.deepEqual(identityBinding, { plan: selected.plan });
 
   const first = await reconcileLinuxLifecycleAuthorityRefresh({ candidateGeneration: selected.plan.runtime.generation, mechanics: composition.mechanics });
   assert.equal(first.ready, true);
@@ -305,6 +312,36 @@ test('composition connects concrete ownership to neutral mechanics and reaches e
 
 test('composition surfaces are closed and the neutral mechanic remains topology-free', async () => {
   const selected = values();
+  const compositionRequest = Object.freeze({
+    basePlan: selected.base,
+    candidatePlan: selected.plan,
+    candidate: selected.candidate,
+    packageRoot: '/source/package',
+    nodeExecutable: '/source/node',
+    admitClaim: async () => true,
+  });
+  await assert.rejects(() => createLinuxLifecycleAuthorityRefreshComposition({
+    ...compositionRequest,
+    candidatePlan: Object.freeze({
+      ...selected.plan,
+      service: Object.freeze({ ...selected.plan.service, managementGroupId: 0 }),
+    }),
+  }), /required group identity is invalid/u);
+  await assert.rejects(() => createLinuxLifecycleAuthorityRefreshComposition({
+    ...compositionRequest,
+    candidatePlan: Object.freeze({
+      ...selected.plan,
+      service: Object.freeze({ ...selected.plan.service, managementGroupId: selected.plan.service.managementGroupId + 1 }),
+    }),
+  }), /do not describe one installation/u);
+  await assert.rejects(() => createLinuxLifecycleAuthorityRefreshComposition({
+    ...compositionRequest,
+    candidatePlan: Object.freeze({
+      ...selected.plan,
+      service: Object.freeze({ ...selected.plan.service, managementGroup: '../foreign' }),
+    }),
+  }), /required group identity is invalid/u);
+  await assert.rejects(() => createLinuxLifecycleAuthorityRefreshComposition({ ...compositionRequest, groupIdentity: {} }), /unknown field/u);
   assert.throws(() => createLinuxLifecycleAuthorityGenerationSubjects({
     basePlan: selected.base,
     candidatePlan: selected.plan,

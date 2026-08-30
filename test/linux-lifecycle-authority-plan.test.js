@@ -17,12 +17,13 @@ import {
 
 const PACKAGE_DIGEST = 'a'.repeat(64);
 const NODE_DIGEST = 'b'.repeat(64);
+const MANAGEMENT_GROUP = Object.freeze({ name: 'provider-control', id: 108 });
 
 function basePlan(overrides = {}) {
   return createLinuxLifecycleAuthorityPlan({
     stateDirectory: '/home/alice/.devbridge/state',
     operatorName: 'alice',
-    managementGroup: 'provider-control',
+    managementGroup: MANAGEMENT_GROUP,
     ...overrides,
   });
 }
@@ -43,6 +44,8 @@ test('Linux authority plan derives one exact runtime and split local capabilitie
   assert.equal(value.service.user, `db-auth-${value.authorityIdentity.slice(0, 12)}`);
   assert.equal(value.service.readGroup, `db-read-${value.authorityIdentity.slice(0, 12)}`);
   assert.equal(value.service.coordinationGroup, `db-coord-${value.authorityIdentity.slice(0, 12)}`);
+  assert.equal(value.service.managementGroup, MANAGEMENT_GROUP.name);
+  assert.equal(value.service.managementGroupId, MANAGEMENT_GROUP.id);
   assert.deepEqual(value.storage, {
     parentDirectory: '/var/lib/devbridge',
     rootDirectory: '/var/lib/devbridge/lifecycle-authority',
@@ -156,6 +159,7 @@ test('ordinary operator receives read and coordination membership but never mana
   assert.deepEqual(value.access.readCapability.members, [value.service.user, 'alice']);
   assert.deepEqual(value.access.coordination.members, [value.service.user, 'alice']);
   assert.deepEqual(value.access.management.members, [value.service.user]);
+  assert.equal(value.access.management.groupId, MANAGEMENT_GROUP.id);
   assert.equal(value.access.management.members.includes('alice'), false);
 });
 
@@ -165,7 +169,7 @@ test('systemd unit binds the exact protected generation and narrow writable stud
   assert.match(unit, /Type=exec/u);
   assert.match(unit, new RegExp(`User=${value.service.user}`, 'u'));
   assert.match(unit, new RegExp(`Group=${value.service.readGroup}`, 'u'));
-  assert.match(unit, new RegExp(`SupplementaryGroups=${value.service.coordinationGroup} provider-control`, 'u'));
+  assert.match(unit, new RegExp(`SupplementaryGroups=${value.service.coordinationGroup} ${MANAGEMENT_GROUP.id}`, 'u'));
   assert.match(unit, /UMask=0007/u);
   assert.match(unit, /NoNewPrivileges=true/u);
   assert.match(unit, /ProtectSystem=strict/u);
@@ -202,7 +206,7 @@ test('historical runtime projection derives exact rollback unit bytes without fi
   const base = createLinuxLifecycleAuthorityPlan({
     stateDirectory: '/home/alice/.devbridge/state',
     operatorName: 'alice',
-    managementGroup: 'provider-control',
+    managementGroup: MANAGEMENT_GROUP,
   });
   const current = bindLinuxLifecycleAuthorityRuntime(base, { packageDigest: 'a'.repeat(64), nodeDigest: 'b'.repeat(64) });
   const historical = projectLinuxLifecycleAuthorityRuntime(current, { packageDigest: 'c'.repeat(64), nodeDigest: 'd'.repeat(64) });
@@ -214,8 +218,11 @@ test('historical runtime projection derives exact rollback unit bytes without fi
 test('Linux plan rejects nonportable names, unsafe paths, and percent specifier expansion', () => {
   assert.throws(() => basePlan({ stateDirectory: 'relative/state' }), /absolute Linux path/u);
   assert.throws(() => basePlan({ operatorName: 'alice.example' }), /portable bounded/u);
-  assert.throws(() => basePlan({ managementGroup: '../control' }), /portable bounded/u);
-  assert.throws(() => basePlan({ managementGroup: 'a'.repeat(32) }), /portable bounded/u);
+  assert.throws(() => basePlan({ managementGroup: { name: '../control', id: 108 } }), /portable bounded/u);
+  assert.throws(() => basePlan({ managementGroup: { name: 'a'.repeat(32), id: 108 } }), /portable bounded/u);
+  assert.throws(() => basePlan({ managementGroup: { name: 'provider-control', id: 0 } }), /id is invalid/u);
+  assert.throws(() => basePlan({ managementGroup: { name: 'provider-control', id: 0xffff_ffff } }), /id is invalid/u);
+  assert.throws(() => basePlan({ managementGroup: { ...MANAGEMENT_GROUP, path: '/foreign' } }), /unknown field/u);
   assert.throws(() => basePlan({ runDirectory: '/run/dev bridge' }), /unsupported definition syntax/u);
   assert.throws(() => basePlan({ runDirectory: '/run/dev%bridge' }), /unsupported definition syntax/u);
   assert.throws(() => basePlan({ runDirectory: '/tmp/devbridge' }), /unsupported definition syntax/u);

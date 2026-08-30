@@ -18,6 +18,7 @@ import {
 
 const PROTOCOL = 'devbridge/linux-provider-authority-preflight-v1';
 const LOCAL_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,30}$/u;
+const MAX_LOCAL_ID = 0xffff_fffe;
 const MAX_CAPABILITIES = 16;
 const SEPARATION_REASONS = new Set([
   null,
@@ -54,7 +55,7 @@ function unavailable(platform, reason, { observable = false, capabilities = [] }
 function capability(value, name) {
   exactKeys(value, new Set(['name', 'id']), name);
   if (typeof value.name !== 'string' || !LOCAL_NAME.test(value.name)) throw new Error(`${name} name is invalid`);
-  if (!Number.isSafeInteger(value.id) || value.id < 1) throw new Error(`${name} id is invalid`);
+  if (!Number.isSafeInteger(value.id) || value.id < 1 || value.id > MAX_LOCAL_ID) throw new Error(`${name} id is invalid`);
   return Object.freeze({ name: value.name, id: value.id });
 }
 

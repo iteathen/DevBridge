@@ -32,7 +32,7 @@ function plan() {
   return bindLinuxLifecycleAuthorityRuntime(createLinuxLifecycleAuthorityPlan({
     stateDirectory: '/home/alice/.devbridge/state',
     operatorName: 'alice',
-    managementGroup: 'provider-control',
+    managementGroup: Object.freeze({ name: 'provider-control', id: 108 }),
   }), { packageDigest: PACKAGE_DIGEST, nodeDigest: NODE_DIGEST });
 }
 
@@ -78,6 +78,7 @@ function fixture({ extraServiceGroup = false, serviceType = 'exec' } = {}) {
     serviceName: selected.service.name,
     operatorName: selected.service.operator,
     managementGroup: selected.service.managementGroup,
+    managementGid: selected.service.managementGroupId,
     localIdentity: Object.freeze({ serviceUid, operatorUid, readGid, coordinationGid, managementGid }),
     activeGeneration: selected.runtime.generation,
     stagedGeneration: null,
@@ -150,7 +151,7 @@ function fixture({ extraServiceGroup = false, serviceType = 'exec' } = {}) {
         `FragmentPath=${selected.service.unitPath}`,
         `User=${selected.service.user}`,
         `Group=${selected.service.readGroup}`,
-        `SupplementaryGroups=${selected.service.coordinationGroup} ${selected.service.managementGroup}`,
+        `SupplementaryGroups=${selected.service.coordinationGroup} ${selected.service.managementGroupId}`,
         `Type=${serviceType}`,
         'UnitFileState=enabled',
         'NeedDaemonReload=no',

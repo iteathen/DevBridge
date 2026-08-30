@@ -130,7 +130,7 @@ function planSelectionFixture(overrides = {}) {
       return createLinuxLifecycleAuthorityPlan({
         stateDirectory: request.stateDirectory,
         operatorName: request.principal,
-        managementGroup: request.capability.name,
+        managementGroup: request.capability,
       });
     },
   });
@@ -301,8 +301,10 @@ test('authority-plan selection binds one exact observed capability into the cano
   assert.equal(observed.plan.stateDirectory, '/var/lib/devbridge-state');
   assert.equal(observed.plan.service.operator, 'alice');
   assert.equal(observed.plan.service.managementGroup, 'primary_control');
+  assert.equal(observed.plan.service.managementGroupId, 980);
   assert.deepEqual(observed.plan.access.management, {
     group: 'primary_control',
+    groupId: 980,
     members: [observed.plan.service.user],
     ordinaryUserMember: false,
   });
@@ -375,14 +377,14 @@ test('failed, widened, or identity-changing plan projection fails closed', async
       ...createLinuxLifecycleAuthorityPlan({
         stateDirectory: request.stateDirectory,
         operatorName: request.principal,
-        managementGroup: request.capability.name,
+        managementGroup: request.capability,
       }),
       foreign: true,
     }) }),
     planSelectionFixture({ projected: (request) => createLinuxLifecycleAuthorityPlan({
       stateDirectory: request.stateDirectory,
       operatorName: request.principal,
-      managementGroup: 'foreign_control',
+      managementGroup: Object.freeze({ name: 'foreign_control', id: 982 }),
     }) }),
   ];
   for (const selected of cases) {

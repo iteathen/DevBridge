@@ -20,7 +20,7 @@ function plan() {
   return createLinuxLifecycleAuthorityPlan({
     stateDirectory: '/home/alice/.devbridge/state',
     operatorName: 'alice',
-    managementGroup: 'provider-control',
+    managementGroup: Object.freeze({ name: 'provider-control', id: 108 }),
   });
 }
 
@@ -31,6 +31,7 @@ function claim(selected, localIdentity = Object.freeze({ serviceUid: 995, operat
     serviceName: selected.service.name,
     operatorName: selected.service.operator,
     managementGroup: selected.service.managementGroup,
+    managementGid: selected.service.managementGroupId,
     localIdentity,
     activeGeneration: null,
     stagedGeneration: null,

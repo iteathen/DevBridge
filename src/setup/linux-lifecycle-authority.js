@@ -15,9 +15,10 @@ import {
 import { linuxEnvironmentActivityHandoffTopology } from './linux-environment-activity-handoff.js';
 import { linuxEnvironmentConfigurationHandoffTopology } from './linux-environment-configuration-handoff.js';
 
-const PROTOCOL = 'devbridge/linux-lifecycle-authority-plan-v1';
+const PROTOCOL = 'devbridge/linux-lifecycle-authority-plan-v2';
 const DIGEST = /^[0-9a-f]{64}$/u;
 const LOCAL_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,30}$/u;
+const MAX_LOCAL_ID = 0xffff_fffe;
 const SERVICE_PREFIX = 'devbridge-lifecycle-authority-';
 const ACCOUNT_PREFIX = 'db-auth-';
 const READ_GROUP_PREFIX = 'db-read-';
@@ -37,6 +38,14 @@ function localName(value, name) {
     throw new TypeError(`${name} must be a portable bounded local account or group name`);
   }
   return value;
+}
+
+function groupIdentity(value, name) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} is invalid`);
+  const allowed = new Set(['name', 'id']);
+  for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`${name} contains an unknown field`);
+  if (!Number.isSafeInteger(value.id) || value.id < 1 || value.id > MAX_LOCAL_ID) throw new TypeError(`${name} id is invalid`);
+  return Object.freeze({ name: localName(value.name, `${name} name`), id: value.id });
 }
 
 function definitionPath(value, name) {
@@ -112,7 +121,7 @@ function systemdUnit(plan, runtime) {
     'Type=exec',
     `User=${plan.service.user}`,
     `Group=${plan.service.readGroup}`,
-    `SupplementaryGroups=${plan.service.coordinationGroup} ${plan.service.managementGroup}`,
+    `SupplementaryGroups=${plan.service.coordinationGroup} ${plan.service.managementGroupId}`,
     'UMask=0007',
     `ExecStart=${execStart}`,
     'Restart=on-failure',
@@ -175,7 +184,7 @@ export function createLinuxLifecycleAuthorityPlan({
 } = {}) {
   const state = absoluteLinuxPath(stateDirectory, 'Linux lifecycle authority stateDirectory');
   const operator = localName(operatorName, 'Linux lifecycle authority operatorName');
-  const management = localName(managementGroup, 'Linux lifecycle authority managementGroup');
+  const management = groupIdentity(managementGroup, 'Linux lifecycle authority managementGroup');
   const varLib = absoluteLinuxPath(varLibDirectory, 'Linux lifecycle authority varLibDirectory');
   const run = definitionPath(runDirectory, 'Linux lifecycle authority runDirectory');
   const systemd = absoluteLinuxPath(systemdDirectory, 'Linux lifecycle authority systemdDirectory');
@@ -333,7 +342,8 @@ export function createLinuxLifecycleAuthorityPlan({
       user: serviceUser,
       readGroup,
       coordinationGroup,
-      managementGroup: management,
+      managementGroup: management.name,
+      managementGroupId: management.id,
       operator,
       account: Object.freeze({ home: '/nonexistent', shell: '/usr/sbin/nologin', system: true }),
       restart: 'on-failure',
@@ -352,7 +362,7 @@ export function createLinuxLifecycleAuthorityPlan({
       volatileDefinition: Object.freeze({ owner: 'root', group: 'root', mode: 0o644, serviceWrite: false, ordinaryUserWrite: false }),
       readCapability: Object.freeze({ group: readGroup, members: Object.freeze([serviceUser, operator]) }),
       coordination: Object.freeze({ group: coordinationGroup, members: Object.freeze([serviceUser, operator]) }),
-      management: Object.freeze({ group: management, members: Object.freeze([serviceUser]), ordinaryUserMember: false }),
+      management: Object.freeze({ group: management.name, groupId: management.id, members: Object.freeze([serviceUser]), ordinaryUserMember: false }),
     }),
   });
 }
