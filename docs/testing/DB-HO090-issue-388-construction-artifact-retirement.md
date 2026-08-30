@@ -58,10 +58,11 @@ The current [Node filesystem documentation](https://nodejs.org/api/fs.html) esta
 - promise filesystem operations are asynchronous and are not synchronized with each other, so destructive operations must be explicitly awaited and ordered;
 - `lstat()` observes a symbolic link itself instead of following it;
 - `Stats` exposes stable observation fields including device, inode, size, modification time, and link count;
+- timestamp precision is platform-specific, so separately obtained path and open-handle observations are not guaranteed to expose identical timestamp representations;
 - `rm({ recursive: true })` is deliberately recursive and has retry behavior only in recursive mode;
 - `unlink()` and non-recursive directory removal provide the narrower effects needed for an enumerated plan.
 
-Reassessment: use explicit one-file unlink and empty-directory removal ports. Do not use recursive removal as the retirement primitive. Hold/read and re-observe exact file identity immediately before each unlink because a prior path check is not atomic authority.
+Reassessment: use explicit one-file unlink and empty-directory removal ports. Do not use recursive removal as the retirement primitive. Hold/read and re-observe exact file identity immediately before each unlink because a prior path check is not atomic authority. Compare path timestamps only between the before/after `lstat()` observations made through the same API. Bind the open handle to the path through device/inode, size, regular-file shape, and single-link evidence, then hash through that held handle when a digest is authoritative. This preserves the replacement/race fence without incorrectly requiring cross-API timestamp representation equality.
 
 ### Windows links and reparse points
 
@@ -190,13 +191,22 @@ The first real read-only plan safely exposed an over-retention error: treating e
 
 The concrete mapping now protects recovery only when exact provider observation shows a non-off provider. It independently protects the derived current subject, every admitted image reference, `retained` state, active mutation lease, finalization-attempt ambiguity, malformed/incomplete topology, and any changed artifact. Superseded early-phase subjects may become obsolete only after the exact provider and artifact plan succeeds. The neutral owner and its classification order did not change.
 
+### Hosted portability reassessment
+
+The first hosted implementation run, [33303340630](https://github.com/iteathen/DevBridge/actions/runs/33303340630), caught a test-fixture portability error: a reparse-point fixture forced Windows path semantics while running on Ubuntu. The fixture now selects the native host path contract. That run did not expose a production behavior failure.
+
+The next run, [33303554286](https://github.com/iteathen/DevBridge/actions/runs/33303554286), passed Ubuntu smoke/full and Windows smoke, but its Windows full job exposed a production portability error. On hosted Windows, `lstat(path)` and `open(path).stat()` agreed on device/inode identity but reported timestamp fields at different precision. The implementation had compared the open-handle timestamp record directly with the later path record and therefore rejected an unchanged file as `artifact set file changed during observation`.
+
+The correction keeps each observation inside its owning contract: before/after path records must match completely; path and held-handle records must match filesystem identity, byte size, regular-file shape, and single-link count; authoritative bytes are read only through the held handle. A focused precision-mismatch test proves that an unchanged object is accepted, while an independently injected before/after path timestamp change still fails closed. This is a portability correction, not a relaxation of containment, replacement, hard-link, digest, or exact-membership checks.
+
 ### Qualification and real read-only evidence
 
-Final local qualification passes:
+Final local qualification after the hosted portability correction passes:
 
 - repository preflight: 2 standalone artifacts, 219 syntax files, 2 JSON files, and 178 targeted tests;
-- complete serialized suite: 1,944 total, 1,923 passed, 21 expected platform skips, zero failures;
+- complete serialized suite: 1,946 total, 1,925 passed, 21 expected platform skips, zero failures;
 - focused normal/failure/boundary coverage includes deterministic classification, plan drift, active lease, ambiguous observation, bounded retry, durable restart, path escape, unexpected entry, replacement, hard-link, digest drift, symlink/reparse denial, partial deletion, shared-root preservation, exact Hyper-V ownership, absent-provider reconciliation, CLI mutation separation, derived-current pre-registration, and concrete provider/artifact/record ordering;
+- the artifact boundary additionally covers cross-API timestamp-precision variance and fails closed on same-observation path drift;
 - diff hygiene passes; only line-ending notices remain for existing Windows checkout policy.
 
 The final real ordinary-token read-only product invocation reports no active lease and plan digest `73ffa049ac5c4eee9036d4993352b56792757de14c0a171e38832a14e91aba9e`. It protects:
@@ -207,4 +217,4 @@ The final real ordinary-token read-only product invocation reports no active lea
 
 Ten superseded subjects are exact-plan eligible. Seven have external artifacts and the path-free plan estimates `67,500,791,071` reclaimable bytes; three contain terminal records only. No retirement, provider removal, file deletion, record deletion, UAC, protected-service call, VM start, guest action, repository execution, model invocation, or GPU/CUDA action has occurred.
 
-Next: commit and push the implementation, require the exact-head hosted Ubuntu/Windows matrix, repeat the read-only plan to obtain its then-current digest, and retire only subjects still reported eligible through the product CLI. Re-observe the final plan and rerun the exact Windows protected-image storage preflight rather than treating estimated reclaimed bytes as capacity proof.
+The two earlier hosted runs are diagnostic evidence only; neither accepts the corrected head. Next: commit and push the correction, require the exact-head hosted Ubuntu/Windows matrix, repeat the read-only plan to obtain its then-current digest, and retire only subjects still reported eligible through the product CLI. Re-observe the final plan and rerun the exact Windows protected-image storage preflight rather than treating estimated reclaimed bytes as capacity proof.

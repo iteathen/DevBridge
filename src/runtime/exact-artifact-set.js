@@ -226,6 +226,7 @@ export class ExactArtifactSet {
     const before = await this.#inspect(location, { bigint: true });
     if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || await this.#isReparse(location, before)) throw new Error('artifact set file shape is unsafe');
     if (expected && !sameIdentity(expected.identity, before)) throw new Error('artifact set file identity changed');
+    const beforeIdentity = fileIdentity(before);
     const handle = await this.#open(location, 'r');
     try {
       const held = await handle.stat({ bigint: true });
@@ -234,13 +235,14 @@ export class ExactArtifactSet {
       if (measure || expected?.expectedSha256 != null) measured = await sha256Handle(handle);
       const after = await this.#inspect(location, { bigint: true });
       if (!after.isFile() || after.isSymbolicLink() || after.nlink !== 1n || await this.#isReparse(location, after)
-          || !sameObservedFilesystemIdentity(after, held, { platform: this.#platform }) || !sameIdentity(fileIdentity(held), after)) {
+          || !sameObservedFilesystemIdentity(after, held, { platform: this.#platform }) || held.size !== after.size
+          || !sameIdentity(beforeIdentity, after)) {
         throw new Error('artifact set file changed during observation');
       }
       const expectedBytes = expected?.expectedBytes;
       if (expectedBytes != null && BigInt(expectedBytes) !== held.size) throw new Error('artifact set file byte count changed');
       if (expected?.expectedSha256 != null && (measured.bytes !== Number(held.size) || measured.digest !== expected.expectedSha256)) throw new Error('artifact set file digest changed');
-      return Object.freeze({ info: held, handle, measured, close: false });
+      return Object.freeze({ info: after, handle, measured, close: false });
     } catch (error) {
       await handle.close().catch(() => {});
       throw error;

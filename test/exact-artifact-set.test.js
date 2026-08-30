@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { link, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, mkdtemp, open, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -155,4 +155,46 @@ test('an empty exact root remains present until its directory is removed', async
     await api.remove(manifest);
     assert.equal((await api.observe(manifest)).state, 'absent');
   } finally { await rm(parent, { recursive: true, force: true }); }
+});
+
+test('path observations remain authoritative when handle timestamp precision differs', async () => {
+  const state = await fixture();
+  try {
+    const api = createExactArtifactSet({
+      platform: process.platform,
+      ...(process.platform === 'win32' ? { inspectReparse: async (_location, info) => info.isSymbolicLink() } : {}),
+      openFile: async (location, flags) => {
+        const handle = await open(location, flags);
+        return {
+          read: handle.read.bind(handle),
+          close: handle.close.bind(handle),
+          async stat(options) {
+            const info = await handle.stat(options);
+            info.birthtimeNs += 1n;
+            return info;
+          },
+        };
+      },
+    });
+    const manifest = await api.plan(request(state.root));
+    assert.equal((await api.observe(manifest)).state, 'present');
+  } finally { await rm(state.parent, { recursive: true, force: true }); }
+});
+
+test('path identity drift during one observation fails closed', async () => {
+  const state = await fixture();
+  let observations = 0;
+  try {
+    const target = path.join(state.root, 'first.bin');
+    const api = createExactArtifactSet({
+      platform: process.platform,
+      ...(process.platform === 'win32' ? { inspectReparse: async (_location, info) => info.isSymbolicLink() } : {}),
+      inspect: async (location, options) => {
+        const info = await lstat(location, options);
+        if (location === target && ++observations === 2) info.mtimeNs += 1n;
+        return info;
+      },
+    });
+    await assert.rejects(() => api.plan(request(state.root)), /changed during observation/u);
+  } finally { await rm(state.parent, { recursive: true, force: true }); }
 });
