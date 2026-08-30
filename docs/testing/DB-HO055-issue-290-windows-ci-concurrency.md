@@ -195,3 +195,11 @@ Local exact-candidate evidence:
 - standalone regeneration, syntax, and `git diff --check` passed apart from informational Windows line-ending warnings.
 
 Commit and push the exact replacement, then require repeated complete four-job hosted acceptance before re-closing #290. The same accepted head is required before #377 can close.
+
+## Accepted bounded-policy checkpoint
+
+[GitHub Actions run 33288158789 attempt 1](https://github.com/iteathen/DevBridge/actions/runs/33288158789/attempts/1) passed all four jobs on exact replacement commit `50d3a733785194be2d4161c7aebbfc42934289bd`. Windows bounded smoke completed in 1 minute 30 seconds and Windows serialized full-suite/doctor completed in 2 minutes 15 seconds; Ubuntu smoke and full/doctor completed in 25 and 39 seconds.
+
+[GitHub Actions run 33288158789 attempt 2](https://github.com/iteathen/DevBridge/actions/runs/33288158789/attempts/2) reran the entire matrix on the same commit. Windows bounded smoke completed in 1 minute 23 seconds and Windows serialized full-suite/doctor completed in 2 minutes 32 seconds; Ubuntu smoke and full/doctor completed in 25 and 37 seconds.
+
+Both attempts passed cleanly without rerunning only a failed job, changing a deadline, removing coverage, or altering product behavior. The replacement policy has exact local Node 22 evidence, default-path evidence, complete-suite evidence, and repeated hosted Windows/Ubuntu evidence. Re-close #290.
