@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: local implementation candidate; hosted exact-head acceptance pending
+Status: accepted implementation checkpoint; application-level removal coverage and CLI remain pending
 
 Coordinates with: #116, #159, #180, #391, DB-003, DB-009, DB-011, DB-019, DB-020, DB-HO095, DB-HO098, DB-HO099, DB-HO100, DB-HO101, DB-HO103, DB-HO104, and DB-HO105.
 
@@ -92,4 +92,6 @@ The first implementation used same-operation lease observation as the suppressio
 
 The first receipt-retirement pass also assumed every binding could retain the collection's original generation while receipts retired in forward order. A disposable real runner-cache removal proved that assumption false: each exact CAS advances the receipt generation, dependency projections shrink in forward order, and physical topology changes as effects succeed. The accepted reassessment pre-binds the entire plan, separates producer completeness from materialization consistency, re-observes the exact current receipt at retirement, translates topology-local generations inside the topology adapter, and retires terminal receipts in reverse dependency order. The disposable transaction removed the exact object, structural directories, and root, retired every receipt, and projected complete empty application coverage.
 
-Hosted acceptance is still required for the exact implementation commit. Issue #391 remains open. Application and purge producer coverage, the user-facing uninstall/reconfiguration surface, setup completion, protected-service/provider/environment work, and real Hyper-V plus KVM/libvirt qualification remain later dependency-ordered work. No UAC/elevation, live canonical removal, protected/provider/VM/guest mutation, repository execution, model invocation, or GPU/CUDA action occurred.
+Hosted acceptance: exact implementation commit `c2c95fb059b235cddf18a5817070a77b1981e949` passed Ubuntu smoke/full and Windows bounded-smoke/serialized-full, architecture gates, standalone installer regression, and doctor in [run 33334772070](https://github.com/iteathen/DevBridge/actions/runs/33334772070). This accepts the launch/removal interlock, terminal receipt retirement, and completed-operation rotation boundary.
+
+Issue #391 remains open. Application and purge producer coverage, the user-facing uninstall/reconfiguration surface, setup completion, protected-service/provider/environment work, and real Hyper-V plus KVM/libvirt qualification remain later dependency-ordered work. No UAC/elevation, live canonical removal, protected/provider/VM/guest mutation, repository execution, model invocation, or GPU/CUDA action occurred.
