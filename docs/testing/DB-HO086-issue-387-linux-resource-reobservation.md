@@ -1,6 +1,6 @@
 # DB-HO086 — issue #387 Linux protected resource re-observation
 
-Status: planned on `stage8/362-protected-activity-channel`. This slice is software-only and authorizes no authentication, elevation, protected mutation, provider operation, VM/guest action, repository execution, or model invocation.
+Status: implementation accepted locally and in exact-head hosted CI on `stage8/362-protected-activity-channel`; documentation-head acceptance remains. This slice is software-only and authorizes no authentication, elevation, protected mutation, provider operation, VM/guest action, repository execution, or model invocation.
 
 ## Required preflight and assessment
 
@@ -64,8 +64,19 @@ Tests cover ready-to-no-op, unready-to-reconcile, null/forged/throwing evidence,
 - Exact-Node doctor passed and truthfully reported repository execution unavailable/fail-closed because no local persistent-environment route is configured; coding-model adapters remained disabled.
 - `git diff --check` passed apart from Git's informational existing Windows line-ending policy warnings.
 
-The exact Node archive SHA-256 was `21c2d9735c80b8f86dab19305aa6a9f6f59bbc808f68de3eef09d5832e3bfbbd`. Remove the temporary runtime tree after final local checks. No authentication, `sudo`, UAC, protected service/provider/storage mutation, VM/guest action, repository execution, or coding-model invocation occurred.
+The exact Node archive SHA-256 was `21c2d9735c80b8f86dab19305aa6a9f6f59bbc808f68de3eef09d5832e3bfbbd`. The temporary exact-runtime tree was removed after the final local checks and its absence was verified before commit. No authentication, `sudo`, UAC, protected service/provider/storage mutation, VM/guest action, repository execution, or coding-model invocation occurred.
+
+## Hosted implementation evidence
+
+[GitHub Actions run 33298113471](https://github.com/iteathen/DevBridge/actions/runs/33298113471) passed all four jobs on exact implementation commit `3c0ae99809fcbd8780f90d135a59c4779f4e7f78`:
+
+- Windows bounded smoke/preflight/identity/standalone-installer passed.
+- Windows serialized complete suite, architecture gate, and doctor passed.
+- Ubuntu smoke/preflight/identity/standalone-installer passed.
+- Ubuntu complete suite reported 1,915 tests, 1,879 passed, 36 expected platform skips, and zero failures; its separate architecture gate passed 34/34.
+
+Hosted runners exercised only the software contracts and test fakes in this slice. This evidence does not claim local protected service readiness, provider/storage readiness, a constructed environment, a real guest bridge, repository execution, or either physical C canary.
 
 ## Remaining acceptance
 
-Commit and push the exact implementation, require Ubuntu/Windows smoke/full CI, then record hosted evidence in a documentation-only commit. Close only #387 after that exact documentation head is green. The parent and physical issues remain open.
+Require this documentation-only acceptance head to pass the same Ubuntu/Windows smoke/full matrix. Close only #387 after that exact head is green. The parent and physical issues remain open.
