@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: assessed and planned; physical install-only transaction is gated on exact plan-head hosted acceptance
+Status: exact user-owned candidate staged and independently observed; documentation-head acceptance pending
 
 Coordinates with: #116, #360, #362, #372–#374, DB-003, DB-008, DB-009, DB-011, and DB-020.
 
@@ -52,3 +52,32 @@ Reassessment: use only the checked-in zero-state bootstrap from an exact hosted-
 
 No setup, UAC, service/provider/storage action, VM/guest operation, repository execution, physical canary, model invocation, or GPU/CUDA work is authorized by this plan.
 
+## Hosted plan-head acceptance
+
+[GitHub Actions run 33306793905](https://github.com/iteathen/DevBridge/actions/runs/33306793905) passed Ubuntu smoke/full and Windows bounded-smoke/serialized-full plus doctor on exact plan head `d7d35e6d0a7b7b6e73326ee9155049447a7a9276`. Both smoke jobs passed the standalone installer regression before the local effect.
+
+## Installation and observation
+
+The checked-in zero-state bootstrap was invoked with:
+
+- exact selector `d7d35e6d0a7b7b6e73326ee9155049447a7a9276`;
+- the canonical user installation home; and
+- explicit `--install-only`.
+
+It exited zero and returned one bounded `devbridge/entry-install-v1` result binding component head, selected runner ref, and pinned runner head to the exact selector. It named only the three manifest-owned Permanent Entry wrapper outputs and did not enter setup.
+
+Independent wrapper-owned `entry-install-status` then returned `devbridge/entry-install-status-v1` with component, selected runner, and pinned runner all equal to `d7d35e6d0a7b7b6e73326ee9155049447a7a9276`. Command discovery still resolves `devbridge-entry` and `devbridge` to the manifest-owned launchers below the canonical home.
+
+Installed read-only doctor, supplied with the verified example configuration, exited zero and reported:
+
+- `ok: true`;
+- execution disabled by local configuration;
+- repository execution `unavailable`/not ready because no persistent-environment route is configured;
+- lifecycle `setup-reentry-required` with zero declarations and environments; and
+- coding-model adapters disabled.
+
+The effect did not invoke setup, display or request UAC, refresh the protected service, mutate provider/image/environment/VM/guest state, execute repository code, run a physical canary, invoke a model adapter, or touch GPU/CUDA work. The exact next physical dependency remains one later administrator-authorized protected service refresh/re-entry.
+
+## Remaining acceptance
+
+Require this documentation-only head to pass the same four hosted jobs plus doctor. This staging checkpoint does not close #116, #360, #362, #372, #373, or #374 because their protected-service and physical canary evidence remains incomplete.
