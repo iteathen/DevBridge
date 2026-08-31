@@ -116,3 +116,11 @@ Both standalone artifacts were regenerated twice from the modular source graph w
 Exact implementation `7da445fb5adafdf1ee55396623f7e9ad386394ad` passed Ubuntu smoke/full and Windows bounded-smoke/serialized-full plus doctor in [hosted run 33325147542](https://github.com/iteathen/DevBridge/actions/runs/33325147542). This accepts the production ownership writer only; it does not create inventory or removal authority.
 
 Keep #391 open. The next primitive-first slice is the receipt-backed read-only application-removal contributor and complete application-mode coverage, followed by a separate terminal receipt-retirement/removal-operation rotation design before any uninstall CLI or deletion is exposed.
+
+## Physical historical-membership correction — 2026-08-31
+
+Canonical-home physical re-entry exposed a generation-compatibility defect after the original #362 ownership-composition correction was physically falsified. The installed primary wrapper referenced exact subject `b535a5d2ce04a420ac3e0f559be712009747c8e2`, whose accepted permanent-entry manifest contains the 14-file closure used before runner-cache ownership/runtime dependencies were added. Current reference acceptance incorrectly revalidated that historical component against the later 26-file closure, so a statically recognized primary failed with `Recognized primary file does not reference an accepted subject.`
+
+The correction keeps current component publication/verification unchanged and adds one closed historical reference-verification set matching the previously accepted 14-file generation. Only primary/previous reference acceptance may use it; new component installation and `verifyInstalledComponent` remain bound to the current closure. Unknown intermediate/subset membership remains fail-closed. Regression coverage removes receipt state to model a pre-receipt canonical installation, proves an exact historical wrapper/component can advance while remaining preserved as previous authority, and proves a 15-file unknown membership is rejected without replacing the primary.
+
+This does not authorize manual canonical-home mutation, PATH/service/ACL changes, construction, VM/image work, repository execution, or GPU/CUDA work. Hosted exact-head qualification and a new ordinary non-elevated physical retry remain required before the Stage 8 physical frontier advances.

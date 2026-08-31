@@ -30,16 +30,44 @@ export const INSTALL_STATUS_PROTOCOL = 'devbridge/entry-install-status-v1';
 export const INSTALL_LOCK_PROTOCOL = 'devbridge/entry-install-lock-v1';
 export const INSTALL_OWNERSHIP_REQUEST_PROTOCOL = 'devbridge/entry-install-ownership-request-v1';
 export const SOURCE_REPOSITORY = 'https://github.com/iteathen/DevBridge.git';
+
+// Closed compatibility set for permanent-entry components produced before runner-cache
+// ownership/runtime bricks became part of the installed entry closure. Historical
+// references must match this set exactly; arbitrary subsets are not accepted.
+const HISTORICAL_COMPONENT_FILE_SETS = Object.freeze([
+  Object.freeze([
+    'devbridge-entry.mjs',
+    'src/entry/content-addressed-runner-provider.mjs',
+    'src/entry/development-checkout-runner-provider.mjs',
+    'src/entry/development-stable-subject-authority.mjs',
+    'src/entry/exact-checkout-runner-provider.mjs',
+    'src/entry/experimental-checkout-runner-provider.mjs',
+    'src/entry/experimental-entry.mjs',
+    'src/entry/experimental-subject-authority.mjs',
+    'src/entry/github-runner-source.mjs',
+    'src/entry/installation-identity.mjs',
+    'src/entry/permanent-entry.mjs',
+    'src/entry/production-stable-subject-authority.mjs',
+    'src/entry/stable-entry.mjs',
+    'src/entry/stable-runner-state.mjs',
+  ]),
+]);
 export const INSTALLED_COMPONENT_FILES = PERMANENT_ENTRY_COMPONENT_FILES;
 
 const sourceChannel = createSourceChannel({ normalizeSelector: normalizeInstallRef, defaultEndpoint: SOURCE_REPOSITORY });
-const componentStore = createComponentStore({
-  protocol: INSTALL_PROTOCOL,
-  files: INSTALLED_COMPONENT_FILES,
-  defaultEndpoint: SOURCE_REPOSITORY,
-  manifestName: '.devbridge-entry-install.json',
-  endpointField: 'sourceRepository',
-});
+function createEntryComponentStore(files) {
+  return createComponentStore({
+    protocol: INSTALL_PROTOCOL,
+    files,
+    defaultEndpoint: SOURCE_REPOSITORY,
+    manifestName: '.devbridge-entry-install.json',
+    endpointField: 'sourceRepository',
+  });
+}
+const componentStore = createEntryComponentStore(INSTALLED_COMPONENT_FILES);
+const historicalComponentStores = Object.freeze(
+  HISTORICAL_COMPONENT_FILE_SETS.map((files) => createEntryComponentStore(files)),
+);
 const mutationLease = createMutationLease({ protocol: INSTALL_LOCK_PROTOCOL, fileName: '.install.lock' });
 const entryPublication = createEntryPublication({
   statusProtocol: INSTALL_STATUS_PROTOCOL,
@@ -158,11 +186,15 @@ export async function installDevBridge(options, {
       state: ownership,
       artifacts,
       publication: entryPublication,
-      acceptReference: (reference) => componentStore.verify(
-        path.join(components, reference.subject),
-        reference.subject,
-        sourceRepository,
-      ),
+      acceptReference: (reference) => {
+      const componentRoot = path.join(components, reference.subject);
+      return componentStore.verify(componentRoot, reference.subject, sourceRepository)
+        || historicalComponentStores.some((store) => store.verify(
+          componentRoot,
+          reference.subject,
+          sourceRepository,
+        ));
+    },
     });
     const published = await fileOwnership.install({
       root: home,
