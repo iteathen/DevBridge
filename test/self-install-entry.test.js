@@ -599,3 +599,87 @@ test('default install leaves stable selection active while explicit exact pinnin
   assert.equal(args.selectedRunnerRef, null);
   assert.equal(Object.hasOwn(args, 'pinSelectedRunner'), false);
 });
+
+const HISTORICAL_ENTRY_COMPONENT_FILES = Object.freeze([
+  'devbridge-entry.mjs',
+  'src/entry/content-addressed-runner-provider.mjs',
+  'src/entry/development-checkout-runner-provider.mjs',
+  'src/entry/development-stable-subject-authority.mjs',
+  'src/entry/exact-checkout-runner-provider.mjs',
+  'src/entry/experimental-checkout-runner-provider.mjs',
+  'src/entry/experimental-entry.mjs',
+  'src/entry/experimental-subject-authority.mjs',
+  'src/entry/github-runner-source.mjs',
+  'src/entry/installation-identity.mjs',
+  'src/entry/permanent-entry.mjs',
+  'src/entry/production-stable-subject-authority.mjs',
+  'src/entry/stable-entry.mjs',
+  'src/entry/stable-runner-state.mjs',
+]);
+
+function rewriteComponentMembership(component, files) {
+  const selected = new Set(files);
+  const manifestPath = path.join(component, '.devbridge-entry-install.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  for (const item of manifest.files) {
+    if (!selected.has(item.path)) rmSync(path.join(component, ...item.path.split('/')), { force: true });
+  }
+  manifest.files = manifest.files.filter((item) => selected.has(item.path));
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + String.fromCharCode(10));
+}
+
+function clearInstallerOwnershipReceipts(home) {
+  rmSync(path.join(home, 'entry', 'ownership-receipts'), { recursive: true, force: true });
+  rmSync(path.join(home, 'entry', 'ownership-scratch'), { recursive: true, force: true });
+}
+
+test('historical permanent-entry membership upgrades through exact closed compatibility', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'devbridge-historical-entry-upgrade-'));
+  const fixture = fixtureRepository(root);
+  const home = path.join(root, 'home');
+  const args = parseInstallArgs(['--ref', 'main', '--home', home], { environment: {}, homeDirectory: root });
+  const initial = await installDevBridge(args, installDependencies(fixture.source));
+  const historicalHead = initial.componentHead;
+  const historicalComponent = path.join(home, 'entry', 'components', historicalHead);
+
+  rewriteComponentMembership(historicalComponent, HISTORICAL_ENTRY_COMPONENT_FILES);
+  assert.equal(verifyInstalledComponent(historicalComponent, historicalHead, fixture.source), false);
+  clearInstallerOwnershipReceipts(home);
+
+  const nextHead = fixture.advance();
+  const upgraded = await installDevBridge(args, installDependencies(fixture.source));
+  assert.equal(upgraded.componentHead, nextHead);
+  assert.equal(existsSync(historicalComponent), true);
+
+  const previous = path.join(home, 'bin', 'devbridge-entry.previous.mjs');
+  const previousStatus = JSON.parse(run(process.execPath, [previous, 'entry-install-status']).stdout.trim());
+  assert.equal(previousStatus.componentHead, historicalHead);
+  const currentStatus = JSON.parse(run(process.execPath, [upgraded.wrappers.javascript, 'entry-install-status']).stdout.trim());
+  assert.equal(currentStatus.componentHead, nextHead);
+});
+
+test('historical reference compatibility rejects unknown component membership', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'devbridge-historical-entry-reject-'));
+  const fixture = fixtureRepository(root);
+  const home = path.join(root, 'home');
+  const args = parseInstallArgs(['--ref', 'main', '--home', home], { environment: {}, homeDirectory: root });
+  const initial = await installDevBridge(args, installDependencies(fixture.source));
+  const historicalHead = initial.componentHead;
+  const historicalComponent = path.join(home, 'entry', 'components', historicalHead);
+  const unknownMembership = [
+    ...HISTORICAL_ENTRY_COMPONENT_FILES,
+    'src/entry/runner-cache-composition.mjs',
+  ];
+
+  rewriteComponentMembership(historicalComponent, unknownMembership);
+  clearInstallerOwnershipReceipts(home);
+  fixture.advance();
+
+  await assert.rejects(
+    () => installDevBridge(args, installDependencies(fixture.source)),
+    /Recognized primary file does not reference an accepted subject/u,
+  );
+  const primary = path.join(home, 'bin', 'devbridge-entry.mjs');
+  const status = JSON.parse(run(process.execPath, [primary, 'entry-install-status']).stdout.trim());
+  assert.equal(status.componentHead, historicalHead);
+});
