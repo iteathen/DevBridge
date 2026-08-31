@@ -168,18 +168,18 @@ function assertActivity(value) {
   return value;
 }
 
-async function invokeActivity(activity, request) {
-  if (request.operation === 'inspect') return activity.inspect();
-  if (request.operation === 'list') return activity.list();
-  if (request.operation === 'observe') return activity.observe(request.payload.target);
-  if (request.operation === 'prepare') return activity.prepare(request.payload.target);
-  if (request.operation === 'exchange') return activity.exchange(request.payload.frame);
+async function invokeActivity(activity, request, options) {
+  if (request.operation === 'inspect') return activity.inspect(options);
+  if (request.operation === 'list') return activity.list(options);
+  if (request.operation === 'observe') return activity.observe(request.payload.target, options);
+  if (request.operation === 'prepare') return activity.prepare(request.payload.target, options);
+  if (request.operation === 'exchange') return activity.exchange(request.payload.frame, options);
   throw new TypeError('environment activity operation is invalid');
 }
 
 export function createEnvironmentActivityHandler({ activity } = {}) {
   const selected = assertActivity(activity);
-  return async (raw) => {
+  return async (raw, { signal = null } = {}) => {
     let request;
     try { request = normalizeEnvironmentActivityRequest(raw); }
     catch {
@@ -192,7 +192,7 @@ export function createEnvironmentActivityHandler({ activity } = {}) {
       });
     }
     try {
-      const projected = projectValue(request.operation, await invokeActivity(selected, request), request);
+      const projected = projectValue(request.operation, await invokeActivity(selected, request, { signal }), request);
       const response = Object.freeze({ protocol: RESULT_PROTOCOL, requestId: request.requestId, ok: true, value: projected });
       encodedBytes(response, 'environment activity result', MAX_RESULT_BYTES);
       return response;
@@ -233,10 +233,10 @@ export class EnvironmentActivityClient {
     return structuredClone(result.value);
   }
 
-  inspect() { return this.#request('inspect'); }
-  list() { return this.#request('list'); }
-  observe(targetValue) { return this.#request('observe', { target: targetValue }); }
-  prepare(targetValue) { return this.#request('prepare', { target: targetValue }); }
+  inspect(options = {}) { return this.#request('inspect', {}, options); }
+  list(options = {}) { return this.#request('list', {}, options); }
+  observe(targetValue, options = {}) { return this.#request('observe', { target: targetValue }, options); }
+  prepare(targetValue, options = {}) { return this.#request('prepare', { target: targetValue }, options); }
   async exchange(frame, { signal = null } = {}) {
     const value = await this.#request('exchange', { frame }, { signal });
     return value.frame;

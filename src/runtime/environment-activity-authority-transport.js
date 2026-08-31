@@ -11,6 +11,7 @@ import {
 
 const AUTHORITY_ID = /^[0-9a-f]{32}$/u;
 const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
+const DEFAULT_OPERATION_TIMEOUT_MS = 300_000;
 const MAX_REQUEST_WIRE_BYTES = ENVIRONMENT_ACTIVITY_AUTHORITY_MAX_REQUEST_BYTES + 1024;
 const MAX_RESULT_WIRE_BYTES = ENVIRONMENT_ACTIVITY_AUTHORITY_MAX_RESULT_BYTES + 1024;
 
@@ -53,38 +54,54 @@ function connectTimeout(value) {
   return value;
 }
 
+function operationTimeout(value) {
+  if (!Number.isSafeInteger(value) || value < 100 || value > 300_000) throw new TypeError('environment activity operation timeout must be 100-300000 ms');
+  return value;
+}
+
 function transportFailure(message = 'environment activity authority transport is unavailable') {
   const error = new Error(message);
   error.code = 'ENVIRONMENT_ACTIVITY_AUTHORITY_UNAVAILABLE';
   return error;
 }
 
-export function createEnvironmentActivitySocketExchange({ endpoint, connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS } = {}) {
+export function createEnvironmentActivitySocketExchange({
+  endpoint,
+  connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS,
+  exchangeTimeoutMs = DEFAULT_OPERATION_TIMEOUT_MS,
+} = {}) {
   if (typeof endpoint !== 'string' || endpoint.length === 0) throw new TypeError('environment activity authority endpoint is required');
-  const timeoutMs = connectTimeout(connectTimeoutMs);
+  const connectMs = connectTimeout(connectTimeoutMs);
+  const exchangeMs = operationTimeout(exchangeTimeoutMs);
   return async (request, { signal = null } = {}) => new Promise((resolve, reject) => {
     let settled = false;
     let connected = false;
     let buffer = '';
+    let connectTimer = null;
+    let exchangeTimer = null;
     const socket = net.createConnection(endpoint);
     const finish = (error, value) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (connectTimer != null) clearTimeout(connectTimer);
+      if (exchangeTimer != null) clearTimeout(exchangeTimer);
       signal?.removeEventListener?.('abort', onAbort);
       socket.destroy();
       if (error) reject(error);
       else resolve(value);
     };
     const onAbort = () => finish(transportFailure('environment activity authority exchange was interrupted'));
-    const timer = setTimeout(() => finish(transportFailure()), timeoutMs);
-    timer.unref?.();
+    connectTimer = setTimeout(() => finish(transportFailure()), connectMs);
+    connectTimer.unref?.();
     if (signal?.aborted) return finish(transportFailure('environment activity authority exchange was interrupted'));
     signal?.addEventListener?.('abort', onAbort, { once: true });
     socket.setEncoding('utf8');
     socket.once('connect', () => {
       connected = true;
-      clearTimeout(timer);
+      if (connectTimer != null) clearTimeout(connectTimer);
+      connectTimer = null;
+      exchangeTimer = setTimeout(() => finish(transportFailure('environment activity authority exchange timed out')), exchangeMs);
+      exchangeTimer.unref?.();
       let wire;
       try { wire = `${JSON.stringify(request)}\n`; }
       catch { return finish(transportFailure('environment activity authority request could not be encoded')); }
@@ -126,28 +143,45 @@ function close(server) {
   });
 }
 
-export function createEnvironmentActivitySocketServerAtEndpoint({ endpoint, handler, maxConnections = 32, requestTimeoutMs = 5000 } = {}) {
+export function createEnvironmentActivitySocketServerAtEndpoint({
+  endpoint,
+  handler,
+  maxConnections = 32,
+  requestTimeoutMs = 5000,
+  operationTimeoutMs = DEFAULT_OPERATION_TIMEOUT_MS,
+} = {}) {
   if (typeof endpoint !== 'string' || endpoint.length === 0) throw new TypeError('environment activity authority endpoint is required');
   if (typeof handler !== 'function') throw new TypeError('environment activity authority handler is required');
   if (!Number.isSafeInteger(maxConnections) || maxConnections < 1 || maxConnections > 256) throw new TypeError('environment activity authority maxConnections is invalid');
-  const timeoutMs = connectTimeout(requestTimeoutMs);
+  const preRequestTimeoutMs = connectTimeout(requestTimeoutMs);
+  const operationMs = operationTimeout(operationTimeoutMs);
   const server = net.createServer((socket) => {
     socket.setEncoding('utf8');
     let buffer = '';
     let processing = false;
     let answered = false;
+    let controller = null;
+    let operationTimer = null;
+    const clearOperationTimer = () => {
+      if (operationTimer == null) return;
+      clearTimeout(operationTimer);
+      operationTimer = null;
+    };
     const failClosed = () => {
       if (answered) return;
       answered = true;
+      clearOperationTimer();
+      controller?.abort();
       socket.destroy();
     };
-    socket.setTimeout(timeoutMs, failClosed);
+    socket.setTimeout(preRequestTimeoutMs, failClosed);
     const answer = (value) => {
       if (answered) return;
       let wire;
       try { wire = `${JSON.stringify(value)}\n`; } catch { return failClosed(); }
       if (Buffer.byteLength(wire, 'utf8') > MAX_RESULT_WIRE_BYTES) return failClosed();
       answered = true;
+      clearOperationTimer();
       socket.end(wire);
     };
     socket.on('data', async (chunk) => {
@@ -160,11 +194,20 @@ export function createEnvironmentActivitySocketServerAtEndpoint({ endpoint, hand
       let request;
       try { request = JSON.parse(buffer.slice(0, newline)); } catch { return failClosed(); }
       processing = true;
+      controller = new AbortController();
       socket.setTimeout(0);
       socket.pause();
-      try { answer(await handler(request)); } catch { failClosed(); }
+      const onClose = () => failClosed();
+      socket.once('close', onClose);
+      operationTimer = setTimeout(failClosed, operationMs);
+      operationTimer.unref?.();
+      try { answer(await handler(request, { signal: controller.signal })); } catch { failClosed(); }
+      finally {
+        clearOperationTimer();
+        socket.off('close', onClose);
+      }
     });
-    socket.once('error', () => {});
+    socket.once('error', failClosed);
   });
   server.maxConnections = maxConnections;
   return Object.freeze({
@@ -187,10 +230,15 @@ export function createConfiguredEnvironmentActivityClient({
   platform = process.platform,
   runDirectory = '/run/devbridge',
   connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS,
+  exchangeTimeoutMs = DEFAULT_OPERATION_TIMEOUT_MS,
 } = {}) {
   const selected = endpointFor({ stateDirectory, platform, runDirectory });
   return new EnvironmentActivityClient({
-    exchange: createEnvironmentActivitySocketExchange({ endpoint: selected.endpoint, connectTimeoutMs }),
+    exchange: createEnvironmentActivitySocketExchange({
+      endpoint: selected.endpoint,
+      connectTimeoutMs,
+      exchangeTimeoutMs,
+    }),
   });
 }
 
@@ -199,10 +247,14 @@ export function createEnvironmentActivitySocketServer({
   stateDirectory,
   platform = process.platform,
   runDirectory = '/run/devbridge',
+  requestTimeoutMs = 5000,
+  operationTimeoutMs = DEFAULT_OPERATION_TIMEOUT_MS,
 } = {}) {
   const selected = endpointFor({ stateDirectory, platform, runDirectory });
   return createEnvironmentActivitySocketServerAtEndpoint({
     endpoint: selected.endpoint,
     handler: createEnvironmentActivityHandler({ activity }),
+    requestTimeoutMs,
+    operationTimeoutMs,
   });
 }

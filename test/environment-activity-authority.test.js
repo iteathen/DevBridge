@@ -76,6 +76,36 @@ test('activity bridge client preserves the existing frame contract through the c
   assert.equal(seen[0].target, TARGET);
 });
 
+test('activity handler preserves the caller cancellation signal across the neutral hop', async () => {
+  const controller = new AbortController();
+  let observedSignal = null;
+  const frame = {
+    protocol: ENVIRONMENT_BRIDGE_PROTOCOL,
+    request: 'a'.repeat(32),
+    target: TARGET,
+    kind: 'health',
+    body: {},
+  };
+  const handler = createEnvironmentActivityHandler({ activity: {
+    async inspect() { return { ready: true, identity: 'foundation-a' }; },
+    async list() { return []; },
+    async observe() { return observed(); },
+    async prepare() { return { generation: 'bootstrap-v1' }; },
+    async exchange(candidate, { signal = null } = {}) {
+      observedSignal = signal;
+      return bridgeResponse(candidate, { version: '1.0.0', features: ['health', 'execute', 'observe', 'cancel', 'put', 'get'] });
+    },
+  } });
+  const response = await handler({
+    protocol: ENVIRONMENT_ACTIVITY_AUTHORITY_REQUEST_PROTOCOL,
+    requestId: crypto.randomUUID(),
+    operation: 'exchange',
+    payload: { frame },
+  }, { signal: controller.signal });
+  assert.equal(response.ok, true);
+  assert.equal(observedSignal, controller.signal);
+});
+
 test('activity handler fails closed without exposing protected failures', async () => {
   const handler = createEnvironmentActivityHandler({ activity: {
     async inspect() { throw new Error('C:/protected/identity private provider detail'); },
@@ -104,4 +134,3 @@ test('activity client rejects response ownership mismatch and unavailable transp
   const missing = new EnvironmentActivityClient({ exchange: async () => { throw new Error('missing'); } });
   await assert.rejects(() => missing.inspect(), /environment activity authority is unavailable/u);
 });
-
