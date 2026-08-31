@@ -218,6 +218,7 @@ jobs:
           git add -A
           actual="$(git diff --cached --name-only | sort)"
           expected="$(printf '%s\n' \
+            .github/workflows/fix-historical-entry-component-clean.yml \
             docs/testing/DB-HO103-issue-391-permanent-entry-production-receipts.md \
             install-devbridge.mjs \
             src/install/permanent-entry-installer.mjs \
