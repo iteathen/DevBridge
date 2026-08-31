@@ -27,6 +27,19 @@ import { materializeExactSource } from '../src/bootstrap/exact-source-acquisitio
 const HEAD_A = 'a'.repeat(40);
 const HEAD_B = 'b'.repeat(40);
 const RAW_BASE = 'https://raw.githubusercontent.com/iteathen/DevBridge/';
+const REPAIR_COMPONENT_PATH = 'component.txt';
+const REPAIR_COMPONENT = 'selected-subject-component';
+const REPAIR_STAGE = `
+export const INSTALLED_COMPONENT_FILES = ${JSON.stringify([REPAIR_COMPONENT_PATH])};
+export async function installDevBridge(options, dependencies) {
+  const { readFile } = await import('node:fs/promises');
+  const path = await import('node:path');
+  const content = await readFile(path.join(dependencies.preparedSource.root, ${JSON.stringify(REPAIR_COMPONENT_PATH)}), 'utf8');
+  if (content !== ${JSON.stringify(REPAIR_COMPONENT)}) throw new Error('component subject bytes changed');
+  return { componentHead: dependencies.preparedSource.head, home: options.home };
+}
+export function runInstalledSetup() { throw new Error('repair setup must not run'); }
+`;
 
 function response(body, status = 200) {
   const bytes = Buffer.isBuffer(body)
@@ -180,13 +193,10 @@ test('selection repair separates exact installer mechanics from the exact compon
     const value = String(url);
     requests.push(value);
     const installerRelative = rawRelative(value, HEAD_B);
-    if (installerRelative === STAGE_PATH || installerRelative === SOURCE_STAGE_PATH) {
-      return response(repositoryFile(installerRelative));
-    }
+    if (installerRelative === STAGE_PATH) return response(REPAIR_STAGE);
+    if (installerRelative === SOURCE_STAGE_PATH) return response(repositoryFile(installerRelative));
     const componentRelative = rawRelative(value, HEAD_A);
-    if (INSTALLED_COMPONENT_FILES.includes(componentRelative)) {
-      return response(repositoryFile(componentRelative));
-    }
+    if (componentRelative === REPAIR_COMPONENT_PATH) return response(REPAIR_COMPONENT);
     throw new Error(`unexpected repair fetch ${url}`);
   };
 
@@ -208,18 +218,12 @@ test('selection repair separates exact installer mechanics from the exact compon
     assert.equal(result.subject.head, HEAD_A);
     assert.equal(result.installed.componentHead, HEAD_A);
     assert.equal(readBootstrapSelection(home), null);
-    assert.equal(
-      verifyInstalledComponent(path.join(home, 'entry', 'components', HEAD_A), HEAD_A, SOURCE_REPOSITORY),
-      true,
-    );
     assert.equal(requests.some((value) => value.includes(`/${HEAD_A}/${STAGE_PATH}`)), false);
     assert.equal(requests.some((value) => value.includes(`/${HEAD_A}/${SOURCE_STAGE_PATH}`)), false);
     assert.equal(requests.some((value) => value.includes(`/${HEAD_B}/${STAGE_PATH}`)), true);
     assert.equal(requests.some((value) => value.includes(`/${HEAD_B}/${SOURCE_STAGE_PATH}`)), true);
-    assert.equal(
-      requests.some((value) => INSTALLED_COMPONENT_FILES.some((relative) => value.includes(`/${HEAD_B}/${relative}`))),
-      false,
-    );
+    assert.equal(requests.some((value) => value.includes(`/${HEAD_A}/${REPAIR_COMPONENT_PATH}`)), true);
+    assert.equal(requests.some((value) => value.includes(`/${HEAD_B}/${REPAIR_COMPONENT_PATH}`)), false);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

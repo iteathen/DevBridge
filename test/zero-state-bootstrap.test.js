@@ -309,9 +309,10 @@ test('selection repair requires prior state and retains it unless the selected s
 
 test('standalone first-stage bytes can execute directly from a Node data import', () => {
   const source = readFileSync(new URL('../bootstrap-devbridge.mjs', import.meta.url));
-  const data = `data:text/javascript;base64,${source.toString('base64')}`;
-  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(data)})`, '--', '--help'], {
+  const loader = "const chunks=[];for await(const chunk of process.stdin)chunks.push(chunk);await import('data:text/javascript;base64,'+Buffer.concat(chunks).toString('base64'))";
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', loader, '--', '--help'], {
     encoding: 'utf8',
+    input: source,
     shell: false,
   });
   assert.equal(result.status, 0, result.stderr);

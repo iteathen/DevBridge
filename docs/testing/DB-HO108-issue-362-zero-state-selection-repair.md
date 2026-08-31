@@ -79,3 +79,12 @@ Source, tests, and this repair contract were committed at `bc535050174b981f0b52d
 - committed only the generated standalone bootstrap and deletion of the temporary workflow.
 
 The self-cleaned generated-artifact commit is `147f019b666e3d4ccb15c5ee5b57adbe4d5d910a`. No repository-controlled generator or test ran on the physical workstation. The repair remains unqualified for physical use until the exact final PR head passes the normal full Ubuntu/Windows smoke and full matrix and is integrated into the Stage 8 branch.
+
+## First full-matrix classification
+
+PR #407 exact head `f06864860238b35e2cf4f0ef999eff11957efc69` ran CI `33436694853`. Both Ubuntu jobs passed. Windows exposed two test-harness costs owned by this change while the new repair behavior itself passed:
+
+- full job `99634749433` passed both new repair tests, then the pre-existing standalone data-import test returned a null child status because it placed the enlarged standalone artifact in Windows child-process argv; the physical first-byte loader creates the data URL inside Node and does not place the artifact in argv;
+- smoke job `99634749329` reached its fixed three-minute step timeout because the new exact-source regression repeated the existing full permanent-entry materialization, adding about 50 seconds on Windows.
+
+The bounded correction does not change product code. The standalone test now streams artifact bytes to a constant-size child loader through standard input, preserving the data-import assertion without a platform argv dependency. The repair exact-source regression keeps the real source helper and default preparation path but uses one fixture component and a fixture installer stage, proving the repair-head/selected-subject split without duplicating the separately covered full component installation. Exact final-head CI must rerun; the failed run is not valid physical qualification evidence.
