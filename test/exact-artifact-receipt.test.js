@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { unlinkSync } from 'node:fs';
 import {
   link,
   mkdir,
@@ -229,7 +230,14 @@ test('receipt readers reject extra, gapped, noncanonical, changed-chain, and har
     nested.after(() => rm(selected.root, { recursive: true, force: true }));
     const alias = path.join(selected.root, 'transient.json');
     await link(path.join(selected.directory, '000000000001.json'), alias);
-    const removal = new Promise((resolve, reject) => setTimeout(() => unlink(alias).then(resolve, reject), 15));
+    const removal = new Promise((resolve, reject) => setTimeout(() => {
+      try {
+        unlinkSync(alias);
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    }, 15));
     assert.equal((await selected.journal().read()).revision, 1);
     await removal;
   });
