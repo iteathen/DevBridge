@@ -521,8 +521,8 @@ namespace DevBridge.WindowsLifecycleAuthority
                         stdout.Write(buffer, 0, count);
                         if (stdout.Length > maxResponseBytes) return null;
                     }
-                    int remaining = ActivityWorkerTimeoutMs - (int)elapsed.ElapsedMilliseconds;
-                    if (remaining <= 0 || clientMonitor.IsCompleted || !worker.WaitForExit(remaining) || clientMonitor.IsCompleted) return null;
+                    int exitRemaining = ActivityWorkerTimeoutMs - (int)elapsed.ElapsedMilliseconds;
+                    if (exitRemaining <= 0 || clientMonitor.IsCompleted || !worker.WaitForExit(exitRemaining) || clientMonitor.IsCompleted) return null;
                     if (worker.ExitCode != 0) return null;
                     return ExactWorkerResponse(stdout.ToArray());
                 }
