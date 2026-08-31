@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -80,8 +80,9 @@ function unknownRecord(first = acceptedRecord()) {
 
 async function tempRoot(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-accelerator-ledger-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  return root;
+  const canonicalRoot = await realpath(root);
+  t.after(() => rm(canonicalRoot, { recursive: true, force: true }));
+  return canonicalRoot;
 }
 
 async function keyDirectory(root) {
@@ -100,6 +101,7 @@ async function revisionPath(root, revision = 1) {
 test('file ledger requires an existing canonical absolute directory root', async (t) => {
   assert.throws(() => new FileAcceleratorBrokerLedgerStore({ rootPath: 'relative-ledger' }), /rootPath must be absolute/u);
   const root = await tempRoot(t);
+  assert.equal(await realpath(root), root);
   const missing = new FileAcceleratorBrokerLedgerStore({ rootPath: path.join(root, 'missing') });
   await assert.rejects(() => missing.load(acceleratorBrokerLedgerKey(request())), /directory is unavailable/u);
 
