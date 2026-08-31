@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runExperimentalEntry, experimentalEntryCacheRoot } from '../src/entry/experimental-entry.mjs';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  createExperimentalEntryRunnerProvider,
+  experimentalEntryCacheRoot,
+  experimentalEntryStateRoot,
+  runExperimentalEntry,
+} from '../src/entry/experimental-entry.mjs';
 import { RUNNER_SUBJECT_PROTOCOL } from '../src/entry/permanent-entry.mjs';
 
 function subject(head = 'a'.repeat(40)) {
@@ -67,20 +74,34 @@ test('development-only composition refuses implicit or stable runner authority',
 });
 
 test('experimental cache location is local and platform-specific', () => {
+  const windowsCache = experimentalEntryCacheRoot({
+    platform: 'win32',
+    home: 'C:\\Users\\tester',
+    env: { LOCALAPPDATA: 'C:\\Users\\tester\\AppData\\Local' },
+  });
+  assert.equal(windowsCache, 'C:\\Users\\tester\\AppData\\Local\\DevBridge\\entry');
   assert.equal(
-    experimentalEntryCacheRoot({
-      platform: 'win32',
-      home: 'C:\\Users\\tester',
-      env: { LOCALAPPDATA: 'C:\\Users\\tester\\AppData\\Local' },
-    }),
-    'C:\\Users\\tester\\AppData\\Local\\DevBridge\\entry',
+    experimentalEntryStateRoot(windowsCache, { platform: 'win32' }),
+    'C:\\Users\\tester\\AppData\\Local\\DevBridge\\entry-state',
   );
+
+  const linuxCache = experimentalEntryCacheRoot({
+    platform: 'linux',
+    home: '/home/tester',
+    env: { XDG_CACHE_HOME: '/cache/tester' },
+  });
+  assert.equal(linuxCache, '/cache/tester/devbridge/entry');
   assert.equal(
-    experimentalEntryCacheRoot({ platform: 'linux', home: '/home/tester', env: { XDG_CACHE_HOME: '/cache/tester' } }),
-    '/cache/tester/devbridge/entry',
+    experimentalEntryStateRoot(linuxCache, { platform: 'linux' }),
+    '/cache/tester/devbridge/entry-state',
   );
   assert.throws(
     () => experimentalEntryCacheRoot({ platform: 'linux', home: '/home/tester', env: { DEVBRIDGE_ENTRY_CACHE_ROOT: 'relative/cache' } }),
     /absolute local path/u,
   );
+});
+
+test('experimental checkout composition supplies exact ownership and artifact ports', () => {
+  const cacheRoot = path.join(os.tmpdir(), `devbridge-experimental-entry-${process.pid}`, 'entry');
+  assert.doesNotThrow(() => createExperimentalEntryRunnerProvider({ cacheRoot }));
 });

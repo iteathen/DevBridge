@@ -7,11 +7,14 @@ import { runPermanentEntry } from './permanent-entry.mjs';
 import { GitHubRunnerSource } from './github-runner-source.mjs';
 import { ExperimentalSubjectAuthority } from './experimental-subject-authority.mjs';
 import { ExperimentalCheckoutRunnerProvider } from './experimental-checkout-runner-provider.mjs';
+import { createRunnerCacheComposition } from './runner-cache-composition.mjs';
 
 function fail(message) { throw new Error(message); }
 
+function localPathFor(platform) { return platform === 'win32' ? path.win32 : path.posix; }
+
 export function experimentalEntryCacheRoot({ env = process.env, platform = process.platform, home = os.homedir() } = {}) {
-  const localPath = platform === 'win32' ? path.win32 : path.posix;
+  const localPath = localPathFor(platform);
   const explicit = env.DEVBRIDGE_ENTRY_CACHE_ROOT;
   if (explicit != null) {
     if (typeof explicit !== 'string' || !localPath.isAbsolute(explicit)) fail('DEVBRIDGE_ENTRY_CACHE_ROOT must be an absolute local path');
@@ -27,6 +30,24 @@ export function experimentalEntryCacheRoot({ env = process.env, platform = proce
     ? env.XDG_CACHE_HOME
     : path.posix.join(home, '.cache');
   return path.posix.join(base, 'devbridge', 'entry');
+}
+
+export function experimentalEntryStateRoot(cacheRoot, { platform = process.platform } = {}) {
+  const localPath = localPathFor(platform);
+  if (typeof cacheRoot !== 'string' || !localPath.isAbsolute(cacheRoot)) {
+    fail('experimental entry cache root must be an absolute local path');
+  }
+  const resolved = localPath.resolve(cacheRoot);
+  return localPath.join(localPath.dirname(resolved), `${localPath.basename(resolved)}-state`);
+}
+
+export function createExperimentalEntryRunnerProvider({ cacheRoot = experimentalEntryCacheRoot() } = {}) {
+  return new ExperimentalCheckoutRunnerProvider({
+    ...createRunnerCacheComposition({
+      cacheRoot,
+      stateRoot: experimentalEntryStateRoot(cacheRoot),
+    }),
+  });
 }
 
 export async function runExperimentalEntry(argv, {
@@ -45,7 +66,7 @@ export async function runExperimentalEntry(argv, {
       return experimental.resolve(selector);
     },
   };
-  const provider = runnerProvider ?? new ExperimentalCheckoutRunnerProvider({
+  const provider = runnerProvider ?? createExperimentalEntryRunnerProvider({
     cacheRoot: cacheRoot ?? experimentalEntryCacheRoot(),
   });
   return runPermanentEntry(argv, { subjectAuthority: authority, runnerProvider: provider });
