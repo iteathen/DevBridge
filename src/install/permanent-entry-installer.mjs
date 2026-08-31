@@ -187,14 +187,14 @@ export async function installDevBridge(options, {
       artifacts,
       publication: entryPublication,
       acceptReference: (reference) => {
-      const componentRoot = path.join(components, reference.subject);
-      return componentStore.verify(componentRoot, reference.subject, sourceRepository)
-        || historicalComponentStores.some((store) => store.verify(
-          componentRoot,
-          reference.subject,
-          sourceRepository,
-        ));
-    },
+        const componentRoot = path.join(components, reference.subject);
+        return componentStore.verify(componentRoot, reference.subject, sourceRepository)
+          || historicalComponentStores.some((store) => store.verify(
+            componentRoot,
+            reference.subject,
+            sourceRepository,
+          ));
+      },
     });
     const published = await fileOwnership.install({
       root: home,
