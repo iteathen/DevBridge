@@ -10,6 +10,7 @@ import {
 export const ACCELERATOR_BROKER_LEDGER_PROTOCOL = 'devbridge/accelerator-broker-ledger-record-v1';
 
 const MAX_REVISION = Number.MAX_SAFE_INTEGER;
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,159}$/u;
 
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
@@ -18,6 +19,11 @@ function requireObject(value, name) {
 
 function onlyKeys(value, allowed, name) {
   for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`${name}.${key} is not allowed`);
+}
+
+function safeId(value, name) {
+  if (typeof value !== 'string' || !SAFE_ID.test(value)) throw new TypeError(`${name} is invalid`);
+  return value;
 }
 
 function revision(value) {
@@ -57,9 +63,19 @@ function normalizeCancelIntent(raw, request, requestDigest) {
   return Object.freeze({ request: cancel, digest: expectedDigest });
 }
 
+export function normalizeAcceleratorBrokerLedgerKey(raw) {
+  const value = requireObject(raw, 'accelerator broker ledger key');
+  onlyKeys(value, new Set(['sessionIdentity', 'sessionGeneration', 'requestId']), 'accelerator broker ledger key');
+  return Object.freeze({
+    sessionIdentity: safeId(value.sessionIdentity, 'accelerator broker ledger key.sessionIdentity'),
+    sessionGeneration: safeId(value.sessionGeneration, 'accelerator broker ledger key.sessionGeneration'),
+    requestId: safeId(value.requestId, 'accelerator broker ledger key.requestId'),
+  });
+}
+
 export function acceleratorBrokerLedgerKey(rawRequest) {
   const request = normalizeAcceleratorBrokerExecuteRequest(rawRequest);
-  return Object.freeze({
+  return normalizeAcceleratorBrokerLedgerKey({
     sessionIdentity: request.binding.session.identity,
     sessionGeneration: request.binding.session.generation,
     requestId: request.requestId,
@@ -68,7 +84,7 @@ export function acceleratorBrokerLedgerKey(rawRequest) {
 
 export function acceleratorBrokerCancelLedgerKey(rawCancel) {
   const cancel = normalizeAcceleratorBrokerCancelRequest(rawCancel);
-  return Object.freeze({
+  return normalizeAcceleratorBrokerLedgerKey({
     sessionIdentity: cancel.binding.session.identity,
     sessionGeneration: cancel.binding.session.generation,
     requestId: cancel.requestId,
@@ -93,6 +109,22 @@ export function normalizeAcceleratorBrokerLedgerRecord(raw) {
     observation,
     cancelIntent,
   });
+}
+
+export function assertAcceleratorBrokerLedgerRecordTransition(rawPrevious, rawNext) {
+  const previous = normalizeAcceleratorBrokerLedgerRecord(rawPrevious);
+  const next = normalizeAcceleratorBrokerLedgerRecord(rawNext);
+  if (next.revision !== previous.revision + 1) throw new TypeError('accelerator broker ledger record revision transition is invalid');
+  if (next.requestDigest !== previous.requestDigest || JSON.stringify(next.request) !== JSON.stringify(previous.request)) {
+    throw new TypeError('accelerator broker ledger record request changed across revisions');
+  }
+  assertAcceleratorBrokerObservationTransition(previous.observation, next.observation);
+  if (previous.cancelIntent != null) {
+    if (next.cancelIntent == null || JSON.stringify(previous.cancelIntent) !== JSON.stringify(next.cancelIntent)) {
+      throw new TypeError('accelerator broker ledger cancellation intent changed across revisions');
+    }
+  }
+  return next;
 }
 
 export function createAcceleratorBrokerLedgerRecord({ request: rawRequest, observation: rawObservation }) {
