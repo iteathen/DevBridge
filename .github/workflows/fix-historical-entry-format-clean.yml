@@ -1,0 +1,79 @@
+name: Temporary historical verifier formatting
+
+on:
+  push:
+    branches:
+      - fix/362-historical-entry-component-verification-clean
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+          persist-credentials: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.16.0
+          package-manager-cache: false
+      - name: Normalize verifier formatting
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const file = 'src/install/permanent-entry-installer.mjs';
+          let text = readFileSync(file, 'utf8');
+          const current = [
+            '      acceptReference: (reference) => {',
+            '      const componentRoot = path.join(components, reference.subject);',
+            '      return componentStore.verify(componentRoot, reference.subject, sourceRepository)',
+            '        || historicalComponentStores.some((store) => store.verify(',
+            '          componentRoot,',
+            '          reference.subject,',
+            '          sourceRepository,',
+            '        ));',
+            '    },',
+          ].join('\n');
+          const corrected = [
+            '      acceptReference: (reference) => {',
+            '        const componentRoot = path.join(components, reference.subject);',
+            '        return componentStore.verify(componentRoot, reference.subject, sourceRepository)',
+            '          || historicalComponentStores.some((store) => store.verify(',
+            '            componentRoot,',
+            '            reference.subject,',
+            '            sourceRepository,',
+            '          ));',
+            '      },',
+          ].join('\n');
+          if (!text.includes(current)) throw new Error('historical reference callback shape changed');
+          text = text.replace(current, corrected);
+          writeFileSync(file, text);
+          NODE
+      - name: Regenerate standalone artifacts
+        run: node scripts/build-standalone-artifacts.mjs
+      - name: Focused installer regression
+        run: node --test test/self-install-entry.test.js
+      - name: Bounded preflight
+        run: npm run preflight -- --bound-targeted-test-concurrency
+      - name: Commit normalized candidate and retire workflow
+        shell: bash
+        run: |
+          git diff --check
+          rm .github/workflows/fix-historical-entry-format-clean.yml
+          git add -A
+          actual="$(git diff --cached --name-only | sort)"
+          expected="$(printf '%s\n' \
+            .github/workflows/fix-historical-entry-format-clean.yml \
+            install-devbridge.mjs \
+            src/install/permanent-entry-installer.mjs | sort)"
+          test "$actual" = "$expected"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'style(installer): normalize historical verifier'
+          git push origin HEAD:${GITHUB_REF_NAME}
