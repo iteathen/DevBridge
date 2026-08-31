@@ -67,3 +67,15 @@ The repair contract is closed:
 8. Only after exact-head hosted qualification, perform one physical install-only repair of `ecb6edf...`, verify the selection cleared and primary advanced to that exact subject, then run a separate ordinary `8147ede...` setup re-entry.
 
 No direct host test/generator execution, manual installation-state mutation, setup/UAC, construction, provider/image/VM/guest mutation, repository execution, or GPU/CUDA work is authorized by this repository slice.
+
+## Hosted regeneration and bounded qualification
+
+Source, tests, and this repair contract were committed at `bc535050174b981f0b52d95d19f38079a15bae60`. Temporary hosted workflow run `33436424052`, job `99633860654`, then:
+
+- regenerated `bootstrap-devbridge.mjs` from the committed source;
+- passed the focused zero-state bootstrap, exact-source, nested Stage-0 LEGO, and standalone-launcher regressions;
+- passed `npm run preflight -- --bound-targeted-test-concurrency`;
+- passed diff hygiene;
+- committed only the generated standalone bootstrap and deletion of the temporary workflow.
+
+The self-cleaned generated-artifact commit is `147f019b666e3d4ccb15c5ee5b57adbe4d5d910a`. No repository-controlled generator or test ran on the physical workstation. The repair remains unqualified for physical use until the exact final PR head passes the normal full Ubuntu/Windows smoke and full matrix and is integrated into the Stage 8 branch.
