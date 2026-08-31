@@ -75,12 +75,12 @@ async function defaultLoadStage(stagePath) {
   return temporaryMaterialization.load(stagePath);
 }
 
-async function defaultPrepareSource(stage, subject, { fetcher, bootstrapRoot }) {
+async function defaultPrepareSource(stage, subject, { fetcher, bootstrapRoot, installerHead }) {
   if (!Array.isArray(stage?.INSTALLED_COMPONENT_FILES) || stage.INSTALLED_COMPONENT_FILES.length < 1) {
     fail('Bootstrap stage source contract is unavailable.');
   }
-  const helperBytes = await sourceChannel.fetchHelper(subject.head, { fetcher });
-  const helperPath = temporaryMaterialization.write(bootstrapRoot, subject.head, helperBytes, 'source-stage');
+  const helperBytes = await sourceChannel.fetchHelper(installerHead, { fetcher });
+  const helperPath = temporaryMaterialization.write(bootstrapRoot, installerHead, helperBytes, 'source-stage');
   const destination = temporaryMaterialization.directory(bootstrapRoot, subject.head);
   try {
     const helper = await temporaryMaterialization.load(helperPath);
@@ -119,16 +119,23 @@ export async function runZeroStateBootstrap(argv, {
   const options = parseBootstrapArgs(argv, { environment, homeDirectory });
   if (options.help) return Object.freeze({ help: true, status: 0 });
 
+  if (options.repairSelectionWith != null && readBootstrapSelection(options.home) == null) {
+    fail('--repair-selection-with requires an existing durable bootstrap selection.');
+  }
   const subject = await resolveDurableBootstrapSubject(options, { fetcher });
-  const bytes = await fetchBootstrapStage(subject.head, { fetcher });
+  if (options.repairSelectionWith != null && subject.resumed !== true) {
+    fail('Bootstrap selection repair requires a resumed durable subject.');
+  }
+  const installerHead = options.repairSelectionWith ?? subject.head;
+  const bytes = await fetchBootstrapStage(installerHead, { fetcher });
   const bootstrapRoot = path.dirname(bootstrapSelectionPath(subject.home));
-  const stagePath = temporaryMaterialization.write(bootstrapRoot, subject.head, bytes);
+  const stagePath = temporaryMaterialization.write(bootstrapRoot, installerHead, bytes);
   try {
     const stage = await loadStage(stagePath);
     if (typeof stage?.installDevBridge !== 'function' || typeof stage?.runInstalledSetup !== 'function') {
       fail('Bootstrap stage contract is unavailable.');
     }
-    const prepared = await prepareSource(stage, subject, { fetcher, bootstrapRoot });
+    const prepared = await prepareSource(stage, subject, { fetcher, bootstrapRoot, installerHead });
     try {
       const installed = await stage.installDevBridge({
         home: subject.home,
@@ -138,6 +145,9 @@ export async function runZeroStateBootstrap(argv, {
         environment,
         preparedSource: Object.freeze({ head: subject.head, root: prepared.root }),
       });
+      if (options.repairSelectionWith != null && installed?.componentHead !== subject.head) {
+        fail('Bootstrap selection repair did not commit the exact selected subject.');
+      }
       clearBootstrapSelection(subject);
 
       if (!options.runSetup) return Object.freeze({ help: false, status: 0, installed, subject });
@@ -153,7 +163,7 @@ export async function runZeroStateBootstrap(argv, {
 }
 
 export function bootstrapHelp() {
-  return `DevBridge zero-state bootstrap\n\nUsage:\n  <Node first-byte loader> [--home <path>]\n  <Node first-byte loader> --ref <branch-or-exact-head> [--home <path>]\n  <Node first-byte loader> --install-only [--ref <branch-or-exact-head>] [--home <path>]\n\nThe first-byte loader requires only supported Node.js. A moving ref is durably bound to one exact subject before the next stage runs; an interrupted argument-equivalent retry resumes that exact subject.\n`;
+  return `DevBridge zero-state bootstrap\n\nUsage:\n  <Node first-byte loader> [--home <path>]\n  <Node first-byte loader> --ref <branch-or-exact-head> [--home <path>]\n  <Node first-byte loader> --install-only [--ref <branch-or-exact-head>] [--home <path>]\n  <Node first-byte loader> --install-only --ref <existing-selection> --repair-selection-with <exact-installer-head> [--home <path>]\n\nThe first-byte loader requires only supported Node.js. A moving ref is durably bound to one exact subject before the next stage runs; an interrupted argument-equivalent retry resumes that exact subject. Explicit selection repair keeps that durable subject unchanged and uses only the named exact installer head to finish its permanent-entry commit.\n`;
 }
 
 const invokedFromData = import.meta.url.startsWith('data:text/javascript');

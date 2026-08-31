@@ -50,6 +50,25 @@ test('bootstrap parser preserves explicit selector intent separately from exact 
   assert.equal(development.selector.value, 'cuda-target');
   assert.equal(development.explicitSelector, true);
   assert.equal(development.runSetup, false);
+  assert.equal(development.repairSelectionWith, null);
+
+  const repair = parseBootstrapArgs([
+    '--ref', HEAD_A,
+    '--repair-selection-with', HEAD_B,
+    '--install-only',
+    '--home', root,
+  ], { environment: {}, homeDirectory: root });
+  assert.equal(repair.selector.value, HEAD_A);
+  assert.equal(repair.repairSelectionWith, HEAD_B);
+  assert.equal(repair.runSetup, false);
+  assert.throws(
+    () => parseBootstrapArgs(['--ref', HEAD_A, '--repair-selection-with', 'cuda-target', '--install-only'], { environment: {}, homeDirectory: root }),
+    /requires an exact 40-hex head/u,
+  );
+  assert.throws(
+    () => parseBootstrapArgs(['--ref', HEAD_A, '--repair-selection-with', HEAD_B], { environment: {}, homeDirectory: root }),
+    /requires --install-only/u,
+  );
 });
 
 test('interrupted moving selector resumes the persisted exact subject after branch movement', async () => {
@@ -188,6 +207,103 @@ test('different selector cannot replace an incomplete bootstrap checkpoint impli
     await assert.rejects(resolveDurableBootstrapSubject(second, { fetcher }), /already bound to cuda-target/);
   } finally {
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('explicit repair uses newer exact installer mechanics to commit only the existing durable subject', async () => {
+  const home = makeHome();
+  const fetched = [];
+  let setupCalls = 0;
+  try {
+    const selected = parseBootstrapArgs(['--ref', HEAD_A, '--home', home], { environment: {}, homeDirectory: home });
+    await resolveDurableBootstrapSubject(selected, { fetcher: async () => { throw new Error('exact selection must not resolve remotely'); } });
+
+    const result = await runZeroStateBootstrap([
+      '--ref', HEAD_A,
+      '--repair-selection-with', HEAD_B,
+      '--install-only',
+      '--home', home,
+    ], {
+      environment: {},
+      homeDirectory: home,
+      async fetcher(url) {
+        fetched.push(String(url));
+        if (String(url).includes(`/${HEAD_B}/install-devbridge.mjs`)) return response('export const placeholder = true;');
+        throw new Error(`unexpected fetch ${url}`);
+      },
+      async prepareSource(_stage, subject, context) {
+        assert.equal(subject.head, HEAD_A);
+        assert.equal(context.installerHead, HEAD_B);
+        return Object.freeze({ head: HEAD_A, root: home, cleanup() {} });
+      },
+      async loadStage() {
+        return {
+          installDevBridge(options, dependencies) {
+            assert.equal(readBootstrapSelection(home).head, HEAD_A);
+            assert.equal(options.selector.value, HEAD_A);
+            assert.equal(options.selectedRunnerRef, HEAD_A);
+            assert.equal(dependencies.preparedSource.head, HEAD_A);
+            return { componentHead: HEAD_A, home };
+          },
+          runInstalledSetup() { setupCalls += 1; return 0; },
+        };
+      },
+    });
+
+    assert.equal(result.subject.head, HEAD_A);
+    assert.equal(result.installed.componentHead, HEAD_A);
+    assert.equal(readBootstrapSelection(home), null);
+    assert.equal(setupCalls, 0);
+    assert.equal(fetched.length, 1);
+    assert.match(fetched[0], new RegExp(`/${HEAD_B}/install-devbridge\\.mjs$`, 'u'));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('selection repair requires prior state and retains it unless the selected subject commits', async () => {
+  const absentHome = makeHome();
+  const retainedHome = makeHome();
+  try {
+    const repairArgv = [
+      '--ref', HEAD_A,
+      '--repair-selection-with', HEAD_B,
+      '--install-only',
+    ];
+    await assert.rejects(
+      runZeroStateBootstrap([...repairArgv, '--home', absentHome], {
+        environment: {},
+        homeDirectory: absentHome,
+        async fetcher() { throw new Error('repair without state must not fetch'); },
+      }),
+      /requires an existing durable bootstrap selection/u,
+    );
+    assert.equal(readBootstrapSelection(absentHome), null);
+
+    const selected = parseBootstrapArgs(['--ref', HEAD_A, '--home', retainedHome], { environment: {}, homeDirectory: retainedHome });
+    await resolveDurableBootstrapSubject(selected, { fetcher: async () => { throw new Error('exact selection must not resolve remotely'); } });
+    await assert.rejects(
+      runZeroStateBootstrap([...repairArgv, '--home', retainedHome], {
+        environment: {},
+        homeDirectory: retainedHome,
+        async fetcher(url) {
+          if (String(url).includes(`/${HEAD_B}/install-devbridge.mjs`)) return response('export const placeholder = true;');
+          throw new Error(`unexpected fetch ${url}`);
+        },
+        prepareSource: preparedSource(retainedHome),
+        async loadStage() {
+          return {
+            installDevBridge() { return { componentHead: HEAD_B, home: retainedHome }; },
+            runInstalledSetup() { throw new Error('setup must not run'); },
+          };
+        },
+      }),
+      /did not commit the exact selected subject/u,
+    );
+    assert.equal(readBootstrapSelection(retainedHome).head, HEAD_A);
+  } finally {
+    rmSync(absentHome, { recursive: true, force: true });
+    rmSync(retainedHome, { recursive: true, force: true });
   }
 });
 

@@ -47,6 +47,7 @@ export function parseBootstrapArgs(argv, { environment = process.env, homeDirect
   if (!Array.isArray(argv)) throw new TypeError('bootstrap argv must be an array');
   let home = environment.DEVBRIDGE_HOME ?? path.join(homeDirectory, '.devbridge');
   let selector = null;
+  let repairSelectionWith = null;
   let help = false;
   let runSetup = true;
   for (let index = 0; index < argv.length; index += 1) {
@@ -64,13 +65,25 @@ export function parseBootstrapArgs(argv, { environment = process.env, homeDirect
       index += 1;
       continue;
     }
+    if (value === '--repair-selection-with') {
+      if (repairSelectionWith != null) fail('Only one bootstrap selection repair head may be supplied.');
+      const repair = normalizeBootstrapRef(takeValue(argv, index, value));
+      if (repair.kind !== 'exact') fail('--repair-selection-with requires an exact 40-hex head.');
+      repairSelectionWith = repair.value;
+      index += 1;
+      continue;
+    }
     fail(`Unsupported bootstrap argument: ${value}`);
+  }
+  if (repairSelectionWith != null && runSetup) {
+    fail('--repair-selection-with requires --install-only.');
   }
   return Object.freeze({
     help,
     home: path.resolve(expandPath(String(home), homeDirectory)),
     selector: selector ?? Object.freeze({ kind: 'branch', value: 'main' }),
     explicitSelector: selector != null,
+    repairSelectionWith,
     runSetup,
   });
 }

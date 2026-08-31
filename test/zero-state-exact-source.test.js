@@ -12,7 +12,9 @@ import path from 'node:path';
 import {
   SOURCE_STAGE_PATH,
   STAGE_PATH,
+  parseBootstrapArgs,
   readBootstrapSelection,
+  resolveDurableBootstrapSubject,
   runZeroStateBootstrap,
 } from '../bootstrap-devbridge.mjs';
 import {
@@ -166,6 +168,58 @@ test('zero-state branch install is Git-free, resumes the exact subject, and pres
 
     const component = path.join(home, 'entry', 'components', HEAD_A);
     assert.equal(verifyInstalledComponent(component, HEAD_A, SOURCE_REPOSITORY), true);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('selection repair separates exact installer mechanics from the exact component subject', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'devbridge-zero-state-repair-'));
+  const requests = [];
+  const fetcher = async (url) => {
+    const value = String(url);
+    requests.push(value);
+    const installerRelative = rawRelative(value, HEAD_B);
+    if (installerRelative === STAGE_PATH || installerRelative === SOURCE_STAGE_PATH) {
+      return response(repositoryFile(installerRelative));
+    }
+    const componentRelative = rawRelative(value, HEAD_A);
+    if (INSTALLED_COMPONENT_FILES.includes(componentRelative)) {
+      return response(repositoryFile(componentRelative));
+    }
+    throw new Error(`unexpected repair fetch ${url}`);
+  };
+
+  try {
+    const selected = parseBootstrapArgs(['--ref', HEAD_A, '--home', home], { environment: {}, homeDirectory: home });
+    await resolveDurableBootstrapSubject(selected, { fetcher });
+
+    const result = await runZeroStateBootstrap([
+      '--ref', HEAD_A,
+      '--repair-selection-with', HEAD_B,
+      '--install-only',
+      '--home', home,
+    ], {
+      environment: unavailableToolEnvironment(home),
+      homeDirectory: home,
+      fetcher,
+    });
+
+    assert.equal(result.subject.head, HEAD_A);
+    assert.equal(result.installed.componentHead, HEAD_A);
+    assert.equal(readBootstrapSelection(home), null);
+    assert.equal(
+      verifyInstalledComponent(path.join(home, 'entry', 'components', HEAD_A), HEAD_A, SOURCE_REPOSITORY),
+      true,
+    );
+    assert.equal(requests.some((value) => value.includes(`/${HEAD_A}/${STAGE_PATH}`)), false);
+    assert.equal(requests.some((value) => value.includes(`/${HEAD_A}/${SOURCE_STAGE_PATH}`)), false);
+    assert.equal(requests.some((value) => value.includes(`/${HEAD_B}/${STAGE_PATH}`)), true);
+    assert.equal(requests.some((value) => value.includes(`/${HEAD_B}/${SOURCE_STAGE_PATH}`)), true);
+    assert.equal(
+      requests.some((value) => INSTALLED_COMPONENT_FILES.some((relative) => value.includes(`/${HEAD_B}/${relative}`))),
+      false,
+    );
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
