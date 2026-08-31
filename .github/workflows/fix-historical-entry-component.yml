@@ -129,7 +129,7 @@ jobs:
               if (!selected.has(item.path)) rmSync(path.join(component, ...item.path.split('/')), { force: true });
             }
             manifest.files = manifest.files.filter((item) => selected.has(item.path));
-            writeFileSync(manifestPath, \\`${JSON.stringify(manifest, null, 2)}\\n\\`);
+            writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + String.fromCharCode(10));
           }
 
           function clearInstallerOwnershipReceipts(home) {
