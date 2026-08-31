@@ -118,7 +118,7 @@ export function createSourceChannel({ normalizeSelector, defaultEndpoint }) {
     mkdirSync(destination, { mode: 0o700 });
     run(['init', '-q'], { cwd: destination, runner, allowLocalSource, environment });
     run(['remote', 'add', 'origin', endpoint], { cwd: destination, runner, allowLocalSource, environment });
-    run(['fetch', '--no-tags', '--depth', '1', 'origin', subject.fetchSpec], {
+    run(['fetch', '--no-auto-maintenance', '--no-tags', '--depth', '1', 'origin', subject.fetchSpec], {
       cwd: destination, runner, allowLocalSource, environment,
     });
     run(['checkout', '--detach', '-q', 'FETCH_HEAD'], {

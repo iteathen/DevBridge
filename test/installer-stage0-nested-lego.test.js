@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as installerArtifact from '../install-devbridge.mjs';
 import * as installerSource from '../src/install/permanent-entry-installer.mjs';
+import { createSourceChannel as createInstallerSourceChannel } from '../src/install/permanent-entry-installer/source-channel.mjs';
 import * as bootstrapArtifact from '../bootstrap-devbridge.mjs';
 import * as bootstrapSource from '../src/bootstrap/zero-state-bootstrap.mjs';
 
@@ -118,4 +120,42 @@ test('generated artifacts preserve the modular parents public surface and input 
     bootstrapArtifact.parseBootstrapArgs(bootstrapArgv, { environment: {}, homeDirectory }),
     bootstrapSource.parseBootstrapArgs(bootstrapArgv, { environment: {}, homeDirectory }),
   );
+});
+
+test('installer source materialization keeps disposable Git maintenance in its owned process lifetime', () => {
+  const head = 'a'.repeat(40);
+  const endpoint = 'https://example.invalid/owner/repository.git';
+  const calls = [];
+  const channel = createInstallerSourceChannel({
+    defaultEndpoint: endpoint,
+    normalizeSelector(value) {
+      return Object.freeze({ kind: 'exact', value: String(value) });
+    },
+  });
+  const root = mkdtempSync(path.join(tmpdir(), 'devbridge-source-channel-lifetime-'));
+  try {
+    const subject = channel.resolve(head);
+    channel.materialize(subject, path.join(root, 'source'), {
+      runner(executable, args) {
+        calls.push(Object.freeze({ executable, args: Object.freeze([...args]) }));
+        const operation = args[6];
+        if (operation === 'rev-parse') return { status: 0, stdout: `${head}\n` };
+        if (operation === 'remote' && args[7] === 'get-url') return { status: 0, stdout: `${endpoint}\n` };
+        return { status: 0, stdout: '' };
+      },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  const fetch = calls.find((call) => call.args[6] === 'fetch');
+  assert.deepEqual(fetch?.args.slice(6), [
+    'fetch',
+    '--no-auto-maintenance',
+    '--no-tags',
+    '--depth',
+    '1',
+    'origin',
+    head,
+  ]);
 });
