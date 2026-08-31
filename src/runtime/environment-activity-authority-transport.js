@@ -185,7 +185,8 @@ export function createEnvironmentActivitySocketServerAtEndpoint({
       socket.end(wire);
     };
     socket.on('data', async (chunk) => {
-      if (processing || answered) return;
+      if (answered) return;
+      if (processing) return failClosed();
       buffer += chunk;
       if (Buffer.byteLength(buffer, 'utf8') > MAX_REQUEST_WIRE_BYTES) return failClosed();
       const newline = buffer.indexOf('\n');
@@ -196,7 +197,6 @@ export function createEnvironmentActivitySocketServerAtEndpoint({
       processing = true;
       controller = new AbortController();
       socket.setTimeout(0);
-      socket.pause();
       const onClose = () => failClosed();
       socket.once('close', onClose);
       operationTimer = setTimeout(failClosed, operationMs);
