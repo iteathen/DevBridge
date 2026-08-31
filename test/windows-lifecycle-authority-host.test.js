@@ -78,6 +78,17 @@ test('Windows lifecycle endpoints keep one first-instance server alive across re
   assert.doesNotMatch(source, /if \(!read\.Wait\(remaining\)\)[\s\S]{0,160}pipe\.Dispose/u);
 });
 
+test('Windows protected activity workers are bounded by client lifetime without widening other worker protocols', async () => {
+  const source = await readFile(SOURCE, 'utf8');
+  assert.match(source, /private const int ActivityWorkerTimeoutMs = 300000;/u);
+  assert.match(source, /InvokeWorker\(access, request, responseLimit, pipe\)/u);
+  assert.match(source, /Task<int> clientMonitor = clientPipe\.ReadAsync\(clientProbe, 0, clientProbe\.Length\);/u);
+  assert.match(source, /Task\.WaitAny\(new Task\[\] \{ read, clientMonitor \}, remaining\)/u);
+  assert.match(source, /CancelIoEx\(clientPipe\.SafePipeHandle\.DangerousGetHandle\(\), IntPtr\.Zero\)/u);
+  assert.match(source, /String\.Equals\(access, "activity", StringComparison\.Ordinal\)\s*\? ReadActivityWorkerResponse\(worker, clientPipe, maxResponseBytes\)\s*:\s*ReadWorkerResponse\(worker, maxResponseBytes\)/su);
+  assert.match(source, /catch \(IOException\)\s*\{\s*continue;\s*\}/su);
+});
+
 test('Windows lifecycle worker cannot inherit common operator credential channels', async () => {
   const source = await readFile(SOURCE, 'utf8');
   for (const name of [

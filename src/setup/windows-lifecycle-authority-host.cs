@@ -209,7 +209,11 @@ namespace DevBridge.WindowsLifecycleAuthority
         private const int ActivityMaxRequestWireBytes = 66560;
         private const int ActivityMaxResponseWireBytes = 8389632;
         private const int PreRequestTimeoutMs = 5000;
+        private const int ActivityWorkerTimeoutMs = 300000;
         private const int ExclusivePipeServerInstances = 1;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CancelIoEx(IntPtr handle, IntPtr overlapped);
         private static readonly string[] ScrubbedWorkerEnvironment = new string[] {
             "NODE_OPTIONS",
             "NODE_PATH",
@@ -366,10 +370,17 @@ namespace DevBridge.WindowsLifecycleAuthority
                         int responseLimit = String.Equals(access, "activity", StringComparison.Ordinal) ? ActivityMaxResponseWireBytes : LifecycleMaxWireBytes;
                         byte[] request = ReadRequest(pipe, requestLimit);
                         if (request == null) continue;
-                        byte[] response = InvokeWorker(access, request, responseLimit);
+                        byte[] response = InvokeWorker(access, request, responseLimit, pipe);
                         if (response == null || response.Length == 0 || response.Length > responseLimit) continue;
-                        pipe.Write(response, 0, response.Length);
-                        pipe.Flush();
+                        try
+                        {
+                            pipe.Write(response, 0, response.Length);
+                            pipe.Flush();
+                        }
+                        catch (IOException)
+                        {
+                            continue;
+                        }
                     }
                     finally
                     {
@@ -456,7 +467,76 @@ namespace DevBridge.WindowsLifecycleAuthority
             return result.ToString();
         }
 
-        private byte[] InvokeWorker(string access, byte[] request, int maxResponseBytes)
+        private static byte[] ExactWorkerResponse(byte[] response)
+        {
+            int newline = Array.IndexOf(response, (byte)'\n');
+            if (newline < 0) return null;
+            for (int index = newline + 1; index < response.Length; index += 1)
+            {
+                byte value = response[index];
+                if (value != (byte)' ' && value != (byte)'\t' && value != (byte)'\r' && value != (byte)'\n') return null;
+            }
+            byte[] exact = new byte[newline + 1];
+            Buffer.BlockCopy(response, 0, exact, 0, exact.Length);
+            return exact;
+        }
+
+        private static byte[] ReadWorkerResponse(Process worker, int maxResponseBytes)
+        {
+            using (MemoryStream stdout = new MemoryStream())
+            {
+                byte[] buffer = new byte[2048];
+                while (true)
+                {
+                    int count = worker.StandardOutput.BaseStream.Read(buffer, 0, buffer.Length);
+                    if (count <= 0) break;
+                    stdout.Write(buffer, 0, count);
+                    if (stdout.Length > maxResponseBytes) return null;
+                }
+                worker.WaitForExit();
+                if (worker.ExitCode != 0) return null;
+                return ExactWorkerResponse(stdout.ToArray());
+            }
+        }
+
+        private static byte[] ReadActivityWorkerResponse(Process worker, NamedPipeServerStream clientPipe, int maxResponseBytes)
+        {
+            Stopwatch elapsed = Stopwatch.StartNew();
+            byte[] clientProbe = new byte[1];
+            Task<int> clientMonitor = clientPipe.ReadAsync(clientProbe, 0, clientProbe.Length);
+            try
+            {
+                using (MemoryStream stdout = new MemoryStream())
+                {
+                    byte[] buffer = new byte[2048];
+                    while (true)
+                    {
+                        int remaining = ActivityWorkerTimeoutMs - (int)elapsed.ElapsedMilliseconds;
+                        if (remaining <= 0) return null;
+                        Task<int> read = worker.StandardOutput.BaseStream.ReadAsync(buffer, 0, buffer.Length);
+                        int completed = Task.WaitAny(new Task[] { read, clientMonitor }, remaining);
+                        if (completed < 0 || completed == 1) return null;
+                        int count = read.Result;
+                        if (count <= 0) break;
+                        stdout.Write(buffer, 0, count);
+                        if (stdout.Length > maxResponseBytes) return null;
+                    }
+                    int remaining = ActivityWorkerTimeoutMs - (int)elapsed.ElapsedMilliseconds;
+                    if (remaining <= 0 || clientMonitor.IsCompleted || !worker.WaitForExit(remaining) || clientMonitor.IsCompleted) return null;
+                    if (worker.ExitCode != 0) return null;
+                    return ExactWorkerResponse(stdout.ToArray());
+                }
+            }
+            finally
+            {
+                if (!clientMonitor.IsCompleted)
+                    CancelIoEx(clientPipe.SafePipeHandle.DangerousGetHandle(), IntPtr.Zero);
+                try { clientMonitor.Wait(1000); } catch (AggregateException) { }
+                if (!clientMonitor.IsCompleted) throw new InvalidOperationException("activity client monitor did not stop");
+            }
+        }
+
+        private byte[] InvokeWorker(string access, byte[] request, int maxResponseBytes, NamedPipeServerStream clientPipe)
         {
             workerGate.Wait();
             try
@@ -502,33 +582,9 @@ namespace DevBridge.WindowsLifecycleAuthority
                     worker.StandardInput.BaseStream.Flush();
                     worker.StandardInput.Close();
 
-                    MemoryStream stdout = new MemoryStream();
-                    byte[] buffer = new byte[2048];
-                    while (true)
-                    {
-                        int count = worker.StandardOutput.BaseStream.Read(buffer, 0, buffer.Length);
-                        if (count <= 0) break;
-                        stdout.Write(buffer, 0, count);
-                        if (stdout.Length > maxResponseBytes)
-                        {
-                            job.Dispose();
-                            return null;
-                        }
-                    }
-                    worker.WaitForExit();
-                    if (worker.ExitCode != 0) return null;
-                    byte[] response = stdout.ToArray();
-                    stdout.Dispose();
-                    int newline = Array.IndexOf(response, (byte)'\n');
-                    if (newline < 0) return null;
-                    for (int index = newline + 1; index < response.Length; index += 1)
-                    {
-                        byte value = response[index];
-                        if (value != (byte)' ' && value != (byte)'\t' && value != (byte)'\r' && value != (byte)'\n') return null;
-                    }
-                    byte[] exact = new byte[newline + 1];
-                    Buffer.BlockCopy(response, 0, exact, 0, exact.Length);
-                    return exact;
+                    return String.Equals(access, "activity", StringComparison.Ordinal)
+                        ? ReadActivityWorkerResponse(worker, clientPipe, maxResponseBytes)
+                        : ReadWorkerResponse(worker, maxResponseBytes);
                 }
                 finally
                 {
