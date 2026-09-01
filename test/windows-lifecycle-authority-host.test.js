@@ -1,12 +1,54 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
+import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawn, spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import { createConfiguredEnvironmentConfigurationClient } from '../src/runtime/environment-configuration-authority-transport.js';
+import { createWindowsLifecycleAuthorityPlan } from '../src/setup/windows-lifecycle-authority.js';
 
 const SOURCE = fileURLToPath(new URL('../src/setup/windows-lifecycle-authority-host.cs', import.meta.url));
+
+function waitForHostReady(child, timeoutMs = 30_000) {
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => finish(new Error(`compiled host readiness timed out: ${stdout}\n${stderr}`)), timeoutMs);
+    const finish = (error) => {
+      clearTimeout(timer);
+      child.stdout.off('data', onStdout);
+      child.stderr.off('data', onStderr);
+      child.off('exit', onExit);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onStdout = (chunk) => {
+      stdout += chunk;
+      if (stdout.split(/\r?\n/u).includes('READY')) finish();
+    };
+    const onStderr = (chunk) => { stderr += chunk; };
+    const onExit = (code) => finish(new Error(`compiled host exited before readiness (${String(code)}): ${stdout}\n${stderr}`));
+    child.stdout.on('data', onStdout);
+    child.stderr.on('data', onStderr);
+    child.once('exit', onExit);
+  });
+}
+
+function waitForExit(child, timeoutMs = 30_000) {
+  return new Promise((resolve, reject) => {
+    if (child.exitCode != null) return resolve(child.exitCode);
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error('compiled host did not stop within its bounded teardown window'));
+    }, timeoutMs);
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+  });
+}
 
 test('Windows lifecycle service host is only an SCM, IPC, and bounded process adapter', async () => {
   const source = await readFile(SOURCE, 'utf8');
@@ -159,6 +201,142 @@ test('Windows PowerShell 5.1 can compile the service-aware host without a third-
     assert.equal(result.error, undefined, result.error?.message);
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('compiled Windows host serves configuration through its distinct five-endpoint plan', async (t) => {
+  if (process.platform !== 'win32') return t.skip('Windows compiled-host integration runs on Windows CI');
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'devbridge-lifecycle-host-integration-'));
+  const library = path.join(temp, 'devbridge-lifecycle-authority-host.dll');
+  const harnessSource = path.join(temp, 'integration-harness.cs');
+  const harness = path.join(temp, 'integration-harness.exe');
+  let child = null;
+  try {
+    const sidResult = spawnSync('powershell.exe', [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+      '[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
+    ], { encoding: 'utf8', timeout: 30_000, windowsHide: true });
+    assert.equal(sidResult.error, undefined, sidResult.error?.message);
+    assert.equal(sidResult.status, 0, `${sidResult.stdout}\n${sidResult.stderr}`);
+    const operatorSid = sidResult.stdout.trim();
+    const stateDirectory = path.join(temp, 'operator-state');
+    const plan = createWindowsLifecycleAuthorityPlan({
+      stateDirectory,
+      programDataDirectory: temp,
+      operatorSid,
+    });
+    await mkdir(stateDirectory, { recursive: true });
+    await mkdir(plan.protectedRoot, { recursive: true });
+    await mkdir(plan.authorityDirectory, { recursive: true });
+    const node = path.join(plan.protectedRoot, 'node.exe');
+    const worker = path.join(plan.protectedRoot, 'worker.mjs');
+    await writeFile(worker, [
+      "let input = '';",
+      "process.stdin.setEncoding('utf8');",
+      "for await (const chunk of process.stdin) input += chunk;",
+      "const request = JSON.parse(input.trim());",
+      "const access = process.argv[process.argv.indexOf('--access') + 1];",
+      "if (access !== 'configuration') process.exit(2);",
+      "process.stdout.write(JSON.stringify({ protocol: 'devbridge/environment-configuration-authority-result-v1', requestId: request.requestId, ok: true, value: { ready: true } }) + '\\n');",
+    ].join('\n'));
+    await writeFile(harnessSource, String.raw`using System;
+using System.Reflection;
+
+internal static class IntegrationHarness
+{
+    private static int Main(string[] args)
+    {
+        object service = null;
+        MethodInfo stop = null;
+        try
+        {
+            Assembly host = Assembly.LoadFrom(Environment.GetEnvironmentVariable("DB_HOST_LIBRARY"));
+            Type optionsType = host.GetType("DevBridge.WindowsLifecycleAuthority.HostOptions", true);
+            Type serviceType = host.GetType("DevBridge.WindowsLifecycleAuthority.LifecycleAuthorityService", true);
+            MethodInfo parse = optionsType.GetMethod("Parse", BindingFlags.Static | BindingFlags.NonPublic);
+            object options = parse.Invoke(null, new object[] { args });
+            service = Activator.CreateInstance(serviceType, BindingFlags.Instance | BindingFlags.NonPublic, null, new object[] { options }, null);
+            MethodInfo start = serviceType.GetMethod("OnStart", BindingFlags.Instance | BindingFlags.NonPublic);
+            stop = serviceType.GetMethod("OnStop", BindingFlags.Instance | BindingFlags.NonPublic);
+            start.Invoke(service, new object[] { new string[0] });
+            Console.WriteLine("READY");
+            Console.Out.Flush();
+            Console.ReadLine();
+            return 0;
+        }
+        finally
+        {
+            if (service != null && stop != null) stop.Invoke(service, null);
+        }
+    }
+}`);
+    const compileScript = [
+      "$ErrorActionPreference = 'Stop'",
+      "Add-Type -LiteralPath $env:DB_HOST_SOURCE -OutputAssembly $env:DB_HOST_LIBRARY -OutputType Library -ReferencedAssemblies 'System.ServiceProcess.dll'",
+      "Add-Type -LiteralPath $env:DB_HARNESS_SOURCE -OutputAssembly $env:DB_HARNESS_OUTPUT -OutputType ConsoleApplication",
+    ].join('; ');
+    const compile = spawnSync('powershell.exe', [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', compileScript,
+    ], {
+      encoding: 'utf8',
+      timeout: 60_000,
+      windowsHide: true,
+      env: {
+        ...process.env,
+        DB_HOST_SOURCE: SOURCE,
+        DB_HOST_LIBRARY: library,
+        DB_HARNESS_SOURCE: harnessSource,
+        DB_HARNESS_OUTPUT: harness,
+      },
+    });
+    assert.equal(compile.error, undefined, compile.error?.message);
+    assert.equal(compile.status, 0, `${compile.stdout}\n${compile.stderr}`);
+    await copyFile(process.execPath, node);
+
+    const endpointArgs = ['read', 'mutation', 'acceptance', 'activity', 'configuration']
+      .flatMap((capability) => [`--${capability}-pipe`, plan.endpoints[capability].pipeName]);
+    child = spawn(harness, [
+      '--service-name', plan.service.name,
+      '--protected-root', plan.protectedRoot,
+      '--node', node,
+      '--worker', worker,
+      '--state-directory', stateDirectory,
+      '--authority-directory', plan.authorityDirectory,
+      '--operator-sid', operatorSid,
+      ...endpointArgs,
+    ], {
+      cwd: plan.protectedRoot,
+      env: { ...process.env, DB_HOST_LIBRARY: library },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    await waitForHostReady(child);
+    let evidence = null;
+    let lastError = null;
+    for (let attempt = 0; attempt < 20 && evidence == null; attempt += 1) {
+      try {
+        evidence = await createConfiguredEnvironmentConfigurationClient({
+          stateDirectory,
+          platform: 'win32',
+          connectTimeoutMs: 1_000,
+        }).inspect();
+      } catch (error) {
+        lastError = error;
+        if (child.exitCode != null) break;
+        await wait(100);
+      }
+    }
+    if (evidence == null) throw new Error(`compiled configuration endpoint failed: ${lastError?.message ?? 'unknown error'}; host exit=${String(child.exitCode)}`);
+    assert.deepEqual(evidence, { ready: true });
+    child.stdin.end('\n');
+    assert.equal(await waitForExit(child), 0);
+    child = null;
+  } finally {
+    if (child && child.exitCode == null) {
+      child.stdin.end('\n');
+      try { await waitForExit(child, 10_000); } catch { child.kill(); }
+    }
     await rm(temp, { recursive: true, force: true });
   }
 });

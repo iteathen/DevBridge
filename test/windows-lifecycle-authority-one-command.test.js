@@ -450,7 +450,7 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
       invoke: async (request) => {
         invoked += 1;
         assert.equal(request.executable, 'powershell.exe');
-        assert.equal(request.timeoutMs, 5 * 60_000);
+        assert.equal(request.timeoutMs, 45 * 60_000);
         const outer = JSON.parse(request.input);
         assert.equal(typeof outer.brokerCommand, 'string');
         assert.ok(outer.brokerCommand.length > 0);
@@ -486,6 +486,117 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
     assert.equal(invoked, 1);
     assert.equal(result.completed, true);
     assert.equal(result.exitCode, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('elevation adapter removes only prior valid terminal receipts before creating a new channel', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
+  try {
+    const bin = path.join(root, 'bin');
+    const state = path.join(root, 'state');
+    await mkdir(bin);
+    await mkdir(state);
+    const launcher = path.join(bin, 'devbridge-entry.mjs');
+    const node = path.join(root, 'node.exe');
+    await writeFile(launcher, 'export {};\n');
+    await writeFile(node, 'node');
+
+    const completedDirectory = path.join(state, '.lifecycle-authority-elevation-11111111-1111-4111-8111-111111111111');
+    const ambiguousDirectory = path.join(state, '.lifecycle-authority-elevation-22222222-2222-4222-8222-222222222222');
+    await mkdir(completedDirectory);
+    await mkdir(ambiguousDirectory);
+    await writeFile(path.join(completedDirectory, 'result.json'), `${JSON.stringify({
+      protocol: 'devbridge/windows-lifecycle-authority-elevation-broker-v1',
+      requestedHead: 'a'.repeat(40),
+      started: true,
+      exitCode: 3,
+      stdout: '',
+      stderr: '',
+      error: null,
+      outputTruncated: false,
+    })}\n`);
+    await writeFile(path.join(ambiguousDirectory, 'input.json'), '{}\n');
+
+    const result = await requestWindowsLifecycleAuthorityElevation({
+      home: root,
+      launcher,
+      nodeExecutable: node,
+      platform: 'win32',
+      invoke: async () => {
+        await assert.rejects(lstat(completedDirectory), { code: 'ENOENT' });
+        assert.equal((await lstat(ambiguousDirectory)).isDirectory(), true);
+        const entries = await readdir(state, { withFileTypes: true });
+        const current = entries.find((entry) => entry.isDirectory()
+          && entry.name !== path.basename(ambiguousDirectory));
+        assert.ok(current);
+        const resultFile = path.join(state, current.name, 'result.json');
+        await writeFile(resultFile, `${JSON.stringify({
+          protocol: 'devbridge/windows-lifecycle-authority-elevation-broker-v1',
+          requestedHead: 'b'.repeat(40),
+          started: true,
+          exitCode: 0,
+          stdout: JSON.stringify({
+            protocol: 'devbridge/windows-lifecycle-authority-elevated-child-v1',
+            ready: true,
+            changed: false,
+            service: 'ready',
+            protectedState: 'ready',
+            blocker: null,
+          }),
+          stderr: '',
+          error: null,
+          outputTruncated: false,
+        })}\n`);
+        return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":0}' };
+      },
+    }, {
+      resolveRunnerHead: async () => 'b'.repeat(40),
+    });
+
+    assert.equal(result.completed, true);
+    assert.equal((await lstat(ambiguousDirectory)).isDirectory(), true);
+    assert.deepEqual(await readdir(state), [path.basename(ambiguousDirectory)]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('elevation adapter preserves its exact channel when the outer wait expires', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
+  try {
+    const bin = path.join(root, 'bin');
+    const state = path.join(root, 'state');
+    await mkdir(bin);
+    await mkdir(state);
+    const launcher = path.join(bin, 'devbridge-entry.mjs');
+    const node = path.join(root, 'node.exe');
+    await writeFile(launcher, 'export {};\n');
+    await writeFile(node, 'node');
+
+    const result = await requestWindowsLifecycleAuthorityElevation({
+      home: root,
+      launcher,
+      nodeExecutable: node,
+      platform: 'win32',
+      invoke: async () => ({
+        exitCode: null,
+        timedOut: true,
+        aborted: false,
+        outputTruncated: false,
+        stdout: '',
+        stderr: '',
+      }),
+    }, {
+      resolveRunnerHead: async () => 'c'.repeat(40),
+    });
+
+    assert.equal(result.completed, false);
+    assert.match(result.blocker, /did not complete/u);
+    const entries = await readdir(state);
+    assert.equal(entries.length, 1);
+    assert.equal((await lstat(path.join(state, entries[0], 'input.json'))).isFile(), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
