@@ -341,11 +341,19 @@ test('only an exact verified generation-addressed service suppresses legacy migr
 test('fixed legacy service may omit its historically absent description without weakening generation identity', () => {
   const fixed = Object.freeze({
     serviceCommand: 'fixed-command',
-    service: Object.freeze({ account: 'NT SERVICE\\DevBridgeLifecycle-test', description: 'fixed-description' }),
+    service: Object.freeze({
+      account: 'NT SERVICE\\DevBridgeLifecycle-test',
+      logonAccount: 'LocalSystem',
+      description: 'fixed-description',
+    }),
   });
   const generation = Object.freeze({
     serviceCommand: 'generation-command',
-    service: Object.freeze({ account: fixed.service.account, description: 'generation-description' }),
+    service: Object.freeze({
+      account: fixed.service.account,
+      logonAccount: fixed.service.logonAccount,
+      description: 'generation-description',
+    }),
   });
   const observed = Object.freeze({
     exists: true,
@@ -361,6 +369,12 @@ test('fixed legacy service may omit its historically absent description without 
   }), fixed, generation), 'foreign');
   assert.equal(classifyWindowsLifecycleAuthorityLegacyService(Object.freeze({
     ...observed,
+    pathName: generation.serviceCommand,
+    description: generation.service.description,
+  }), fixed, generation), 'generation-running');
+  assert.equal(classifyWindowsLifecycleAuthorityLegacyService(Object.freeze({
+    ...observed,
+    startName: generation.service.logonAccount,
     pathName: generation.serviceCommand,
     description: generation.service.description,
   }), fixed, generation), 'generation-running');

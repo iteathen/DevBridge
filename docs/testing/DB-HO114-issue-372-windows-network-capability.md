@@ -2,9 +2,11 @@
 
 Date: 2026-09-01
 
-Status: locally qualified implementation candidate; hosted and physical acceptance pending
+Status: hosted-qualified hypothesis; physically rejected and superseded by DB-HO115
 
 Coordinates with: #360, #362, #372, #430, DB-003, DB-009, DB-011, DB-019, DB-020, DB-HO110, DB-HO111, and DB-HO113.
+
+Supersession 2026-09-01: exact Stage 8 head `737890fdd73e5594fce90fc73bbe906a9fd8aef1` passed all four pull-request jobs in run `33555094013` and all four fresh post-integration jobs in run `33555496365`. Its physical setup requested UAC at elapsed zero and installed the exact service SID once in each fixed group, but `Get-NetNat` still returned `System error.` under the virtual service token. The standard-group hypothesis is therefore rejected, not retained as an optional compatibility path. DB-HO115 owns the replacement and removal of these now-obsolete memberships.
 
 ## Physical evidence
 

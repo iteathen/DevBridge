@@ -16,8 +16,7 @@ function plan() {
     ownershipManifest: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\0123456789abcdef0123456789abcdef\\ownership.json',
     service: {
       account: 'NT SERVICE\\DevBridgeLifecycle-0123456789abcdef0123456789abcdef',
-      hyperVGroupSid: 'S-1-5-32-578',
-      networkConfigurationGroupSid: 'S-1-5-32-556',
+      retiredCapabilityGroupSids: ['S-1-5-32-578', 'S-1-5-32-556'],
     },
     runtime: {
       generationsDirectory: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\0123456789abcdef0123456789abcdef\\generations',
@@ -83,7 +82,7 @@ test('ordinary protection proof fails closed when either negative capability pro
   );
 });
 
-test('structural proof is read-only and checks exact protected ACL and service capability memberships', async () => {
+test('structural proof is read-only and checks exact protected ACL and retired service capability memberships', async () => {
   let encoded = null;
   let input = null;
   const selected = plan();
@@ -121,21 +120,20 @@ test('structural proof is read-only and checks exact protected ACL and service c
     serviceHostExecutable: selected.runtime.serviceHostExecutable,
     workerEntry: selected.runtime.workerEntry,
     serviceAccount: selected.service.account,
-    hyperVGroupSid: selected.service.hyperVGroupSid,
-    networkConfigurationGroupSid: selected.service.networkConfigurationGroupSid,
+    retiredCapabilityGroupSids: selected.service.retiredCapabilityGroupSids,
   });
 });
 
-test('structural proof rejects caller-selected capability groups before invoking PowerShell', async () => {
+test('structural proof rejects caller-selected retired capability groups before invoking PowerShell', async () => {
   const selected = plan();
-  selected.service.networkConfigurationGroupSid = 'S-1-5-32-544';
+  selected.service.retiredCapabilityGroupSids[1] = 'S-1-5-32-544';
   await assert.rejects(
     verifyWindowsLifecycleAuthorityProtection({
       plan: selected,
       elevated: true,
       invoke: async () => { throw new Error('must not run'); },
     }),
-    /capability groups are invalid/u,
+    /retired capability groups are invalid/u,
   );
 });
 

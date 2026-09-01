@@ -68,7 +68,7 @@ function deps({
               exists: true,
               state: 'Running',
               startMode: 'Auto',
-              startName: plan.service.account,
+              startName: plan.service.logonAccount,
               pathName: plan.serviceCommand,
               description: plan.service.description,
             }
@@ -76,7 +76,7 @@ function deps({
               exists: true,
               state: 'Running',
               startMode: 'Auto',
-              startName: plan.service.account,
+              startName: plan.service.logonAccount,
               pathName: 'C:\\stale\\authority.exe',
               description: 'stale generation',
             };
@@ -360,18 +360,36 @@ test('production elevated reconciliation no longer owns a monolithic provision o
   assert.doesNotMatch(source, /stopped-after-failed-health/u);
 });
 
-test('service capability admission rejects substituted group authority before any service mutation', async () => {
+test('service provider logon and capability retirement reject substituted authority before any service mutation', async () => {
   const source = await readFile(SERVICE_SOURCE, 'utf8');
-  const validation = source.indexOf('function serviceCapabilityGroupSids(plan)');
+  const validation = source.indexOf('function retiredServiceCapabilityGroupSids(plan)');
   const configuration = source.indexOf('async function configureService(service, plan, invoke, environment)');
   const firstMutation = source.indexOf("await invokeSc(invoke, [", configuration);
   assert.equal(validation > 0, true);
   assert.equal(configuration > validation, true);
-  assert.equal(source.indexOf('const capabilityGroupSids = serviceCapabilityGroupSids(plan);', configuration) < firstMutation, true);
+  assert.equal(source.indexOf('const retiredCapabilityGroupSids = retiredServiceCapabilityGroupSids(plan);', configuration) < firstMutation, true);
   assert.match(source.slice(validation, configuration), /WINDOWS_HYPERV_ADMINISTRATORS_SID/u);
   assert.match(source.slice(validation, configuration), /WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID/u);
-  assert.match(source, /groupSids: capabilityGroupSids/u);
-  assert.match(source, /service capability group membership is invalid/u);
+  assert.match(source.slice(validation, configuration), /WINDOWS_LOCAL_SYSTEM_ACCOUNT/u);
+  assert.match(source, /groupSids: retiredCapabilityGroupSids/u);
+  assert.match(source, /Remove-LocalGroupMember/u);
+  assert.doesNotMatch(source, /Add-LocalGroupMember/u);
+  assert.match(source, /service capability group membership was not retired/u);
+});
+
+test('retired virtual logon is admitted only inside the exact one-way refresh transition', async () => {
+  const source = await readFile(SERVICE_SOURCE, 'utf8');
+  const retired = source.indexOf('function serviceMatchesRetiredVirtualLogon(service, plan)');
+  const transition = source.indexOf('function serviceMatchesOwnedTransition(service, plan)');
+  const strictProbe = source.indexOf('async function probeServiceGeneration');
+  const strictReady = source.indexOf('if (serviceMatches(service, plan) && serviceRunning(service))');
+  assert.equal(retired > 0, true);
+  assert.equal(transition > retired, true);
+  assert.match(source.slice(retired, transition), /plan\.service\.account/u);
+  assert.match(source.slice(retired, transition), /WINDOWS_LOCAL_SYSTEM_ACCOUNT/u);
+  assert.equal(source.slice(strictProbe, strictReady).includes('serviceMatchesOwnedTransition'), false);
+  assert.equal(source.slice(strictProbe, strictReady).includes('serviceMatches(service, target.plan)'), true);
+  assert.equal(source.slice(strictReady).includes('serviceMatchesOwnedTransition'), false);
 });
 
 test('authority migration copies only portable protected state and leaves image adoption and activity policy separate', async () => {
