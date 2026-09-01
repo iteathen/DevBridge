@@ -69,6 +69,14 @@ The follow-up correction preserves the five-minute default. The shared process m
 
 Follow-up qualification passed 39 focused command/elevation tests, regenerated and byte-verified the standalone installer, passed bounded preflight (253 syntax files, two JSON files, 203 targeted tests, two standalone artifacts), passed the architecture boundary set and doctor, and passed the Windows-serialized full suite with 2,070 passed plus 21 platform skips out of 2,091 and zero failures. Diff and disposable-test-directory hygiene were clean.
 
+## Post-integration setup-composition finding
+
+Stage 8 integrated the explicit elevation invoker at `43bf74205062d726743d1312beb3a22be6d2df25`, and fresh four-job CI run `33496146955` passed. One newly authorized ordinary setup invocation then ran from `2026-09-01T10:16:24Z` through `2026-09-01T10:39:31Z` and again stopped before UAC with `Windows lifecycle authority elevation could not be started.` No retry was started. Read-only classification found no new elevation channel, elevated child, or protected mutation. The exact runner checkout used head `43bf74205062d726743d1312beb3a22be6d2df25`.
+
+The elevation module's explicit 45-minute invoker was correct but remained only its default. The application setup composition injected its ordinary five-minute `invoke` port into `requestWindowsLifecycleAuthorityElevation`, replacing that default at the physical call site. The long request was therefore rejected by the same ordinary validation ceiling before spawn. This was a split-authority composition defect, not a Windows or UAC refusal.
+
+The correction removes the ordinary invocation port from the elevation request. Ordinary setup mechanics retain their bounded generic invoker, while the elevation adapter exclusively owns its separately bounded transaction invoker. A dynamic application-composition regression injects a failing ordinary invoker, requests elevation through the real setup closure, and proves the elevation request contains no `invoke` field. The adapter's existing real-process policy proof continues to own the 45-minute boundary.
+
 ## Stop conditions
 
 Stop rather than broaden scope if the repair requires a second privileged helper, caller-selected executable/path/pipe identity, ordinary provider credentials, direct provider mutation, pipe ACL widening, service/manual host repair, repository-code host execution, or deletion of ambiguous elevation evidence.

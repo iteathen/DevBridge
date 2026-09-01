@@ -1197,7 +1197,6 @@ export async function runDevBridgeSetup({
           home: root,
           launcher: pathStatus.launcher,
           platform,
-          invoke,
           environment: env,
         })
         : null,

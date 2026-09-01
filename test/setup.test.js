@@ -294,6 +294,31 @@ test('setup composes protected configuration and environment activation only aft
   assert.equal(fixture.calls.canaryRun, 0);
 });
 
+test('setup keeps the ordinary command invoker outside the elevation transaction boundary', async () => {
+  const fixture = dependencies({
+    physical: { state: 'completed', blocked: false, complete: true, reason: null, preflight: { ready: true } },
+  });
+  const ordinaryInvoke = async () => { throw new Error('ordinary command invoker must not own elevation'); };
+  let elevationRequest = null;
+  fixture.deps.invoke = ordinaryInvoke;
+  fixture.deps.elevationRequester = async (request) => {
+    elevationRequest = request;
+    return { completed: true, exitCode: 0 };
+  };
+  fixture.deps.lifecycleAuthorityReconciler = async (request) => {
+    const elevation = await request.requestElevation();
+    assert.equal(elevation.completed, true);
+    return { protocol: 'test/lifecycle-authority', ready: true, blocker: null, changed: true, service: 'ready', protectedState: 'ready' };
+  };
+
+  const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-elevation-command-boundary') }, fixture.deps);
+
+  assert.equal(result.blocked, false);
+  assert.ok(elevationRequest);
+  assert.equal(Object.hasOwn(elevationRequest, 'invoke'), false);
+  assert.equal(elevationRequest.environment, process.env);
+});
+
 test('deferred and empty profile selections preserve repository setup without crossing platform boundaries', async () => {
   const deferredFixture = dependencies({
     initialState: persistedState({
