@@ -2,7 +2,7 @@
 
 Date: 2026-09-01
 
-Status: locally qualified implementation candidate; hosted and physical acceptance pending
+Status: hosted implementation accepted; provider-logon transition physically persisted; final setup acceptance blocked by the separately reproduced DB-HO116 protected-pipe re-arm defect
 
 Coordinates with: #360, #362, #372, #430, DB-003, DB-008, DB-009, DB-011, DB-019, DB-020, DB-HO110, DB-HO111, DB-HO113, and DB-HO114.
 
@@ -70,3 +70,9 @@ Only then install the exact accepted Stage 8 head. One fresh ordinary setup may 
 - the environment route becomes healthy without a manual service, group, ACL, WMI, provider, switch, NAT, image, VM, guest, PATH, or installation-state workaround.
 
 If the provider still fails under this exact context, stop at the new evidence. Do not introduce another authority or manual correction. GitHub task receipt, Hello World compilation/testing, restart recovery, guest acceptance, and GPU/CUDA remain downstream gates.
+
+## Post-integration physical result
+
+PR #437 merged as exact Stage 8 head `7c4edd4a044cefccb455fe5141083f6e387077bc`; pull-request run `33558729096` and fresh post-integration run `33559135053` passed all four jobs. Exact install-only succeeded. One ordinary setup requested UAC at elapsed zero, the operator accepted the single child, and the protected transaction completed at 190 seconds.
+
+The new LocalSystem candidate was rejected because configuration health was transport-unavailable, and exact previous generation `83e931ffb86024ef868caff3fac67cd28d0cf144d5b9b78e2a82d434ece9c4cf` was restored. The account transition persisted: the restored service is Running/Automatic under `LocalSystem`. Read-only endpoint evidence then showed intermittent false unavailability across otherwise healthy listeners. DB-HO116 reproduces that independent named-pipe re-arm defect in the disposable compiled-host integration harness and owns the correction. Do not reinterpret this result as a provider-logon rejection or retry setup from DB-HO115 bytes.
