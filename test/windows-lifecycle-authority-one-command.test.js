@@ -500,7 +500,7 @@ test('elevation adapter default composes the explicit long-transaction invocatio
   assert.doesNotMatch(source, /import \{ invokeCommand \}/u);
 });
 
-test('elevation adapter removes only prior valid terminal receipts before creating a new channel', async () => {
+test('elevation adapter defers old terminal receipt cleanup until after the UAC transaction', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
   try {
     const bin = path.join(root, 'bin');
@@ -534,11 +534,12 @@ test('elevation adapter removes only prior valid terminal receipts before creati
       nodeExecutable: node,
       platform: 'win32',
       invoke: async () => {
-        await assert.rejects(lstat(completedDirectory), { code: 'ENOENT' });
+        assert.equal((await lstat(completedDirectory)).isDirectory(), true);
         assert.equal((await lstat(ambiguousDirectory)).isDirectory(), true);
         const entries = await readdir(state, { withFileTypes: true });
         const current = entries.find((entry) => entry.isDirectory()
-          && entry.name !== path.basename(ambiguousDirectory));
+          && entry.name !== path.basename(ambiguousDirectory)
+          && entry.name !== path.basename(completedDirectory));
         assert.ok(current);
         const resultFile = path.join(state, current.name, 'result.json');
         await writeFile(resultFile, `${JSON.stringify({
