@@ -159,17 +159,21 @@ They contain no:
 - repository execution fallback;
 - setup/doctor/routing integration.
 
-The binding-authority, ledger-persistence, transport, and CUDA backend implementations are separate studs.
+The binding-authority, ledger-persistence, generation-lifecycle, transport, and CUDA backend implementations are separate studs.
 
 ## Next slices
 
-After this core is repository-qualified:
+The original core plan has been superseded by the post-integration #395 recovery review. The repository-side dependency order is now:
 
-1. implement a durable local ledger persistence adapter behind the existing CAS port, with provider-independent storage ownership and restart tests;
-2. define the transport exchange stud and add independent Windows and Linux provider adapters without changing the broker/core protocol;
-3. qualify hostile-guest framing, peer identity, bounded message sizes, disconnect/reconnect, duplicate delivery, and response loss;
-4. implement native Windows and native Linux CUDA semantic backend adapters behind `ensureExecution / observeExecution / ensureCancellation`;
-5. perform the first real Windows canary only after the transport/security path is qualified;
-6. perform Linux physical qualification when a physical Linux GPU host becomes available.
+1. durable local broker ledger persistence behind the existing CAS port — completed by #400;
+2. read-only exact-generation ledger catalog that can prove quiescence without widening broker-core authority — completed by #411;
+3. durable generation retirement/admission gate that fences and drains new execute work, keeps observe/cancel reconciliation available, and promotes only while exact quiescence is proven — #412;
+4. only after #412 qualifies, define the transport exchange stud and independent Windows/Linux provider adapters without changing the broker/core protocol or generation-lifecycle authority;
+5. qualify hostile-guest framing, peer identity, bounded message sizes, disconnect/reconnect, duplicate delivery, and response loss;
+6. implement native Windows and native Linux CUDA semantic backend adapters behind `ensureExecution / observeExecution / ensureCancellation`;
+7. perform the first real Windows canary only after transport/security and generation-lifecycle composition are qualified;
+8. perform Linux physical qualification when a physical Linux GPU host becomes available.
+
+A stale generation must never be made unreachable merely to advance this sequence. The #412 controller remains the pre-transport promotion authority; `AcceleratorBrokerCore` is not widened with stale-backend or generation-retirement mechanics.
 
 No local physical-host action is required for this transportless fake-backed core slice.
