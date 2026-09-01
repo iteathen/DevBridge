@@ -68,7 +68,7 @@ export function createEnvironmentConfigurationSocketExchange({ endpoint, connect
       return await transactBoundedLocalAuthoritySocket({
         endpoint,
         timeoutMs,
-        inspection: request?.operation === 'inspect',
+        replaySafe: request?.operation === 'inspect',
         transact: (socket) => new Promise((resolve, reject) => {
           let settled = false;
           let buffer = '';

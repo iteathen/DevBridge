@@ -8,6 +8,7 @@ import {
   ENVIRONMENT_ACTIVITY_AUTHORITY_MAX_RESULT_BYTES,
   EnvironmentActivityClient,
   createEnvironmentActivityHandler,
+  environmentActivityOperationIsReadOnly,
 } from './environment-activity-authority.js';
 
 const AUTHORITY_ID = /^[0-9a-f]{32}$/u;
@@ -80,7 +81,7 @@ export function createEnvironmentActivitySocketExchange({
         endpoint,
         timeoutMs: connectMs,
         signal,
-        inspection: request?.operation === 'inspect',
+        replaySafe: environmentActivityOperationIsReadOnly(request?.operation),
         transact: (socket) => new Promise((resolve, reject) => {
           let settled = false;
           let buffer = '';

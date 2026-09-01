@@ -6,7 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import { createConfiguredEnvironmentActivityClient } from '../src/runtime/environment-activity-authority-transport.js';
 import { createConfiguredEnvironmentConfigurationClient } from '../src/runtime/environment-configuration-authority-transport.js';
+import { createConfiguredLifecycleAuthorityClient } from '../src/runtime/environment-lifecycle-authority-transport.js';
 import { createWindowsLifecycleAuthorityPlan } from '../src/setup/windows-lifecycle-authority.js';
 
 const SOURCE = fileURLToPath(new URL('../src/setup/windows-lifecycle-authority-host.cs', import.meta.url));
@@ -237,8 +239,10 @@ test('compiled Windows host serves configuration through its distinct five-endpo
       "for await (const chunk of process.stdin) input += chunk;",
       "const request = JSON.parse(input.trim());",
       "const access = process.argv[process.argv.indexOf('--access') + 1];",
-      "if (access !== 'configuration') process.exit(2);",
-      "process.stdout.write(JSON.stringify({ protocol: 'devbridge/environment-configuration-authority-result-v1', requestId: request.requestId, ok: true, value: { ready: true } }) + '\\n');",
+      "if (access === 'configuration') process.stdout.write(JSON.stringify({ protocol: 'devbridge/environment-configuration-authority-result-v1', requestId: request.requestId, ok: true, value: { ready: true } }) + '\\n');",
+      "else if (access === 'read') process.stdout.write(JSON.stringify({ protocol: 'devbridge/environment-lifecycle-authority-result-v1', requestId: request.requestId, ok: true, value: [] }) + '\\n');",
+      "else if (access === 'activity') process.stdout.write(JSON.stringify({ protocol: 'devbridge/environment-activity-authority-result-v1', requestId: request.requestId, ok: true, value: [] }) + '\\n');",
+      "else process.exit(2);",
     ].join('\n'));
     await writeFile(harnessSource, String.raw`using System;
 using System.Reflection;
@@ -324,6 +328,32 @@ internal static class IntegrationHarness
         throw new Error(`compiled configuration endpoint failed on request ${String(request + 1)}: ${error.message}`);
       }
       assert.deepEqual(result, { ready: true });
+    }
+    for (let request = 0; request < 30; request += 1) {
+      let result;
+      try {
+        result = await createConfiguredLifecycleAuthorityClient({
+          stateDirectory,
+          platform: 'win32',
+          connectTimeoutMs: 1_000,
+        }).list();
+      } catch (error) {
+        throw new Error(`compiled lifecycle read endpoint failed on request ${String(request + 1)}: ${error.message}`);
+      }
+      assert.deepEqual(result, []);
+    }
+    for (let request = 0; request < 30; request += 1) {
+      let result;
+      try {
+        result = await createConfiguredEnvironmentActivityClient({
+          stateDirectory,
+          platform: 'win32',
+          connectTimeoutMs: 3_000,
+        }).list();
+      } catch (error) {
+        throw new Error(`compiled activity read endpoint failed on request ${String(request + 1)}: ${error.message}`);
+      }
+      assert.deepEqual(result, []);
     }
     child.stdin.end('\n');
     assert.equal(await waitForExit(child), 0);

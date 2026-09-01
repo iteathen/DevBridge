@@ -15,6 +15,10 @@ const FORBIDDEN_RESULT_KEYS = new Set([
   'xml', 'rawXml', 'socket', 'endpoint', 'credential', 'token',
 ]);
 
+export function environmentLifecycleAuthorityOperationIsReadOnly(value) {
+  return typeof value === 'string' && READ_AUTHORITY_OPERATIONS.has(value);
+}
+
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
   return value;

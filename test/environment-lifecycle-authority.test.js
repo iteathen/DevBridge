@@ -5,10 +5,20 @@ import {
   LifecycleAuthorityClient,
   createLifecycleAuthorityMutationHandler,
   createLifecycleAuthorityReadHandler,
+  environmentLifecycleAuthorityOperationIsReadOnly,
   normalizeLifecycleAuthorityRequest,
 } from '../src/runtime/environment-lifecycle-authority.js';
 
 const ENV = 'environment-test';
+
+test('lifecycle protocol alone classifies replay-safe read capability operations', () => {
+  for (const operation of ['inspect', 'list', 'status', 'plan', 'setup-reentry']) {
+    assert.equal(environmentLifecycleAuthorityOperationIsReadOnly(operation), true, operation);
+  }
+  for (const operation of ['run', 'resume', '', null]) {
+    assert.equal(environmentLifecycleAuthorityOperationIsReadOnly(operation), false, String(operation));
+  }
+});
 
 function operatorFixture(calls) {
   return {
