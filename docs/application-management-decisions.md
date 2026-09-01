@@ -137,3 +137,18 @@ Consequences:
 - DevBridge security, DB-009/DB-011 recovery, and LEGO contracts override any external product behavior that conflicts with them.
 
 These products are design references only. DevBridge must not depend on their software, file layouts, update services, APIs, or trust models, and no external product is normative authority for DevBridge behavior.
+
+## Decision 10: exact cache observation crosses platform process boundaries in bounded batches
+
+Exact artifact ownership remains a neutral runtime contract. Platform-specific evidence such as the Windows reparse-point attribute remains behind an injected adapter, but a bounded artifact set must not require one operating-system process per path.
+
+Consequences:
+
+- the neutral artifact owner sequences fixed-size batches and retains before/after observation policy;
+- the Windows adapter returns one strict count- and order-bound result for each bounded local-path batch;
+- malformed, missing, extra, reordered, timed-out, truncated, or reparse-positive evidence fails closed;
+- file handles, filesystem identity, exact directory membership, byte counts, and content digests remain independently verified;
+- destructive removal retains per-entry exact checks and receives no batch-derived widening of authority; and
+- setup and UAC timing consume this lower-layer improvement but do not own a duplicate cache fast path.
+
+Owners: #159, #180, #432.

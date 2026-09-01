@@ -100,7 +100,7 @@ test('filesystem indirection and explicit reparse evidence cannot enter a plan',
     await rm(path.join(state.root, 'nested'), { recursive: true, force: true });
     try { await symlink(target, path.join(state.root, 'nested'), process.platform === 'win32' ? 'junction' : 'dir'); }
     catch (error) { if (process.platform === 'win32' && error?.code === 'EPERM') { t.skip('symlink creation is unavailable'); return; } throw error; }
-    await assert.rejects(() => state.api.plan(request(state.root)), /real directory|shape is unsafe/u);
+    await assert.rejects(() => state.api.plan(request(state.root)), /real directory|shape is unsafe|reparse point/u);
   } finally { await rm(state.parent, { recursive: true, force: true }); }
 
   const flagged = await fixture();
@@ -109,8 +109,66 @@ test('filesystem indirection and explicit reparse evidence cannot enter a plan',
       platform: process.platform,
       inspectReparse: async (location, info) => info.isSymbolicLink() || location.endsWith('first.bin'),
     });
-    await assert.rejects(() => api.plan(request(flagged.root)), /shape is unsafe/u);
+    await assert.rejects(() => api.plan(request(flagged.root)), /shape is unsafe|reparse point/u);
   } finally { await rm(flagged.parent, { recursive: true, force: true }); }
+});
+
+test('Windows artifact planning and observation batch reparse checks without per-entry processes', { skip: process.platform !== 'win32' }, async () => {
+  const state = await fixture();
+  let singleCalls = 0;
+  const batches = [];
+  try {
+    const api = createExactArtifactSet({
+      platform: 'win32',
+      inspectReparse: async () => { singleCalls += 1; return false; },
+      inspectReparseBatch: async (locations) => {
+        batches.push([...locations]);
+        return locations.map(() => ({ exists: true, reparse: false }));
+      },
+    });
+    const manifest = await api.plan(request(state.root));
+    assert.equal((await api.observe(manifest)).state, 'present');
+    assert.equal(singleCalls, 0);
+    assert.equal(batches.length, 4);
+    assert.equal(batches.every((batch) => batch.length === 4), true);
+  } finally { await rm(state.parent, { recursive: true, force: true }); }
+});
+
+test('Windows artifact planning splits reparse observations at the fixed batch bound', { skip: process.platform !== 'win32' }, async () => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), 'devbridge-artifact-batches-'));
+  const root = path.join(parent, 'owned');
+  const batches = [];
+  try {
+    await mkdir(root);
+    const files = Array.from({ length: 513 }, (_, index) => ({ relative: `artifact-${String(index).padStart(3, '0')}.bin` }));
+    await Promise.all(files.map((entry) => writeFile(path.join(root, entry.relative), '')));
+    const api = createExactArtifactSet({
+      platform: 'win32',
+      inspectReparse: async () => { throw new Error('single-entry reparse observation is forbidden'); },
+      inspectReparseBatch: async (locations) => {
+        batches.push([...locations]);
+        return locations.map(() => ({ exists: true, reparse: false }));
+      },
+    });
+    await api.plan({ identity: 'set-batched-11111111', root, files, directories: [] });
+    assert.deepEqual(batches.map((batch) => batch.length), [512, 2, 512, 2]);
+  } finally { await rm(parent, { recursive: true, force: true }); }
+});
+
+test('Windows batch reparse evidence still fails closed', { skip: process.platform !== 'win32' }, async () => {
+  const state = await fixture();
+  let calls = 0;
+  try {
+    const api = createExactArtifactSet({
+      platform: 'win32',
+      inspectReparse: async () => false,
+      inspectReparseBatch: async (locations) => locations.map((location) => ({
+        exists: true,
+        reparse: ++calls === 2 && location.endsWith('first.bin'),
+      })),
+    });
+    await assert.rejects(() => api.plan(request(state.root)), /reparse point/u);
+  } finally { await rm(state.parent, { recursive: true, force: true }); }
 });
 
 test('partial deletion is restart-reconcilable from the immutable manifest', async () => {

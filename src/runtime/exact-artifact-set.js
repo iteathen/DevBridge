@@ -10,6 +10,8 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const MAX_ENTRIES = 8192;
 const READ_BYTES = 4 * 1024 * 1024;
+const REPARSE_BATCH_ENTRIES = 512;
+const REPARSE_BATCH_BYTES = 2 * 1024 * 1024;
 
 function onlyKeys(value, allowed, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
@@ -176,6 +178,7 @@ export class ExactArtifactSet {
   #removeFile;
   #removeDirectory;
   #isReparse;
+  #inspectReparseBatch;
 
   constructor({
     platform = process.platform,
@@ -186,12 +189,14 @@ export class ExactArtifactSet {
     removeFile = unlink,
     removeDirectory = rmdir,
     inspectReparse = null,
+    inspectReparseBatch = null,
   } = {}) {
     if (!['win32', 'linux', 'darwin'].includes(platform)) throw new TypeError('artifact set platform is unsupported');
     for (const [value, name] of [[inspect, 'inspect'], [canonicalize, 'canonicalize'], [openFile, 'openFile'], [listDirectory, 'listDirectory'], [removeFile, 'removeFile'], [removeDirectory, 'removeDirectory']]) {
       if (typeof value !== 'function') throw new TypeError(`artifact set ${name} contract is invalid`);
     }
     if (inspectReparse != null && typeof inspectReparse !== 'function') throw new TypeError('artifact set reparse inspection contract is invalid');
+    if (inspectReparseBatch != null && typeof inspectReparseBatch !== 'function') throw new TypeError('artifact set batch reparse inspection contract is invalid');
     if (platform === 'win32' && inspectReparse == null) throw new TypeError('Windows artifact set requires a reparse inspection contract');
     this.#platform = platform;
     this.#path = selectedPath(platform);
@@ -202,6 +207,66 @@ export class ExactArtifactSet {
     this.#removeFile = removeFile;
     this.#removeDirectory = removeDirectory;
     this.#isReparse = inspectReparse ?? (async (_location, info) => info.isSymbolicLink());
+    this.#inspectReparseBatch = inspectReparseBatch;
+  }
+
+  async #reparseStates(rawLocations) {
+    const locations = [...new Set(rawLocations)];
+    const states = new Map();
+    if (this.#inspectReparseBatch == null) {
+      for (const location of locations) {
+        let info;
+        try { info = await this.#inspect(location, { bigint: true }); }
+        catch (error) {
+          if (error?.code === 'ENOENT') { states.set(location, Object.freeze({ exists: false, reparse: false })); continue; }
+          throw error;
+        }
+        states.set(location, Object.freeze({ exists: true, reparse: await this.#isReparse(location, info) }));
+      }
+      return states;
+    }
+    let chunk = [];
+    const flush = async () => {
+      if (chunk.length === 0) return;
+      const observed = await this.#inspectReparseBatch(chunk);
+      if (!Array.isArray(observed) || observed.length !== chunk.length) throw new Error('artifact set batch reparse observation is invalid');
+      for (let index = 0; index < chunk.length; index += 1) {
+        const entry = observed[index];
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)
+            || Object.keys(entry).some((key) => !['exists', 'reparse'].includes(key))
+            || typeof entry.exists !== 'boolean' || typeof entry.reparse !== 'boolean'
+            || (!entry.exists && entry.reparse)) {
+          throw new Error('artifact set batch reparse observation is invalid');
+        }
+        states.set(chunk[index], Object.freeze({ exists: entry.exists, reparse: entry.reparse }));
+      }
+      chunk = [];
+    };
+    for (const location of locations) {
+      const next = [...chunk, location];
+      if (chunk.length > 0 && (next.length > REPARSE_BATCH_ENTRIES
+          || Buffer.byteLength(JSON.stringify({ locations: next }), 'utf8') > REPARSE_BATCH_BYTES)) await flush();
+      chunk.push(location);
+      if (Buffer.byteLength(JSON.stringify({ locations: chunk }), 'utf8') > REPARSE_BATCH_BYTES) {
+        throw new Error('artifact set reparse location exceeds its batch byte bound');
+      }
+    }
+    await flush();
+    return states;
+  }
+
+  #reparseState(states, location) {
+    const state = states?.get(location) ?? null;
+    if (states != null && state == null) throw new Error('artifact set reparse observation omitted an entry');
+    return state;
+  }
+
+  #requirePresentNonReparse(states, locations) {
+    for (const location of locations) {
+      const state = this.#reparseState(states, location);
+      if (!state.exists) throw new Error('artifact set entry disappeared during reparse observation');
+      if (state.reparse) throw new Error('artifact set entry is a reparse point');
+    }
   }
 
   #location(root, relative) {
@@ -213,18 +278,26 @@ export class ExactArtifactSet {
     return resolved;
   }
 
-  async #realDirectory(location, expectedIdentity = null) {
+  async #realDirectory(location, expectedIdentity = null, reparseStates = null) {
     const before = await this.#inspect(location, { bigint: true });
-    if (!before.isDirectory() || before.isSymbolicLink() || await this.#isReparse(location, before)) throw new Error('artifact set directory is not a real directory');
+    const reparse = this.#reparseState(reparseStates, location);
+    if (!before.isDirectory() || before.isSymbolicLink()
+        || (reparse == null ? await this.#isReparse(location, before) : !reparse.exists || reparse.reparse)) {
+      throw new Error('artifact set directory is not a real directory');
+    }
     const canonical = await this.#canonicalize(location);
     if (!(await sameFilesystemIdentity(location, canonical, { platform: this.#platform, inspect: this.#inspect }))) throw new Error('artifact set directory uses filesystem indirection');
     if (expectedIdentity && !sameDirectoryIdentity(expectedIdentity, before)) throw new Error('artifact set directory identity changed');
     return before;
   }
 
-  async #inspectFile(location, expected = null, { measure = false } = {}) {
+  async #inspectFile(location, expected = null, { measure = false, reparseStates = null } = {}) {
     const before = await this.#inspect(location, { bigint: true });
-    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || await this.#isReparse(location, before)) throw new Error('artifact set file shape is unsafe');
+    const reparse = this.#reparseState(reparseStates, location);
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n
+        || (reparse == null ? await this.#isReparse(location, before) : !reparse.exists || reparse.reparse)) {
+      throw new Error('artifact set file shape is unsafe');
+    }
     if (expected && !sameIdentity(expected.identity, before)) throw new Error('artifact set file identity changed');
     const beforeIdentity = fileIdentity(before);
     const handle = await this.#open(location, 'r');
@@ -234,7 +307,8 @@ export class ExactArtifactSet {
       let measured = null;
       if (measure || expected?.expectedSha256 != null) measured = await sha256Handle(handle);
       const after = await this.#inspect(location, { bigint: true });
-      if (!after.isFile() || after.isSymbolicLink() || after.nlink !== 1n || await this.#isReparse(location, after)
+      if (!after.isFile() || after.isSymbolicLink() || after.nlink !== 1n
+          || (reparse == null ? await this.#isReparse(location, after) : !reparse.exists || reparse.reparse)
           || !sameObservedFilesystemIdentity(after, held, { platform: this.#platform }) || held.size !== after.size
           || !sameIdentity(beforeIdentity, after)) {
         throw new Error('artifact set file changed during observation');
@@ -252,11 +326,18 @@ export class ExactArtifactSet {
   async plan(rawRequest) {
     const request = normalizeRequest(rawRequest);
     const root = this.#path.resolve(request.root);
-    const rootInfo = await this.#realDirectory(root);
+    const locations = [
+      root,
+      ...request.files.map((entry) => this.#location(root, entry.relative)),
+      ...request.directories.map((relative) => this.#location(root, relative)),
+    ];
+    const beforeReparse = await this.#reparseStates(locations);
+    this.#requirePresentNonReparse(beforeReparse, locations);
+    const rootInfo = await this.#realDirectory(root, null, beforeReparse);
     const entries = [];
     for (const expected of request.files) {
       const location = this.#location(root, expected.relative);
-      const observed = await this.#inspectFile(location, null, { measure: expected.sha256 != null });
+      const observed = await this.#inspectFile(location, null, { measure: expected.sha256 != null, reparseStates: beforeReparse });
       try {
         if (expected.bytes != null && observed.info.size !== BigInt(expected.bytes)) throw new Error('artifact set file byte count does not match authority');
         if (expected.sha256 != null && observed.measured.digest !== expected.sha256) throw new Error('artifact set file digest does not match authority');
@@ -272,7 +353,7 @@ export class ExactArtifactSet {
       }
     }
     for (const relative of request.directories) {
-      const info = await this.#realDirectory(this.#location(root, relative));
+      const info = await this.#realDirectory(this.#location(root, relative), null, beforeReparse);
       entries.push(Object.freeze({ relative, kind: 'directory', identity: directoryIdentity(info), expectedBytes: null, expectedSha256: null }));
     }
     entries.sort((left, right) => left.relative.localeCompare(right.relative));
@@ -280,12 +361,14 @@ export class ExactArtifactSet {
       const expectedChildren = childrenByDirectory(entries);
       for (const [relative, children] of expectedChildren) {
         const directory = relative === '' ? root : this.#location(root, relative);
-        await this.#realDirectory(directory, relative === '' ? directoryIdentity(rootInfo) : entries.find((entry) => entry.kind === 'directory' && entry.relative === relative)?.identity);
+        await this.#realDirectory(directory, relative === '' ? directoryIdentity(rootInfo) : entries.find((entry) => entry.kind === 'directory' && entry.relative === relative)?.identity, beforeReparse);
         const actual = (await this.#list(directory, { withFileTypes: true })).map((entry) => entry.name).sort();
         const expected = [...children].sort();
         if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error('artifact set contains unexpected or missing entries');
       }
     }
+    const afterReparse = await this.#reparseStates(locations);
+    this.#requirePresentNonReparse(afterReparse, locations);
     const body = Object.freeze({
       protocol: EXACT_ARTIFACT_SET_PROTOCOL,
       identity: request.identity,
@@ -304,28 +387,33 @@ export class ExactArtifactSet {
     const identity = safeId(value.identity, 'artifact set discovery identity');
     if (typeof value.root !== 'string' || value.root.length === 0 || value.root.includes('\0')) throw new TypeError('artifact set discovery root is invalid');
     const root = this.#path.resolve(value.root);
-    await this.#realDirectory(root);
+    const rootReparse = await this.#reparseStates([root]);
+    this.#requirePresentNonReparse(rootReparse, [root]);
+    await this.#realDirectory(root, null, rootReparse);
     const files = [];
     const directories = [];
-    const pending = [''];
+    const pending = [{ relative: '', reparse: rootReparse }];
     while (pending.length > 0) {
-      const parent = pending.shift();
+      const { relative: parent, reparse } = pending.shift();
       const location = parent === '' ? root : this.#location(root, parent);
-      await this.#realDirectory(location);
+      await this.#realDirectory(location, null, reparse);
       const entries = await this.#list(location, { withFileTypes: true });
       if (files.length + directories.length + entries.length > MAX_ENTRIES) throw new Error('artifact set discovery exceeds its entry bound');
       entries.sort((left, right) => left.name.localeCompare(right.name));
+      const children = entries.map((entry) => this.#location(root, parent ? `${parent}/${entry.name}` : entry.name));
+      const childReparse = children.length > 0 ? await this.#reparseStates(children) : new Map();
+      this.#requirePresentNonReparse(childReparse, children);
       for (const entry of entries) {
         const relative = parent ? `${parent}/${entry.name}` : entry.name;
         const selected = relativePath(relative, 'artifact set discovered path');
         const child = this.#location(root, selected);
         const info = await this.#inspect(child, { bigint: true });
-        if (info.isSymbolicLink() || await this.#isReparse(child, info)) throw new Error('artifact set discovery found filesystem indirection');
+        if (info.isSymbolicLink()) throw new Error('artifact set discovery found filesystem indirection');
         if (info.isDirectory()) {
           directories.push(selected);
-          pending.push(selected);
+          pending.push({ relative: selected, reparse: childReparse });
         } else if (info.isFile()) {
-          const observed = await this.#inspectFile(child, null, { measure: true });
+          const observed = await this.#inspectFile(child, null, { measure: true, reparseStates: childReparse });
           try {
             if (observed.info.size > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('artifact set discovered file exceeds its byte bound');
             files.push(Object.freeze({
@@ -345,8 +433,14 @@ export class ExactArtifactSet {
 
   async observe(rawManifest) {
     const manifest = normalizeManifest(rawManifest);
+    const locations = [manifest.root, ...manifest.entries.map((entry) => this.#location(manifest.root, entry.relative))];
+    let beforeReparse;
+    try { beforeReparse = await this.#reparseStates(locations); }
+    catch { return Object.freeze({ identity: manifest.identity, state: 'ambiguous', retryable: false }); }
+    if (beforeReparse.get(manifest.root)?.exists === false) return Object.freeze({ identity: manifest.identity, state: 'absent', retryable: false });
+    if ([...beforeReparse.values()].some((entry) => entry.reparse)) return Object.freeze({ identity: manifest.identity, state: 'ambiguous', retryable: false });
     let rootInfo;
-    try { rootInfo = await this.#realDirectory(manifest.root, manifest.rootIdentity); }
+    try { rootInfo = await this.#realDirectory(manifest.root, manifest.rootIdentity, beforeReparse); }
     catch (error) {
       if (error?.code === 'ENOENT') return Object.freeze({ identity: manifest.identity, state: 'absent', retryable: false });
       return Object.freeze({ identity: manifest.identity, state: 'ambiguous', retryable: false });
@@ -355,11 +449,12 @@ export class ExactArtifactSet {
     const remaining = new Set();
     for (const entry of manifest.entries) {
       const location = this.#location(manifest.root, entry.relative);
+      if (beforeReparse.get(location)?.exists === false) continue;
       try {
         if (entry.kind === 'file') {
-          const observed = await this.#inspectFile(location, entry, { measure: entry.expectedSha256 != null });
+          const observed = await this.#inspectFile(location, entry, { measure: entry.expectedSha256 != null, reparseStates: beforeReparse });
           await observed.handle.close();
-        } else await this.#realDirectory(location, entry.identity);
+        } else await this.#realDirectory(location, entry.identity, beforeReparse);
         remaining.add(entry.relative);
       } catch (error) {
         if (error?.code !== 'ENOENT') return Object.freeze({ identity: manifest.identity, state: 'ambiguous', retryable: false });
@@ -370,6 +465,7 @@ export class ExactArtifactSet {
       const directories = ['', ...manifest.entries.filter((entry) => entry.kind === 'directory').map((entry) => entry.relative)];
       for (const relative of directories) {
         const location = relative === '' ? manifest.root : this.#location(manifest.root, relative);
+        if (beforeReparse.get(location)?.exists === false) continue;
         let entries;
         try { entries = await this.#list(location, { withFileTypes: true }); }
         catch (error) {
@@ -380,6 +476,16 @@ export class ExactArtifactSet {
           const child = relative ? `${relative}/${entry.name}` : entry.name;
           if (!known.has(child)) return Object.freeze({ identity: manifest.identity, state: 'ambiguous', retryable: false });
         }
+      }
+    }
+    let afterReparse;
+    try { afterReparse = await this.#reparseStates(locations); }
+    catch { return Object.freeze({ identity: manifest.identity, state: 'ambiguous', retryable: false }); }
+    for (const location of locations) {
+      const before = beforeReparse.get(location);
+      const after = afterReparse.get(location);
+      if (!after || before.exists !== after.exists || after.reparse) {
+        return Object.freeze({ identity: manifest.identity, state: 'ambiguous', retryable: false });
       }
     }
     return Object.freeze({

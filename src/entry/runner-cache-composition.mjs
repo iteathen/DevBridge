@@ -14,7 +14,10 @@ export function createRunnerCacheComposition({ cacheRoot, stateRoot } = {}, {
   ownershipFactory = createRunnerCacheOwnership,
 } = {}) {
   const observer = platform === 'win32' ? attributeObserverFactory({ invoke }) : null;
-  const reparse = observer ? { inspectReparse: (location) => observer.isReparse(location) } : {};
+  const reparse = observer ? {
+    inspectReparse: (location) => observer.isReparse(location),
+    inspectReparseBatch: (locations) => observer.inspectReparseBatch(locations),
+  } : {};
   const directories = directoryFactory({ platform, ...reparse });
   return Object.freeze({
     cacheRoot,
