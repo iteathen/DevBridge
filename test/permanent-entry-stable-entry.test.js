@@ -76,6 +76,51 @@ test('tracked development ref is consumed locally and resolves through stable au
   assert.equal(accepted.current.subject.sha256, DIGEST);
 });
 
+test('tracked development ref preparation failure cannot launch its previous exact subject', async (t) => {
+  const home = await homeFixture(t);
+  const firstHead = '3'.repeat(40);
+  const secondHead = '4'.repeat(40);
+  let selectedHead = firstHead;
+  const bytes = new Map([
+    [firstHead, Buffer.from('first exact runner\n', 'utf8')],
+    [secondHead, Buffer.from('second exact runner\n', 'utf8')],
+  ]);
+  const source = {
+    async resolve(ref) { assert.equal(ref, 'cuda-target'); return selectedHead; },
+    async read(head) { return bytes.get(head); },
+  };
+  const acceptingProvider = {
+    async prepare(subject) {
+      return { subject, async launch() { return 0; } };
+    },
+  };
+
+  await runStableEntry(['--entry-development-ref', 'cuda-target', '--home', home, 'doctor'], {
+    env: {}, homeDirectory: home, source, runnerProvider: acceptingProvider,
+  });
+  selectedHead = secondHead;
+  await runStableEntry(['--entry-development-ref', 'cuda-target', '--home', home, 'doctor'], {
+    env: {}, homeDirectory: home, source, runnerProvider: acceptingProvider,
+  });
+
+  const attempts = [];
+  await assert.rejects(
+    () => runStableEntry(['--entry-development-ref', 'cuda-target', '--home', home, 'setup', '--construct'], {
+      env: {},
+      homeDirectory: home,
+      source,
+      runnerProvider: {
+        async prepare(subject) {
+          attempts.push(subject.head);
+          throw new Error('current exact checkout receipt mismatch');
+        },
+      },
+    }),
+    /current exact checkout receipt mismatch/u,
+  );
+  assert.deepEqual(attempts, [secondHead]);
+});
+
 test('tracked development ref launches its exact control-plane provider instead of Stage 0 accepted-runtime history', async (t) => {
   const home = await homeFixture(t);
   const oldRuntime = '7'.repeat(40);

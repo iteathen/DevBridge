@@ -108,6 +108,7 @@ test('provider fetches only the exact head from the fixed source and launches th
 
     const gitEnvironment = fetchCalls(git.calls)[0].context.env;
     assert.equal(gitEnvironment.GIT_CONFIG_NOSYSTEM, '1');
+    assert.equal(gitEnvironment.GIT_OPTIONAL_LOCKS, '0');
     assert.equal(gitEnvironment.GIT_TERMINAL_PROMPT, '0');
     assert.equal(gitEnvironment.GIT_CONFIG_COUNT, '3');
     assert.equal(gitEnvironment.GIT_CONFIG_KEY_0, 'core.hooksPath');

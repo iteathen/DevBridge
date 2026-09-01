@@ -62,7 +62,7 @@ test('source failure preserves and returns the exact already accepted stable run
   assert.deepEqual(await state.status(), before);
 });
 
-test('failed preparation of a newly resolved runner falls back to current without accepting the failed candidate', async (t) => {
+test('failed preparation of a newly resolved runner cannot change its exact development subject', async (t) => {
   let head = FIRST_HEAD;
   const source = {
     async resolve() { return head; },
@@ -76,11 +76,11 @@ test('failed preparation of a newly resolved runner falls back to current withou
   const second = await authority.resolve({ kind: 'channel', value: 'stable' });
   assert.equal(second.sha256, digest(SECOND_BYTES));
   const fallback = await authority.recover(second, new Error('cache publication failed'));
-  assert.deepEqual(fallback, first);
+  assert.equal(fallback, null);
   assert.deepEqual((await state.status()).current.subject, first);
 });
 
-test('failed preparation of current accepted runner falls back to previous accepted runner', async (t) => {
+test('failed preparation of current accepted runner cannot launch the previous development subject', async (t) => {
   let head = FIRST_HEAD;
   const source = {
     async resolve() { return head; },
@@ -94,7 +94,7 @@ test('failed preparation of current accepted runner falls back to previous accep
   await authority.accept(second, { kind: 'channel', value: 'stable' });
 
   const fallback = await authority.recover(second, new Error('accepted cache corrupt'));
-  assert.deepEqual(fallback, first);
+  assert.equal(fallback, null);
   assert.deepEqual((await state.status()).current.subject, second);
 });
 
