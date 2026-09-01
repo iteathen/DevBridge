@@ -58,6 +58,15 @@ Before 1.0, compatibility shims and migration layers require evidence of an exte
 
 The same rule applies to distributed coordination and concurrency: implement the semantics required by the current trustworthy topology or measured workload, not a speculative future fleet.
 
+## AI-assisted development accountability
+
+DevBridge may use substantial AI-agent assistance, but AI output never becomes security or readiness evidence by generation or agreement alone.
+
+- Treat model-generated code, prose, analysis, and model-to-model review as untrusted working material, not authority, an independent oracle, review evidence, or proof of correctness.
+- The contributor or maintainer remains accountable for understanding the change and for every authority, security, recovery, provenance, compatibility, test, and qualification claim attached to it.
+- Apply the same exact-head tests, adversarial evidence, provider qualification, provenance, cleanup, and independent-review gates regardless of how much of a change was agent-produced.
+- Keep public AI disclosure brief and factual in `CONTRIBUTING.md`. Do not create defensive AI-process documents or treat model agreement as a substitute for required independent review.
+
 ## Cross-project and external dependency rule
 
 Treat dependencies as explicit public capability edges. State the required contract and consumer acceptance criteria; leave implementation and qualification with the owning producer. Never couple to sibling internals or grant authority through a workaround.
