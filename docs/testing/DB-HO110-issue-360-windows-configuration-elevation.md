@@ -77,6 +77,18 @@ The elevation module's explicit 45-minute invoker was correct but remained only 
 
 The correction removes the ordinary invocation port from the elevation request. Ordinary setup mechanics retain their bounded generic invoker, while the elevation adapter exclusively owns its separately bounded transaction invoker. A dynamic application-composition regression injects a failing ordinary invoker, requests elevation through the real setup closure, and proves the elevation request contains no `invoke` field. The adapter's existing real-process policy proof continues to own the 45-minute boundary.
 
+## Post-integration protected recovery composition finding
+
+Stage 8 integrated the setup-composition correction at `6d1200ccca3c20c05a5a9ac3ea21934117b84d19`, and fresh four-job CI run `33500056999` passed. One authorized ordinary setup invocation reached UAC after its normal preparation, the operator approved the single child, and the bounded broker returned exit code 3. The protected child resumed transaction `51d6ada7a800e167c26ee72e9f332c5848b9fd66e091ea805035fcf7c59208b0` but again reported `environment configuration authority is unavailable` while health-checking recovery generation `c0183b754f638ee205a3c2d8c467a16c39d6ca8acbee87575be3829d50d9f2ae`.
+
+Read-only observation proves the recovery service is running and its exact command declares read, mutation, acceptance, and activity only. It has no configuration pipe. The accepted profile declaration exists beneath the canonical home, and the service SID can read it. No setup/elevation process or new channel remained after the attempt; the preserved 2026-08-27 input-only evidence directory remains untouched.
+
+The service refresh owner already derives endpoint health from each exact generation manifest. The readiness composition replaced that port with a wrapper that unconditionally required the newest configuration endpoint before applying service/protection proofs. Unit coverage had tested the generation-aware probe independently, so it did not exercise this replacement composition.
+
+The owner-local correction makes readiness supply an additive proof rather than a replacement probe. The service owner always performs exact-generation endpoint health first, then invokes the optional service/protection proof with the validated lifecycle inspection. Historical activity generations therefore remain eligible for read-only recovery health, while current generations continue to require configuration through the unchanged generation-health owner. The generic blocked-recovery rule remains unchanged: healing a recovery-health block checkpoints only that transaction and fences a different candidate until a later setup invocation.
+
+Qualification on Windows passed the complete authority family and shared reconciler (160/160), the setup/LEGO architecture set (33/33), preflight (203 targeted tests), and the serialized full suite (2,094 tests: 2,073 passed, 21 skipped, 0 failed). `git diff --check` reported only the repository's expected CRLF conversion warnings.
+
 ## Stop conditions
 
 Stop rather than broaden scope if the repair requires a second privileged helper, caller-selected executable/path/pipe identity, ordinary provider credentials, direct provider mutation, pipe ACL widening, service/manual host repair, repository-code host execution, or deletion of ambiguous elevation evidence.

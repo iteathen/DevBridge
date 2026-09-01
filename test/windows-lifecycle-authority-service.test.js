@@ -135,6 +135,54 @@ test('existing healthy exact protected authority requires exact SCM generation b
   assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'inspect-service', 'probe']);
 });
 
+test('exact generation health runs before an additive service proof', async () => {
+  const fixture = deps({ elevated: false, exactService: true, probeReady: true });
+  fixture.value.proof = async (plan, inspection) => {
+    fixture.calls.push('proof');
+    assert.deepEqual(plan.runtimeEvidence, { packageDigest: PACKAGE_DIGEST, nodeDigest: NODE_DIGEST });
+    assert.equal(inspection.protocol, 'devbridge/environment-operator-v1');
+  };
+  const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
+  assert.equal(result.ready, true);
+  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'inspect-service', 'probe', 'proof']);
+});
+
+test('refresh composition preserves historical endpoint health before additive proof', async () => {
+  const fixture = deps({ elevated: true, exactService: false });
+  let composedProbe = null;
+  let configurationFactories = 0;
+  let proofCalls = 0;
+  fixture.value.probe = (plan) => probeWindowsLifecycleAuthority(plan, {
+    clientFactory: () => ({ async inspect() { return { protocol: 'devbridge/environment-operator-v1' }; } }),
+    activityClientFactory: () => ({ async inspect() { return { ready: true, identity: 'a'.repeat(32) }; } }),
+    configurationClientFactory: () => { configurationFactories += 1; throw new Error('historical generation has no configuration endpoint'); },
+    waitForRetry: async () => { throw new Error('historical generation should be accepted immediately'); },
+  });
+  fixture.value.proof = async (_plan, inspection) => {
+    proofCalls += 1;
+    assert.equal(inspection.protocol, 'devbridge/environment-operator-v1');
+  };
+  fixture.value.createRefreshMechanics = (input) => {
+    fixture.calls.push('create-refresh-mechanics');
+    composedProbe = input.probe;
+    return Object.freeze({ fixture: 'historical-health' });
+  };
+  fixture.value.refresh = async () => {
+    fixture.calls.push('refresh');
+    await composedProbe({
+      stateDirectory: STATE,
+      hostCommandProtocol: 'read-mutation-acceptance-activity-v1',
+    });
+    return Object.freeze({ ready: true, changed: true, recovered: false, blocker: null });
+  };
+
+  const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
+  assert.equal(result.ready, true);
+  assert.equal(configurationFactories, 0);
+  assert.equal(proofCalls, 1);
+  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'inspect-service', 'create-refresh-mechanics', 'refresh']);
+});
+
 test('ordinary setup never trusts a healthy stale-generation pipe and stops at elevation before refresh', async () => {
   const fixture = deps({ elevated: false, exactService: false, probeReady: true });
   const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);

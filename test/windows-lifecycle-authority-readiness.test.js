@@ -109,12 +109,13 @@ test('provider-aware image adoption reaches the protected service path and accep
     verifyProtection: async () => { calls.push(['protection']); return { ready: true }; },
     serviceReconciler: async (_options, dependencies) => {
       await dependencies.inspectHost({});
-      await dependencies.probe(PLAN);
+      assert.equal(Object.hasOwn(dependencies, 'probe'), false);
+      await dependencies.proof(PLAN, { protocol: 'devbridge/environment-operator-v1' });
       return readyService();
     },
   });
   assert.equal(result.ready, true);
-  assert.deepEqual(calls.map((entry) => entry[0]), ['host', 'service-proof', 'client', 'inspect', 'configuration-client', 'configuration-inspect', 'protection']);
+  assert.deepEqual(calls.map((entry) => entry[0]), ['host', 'service-proof', 'protection']);
 });
 
 test('ordinary readiness requires SCM identity, read inspection, and negative-capability proof in that order', async () => {
@@ -129,13 +130,13 @@ test('ordinary readiness requires SCM identity, read inspection, and negative-ca
     serviceReconciler: async (options, dependencies) => {
       assert.equal(options.stateDirectory, STATE);
       await dependencies.inspectHost({});
-      await dependencies.probe(PLAN);
+      await dependencies.proof(PLAN, { protocol: 'devbridge/environment-operator-v1' });
       return readyService();
     },
   });
   assert.equal(result.ready, true);
   assert.equal(result.service, 'ready');
-  assert.deepEqual(calls.map((entry) => entry[0]), ['host', 'service-proof', 'client', 'inspect', 'configuration-client', 'configuration-inspect', 'protection']);
+  assert.deepEqual(calls.map((entry) => entry[0]), ['host', 'service-proof', 'protection']);
   assert.equal(calls[1][1], host(false).operatorSid);
   assert.equal(calls.at(-1)[1], false);
 });
@@ -169,8 +170,11 @@ test('missing configuration capability is stale service health and receives one 
     serviceReconciler: async (_options, dependencies) => {
       services += 1;
       await dependencies.inspectHost({});
-      try { await dependencies.probe({ ...PLAN, protocol: 'devbridge/windows-lifecycle-authority-plan-v1' }); }
-      catch { return Object.freeze({ ...readyService(), ready: false, service: 'unavailable', protectedState: 'unknown' }); }
+      if (!capabilityCurrent) return Object.freeze({ ...readyService(), ready: false, service: 'unavailable', protectedState: 'unknown' });
+      await dependencies.proof(
+        { ...PLAN, protocol: 'devbridge/windows-lifecycle-authority-plan-v1' },
+        { protocol: 'devbridge/environment-operator-v1' },
+      );
       return readyService();
     },
   });
@@ -189,7 +193,7 @@ test('SCM identity failure blocks before any same-named read pipe can be trusted
     verifyProtection: async () => { calls.push('protection'); throw new Error('must not run'); },
     serviceReconciler: async (_options, dependencies) => {
       await dependencies.inspectHost({});
-      try { await dependencies.probe(PLAN); } catch {}
+      try { await dependencies.proof(PLAN, { protocol: 'devbridge/environment-operator-v1' }); } catch {}
       return Object.freeze({ ...readyService(), ready: false, service: 'unavailable', protectedState: 'unknown', blocker: 'generic elevation boundary' });
     },
   });
@@ -209,7 +213,7 @@ test('elevated structural proof never publishes final readiness before ordinary 
     verifyProtection: async ({ elevated }) => { calls.push(['protection', elevated]); return { ready: true, mode: 'structural' }; },
     serviceReconciler: async (_options, dependencies) => {
       await dependencies.inspectHost({});
-      await dependencies.probe(PLAN);
+      await dependencies.proof(PLAN, { protocol: 'devbridge/environment-operator-v1' });
       return Object.freeze({ ...readyService(), changed: true });
     },
   });
@@ -217,7 +221,7 @@ test('elevated structural proof never publishes final readiness before ordinary 
   assert.equal(result.changed, true);
   assert.equal(result.service, 'ready');
   assert.match(result.blocker, /non-elevated PowerShell/u);
-  assert.deepEqual(calls.map((entry) => entry[0]), ['service-proof', 'client', 'inspect', 'configuration-client', 'configuration-inspect', 'protection']);
+  assert.deepEqual(calls.map((entry) => entry[0]), ['service-proof', 'protection']);
   assert.equal(calls.at(-1)[1], true);
 });
 
@@ -231,7 +235,7 @@ test('ordinary protection failure is a bounded elevation blocker rather than rea
     verifyProtection: async () => { throw new Error('sensitive ACL detail must not escape'); },
     serviceReconciler: async (_options, dependencies) => {
       await dependencies.inspectHost({});
-      try { await dependencies.probe(PLAN); } catch {}
+      try { await dependencies.proof(PLAN, { protocol: 'devbridge/environment-operator-v1' }); } catch {}
       return Object.freeze({ ...readyService(), ready: false, service: 'unavailable', protectedState: 'unknown', blocker: 'generic elevation boundary' });
     },
   });
@@ -250,7 +254,7 @@ test('elevated protection failure remains on the service-owned failed-health pat
     verifyProtection: async () => { throw new Error('protection mismatch'); },
     serviceReconciler: async (_options, dependencies) => {
       await dependencies.inspectHost({});
-      try { await dependencies.probe(PLAN); } catch {
+      try { await dependencies.proof(PLAN, { protocol: 'devbridge/environment-operator-v1' }); } catch {
         return Object.freeze({ ...readyService(), ready: false, changed: true, service: 'stopped-after-failed-health', blocker: 'service-owned health stop' });
       }
       throw new Error('proof failure was not propagated through the service probe');

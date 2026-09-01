@@ -171,15 +171,9 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
       host = await inspectHost(request);
       return host;
     };
-    const protectedProbe = async (plan) => {
+    const protectedProof = async (plan, inspection) => {
       await verifyService({ plan, operatorSid: host?.operatorSid, invoke, environment });
-      const client = clientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
-      const inspection = verifiedInspection(await client.inspect());
-      const configurationClient = configurationClientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
-      const configurationInspection = await configurationClient.inspect();
-      if (configurationInspection?.ready !== true || Object.keys(configurationInspection).length !== 1) {
-        throw new Error('protected environment configuration authority returned invalid inspection evidence');
-      }
+      const verified = verifiedInspection(inspection);
       try {
         await verifyProtection({ plan, elevated: host?.elevated, invoke, environment });
       } catch (error) {
@@ -187,7 +181,7 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
         throw error;
       }
       verifiedPlan = plan;
-      return inspection;
+      return verified;
     };
     const refreshDiagnostic = onDiagnostic == null ? null : (event) => onDiagnostic(Object.freeze({
       ...event,
@@ -195,7 +189,7 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
     }));
     return serviceReconciler({ stateDirectory, platform, invoke, environment, onDiagnostic: refreshDiagnostic }, {
       inspectHost: composedHostInspection,
-      probe: protectedProbe,
+      proof: protectedProof,
     });
   };
 
