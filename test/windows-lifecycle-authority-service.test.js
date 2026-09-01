@@ -360,6 +360,20 @@ test('production elevated reconciliation no longer owns a monolithic provision o
   assert.doesNotMatch(source, /stopped-after-failed-health/u);
 });
 
+test('service capability admission rejects substituted group authority before any service mutation', async () => {
+  const source = await readFile(SERVICE_SOURCE, 'utf8');
+  const validation = source.indexOf('function serviceCapabilityGroupSids(plan)');
+  const configuration = source.indexOf('async function configureService(service, plan, invoke, environment)');
+  const firstMutation = source.indexOf("await invokeSc(invoke, [", configuration);
+  assert.equal(validation > 0, true);
+  assert.equal(configuration > validation, true);
+  assert.equal(source.indexOf('const capabilityGroupSids = serviceCapabilityGroupSids(plan);', configuration) < firstMutation, true);
+  assert.match(source.slice(validation, configuration), /WINDOWS_HYPERV_ADMINISTRATORS_SID/u);
+  assert.match(source.slice(validation, configuration), /WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID/u);
+  assert.match(source, /groupSids: capabilityGroupSids/u);
+  assert.match(source, /service capability group membership is invalid/u);
+});
+
 test('authority migration copies only portable protected state and leaves image adoption and activity policy separate', async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'devbridge-authority-migration-'));
   const state = path.join(temp, 'ordinary');

@@ -34,6 +34,8 @@ import {
   WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACTIVITY_V1,
   WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1,
   WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1,
+  WINDOWS_HYPERV_ADMINISTRATORS_SID,
+  WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID,
 } from './windows-lifecycle-authority.js';
 import { reconcileWindowsLifecycleAuthorityImages } from './windows-lifecycle-authority-image-adoption.js';
 
@@ -160,14 +162,24 @@ if (-not (Test-Path -LiteralPath ([string]$data.output) -PathType Leaf)) { throw
 @{ compiled = $true } | ConvertTo-Json -Compress
 `;
 
-const ADD_HYPERV_GROUP_SCRIPT = String.raw`
+const ADD_CAPABILITY_GROUPS_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 $serviceSid = (New-Object Security.Principal.NTAccount([string]$data.serviceAccount)).Translate([Security.Principal.SecurityIdentifier])
-$members = @(Get-LocalGroupMember -SID ([string]$data.groupSid) -ErrorAction Stop)
-$present = @($members | Where-Object { $_.SID -and $_.SID.Value -eq $serviceSid.Value }).Count -gt 0
-if (-not $present) { Add-LocalGroupMember -SID ([string]$data.groupSid) -Member ([string]$data.serviceAccount) -ErrorAction Stop }
-@{ changed = (-not $present); serviceSid = [string]$serviceSid.Value } | ConvertTo-Json -Compress
+$changed = $false
+foreach ($groupSid in @($data.groupSids)) {
+  $members = @(Get-LocalGroupMember -SID ([string]$groupSid) -ErrorAction Stop)
+  $matching = @($members | Where-Object { $_.SID -and $_.SID.Value -eq $serviceSid.Value })
+  if ($matching.Count -gt 1) { throw 'service capability group membership is duplicated' }
+  if ($matching.Count -eq 0) {
+    Add-LocalGroupMember -SID ([string]$groupSid) -Member ([string]$data.serviceAccount) -ErrorAction Stop
+    $changed = $true
+  }
+  $verified = @(Get-LocalGroupMember -SID ([string]$groupSid) -ErrorAction Stop |
+    Where-Object { $_.SID -and $_.SID.Value -eq $serviceSid.Value })
+  if ($verified.Count -ne 1) { throw 'service capability group membership is invalid' }
+}
+@{ changed = $changed; serviceSid = [string]$serviceSid.Value } | ConvertTo-Json -Compress
 `;
 
 const SEAL_ACL_SCRIPT = String.raw`
@@ -537,7 +549,19 @@ async function quiesceOwnedService(service, plan, invoke, environment) {
   await invokePowerShell(invoke, STOP_SERVICE_SCRIPT, { name: plan.service.name }, 'Windows lifecycle authority service stop', environment);
 }
 
+function serviceCapabilityGroupSids(plan) {
+  if (plan?.service?.hyperVGroupSid !== WINDOWS_HYPERV_ADMINISTRATORS_SID
+    || plan?.service?.networkConfigurationGroupSid !== WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID) {
+    throw new Error('Windows lifecycle authority capability group plan is invalid');
+  }
+  return Object.freeze([
+    WINDOWS_HYPERV_ADMINISTRATORS_SID,
+    WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID,
+  ]);
+}
+
 async function configureService(service, plan, invoke, environment) {
+  const capabilityGroupSids = serviceCapabilityGroupSids(plan);
   const command = plan.serviceCommand;
   let changed = false;
   if (!service.exists) {
@@ -554,10 +578,10 @@ async function configureService(service, plan, invoke, environment) {
   await invokeSc(invoke, ['sidtype', plan.service.name, plan.service.sidType], 'Windows lifecycle authority service SID configuration', environment);
   await invokeSc(invoke, ['failure', plan.service.name, 'reset=', '86400', 'actions=', 'restart/5000'], 'Windows lifecycle authority service failure policy', environment);
   await invokeSc(invoke, ['description', plan.service.name, plan.service.description], 'Windows lifecycle authority runtime evidence configuration', environment);
-  const group = await invokePowerShell(invoke, ADD_HYPERV_GROUP_SCRIPT, {
+  const group = await invokePowerShell(invoke, ADD_CAPABILITY_GROUPS_SCRIPT, {
     serviceAccount: plan.service.account,
-    groupSid: plan.service.hyperVGroupSid,
-  }, 'Windows lifecycle authority Hyper-V group admission', environment);
+    groupSids: capabilityGroupSids,
+  }, 'Windows lifecycle authority capability group admission', environment);
   changed ||= group.changed === true;
   return Object.freeze({ changed });
 }
