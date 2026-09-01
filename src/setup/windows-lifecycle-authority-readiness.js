@@ -298,5 +298,8 @@ export async function reconcileWindowsLifecycleAuthorityReadiness({
       'Windows protected lifecycle authority failed its ordinary negative-capability proof. Re-run devbridge setup from an elevated PowerShell to reconcile the protected service and state boundary.',
     );
   }
+  if ((needsElevation(result, host) || configurationNeedsElevation) && requestElevation == null) {
+    return Object.freeze({ ...result, elevationRequired: true });
+  }
   return result;
 }

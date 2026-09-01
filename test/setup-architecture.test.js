@@ -12,7 +12,7 @@ test('generic setup composes observations and one explicit construction action t
   assert.doesNotMatch(source, /\b(?:New-VM|Remove-VM|Start-VM|Stop-VM|virsh|qemu-system)\b/u);
   assert.match(source, /createUbuntuProductionImagePhysicalCanary/u);
   assert.match(source, /selectSerialProfileAction/u);
-  assert.match(source, /physical = await canary\.status\(\)/u);
+  assert.match(source, /physical = await progress\.run\('physical-image-status', \(\) => canary\.status\(\)\)/u);
   assert.match(source, /if \(decision\.state === 'ready'\)/u);
   assert.match(source, /reconcileWindowsConstruction\('advance'\)/u);
   assert.match(source, /physical = await canary\.run\(\)/u);

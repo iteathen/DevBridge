@@ -192,6 +192,7 @@ test('setup selector projects only the adapter-local request and fails closed of
     environment: { SECRET: 'not-forwarded' },
     configuration: null,
     requestElevation: null,
+    onDiagnostic: null,
   };
   let selectedPlatform = null;
   let received = null;

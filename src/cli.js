@@ -13,6 +13,7 @@ import { selectConfiguredQueue } from './app/queue-selection.js';
 import { createConfiguredLifecycleAuthorityClient } from './runtime/environment-lifecycle-authority-transport.js';
 import { chatHandoffSeed, chatHandoffStatus } from './app/chat-handoff.js';
 import { formatSetupHandoff, runDevBridgeSetup } from './app/setup.js';
+import { formatSetupProgress } from './setup/setup-progress.js';
 import { runWindowsLifecycleAuthoritySetupChild } from './app/windows-lifecycle-authority-setup-child.js';
 import { runConstructionRetentionCli } from './app/construction-retention-cli.js';
 import { PolicyError } from './errors.js';
@@ -143,6 +144,7 @@ async function main() {
       windowsMediaApproval: selected.windowsMediaApproval,
       windowsDistribution: selected.windowsDistribution,
       windowsActivation: selected.windowsActivation,
+      onProgress: (event) => process.stderr.write(formatSetupProgress(event)),
     });
     process.stdout.write(formatSetupHandoff(result));
     if (result.blocked) process.exitCode = 3;

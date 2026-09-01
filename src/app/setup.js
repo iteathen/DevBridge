@@ -16,7 +16,7 @@ import { reconcileSetupWindowsActivationPolicy } from './setup-windows-activatio
 import { reconcileSetupLifecycleAuthority } from './setup-lifecycle-authority.js';
 import { executionWorkspaceIdentity } from './execution-profile-routing.js';
 import { discoverGitHubSetupScope } from '../setup/github-discovery.js';
-import { installStableDevBridgeCommand } from '../setup/path-installation.js';
+import { installStableDevBridgeCommand, resolveInstalledCommand } from '../setup/path-installation.js';
 import { reconcileSetupPrerequisites } from '../setup/prerequisite-reconciliation.js';
 import { selectRepositoryDefaults } from '../setup/repository-defaults.js';
 import { reconcileSerialSelection } from '../setup/serial-reconciliation.js';
@@ -42,6 +42,9 @@ import {
 } from '../setup/operational-configuration.js';
 import { reconcileWindowsInstallMediaSetup } from './windows-install-media-setup.js';
 import { reconcileWindowsProductionImageSetup } from './windows-production-image-setup.js';
+import { readEnvironmentProfileConfigurationRecord } from '../setup/environment-profile-configuration-record.js';
+import { createSetupProgress } from '../setup/setup-progress.js';
+import { createSetupProtectedApplyFrontier } from '../setup/setup-protected-apply-frontier.js';
 
 const PROTOCOL = 'devbridge/setup-status-v1';
 const STATE_KEY = 'setup:v1';
@@ -100,6 +103,40 @@ function setupState(previous, { identity, repositories, snapshot }) {
     identity: Object.freeze({ id: identity.id, login: identity.login }),
     repositories: Object.freeze({ selected: repositories.selected.map((entry) => ({ id: entry.id, fullName: entry.fullName, private: entry.private })) }),
     ubuntu: selectedSnapshot == null ? null : Object.freeze({ snapshot: selectedSnapshot }),
+  });
+}
+
+function resumeSetupContext(previous) {
+  if (!previous || previous.protocol !== PROTOCOL || !Number.isSafeInteger(previous.identity?.id)
+      || previous.identity.id < 1 || typeof previous.identity.login !== 'string'
+      || !Array.isArray(previous.repositories?.selected)) {
+    throw new Error('prepared setup checkpoint is unavailable');
+  }
+  const selected = previous.repositories.selected.map((entry) => {
+    if (!Number.isSafeInteger(entry?.id) || entry.id < 1 || typeof entry.fullName !== 'string'
+        || !/^[^/\s]+\/[^/\s]+$/u.test(entry.fullName) || typeof entry.private !== 'boolean') {
+      throw new Error('prepared repository checkpoint is invalid');
+    }
+    return Object.freeze({ id: entry.id, fullName: entry.fullName, private: entry.private });
+  });
+  if (new Set(selected.map((entry) => entry.id)).size !== selected.length) throw new Error('prepared repository checkpoint is ambiguous');
+  const snapshot = previous.ubuntu?.snapshot ?? null;
+  if (snapshot != null && (typeof snapshot !== 'string' || !/^\d{8}T\d{6}Z$/u.test(snapshot))) {
+    throw new Error('prepared package checkpoint is invalid');
+  }
+  return Object.freeze({
+    identity: Object.freeze({ id: previous.identity.id, login: previous.identity.login }),
+    repositories: Object.freeze({
+      protocol: 'devbridge/setup-repository-selection-v1',
+      discoveredCount: selected.length,
+      eligibleCount: selected.length,
+      selectedCount: selected.length,
+      needsSelection: false,
+      reason: null,
+      selected: Object.freeze(selected),
+      excluded: Object.freeze([]),
+    }),
+    snapshot,
   });
 }
 
@@ -350,7 +387,7 @@ async function createSetupResourceConflict({ stateDirectory, platform, invoke })
   return createWindowsSetupResourceConflict({ identity, platform, invoke });
 }
 
-function setupResult({ home, pathStatus, repositories = null, identity = null, profileSelection = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, physical = null, resourceConflict = null, environmentActivation = null, operationalConfiguration = null, windowsMedia = null, windowsConstruction = null, windowsDistributionPolicy = null, windowsActivationPolicy = null, blocker = null, constructionRequested = false, constructionAttempted = false, constructionProfile = null }) {
+function setupResult({ home, pathStatus, repositories = null, identity = null, profileSelection = null, snapshot = null, prerequisites = null, lifecycleAuthority = null, protectedApply = null, physical = null, resourceConflict = null, environmentActivation = null, operationalConfiguration = null, windowsMedia = null, windowsConstruction = null, windowsDistributionPolicy = null, windowsActivationPolicy = null, blocker = null, constructionRequested = false, constructionAttempted = false, constructionProfile = null }) {
   const readyForConstruction = constructionAttempted !== true && physical?.blocked === false && physical?.complete !== true;
   const linuxRequested = profileSelection?.profiles.includes(LINUX_PROFILE) === true;
   const windowsRequested = profileSelection?.profiles.includes(WINDOWS_PROFILE) === true;
@@ -363,6 +400,7 @@ function setupResult({ home, pathStatus, repositories = null, identity = null, p
     phase: blocker ? 'blocked'
       : profileSelection?.state === 'deferred' ? 'profile-selection-deferred'
       : profileSelection?.profiles.length === 0 ? 'profiles-disabled'
+      : protectedApply?.state === 'prepared' ? 'protected-apply-ready'
       : operationalConfiguration?.ready === true ? 'operational-ready'
       : environmentActivation?.ready === true ? 'environment-ready'
       : constructionAttempted ? activePhysical?.state ?? windowsConstruction?.state ?? 'constructing'
@@ -380,6 +418,7 @@ function setupResult({ home, pathStatus, repositories = null, identity = null, p
     prerequisites,
     resourceConflict: publicResourceConflict(resourceConflict),
     lifecycleAuthority: publicLifecycleAuthority(lifecycleAuthority),
+    protectedApply,
     environment: publicEnvironmentActivation(environmentActivation),
     operational: publicOperationalConfiguration(operationalConfiguration),
     linuxProfile: linuxRequested ? Object.freeze({ profile: LINUX_PROFILE, snapshot, physicalStatus: physical }) : null,
@@ -603,6 +642,16 @@ export function formatSetupHandoff(result) {
     lines.push('');
     return lines.join('\n');
   }
+  if (result.phase === 'protected-apply-ready') {
+    const lines = [
+      'DevBridge ordinary setup preparation is complete.',
+      '',
+      'Protected apply is durably checkpointed. Re-run devbridge setup from an ordinary, non-elevated PowerShell while you are present.',
+      'If protected changes are still required, the single UAC prompt will follow that explicit re-entry before network discovery or construction work.',
+    ];
+    appendCommandAvailability(lines, result.path);
+    return `${lines.join('\n')}\n`;
+  }
   if (result.phase === 'profile-selection-deferred') {
     const lines = [
       'DevBridge execution-profile setup was deferred.',
@@ -703,6 +752,7 @@ export async function runDevBridgeSetup({
   windowsDistribution = null,
   windowsActivation = null,
   env = process.env,
+  onProgress = null,
 } = {}, {
   invoke = invokeCommand,
   fetchImpl = globalThis.fetch,
@@ -710,6 +760,7 @@ export async function runDevBridgeSetup({
   platform = process.platform,
   storeFactory = (file) => new JsonStateStore(file),
   pathInstaller = installStableDevBridgeCommand,
+  pathResolver = resolveInstalledCommand,
   tokenResolver = resolveGitHubToken,
   clientFactory = (token) => new GitHubRestClient({ tokenProvider: async () => token, fetchImpl }),
   discover = discoverGitHubSetupScope,
@@ -739,6 +790,10 @@ export async function runDevBridgeSetup({
     [WINDOWS_PROFILE]: createWindowsEnvironmentProfileSource,
   }),
   workspaceIdentity = executionWorkspaceIdentity,
+  progressFactory = createSetupProgress,
+  protectedApplyFrontierFactory = createSetupProtectedApplyFrontier,
+  profileConfigurationRecordReader = readEnvironmentProfileConfigurationRecord,
+  clock = () => Date.now(),
 } = {}) {
   if (typeof construct !== 'boolean') throw new TypeError('DevBridge setup construction option must be boolean');
   if (typeof discoverWindowsMedia !== 'boolean') throw new TypeError('DevBridge Windows media discovery option must be boolean');
@@ -748,13 +803,21 @@ export async function runDevBridgeSetup({
   const stateDirectory = path.join(root, 'state');
   const store = storeFactory(path.join(stateDirectory, 'setup.json'));
   const previous = await store.get(STATE_KEY);
+  const progress = progressFactory({ onProgress, clock });
+  if (!progress || typeof progress.run !== 'function' || typeof progress.watch !== 'function' || typeof progress.emit !== 'function') throw new TypeError('DevBridge setup progress composition is invalid');
+  const protectedApplyFrontier = protectedApplyFrontierFactory({ stateDirectory, now: () => now().toISOString() });
+  if (!protectedApplyFrontier || ['current', 'prepare', 'apply', 'matches'].some((name) => typeof protectedApplyFrontier[name] !== 'function')) {
+    throw new TypeError('DevBridge protected-apply frontier composition is invalid');
+  }
   let profileSelection = null;
   let windowsMedia = null;
   let windowsConstruction = null;
   let windowsDistributionPolicy = null;
   let windowsActivationPolicy = null;
   let constructionProfile = null;
-  const publicResult = (value) => setupResult({ ...value, profileSelection, windowsMedia, windowsConstruction, windowsDistributionPolicy, windowsActivationPolicy, constructionProfile });
+  let protectedApply = null;
+  let resumedProtectedApply = null;
+  const publicResult = (value) => setupResult({ ...value, profileSelection, protectedApply, windowsMedia, windowsConstruction, windowsDistributionPolicy, windowsActivationPolicy, constructionProfile });
   const reconcileWindowsConstruction = async (action) => {
     try {
       return await windowsConstructionReconciler({ home: root, stateDirectory, platform, invoke, action });
@@ -771,20 +834,111 @@ export async function runDevBridgeSetup({
   };
 
   try {
-    profileSelection = normalizeProfileSelection(await profileSelectionReconciler({
+    profileSelection = normalizeProfileSelection(await progress.run('profile-selection', () => profileSelectionReconciler({
       stateDirectory,
       choice: profileChoice,
-    }));
+    })));
   } catch (error) {
     return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: `Execution-profile selection failed: ${error.message}` });
   }
   const linuxRequested = hasProfile(profileSelection, LINUX_PROFILE);
   const windowsRequested = hasProfile(profileSelection, WINDOWS_PROFILE);
+  const plainProtectedApplyReentry = construct === false && requestedRepositories == null && profileChoice == null
+    && retireConflict == null && windowsMediaLocation == null && windowsMediaApproval == null
+    && windowsDistribution == null && windowsActivation == null;
   if (construct && (profileSelection.state !== 'accepted' || profileSelection.profiles.length === 0)) {
     return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: 'Physical image construction requires at least one accepted execution profile' });
   }
   if ((windowsMediaLocation != null || windowsMediaApproval != null || windowsDistribution != null || windowsActivation != null) && !windowsRequested) {
     return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: 'Windows setup options require the selected Windows execution profile' });
+  }
+
+  let pathStatus = null;
+  if (platform === 'win32' && plainProtectedApplyReentry
+      && profileSelection.state === 'accepted' && profileSelection.profiles.length > 0) {
+    try {
+      const [frontier, configurationRecord] = await progress.run('protected-apply-inspection', () => Promise.all([
+        protectedApplyFrontier.current(),
+        profileConfigurationRecordReader({ stateDirectory }),
+      ]));
+      if (frontier != null && configurationRecord != null
+          && protectedApplyFrontier.matches(frontier, configurationRecord, profileSelection.revision, previous, 'prepared')) {
+        protectedApply = frontier;
+        const resolvedCommand = await progress.run('command-resolution', () => pathResolver({ home: root, platform }));
+        pathStatus = Object.freeze({
+          protocol: 'devbridge/setup-path-v2',
+          ...resolvedCommand,
+          persisted: true,
+          changed: false,
+          visibility: 'available',
+        });
+        const configuration = profileConfigurationFactory({ stateDirectory, platform, invoke });
+        let elevationOutcome = null;
+        const lifecycleAuthority = await progress.run('protected-apply', () => lifecycleAuthorityReconciler({
+          stateDirectory,
+          platform,
+          invoke,
+          environment: env,
+          configuration,
+          onDiagnostic: (event) => progress.emit('protected-authority', event?.state ?? 'observed', event?.phase ?? null),
+          requestElevation: async () => {
+            progress.emit('elevation-consent', 'requested', 'Windows will request consent now');
+            elevationOutcome = await progress.watch('protected-transaction', () => elevationRequester({
+              home: root,
+              launcher: pathStatus.launcher,
+              platform,
+              environment: env,
+            }), { detail: 'bounded elevated child remains active' });
+            progress.emit('elevation-consent', elevationOutcome?.completed === true ? 'completed' : 'declined', elevationOutcome?.blocker ?? null);
+            return elevationOutcome;
+          },
+        }));
+        if (lifecycleAuthority?.ready !== true) {
+          return publicResult({
+            home: root,
+            pathStatus,
+            lifecycleAuthority,
+            constructionRequested: construct,
+            blocker: lifecycleAuthority?.blocker ?? (elevationOutcome?.completed === false
+              ? 'Windows lifecycle authority elevation was declined; the durable protected-apply frontier is unchanged'
+              : 'Protected lifecycle authority did not reach readiness'),
+          });
+        }
+        protectedApply = (await protectedApplyFrontier.apply(configurationRecord, profileSelection.revision, previous)).record;
+        const context = resumeSetupContext(previous);
+        resumedProtectedApply = Object.freeze({
+          configurationRecord,
+          lifecycleAuthority,
+          activationProfiles: selectedActivationProfiles({ record: configurationRecord }, profileSelection),
+          ...context,
+        });
+        progress.emit('protected-apply', 'checkpointed', 'exact prepared subject applied');
+      }
+    } catch (error) {
+      return publicResult({ home: root, pathStatus, constructionRequested: construct, blocker: `Protected apply re-entry failed: ${error.message}` });
+    }
+  }
+
+  let scope = resumedProtectedApply == null ? null : Object.freeze({ identity: resumedProtectedApply.identity });
+  let repositories = resumedProtectedApply?.repositories ?? null;
+  let snapshot = resumedProtectedApply?.snapshot ?? null;
+  let prerequisites = null;
+  let physical = resumedProtectedApply == null
+    ? null
+    : Object.freeze({ state: 'checkpointed-complete', blocked: false, complete: true, reason: null });
+  let constructionAttempted = false;
+
+  if (resumedProtectedApply == null) {
+  try {
+    pathStatus = await progress.run('command-installation', () => pathInstaller({
+      home: root,
+      stage0Launcher: env.DEVBRIDGE_STAGE0_LAUNCHER ?? null,
+      platform,
+      env,
+      invoke,
+    }));
+  } catch (error) {
+    return publicResult({ home: root, pathStatus, constructionRequested: construct, blocker: error.message });
   }
 
   if (windowsRequested) {
@@ -854,30 +1008,15 @@ export async function runDevBridgeSetup({
     }
   }
 
-  let pathStatus;
-  try {
-    pathStatus = await pathInstaller({
-      home: root,
-      stage0Launcher: env.DEVBRIDGE_STAGE0_LAUNCHER ?? null,
-      platform,
-      env,
-      invoke,
-    });
-  } catch (error) {
-    return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: error.message });
-  }
-
-  const token = await tokenResolver({ env, invoke });
+  const token = await progress.run('github-authentication', () => tokenResolver({ env, invoke }));
   if (!token) return publicResult({ home: root, pathStatus, constructionRequested: construct, blocker: 'GitHub authentication is unavailable; authenticate with GitHub CLI or provide GH_TOKEN/GITHUB_TOKEN and re-run devbridge setup' });
 
-  let scope;
   try {
-    scope = await discover(clientFactory(token));
+    scope = await progress.run('github-discovery', () => discover(clientFactory(token)));
   } catch (error) {
     return publicResult({ home: root, pathStatus, constructionRequested: construct, blocker: `GitHub discovery failed: ${error.message}` });
   }
 
-  let repositories;
   try {
     const accepted = acceptedRepositorySelection(previous, scope.identity, requestedRepositories);
     repositories = selectRepositories(scope.repositories, { requested: requestedRepositories, accepted });
@@ -888,7 +1027,7 @@ export async function runDevBridgeSetup({
     return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, constructionRequested: construct, blocker: repositories.reason });
   }
 
-  const snapshot = linuxRequested ? previous?.ubuntu?.snapshot ?? defaultUbuntuPackageSnapshot(now()) : null;
+  snapshot = linuxRequested ? previous?.ubuntu?.snapshot ?? defaultUbuntuPackageSnapshot(now()) : null;
   await store.set(STATE_KEY, setupState(previous, { identity: scope.identity, repositories, snapshot }));
 
   if (profileSelection.state === 'deferred' || profileSelection.profiles.length === 0) {
@@ -921,12 +1060,9 @@ export async function runDevBridgeSetup({
       });
     }
   }
-  let prerequisites = null;
-  let physical = null;
-  let constructionAttempted = false;
   if (linuxRequested) {
   try {
-    prerequisites = await prerequisiteReconciler({ platform, invoke, fetchImpl, environment: env });
+    prerequisites = await progress.run('prerequisites', () => prerequisiteReconciler({ platform, invoke, fetchImpl, environment: env }));
   } catch (error) {
     return publicResult({
       home: root,
@@ -955,7 +1091,7 @@ export async function runDevBridgeSetup({
   let release;
   let authority;
   try {
-    [release, authority] = await Promise.all([
+    [release, authority] = await progress.run('construction-authority', () => Promise.all([
       releaseAuthority({
         home: root,
         fetchImpl,
@@ -963,7 +1099,7 @@ export async function runDevBridgeSetup({
         signatureVerifierExecutable,
       }),
       authorityFactory({ snapshot, fetchImpl }),
-    ]);
+    ]));
   } catch (error) {
     return publicResult({ home: root, pathStatus, identity: scope.identity, repositories, snapshot, prerequisites, constructionRequested: construct, blocker: `Ubuntu construction authority is unavailable: ${error.message}` });
   }
@@ -979,7 +1115,7 @@ export async function runDevBridgeSetup({
   let canary;
   try {
     canary = canaryFactory(physicalConfig, { platform, invoke, fetchImpl, signatureVerifierExecutable });
-    physical = await canary.status();
+    physical = await progress.run('physical-image-status', () => canary.status());
   } catch (error) {
     return publicResult({
       home: root,
@@ -1106,12 +1242,13 @@ export async function runDevBridgeSetup({
       });
     }
   }
+  }
 
   let resourceConflict;
   let conflictConsentStore = null;
   let conflictConsentAccepted = false;
   try {
-    const conflict = assertSetupResourceConflictPort(await resourceConflictFactory({ stateDirectory, platform, invoke }));
+    const conflict = assertSetupResourceConflictPort(await progress.run('resource-conflict', () => resourceConflictFactory({ stateDirectory, platform, invoke })));
     conflictConsentStore = resourceConflictConsentStoreFactory({ stateDirectory });
     if (!conflictConsentStore || ['load', 'save', 'clear'].some((name) => typeof conflictConsentStore[name] !== 'function')) {
       throw new TypeError('setup resource conflict consent store is incomplete');
@@ -1157,17 +1294,24 @@ export async function runDevBridgeSetup({
 
   let profileConfiguration;
   let activationProfiles;
+  let profileConfigurationRecord;
   try {
-    const sources = selectedProfileSources(profileSelection, profileSourceFactories);
-    const publisher = profileConfigurationPublisher({
-      stateDirectory,
-      sources,
-      identify: workspaceIdentity,
-      now: () => now().toISOString(),
-    });
-    if (!publisher || typeof publisher.reconcile !== 'function') throw new TypeError('setup profile configuration publisher is incomplete');
-    const publication = await publisher.reconcile({ subjects: repositories.selected });
-    activationProfiles = selectedActivationProfiles(publication, profileSelection);
+    if (resumedProtectedApply == null) {
+      const sources = selectedProfileSources(profileSelection, profileSourceFactories);
+      const publisher = profileConfigurationPublisher({
+        stateDirectory,
+        sources,
+        identify: workspaceIdentity,
+        now: () => now().toISOString(),
+      });
+      if (!publisher || typeof publisher.reconcile !== 'function') throw new TypeError('setup profile configuration publisher is incomplete');
+      const publication = await progress.run('profile-configuration', () => publisher.reconcile({ subjects: repositories.selected }));
+      profileConfigurationRecord = publication.record;
+      activationProfiles = selectedActivationProfiles(publication, profileSelection);
+    } else {
+      profileConfigurationRecord = resumedProtectedApply.configurationRecord;
+      activationProfiles = resumedProtectedApply.activationProfiles;
+    }
     profileConfiguration = profileConfigurationFactory({ stateDirectory, platform, invoke });
   } catch (error) {
     return publicResult({
@@ -1186,21 +1330,15 @@ export async function runDevBridgeSetup({
 
   let lifecycleAuthority;
   try {
-    lifecycleAuthority = await lifecycleAuthorityReconciler({
-      stateDirectory,
-      platform,
-      invoke,
-      environment: env,
-      configuration: profileConfiguration,
-      requestElevation: platform === 'win32'
-        ? () => elevationRequester({
-          home: root,
-          launcher: pathStatus.launcher,
-          platform,
-          environment: env,
-        })
-        : null,
-    });
+    lifecycleAuthority = resumedProtectedApply?.lifecycleAuthority ?? await progress.run('lifecycle-authority', () => lifecycleAuthorityReconciler({
+        stateDirectory,
+        platform,
+        invoke,
+        environment: env,
+        configuration: profileConfiguration,
+        onDiagnostic: (event) => progress.emit('protected-authority', event?.state ?? 'observed', event?.phase ?? null),
+        requestElevation: null,
+      }));
   } catch (error) {
     return publicResult({
       home: root,
@@ -1214,6 +1352,40 @@ export async function runDevBridgeSetup({
       constructionAttempted,
       blocker: `Lifecycle authority reconciliation failed: ${error.message}`,
     });
+  }
+  if (platform === 'win32' && lifecycleAuthority?.ready !== true && lifecycleAuthority?.elevationRequired === true) {
+    try {
+      const acceptedSetup = setupState(previous, { identity: scope.identity, repositories, snapshot });
+      protectedApply = (await protectedApplyFrontier.prepare(profileConfigurationRecord, profileSelection.revision, acceptedSetup)).record;
+      progress.emit('protected-apply', 'checkpointed', 'ordinary preparation complete');
+      return publicResult({
+        home: root,
+        pathStatus,
+        identity: scope.identity,
+        repositories,
+        snapshot,
+        prerequisites,
+        lifecycleAuthority,
+        physical,
+        resourceConflict,
+        constructionRequested: construct,
+        constructionAttempted,
+      });
+    } catch (error) {
+      return publicResult({
+        home: root,
+        pathStatus,
+        identity: scope.identity,
+        repositories,
+        snapshot,
+        prerequisites,
+        lifecycleAuthority,
+        physical,
+        constructionRequested: construct,
+        constructionAttempted,
+        blocker: `Protected apply checkpoint failed: ${error.message}`,
+      });
+    }
   }
   if (lifecycleAuthority?.ready !== true) {
     return publicResult({
@@ -1234,7 +1406,7 @@ export async function runDevBridgeSetup({
   let environmentActivation;
   try {
     const client = lifecycleClientFactory({ stateDirectory, platform, connectTimeoutMs: 3_000 });
-    environmentActivation = await serialReconciler({
+    environmentActivation = await progress.run('environment-activation', () => serialReconciler({
       items: activationProfiles,
       reconcile: async (profile) => {
         const observed = await environmentActivationReconciler({ client, profile });
@@ -1246,7 +1418,7 @@ export async function runDevBridgeSetup({
             : observed?.blocker ?? 'accepted environment did not verify ready after protected activation',
         });
       },
-    });
+    }));
   } catch (error) {
     return publicResult({
       home: root,
@@ -1311,12 +1483,12 @@ export async function runDevBridgeSetup({
     const owners = [...new Set(targets.map((target) => target.split('/')[0].toLowerCase()))];
     const publisher = operationalConfigurationFactory({ home: root, validate: validateConfig, platform });
     if (!publisher || typeof publisher.reconcile !== 'function') throw new TypeError('setup operational configuration publisher is incomplete');
-    operationalConfiguration = await publisher.reconcile({
+    operationalConfiguration = await progress.run('operational-configuration', () => publisher.reconcile({
       protocol: SETUP_OPERATIONAL_CONFIGURATION_REQUEST_PROTOCOL,
       targets,
       submitters: [String(scope.identity.id)],
       owners,
-    });
+    }));
   } catch (error) {
     return publicResult({
       home: root,
