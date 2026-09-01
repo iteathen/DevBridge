@@ -312,23 +312,19 @@ internal static class IntegrationHarness
       windowsHide: true,
     });
     await waitForHostReady(child);
-    let evidence = null;
-    let lastError = null;
-    for (let attempt = 0; attempt < 20 && evidence == null; attempt += 1) {
+    for (let request = 0; request < 30; request += 1) {
+      let result;
       try {
-        evidence = await createConfiguredEnvironmentConfigurationClient({
+        result = await createConfiguredEnvironmentConfigurationClient({
           stateDirectory,
           platform: 'win32',
           connectTimeoutMs: 1_000,
         }).inspect();
       } catch (error) {
-        lastError = error;
-        if (child.exitCode != null) break;
-        await wait(100);
+        throw new Error(`compiled configuration endpoint failed on request ${String(request + 1)}: ${error.message}`);
       }
+      assert.deepEqual(result, { ready: true });
     }
-    if (evidence == null) throw new Error(`compiled configuration endpoint failed: ${lastError?.message ?? 'unknown error'}; host exit=${String(child.exitCode)}`);
-    assert.deepEqual(evidence, { ready: true });
     child.stdin.end('\n');
     assert.equal(await waitForExit(child), 0);
     child = null;
