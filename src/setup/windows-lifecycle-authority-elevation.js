@@ -303,16 +303,16 @@ export async function resolveWindowsLifecycleAuthorityElevationRunner({ packageR
   return Object.freeze({ head, root, launcher });
 }
 
-async function boundedManagedFile(root, file, name) {
+async function boundedContainedFile(root, file, name, boundary) {
   const resolvedRoot = path.resolve(root);
   const resolvedFile = path.resolve(file);
   if (!pathIsWithin(resolvedRoot, resolvedFile)) {
-    throw new Error(`${name} escaped the managed DevBridge home`);
+    throw new Error(`${name} escaped its ${boundary}`);
   }
 
   const rootInfo = await lstat(resolvedRoot);
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
-    throw new Error(`${name} managed root must be a real directory`);
+    throw new Error(`${name} ${boundary} must be a real directory`);
   }
   const canonicalRoot = await realpath(resolvedRoot);
   const relative = path.relative(resolvedRoot, resolvedFile);
@@ -331,7 +331,7 @@ async function boundedManagedFile(root, file, name) {
     }
     const canonical = await realpath(current);
     if (!pathIsWithin(canonicalRoot, canonical)) {
-      throw new Error(`${name} escaped the managed DevBridge home`);
+      throw new Error(`${name} escaped its ${boundary}`);
     }
   }
 
@@ -364,7 +364,7 @@ export async function requestWindowsLifecycleAuthorityElevation({
     throw new Error('Windows lifecycle authority elevation launcher is outside the managed DevBridge entry boundary');
   }
   await Promise.all([
-    boundedManagedFile(root, selectedEntryLauncher, 'Windows lifecycle authority elevation entry launcher'),
+    boundedContainedFile(root, selectedEntryLauncher, 'Windows lifecycle authority elevation entry launcher', 'managed installation home'),
     boundedRealFile(node, 'Windows lifecycle authority elevation Node executable'),
   ]);
 
@@ -397,7 +397,12 @@ export async function requestWindowsLifecycleAuthorityElevation({
     const runnerRoot = absoluteLocalPath(runner.root, 'DevBridge elevation runner root');
     runnerLauncher = absoluteLocalPath(runner.launcher, 'DevBridge elevation runner launcher');
     if (!samePath(runnerLauncher, path.join(runnerRoot, 'src', 'cli.js'), platform)) throw new Error('runner launcher is not its fixed CLI');
-    await boundedManagedFile(root, runnerLauncher, 'Windows lifecycle authority elevation runner launcher');
+    const observedRunner = await resolveWindowsLifecycleAuthorityElevationRunner({ packageRoot: runnerRoot });
+    if (observedRunner.head !== runnerHead || !samePath(observedRunner.root, runnerRoot, platform)
+        || !samePath(observedRunner.launcher, runnerLauncher, platform)) {
+      throw new Error('runner descriptor differs from its detached exact checkout');
+    }
+    await boundedContainedFile(runnerRoot, runnerLauncher, 'Windows lifecycle authority elevation runner launcher', 'detached exact checkout');
   } catch {
     runnerLauncher = null;
   }
