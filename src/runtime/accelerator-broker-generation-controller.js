@@ -189,7 +189,8 @@ export class AcceleratorBrokerGenerationController {
         || request.binding.session.generation !== current.session.generation) {
         return fencedExecuteObservation(request);
       }
-      return this.#core.execute(request);
+      const observation = await this.#core.execute(request);
+      return observation;
     } finally {
       await held.release();
     }
