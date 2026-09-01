@@ -201,6 +201,11 @@ A future database or other storage adapter can replace it without changing the b
 
 ## Next gate
 
-After exact-head Windows/Ubuntu qualification, the next architectural slice is the neutral broker transport exchange stud followed by independent Windows and Linux transport adapters. Transport selection must not change the protocol, core, or ledger-store ownership boundaries.
+The post-integration #395 review found that transport must **not** follow this persistence slice directly. Before any concrete broker transport/backend can qualify, generation retirement must remain recoverable under DB-009:
 
-No physical-host Codex action is required for this persistence slice.
+1. #411 adds a read-only exact-generation catalog over the immutable ledger so lifecycle composition can prove whether a retiring session generation has any nonterminal admitted effects;
+2. #412 adds durable serialized retirement/admission gating so new execute admission is fenced before quiescence is observed and the next exact generation is promoted only after that proof.
+
+A catalog result alone is not promotion authority because an unfenced execute could race between observation and promotion. Transport selection/qualification remains blocked until both ownership slices are repository-qualified.
+
+No physical-host Codex action is required for this persistence or catalog work.
