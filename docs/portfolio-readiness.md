@@ -34,6 +34,39 @@ Once a boundary is sufficiently specified, prefer the thinnest meaningful execut
 
 A thin slice does not weaken security or LEGO ownership. It must preserve the host/guest trust boundary, provider abstraction, authoritative Git, bounded bridge, capability policy, failure/recovery semantics, and exact evidence required by the owning contracts.
 
+## Public evidence rule
+
+Public security and readiness prose must be at least as conservative as the evidence.
+
+The README and other public entry points lead with:
+
+1. what is executable now;
+2. how to validate it now;
+3. what is implemented but not fully qualified;
+4. what security/readiness property is known missing;
+5. architecture and roadmap links only after those facts.
+
+Do not bury a material limitation after a broad security claim. Classify material properties as **enforced and qualified**, **implemented but not fully qualified**, **designed/proposed**, or **known missing**. Hosted regression CI cannot be worded as real Hyper-V/KVM security qualification.
+
+Prefer a short current limit over prose defending why that limit is not an architectural ceiling. Architecture rationale belongs in the owning design/specification documents.
+
+## Process and compatibility proportionality
+
+New coordination, compatibility, migration, recovery, abstraction, or policy machinery must name a present beneficiary: an actual deployment, persisted state, security/recovery requirement, external contract, active consumer, or demonstrated high cost of changing later. Future possibility by itself does not justify production machinery.
+
+Before 1.0, compatibility shims and migration layers require evidence of an external/deployed/persisted dependency or another concrete safety/recovery reason. If no such beneficiary exists, prefer a clean break and retain only concise provenance when it remains useful.
+
+The same rule applies to distributed coordination and concurrency: implement the semantics required by the current trustworthy topology or measured workload, not a speculative future fleet.
+
+## AI-assisted development accountability
+
+DevBridge may use substantial AI-agent assistance, but AI output never becomes security or readiness evidence by generation or agreement alone.
+
+- Treat model-generated code, prose, analysis, and model-to-model review as untrusted working material, not authority, an independent oracle, review evidence, or proof of correctness.
+- The contributor or maintainer remains accountable for understanding the change and for every authority, security, recovery, provenance, compatibility, test, and qualification claim attached to it.
+- Apply the same exact-head tests, adversarial evidence, provider qualification, provenance, cleanup, and independent-review gates regardless of how much of a change was agent-produced.
+- Keep public AI disclosure brief and factual in `CONTRIBUTING.md`. Do not create defensive AI-process documents or treat model agreement as a substitute for required independent review.
+
 ## Cross-project and external dependency rule
 
 Treat dependencies as explicit public capability edges. State the required contract and consumer acceptance criteria; leave implementation and qualification with the owning producer. Never couple to sibling internals or grant authority through a workaround.
@@ -55,4 +88,5 @@ Every material PR or closure record states:
 - the exact evidence supporting the transition;
 - what remains unproven or environment-blocked;
 - which downstream composed capability is newly unblocked;
+- the present beneficiary for any new process/compatibility/coordination machinery;
 - whether an independent security/review gate is triggered before broader deployment.
