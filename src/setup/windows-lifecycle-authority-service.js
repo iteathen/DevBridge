@@ -1076,6 +1076,7 @@ export async function reconcileWindowsLifecycleAuthorityService({
   inspectServiceState = inspectService,
   measureCandidate = measureWindowsLifecycleAuthorityCandidate,
   probe = probeWindowsLifecycleAuthority,
+  proof = null,
   createRefreshMechanics = createWindowsLifecycleAuthorityRefreshMechanics,
   refresh = reconcileWindowsLifecycleAuthorityRefresh,
 } = {}) {
@@ -1083,6 +1084,7 @@ export async function reconcileWindowsLifecycleAuthorityService({
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('Windows lifecycle authority setup stateDirectory is required');
   if (typeof invoke !== 'function') throw new TypeError('Windows lifecycle authority setup invocation contract is invalid');
   if (typeof measureCandidate !== 'function') throw new TypeError('Windows lifecycle authority runtime measurement contract is invalid');
+  if (proof != null && typeof proof !== 'function') throw new TypeError('Windows lifecycle authority service proof contract is invalid');
   if (platform !== 'win32') return serviceResult({ platform, ready: true, service: 'not-applicable', protectedState: 'not-applicable' });
 
   let host;
@@ -1113,10 +1115,16 @@ export async function reconcileWindowsLifecycleAuthorityService({
     return serviceResult({ platform, ready: false, blocker: `Windows lifecycle authority plan is invalid: ${boundedReason(error?.message, 'unknown failure')}`, service: 'unavailable', protectedState: 'unknown' });
   }
 
+  const probeExactGeneration = async (targetPlan) => {
+    const inspection = await probe(targetPlan);
+    if (proof != null) await proof(targetPlan, inspection);
+    return inspection;
+  };
+
   try {
     const service = await inspectServiceState(plan, invoke, environment);
     if (serviceMatches(service, plan) && serviceRunning(service)) {
-      await probe(plan);
+      await probeExactGeneration(plan);
       return serviceResult({ platform, ready: true, authorityIdentity: plan.authorityIdentity, service: 'ready', protectedState: 'ready' });
     }
   } catch {
@@ -1157,7 +1165,7 @@ export async function reconcileWindowsLifecycleAuthorityService({
       packageRoot,
       nodeExecutable,
       candidate,
-      probe,
+      probe: probeExactGeneration,
     });
     refreshed = await refresh({ candidateGeneration: plan.runtime.generation, mechanics, onDiagnostic: captureRefreshDiagnostic });
   } catch {

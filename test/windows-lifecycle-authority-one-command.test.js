@@ -84,6 +84,8 @@ function readinessDeps({ elevated = false, serviceReconciler, legacyRuntimeMigra
   };
 }
 
+const INSPECTION = Object.freeze({ protocol: 'devbridge/environment-operator-v1' });
+
 test('exact-current ordinary readiness performs zero elevation', async () => {
   let elevations = 0;
   const result = await reconcileWindowsLifecycleAuthorityReadiness({
@@ -93,7 +95,7 @@ test('exact-current ordinary readiness performs zero elevation', async () => {
   }, readinessDeps({
     serviceReconciler: async (_options, dependencies) => {
       await dependencies.inspectHost({});
-      await dependencies.probe(PLAN);
+      await dependencies.proof(PLAN, INSPECTION);
       return serviceResult({ ready: true });
     },
   }));
@@ -114,7 +116,7 @@ test('ordinary stale authority uses one elevation and resumes ordinary proof in 
       services += 1;
       await dependencies.inspectHost({});
       if (services === 1) return unavailable();
-      await dependencies.probe(PLAN);
+      await dependencies.proof(PLAN, INSPECTION);
       probes += 1;
       return serviceResult({ ready: true, changed: true });
     },
@@ -143,7 +145,7 @@ test('ordinary exact service reconciles accepted profile configuration through i
     serviceReconciler: async (_options, dependencies) => {
       services += 1;
       await dependencies.inspectHost({});
-      await dependencies.probe(PLAN);
+      await dependencies.proof(PLAN, INSPECTION);
       return serviceResult({ ready: true });
     },
   }));
@@ -181,7 +183,7 @@ test('stale configuration capability receives one structural refresh before ordi
     serviceReconciler: async (_options, dependencies) => {
       services += 1;
       await dependencies.inspectHost({});
-      await dependencies.probe(PLAN);
+      await dependencies.proof(PLAN, INSPECTION);
       return serviceResult({ ready: true, changed: services > 1 });
     },
   }));
@@ -206,7 +208,7 @@ test('elevated child refreshes service structure but never reconciles accepted p
     elevated: true,
     serviceReconciler: async (_options, dependencies) => {
       await dependencies.inspectHost({});
-      await dependencies.probe(PLAN);
+      await dependencies.proof(PLAN, INSPECTION);
       return serviceResult({ ready: true, changed: true });
     },
   }));
@@ -275,7 +277,7 @@ test('elevated child migrates qualifying legacy runtime before service reconcili
     serviceReconciler: async (_options, dependencies) => {
       calls.push('service');
       await dependencies.inspectHost({});
-      await dependencies.probe(PLAN);
+      await dependencies.proof(PLAN, INSPECTION);
       return serviceResult({ ready: true, changed: true });
     },
   }));
