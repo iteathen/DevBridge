@@ -1,7 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstat, realpath } from 'node:fs/promises';
 import os from 'node:os';
-import path from 'node:path';
 import { COMPUTE_TOPOLOGY } from '../compute-capabilities.js';
 import {
   ACCELERATOR_BACKEND_CHECK,
@@ -9,6 +7,7 @@ import {
   ACCELERATOR_BACKEND_REASON,
   createAcceleratorBackendObservation,
 } from '../accelerator-backend-inventory.js';
+import { WINDOWS_SYSTEM_TARGET, resolveWindowsSystemTarget } from '../windows-system-targets.js';
 
 const MIN_WINDOWS_BUILD = 19044;
 const MIN_DRIVER_MAJOR = 495;
@@ -50,39 +49,10 @@ function windowsBuild(release) {
   return Number.isSafeInteger(build) ? build : null;
 }
 
-async function regularFile(candidate) {
-  try {
-    const info = await lstat(candidate);
-    if (!info.isFile() || info.isSymbolicLink()) return null;
-    return realpath(candidate);
-  } catch {
-    return null;
-  }
-}
-
-function unique(values) {
-  return [...new Set(values.filter(Boolean))];
-}
-
-function executableCandidates(env) {
-  const root = env.SystemRoot || env.WINDIR;
-  const programFiles = unique([env.ProgramW6432, env.ProgramFiles]);
-  return Object.freeze({
-    runtime: unique(root ? [path.win32.join(root, 'System32', 'wsl.exe')] : []),
-    accelerator: unique([
-      ...(root ? [path.win32.join(root, 'System32', 'nvidia-smi.exe')] : []),
-      ...programFiles.map((base) => path.win32.join(base, 'NVIDIA Corporation', 'NVSMI', 'nvidia-smi.exe')),
-    ]),
-  });
-}
-
-async function defaultResolveExecutable(kind, env) {
-  const candidates = executableCandidates(env)[kind] ?? [];
-  for (const candidate of candidates) {
-    const resolved = await regularFile(candidate);
-    if (resolved) return resolved;
-  }
-  return null;
+async function defaultResolveExecutable(kind) {
+  if (kind === 'runtime') return resolveWindowsSystemTarget(WINDOWS_SYSTEM_TARGET.WSL_RUNTIME);
+  if (kind === 'accelerator') return resolveWindowsSystemTarget(WINDOWS_SYSTEM_TARGET.NVIDIA_SMI);
+  throw new TypeError('Windows WSL CUDA inventory local target is unsupported');
 }
 
 function wsl2Count(text) {
@@ -128,14 +98,12 @@ export class WindowsWslCudaBackendInventory {
   #resolveExecutable;
   #platform;
   #release;
-  #env;
 
   constructor({
     invoke,
     resolveExecutable = defaultResolveExecutable,
     platform = process.platform,
     release = os.release(),
-    env = process.env,
   } = {}) {
     if (typeof invoke !== 'function') throw new TypeError('accelerator backend inventory invoke must be a function');
     if (typeof resolveExecutable !== 'function') throw new TypeError('accelerator backend inventory executable resolver must be a function');
@@ -143,7 +111,6 @@ export class WindowsWslCudaBackendInventory {
     this.#resolveExecutable = resolveExecutable;
     this.#platform = platform;
     this.#release = release;
-    this.#env = env;
   }
 
   async #run(executable, argumentsList) {
@@ -189,7 +156,7 @@ export class WindowsWslCudaBackendInventory {
       checks[ACCELERATOR_BACKEND_CHECK.HOST_PLATFORM] = READY;
     }
 
-    const runtimeExecutable = await this.#resolveExecutable('runtime', this.#env);
+    const runtimeExecutable = await this.#resolveExecutable('runtime');
     if (!runtimeExecutable) {
       checks[ACCELERATOR_BACKEND_CHECK.BACKEND_RUNTIME] = blocked(ACCELERATOR_BACKEND_REASON.RUNTIME_UNAVAILABLE);
       checks[ACCELERATOR_BACKEND_CHECK.BACKEND_ENVIRONMENT] = blocked(ACCELERATOR_BACKEND_REASON.ENVIRONMENT_UNAVAILABLE);
@@ -220,7 +187,7 @@ export class WindowsWslCudaBackendInventory {
       }
     }
 
-    const acceleratorExecutable = await this.#resolveExecutable('accelerator', this.#env);
+    const acceleratorExecutable = await this.#resolveExecutable('accelerator');
     if (!acceleratorExecutable) {
       checks[ACCELERATOR_BACKEND_CHECK.ACCELERATOR_RUNTIME] = blocked(ACCELERATOR_BACKEND_REASON.ACCELERATOR_UNAVAILABLE);
     } else {
