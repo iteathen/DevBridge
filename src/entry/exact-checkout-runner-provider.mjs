@@ -116,6 +116,7 @@ function gitEnvironment(home) {
   if (process.platform === 'win32') env.USERPROFILE = home;
   env.GIT_CONFIG_GLOBAL = path.join(home, 'gitconfig');
   env.GIT_CONFIG_NOSYSTEM = '1';
+  env.GIT_OPTIONAL_LOCKS = '0';
   env.GIT_CONFIG_COUNT = '3';
   env.GIT_CONFIG_KEY_0 = 'core.hooksPath';
   env.GIT_CONFIG_VALUE_0 = env.GIT_CONFIG_GLOBAL;
