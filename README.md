@@ -19,7 +19,7 @@ DevBridge is a local Node.js control plane for provenance, capability policy, re
 | Destination-workstation cryptographic addressing | **Not implemented**; lease identity is not sender-to-specific-workstation authorization |
 | Production deployment claim | **No** |
 
-DevBridge contains substantial executable control-plane code. It is still an active public alpha and should be evaluated at an exact reviewed commit, not treated as a production security product because its architecture is documented or hosted CI is green.
+DevBridge contains substantial executable control-plane code. It is still in active public alpha development and should be evaluated at an exact reviewed commit, not treated as a production security product because its architecture is documented or hosted CI is green.
 
 ## Verify what exists
 
