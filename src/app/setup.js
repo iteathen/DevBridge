@@ -873,25 +873,30 @@ export async function runDevBridgeSetup({
           visibility: 'available',
         });
         const configuration = profileConfigurationFactory({ stateDirectory, platform, invoke });
-        let elevationOutcome = null;
-        const lifecycleAuthority = await progress.run('protected-apply', () => lifecycleAuthorityReconciler({
+        progress.emit('elevation-consent', 'requested', 'Windows will request consent now');
+        const elevationOutcome = await progress.watch('protected-transaction', () => elevationRequester({
+          home: root,
+          launcher: pathStatus.launcher,
+          platform,
+          environment: env,
+        }), { detail: 'bounded elevated child remains active' });
+        progress.emit('elevation-consent', elevationOutcome?.completed === true ? 'completed' : 'declined', elevationOutcome?.blocker ?? null);
+        if (elevationOutcome?.completed !== true) {
+          return publicResult({
+            home: root,
+            pathStatus,
+            constructionRequested: construct,
+            blocker: elevationOutcome?.blocker ?? 'Windows lifecycle authority elevation did not complete; the durable protected-apply frontier is unchanged',
+          });
+        }
+        const lifecycleAuthority = await progress.run('protected-apply-verification', () => lifecycleAuthorityReconciler({
           stateDirectory,
           platform,
           invoke,
           environment: env,
           configuration,
           onDiagnostic: (event) => progress.emit('protected-authority', event?.state ?? 'observed', event?.phase ?? null),
-          requestElevation: async () => {
-            progress.emit('elevation-consent', 'requested', 'Windows will request consent now');
-            elevationOutcome = await progress.watch('protected-transaction', () => elevationRequester({
-              home: root,
-              launcher: pathStatus.launcher,
-              platform,
-              environment: env,
-            }), { detail: 'bounded elevated child remains active' });
-            progress.emit('elevation-consent', elevationOutcome?.completed === true ? 'completed' : 'declined', elevationOutcome?.blocker ?? null);
-            return elevationOutcome;
-          },
+          requestElevation: null,
         }));
         if (lifecycleAuthority?.ready !== true) {
           return publicResult({
@@ -899,9 +904,7 @@ export async function runDevBridgeSetup({
             pathStatus,
             lifecycleAuthority,
             constructionRequested: construct,
-            blocker: lifecycleAuthority?.blocker ?? (elevationOutcome?.completed === false
-              ? 'Windows lifecycle authority elevation was declined; the durable protected-apply frontier is unchanged'
-              : 'Protected lifecycle authority did not reach readiness'),
+            blocker: lifecycleAuthority?.blocker ?? 'Protected lifecycle authority did not verify readiness after the single elevated child',
           });
         }
         protectedApply = (await protectedApplyFrontier.apply(configurationRecord, profileSelection.revision, previous)).record;

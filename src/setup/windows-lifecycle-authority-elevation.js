@@ -388,7 +388,6 @@ export async function requestWindowsLifecycleAuthorityElevation({
     });
   }
 
-  await cleanupCompletedChildResultTargets(root);
   const childTarget = await childResultTarget(root);
   await writeFile(childTarget.input, `${JSON.stringify({ home: root, launcher: selectedLauncher, node, runnerHead })}\n`, { flag: 'wx', mode: 0o600 });
   const brokerCommand = encodedScript(renderedBrokerScript(childTarget.input, runnerHead));
@@ -405,6 +404,7 @@ export async function requestWindowsLifecycleAuthorityElevation({
     });
   } catch {
     await cleanupChildResultTarget(childTarget);
+    await cleanupCompletedChildResultTargets(root);
     return Object.freeze({
       protocol: PROTOCOL,
       attempted: true,
@@ -428,6 +428,7 @@ export async function requestWindowsLifecycleAuthorityElevation({
   try { brokerResult = await readBrokerResult(childTarget); }
   catch {}
   await cleanupChildResultTarget(childTarget);
+  await cleanupCompletedChildResultTargets(root);
 
   let value;
   try { value = JSON.parse(String(result.stdout ?? '').trim()); }

@@ -338,6 +338,7 @@ test('setup keeps the ordinary command invoker outside the elevation transaction
       assert.equal(request.requestElevation, null);
       return { protocol: 'test/lifecycle-authority', ready: false, elevationRequired: true, blocker: 'prepared apply requires elevation', changed: false, service: 'unavailable', protectedState: 'unknown' };
     }
+    order.push('lifecycle-verification');
     if (typeof request.requestElevation === 'function') {
       const elevation = await request.requestElevation();
       assert.equal(elevation.completed, true);
@@ -357,7 +358,7 @@ test('setup keeps the ordinary command invoker outside the elevation transaction
   assert.ok(elevationRequest);
   assert.equal(Object.hasOwn(elevationRequest, 'invoke'), false);
   assert.equal(elevationRequest.environment, process.env);
-  assert.deepEqual(order, ['resolve-command', 'elevation']);
+  assert.deepEqual(order, ['resolve-command', 'elevation', 'lifecycle-verification']);
 });
 
 test('deferred and empty profile selections preserve repository setup without crossing platform boundaries', async () => {
