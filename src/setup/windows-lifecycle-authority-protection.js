@@ -82,16 +82,13 @@ try {
   Assert-ProtectedAcl ([string]$data.nodeExecutable) 'read' $false 'node-executable'; $checks += 'node-executable'
   Assert-ProtectedAcl ([string]$data.serviceHostExecutable) 'read' $false 'service-host-executable'; $checks += 'service-host-executable'
   Assert-ProtectedAcl ([string]$data.workerEntry) 'read' $false 'worker-entry'; $checks += 'worker-entry'
-  $script:current = 'hyperv-membership'
-  $members = @(Get-LocalGroupMember -SID ([string]$data.hyperVGroupSid) -ErrorAction Stop)
-  $serviceMember = @($members | Where-Object { $_.SID -and $_.SID.Value -eq $service.Value }).Count -eq 1
-  if (-not $serviceMember) { throw 'missing-service-member' }
-  $checks += 'hyperv-membership'
-  $script:current = 'network-configuration-membership'
-  $members = @(Get-LocalGroupMember -SID ([string]$data.networkConfigurationGroupSid) -ErrorAction Stop)
-  $serviceMember = @($members | Where-Object { $_.SID -and $_.SID.Value -eq $service.Value }).Count -eq 1
-  if (-not $serviceMember) { throw 'missing-service-member' }
-  $checks += 'network-configuration-membership'
+  foreach ($groupSid in @($data.retiredCapabilityGroupSids)) {
+    $script:current = 'capability-membership-retirement'
+    $members = @(Get-LocalGroupMember -SID ([string]$groupSid) -ErrorAction Stop)
+    $serviceMembers = @($members | Where-Object { $_.SID -and $_.SID.Value -eq $service.Value })
+    if ($serviceMembers.Count -ne 0) { throw 'stale-service-member' }
+  }
+  $checks += 'capability-membership-retirement'
   @{ ready = $true; checks = $checks } | ConvertTo-Json -Compress
 } catch {
   @{ ready = $false; checks = $checks; failed = $script:current; reason = [string]$_.Exception.Message } | ConvertTo-Json -Compress
@@ -109,9 +106,12 @@ function invocationSucceeded(result) {
 function requirePlan(plan) {
   if (!plan || typeof plan !== 'object' || Array.isArray(plan)) throw new TypeError('Windows lifecycle authority protection plan is required');
   if (typeof plan?.service?.account !== 'string' || !SERVICE_ACCOUNT.test(plan.service.account)) throw new TypeError('Windows lifecycle authority protection service account is invalid');
-  if (plan?.service?.hyperVGroupSid !== WINDOWS_HYPERV_ADMINISTRATORS_SID
-    || plan?.service?.networkConfigurationGroupSid !== WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID) {
-    throw new TypeError('Windows lifecycle authority protection capability groups are invalid');
+  const retiredCapabilityGroupSids = plan?.service?.retiredCapabilityGroupSids;
+  if (!Array.isArray(retiredCapabilityGroupSids)
+    || retiredCapabilityGroupSids.length !== 2
+    || retiredCapabilityGroupSids[0] !== WINDOWS_HYPERV_ADMINISTRATORS_SID
+    || retiredCapabilityGroupSids[1] !== WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID) {
+    throw new TypeError('Windows lifecycle authority protection retired capability groups are invalid');
   }
   for (const value of [
     plan.protectedRoot,
@@ -150,8 +150,7 @@ async function verifyStructuralProtection(plan, invoke, environment) {
         serviceHostExecutable: plan.runtime.serviceHostExecutable,
         workerEntry: plan.runtime.workerEntry,
         serviceAccount: plan.service.account,
-        hyperVGroupSid: plan.service.hyperVGroupSid,
-        networkConfigurationGroupSid: plan.service.networkConfigurationGroupSid,
+        retiredCapabilityGroupSids: plan.service.retiredCapabilityGroupSids,
       }),
       timeoutMs: 60_000,
       maxOutputBytes: 64 * 1024,

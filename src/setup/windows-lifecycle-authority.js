@@ -36,6 +36,7 @@ const HOST_COMMAND_PROTOCOLS = new Set([
 export const WINDOWS_ADMINISTRATORS_SID = 'S-1-5-32-544';
 export const WINDOWS_HYPERV_ADMINISTRATORS_SID = 'S-1-5-32-578';
 export const WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID = 'S-1-5-32-556';
+export const WINDOWS_LOCAL_SYSTEM_ACCOUNT = 'LocalSystem';
 export const WINDOWS_SYSTEM_SID = 'S-1-5-18';
 
 function absoluteWindowsPath(value, name) {
@@ -196,11 +197,14 @@ export function createWindowsLifecycleAuthorityPlan({
       name: serviceName,
       displayName: `DevBridge Environment Lifecycle Authority ${authorityIdentity.slice(0, 12)}`,
       account: serviceAccount,
+      logonAccount: WINDOWS_LOCAL_SYSTEM_ACCOUNT,
       sidType: 'unrestricted',
       start: 'automatic',
       failureAction: 'restart',
-      hyperVGroupSid: WINDOWS_HYPERV_ADMINISTRATORS_SID,
-      networkConfigurationGroupSid: WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID,
+      retiredCapabilityGroupSids: Object.freeze([
+        WINDOWS_HYPERV_ADMINISTRATORS_SID,
+        WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID,
+      ]),
     }),
     endpoints: Object.freeze({
       read: Object.freeze({ endpoint: readEndpoint, pipeName: readPipeName }),

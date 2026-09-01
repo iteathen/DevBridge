@@ -35,6 +35,7 @@ import {
   WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1,
   WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1,
   WINDOWS_HYPERV_ADMINISTRATORS_SID,
+  WINDOWS_LOCAL_SYSTEM_ACCOUNT,
   WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID,
 } from './windows-lifecycle-authority.js';
 import { reconcileWindowsLifecycleAuthorityImages } from './windows-lifecycle-authority-image-adoption.js';
@@ -162,7 +163,7 @@ if (-not (Test-Path -LiteralPath ([string]$data.output) -PathType Leaf)) { throw
 @{ compiled = $true } | ConvertTo-Json -Compress
 `;
 
-const ADD_CAPABILITY_GROUPS_SCRIPT = String.raw`
+const RETIRE_CAPABILITY_GROUPS_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 $serviceSid = (New-Object Security.Principal.NTAccount([string]$data.serviceAccount)).Translate([Security.Principal.SecurityIdentifier])
@@ -171,13 +172,13 @@ foreach ($groupSid in @($data.groupSids)) {
   $members = @(Get-LocalGroupMember -SID ([string]$groupSid) -ErrorAction Stop)
   $matching = @($members | Where-Object { $_.SID -and $_.SID.Value -eq $serviceSid.Value })
   if ($matching.Count -gt 1) { throw 'service capability group membership is duplicated' }
-  if ($matching.Count -eq 0) {
-    Add-LocalGroupMember -SID ([string]$groupSid) -Member ([string]$data.serviceAccount) -ErrorAction Stop
+  if ($matching.Count -eq 1) {
+    Remove-LocalGroupMember -SID ([string]$groupSid) -Member ([string]$data.serviceAccount) -Confirm:$false -ErrorAction Stop
     $changed = $true
   }
   $verified = @(Get-LocalGroupMember -SID ([string]$groupSid) -ErrorAction Stop |
     Where-Object { $_.SID -and $_.SID.Value -eq $serviceSid.Value })
-  if ($verified.Count -ne 1) { throw 'service capability group membership is invalid' }
+  if ($verified.Count -ne 0) { throw 'service capability group membership was not retired' }
 }
 @{ changed = $changed; serviceSid = [string]$serviceSid.Value } | ConvertTo-Json -Compress
 `;
@@ -517,9 +518,21 @@ function sameWindowsText(left, right) {
 
 function serviceMatches(service, plan) {
   return service.exists === true
+    && sameWindowsText(service.startName, plan.service.logonAccount)
+    && sameWindowsText(service.pathName, plan.serviceCommand)
+    && service.description === plan.service.description;
+}
+
+function serviceMatchesRetiredVirtualLogon(service, plan) {
+  return plan?.service?.logonAccount === WINDOWS_LOCAL_SYSTEM_ACCOUNT
+    && service.exists === true
     && sameWindowsText(service.startName, plan.service.account)
     && sameWindowsText(service.pathName, plan.serviceCommand)
     && service.description === plan.service.description;
+}
+
+function serviceMatchesOwnedTransition(service, plan) {
+  return serviceMatches(service, plan) || serviceMatchesRetiredVirtualLogon(service, plan);
 }
 
 function serviceRunning(service) {
@@ -549,19 +562,22 @@ async function quiesceOwnedService(service, plan, invoke, environment) {
   await invokePowerShell(invoke, STOP_SERVICE_SCRIPT, { name: plan.service.name }, 'Windows lifecycle authority service stop', environment);
 }
 
-function serviceCapabilityGroupSids(plan) {
-  if (plan?.service?.hyperVGroupSid !== WINDOWS_HYPERV_ADMINISTRATORS_SID
-    || plan?.service?.networkConfigurationGroupSid !== WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID) {
-    throw new Error('Windows lifecycle authority capability group plan is invalid');
+function retiredServiceCapabilityGroupSids(plan) {
+  const selected = plan?.service?.retiredCapabilityGroupSids;
+  if (!Array.isArray(selected)
+    || selected.length !== 2
+    || selected[0] !== WINDOWS_HYPERV_ADMINISTRATORS_SID
+    || selected[1] !== WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID) {
+    throw new Error('Windows lifecycle authority retired capability group plan is invalid');
   }
-  return Object.freeze([
-    WINDOWS_HYPERV_ADMINISTRATORS_SID,
-    WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID,
-  ]);
+  if (plan?.service?.logonAccount !== WINDOWS_LOCAL_SYSTEM_ACCOUNT) {
+    throw new Error('Windows lifecycle authority provider logon plan is invalid');
+  }
+  return selected;
 }
 
 async function configureService(service, plan, invoke, environment) {
-  const capabilityGroupSids = serviceCapabilityGroupSids(plan);
+  const retiredCapabilityGroupSids = retiredServiceCapabilityGroupSids(plan);
   const command = plan.serviceCommand;
   let changed = false;
   if (!service.exists) {
@@ -569,19 +585,19 @@ async function configureService(service, plan, invoke, environment) {
       'create', plan.service.name,
       'binPath=', command,
       'start=', 'demand',
-      'obj=', plan.service.account,
+      'obj=', plan.service.logonAccount,
       'DisplayName=', plan.service.displayName,
     ], 'Windows lifecycle authority service creation', environment);
     changed = true;
   }
-  await invokeSc(invoke, ['config', plan.service.name, 'binPath=', command, 'start=', 'auto', 'obj=', plan.service.account], 'Windows lifecycle authority service configuration', environment);
+  await invokeSc(invoke, ['config', plan.service.name, 'binPath=', command, 'start=', 'auto', 'obj=', plan.service.logonAccount], 'Windows lifecycle authority service configuration', environment);
   await invokeSc(invoke, ['sidtype', plan.service.name, plan.service.sidType], 'Windows lifecycle authority service SID configuration', environment);
   await invokeSc(invoke, ['failure', plan.service.name, 'reset=', '86400', 'actions=', 'restart/5000'], 'Windows lifecycle authority service failure policy', environment);
   await invokeSc(invoke, ['description', plan.service.name, plan.service.description], 'Windows lifecycle authority runtime evidence configuration', environment);
-  const group = await invokePowerShell(invoke, ADD_CAPABILITY_GROUPS_SCRIPT, {
+  const group = await invokePowerShell(invoke, RETIRE_CAPABILITY_GROUPS_SCRIPT, {
     serviceAccount: plan.service.account,
-    groupSids: capabilityGroupSids,
-  }, 'Windows lifecycle authority capability group admission', environment);
+    groupSids: retiredCapabilityGroupSids,
+  }, 'Windows lifecycle authority capability group retirement', environment);
   changed ||= group.changed === true;
   return Object.freeze({ changed });
 }
@@ -851,13 +867,13 @@ async function readRefreshInstallation(context) {
   let previousServiceMatches = false;
   if (journal?.previousGeneration != null) {
     try {
-      previousServiceMatches = serviceMatches(service, (await manifestPlan(basePlan, journal.previousGeneration)).plan);
+      previousServiceMatches = serviceMatchesOwnedTransition(service, (await manifestPlan(basePlan, journal.previousGeneration)).plan);
     } catch {
       previousServiceMatches = false;
     }
   }
 
-  const activeServiceMatches = activePlan == null ? !service.exists : serviceMatches(service, activePlan);
+  const activeServiceMatches = activePlan == null ? !service.exists : serviceMatchesOwnedTransition(service, activePlan);
   if (!activeServiceMatches && !transitionAllowsServiceMismatch({
     service,
     journal,
@@ -897,7 +913,7 @@ async function readRefreshInstallation(context) {
     owner: 'devbridge',
     serviceGeneration: activeGeneration,
     preparedGeneration,
-    serviceRunning: activePlan != null && serviceMatches(service, activePlan) && serviceRunning(service),
+    serviceRunning: activePlan != null && serviceMatchesOwnedTransition(service, activePlan) && serviceRunning(service),
     retainedGenerations: Object.freeze([...new Set(retained)]),
   });
 }
@@ -912,7 +928,9 @@ async function stopServiceGeneration({ generation }, context) {
   const identity = exactGeneration(generation, 'Windows lifecycle authority stop generation');
   const target = await manifestPlan(context.basePlan, identity);
   const service = await inspectService(target.plan, context.invoke, context.environment);
-  validateOwnedService(service, target.plan);
+  if (service.exists && !serviceMatchesOwnedTransition(service, target.plan)) {
+    throw new Error('existing Windows lifecycle authority service does not match protected DevBridge ownership');
+  }
   await quiesceOwnedService(service, target.plan, context.invoke, context.environment);
 }
 
@@ -931,7 +949,7 @@ async function configureServiceGeneration({ generation, previousGeneration }, co
   if (service.exists) {
     const alreadyTarget = serviceMatches(service, target.plan);
     let previousMatch = false;
-    if (previous != null) previousMatch = serviceMatches(service, (await manifestPlan(context.basePlan, previous)).plan);
+    if (previous != null) previousMatch = serviceMatchesOwnedTransition(service, (await manifestPlan(context.basePlan, previous)).plan);
     if (!alreadyTarget && !previousMatch) throw new Error('Windows lifecycle authority promotion service identity changed');
     if (serviceRunning(service)) throw new Error('Windows lifecycle authority promotion requires a quiesced service');
   } else if (previous != null) {

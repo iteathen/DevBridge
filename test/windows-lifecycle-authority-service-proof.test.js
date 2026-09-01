@@ -28,7 +28,7 @@ function success(stdout = '{"ready":true}\n') {
   return Promise.resolve({ exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout, stderr: '' });
 }
 
-test('service proof requires exact SCM command, virtual account, and runtime description', async () => {
+test('service proof requires exact SCM command, provider logon account, and runtime description', async () => {
   let request = null;
   const result = await verifyWindowsLifecycleAuthorityService({
     plan,
@@ -40,7 +40,7 @@ test('service proof requires exact SCM command, virtual account, and runtime des
   assert.equal(request.executable, 'powershell.exe');
   const input = JSON.parse(request.input);
   assert.equal(input.name, plan.service.name);
-  assert.equal(input.account, plan.service.account);
+  assert.equal(input.account, plan.service.logonAccount);
   assert.equal(input.command, plan.serviceCommand);
   assert.equal(input.description, plan.service.description);
   assert.match(input.command, /devbridge-lifecycle-authority-host\.exe" "--service-name" "DevBridgeLifecycle-/u);
@@ -65,15 +65,19 @@ test('service proof rejects an unbound plan or mismatched service identity/runti
     ...plan,
     service: Object.freeze({ ...plan.service, description: 'DevBridge lifecycle authority runtime v1' }),
   });
+  const wrongLogonAccount = Object.freeze({
+    ...plan,
+    service: Object.freeze({ ...plan.service, logonAccount: plan.service.account }),
+  });
 
   await assert.rejects(
     () => verifyWindowsLifecycleAuthorityService({ plan: basePlan, operatorSid: OPERATOR_SID, invoke: async () => success() }),
     /service proof plan is incomplete/u,
   );
-  for (const candidate of [wrongRuntimeEvidence, wrongName, wrongAccount]) {
+  for (const candidate of [wrongRuntimeEvidence, wrongName, wrongAccount, wrongLogonAccount]) {
     await assert.rejects(
       () => verifyWindowsLifecycleAuthorityService({ plan: candidate, operatorSid: OPERATOR_SID, invoke: async () => success() }),
-      /service proof (?:runtime evidence|identity) is invalid/u,
+      /service proof (?:runtime evidence|identity|logon identity) is invalid/u,
     );
   }
 });
