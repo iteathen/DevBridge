@@ -64,8 +64,6 @@ try {
   $launcher = '"' + $launcherPath.Replace('"', '') + '"'
   $child = Start-Process -FilePath $node -ArgumentList @(
     $launcher,
-    '--ref',
-    $head,
     'setup',
     '--lifecycle-authority-child',
     '--no-update'
@@ -280,26 +278,29 @@ function parseChildOutput(output) {
   return Object.freeze({ diagnostics: Object.freeze(diagnostics), result });
 }
 
-export async function resolveWindowsLifecycleAuthorityElevationRunnerHead({ packageRoot = PACKAGE_ROOT } = {}) {
+export async function resolveWindowsLifecycleAuthorityElevationRunner({ packageRoot = PACKAGE_ROOT } = {}) {
   const root = path.resolve(packageRoot);
   const git = path.join(root, '.git');
   const headFile = path.join(git, 'HEAD');
+  const launcher = path.join(root, 'src', 'cli.js');
   let rootInfo;
   let gitInfo;
   let headInfo;
+  let launcherInfo;
   try {
-    [rootInfo, gitInfo, headInfo] = await Promise.all([lstat(root), lstat(git), lstat(headFile)]);
+    [rootInfo, gitInfo, headInfo, launcherInfo] = await Promise.all([lstat(root), lstat(git), lstat(headFile), lstat(launcher)]);
   } catch (error) {
     if (error?.code === 'ENOENT') throw new Error('Windows lifecycle authority elevation requires an exact checkout identity');
     throw error;
   }
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink() || !gitInfo.isDirectory() || gitInfo.isSymbolicLink()
-      || !headInfo.isFile() || headInfo.isSymbolicLink() || headInfo.size < 40 || headInfo.size > 128) {
+      || !headInfo.isFile() || headInfo.isSymbolicLink() || headInfo.size < 40 || headInfo.size > 128
+      || !launcherInfo.isFile() || launcherInfo.isSymbolicLink()) {
     throw new Error('Windows lifecycle authority elevation checkout identity is not a bounded real file');
   }
   const head = String(await readFile(headFile, 'utf8')).trim().toLowerCase();
   if (!EXACT_HEAD.test(head)) throw new Error('Windows lifecycle authority elevation requires one detached exact checkout head');
-  return head;
+  return Object.freeze({ head, root, launcher });
 }
 
 async function boundedManagedFile(root, file, name) {
@@ -351,24 +352,26 @@ export async function requestWindowsLifecycleAuthorityElevation({
   invoke = invokeElevationCommand,
   environment = process.env,
 } = {}, {
-  resolveRunnerHead = resolveWindowsLifecycleAuthorityElevationRunnerHead,
+  resolveRunner = resolveWindowsLifecycleAuthorityElevationRunner,
 } = {}) {
   if (platform !== 'win32') return Object.freeze({ protocol: PROTOCOL, attempted: false, completed: true, exitCode: 0, blocker: null });
-  if (typeof invoke !== 'function' || typeof resolveRunnerHead !== 'function') throw new TypeError('Windows lifecycle authority elevation invocation contract is invalid');
+  if (typeof invoke !== 'function' || typeof resolveRunner !== 'function') throw new TypeError('Windows lifecycle authority elevation invocation contract is invalid');
   const root = absoluteLocalPath(home, 'DevBridge elevation home');
-  const selectedLauncher = absoluteLocalPath(launcher, 'DevBridge elevation launcher');
+  const selectedEntryLauncher = absoluteLocalPath(launcher, 'DevBridge elevation entry launcher');
   const node = absoluteLocalPath(nodeExecutable, 'DevBridge elevation Node executable');
   const expectedBin = path.join(root, 'bin');
-  if (!samePath(path.dirname(selectedLauncher), expectedBin, platform) || !ALLOWED_LAUNCHERS.has(path.basename(selectedLauncher).toLowerCase())) {
+  if (!samePath(path.dirname(selectedEntryLauncher), expectedBin, platform) || !ALLOWED_LAUNCHERS.has(path.basename(selectedEntryLauncher).toLowerCase())) {
     throw new Error('Windows lifecycle authority elevation launcher is outside the managed DevBridge entry boundary');
   }
   await Promise.all([
-    boundedManagedFile(root, selectedLauncher, 'Windows lifecycle authority elevation launcher'),
+    boundedManagedFile(root, selectedEntryLauncher, 'Windows lifecycle authority elevation entry launcher'),
     boundedRealFile(node, 'Windows lifecycle authority elevation Node executable'),
   ]);
 
+  let runner;
   let runnerHead;
-  try { runnerHead = String(await resolveRunnerHead()).trim().toLowerCase(); }
+  let runnerLauncher;
+  try { runner = await resolveRunner(); }
   catch {
     return Object.freeze({
       protocol: PROTOCOL,
@@ -378,7 +381,27 @@ export async function requestWindowsLifecycleAuthorityElevation({
       blocker: 'Windows lifecycle authority elevation requires the exact current DevBridge runner identity. Re-enter setup through an exact installed selector.',
     });
   }
-  if (!EXACT_HEAD.test(runnerHead)) {
+  if (!runner || typeof runner !== 'object' || Array.isArray(runner)
+      || Object.keys(runner).some((key) => !['head', 'root', 'launcher'].includes(key))
+      || typeof runner.head !== 'string' || typeof runner.root !== 'string' || typeof runner.launcher !== 'string') {
+    return Object.freeze({
+      protocol: PROTOCOL,
+      attempted: false,
+      completed: false,
+      exitCode: null,
+      blocker: 'Windows lifecycle authority elevation requires the exact current DevBridge runner identity. Re-enter setup through an exact installed selector.',
+    });
+  }
+  runnerHead = runner.head.trim().toLowerCase();
+  try {
+    const runnerRoot = absoluteLocalPath(runner.root, 'DevBridge elevation runner root');
+    runnerLauncher = absoluteLocalPath(runner.launcher, 'DevBridge elevation runner launcher');
+    if (!samePath(runnerLauncher, path.join(runnerRoot, 'src', 'cli.js'), platform)) throw new Error('runner launcher is not its fixed CLI');
+    await boundedManagedFile(root, runnerLauncher, 'Windows lifecycle authority elevation runner launcher');
+  } catch {
+    runnerLauncher = null;
+  }
+  if (!EXACT_HEAD.test(runnerHead) || runnerLauncher == null) {
     return Object.freeze({
       protocol: PROTOCOL,
       attempted: false,
@@ -389,7 +412,7 @@ export async function requestWindowsLifecycleAuthorityElevation({
   }
 
   const childTarget = await childResultTarget(root);
-  await writeFile(childTarget.input, `${JSON.stringify({ home: root, launcher: selectedLauncher, node, runnerHead })}\n`, { flag: 'wx', mode: 0o600 });
+  await writeFile(childTarget.input, `${JSON.stringify({ home: root, launcher: runnerLauncher, node, runnerHead })}\n`, { flag: 'wx', mode: 0o600 });
   const brokerCommand = encodedScript(renderedBrokerScript(childTarget.input, runnerHead));
 
   let result;
