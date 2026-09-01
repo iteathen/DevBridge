@@ -33,7 +33,7 @@ test('setup projects stable subjects into one accepted profile without repositor
     const images = new BaseImageLibrary({ directory: path.join(root, 'environment-foundation', 'images') });
     const image = await images.publish({
       profile: 'linux-development',
-      generation: 'ubuntu-2604-production-v5',
+      generation: 'ubuntu-2604-production-v6',
       source,
       provenance: { origin: 'test', bootstrap: 'guest-image-v1' },
     });

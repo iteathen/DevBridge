@@ -8,8 +8,10 @@ import {
   deriveCurrentUbuntuSetupAuthority,
   UBUNTU_SETUP_BOOT_PATCH,
 } from '../src/setup/ubuntu-authority.js';
+import { createGuestImagePayload } from '../src/guest/image-payload.js';
 
 const SNAPSHOT = '20260821T200000Z';
+const CURRENT_PAYLOAD_GENERATION = 'guest-image-6c102cff53ad6d9f10f03530';
 
 function index(entries) {
   return gzipSync(Buffer.from(entries.map(([name, version]) => `Package: ${name}\nVersion: ${version}\nArchitecture: amd64\n`).join('\n'), 'utf8'));
@@ -52,7 +54,7 @@ test('setup authority binds source policy, exact snapshot and current payload ge
   const authority = await createUbuntuSetupAuthority({
     snapshot: SNAPSHOT,
     fetchImpl: async (url) => responseFor(String(url)),
-    payloadFactory: async () => ({ generation: 'guest-image-current' }),
+    payloadFactory: async () => ({ generation: CURRENT_PAYLOAD_GENERATION }),
   });
   assert.equal(authority.source.media.sha256, 'dec49008a71f6098d0bcfc822021f4d042d5f2db279e4d75bdd981304f1ca5d9');
   assert.equal(authority.source.media.bytes, 2_918_598_656);
@@ -60,24 +62,37 @@ test('setup authority binds source policy, exact snapshot and current payload ge
   assert.equal(authority.packages.generation, 'ubuntu-2604-tools-v4');
   assert.equal(authority.packages.packages.find((entry) => entry.name === 'openssh-server')?.version, '1:9.9p1-3ubuntu3');
   assert.deepEqual(authority.qualification.commands, ['hv_kvp_daemon', 'make']);
-  assert.equal(authority.payload.generation, 'guest-image-current');
+  assert.equal(authority.payload.generation, CURRENT_PAYLOAD_GENERATION);
   assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v10');
-  assert.equal(authority.output.generation, 'ubuntu-2604-production-v5');
+  assert.equal(authority.output.generation, 'ubuntu-2604-production-v6');
   assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 2, ...UBUNTU_SETUP_BOOT_PATCH }]);
+});
+
+test('setup output generation is bound to the exact current semantic payload', async () => {
+  const payload = await createGuestImagePayload();
+  assert.equal(payload.generation, CURRENT_PAYLOAD_GENERATION);
+  await assert.rejects(
+    () => createUbuntuSetupAuthority({
+      snapshot: SNAPSHOT,
+      fetchImpl: async (url) => responseFor(String(url)),
+      payloadFactory: async () => ({ generation: 'guest-image-ffffffffffffffffffffffff' }),
+    }),
+    /payload generation is not bound to the Ubuntu output generation/u,
+  );
 });
 
 test('setup derives the exact current authority from one durable local package set without network resolution', async () => {
   const authority = await createUbuntuSetupAuthority({
     snapshot: SNAPSHOT,
     fetchImpl: async (url) => responseFor(String(url)),
-    payloadFactory: async () => ({ generation: 'guest-image-current' }),
+    payloadFactory: async () => ({ generation: CURRENT_PAYLOAD_GENERATION }),
   });
   const historical = structuredClone(authority);
   historical.output.generation = 'ubuntu-2604-production-v4';
   const selected = await deriveCurrentUbuntuSetupAuthority({
     snapshot: SNAPSHOT,
     authorities: [historical, authority],
-    payloadFactory: async () => ({ generation: 'guest-image-current' }),
+    payloadFactory: async () => ({ generation: CURRENT_PAYLOAD_GENERATION }),
   });
   assert.deepEqual(selected, authority);
   const conflicting = structuredClone(authority);
@@ -86,7 +101,7 @@ test('setup derives the exact current authority from one durable local package s
     () => deriveCurrentUbuntuSetupAuthority({
       snapshot: SNAPSHOT,
       authorities: [authority, conflicting],
-      payloadFactory: async () => ({ generation: 'guest-image-current' }),
+      payloadFactory: async () => ({ generation: CURRENT_PAYLOAD_GENERATION }),
     }),
     /observed 2/u,
   );

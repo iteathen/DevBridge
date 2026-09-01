@@ -21,7 +21,8 @@ const SOURCE = Object.freeze({
   signerFingerprint: '843938DF228D22F7B3742BC0D94AA3F0EFE21092',
 });
 
-const OUTPUT = Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v5', bootstrap: 'guest-image-v1' });
+const OUTPUT = Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v6', bootstrap: 'guest-image-v1' });
+const OUTPUT_PAYLOAD_GENERATION = 'guest-image-6c102cff53ad6d9f10f03530';
 const RECIPE_GENERATION = 'ubuntu-2604-autoinstall-v10';
 const PACKAGE_GENERATION = 'ubuntu-2604-tools-v4';
 
@@ -93,6 +94,9 @@ export async function resolveUbuntuPackagePins({ snapshot, fetchImpl = globalThi
 }
 
 function authorityFrom({ snapshot, packages, payloadGeneration }) {
+  if (payloadGeneration !== OUTPUT_PAYLOAD_GENERATION) {
+    throw new Error('current guest payload generation is not bound to the Ubuntu output generation');
+  }
   return Object.freeze({
     protocol: 'devbridge/ubuntu-construction-authority-v1',
     source: Object.freeze({
