@@ -8,6 +8,7 @@ import {
   LifecycleAuthorityClient,
   createLifecycleAuthorityMutationHandler,
   createLifecycleAuthorityReadHandler,
+  environmentLifecycleAuthorityOperationIsReadOnly,
 } from './environment-lifecycle-authority.js';
 
 const AUTHORITY_ID = /^[0-9a-f]{32}$/u;
@@ -79,7 +80,7 @@ export function createLifecycleAuthoritySocketExchange({ endpoint, connectTimeou
       return await transactBoundedLocalAuthoritySocket({
         endpoint,
         timeoutMs,
-        inspection: request?.operation === 'inspect',
+        replaySafe: environmentLifecycleAuthorityOperationIsReadOnly(request?.operation),
         transact: (socket) => new Promise((resolve, reject) => {
           let settled = false;
           let buffer = '';

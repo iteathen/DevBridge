@@ -4,11 +4,21 @@ import {
   ENVIRONMENT_ACTIVITY_AUTHORITY_REQUEST_PROTOCOL,
   EnvironmentActivityClient,
   createEnvironmentActivityHandler,
+  environmentActivityOperationIsReadOnly,
   normalizeEnvironmentActivityRequest,
 } from '../src/runtime/environment-activity-authority.js';
 import { ENVIRONMENT_BRIDGE_PROTOCOL, EnvironmentBridge } from '../src/runtime/environment-bridge.js';
 
 const TARGET = 'environment-logical';
+
+test('activity protocol alone classifies replay-safe read operations', () => {
+  for (const operation of ['inspect', 'list', 'observe']) {
+    assert.equal(environmentActivityOperationIsReadOnly(operation), true, operation);
+  }
+  for (const operation of ['prepare', 'exchange', '', null]) {
+    assert.equal(environmentActivityOperationIsReadOnly(operation), false, String(operation));
+  }
+});
 
 function observed() {
   return {

@@ -103,12 +103,12 @@ export async function transactBoundedLocalAuthoritySocket({
   endpoint,
   timeoutMs,
   signal = null,
-  inspection = false,
+  replaySafe = false,
   transact,
 } = {}, dependencies = {}) {
   const selectedEndpoint = requiredEndpoint(endpoint);
   const selectedTimeout = requiredTimeout(timeoutMs);
-  if (typeof inspection !== 'boolean' || typeof transact !== 'function') {
+  if (typeof replaySafe !== 'boolean' || typeof transact !== 'function') {
     throw new TypeError('local authority transaction composition is invalid');
   }
   const now = dependencies.now ?? Date.now;
@@ -127,7 +127,7 @@ export async function transactBoundedLocalAuthoritySocket({
     try {
       return await transact(socket);
     } catch (error) {
-      retry = inspection === true
+      retry = replaySafe === true
         && WINDOWS_PIPE.test(selectedEndpoint)
         && error?.code === 'EPIPE'
         && error?.localAuthorityResponseBytes === 0;

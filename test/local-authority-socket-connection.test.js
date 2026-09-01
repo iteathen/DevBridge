@@ -70,13 +70,13 @@ test('Windows transient retries remain inside the original connection deadline',
   assert.equal(fixture.attempts(), 1);
 });
 
-test('Windows inspection retries only stale zero-response transactions', async () => {
+test('Windows replay-safe operation retries only stale zero-response transactions', async () => {
   const fixture = connectionFactory([null, null]);
   let transactions = 0;
   const value = await transactBoundedLocalAuthoritySocket({
     endpoint: '\\\\.\\pipe\\devbridge-test',
     timeoutMs: 1000,
-    inspection: true,
+    replaySafe: true,
     transact: async () => {
       transactions += 1;
       if (transactions === 1) throw Object.assign(new Error('stale pipe'), { code: 'EPIPE', localAuthorityResponseBytes: 0 });
@@ -90,17 +90,17 @@ test('Windows inspection retries only stale zero-response transactions', async (
   assert.equal(transactions, 2);
 });
 
-test('local authority transaction does not retry mutations or partial responses', async () => {
+test('local authority transaction does not retry replay-unsafe operations or partial responses', async () => {
   for (const input of [
-    { inspection: false, localAuthorityResponseBytes: 0 },
-    { inspection: true, localAuthorityResponseBytes: 1 },
+    { replaySafe: false, localAuthorityResponseBytes: 0 },
+    { replaySafe: true, localAuthorityResponseBytes: 1 },
   ]) {
     const fixture = connectionFactory([null, null]);
     let transactions = 0;
     await assert.rejects(transactBoundedLocalAuthoritySocket({
       endpoint: '\\\\.\\pipe\\devbridge-test',
       timeoutMs: 1000,
-      inspection: input.inspection,
+      replaySafe: input.replaySafe,
       transact: async () => {
         transactions += 1;
         throw Object.assign(new Error('ambiguous pipe'), { code: 'EPIPE', localAuthorityResponseBytes: input.localAuthorityResponseBytes });

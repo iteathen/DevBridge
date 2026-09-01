@@ -13,6 +13,11 @@ const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_RESULT_BYTES = 8 * 1024 * 1024;
 const MAX_ENVIRONMENTS = 256;
+const READ_ONLY_OPERATIONS = new Set(['inspect', 'list', 'observe']);
+
+export function environmentActivityOperationIsReadOnly(value) {
+  return typeof value === 'string' && READ_ONLY_OPERATIONS.has(value);
+}
 
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
