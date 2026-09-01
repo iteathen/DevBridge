@@ -59,6 +59,16 @@ A Windows-only integration test compiles the committed C# host as a disposable l
 
 Local qualification completed on Windows with the focused lifecycle/host set at 60/60, the architecture boundary set at 33 passed plus one platform skip, doctor healthy, and the serialized repository suite at 2,068 passed plus 21 platform skips out of 2,089. A final cleanup-boundary hardening then narrowed stale-directory admission to a canonical managed state root and exact UUID-v4 directory grammar; the affected 60-test set and bounded preflight were rerun from those final bytes. Final preflight covered 253 syntax files, two JSON files, 203 targeted tests, and two standalone artifacts. No disposable compiled-host or elevation-test directory remained afterward.
 
+## Post-integration physical composition finding
+
+Stage 8 integrated the first correction at `c0b24d356afe8ad8cab08dd1d5ed8a8413757f9d`, and fresh four-job CI passed. One newly authorized ordinary setup invocation then ran from 02:32:01 through 02:55:16 and stopped before UAC with `Windows lifecycle authority elevation could not be started.` Read-only classification found no elevated child, no new elevation channel, and no protected mutation.
+
+The elevation owner requested its new 45-minute transaction budget through the default generic `invokeCommand`, whose deliberately narrower validation ceiling remained five minutes. Production therefore rejected the request before process spawn. The injected focused invocation had asserted the requested value but did not exercise the default composition policy.
+
+The follow-up correction preserves the five-minute default. The shared process mechanic now exposes a closed local factory for an explicitly bounded invoker, with 45 minutes as its hard maximum. The Windows elevation adapter alone composes that exact maximum as its default invocation port. A real-process regression proves the ordinary invoker rejects the 45-minute request, the explicitly composed invoker admits it, and neither the policy nor an individual request may exceed the hard ceiling. A separate composition guard proves the elevation default remains attached to that explicit policy rather than the ordinary invoker.
+
+Follow-up qualification passed 39 focused command/elevation tests, regenerated and byte-verified the standalone installer, passed bounded preflight (253 syntax files, two JSON files, 203 targeted tests, two standalone artifacts), passed the architecture boundary set and doctor, and passed the Windows-serialized full suite with 2,070 passed plus 21 platform skips out of 2,091 and zero failures. Diff and disposable-test-directory hygiene were clean.
+
 ## Stop conditions
 
 Stop rather than broaden scope if the repair requires a second privileged helper, caller-selected executable/path/pipe identity, ordinary provider credentials, direct provider mutation, pipe ACL widening, service/manual host repair, repository-code host execution, or deletion of ambiguous elevation evidence.
