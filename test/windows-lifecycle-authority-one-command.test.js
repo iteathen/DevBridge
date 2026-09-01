@@ -491,6 +491,13 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
   }
 });
 
+test('elevation adapter default composes the explicit long-transaction invocation policy', async () => {
+  const source = await readFile(new URL('../src/setup/windows-lifecycle-authority-elevation.js', import.meta.url), 'utf8');
+  assert.match(source, /createCommandInvoker\(\{ maximumTimeoutMs: ELEVATION_TRANSACTION_TIMEOUT_MS \}\)/u);
+  assert.match(source, /invoke = invokeElevationCommand/u);
+  assert.doesNotMatch(source, /import \{ invokeCommand \}/u);
+});
+
 test('elevation adapter removes only prior valid terminal receipts before creating a new channel', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
   try {

@@ -3,7 +3,7 @@ import { lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:f
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { invokeCommand } from '../runtime/command-invocation.js';
+import { createCommandInvoker } from '../runtime/command-invocation.js';
 
 const PROTOCOL = 'devbridge/windows-lifecycle-authority-elevation-v1';
 const POWERSHELL = 'powershell.exe';
@@ -17,6 +17,7 @@ const BROKER_RESULT_PROTOCOL = 'devbridge/windows-lifecycle-authority-elevation-
 const CHILD_RESULT_DIRECTORY = /^\.lifecycle-authority-elevation-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const MAX_BROKER_RESULT_BYTES = 80 * 1024;
 const ELEVATION_TRANSACTION_TIMEOUT_MS = 45 * 60_000;
+const invokeElevationCommand = createCommandInvoker({ maximumTimeoutMs: ELEVATION_TRANSACTION_TIMEOUT_MS });
 
 const BROKER_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
@@ -347,7 +348,7 @@ export async function requestWindowsLifecycleAuthorityElevation({
   launcher,
   platform = process.platform,
   nodeExecutable = process.execPath,
-  invoke = invokeCommand,
+  invoke = invokeElevationCommand,
   environment = process.env,
 } = {}, {
   resolveRunnerHead = resolveWindowsLifecycleAuthorityElevationRunnerHead,
