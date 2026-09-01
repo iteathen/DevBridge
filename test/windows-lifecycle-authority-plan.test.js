@@ -10,6 +10,7 @@ import {
   windowsLifecycleAuthorityRuntimeGeneration,
   WINDOWS_ADMINISTRATORS_SID,
   WINDOWS_HYPERV_ADMINISTRATORS_SID,
+  WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID,
   WINDOWS_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL,
   WINDOWS_SYSTEM_SID,
 } from '../src/setup/windows-lifecycle-authority.js';
@@ -57,6 +58,7 @@ test('Windows authority plan derives one deterministic service and protected gen
   assert.equal(value.service.name, `DevBridgeLifecycle-${identity}`);
   assert.equal(value.service.account, `NT SERVICE\\DevBridgeLifecycle-${identity}`);
   assert.equal(value.service.hyperVGroupSid, WINDOWS_HYPERV_ADMINISTRATORS_SID);
+  assert.equal(value.service.networkConfigurationGroupSid, WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID);
   assert.equal(value.protectedRoot, path.win32.join(PROGRAM_DATA, 'DevBridge', 'lifecycle-authority', identity));
   assert.equal(value.authorityDirectory, path.win32.join(value.protectedRoot, 'state'));
   assert.equal(value.runtime.generationsDirectory, path.win32.join(value.protectedRoot, 'generations'));

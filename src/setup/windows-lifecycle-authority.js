@@ -35,6 +35,7 @@ const HOST_COMMAND_PROTOCOLS = new Set([
 
 export const WINDOWS_ADMINISTRATORS_SID = 'S-1-5-32-544';
 export const WINDOWS_HYPERV_ADMINISTRATORS_SID = 'S-1-5-32-578';
+export const WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID = 'S-1-5-32-556';
 export const WINDOWS_SYSTEM_SID = 'S-1-5-18';
 
 function absoluteWindowsPath(value, name) {
@@ -199,6 +200,7 @@ export function createWindowsLifecycleAuthorityPlan({
       start: 'automatic',
       failureAction: 'restart',
       hyperVGroupSid: WINDOWS_HYPERV_ADMINISTRATORS_SID,
+      networkConfigurationGroupSid: WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID,
     }),
     endpoints: Object.freeze({
       read: Object.freeze({ endpoint: readEndpoint, pipeName: readPipeName }),
