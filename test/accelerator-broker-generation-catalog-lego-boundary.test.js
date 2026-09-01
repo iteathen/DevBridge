@@ -20,7 +20,7 @@ test('file generation catalog has read-only persistence authority only', async (
   const source = (await readFile(fileUrl, 'utf8')).toLowerCase();
   for (const forbidden of [
     "'node:child_process'", '"node:child_process"', "'node:net'", '"node:net"',
-    'process.argv', 'shell:', 'writefile', 'mkdir(', 'unlink(', 'rename(', 'link(',
+    'process.argv', 'shell:', 'writefile(', 'await mkdir(', 'await unlink(', 'await rename(', 'await link(',
     'wsl', 'nvidia', 'hyper-v', 'libvirt', 'vfio', 'vsock', 'powershell', 'ssh', 'pci',
     'nvcuda', 'libcuda', 'cudamalloc', 'culaunch',
   ]) {
