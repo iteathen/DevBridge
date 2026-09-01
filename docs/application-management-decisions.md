@@ -50,9 +50,12 @@ Consequences:
 - permanent entry does not grow provider/repository/setup business logic;
 - runner does not become a second configuration system;
 - setup progress is durable/versioned independently of executable runtime generation;
+- protected setup preparation and protected apply are separate exact states; a prepared Windows subject is bound to the accepted configuration digest, profile-selection revision, and accepted identity/repository/package checkpoint;
+- Windows consent is requested only on an explicit setup re-entry, immediately after bounded local subject and installed-command validation and before remote discovery or construction;
+- phase timing/progress is a bounded observation port and cannot become mutation, retry, provider, or elevation authority;
 - ordinary runtime commands do not silently re-enter authority-changing setup.
 
-Owners: #103, #116.
+Owners: #103, #116, #429, #430.
 
 ## Decision 5: accepted runtime owns execution-environment reconstruction through lifecycle contracts
 

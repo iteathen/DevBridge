@@ -54,6 +54,7 @@ export async function reconcileSetupLifecycleAuthority(value = {}, providedPorts
     'environment',
     'configuration',
     'requestElevation',
+    'onDiagnostic',
   ]), 'setup lifecycle authority composition request');
   exactObject(providedPorts, new Set(['select']), 'setup lifecycle authority composition ports', { complete: false });
   if (typeof value.platform !== 'string' || value.platform.length === 0) {

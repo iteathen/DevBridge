@@ -144,6 +144,7 @@ function dependencies({
         return structuredClone(windowsActivation ?? windowsActivationPolicy());
       },
       pathInstaller: async ({ home }) => ({ protocol: 'test/path-v2', command: path.join(home, 'bin', 'devbridge.cmd'), invocation: `& '${path.join(home, 'bin', 'devbridge.cmd')}'`, persisted: true, changed: false, visibility: 'available' }),
+      pathResolver: async ({ home }) => ({ command: path.join(home, 'bin', 'devbridge.cmd'), binDirectory: path.join(home, 'bin'), launcher: path.join(home, 'bin', 'devbridge-entry.mjs'), invocation: `& '${path.join(home, 'bin', 'devbridge.cmd')}'` }),
       tokenResolver: async () => 'test-token',
       clientFactory: () => ({}),
       discover: async () => ({ identity, repositories: discoveredRepositories }),
@@ -186,11 +187,18 @@ function dependencies({
           calls.profileSourceCount = sources.length;
           return {
             changed: false,
-            record: { configuration: { declarations: configuredProfiles.map((profile) => ({ profile })) } },
+            record: { revision: 1, digest: 'a'.repeat(64), configuration: { declarations: configuredProfiles.map((profile) => ({ profile })) } },
           };
         },
       }),
       profileConfigurationFactory: () => ({}),
+      profileConfigurationRecordReader: async () => null,
+      protectedApplyFrontierFactory: () => ({
+        async current() { return null; },
+        async prepare(record, revision) { return { changed: true, record: { state: 'prepared', configurationDigest: record.digest, profileSelectionRevision: revision } }; },
+        async apply(record, revision) { return { changed: true, record: { state: 'applied', configurationDigest: record.digest, profileSelectionRevision: revision } }; },
+        matches() { return false; },
+      }),
       resourceConflictFactory: async () => ({
         async inspect() {
           calls.resourceConflict += 1;
@@ -300,23 +308,56 @@ test('setup keeps the ordinary command invoker outside the elevation transaction
   });
   const ordinaryInvoke = async () => { throw new Error('ordinary command invoker must not own elevation'); };
   let elevationRequest = null;
+  let frontier = null;
+  let order = [];
+  const configurationRecord = { revision: 1, digest: 'a'.repeat(64), configuration: { declarations: [{ profile: 'linux-development' }] } };
   fixture.deps.invoke = ordinaryInvoke;
+  fixture.deps.profileConfigurationRecordReader = async () => configurationRecord;
+  fixture.deps.protectedApplyFrontierFactory = () => ({
+    async current() { return frontier; },
+    async prepare() { frontier = { state: 'prepared' }; return { changed: true, record: frontier }; },
+    async apply() { frontier = { state: 'applied' }; return { changed: true, record: frontier }; },
+    matches(value, record, revision, checkpoint, state) {
+      return value === frontier && value.state === state && record === configurationRecord && revision === 1
+        && checkpoint?.identity?.id === 42;
+    },
+  });
   fixture.deps.elevationRequester = async (request) => {
+    order.push('elevation');
     elevationRequest = request;
     return { completed: true, exitCode: 0 };
   };
+  const baseResolver = fixture.deps.pathResolver;
+  const baseInstaller = fixture.deps.pathInstaller;
+  const baseDiscover = fixture.deps.discover;
+  fixture.deps.pathResolver = async (request) => { order.push('resolve-command'); return baseResolver(request); };
+  fixture.deps.pathInstaller = async (request) => { order.push('install-command'); return baseInstaller(request); };
+  fixture.deps.discover = async (...args) => { order.push('github-discovery'); return baseDiscover(...args); };
   fixture.deps.lifecycleAuthorityReconciler = async (request) => {
-    const elevation = await request.requestElevation();
-    assert.equal(elevation.completed, true);
+    if (frontier == null) {
+      assert.equal(request.requestElevation, null);
+      return { protocol: 'test/lifecycle-authority', ready: false, elevationRequired: true, blocker: 'prepared apply requires elevation', changed: false, service: 'unavailable', protectedState: 'unknown' };
+    }
+    if (typeof request.requestElevation === 'function') {
+      const elevation = await request.requestElevation();
+      assert.equal(elevation.completed, true);
+    }
     return { protocol: 'test/lifecycle-authority', ready: true, blocker: null, changed: true, service: 'ready', protectedState: 'ready' };
   };
 
+  const first = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-elevation-command-boundary') }, fixture.deps);
+  assert.equal(first.phase, 'protected-apply-ready');
+  assert.equal(first.blocked, false);
+  assert.equal(elevationRequest, null);
+
+  order = [];
   const result = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-setup-elevation-command-boundary') }, fixture.deps);
 
-  assert.equal(result.blocked, false);
+  assert.equal(result.blocked, false, result.blocker);
   assert.ok(elevationRequest);
   assert.equal(Object.hasOwn(elevationRequest, 'invoke'), false);
   assert.equal(elevationRequest.environment, process.env);
+  assert.deepEqual(order, ['resolve-command', 'elevation']);
 });
 
 test('deferred and empty profile selections preserve repository setup without crossing platform boundaries', async () => {

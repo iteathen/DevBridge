@@ -183,6 +183,27 @@ test('missing configuration capability is stale service health and receives one 
   assert.equal(elevations, 1);
 });
 
+test('ordinary inspection reports an explicit elevation-required state without prompting', async () => {
+  let services = 0;
+  const result = await reconcileWindowsLifecycleAuthorityReadiness({
+    stateDirectory: STATE,
+    platform: 'win32',
+    invoke: async () => {},
+    requestElevation: null,
+  }, {
+    migrationSafety: async () => portableMigration(),
+    inspectHost: async () => host(false),
+    serviceReconciler: async (_options, dependencies) => {
+      services += 1;
+      await dependencies.inspectHost({});
+      return Object.freeze({ ...readyService(), ready: false, service: 'unavailable', protectedState: 'unknown' });
+    },
+  });
+  assert.equal(services, 1);
+  assert.equal(result.ready, false);
+  assert.equal(result.elevationRequired, true);
+});
+
 test('SCM identity failure blocks before any same-named read pipe can be trusted', async () => {
   const calls = [];
   const result = await reconcileWindowsLifecycleAuthorityReadiness({ stateDirectory: STATE, platform: 'win32', invoke: async () => {} }, {
