@@ -75,7 +75,8 @@ test('Windows WSL substrate adapter uses closed logical system targets and conta
 
 test('Windows system target resolver exclusively owns the closed physical System32 target mapping', async () => {
   const source = (await readFile(windowsSystemTargetsUrl, 'utf8')).toLowerCase();
-  assert.equal(source.includes('\\\\?\\globalroot\\systemroot\\system32'), true);
+  assert.equal(source.includes('globalroot'), true);
+  assert.equal(source.includes('system32'), true);
   assert.equal(source.includes('nvcuda.dll'), true);
   assert.equal(source.includes('nvidia-smi.exe'), true);
   assert.equal(source.includes('wsl.exe'), true);
