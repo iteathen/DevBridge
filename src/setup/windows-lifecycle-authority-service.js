@@ -1036,12 +1036,20 @@ export async function probeWindowsLifecycleAuthority(plan, {
       const client = clientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
       const result = await client.inspect();
       if (!result || result.protocol !== 'devbridge/environment-operator-v1') throw new Error('protected lifecycle authority returned invalid inspection evidence');
-      const activityClient = activityClientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
-      const activity = await activityClient.inspect();
-      if (!activity || typeof activity.ready !== 'boolean' || typeof activity.identity !== 'string') throw new Error('protected environment activity authority returned invalid inspection evidence');
-      const configurationClient = configurationClientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
-      const configuration = await configurationClient.inspect();
-      if (configuration?.ready !== true || Object.keys(configuration).length !== 1) throw new Error('protected environment configuration authority returned invalid inspection evidence');
+      const commandProtocol = plan.hostCommandProtocol ?? WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1;
+      if (![WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACCEPTANCE_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACTIVITY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1].includes(commandProtocol)) {
+        throw new Error('protected lifecycle authority host command protocol is invalid');
+      }
+      if ([WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACTIVITY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1].includes(commandProtocol)) {
+        const activityClient = activityClientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
+        const activity = await activityClient.inspect();
+        if (!activity || typeof activity.ready !== 'boolean' || typeof activity.identity !== 'string') throw new Error('protected environment activity authority returned invalid inspection evidence');
+      }
+      if (commandProtocol === WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1) {
+        const configurationClient = configurationClientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
+        const configuration = await configurationClient.inspect();
+        if (configuration?.ready !== true || Object.keys(configuration).length !== 1) throw new Error('protected environment configuration authority returned invalid inspection evidence');
+      }
       return result;
     } catch (error) {
       lastError = error;

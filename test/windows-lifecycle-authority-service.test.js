@@ -206,6 +206,51 @@ test('Windows lifecycle authority generation health separates endpoint readiness
   assert.equal(result.protocol, 'devbridge/environment-operator-v1');
 });
 
+test('Windows lifecycle authority health probes only the endpoints declared by an activity generation', async () => {
+  let activityInspections = 0;
+  let configurationFactories = 0;
+  const result = await probeWindowsLifecycleAuthority({
+    stateDirectory: STATE,
+    hostCommandProtocol: 'read-mutation-acceptance-activity-v1',
+  }, {
+    clientFactory: () => ({ async inspect() { return { protocol: 'devbridge/environment-operator-v1' }; } }),
+    activityClientFactory: () => ({ async inspect() { activityInspections += 1; return { ready: true, identity: 'a'.repeat(32) }; } }),
+    configurationClientFactory: () => { configurationFactories += 1; throw new Error('configuration endpoint is not declared'); },
+    waitForRetry: async () => { throw new Error('valid activity generation should be accepted immediately'); },
+  });
+  assert.equal(result.protocol, 'devbridge/environment-operator-v1');
+  assert.equal(activityInspections, 1);
+  assert.equal(configurationFactories, 0);
+});
+
+test('Windows lifecycle authority health accepts legacy and acceptance generations without later endpoints', async () => {
+  for (const hostCommandProtocol of ['legacy-read-mutation-v1', 'read-mutation-acceptance-v1']) {
+    let laterEndpointFactories = 0;
+    const result = await probeWindowsLifecycleAuthority({ stateDirectory: STATE, hostCommandProtocol }, {
+      clientFactory: () => ({ async inspect() { return { protocol: 'devbridge/environment-operator-v1' }; } }),
+      activityClientFactory: () => { laterEndpointFactories += 1; throw new Error('activity endpoint is not declared'); },
+      configurationClientFactory: () => { laterEndpointFactories += 1; throw new Error('configuration endpoint is not declared'); },
+      waitForRetry: async () => { throw new Error('historical generation should be accepted immediately'); },
+    });
+    assert.equal(result.protocol, 'devbridge/environment-operator-v1');
+    assert.equal(laterEndpointFactories, 0);
+  }
+});
+
+test('Windows lifecycle authority health rejects an unknown generation protocol without probing later endpoints', async () => {
+  let laterEndpointFactories = 0;
+  await assert.rejects(probeWindowsLifecycleAuthority({
+    stateDirectory: STATE,
+    hostCommandProtocol: 'unknown-v1',
+  }, {
+    clientFactory: () => ({ async inspect() { return { protocol: 'devbridge/environment-operator-v1' }; } }),
+    activityClientFactory: () => { laterEndpointFactories += 1; throw new Error('unexpected activity probe'); },
+    configurationClientFactory: () => { laterEndpointFactories += 1; throw new Error('unexpected configuration probe'); },
+    waitForRetry: async () => {},
+  }), /host command protocol is invalid/u);
+  assert.equal(laterEndpointFactories, 0);
+});
+
 test('Windows lifecycle authority health stops at its bounded readiness deadline', async () => {
   let attempts = 0;
   const delays = [];

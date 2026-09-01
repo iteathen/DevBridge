@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -14,8 +14,9 @@ const ALLOWED_LAUNCHERS = new Set(['devbridge-entry.mjs', 'devbridge-stage0.mjs'
 const EXACT_HEAD = /^[0-9a-f]{40}$/u;
 const PACKAGE_ROOT = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
 const BROKER_RESULT_PROTOCOL = 'devbridge/windows-lifecycle-authority-elevation-broker-v1';
-const CHILD_RESULT_DIRECTORY = /^\.lifecycle-authority-elevation-[0-9a-f-]{36}$/u;
+const CHILD_RESULT_DIRECTORY = /^\.lifecycle-authority-elevation-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const MAX_BROKER_RESULT_BYTES = 80 * 1024;
+const ELEVATION_TRANSACTION_TIMEOUT_MS = 45 * 60_000;
 
 const BROKER_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
@@ -143,7 +144,7 @@ async function boundedRealFile(file, name) {
   return resolved;
 }
 
-async function childResultTarget(home) {
+async function managedStateRoot(home) {
   const state = path.join(home, 'state');
   const stateInfo = await lstat(state);
   if (!stateInfo.isDirectory() || stateInfo.isSymbolicLink()) {
@@ -154,6 +155,11 @@ async function childResultTarget(home) {
   if (!pathIsWithin(canonicalHome, canonicalState)) {
     throw new Error('Windows lifecycle authority elevation state root escaped the managed DevBridge home');
   }
+  return Object.freeze({ state, canonicalState });
+}
+
+async function childResultTarget(home) {
+  const { state } = await managedStateRoot(home);
   const directory = path.join(state, `.lifecycle-authority-elevation-${randomUUID()}`);
   await mkdir(directory, { mode: 0o700 });
   return Object.freeze({ state, directory, input: path.join(directory, 'input.json'), file: path.join(directory, 'result.json') });
@@ -168,6 +174,37 @@ async function cleanupChildResultTarget(target) {
         || path.dirname(target.file) !== target.directory || path.basename(target.file) !== 'result.json') return;
     await rm(target.directory, { recursive: true, force: true });
   } catch {}
+}
+
+async function cleanupCompletedChildResultTargets(root) {
+  let state;
+  let canonicalState;
+  let entries;
+  try {
+    ({ state, canonicalState } = await managedStateRoot(root));
+    entries = await readdir(state, { withFileTypes: true });
+  }
+  catch { return; }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !CHILD_RESULT_DIRECTORY.test(entry.name)) continue;
+    const directory = path.join(state, entry.name);
+    const target = Object.freeze({
+      state,
+      directory,
+      input: path.join(directory, 'input.json'),
+      file: path.join(directory, 'result.json'),
+    });
+    try {
+      const directoryInfo = await lstat(directory);
+      const canonicalDirectory = await realpath(directory);
+      if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink()
+          || !samePath(path.dirname(canonicalDirectory), canonicalState, 'win32')) continue;
+      const contents = await readdir(directory, { withFileTypes: true });
+      if (contents.length !== 1 || contents[0].name !== 'result.json' || !contents[0].isFile()) continue;
+      await readBrokerResult(target);
+      await cleanupChildResultTarget(target);
+    } catch {}
+  }
 }
 
 function boundedBrokerText(value) {
@@ -350,6 +387,7 @@ export async function requestWindowsLifecycleAuthorityElevation({
     });
   }
 
+  await cleanupCompletedChildResultTargets(root);
   const childTarget = await childResultTarget(root);
   await writeFile(childTarget.input, `${JSON.stringify({ home: root, launcher: selectedLauncher, node, runnerHead })}\n`, { flag: 'wx', mode: 0o600 });
   const brokerCommand = encodedScript(renderedBrokerScript(childTarget.input, runnerHead));
@@ -360,7 +398,7 @@ export async function requestWindowsLifecycleAuthorityElevation({
       executable: POWERSHELL,
       arguments: [...POWERSHELL_ARGS, encodedScript(ELEVATE_SCRIPT)],
       input: JSON.stringify({ brokerCommand }),
-      timeoutMs: 5 * 60_000,
+      timeoutMs: ELEVATION_TRANSACTION_TIMEOUT_MS,
       maxOutputBytes: 64 * 1024,
       environment,
     });
@@ -375,11 +413,6 @@ export async function requestWindowsLifecycleAuthorityElevation({
     });
   }
 
-  let brokerResult = null;
-  try { brokerResult = await readBrokerResult(childTarget); }
-  catch {}
-  await cleanupChildResultTarget(childTarget);
-
   if (!invocationSucceeded(result)) {
     return Object.freeze({
       protocol: PROTOCOL,
@@ -389,6 +422,11 @@ export async function requestWindowsLifecycleAuthorityElevation({
       blocker: 'Windows lifecycle authority elevation did not complete. Re-run devbridge setup to retry the same protected reconciliation.',
     });
   }
+
+  let brokerResult = null;
+  try { brokerResult = await readBrokerResult(childTarget); }
+  catch {}
+  await cleanupChildResultTarget(childTarget);
 
   let value;
   try { value = JSON.parse(String(result.stdout ?? '').trim()); }
