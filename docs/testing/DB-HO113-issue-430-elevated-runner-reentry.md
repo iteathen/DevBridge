@@ -37,21 +37,25 @@ The ordinary exact-checkout provider correctly holds the runner-cache activity l
 
 The broker input contains the direct runner launcher, not the installed entry launcher. The fixed broker no longer supplies `--ref`; therefore it performs no runner selection, fetch, receipt mutation, or runner-cache lease acquisition. It still checks the descriptor head against the independently encoded expected head before starting the child.
 
+Physical re-entry at accepted Stage 8 head `7b5605492465fe60fcad0ce0927ce7362cee3eec` exposed one further boundary error before UAC: exact `--ref` selection intentionally stores its receipt-owned detached checkout below the user-local experimental cache, not below the canonical installation home. Requiring the runner launcher to be nested under the installation root therefore rejected a valid provider-owned runner. The adapter now revalidates the descriptor as its own bounded detached exact checkout and contains the fixed CLI within that checkout root. The installation entry remains contained and validated under the canonical home; neither root is promoted to authority for the other.
+
 ## Candidate evidence
 
 Final-byte local qualification uses the exact supported minimum Node 22.16.0 runtime and passes:
 
 - bounded repository preflight: two standalone artifacts, 255 syntax files, two JSON files, and 205 targeted test files;
-- expanded setup/frontier/provider/cache/elevation boundary: 116/116;
+- expanded setup/frontier/provider/cache/elevation boundary: 117/117;
 - architecture/product/standalone gate: 11/11;
 - read-only doctor: `ok: true`, with GitHub authentication available and repository execution still correctly unavailable until protected setup publishes a route; and
-- complete serialized suite: 2,107 total, 2,086 passed, 21 expected platform skips, and zero failures in 332.5 seconds.
+- complete serialized suite: 2,108 total, 2,087 passed, 21 expected platform skips, and zero failures in 336.7 seconds.
 
 Tests prove:
 
 - detached exact descriptor acceptance and symbolic-head rejection;
 - managed installed-entry validation remains mandatory;
-- exact-looking runner launchers outside the managed home fail before UAC;
+- unproved runner launchers outside the managed home fail before UAC;
+- a proved detached exact runner outside the installation home reaches the one UAC adapter;
+- runner descriptors are revalidated against their own detached checkout rather than installation-home containment;
 - the real rendered PowerShell broker executes the direct CLI with exactly the three internal arguments and returns bounded child evidence;
 - timeout preserves the exact result channel;
 - completed old channels are cleaned only after the UAC transaction;

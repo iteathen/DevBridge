@@ -76,7 +76,9 @@ async function elevationChannel(root) {
 async function elevationRunner(root, head, source = 'export {};\n') {
   const runnerRoot = path.join(root, 'entry', 'cache', 'checkouts', 'a'.repeat(64));
   const launcher = path.join(runnerRoot, 'src', 'cli.js');
+  await mkdir(path.join(runnerRoot, '.git'), { recursive: true });
   await mkdir(path.dirname(launcher), { recursive: true });
+  await writeFile(path.join(runnerRoot, '.git', 'HEAD'), `${head}\n`);
   await writeFile(launcher, source);
   return Object.freeze({ head, root: runnerRoot, launcher });
 }
@@ -995,7 +997,39 @@ test('elevation adapter fails before UAC when the current runner identity is not
   }
 });
 
-test('elevation adapter refuses an exact runner launcher outside the managed home before UAC', async () => {
+test('elevation adapter admits a proved detached runner outside the installation home', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
+  const outside = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-runner-cache-'));
+  try {
+    const bin = path.join(root, 'bin');
+    await mkdir(bin);
+    await mkdir(path.join(root, 'state'));
+    const entryLauncher = path.join(bin, 'devbridge-entry.mjs');
+    const node = path.join(root, 'node.exe');
+    await writeFile(entryLauncher, 'export {};\n');
+    await writeFile(node, 'node');
+    const runner = await elevationRunner(outside, 'f'.repeat(40));
+    let invoked = false;
+    const result = await requestWindowsLifecycleAuthorityElevation({
+      home: root,
+      launcher: entryLauncher,
+      nodeExecutable: node,
+      platform: 'win32',
+      invoke: async () => { invoked = true; throw new Error('stop before UAC'); },
+    }, {
+      resolveRunner: async () => runner,
+    });
+    assert.equal(invoked, true);
+    assert.equal(result.attempted, true);
+    assert.equal(result.completed, false);
+    assert.match(result.blocker, /could not be started/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('elevation adapter refuses an unproved runner launcher outside the managed home before UAC', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
   const outside = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-outside-'));
   try {
