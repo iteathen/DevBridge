@@ -13,10 +13,11 @@ export class HyperVPersistentEnvironment {
   #channel;
   #storage;
 
-  constructor({ directory, sourceRoot, identity, invoke }) {
+  constructor({ directory, machineRoot = path.join(path.resolve(directory), 'machines'), sourceRoot, identity, invoke }) {
     this.#directory = path.resolve(directory);
     this.#contract = new HyperVEnvironmentContract({
       directory,
+      machineRoot,
       sourceRoot,
       identity,
       normalizeProtection: normalizeBootProtection,
@@ -56,7 +57,12 @@ export class HyperVPersistentEnvironment {
     };
     const existing = this.#contract.record(state, identity);
     if (existing) {
-      const comparableExisting = { ...existing, diskFileIdentity: null, providerIdentity: null };
+      const comparableExisting = {
+        ...existing,
+        configPath: existing.configPath === descriptor.legacyConfigPath ? descriptor.configPath : existing.configPath,
+        diskFileIdentity: null,
+        providerIdentity: null,
+      };
       if (JSON.stringify(comparableExisting) !== JSON.stringify(record)) throw new Error('environment adapter record conflicts with the requested lineage');
     } else {
       state.records[identity] = record;
@@ -64,21 +70,31 @@ export class HyperVPersistentEnvironment {
     }
 
     await mkdir(descriptor.local, { recursive: true, mode: 0o700 });
-    const localInfo = await lstat(descriptor.local);
+    await mkdir(descriptor.machineRoot, { recursive: true, mode: 0o700 });
+    const [localInfo, machineRootInfo] = await Promise.all([lstat(descriptor.local), lstat(descriptor.machineRoot)]);
     if (!localInfo.isDirectory() || localInfo.isSymbolicLink()) throw new Error('environment object directory must be a real directory');
+    if (!machineRootInfo.isDirectory() || machineRootInfo.isSymbolicLink()) throw new Error('environment machine root must be a real directory');
     const outcome = await this.#channel.provision({
       ...state.records[identity],
+      creationConfigPath: descriptor.configPath,
       memoryBytes: settings.memoryBytes,
       processorCount: settings.processorCount,
       firmware: settings.firmware,
       ...this.#contract.bootSettings(settings),
     });
+    if (typeof outcome?.created !== 'boolean') throw new Error('environment management did not return valid creation evidence');
     const providerIdentity = this.#contract.providerIdentity(outcome?.providerIdentity);
     if (state.records[identity].providerIdentity && state.records[identity].providerIdentity !== providerIdentity) throw new Error('environment provider identity changed during provisioning');
+    let recordChanged = false;
+    if (outcome.created && state.records[identity].configPath !== descriptor.configPath) {
+      state.records[identity].configPath = descriptor.configPath;
+      recordChanged = true;
+    }
     if (!state.records[identity].providerIdentity) {
       state.records[identity].providerIdentity = providerIdentity;
-      await this.#ledger.save(state);
+      recordChanged = true;
     }
+    if (recordChanged) await this.#ledger.save(state);
     if (!state.records[identity].diskFileIdentity) {
       state.records[identity].diskFileIdentity = await this.#storage.capture(diskPath);
       await this.#ledger.save(state);
@@ -149,8 +165,15 @@ export class HyperVPersistentEnvironment {
     if (observed.exists && observed.state !== 'off') throw new Error('environment must be stopped before removal');
     const result = await this.#channel.remove(record);
     if (diskInfo) await this.#storage.assertContainedFile(this.#directory, record.diskPath, diskInfo);
-    const localInfo = await lstat(descriptor.local).catch((error) => error?.code === 'ENOENT' ? null : Promise.reject(error));
+    const [localInfo, configInfo] = await Promise.all([
+      lstat(descriptor.local).catch((error) => error?.code === 'ENOENT' ? null : Promise.reject(error)),
+      lstat(record.configPath).catch((error) => error?.code === 'ENOENT' ? null : Promise.reject(error)),
+    ]);
     if (localInfo && (!localInfo.isDirectory() || localInfo.isSymbolicLink())) throw new Error('environment object directory shape changed');
+    if (configInfo && (!configInfo.isDirectory() || configInfo.isSymbolicLink())) throw new Error('environment configuration directory shape changed');
+    if (path.resolve(record.configPath) !== descriptor.legacyConfigPath) {
+      await rm(record.configPath, { recursive: true, force: true });
+    }
     await rm(descriptor.local, { recursive: true, force: true });
     delete state.records[identity];
     await this.#ledger.save(state);

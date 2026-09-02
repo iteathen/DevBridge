@@ -72,7 +72,13 @@ export async function createEnvironmentFoundation({
   let operations;
   if (platform === 'win32') {
     control = new HyperVEnvironment({ directory: controlDirectory, assetRoot, identity, invoke });
-    operations = new HyperVPersistentEnvironment({ directory: path.join(persistentRoot, 'operations'), sourceRoot: assetRoot, identity, invoke });
+    operations = new HyperVPersistentEnvironment({
+      directory: path.join(persistentRoot, 'operations'),
+      machineRoot: path.join(path.resolve(stateDirectory), 'hv'),
+      sourceRoot: assetRoot,
+      identity,
+      invoke,
+    });
   } else if (platform === 'linux') {
     control = new LibvirtEnvironment({ directory: controlDirectory, assetRoot, identity, invoke });
     operations = new LibvirtPersistentEnvironment({ directory: path.join(persistentRoot, 'operations'), sourceRoot: assetRoot, identity, invoke });
