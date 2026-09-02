@@ -329,7 +329,7 @@ function commonArguments(request) {
     '-o', 'APT::Solver=internal',
     '-o', `APT::Architecture=${request.architecture}`,
     '--snapshot', request.snapshot,
-    '--simulate', '--quiet=2', '--no-list-columns',
+    '--simulate', '--quiet=2',
   ];
 }
 
