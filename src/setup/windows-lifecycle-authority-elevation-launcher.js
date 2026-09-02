@@ -11,7 +11,7 @@ const RECEIPT_PROTOCOL = 'devbridge/windows-lifecycle-authority-elevation-launch
 const FILE_DESCRIPTION = 'DevBridge Protected Setup - reconcile lifecycle service and protected environment';
 const PURPOSE = 'Reconcile the DevBridge-owned lifecycle service and protected environment configuration';
 const DIRECTORY = 'windows-elevation-launchers';
-const EXECUTABLE = 'DevBridge-Protected-Setup-Reconcile-Lifecycle-Service-and-Environment.exe';
+const EXECUTABLE = 'DevBridge-Protected-Setup-Lifecycle-Environment.exe';
 const RECEIPT = 'receipt.json';
 const SOURCE = 'windows-lifecycle-authority-elevation-launcher.cs';
 const MANIFEST = 'windows-lifecycle-authority-elevation-launcher.manifest';
@@ -179,11 +179,15 @@ function launcherPaths(home, subjectDigest) {
   const state = path.join(home, 'state');
   const parent = path.join(state, DIRECTORY);
   const directory = path.join(parent, subjectDigest);
+  const executable = path.join(directory, EXECUTABLE);
+  if (`${executable}.config`.length >= 260) {
+    throw new Error('Windows elevation launcher path exceeds the legacy configuration path budget');
+  }
   return Object.freeze({
     state,
     parent,
     directory,
-    executable: path.join(directory, EXECUTABLE),
+    executable,
     receipt: path.join(directory, RECEIPT),
   });
 }

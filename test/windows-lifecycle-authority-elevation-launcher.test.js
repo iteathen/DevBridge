@@ -64,7 +64,8 @@ test('Windows elevation launcher compiles one identified exact artifact and reus
     assert.equal(repeated.prepared, true);
     assert.equal(repeated.changed, false);
     assert.equal(repeated.launcher.executable, first.launcher.executable);
-    assert.equal(path.basename(repeated.launcher.executable), 'DevBridge-Protected-Setup-Reconcile-Lifecycle-Service-and-Environment.exe');
+    assert.equal(path.basename(repeated.launcher.executable), 'DevBridge-Protected-Setup-Lifecycle-Environment.exe');
+    assert.ok(`${repeated.launcher.executable}.config`.length < 260);
     assert.equal(repeated.launcher.fileDescription, 'DevBridge Protected Setup - reconcile lifecycle service and protected environment');
     assert.equal(repeated.launcher.purpose, windowsLifecycleAuthorityElevationPurpose());
     assert.deepEqual(repeated.launcher.input, first.launcher.input);
@@ -116,6 +117,27 @@ test('Windows elevation launcher rejects exact artifact or runner drift', {
     await assert.rejects(resolveWindowsLifecycleAuthorityElevationLauncher(options), /identity changed/u);
     await writeFile(path.join(selected.runner.root, '.git', 'HEAD'), `${'b'.repeat(40)}\n`);
     await assert.rejects(resolveWindowsLifecycleAuthorityElevationLauncher(options), /runner head changed/u);
+  } finally {
+    await rm(selected.root, { recursive: true, force: true });
+  }
+});
+
+test('Windows elevation launcher rejects an unsafe legacy configuration path before compilation', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  const selected = await fixture();
+  try {
+    const home = path.join(selected.root, 'x'.repeat(64), 'home');
+    await mkdir(path.join(home, 'state'), { recursive: true });
+    let compilations = 0;
+    await assert.rejects(prepareWindowsLifecycleAuthorityElevationLauncher({
+      home,
+      runner: selected.runner,
+      platform: 'win32',
+      nodeExecutable: process.execPath,
+      invoke: async () => { compilations += 1; return {}; },
+    }), /legacy configuration path budget/u);
+    assert.equal(compilations, 0);
   } finally {
     await rm(selected.root, { recursive: true, force: true });
   }
