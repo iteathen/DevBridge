@@ -1,7 +1,9 @@
 import process from 'node:process';
-import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment-lifecycle-authority-transport.js';
+import { createLocalEnvironmentOperator } from './environment-operator-runtime.js';
 import { readEnvironmentProfileConfigurationRecord } from '../setup/environment-profile-configuration-record.js';
 import { createWindowsEnvironmentProfileConfiguration } from '../setup/windows-environment-profile-configuration.js';
+import { createWindowsLifecycleAuthorityPlan } from '../setup/windows-lifecycle-authority.js';
+import { inspectWindowsLifecycleAuthorityReadinessHost } from '../setup/windows-lifecycle-authority-readiness.js';
 import { reconcileSetupEnvironmentActivation } from './setup-environment-activation.js';
 
 export const WINDOWS_ELEVATED_SETUP_ENVIRONMENT_ACTIVATION_PROTOCOL = 'devbridge/windows-elevated-setup-environment-activation-v1';
@@ -19,19 +21,37 @@ function result({ ready, changed = false, blocker = null, environmentCount = 0 }
 export async function reconcileWindowsElevatedSetupEnvironmentActivation({
   stateDirectory,
   platform = process.platform,
+  invoke,
+  environment = process.env,
 } = {}, {
   recordReader = readEnvironmentProfileConfigurationRecord,
   configurationFactory = createWindowsEnvironmentProfileConfiguration,
-  clientFactory = createConfiguredLifecycleAuthorityClient,
+  hostInspector = inspectWindowsLifecycleAuthorityReadinessHost,
+  planFactory = createWindowsLifecycleAuthorityPlan,
+  operatorFactory = createLocalEnvironmentOperator,
   activationReconciler = reconcileSetupEnvironmentActivation,
 } = {}) {
   if (platform !== 'win32') throw new Error('elevated setup environment activation is only valid on Windows');
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0 || stateDirectory.includes('\0')) {
     throw new TypeError('elevated setup environment activation state directory is invalid');
   }
-  if (typeof recordReader !== 'function' || typeof configurationFactory !== 'function'
-      || typeof clientFactory !== 'function' || typeof activationReconciler !== 'function') {
+  if (typeof invoke !== 'function' || typeof recordReader !== 'function' || typeof configurationFactory !== 'function'
+      || typeof hostInspector !== 'function' || typeof planFactory !== 'function'
+      || typeof operatorFactory !== 'function' || typeof activationReconciler !== 'function') {
     throw new TypeError('elevated setup environment activation composition is invalid');
+  }
+
+  const host = await hostInspector({ invoke, environment });
+  if (host?.elevated !== true) {
+    return result({ ready: false, blocker: 'initial environment activation requires the bounded elevated setup child' });
+  }
+  const plan = planFactory({
+    stateDirectory,
+    programDataDirectory: host.programData,
+    operatorSid: host.operatorSid,
+  });
+  if (typeof plan?.authorityDirectory !== 'string' || plan.authorityDirectory.length === 0) {
+    throw new Error('elevated setup lifecycle authority plan is invalid');
   }
 
   const configuration = configurationFactory({ stateDirectory, platform: 'win32' });
@@ -49,7 +69,12 @@ export async function reconcileWindowsElevatedSetupEnvironmentActivation({
     return result({ ready: false, blocker: 'accepted environment profile configuration is unavailable' });
   }
 
-  const client = clientFactory({ stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
+  const client = await operatorFactory({
+    stateDirectory,
+    authorityDirectory: plan.authorityDirectory,
+    platform: 'win32',
+    invoke,
+  });
   let changed = configured.changed === true;
   let environmentCount = 0;
   for (const declaration of declarations) {

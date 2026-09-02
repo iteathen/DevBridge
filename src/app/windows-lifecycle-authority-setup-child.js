@@ -50,7 +50,7 @@ export async function runWindowsLifecycleAuthoritySetupChild({
       : null,
   });
   const activation = result?.ready === true
-    ? await activationReconciler({ stateDirectory, platform })
+    ? await activationReconciler({ stateDirectory, platform, invoke, environment: env })
     : null;
   const ready = result?.ready === true && activation?.ready === true;
   return Object.freeze({
