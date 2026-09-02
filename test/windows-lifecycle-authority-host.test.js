@@ -8,7 +8,10 @@ import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { createConfiguredEnvironmentActivityClient } from '../src/runtime/environment-activity-authority-transport.js';
 import { createConfiguredEnvironmentConfigurationClient } from '../src/runtime/environment-configuration-authority-transport.js';
-import { createConfiguredLifecycleAuthorityClient } from '../src/runtime/environment-lifecycle-authority-transport.js';
+import {
+  createConfiguredLifecycleAuthorityClient,
+  createLifecycleAuthoritySocketExchange,
+} from '../src/runtime/environment-lifecycle-authority-transport.js';
 import { createWindowsLifecycleAuthorityPlan } from '../src/setup/windows-lifecycle-authority.js';
 
 const SOURCE = fileURLToPath(new URL('../src/setup/windows-lifecycle-authority-host.cs', import.meta.url));
@@ -70,7 +73,11 @@ test('Windows lifecycle service host is only an SCM, IPC, and bounded process ad
     'options.ActivityPipe',
     'configurationThread',
     'options.ConfigurationPipe',
+    'ResponseAcknowledgement',
+    'ReadResponseAcknowledgement',
   ]) assert.equal(source.includes(required), true, `service host lost ${required}`);
+  assert.match(source, /if \(!ReadResponseAcknowledgement\(pipe\)\) continue;/u);
+  assert.doesNotMatch(source, /WaitForPipeDrain/u);
 
   for (const forbidden of [
     'Remove-VM',
@@ -240,7 +247,7 @@ test('compiled Windows host serves configuration through its distinct five-endpo
       "const request = JSON.parse(input.trim());",
       "const access = process.argv[process.argv.indexOf('--access') + 1];",
       "if (access === 'configuration') process.stdout.write(JSON.stringify({ protocol: 'devbridge/environment-configuration-authority-result-v1', requestId: request.requestId, ok: true, value: { ready: true } }) + '\\n');",
-      "else if (access === 'read') process.stdout.write(JSON.stringify({ protocol: 'devbridge/environment-lifecycle-authority-result-v1', requestId: request.requestId, ok: true, value: [] }) + '\\n');",
+      "else if (access === 'read') process.stdout.write(JSON.stringify({ protocol: 'devbridge/environment-lifecycle-authority-result-v1', requestId: request.requestId, ok: true, value: request.operation === 'fixture-large' ? { payload: 'x'.repeat(8000) } : [] }) + '\\n');",
       "else if (access === 'activity') process.stdout.write(JSON.stringify({ protocol: 'devbridge/environment-activity-authority-result-v1', requestId: request.requestId, ok: true, value: [] }) + '\\n');",
       "else process.exit(2);",
     ].join('\n'));
@@ -316,6 +323,16 @@ internal static class IntegrationHarness
       windowsHide: true,
     });
     await waitForHostReady(child);
+    const largeResponse = await createLifecycleAuthoritySocketExchange({
+      endpoint: plan.endpoints.read.endpoint,
+      connectTimeoutMs: 1_000,
+    })({
+      protocol: 'devbridge/environment-lifecycle-authority-request-v1',
+      requestId: '11111111-1111-4111-8111-111111111111',
+      operation: 'fixture-large',
+      payload: {},
+    });
+    assert.equal(largeResponse.value.payload.length, 8000);
     for (let request = 0; request < 30; request += 1) {
       let result;
       try {

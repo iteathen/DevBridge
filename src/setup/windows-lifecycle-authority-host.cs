@@ -211,6 +211,7 @@ namespace DevBridge.WindowsLifecycleAuthority
         private const int PreRequestTimeoutMs = 5000;
         private const int ActivityWorkerTimeoutMs = 300000;
         private const int ExclusivePipeServerInstances = 1;
+        private static readonly byte[] ResponseAcknowledgement = Encoding.UTF8.GetBytes("devbridge/local-authority-response-ack-v1\n");
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool CancelIoEx(IntPtr handle, IntPtr overlapped);
@@ -376,6 +377,7 @@ namespace DevBridge.WindowsLifecycleAuthority
                         {
                             pipe.Write(response, 0, response.Length);
                             pipe.Flush();
+                            if (!ReadResponseAcknowledgement(pipe)) continue;
                         }
                         catch (IOException)
                         {
@@ -434,6 +436,43 @@ namespace DevBridge.WindowsLifecycleAuthority
                 return null;
             }
             finally { output.Dispose(); }
+        }
+
+        private bool ReadResponseAcknowledgement(NamedPipeServerStream pipe)
+        {
+            Stopwatch elapsed = Stopwatch.StartNew();
+            MemoryStream output = new MemoryStream();
+            Task<int> pending = null;
+            byte[] buffer = new byte[ResponseAcknowledgement.Length + 1];
+            try
+            {
+                while (output.Length <= ResponseAcknowledgement.Length)
+                {
+                    int remaining = PreRequestTimeoutMs - (int)elapsed.ElapsedMilliseconds;
+                    if (remaining <= 0) return false;
+                    pending = pipe.ReadAsync(buffer, 0, buffer.Length);
+                    if (!pending.Wait(remaining)) return false;
+                    int count = pending.Result;
+                    pending = null;
+                    if (count <= 0) return false;
+                    output.Write(buffer, 0, count);
+                    if (output.Length > ResponseAcknowledgement.Length) return false;
+                    byte[] current = output.ToArray();
+                    for (int index = 0; index < current.Length; index += 1)
+                        if (current[index] != ResponseAcknowledgement[index]) return false;
+                    if (current.Length == ResponseAcknowledgement.Length) return true;
+                }
+                return false;
+            }
+            finally
+            {
+                if (pending != null && !pending.IsCompleted)
+                {
+                    CancelIoEx(pipe.SafePipeHandle.DangerousGetHandle(), IntPtr.Zero);
+                    try { pending.Wait(1000); } catch (AggregateException) { }
+                }
+                output.Dispose();
+            }
         }
 
         private static string QuoteArgument(string value)

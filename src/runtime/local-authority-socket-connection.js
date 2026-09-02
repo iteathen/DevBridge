@@ -3,6 +3,7 @@ import net from 'node:net';
 const WINDOWS_PIPE = /^\\\\\.\\pipe\\/iu;
 const WINDOWS_TRANSIENT_OPEN_CODES = new Set(['EBUSY', 'ENOENT']);
 const RETRY_DELAY_MS = 25;
+export const LOCAL_AUTHORITY_RESPONSE_ACKNOWLEDGEMENT = 'devbridge/local-authority-response-ack-v1\n';
 
 function requiredEndpoint(value) {
   if (typeof value !== 'string' || value.length === 0) throw new TypeError('local authority endpoint is required');
@@ -67,6 +68,109 @@ function retryDelay(milliseconds, signal) {
     const timer = setTimeout(() => finish(null), milliseconds);
     if (signal?.aborted) return finish(connectionFailure('local authority connection was interrupted', 'ABORT_ERR'));
     signal?.addEventListener?.('abort', onAbort, { once: true });
+  });
+}
+
+export function transactAcknowledgedLocalAuthorityJsonLine({
+  socket,
+  request,
+  maxRequestWireBytes,
+  maxResponseWireBytes,
+  authority,
+  failure,
+  signal = null,
+  responseTimeoutMs = null,
+} = {}) {
+  if (!socket || typeof socket.on !== 'function' || typeof socket.once !== 'function'
+      || typeof socket.write !== 'function' || typeof socket.end !== 'function') {
+    throw new TypeError('local authority response socket is invalid');
+  }
+  if (!Number.isSafeInteger(maxRequestWireBytes) || maxRequestWireBytes < 1
+      || !Number.isSafeInteger(maxResponseWireBytes) || maxResponseWireBytes < 1) {
+    throw new TypeError('local authority response bounds are invalid');
+  }
+  if (typeof authority !== 'string' || authority.length === 0 || typeof failure !== 'function') {
+    throw new TypeError('local authority response composition is invalid');
+  }
+  if (responseTimeoutMs != null && (!Number.isSafeInteger(responseTimeoutMs) || responseTimeoutMs < 1)) {
+    throw new TypeError('local authority response timeout is invalid');
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let acknowledged = false;
+    let buffer = '';
+    let parsed;
+    let responseComplete = false;
+    let responseTimer = null;
+    const fail = (message) => failure(`${authority} ${message}`);
+    const onAbort = () => finish(fail('exchange was interrupted'));
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      if (responseTimer != null) clearTimeout(responseTimer);
+      signal?.removeEventListener?.('abort', onAbort);
+      if (error) reject(error); else resolve(value);
+    };
+    const completeResponse = () => {
+      const newline = buffer.indexOf('\n');
+      if (newline < 0) return null;
+      if (buffer.slice(newline + 1).trim() !== '') {
+        finish(fail('response framing is invalid'));
+        return null;
+      }
+      if (!responseComplete) {
+        try { parsed = JSON.parse(buffer.slice(0, newline)); }
+        catch {
+          finish(fail('response is malformed'));
+          return null;
+        }
+        responseComplete = true;
+      }
+      if (!acknowledged) {
+        acknowledged = true;
+        try { socket.end(LOCAL_AUTHORITY_RESPONSE_ACKNOWLEDGEMENT); }
+        catch (error) {
+          error.localAuthorityResponseBytes = Buffer.byteLength(buffer, 'utf8');
+          finish(error);
+          return null;
+        }
+      }
+      return true;
+    };
+    const acceptResponse = () => {
+      if (settled) return;
+      const complete = completeResponse();
+      if (settled) return;
+      if (!complete) return finish(fail('closed without a result'));
+      finish(null, parsed);
+    };
+    if (signal?.aborted) return finish(fail('exchange was interrupted'));
+    signal?.addEventListener?.('abort', onAbort, { once: true });
+    if (responseTimeoutMs != null) {
+      responseTimer = setTimeout(() => finish(fail('exchange timed out')), responseTimeoutMs);
+      responseTimer.unref?.();
+    }
+    socket.setEncoding('utf8');
+    socket.on('data', (chunk) => {
+      buffer += chunk;
+      if (Buffer.byteLength(buffer, 'utf8') > maxResponseWireBytes) {
+        finish(fail('response exceeded the transport bound'));
+        return;
+      }
+      completeResponse();
+    });
+    socket.once('end', acceptResponse);
+    socket.once('error', (error) => {
+      if (buffer.includes('\n')) return acceptResponse();
+      error.localAuthorityResponseBytes = Buffer.byteLength(buffer, 'utf8');
+      finish(error);
+    });
+    socket.once('close', () => { if (!settled) finish(fail('connection closed ambiguously')); });
+    let wire;
+    try { wire = `${JSON.stringify(request)}\n`; }
+    catch { return finish(fail('request could not be encoded')); }
+    if (Buffer.byteLength(wire, 'utf8') > maxRequestWireBytes) return finish(fail('request exceeded the transport bound'));
+    socket.write(wire);
   });
 }
 
