@@ -108,7 +108,9 @@ $services = @(Get-VMIntegrationService -VMName ([string]$data.reference) -ErrorA
 $copy = $services | Where-Object { $_.Name -eq 'Guest Service Interface' } | Select-Object -First 1
 if ($null -eq $copy) { throw 'guest file service is unavailable' }
 if (-not $copy.Enabled) { Enable-VMIntegrationService -VMIntegrationService $copy -ErrorAction Stop | Out-Null }
-@{ ready = $true; state = ([string]$item.State).ToLowerInvariant() } | ConvertTo-Json -Compress
+$running = [string]$item.State -eq 'Running'
+$contact = [string]$copy.PrimaryOperationalStatus -eq 'Ok'
+@{ ready = $true; state = ([string]$item.State).ToLowerInvariant(); cycleRequired = ($running -and -not $contact) } | ConvertTo-Json -Compress
 `;
 
 const COPY_SCRIPT = String.raw`
@@ -298,7 +300,8 @@ export class HyperVEnvironmentBootstrap {
       networkProof: location.network.proof,
     }, 60_000);
     if (result.ready !== true) throw new Error('bootstrap preparation did not become ready');
-    return { ready: true, cycleRequired: false };
+    if (typeof result.cycleRequired !== 'boolean') throw new Error('bootstrap preparation returned invalid lifecycle-cycle evidence');
+    return { ready: true, cycleRequired: result.cycleRequired };
   }
 
   async activate(rawTarget) {

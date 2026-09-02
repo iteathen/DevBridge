@@ -35,7 +35,7 @@ test('Hyper-V preparation uses only located ownership/network state and activati
       assert.equal(payload.reference, location(target).reference);
       assert.equal(payload.proof, location(target).proof);
       assert.equal(payload.networkReference, 'network-local');
-      return success(JSON.stringify({ ready: true, state: 'off' }));
+      return success(JSON.stringify({ ready: true, state: 'off', cycleRequired: false }));
     }
     if (payload.source) {
       copies += 1;
@@ -66,6 +66,30 @@ test('Hyper-V preparation uses only located ownership/network state and activati
     assert.equal(connected.family, 'linux');
     assert.equal(connected.user, 'guest');
     assert.equal(connected.address, copiedSeed.address);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Hyper-V preparation requests one lifecycle cycle when a running guest file service has no contact', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-hv-bootstrap-cycle-'));
+  let calls = 0;
+  try {
+    const adapter = new HyperVEnvironmentBootstrap({
+      directory: root,
+      invoke: async (request) => {
+        calls += 1;
+        const script = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
+        assert.match(script, /PrimaryOperationalStatus/u);
+        assert.match(script, /\$running -and -not \$contact/u);
+        return success(JSON.stringify({ ready: true, state: 'running', cycleRequired: true }));
+      },
+      locate: async (value) => location(value),
+      connection: async () => baseConnection,
+      dnsServers: () => ['10.0.0.53'],
+    });
+    assert.deepEqual(await adapter.prepare(target), { ready: true, cycleRequired: true });
+    assert.equal(calls, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
