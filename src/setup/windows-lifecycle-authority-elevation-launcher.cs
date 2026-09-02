@@ -4,10 +4,11 @@ using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using System.Security.Principal;
+using System.Runtime.Serialization;
+using System.Runtime.Serialization.Json;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using System.Web.Script.Serialization;
 using System.Reflection;
 
 [assembly: AssemblyTitle("DevBridge Protected Setup - reconcile lifecycle service and protected environment")]
@@ -30,6 +31,19 @@ namespace DevBridge.ProtectedSetup
             Value = value;
             Truncated = truncated;
         }
+    }
+
+    [DataContract]
+    internal sealed class BrokerResult
+    {
+        [DataMember(Name = "protocol", Order = 1)] internal string Protocol;
+        [DataMember(Name = "requestedHead", Order = 2)] internal string RequestedHead;
+        [DataMember(Name = "started", Order = 3)] internal bool Started;
+        [DataMember(Name = "exitCode", Order = 4)] internal int ExitCode;
+        [DataMember(Name = "stdout", Order = 5)] internal string Stdout;
+        [DataMember(Name = "stderr", Order = 6)] internal string Stderr;
+        [DataMember(Name = "error", Order = 7)] internal string Error;
+        [DataMember(Name = "outputTruncated", Order = 8)] internal bool OutputTruncated;
     }
 
     internal static class LifecycleAuthorityElevationLauncher
@@ -170,8 +184,16 @@ namespace DevBridge.ProtectedSetup
             FileInfo inputInfo = new FileInfo(inputFile);
             if (!inputInfo.Exists || inputInfo.Length < 2 || inputInfo.Length > 16 * 1024 || (inputInfo.Attributes & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidDataException("elevation input is not one bounded real file");
-            string json = File.ReadAllText(inputFile, Encoding.UTF8);
-            Dictionary<string, object> data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(json);
+            string json = File.ReadAllText(inputFile, new UTF8Encoding(false, true));
+            Dictionary<string, object> data;
+            DataContractJsonSerializerSettings settings = new DataContractJsonSerializerSettings();
+            settings.UseSimpleDictionaryFormat = true;
+            DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(Dictionary<string, object>), settings);
+            using (MemoryStream stream = new MemoryStream(new UTF8Encoding(false, true).GetBytes(json), false))
+            {
+                data = serializer.ReadObject(stream) as Dictionary<string, object>;
+                if (stream.Position != stream.Length) throw new InvalidDataException("elevation input has trailing data");
+            }
             if (data == null || Required(data, "protocol") != InputProtocol) throw new InvalidDataException("elevation input protocol is invalid");
             if (data.Count != 8) throw new InvalidDataException("elevation input shape is invalid");
             foreach (string key in data.Keys) if (!IsInputField(key)) throw new InvalidDataException("elevation input shape is invalid");
@@ -217,20 +239,32 @@ namespace DevBridge.ProtectedSetup
             return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
         }
 
+        private static byte[] SerializeResult(BrokerResult record)
+        {
+            DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(BrokerResult));
+            using (MemoryStream stream = new MemoryStream())
+            {
+                serializer.WriteObject(stream, record);
+                stream.WriteByte((byte)'\n');
+                return stream.ToArray();
+            }
+        }
+
         private static int Apply(string inputFile, string expectedHead)
         {
             Dictionary<string, object> data = LoadInput(inputFile, expectedHead);
+            BrokerResult record = new BrokerResult();
+            record.Protocol = ResultProtocol;
+            record.RequestedHead = expectedHead;
+            record.Started = false;
+            record.ExitCode = 1;
+            record.Stdout = String.Empty;
+            record.Stderr = String.Empty;
+            record.Error = null;
+            record.OutputTruncated = false;
+            SerializeResult(record);
             if (!IsElevated()) throw new UnauthorizedAccessException("DevBridge protected setup did not receive administrator authority");
             string resultFile = Path.Combine(Path.GetDirectoryName(inputFile), "result.json");
-            Dictionary<string, object> record = new Dictionary<string, object>();
-            record["protocol"] = ResultProtocol;
-            record["requestedHead"] = expectedHead;
-            record["started"] = false;
-            record["exitCode"] = 1;
-            record["stdout"] = String.Empty;
-            record["stderr"] = String.Empty;
-            record["error"] = null;
-            record["outputTruncated"] = false;
             int brokerExit = 1;
             try
             {
@@ -256,25 +290,27 @@ namespace DevBridge.ProtectedSetup
                     Task<BoundedText> stderr = Task.Factory.StartNew(() => ReadBounded(child.StandardError));
                     child.WaitForExit();
                     Task.WaitAll(stdout, stderr);
-                    record["started"] = true;
-                    record["exitCode"] = child.ExitCode;
-                    record["stdout"] = stdout.Result.Value;
-                    record["stderr"] = stderr.Result.Value;
-                    record["outputTruncated"] = stdout.Result.Truncated || stderr.Result.Truncated;
+                    record.Started = true;
+                    record.ExitCode = child.ExitCode;
+                    record.Stdout = stdout.Result.Value;
+                    record.Stderr = stderr.Result.Value;
+                    record.OutputTruncated = stdout.Result.Truncated || stderr.Result.Truncated;
                     brokerExit = child.ExitCode;
                 }
             }
             catch (Exception error)
             {
                 string message = (error.Message ?? "elevation broker failed").Replace('\r', ' ').Replace('\n', ' ').Trim();
-                record["exitCode"] = brokerExit;
-                record["error"] = message.Length > 2048 ? message.Substring(0, 2048) : message;
+                record.ExitCode = brokerExit;
+                record.Error = message.Length > 2048 ? message.Substring(0, 2048) : message;
             }
             finally
             {
-                string json = new JavaScriptSerializer().Serialize(record) + Environment.NewLine;
+                byte[] json = SerializeResult(record);
                 using (FileStream stream = new FileStream(resultFile, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                using (StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(false))) writer.Write(json);
+                {
+                    stream.Write(json, 0, json.Length);
+                }
             }
             return brokerExit;
         }
