@@ -385,7 +385,16 @@ test('real apt-get solves a disposable private no-removal universe on Linux', {
       rm(path.join(listsDirectory, 'auxfiles'), { recursive: true, force: true }),
       rm(path.join(listsDirectory, 'lock'), { force: true }),
     ]);
-    assert.ok((await readdir(listsDirectory)).length > 0);
+    for (const entry of await readdir(listsDirectory, { withFileTypes: true })) {
+      if (!entry.isSymbolicLink()) continue;
+      const location = path.join(listsDirectory, entry.name);
+      const bytes = await readFile(location);
+      await rm(location);
+      await writeFile(location, bytes);
+    }
+    const capturedLists = await readdir(listsDirectory, { withFileTypes: true });
+    assert.ok(capturedLists.length > 0);
+    assert.ok(capturedLists.every((entry) => entry.isFile() && !entry.isSymbolicLink()));
     const solver = new UbuntuAptTransactionSolver({ executable: '/usr/bin/apt-get' });
     const solution = await solver.solve({
       workspace,
