@@ -343,6 +343,15 @@ function environmentFor(configurationFile) {
 
 function argumentBytes(args) { return args.reduce((total, value) => total + Buffer.byteLength(value, 'utf8') + 1, 0); }
 
+function aptFailure(label, result) {
+  const code = Number.isInteger(result?.code) ? result.code : 'invalid';
+  const childSignal = typeof result?.signal === 'string' && result.signal ? `, signal ${result.signal}` : '';
+  const detail = typeof result?.stderr === 'string'
+    ? result.stderr.trim().replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, '?').slice(-2048)
+    : '';
+  return `${label} failed (exit ${code}${childSignal})${detail ? `: ${detail}` : ''}`;
+}
+
 async function observeInputs(options, request) {
   const workspace = await directEntry(request.workspace, 'Ubuntu APT workspace', 'directory');
   const [executable, configurationFile, statusFile, sourcesListFile, sourcePartsDirectory, listsDirectory] = await Promise.all([
@@ -431,7 +440,7 @@ export class UbuntuAptTransactionSolver {
     const upgrade = await this.run(observed.executable.location, upgradeArgs, environment, request.signal);
     if (!upgrade || upgrade.code !== 0 || upgrade.signal != null || typeof upgrade.stdout !== 'string' || typeof upgrade.stderr !== 'string'
         || Buffer.byteLength(upgrade.stderr, 'utf8') > MAX_STDERR_BYTES || upgrade.stderr.trim() !== '') {
-      fail('Ubuntu APT no-removal upgrade simulation failed');
+      fail(aptFailure('Ubuntu APT no-removal upgrade simulation', upgrade));
     }
     const upgradePackages = parseUbuntuAptSimulation(upgrade.stdout);
     const specifications = upgradePackages.map((item) => `${item.package}:${item.architecture}=${item.version}`);
@@ -440,7 +449,7 @@ export class UbuntuAptTransactionSolver {
     const install = await this.run(observed.executable.location, installArgs, environment, request.signal);
     if (!install || install.code !== 0 || install.signal != null || typeof install.stdout !== 'string' || typeof install.stderr !== 'string'
         || Buffer.byteLength(install.stderr, 'utf8') > MAX_STDERR_BYTES || install.stderr.trim() !== '') {
-      fail('Ubuntu APT combined transaction simulation failed');
+      fail(aptFailure('Ubuntu APT combined transaction simulation', install));
     }
     const installed = parseUbuntuAptSimulation(install.stdout);
     const selectedByIdentity = new Map(installed.map((entry) => [packageIdentity(entry), entry]));
