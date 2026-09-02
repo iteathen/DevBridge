@@ -36,7 +36,6 @@ namespace DevBridge.ProtectedSetup
     {
         private const string InputProtocol = "devbridge/windows-lifecycle-authority-elevation-input-v2";
         private const string ResultProtocol = "devbridge/windows-lifecycle-authority-elevation-broker-v1";
-        private const string IdentityProtocol = "devbridge/windows-lifecycle-authority-elevation-launcher-v1";
         private const string BindingProtocol = "devbridge/windows-lifecycle-authority-elevation-binding-v1";
         private const int OutputLimit = 32 * 1024;
         private static readonly Regex ExactHead = new Regex("^[0-9a-f]{40}$", RegexOptions.CultureInvariant);
@@ -212,8 +211,8 @@ namespace DevBridge.ProtectedSetup
 
         private static int Apply(string inputFile, string expectedHead)
         {
-            if (!IsElevated()) throw new UnauthorizedAccessException("DevBridge protected setup did not receive administrator authority");
             Dictionary<string, object> data = LoadInput(inputFile, expectedHead);
+            if (!IsElevated()) throw new UnauthorizedAccessException("DevBridge protected setup did not receive administrator authority");
             string resultFile = Path.Combine(Path.GetDirectoryName(inputFile), "result.json");
             Dictionary<string, object> record = new Dictionary<string, object>();
             record["protocol"] = ResultProtocol;
@@ -274,13 +273,9 @@ namespace DevBridge.ProtectedSetup
 
         private static int Identity()
         {
-            Dictionary<string, object> value = new Dictionary<string, object>();
-            value["protocol"] = IdentityProtocol;
-            value["fileDescription"] = "DevBridge Protected Setup - reconcile lifecycle service and protected environment";
-            value["purpose"] = "Reconcile the DevBridge-owned lifecycle service and protected environment configuration";
-            value["executionLevel"] = "asInvoker";
-            value["uiAccess"] = false;
-            Console.Out.WriteLine(new JavaScriptSerializer().Serialize(value));
+            const string value = "{\"protocol\":\"devbridge/windows-lifecycle-authority-elevation-launcher-v1\",\"fileDescription\":\"DevBridge Protected Setup - reconcile lifecycle service and protected environment\",\"purpose\":\"Reconcile the DevBridge-owned lifecycle service and protected environment configuration\",\"executionLevel\":\"asInvoker\",\"uiAccess\":false}";
+            byte[] output = new UTF8Encoding(false).GetBytes(value + Environment.NewLine);
+            using (Stream stream = Console.OpenStandardOutput()) stream.Write(output, 0, output.Length);
             return 0;
         }
 
@@ -292,8 +287,10 @@ namespace DevBridge.ProtectedSetup
                 if (args.Length != 3 || args[0] != "--apply" || !ExactHead.IsMatch(args[2])) return 2;
                 return Apply(FullPath(args[1], "elevation input"), args[2]);
             }
-            catch
+            catch (Exception error)
             {
+                try { Console.Error.WriteLine("DevBridge elevation launcher rejected input: " + error.GetType().Name); }
+                catch {}
                 return 2;
             }
         }

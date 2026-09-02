@@ -99,6 +99,8 @@ On Node.js 24.15.0, focused command/setup/elevation evidence passes 85/85. Repos
 
 No UAC, service, provider, VM, guest, construction, repository-task, or canonical-install mutation occurred. Cleanup removed 120 qualification-created `db-*`/`devbridge-*` roots from the Windows temporary directory and verified none remained. The pre-existing canonical `.lifecycle-authority-elevation-*` directory is preserved as ambiguous recovery evidence from the failed physical transaction.
 
+The first pull-request run `33578473128` passed Ubuntu smoke/full and Windows smoke, but Windows full failed the new helper identity check: the compiled as-invoker executable exited 2 only on the hosted Windows image. This belongs to DB-HO119, so the candidate was not merged. The identity path unnecessarily used the general JSON runtime even though its value is fixed. The focused correction writes exact static UTF-8 identity bytes, reports only a bounded exception class on rejected input, and directly runs the helper as an ordinary process with a valid bound input to prove complete parsing ends at `UnauthorizedAccessException` without creating a result or requesting elevation. Post-correction focused evidence remains 85/85 and preflight remains green at the same 2 / 256 / 2 / 206 inventory. A fresh exact-head hosted matrix is required.
+
 ## Stop conditions
 
 Stop rather than broaden scope if the correction requires a second privileged helper, a generic elevated shell, caller-selected executable/argv/path authority, reusable administrator token, UIAccess, secure-desktop automation, UAC-policy changes, service/ACL changes, provider mutation, repository-code host execution, deletion of ambiguous elevation evidence, or an invented signing trust root.
