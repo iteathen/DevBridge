@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { appendFile, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -70,6 +71,20 @@ test('Windows elevation launcher compiles one identified exact artifact and reus
       executionLevel: 'asInvoker',
       uiAccess: false,
     });
+
+    const channel = path.join(selected.home, 'state', `.lifecycle-authority-elevation-${randomUUID()}`);
+    const inputFile = path.join(channel, 'input.json');
+    await mkdir(channel);
+    await writeFile(inputFile, `${JSON.stringify(first.launcher.input)}\n`);
+    const ordinaryApply = await invokeCommand({
+      executable: first.launcher.executable,
+      arguments: ['--apply', inputFile, HEAD],
+      timeoutMs: 10_000,
+      maxOutputBytes: 16 * 1024,
+    });
+    assert.equal(ordinaryApply.exitCode, 2);
+    assert.match(ordinaryApply.stderr, /UnauthorizedAccessException/u);
+    await assert.rejects(readFile(path.join(channel, 'result.json')), { code: 'ENOENT' });
 
     const manifest = await readFile(MANIFEST, 'utf8');
     assert.match(manifest, /requestedExecutionLevel level="asInvoker" uiAccess="false"/u);
