@@ -4,8 +4,9 @@ import { lstat, mkdir, open, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { sameObservedFilesystemIdentity } from '../runtime/local-filesystem-identity.js';
+import { SOURCE_BUNDLE_REF } from './source-bundle-release-input.mjs';
 
-export const SOURCE_BUNDLE_REF = 'refs/heads/devbridge-source';
+export { SOURCE_BUNDLE_REF };
 
 const SOURCE_REPOSITORY = 'https://github.com/iteathen/DevBridge.git';
 const OBJECT_FORMAT = /^[a-f0-9]{40}$/u;

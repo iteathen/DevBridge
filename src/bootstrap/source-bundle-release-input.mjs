@@ -9,6 +9,7 @@ export const SOURCE_BUNDLE_RELEASE_PROTOCOL = 'devbridge/source-bundle-release-s
 export const SOURCE_BUNDLE_REPOSITORY = 'iteathen/DevBridge';
 export const SOURCE_BUNDLE_FORMAT = 'git-bundle-v2';
 export const SOURCE_BUNDLE_OBJECT = 'devbridge-source.bundle';
+export const SOURCE_BUNDLE_REF = 'refs/heads/devbridge-source';
 
 const OBJECT_FORMAT = /^[a-f0-9]{40}$/u;
 const DIGEST = /^[a-f0-9]{64}$/u;
