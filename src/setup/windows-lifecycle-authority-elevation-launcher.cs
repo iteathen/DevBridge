@@ -33,6 +33,17 @@ namespace DevBridge.ProtectedSetup
         }
     }
 
+    internal sealed class LauncherInputException : Exception
+    {
+        internal readonly string Stage;
+
+        internal LauncherInputException(string stage, Exception inner)
+            : base("DevBridge elevation input was rejected", inner)
+        {
+            Stage = stage;
+        }
+    }
+
     [DataContract]
     internal sealed class BrokerResult
     {
@@ -181,56 +192,90 @@ namespace DevBridge.ProtectedSetup
 
         private static Dictionary<string, object> LoadInput(string inputFile, string expectedHead)
         {
-            FileInfo inputInfo = new FileInfo(inputFile);
-            if (!inputInfo.Exists || inputInfo.Length < 2 || inputInfo.Length > 16 * 1024 || (inputInfo.Attributes & FileAttributes.ReparsePoint) != 0)
-                throw new InvalidDataException("elevation input is not one bounded real file");
-            string json = File.ReadAllText(inputFile, new UTF8Encoding(false, true));
-            Dictionary<string, object> data;
-            DataContractJsonSerializerSettings settings = new DataContractJsonSerializerSettings();
-            settings.UseSimpleDictionaryFormat = true;
-            DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(Dictionary<string, object>), settings);
-            using (MemoryStream stream = new MemoryStream(new UTF8Encoding(false, true).GetBytes(json), false))
+            string stage = "file-metadata";
+            try
             {
-                data = serializer.ReadObject(stream) as Dictionary<string, object>;
-                if (stream.Position != stream.Length) throw new InvalidDataException("elevation input has trailing data");
+                FileInfo inputInfo = new FileInfo(inputFile);
+                if (!inputInfo.Exists || inputInfo.Length < 2 || inputInfo.Length > 16 * 1024 || (inputInfo.Attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException("elevation input is not one bounded real file");
+                stage = "file-read";
+                string json = File.ReadAllText(inputFile, new UTF8Encoding(false, true));
+                Dictionary<string, object> data;
+                stage = "deserialize";
+                DataContractJsonSerializerSettings settings = new DataContractJsonSerializerSettings();
+                settings.UseSimpleDictionaryFormat = true;
+                DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(Dictionary<string, object>), settings);
+                using (MemoryStream stream = new MemoryStream(new UTF8Encoding(false, true).GetBytes(json), false))
+                {
+                    data = serializer.ReadObject(stream) as Dictionary<string, object>;
+                    stage = "trailing-data";
+                    if (stream.Position != stream.Length) throw new InvalidDataException("elevation input has trailing data");
+                }
+                stage = "protocol";
+                if (data == null || Required(data, "protocol") != InputProtocol) throw new InvalidDataException("elevation input protocol is invalid");
+                stage = "shape";
+                if (data.Count != 8) throw new InvalidDataException("elevation input shape is invalid");
+                foreach (string key in data.Keys) if (!IsInputField(key)) throw new InvalidDataException("elevation input shape is invalid");
+
+                stage = "paths";
+                string home = FullPath(Required(data, "home"), "elevation home");
+                string node = FullPath(Required(data, "node"), "elevation Node executable");
+                string launcher = FullPath(Required(data, "launcher"), "elevation runner launcher");
+                string runnerHead = Required(data, "runnerHead");
+                string nodeDigest = Required(data, "nodeSha256");
+                string launcherDigest = Required(data, "launcherSha256");
+                string bindingDigest = Required(data, "bindingDigest");
+                stage = "identity";
+                if (!Matches(runnerHead, ExactHeadPattern) || !Matches(nodeDigest, DigestPattern) || !Matches(launcherDigest, DigestPattern) || !Matches(bindingDigest, DigestPattern) || runnerHead != expectedHead)
+                    throw new InvalidDataException("elevation input identity is invalid");
+
+                string state = Path.Combine(home, "state");
+                string channel = Path.GetDirectoryName(inputFile);
+                stage = "channel";
+                if (String.IsNullOrEmpty(channel) || !SamePath(Path.GetDirectoryName(channel), state) || !Matches(Path.GetFileName(channel), ChannelPattern) || !SamePath(inputFile, Path.Combine(channel, "input.json")))
+                    throw new InvalidDataException("elevation input escaped the managed channel");
+                stage = "home-path";
+                RealDirectory(home, "elevation home");
+                stage = "state-path";
+                RealDirectory(state, "elevation state");
+                stage = "channel-path";
+                RealDirectory(channel, "elevation channel");
+                stage = "input-path";
+                RealFile(inputFile, "elevation input");
+                stage = "node-path";
+                RealFile(node, "elevation Node executable");
+                stage = "launcher-path";
+                RealFile(launcher, "elevation runner launcher");
+                stage = "node-name";
+                if (!String.Equals(Path.GetFileName(node), "node.exe", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("elevation executable is not Node");
+                stage = "launcher-name";
+                if (!String.Equals(Path.GetFileName(launcher), "cli.js", StringComparison.OrdinalIgnoreCase) || !String.Equals(Path.GetFileName(Path.GetDirectoryName(launcher)), "src", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("elevation runner launcher is not the fixed CLI");
+
+                string runnerRoot = Path.GetDirectoryName(Path.GetDirectoryName(launcher));
+                string headFile = Path.Combine(runnerRoot, ".git", "HEAD");
+                stage = "runner-root";
+                RealDirectory(runnerRoot, "elevation runner root");
+                stage = "runner-git";
+                RealDirectory(Path.Combine(runnerRoot, ".git"), "elevation runner Git directory");
+                stage = "runner-head-path";
+                RealFile(headFile, "elevation runner head");
+                stage = "runner-head";
+                if (File.ReadAllText(headFile, Encoding.UTF8).Trim().ToLowerInvariant() != runnerHead) throw new InvalidDataException("elevation runner head changed");
+                stage = "content-digests";
+                if (Sha256File(node) != nodeDigest || Sha256File(launcher) != launcherDigest) throw new InvalidDataException("elevation executable bytes changed");
+                stage = "binding-digest";
+                if (BindingDigest(home, node, nodeDigest, launcher, launcherDigest, runnerHead) != bindingDigest) throw new InvalidDataException("elevation binding digest is invalid");
+                return data;
             }
-            if (data == null || Required(data, "protocol") != InputProtocol) throw new InvalidDataException("elevation input protocol is invalid");
-            if (data.Count != 8) throw new InvalidDataException("elevation input shape is invalid");
-            foreach (string key in data.Keys) if (!IsInputField(key)) throw new InvalidDataException("elevation input shape is invalid");
-
-            string home = FullPath(Required(data, "home"), "elevation home");
-            string node = FullPath(Required(data, "node"), "elevation Node executable");
-            string launcher = FullPath(Required(data, "launcher"), "elevation runner launcher");
-            string runnerHead = Required(data, "runnerHead");
-            string nodeDigest = Required(data, "nodeSha256");
-            string launcherDigest = Required(data, "launcherSha256");
-            string bindingDigest = Required(data, "bindingDigest");
-            if (!Matches(runnerHead, ExactHeadPattern) || !Matches(nodeDigest, DigestPattern) || !Matches(launcherDigest, DigestPattern) || !Matches(bindingDigest, DigestPattern) || runnerHead != expectedHead)
-                throw new InvalidDataException("elevation input identity is invalid");
-
-            string state = Path.Combine(home, "state");
-            string channel = Path.GetDirectoryName(inputFile);
-            if (String.IsNullOrEmpty(channel) || !SamePath(Path.GetDirectoryName(channel), state) || !Matches(Path.GetFileName(channel), ChannelPattern) || !SamePath(inputFile, Path.Combine(channel, "input.json")))
-                throw new InvalidDataException("elevation input escaped the managed channel");
-            RealDirectory(home, "elevation home");
-            RealDirectory(state, "elevation state");
-            RealDirectory(channel, "elevation channel");
-            RealFile(inputFile, "elevation input");
-            RealFile(node, "elevation Node executable");
-            RealFile(launcher, "elevation runner launcher");
-            if (!String.Equals(Path.GetFileName(node), "node.exe", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("elevation executable is not Node");
-            if (!String.Equals(Path.GetFileName(launcher), "cli.js", StringComparison.OrdinalIgnoreCase) || !String.Equals(Path.GetFileName(Path.GetDirectoryName(launcher)), "src", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("elevation runner launcher is not the fixed CLI");
-
-            string runnerRoot = Path.GetDirectoryName(Path.GetDirectoryName(launcher));
-            string headFile = Path.Combine(runnerRoot, ".git", "HEAD");
-            RealDirectory(runnerRoot, "elevation runner root");
-            RealDirectory(Path.Combine(runnerRoot, ".git"), "elevation runner Git directory");
-            RealFile(headFile, "elevation runner head");
-            if (File.ReadAllText(headFile, Encoding.UTF8).Trim().ToLowerInvariant() != runnerHead) throw new InvalidDataException("elevation runner head changed");
-            if (Sha256File(node) != nodeDigest || Sha256File(launcher) != launcherDigest) throw new InvalidDataException("elevation executable bytes changed");
-            if (BindingDigest(home, node, nodeDigest, launcher, launcherDigest, runnerHead) != bindingDigest) throw new InvalidDataException("elevation binding digest is invalid");
-            return data;
+            catch (LauncherInputException)
+            {
+                throw;
+            }
+            catch (Exception error)
+            {
+                throw new LauncherInputException(stage, error);
+            }
         }
 
         private static bool IsElevated()
@@ -343,7 +388,9 @@ namespace DevBridge.ProtectedSetup
                         types.Append(current.GetType().Name);
                         current = current.InnerException;
                     }
-                    Console.Error.WriteLine("DevBridge elevation launcher rejected input: " + types.ToString());
+                    LauncherInputException inputError = error as LauncherInputException;
+                    string stage = inputError == null ? String.Empty : " stage=" + inputError.Stage;
+                    Console.Error.WriteLine("DevBridge elevation launcher rejected input" + stage + ": " + types.ToString());
                 }
                 catch {}
                 return 2;

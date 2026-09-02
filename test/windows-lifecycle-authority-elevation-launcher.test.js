@@ -91,6 +91,16 @@ test('Windows elevation launcher compiles one identified exact artifact and reus
     const channel = path.join(selected.home, 'state', `.lifecycle-authority-elevation-${randomUUID()}`);
     const inputFile = path.join(channel, 'input.json');
     await mkdir(channel);
+    await writeFile(inputFile, '{}\n');
+    const malformedApply = await invokeCommand({
+      executable: first.launcher.executable,
+      arguments: ['--apply', inputFile, HEAD],
+      timeoutMs: 10_000,
+      maxOutputBytes: 16 * 1024,
+    });
+    assert.equal(malformedApply.exitCode, 2);
+    assert.match(malformedApply.stderr, /rejected input stage=protocol: LauncherInputException>InvalidDataException/u);
+    assert.doesNotMatch(malformedApply.stderr, new RegExp(selected.root.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
     await writeFile(inputFile, `${JSON.stringify(first.launcher.input)}\n`);
     const ordinaryApply = await invokeCommand({
       executable: first.launcher.executable,
