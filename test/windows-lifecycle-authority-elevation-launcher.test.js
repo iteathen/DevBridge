@@ -54,6 +54,12 @@ test('elevation launcher serialization has no ambient System.Web configuration d
   assert.match(adapter, /System\.Xml\.dll/u);
 });
 
+test('elevation launcher binds exact published path strings while separately validating physical targets', async () => {
+  const source = await readFile(SOURCE, 'utf8');
+  assert.match(source, /BindingDigest\(homeInput, nodeInput, nodeDigest, launcherInput, launcherDigest, runnerHead\)/u);
+  assert.doesNotMatch(source, /BindingDigest\(home, node, nodeDigest, launcher, launcherDigest, runnerHead\)/u);
+});
+
 test('Windows elevation launcher compiles one identified exact artifact and reuses it', {
   skip: process.platform !== 'win32',
 }, async () => {
