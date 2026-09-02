@@ -75,8 +75,12 @@ test('Windows lifecycle service host is only an SCM, IPC, and bounded process ad
     'options.ConfigurationPipe',
     'ResponseAcknowledgement',
     'ReadResponseAcknowledgement',
+    'WorkerResponse',
+    'monitorTransferred',
+    'CancelPendingPipeRead',
   ]) assert.equal(source.includes(required), true, `service host lost ${required}`);
-  assert.match(source, /if \(!ReadResponseAcknowledgement\(pipe\)\) continue;/u);
+  assert.match(source, /ReadResponseAcknowledgement\(pipe, response\.ClientMonitor, response\.ClientProbe\)/u);
+  assert.match(source, /WorkerResponse result = new WorkerResponse\(response, clientMonitor, clientProbe\);\s*monitorTransferred = true;\s*return result;/su);
   assert.doesNotMatch(source, /WaitForPipeDrain/u);
 
   for (const forbidden of [
@@ -135,8 +139,9 @@ test('Windows protected activity workers are bounded by client lifetime without 
   assert.match(source, /InvokeWorker\(access, request, responseLimit, pipe\)/u);
   assert.match(source, /Task<int> clientMonitor = clientPipe\.ReadAsync\(clientProbe, 0, clientProbe\.Length\);/u);
   assert.match(source, /Task\.WaitAny\(new Task\[\] \{ read, clientMonitor \}, remaining\)/u);
-  assert.match(source, /CancelIoEx\(clientPipe\.SafePipeHandle\.DangerousGetHandle\(\), IntPtr\.Zero\)/u);
-  assert.match(source, /String\.Equals\(access, "activity", StringComparison\.Ordinal\)\s*\? ReadActivityWorkerResponse\(worker, clientPipe, maxResponseBytes\)\s*:\s*ReadWorkerResponse\(worker, maxResponseBytes\)/su);
+  assert.match(source, /CancelPendingPipeRead\(clientPipe, clientMonitor\);/u);
+  assert.match(source, /if \(String\.Equals\(access, "activity", StringComparison\.Ordinal\)\)\s*return ReadActivityWorkerResponse\(worker, clientPipe, maxResponseBytes\);/su);
+  assert.match(source, /if \(!monitorTransferred\)\s*\{\s*CancelPendingPipeRead\(clientPipe, clientMonitor\);/su);
   assert.match(source, /catch \(IOException\)\s*\{\s*continue;\s*\}/su);
 });
 
@@ -359,7 +364,7 @@ internal static class IntegrationHarness
       }
       assert.deepEqual(result, []);
     }
-    for (let request = 0; request < 30; request += 1) {
+    for (let request = 0; request < 100; request += 1) {
       let result;
       try {
         result = await createConfiguredEnvironmentActivityClient({
