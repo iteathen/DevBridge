@@ -56,7 +56,8 @@ test('release builder creates one signed chunked source object that the offline 
     const keys = keyFixture();
     const releaseRoot = path.join(root, 'release');
     const built = await buildSourceBundleRelease({
-      repository: source.repository,
+      // Windows may preserve an 8.3 or case-variant spelling for the same real directory.
+      repository: process.platform === 'win32' ? source.repository.toUpperCase() : source.repository,
       destination: releaseRoot,
       head: source.head,
       releaseId: 'stage8-source-1',
