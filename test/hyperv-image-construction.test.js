@@ -33,13 +33,15 @@ function fakeHost() {
     bootCompatible: true,
     bootReason: null,
     guestFileServiceEnabled: false,
+    guestFileServiceContact: true,
+    failAfterQualificationCycleEffect: false,
   };
   return {
     state,
     async invoke(request) {
       const script = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
       const payload = JSON.parse(request.input);
-      state.calls.push({ script, payload });
+      state.calls.push({ script, payload, timeoutMs: request.timeoutMs });
       let body;
       if (script.includes('construction media attachment count is incompatible')) {
         if (state.failPrepare) {
@@ -56,9 +58,17 @@ function fakeHost() {
         state.bootReason = null;
         state.guestFileServiceEnabled = true;
         body = { ready: true, providerIdentity: state.providerIdentity };
-      } else if (script.includes('construction machine must be running during qualification preparation')) {
+      } else if (script.includes('construction machine did not stop for qualification host reconciliation')) {
         state.guestFileServiceEnabled = true;
-        body = { ready: true };
+        const cycled = payload.cycle === true
+          && state.guestFileServiceContact === false
+          && state.uptimeMilliseconds >= payload.baselineUptimeMilliseconds;
+        if (cycled) state.uptimeMilliseconds = 0;
+        if (cycled && state.failAfterQualificationCycleEffect) {
+          state.failAfterQualificationCycleEffect = false;
+          return { exitCode: 1, stdout: '', stderr: 'simulated transport loss after qualification cycle', timedOut: false, aborted: false, outputTruncated: false };
+        }
+        body = { ready: true, cycled, contact: state.guestFileServiceContact };
       } else if (script.includes("diskPresent = (Test-Path")) {
         body = {
           exists: state.exists,
@@ -193,13 +203,17 @@ test('Hyper-V image construction resumes exact intent through install, qualifica
     assert.match(location.reference, /^db-image-build-[a-f0-9]{16}$/u);
     assert.equal(location.proof, `devbridge-owned:${'a'.repeat(32)}:image-build:${data.request.identity}:v1`);
     assert.equal(host.state.guestFileServiceEnabled, true);
-    const qualificationPreparation = host.state.calls.find((entry) => entry.script.includes('construction machine must be running during qualification preparation'));
+    const qualificationPreparation = host.state.calls.find((entry) => entry.script.includes('construction machine did not stop for qualification host reconciliation'));
     assert.ok(qualificationPreparation);
     assert.match(qualificationPreparation.script, /Get-VMIntegrationService/u);
     assert.match(qualificationPreparation.script, /Enable-VMIntegrationService/u);
+    assert.match(qualificationPreparation.script, /PrimaryOperationalStatus/u);
     assert.match(qualificationPreparation.script, /provider identity does not match/u);
     assert.match(qualificationPreparation.script, /\$matches\.Count -ne 1/u);
     assert.match(qualificationPreparation.script, /\$confirmed\.Count -ne 1 -or -not \[bool\]\$confirmed\[0\]\.Enabled/u);
+    assert.match(qualificationPreparation.script, /Stop-VM -Name \(\[string\]\$data\.name\) -Confirm:\$false/u);
+    assert.match(qualificationPreparation.script, /Start-VM -Name \(\[string\]\$data\.name\)/u);
+    assert.equal(qualificationPreparation.timeoutMs, 120_000);
 
     await resumed.stop(data.request.identity);
     const stopScript = host.state.calls.find((entry) => entry.script.includes('if ($data.force -eq $true)')).script;
@@ -470,6 +484,83 @@ test('Hyper-V image construction binds an exact system-managed switch and resolv
 
     host.state.guestAddresses = ['10.0.0.2', '192.168.1.2'];
     await assert.rejects(() => construction.connectionAddress(data.request.identity), /ambiguous private IPv4/u);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('Hyper-V qualification host cycle is durable and reconciles transport loss without a second cycle', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const construction = constructor(data, host, '7'.repeat(32));
+    await construction.prepare(data.request);
+    await construction.startInstall(data.request.identity);
+    host.state.machineState = 'off';
+    await construction.bootInstalled(data.request.identity);
+    host.state.uptimeMilliseconds = 600_000;
+    host.state.guestFileServiceContact = false;
+    host.state.guestAddresses = ['172.27.17.42'];
+    host.state.failAfterQualificationCycleEffect = true;
+
+    await assert.rejects(() => construction.connectionAddress(data.request.identity), /transport loss after qualification cycle/u);
+    assert.equal(host.state.uptimeMilliseconds, 0);
+
+    const resumed = constructor(data, host, '7'.repeat(32));
+    assert.deepEqual(await resumed.connectionAddress(data.request.identity), { ready: true, reason: null, address: '172.27.17.42' });
+    const preparations = host.state.calls.filter((entry) => entry.script.includes('construction machine did not stop for qualification host reconciliation'));
+    assert.equal(preparations.length, 2);
+    assert.equal(preparations[0].payload.cycle, true);
+    assert.equal(preparations[1].payload.cycle, true);
+    assert.equal(preparations.filter((entry) => entry.payload.baselineUptimeMilliseconds === 600_000).length, 2);
+    assert.equal(host.state.uptimeMilliseconds, 0, 'resume must not cycle a second time');
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('Hyper-V qualification host cycle returns one durable guest-restart frontier', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const construction = constructor(data, host, '6'.repeat(32));
+    await construction.prepare(data.request);
+    await construction.startInstall(data.request.identity);
+    host.state.machineState = 'off';
+    await construction.bootInstalled(data.request.identity);
+    host.state.uptimeMilliseconds = 600_000;
+    host.state.guestFileServiceContact = false;
+    host.state.guestAddresses = ['172.27.17.42'];
+
+    assert.deepEqual(await construction.connectionAddress(data.request.identity), {
+      ready: false,
+      reason: 'construction guest restarted after qualification host-service activation',
+      address: null,
+    });
+    assert.deepEqual(await construction.connectionAddress(data.request.identity), { ready: true, reason: null, address: '172.27.17.42' });
+    const preparations = host.state.calls.filter((entry) => entry.script.includes('construction machine did not stop for qualification host reconciliation'));
+    assert.equal(preparations.length, 2);
+    assert.deepEqual(preparations.map((entry) => entry.payload.cycle), [true, false]);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('Hyper-V qualification host preparation rejects invalid durable state before effects', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const construction = constructor(data, host, '5'.repeat(32));
+    await construction.prepare(data.request);
+    await construction.startInstall(data.request.identity);
+    host.state.machineState = 'off';
+    await construction.bootInstalled(data.request.identity);
+    const stateFile = path.join(data.stateRoot, 'state.json');
+    const state = JSON.parse(await readFile(stateFile, 'utf8'));
+    state.records[data.request.identity].qualificationHostPreparation = {
+      protocol: 'devbridge/hyperv-qualification-host-preparation-v1',
+      phase: 'completed',
+      baselineUptimeMilliseconds: -1,
+      cycled: true,
+    };
+    await writeFile(stateFile, `${JSON.stringify(state)}\n`);
+    const calls = host.state.calls.length;
+    await assert.rejects(() => construction.connectionAddress(data.request.identity), /preparation state is invalid/u);
+    assert.equal(host.state.calls.length, calls + 1, 'only the read-only status observation may precede state rejection');
   } finally { await rm(data.directory, { recursive: true, force: true }); }
 });
 

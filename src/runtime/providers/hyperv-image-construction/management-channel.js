@@ -126,9 +126,25 @@ Import-Module Hyper-V -ErrorAction Stop
 $item = Get-VM -Name ([string]$data.name) -ErrorAction Stop
 if ([string]$item.Notes -ne [string]$data.marker) { throw 'construction ownership evidence does not match' }
 if (([string]$item.Id).ToLowerInvariant() -ne ([string]$data.providerIdentity).ToLowerInvariant()) { throw 'construction provider identity does not match' }
-if ([string]$item.State -ne 'Running') { throw 'construction machine must be running during qualification preparation' }
+if ([string]$item.State -ne 'Running' -and -not ($data.cycle -eq $true -and [string]$item.State -eq 'Off')) { throw 'construction machine state is invalid during qualification preparation' }
 Enable-DevBridgeGuestFileService -VMName ([string]$data.name)
-@{ ready = $true } | ConvertTo-Json -Compress
+$item = Get-VM -Name ([string]$data.name) -ErrorAction Stop
+$service = @(Get-VMIntegrationService -VMName ([string]$data.name) -ErrorAction Stop | Where-Object { $_.Name -eq 'Guest Service Interface' })[0]
+$contact = [string]$service.PrimaryOperationalStatus -eq 'Ok'
+$uptimeMilliseconds = [long]$item.Uptime.TotalMilliseconds
+$alreadyCycled = $data.cycle -eq $true -and [string]$item.State -eq 'Running' -and $uptimeMilliseconds -lt [long]$data.baselineUptimeMilliseconds
+$cycled = $false
+if ($data.cycle -eq $true -and -not $contact -and -not $alreadyCycled) {
+  if ([string]$item.State -eq 'Running') { Stop-VM -Name ([string]$data.name) -Confirm:$false -ErrorAction Stop }
+  $item = Get-VM -Name ([string]$data.name) -ErrorAction Stop
+  if ([string]$item.State -ne 'Off') { throw 'construction machine did not stop for qualification host reconciliation' }
+  Start-VM -Name ([string]$data.name) -ErrorAction Stop | Out-Null
+  $cycled = $true
+} elseif ($data.cycle -eq $true -and [string]$item.State -eq 'Off') {
+  Start-VM -Name ([string]$data.name) -ErrorAction Stop | Out-Null
+  $cycled = $true
+}
+@{ ready = $true; cycled = $cycled; contact = $contact } | ConvertTo-Json -Compress
 `;
 
 const OBSERVE_SCRIPT = String.raw`
@@ -343,7 +359,7 @@ export class HyperVConstructionChannel {
   }
 
   prepare(payload) { return this.#run(PREPARE_SCRIPT, payload, 120_000); }
-  prepareQualification(payload) { return this.#run(PREPARE_QUALIFICATION_SCRIPT, payload, 30_000); }
+  prepareQualification(payload) { return this.#run(PREPARE_QUALIFICATION_SCRIPT, payload, 120_000); }
   observe(payload) { return this.#run(OBSERVE_SCRIPT, payload, 30_000); }
   console(payload) { return this.#run(INSTALL_CONSOLE_SCRIPT, payload, 30_000); }
   startInstall(payload) { return this.#run(START_INSTALL_SCRIPT, payload, 60_000); }
