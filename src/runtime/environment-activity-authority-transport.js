@@ -2,7 +2,10 @@ import { createHash } from 'node:crypto';
 import net from 'node:net';
 import path from 'node:path';
 import process from 'node:process';
-import { transactBoundedLocalAuthoritySocket } from './local-authority-socket-connection.js';
+import {
+  transactAcknowledgedLocalAuthorityJsonLine,
+  transactBoundedLocalAuthoritySocket,
+} from './local-authority-socket-connection.js';
 import {
   ENVIRONMENT_ACTIVITY_AUTHORITY_MAX_REQUEST_BYTES,
   ENVIRONMENT_ACTIVITY_AUTHORITY_MAX_RESULT_BYTES,
@@ -82,49 +85,15 @@ export function createEnvironmentActivitySocketExchange({
         timeoutMs: connectMs,
         signal,
         replaySafe: environmentActivityOperationIsReadOnly(request?.operation),
-        transact: (socket) => new Promise((resolve, reject) => {
-          let settled = false;
-          let buffer = '';
-          let exchangeTimer = null;
-          const finish = (error, value) => {
-            if (settled) return;
-            settled = true;
-            if (exchangeTimer != null) clearTimeout(exchangeTimer);
-            signal?.removeEventListener?.('abort', onAbort);
-            if (error) reject(error); else resolve(value);
-          };
-          const onAbort = () => finish(transportFailure('environment activity authority exchange was interrupted'));
-          if (signal?.aborted) return finish(transportFailure('environment activity authority exchange was interrupted'));
-          signal?.addEventListener?.('abort', onAbort, { once: true });
-          socket.setEncoding('utf8');
-          exchangeTimer = setTimeout(() => finish(transportFailure('environment activity authority exchange timed out')), exchangeMs);
-          exchangeTimer.unref?.();
-          const acceptResponse = () => {
-            if (settled) return;
-            const newline = buffer.indexOf('\n');
-            if (newline < 0) return finish(transportFailure('environment activity authority closed without a result'));
-            if (buffer.slice(newline + 1).trim() !== '') return finish(transportFailure('environment activity authority response framing is invalid'));
-            let response;
-            try { response = JSON.parse(buffer.slice(0, newline)); }
-            catch { return finish(transportFailure('environment activity authority response is malformed')); }
-            finish(null, response);
-          };
-          socket.on('data', (chunk) => {
-            buffer += chunk;
-            if (Buffer.byteLength(buffer, 'utf8') > MAX_RESULT_WIRE_BYTES) finish(transportFailure('environment activity authority response exceeded the transport bound'));
-          });
-          socket.once('end', acceptResponse);
-          socket.once('error', (error) => {
-            if (buffer.includes('\n')) return acceptResponse();
-            error.localAuthorityResponseBytes = Buffer.byteLength(buffer, 'utf8');
-            finish(error);
-          });
-          socket.once('close', () => { if (!settled) finish(transportFailure('environment activity authority connection closed ambiguously')); });
-          let wire;
-          try { wire = `${JSON.stringify(request)}\n`; }
-          catch { return finish(transportFailure('environment activity authority request could not be encoded')); }
-          if (Buffer.byteLength(wire, 'utf8') > MAX_REQUEST_WIRE_BYTES) return finish(transportFailure('environment activity authority request exceeded the transport bound'));
-          socket.write(wire);
+        transact: (socket) => transactAcknowledgedLocalAuthorityJsonLine({
+          socket,
+          request,
+          maxRequestWireBytes: MAX_REQUEST_WIRE_BYTES,
+          maxResponseWireBytes: MAX_RESULT_WIRE_BYTES,
+          authority: 'environment activity authority',
+          failure: transportFailure,
+          signal,
+          responseTimeoutMs: exchangeMs,
         }),
       });
     } catch (error) {
@@ -194,6 +163,7 @@ export function createEnvironmentActivitySocketServerAtEndpoint({
       answered = true;
       clearOperationTimer();
       socket.end(wire);
+      socket.resume();
     };
     socket.on('data', async (chunk) => {
       if (answered) return;
