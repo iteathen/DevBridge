@@ -85,7 +85,7 @@ async function elevationRunner(root, head, source = 'export {};\n') {
 function elevationLauncher(root, runner, node) {
   const bindingDigest = 'd'.repeat(64);
   return Object.freeze({
-    executable: path.join(root, 'state', 'windows-elevation-launchers', 'test', 'DevBridge-Protected-Setup-Reconcile-Lifecycle-Service-and-Environment.exe'),
+    executable: path.join(root, 'state', 'windows-elevation-launchers', 'test', 'DevBridge-Protected-Setup-Lifecycle-Environment.exe'),
     bindingDigest,
     input: Object.freeze({
       protocol: 'devbridge/windows-lifecycle-authority-elevation-input-v2',
