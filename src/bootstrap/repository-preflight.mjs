@@ -8,6 +8,7 @@ const SYNTAX_FILES = [
   'devbridge.mjs',
   'install-devbridge.mjs',
   'bootstrap-devbridge.mjs',
+  'first-byte-devbridge.mjs',
   'scripts/build-standalone-artifacts.mjs',
   'src/bootstrap/standalone-artifact.mjs',
   'src/bootstrap/standalone-source-loader.mjs',
@@ -37,6 +38,9 @@ const SYNTAX_FILES = [
   'src/bootstrap/zero-state-bootstrap/selection-state.mjs',
   'src/bootstrap/zero-state-bootstrap/source-channel.mjs',
   'src/bootstrap/zero-state-bootstrap/temporary-materialization.mjs',
+  'src/bootstrap/first-byte-release-input.mjs',
+  'src/bootstrap/first-byte-execution.mjs',
+  'src/bootstrap/first-byte-cli.mjs',
   'src/cli.js',
   'src/config.js',
   'src/app/runtime.js',
@@ -280,6 +284,10 @@ const TARGETED_TESTS = [
   'test/zero-state-bootstrap.test.js',
   'test/zero-state-exact-source.test.js',
   'test/zero-state-installer-handoff.test.js',
+  'test/first-byte-release-input.test.js',
+  'test/first-byte-execution.test.js',
+  'test/first-byte-cli.test.js',
+  'test/first-byte-lego.test.js',
   'test/config.test.js',
   'test/setup-authority-nested-lego.test.js',
   'test/setup-authority-state-store-lego.test.js',
@@ -621,7 +629,7 @@ export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync,
     ...targeted,
   ];
   checked(runner, testArguments, { cwd, label: 'targeted preflight tests', timeoutMs: 180_000 });
-  return { standaloneArtifacts: 2, syntaxFiles: SYNTAX_FILES.length, jsonFiles: JSON_FILES.length, targetedTests: targeted.length, compatibility };
+  return { standaloneArtifacts: 3, syntaxFiles: SYNTAX_FILES.length, jsonFiles: JSON_FILES.length, targetedTests: targeted.length, compatibility };
 }
 
 const thisFile = path.resolve(fileURLToPath(import.meta.url));

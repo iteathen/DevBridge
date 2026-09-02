@@ -10,6 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const plans = Object.freeze([
   Object.freeze({ source: 'src/install/permanent-entry-installer.mjs', target: 'install-devbridge.mjs' }),
   Object.freeze({ source: 'src/bootstrap/zero-state-bootstrap.mjs', target: 'bootstrap-devbridge.mjs' }),
+  Object.freeze({ source: 'src/bootstrap/first-byte-cli.mjs', target: 'first-byte-devbridge.mjs' }),
 ]);
 const sourceLoader = createStandaloneSourceLoader({ root });
 

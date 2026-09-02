@@ -166,7 +166,8 @@ export function bootstrapHelp() {
   return `DevBridge zero-state bootstrap\n\nUsage:\n  <Node first-byte loader> [--home <path>]\n  <Node first-byte loader> --ref <branch-or-exact-head> [--home <path>]\n  <Node first-byte loader> --install-only [--ref <branch-or-exact-head>] [--home <path>]\n  <Node first-byte loader> --install-only --ref <existing-selection> --repair-selection-with <exact-installer-head> [--home <path>]\n\nThe first-byte loader requires only supported Node.js. A moving ref is durably bound to one exact subject before the next stage runs; an interrupted argument-equivalent retry resumes that exact subject. Explicit selection repair keeps that durable subject unchanged and uses only the named exact installer head to finish its permanent-entry commit.\n`;
 }
 
-const invokedFromData = import.meta.url.startsWith('data:text/javascript');
+const invokedFromData = import.meta.url.startsWith('data:text/javascript')
+  && globalThis[Symbol.for('devbridge.first-byte-parent')] !== true;
 const invokedFromFile = process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
 if (invokedFromData || invokedFromFile) {
   const argv = invokedFromData ? process.argv.slice(1) : process.argv.slice(2);
