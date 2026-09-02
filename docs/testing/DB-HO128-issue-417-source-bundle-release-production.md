@@ -2,7 +2,7 @@
 
 Date: 2026-09-02
 
-Status: local implementation and qualification complete; hosted acceptance pending
+Status: Windows path-identity correction locally qualified; fresh hosted acceptance pending
 
 Coordinates with: #159, #178, #180, #417, DB-003, DB-008, DB-009, DB-011, DB-017, DB-019, DB-020, DB-HO124, DB-HO125, DB-HO126, and DB-HO127.
 
@@ -77,3 +77,11 @@ Local evidence on exact Node.js 22.16.0:
 - doctor: green on Node.js 22.16.0, with repository execution truthfully unavailable until construction supplies a persistent execution route.
 
 The tests create only disposable fixture repositories, ephemeral Ed25519 keys, and operation-owned release directories under the test Temp root. No project release artifact/key was retained or published.
+
+## Hosted Windows correction
+
+Pull-request run `33629919005` passed both Ubuntu jobs and failed only the Windows smoke/full jobs. All three failing release paths had one cause: the producer compared `realpath(repository)` to the caller spelling as exact text. GitHub-hosted Windows supplied the Temp repository through an 8.3 spelling such as `RUNNER~1`, while `realpath` returned the same directory under its long spelling. The producer therefore rejected a direct directory before checking its clean/head/origin contracts.
+
+Use the existing neutral `sameFilesystemIdentity` LEGO for this boundary. It treats case and 8.3 spelling differences as the same Windows filesystem identity only after checking the path chain for symbolic entries and comparing the observed directory identity; POSIX remains exact-spelling and every symbolic-indirection rejection remains intact. The end-to-end release/materialization test now deliberately supplies a case-variant Windows spelling so raw text comparison cannot regress. This changes no timeout, Git operation, signing rule, origin policy, setup state, or physical host.
+
+Correction qualification on exact Node.js 22.16.0 passes the direct producer/CLI set at 5/5, the broader source chain at 15/15, bounded preflight at 3 standalone artifacts / 268 syntax files / 2 JSON files / 214 targeted test files, and architecture/product/standalone at 37 total / 36 passed / one expected Windows symlink skip. The complete serialized suite passes 2,202 total / 2,181 passed / 21 expected skips / zero failed / zero cancelled in 346.476 seconds. Exact doctor is green and truthfully reports repository execution unavailable pending construction. Cleanup removed the verified 133,896,200-byte temporary Node runtime; all matching qualification roots and attributable processes are absent. Require one fresh complete hosted matrix before acceptance.

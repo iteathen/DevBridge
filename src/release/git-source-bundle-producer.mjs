@@ -4,6 +4,7 @@ import { lstat, mkdir, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { SOURCE_BUNDLE_REF } from '../bootstrap/source-bundle-release-input.mjs';
+import { sameFilesystemIdentity } from '../runtime/local-filesystem-identity.js';
 
 const SOURCE_REPOSITORY = 'https://github.com/iteathen/DevBridge.git';
 const OBJECT_FORMAT = /^[a-f0-9]{40}$/u;
@@ -96,7 +97,8 @@ export class GitSourceBundleProducer {
     if (signal?.aborted) throw signal.reason ?? new Error('source-bundle release was interrupted');
     const source = path.resolve(repository);
     const sourceInfo = await lstat(source);
-    if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink() || await realpath(source) !== source) {
+    if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink()
+        || !await sameFilesystemIdentity(await realpath(source), source)) {
       fail('source-bundle release repository must be a real canonical directory');
     }
     if (!await absent(destination)) fail('source-bundle release destination already exists');
