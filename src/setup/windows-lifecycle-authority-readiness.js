@@ -37,7 +37,7 @@ function invocationSucceeded(result) {
   return result?.exitCode === 0 && result?.timedOut !== true && result?.aborted !== true && result?.outputTruncated !== true;
 }
 
-async function inspectWindowsLifecycleAuthorityReadinessHost({ invoke, environment }) {
+export async function inspectWindowsLifecycleAuthorityReadinessHost({ invoke, environment }) {
   let result;
   try {
     result = await invoke({
