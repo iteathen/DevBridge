@@ -218,9 +218,12 @@ namespace DevBridge.ProtectedSetup
                 foreach (string key in data.Keys) if (!IsInputField(key)) throw new InvalidDataException("elevation input shape is invalid");
 
                 stage = "paths";
-                string home = FullPath(Required(data, "home"), "elevation home");
-                string node = FullPath(Required(data, "node"), "elevation Node executable");
-                string launcher = FullPath(Required(data, "launcher"), "elevation runner launcher");
+                string homeInput = Required(data, "home");
+                string nodeInput = Required(data, "node");
+                string launcherInput = Required(data, "launcher");
+                string home = FullPath(homeInput, "elevation home");
+                string node = FullPath(nodeInput, "elevation Node executable");
+                string launcher = FullPath(launcherInput, "elevation runner launcher");
                 string runnerHead = Required(data, "runnerHead");
                 string nodeDigest = Required(data, "nodeSha256");
                 string launcherDigest = Required(data, "launcherSha256");
@@ -265,7 +268,7 @@ namespace DevBridge.ProtectedSetup
                 stage = "content-digests";
                 if (Sha256File(node) != nodeDigest || Sha256File(launcher) != launcherDigest) throw new InvalidDataException("elevation executable bytes changed");
                 stage = "binding-digest";
-                if (BindingDigest(home, node, nodeDigest, launcher, launcherDigest, runnerHead) != bindingDigest) throw new InvalidDataException("elevation binding digest is invalid");
+                if (BindingDigest(homeInput, nodeInput, nodeDigest, launcherInput, launcherDigest, runnerHead) != bindingDigest) throw new InvalidDataException("elevation binding digest is invalid");
                 return data;
             }
             catch (LauncherInputException)
