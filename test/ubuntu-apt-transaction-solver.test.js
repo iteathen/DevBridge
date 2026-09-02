@@ -250,7 +250,7 @@ test('solver rejects prior and late cancellation plus diagnostic stderr', async 
         },
       });
       await assert.rejects(solver.solve({ ...built.request, signal: controller.signal }), mode === 'stderr'
-        ? /simulation failed/u : /operator interrupted solving/u);
+        ? /simulation failed \(exit 0\): W: unexpected policy diagnostic/u : /operator interrupted solving/u);
       if (mode === 'prior') assert.equal(call, 0);
     } finally {
       await rm(built.root, { recursive: true, force: true });
