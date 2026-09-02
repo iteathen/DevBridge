@@ -117,6 +117,8 @@ The seventh complete run `33582093924` passed Ubuntu smoke/full and Windows smok
 
 The exact-string correction passes 88/88 focused tests and preflight remains green at 2 / 256 / 2 / 206. Standalone artifacts and diff hygiene remain exact, and zero disposable elevation roots remain. No full local rerun is needed for this two-line formula correction because the immediately preceding exact diagnostic head passed all 2,128 serialized tests locally; the fresh hosted matrix must supply the missing cross-runtime proof.
 
+The eighth complete run `33582561706` passed Ubuntu smoke/full and Windows smoke. Windows full cleared `stage=binding-digest`, completed input validation, and then returned broker exit 1 rather than the test's assumed non-administrator exit 2. GitHub's Windows runner already carries an administrative token; the `asInvoker` manifest correctly inherits it without a UAC request, and the deliberately non-executable fixture `node.exe` cannot start. Make the direct process proof principal-aware but closed: a non-administrator must return `UnauthorizedAccessException` with no result, while an administrator may return only the bounded broker record showing `started=false`, exit 1, empty child streams, and a bounded error. This changes no production path or authority.
+
 ## Stop conditions
 
 Stop rather than broaden scope if the correction requires a second privileged helper, a generic elevated shell, caller-selected executable/argv/path authority, reusable administrator token, UIAccess, secure-desktop automation, UAC-policy changes, service/ACL changes, provider mutation, repository-code host execution, deletion of ambiguous elevation evidence, or an invented signing trust root.
