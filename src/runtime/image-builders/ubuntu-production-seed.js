@@ -12,6 +12,7 @@ const PACKAGE_VERSION = /^[A-Za-z0-9][A-Za-z0-9.+:~_-]{0,159}$/u;
 const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const MUTABLE_VERSION = /^(?:latest|stable|current|head|main|master)$/iu;
+const SERVICE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,122}\.service$/u;
 
 function yamlString(value) { return JSON.stringify(String(value)); }
 function digest(value) { return createHash('sha256').update(value).digest('hex'); }
@@ -106,6 +107,16 @@ function writeFileYaml(lines, { path, content, permissions = '0755' }, indent = 
 
 function yamlList(values) { return `[${values.map(yamlString).join(', ')}]`; }
 
+function normalizeServices(raw = []) {
+  if (!Array.isArray(raw) || raw.length > 16) throw new TypeError('production seed service set is invalid');
+  const seen = new Set();
+  return Object.freeze(raw.map((entry, index) => {
+    if (typeof entry !== 'string' || !SERVICE.test(entry) || seen.has(entry)) throw new TypeError(`production seed service ${index} is invalid`);
+    seen.add(entry);
+    return entry;
+  }));
+}
+
 const NETWORK_UNIT = `[Unit]\nDescription=Apply locally supplied network state\nAfter=local-fs.target\n\n[Service]\nType=simple\nExecStart=/usr/bin/node /usr/local/libexec/devbridge/network-seed-agent.mjs --watch\nRestart=always\nRestartSec=1\n\n[Install]\nWantedBy=multi-user.target\n`;
 const ACCESS_UNIT = `[Unit]\nDescription=Apply locally supplied access state\nAfter=local-fs.target ssh.service\nWants=ssh.service\n\n[Service]\nType=simple\nExecStart=/usr/bin/node /usr/local/libexec/devbridge/linux-access-seed-agent.mjs --watch\nRestart=always\nRestartSec=1\n\n[Install]\nWantedBy=multi-user.target\n`;
 const SANITIZER_PATH = '/usr/local/libexec/devbridge/image-sanitize.sh';
@@ -115,12 +126,14 @@ const TEMPORARY_SUDO = `devbridge ALL=(root) NOPASSWD: ${SANITIZER_PATH}\n`;
 export class UbuntuProductionSeedFactory {
   #payloadSet;
   #packageSet;
+  #services;
 
-  constructor({ payloadSet, packageSet } = {}) {
+  constructor({ payloadSet, packageSet, services = [] } = {}) {
     if (typeof payloadSet !== 'function') throw new TypeError('payloadSet must be a function');
     if (typeof packageSet !== 'function') throw new TypeError('packageSet must be a function');
     this.#payloadSet = payloadSet;
     this.#packageSet = packageSet;
+    this.#services = normalizeServices(services);
   }
 
   async create(rawRequest) {
@@ -141,7 +154,9 @@ export class UbuntuProductionSeedFactory {
     writeFileYaml(lines, { path: '/etc/systemd/system/devbridge-access-seed.service', content: ACCESS_UNIT, permissions: '0644' });
     writeFileYaml(lines, { path: SANITIZER_PATH, content: SANITIZER, permissions: '0755' });
     writeFileYaml(lines, { path: '/etc/sudoers.d/devbridge-image-build', content: TEMPORARY_SUDO, permissions: '0440' });
-    lines.push('    runcmd:', '      - [systemctl, daemon-reload]', '      - [systemctl, enable, --now, devbridge-network-seed.service]', '      - [systemctl, enable, --now, devbridge-access-seed.service]', '      - [systemctl, restart, ssh]');
+    lines.push('    runcmd:', '      - [systemctl, daemon-reload]');
+    for (const service of this.#services) lines.push(`      - ${yamlList(['systemctl', 'enable', '--now', service])}`);
+    lines.push('      - [systemctl, enable, --now, devbridge-network-seed.service]', '      - [systemctl, enable, --now, devbridge-access-seed.service]', '      - [systemctl, restart, ssh]');
 
     const userData = `${lines.join('\n')}\n`;
     const fileEvidence = payload.files.map((entry) => ({ path: entry.path, bytes: entry.bytes, sha256: entry.sha256 }));
@@ -155,6 +170,7 @@ export class UbuntuProductionSeedFactory {
         packageGeneration: packages.generation,
         packageSnapshot: packages.snapshot,
         packages: packages.packages.map(({ name, version }) => ({ name, version })),
+        services: [...this.#services],
         networkMethod: request.network.method,
         userDataSha256: digest(userData),
       }),

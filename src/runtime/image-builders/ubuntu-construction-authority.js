@@ -15,6 +15,7 @@ const PACKAGE_VERSION = /^[A-Za-z0-9][A-Za-z0-9.+:~_-]{0,159}$/u;
 const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
 const PATCH_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const COMMAND = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/u;
+const SERVICE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,122}\.service$/u;
 const MUTABLE_VERSION = /^(?:latest|stable|current|head|main|master)$/iu;
 const APPROVED_SOURCE_HOSTS = new Set(['releases.ubuntu.com', 'cdimage.ubuntu.com']);
 const MAX_PATCH_BYTES = 64 * 1024;
@@ -127,16 +128,26 @@ function normalizePayload(raw) {
 }
 
 function normalizeQualification(raw = {}) {
-  const value = onlyKeys(raw, new Set(['commands']), 'construction qualification');
-  const source = value.commands ?? [];
-  if (!Array.isArray(source) || source.length > 32) throw new TypeError('construction qualification commands is invalid');
-  const seen = new Set();
-  const commands = source.map((entry, index) => {
-    if (typeof entry !== 'string' || !COMMAND.test(entry) || seen.has(entry)) throw new TypeError(`construction qualification command ${index} is invalid`);
-    seen.add(entry);
+  const value = onlyKeys(raw, new Set(['commands', 'services']), 'construction qualification');
+  const commandSource = value.commands ?? [];
+  if (!Array.isArray(commandSource) || commandSource.length > 32) throw new TypeError('construction qualification commands is invalid');
+  const commandNames = new Set();
+  const commands = commandSource.map((entry, index) => {
+    if (typeof entry !== 'string' || !COMMAND.test(entry) || commandNames.has(entry)) throw new TypeError(`construction qualification command ${index} is invalid`);
+    commandNames.add(entry);
     return entry;
   });
-  return Object.freeze({ commands: Object.freeze(commands.sort()) });
+  const serviceSource = value.services ?? [];
+  if (!Array.isArray(serviceSource) || serviceSource.length > 16) throw new TypeError('construction qualification services is invalid');
+  const serviceNames = new Set();
+  const services = serviceSource.map((entry, index) => {
+    if (typeof entry !== 'string' || !SERVICE.test(entry) || serviceNames.has(entry)) throw new TypeError(`construction qualification service ${index} is invalid`);
+    serviceNames.add(entry);
+    return entry;
+  });
+  const normalized = { commands: Object.freeze(commands.sort()) };
+  if (value.services !== undefined) normalized.services = Object.freeze(services.sort());
+  return Object.freeze(normalized);
 }
 
 function normalizeOutput(raw) {

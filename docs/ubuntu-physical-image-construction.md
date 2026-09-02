@@ -69,6 +69,8 @@ The public setup surface deliberately does not expose the internal physical-cana
 
 The Ubuntu installer requests IPv4 through DHCP on the construction-only network. After installed boot, the Hyper-V adapter re-observes the exact owned disposable VM, exact attached system-switch identity, and one unambiguous private IPv4 address reported through Hyper-V integration services. The image therefore includes the snapshot-pinned `linux-cloud-tools-virtual` package and qualifies `hv_kvp_daemon`; SSH still requires the separately pinned host-key evidence before guest qualification begins.
 
+The same image is the source for persistent Hyper-V environment bootstrap, whose bounded seed delivery uses Hyper-V Guest Service Interface file copy before routine guest access exists. Package presence is insufficient admission evidence for that path. The setup-owned authority names the required `hv-fcopy-daemon.service`; the installed-boot seed explicitly enables and starts it, and pre-finalization qualification requires both enabled and active state together with the current `hv_fcopy_uio_daemon` executable. An image that cannot prove those conditions is not publishable under that output generation.
+
 No address is inferred from a mutable switch name, a guessed subnet, or unrelated VM state. No address yet reported is a durable waiting frontier. Multiple private addresses, changed VM ownership, changed provider identity, or changed switch binding fail closed.
 
 ## Distribution authority

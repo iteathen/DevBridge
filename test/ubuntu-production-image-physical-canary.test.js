@@ -57,7 +57,7 @@ async function fixture(root) {
           ],
         },
         payload: { generation: payload.generation },
-        qualification: { commands: ['make'] },
+        qualification: { commands: ['make'], services: ['hv-fcopy-daemon.service'] },
         output: { profile: 'linux-development', generation: 'ubuntu-2604-production-v1', bootstrap: 'guest-image-v1' },
       },
       resources: { memoryBytes: 2 * 1024 * 1024 * 1024, processorCount: 2, diskBytes: 32 * 1024 * 1024 * 1024 },
@@ -92,6 +92,7 @@ function canonicalRequest(data, subject) {
       packageSnapshot: data.config.authority.packages.snapshot,
       packages: data.config.authority.packages.packages.map((entry) => ({ ...entry })),
       commands: [...data.config.authority.qualification.commands],
+      services: [...data.config.authority.qualification.services],
     }),
     output: {
       profile: data.config.authority.output.profile,

@@ -44,6 +44,7 @@ function factory(overrides = {}) {
         { name: 'openssh-server', version: '1:9.9p1-3ubuntu3' },
       ],
     }),
+    services: ['hv-fcopy-daemon.service'],
     ...overrides,
   });
 }
@@ -63,6 +64,7 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.doesNotMatch(result.userData, /id: ubuntu-server(?:\n|$)/u);
   assert.match(result.userData, /"nodejs=22\.16\.0\+dfsg-1"/u);
   assert.match(result.userData, /"linux-cloud-tools-virtual=6\.14\.0\.29\.29"/u);
+  assert.match(result.userData, /\["systemctl", "enable", "--now", "hv-fcopy-daemon\.service"\]/u);
   assert.match(result.userData, /dhcp4: true/u);
   assert.doesNotMatch(result.userData, /192\.168\.77/u);
   assert.match(result.userData, /apt:\n    conf: \|\n      Unattended-Upgrade::Package-Blacklist \{\n        "\.\*";\n      \};/u);
@@ -83,6 +85,7 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.equal(result.evidence.packageGeneration, 'ubuntu-tools-v4');
   assert.equal(result.evidence.packageSnapshot, snapshot);
   assert.equal(result.evidence.networkMethod, 'automatic');
+  assert.deepEqual(result.evidence.services, ['hv-fcopy-daemon.service']);
   assert.equal(result.evidence.packages.find((entry) => entry.name === 'git').version, '1:2.48.1-0ubuntu1');
   assert.equal(result.evidence.files.length, 3);
   assert.match(result.evidence.userDataSha256, /^[a-f0-9]{64}$/u);
@@ -176,6 +179,14 @@ test('Ubuntu production seed embeds transient access only in seed material and e
   assert.match(result.userData, /devbridge-network-seed\.service/u);
   assert.match(result.userData, /devbridge-access-seed\.service/u);
   assert.match(result.userData, /shutdown:\s+poweroff/u);
+});
+
+test('Ubuntu production seed rejects unsafe or duplicate required services before creating media', () => {
+  assert.throws(() => factory({ services: ['../hv-fcopy-daemon.service'] }), /production seed service 0 is invalid/u);
+  assert.throws(
+    () => factory({ services: ['hv-fcopy-daemon.service', 'hv-fcopy-daemon.service'] }),
+    /production seed service 1 is invalid/u,
+  );
 });
 
 test('Ubuntu production seed rejects mutable or ambiguous package authority', async () => {
