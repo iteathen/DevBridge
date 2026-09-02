@@ -2,7 +2,7 @@
 
 Date: 2026-09-02
 
-Status: local implementation and qualification complete; hosted acceptance pending
+Status: accepted on Stage 8
 
 Coordinates with: #178, #192, #197, #200, #417, DB-003, DB-008, DB-009, DB-017, DB-019, DB-020, and DB-HO124 through DB-HO128.
 
@@ -89,3 +89,7 @@ Local evidence on exact Node.js 22.16.0:
 - doctor: `ok: true`, with repository execution truthfully unavailable until a constructed persistent environment exists.
 
 The final contract correction rejects URI/drive-shaped and percent-encoded traversal archive paths and binds exact base-media plus canonical pre/post installed-package-state digests. The complete serialized suite was repeated after that production change; the evidence above is for the final candidate bytes. Test fixtures use ephemeral Ed25519 keys and synthetic descriptors only. No Ubuntu package/source/media object, project signing key, release artifact, or remote publication was created.
+
+## Hosted acceptance
+
+PR #453 candidate `ce059dbeae6acb38a9d6156acc7f8f1764d634a6` passed all four Ubuntu/Windows smoke and full jobs in run `33638497863`. Rebase merge produced exact Stage 8 head `8803d6866bbea84647e2fc3e6a55f90595a81d95`; its tree `83f68ee8eb5330fbc0ca74ba28dbee2cf67489f2` is identical to the qualified candidate tree. Fresh post-integration run `33639007035` passed all four jobs. DB-HO129 is accepted; producer sealing remains a separate gate and no physical setup or construction action follows from this acceptance alone.
