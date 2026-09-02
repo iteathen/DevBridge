@@ -78,6 +78,8 @@ test('first-byte CLI help is side-effect free and rejects mixed input', () => {
 
 test('generated first-byte artifact preserves the public contract and executes from a data import', () => {
   assert.deepEqual(Object.keys(standaloneContract).sort(), Object.keys(sourceContract).sort());
+  const attributes = readFileSync(new URL('../.gitattributes', import.meta.url), 'utf8');
+  assert.match(attributes, /^\/first-byte-devbridge\.mjs text eol=lf$/mu);
   const source = readFileSync(new URL('../first-byte-devbridge.mjs', import.meta.url));
   const loader = "const chunks=[];for await(const chunk of process.stdin)chunks.push(chunk);await import('data:text/javascript;base64,'+Buffer.concat(chunks).toString('base64'))";
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', loader, '--', '--help'], {
