@@ -359,6 +359,7 @@ test('real apt-get solves a disposable private no-removal universe on Linux', {
       'Label: DevBridgeFixture',
       'Suite: stable',
       'Codename: stable',
+      'Date: Fri, 21 Aug 2026 23:00:00 UTC',
       'Architectures: amd64',
       'Components: main',
       'SHA256:',
