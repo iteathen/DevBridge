@@ -85,6 +85,7 @@ test('release builder creates one signed chunked source object that the offline 
       }),
       checkout: new GitBundleCheckout(),
     });
+    const checkoutDestination = path.join(root, 'checkout');
     const prepared = await materialization.prepare({
       authority: {
         manifestBytes: await readFile(path.join(releaseRoot, SOURCE_BUNDLE_RELEASE_MANIFEST_NAME)),
@@ -93,7 +94,7 @@ test('release builder creates one signed chunked source object that the offline 
         expectedPublicKeySha256: built.publicKeySha256,
         expectedKeyId: built.keyId,
       },
-      destination: path.join(root, 'checkout'),
+      destination: process.platform === 'win32' ? checkoutDestination.toUpperCase() : checkoutDestination,
     });
     assert.equal(prepared.head, source.head);
     assert.equal(prepared.tree, source.tree);

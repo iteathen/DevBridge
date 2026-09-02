@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 import { lstat, open } from 'node:fs/promises';
 import path from 'node:path';
-import { sameObservedFilesystemIdentity } from '../runtime/local-filesystem-identity.js';
+import {
+  sameFilesystemIdentity,
+  sameObservedFilesystemIdentity,
+} from '../runtime/local-filesystem-identity.js';
 import { immutableObjectSetDigest } from '../runtime/immutable-object-set.js';
 import { verifySourceBundleReleaseInput } from './source-bundle-release-input.mjs';
 
@@ -19,6 +22,11 @@ function sameFile(left, right) {
     && left.nlink === right.nlink
     && left.mtimeNs === right.mtimeNs
     && left.ctimeNs === right.ctimeNs;
+}
+
+async function sameCheckoutRoot(left, right) {
+  try { return await sameFilesystemIdentity(left, right); }
+  catch { return false; }
 }
 
 async function observeExactObject(location, expected) {
@@ -92,9 +100,10 @@ export class SourceBundleMaterialization {
       signal: input.signal ?? null,
     });
     const destination = path.resolve(input.destination);
+    const rootValid = typeof result?.root === 'string' && path.isAbsolute(result.root);
+    const rootMatches = rootValid && await sameCheckoutRoot(result.root, destination);
     if (result?.head !== authority.head || result?.tree !== authority.tree
-        || typeof result?.root !== 'string' || !path.isAbsolute(result.root)
-        || path.resolve(result.root) !== destination) {
+        || !rootMatches) {
       fail('source-bundle checkout evidence does not match authority');
     }
     return Object.freeze({
