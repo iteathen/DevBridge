@@ -38,12 +38,20 @@ namespace DevBridge.ProtectedSetup
         private const string ResultProtocol = "devbridge/windows-lifecycle-authority-elevation-broker-v1";
         private const string BindingProtocol = "devbridge/windows-lifecycle-authority-elevation-binding-v1";
         private const int OutputLimit = 32 * 1024;
-        private static readonly Regex ExactHead = new Regex("^[0-9a-f]{40}$", RegexOptions.CultureInvariant);
-        private static readonly Regex Digest = new Regex("^[0-9a-f]{64}$", RegexOptions.CultureInvariant);
-        private static readonly Regex Channel = new Regex("^\\.lifecycle-authority-elevation-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", RegexOptions.CultureInvariant);
-        private static readonly HashSet<string> InputFields = new HashSet<string>(new[] {
-            "protocol", "home", "node", "nodeSha256", "launcher", "launcherSha256", "runnerHead", "bindingDigest"
-        }, StringComparer.Ordinal);
+        private const string ExactHeadPattern = "^[0-9a-f]{40}$";
+        private const string DigestPattern = "^[0-9a-f]{64}$";
+        private const string ChannelPattern = "^\\.lifecycle-authority-elevation-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$";
+
+        private static bool Matches(string value, string pattern)
+        {
+            return value != null && Regex.IsMatch(value, pattern, RegexOptions.CultureInvariant);
+        }
+
+        private static bool IsInputField(string key)
+        {
+            return key == "protocol" || key == "home" || key == "node" || key == "nodeSha256"
+                || key == "launcher" || key == "launcherSha256" || key == "runnerHead" || key == "bindingDigest";
+        }
 
         private static string Required(Dictionary<string, object> value, string key)
         {
@@ -165,8 +173,8 @@ namespace DevBridge.ProtectedSetup
             string json = File.ReadAllText(inputFile, Encoding.UTF8);
             Dictionary<string, object> data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(json);
             if (data == null || Required(data, "protocol") != InputProtocol) throw new InvalidDataException("elevation input protocol is invalid");
-            if (data.Count != InputFields.Count) throw new InvalidDataException("elevation input shape is invalid");
-            foreach (string key in data.Keys) if (!InputFields.Contains(key)) throw new InvalidDataException("elevation input shape is invalid");
+            if (data.Count != 8) throw new InvalidDataException("elevation input shape is invalid");
+            foreach (string key in data.Keys) if (!IsInputField(key)) throw new InvalidDataException("elevation input shape is invalid");
 
             string home = FullPath(Required(data, "home"), "elevation home");
             string node = FullPath(Required(data, "node"), "elevation Node executable");
@@ -175,12 +183,12 @@ namespace DevBridge.ProtectedSetup
             string nodeDigest = Required(data, "nodeSha256");
             string launcherDigest = Required(data, "launcherSha256");
             string bindingDigest = Required(data, "bindingDigest");
-            if (!ExactHead.IsMatch(runnerHead) || !Digest.IsMatch(nodeDigest) || !Digest.IsMatch(launcherDigest) || !Digest.IsMatch(bindingDigest) || runnerHead != expectedHead)
+            if (!Matches(runnerHead, ExactHeadPattern) || !Matches(nodeDigest, DigestPattern) || !Matches(launcherDigest, DigestPattern) || !Matches(bindingDigest, DigestPattern) || runnerHead != expectedHead)
                 throw new InvalidDataException("elevation input identity is invalid");
 
             string state = Path.Combine(home, "state");
             string channel = Path.GetDirectoryName(inputFile);
-            if (String.IsNullOrEmpty(channel) || !SamePath(Path.GetDirectoryName(channel), state) || !Channel.IsMatch(Path.GetFileName(channel)) || !SamePath(inputFile, Path.Combine(channel, "input.json")))
+            if (String.IsNullOrEmpty(channel) || !SamePath(Path.GetDirectoryName(channel), state) || !Matches(Path.GetFileName(channel), ChannelPattern) || !SamePath(inputFile, Path.Combine(channel, "input.json")))
                 throw new InvalidDataException("elevation input escaped the managed channel");
             RealDirectory(home, "elevation home");
             RealDirectory(state, "elevation state");
@@ -284,12 +292,23 @@ namespace DevBridge.ProtectedSetup
             try
             {
                 if (args.Length == 1 && args[0] == "--identity") return Identity();
-                if (args.Length != 3 || args[0] != "--apply" || !ExactHead.IsMatch(args[2])) return 2;
+                if (args.Length != 3 || args[0] != "--apply" || !Matches(args[2], ExactHeadPattern)) return 2;
                 return Apply(FullPath(args[1], "elevation input"), args[2]);
             }
             catch (Exception error)
             {
-                try { Console.Error.WriteLine("DevBridge elevation launcher rejected input: " + error.GetType().Name); }
+                try
+                {
+                    StringBuilder types = new StringBuilder();
+                    Exception current = error;
+                    for (int depth = 0; current != null && depth < 4; depth += 1)
+                    {
+                        if (types.Length > 0) types.Append('>');
+                        types.Append(current.GetType().Name);
+                        current = current.InnerException;
+                    }
+                    Console.Error.WriteLine("DevBridge elevation launcher rejected input: " + types.ToString());
+                }
                 catch {}
                 return 2;
             }
