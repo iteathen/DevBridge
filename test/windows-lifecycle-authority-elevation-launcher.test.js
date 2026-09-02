@@ -20,16 +20,19 @@ async function fixture() {
   const home = path.join(root, 'home');
   const runnerRoot = path.join(root, 'runner');
   const launcher = path.join(runnerRoot, 'src', 'cli.js');
+  const node = path.join(root, 'node.exe');
   await mkdir(path.join(home, 'state'), { recursive: true });
   await mkdir(path.join(runnerRoot, '.git'), { recursive: true });
   await mkdir(path.join(runnerRoot, 'src', 'setup'), { recursive: true });
   await writeFile(path.join(runnerRoot, '.git', 'HEAD'), `${HEAD}\n`);
   await writeFile(launcher, 'export {};\n');
+  await writeFile(node, 'fixture-owned-node-bytes\n');
   await copyFile(SOURCE, path.join(runnerRoot, 'src', 'setup', 'windows-lifecycle-authority-elevation-launcher.cs'));
   await copyFile(MANIFEST, path.join(runnerRoot, 'src', 'setup', 'windows-lifecycle-authority-elevation-launcher.manifest'));
   return Object.freeze({
     root,
     home,
+    node,
     runner: Object.freeze({ head: HEAD, root: runnerRoot, launcher }),
   });
 }
@@ -56,7 +59,7 @@ test('Windows elevation launcher compiles one identified exact artifact and reus
 }, async () => {
   const selected = await fixture();
   try {
-    const options = { home: selected.home, runner: selected.runner, platform: 'win32', nodeExecutable: process.execPath };
+    const options = { home: selected.home, runner: selected.runner, platform: 'win32', nodeExecutable: selected.node };
     const first = await prepareWindowsLifecycleAuthorityElevationLauncher(options);
     const repeated = await prepareWindowsLifecycleAuthorityElevationLauncher(options);
     assert.equal(first.prepared, true);
@@ -111,7 +114,7 @@ test('Windows elevation launcher rejects exact artifact or runner drift', {
 }, async () => {
   const selected = await fixture();
   try {
-    const options = { home: selected.home, runner: selected.runner, platform: 'win32', nodeExecutable: process.execPath };
+    const options = { home: selected.home, runner: selected.runner, platform: 'win32', nodeExecutable: selected.node };
     const prepared = await prepareWindowsLifecycleAuthorityElevationLauncher(options);
     await appendFile(prepared.launcher.executable, 'drift');
     await assert.rejects(resolveWindowsLifecycleAuthorityElevationLauncher(options), /identity changed/u);
@@ -134,7 +137,7 @@ test('Windows elevation launcher rejects an unsafe legacy configuration path bef
       home,
       runner: selected.runner,
       platform: 'win32',
-      nodeExecutable: process.execPath,
+      nodeExecutable: selected.node,
       invoke: async () => { compilations += 1; return {}; },
     }), /legacy configuration path budget/u);
     assert.equal(compilations, 0);
