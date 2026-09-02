@@ -63,6 +63,7 @@ test('source-bundle materialization rechecks authority, acquisition evidence, an
         async materialize(input) {
           assert.equal(input.bundle.location, object);
           assert.equal(input.bundle.sha256, fixture.objectSha256);
+          await mkdir(destination);
           return { head: fixture.head, tree: fixture.tree, root: destination };
         },
       },
