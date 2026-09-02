@@ -135,7 +135,6 @@ const PROVISION_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 Import-Module Hyper-V -ErrorAction Stop
-$null = New-Item -ItemType Directory -Path $data.configPath -Force -ErrorAction Stop
 if (-not (Test-Path -LiteralPath $data.diskPath -PathType Leaf)) {
   $null = New-VHD -Path $data.diskPath -ParentPath $data.parentPath -Differencing -ErrorAction Stop
 }
@@ -145,8 +144,11 @@ $actualParent = if ([string]::IsNullOrWhiteSpace([string]$disk.ParentPath)) { $n
 if ([string]$disk.VhdType -ne 'Differencing' -or $actualParent -ne [IO.Path]::GetFullPath([string]$data.parentPath)) { throw 'environment writable lineage does not match' }
 $vmGeneration = if ([string]$data.firmware -eq 'bios') { 1 } else { 2 }
 $item = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq $data.name } | Select-Object -First 1
+$created = $false
 if ($null -eq $item) {
-  $item = New-VM -Name $data.name -MemoryStartupBytes ([long]$data.memoryBytes) -Generation $vmGeneration -VHDPath $data.diskPath -Path $data.configPath -ErrorAction Stop
+  $null = New-Item -ItemType Directory -Path $data.creationConfigPath -Force -ErrorAction Stop
+  $item = New-VM -Name $data.name -MemoryStartupBytes ([long]$data.memoryBytes) -Generation $vmGeneration -VHDPath $data.diskPath -Path $data.creationConfigPath -ErrorAction Stop
+  $created = $true
   $item = Get-VM -Name $data.name -ErrorAction Stop
 }
 $actualIdentity = ([string]$item.Id).ToLowerInvariant()
@@ -191,7 +193,7 @@ if ($alreadyOwned) {
 }
 Set-VM -Name $data.name -Notes $data.marker -AutomaticCheckpointsEnabled $false -AutomaticStartAction Nothing -AutomaticStopAction ShutDown -ErrorAction Stop
 Set-VMProcessor -VMName $data.name -Count ([long]$data.processorCount) -ErrorAction Stop
-@{ ready = $true; providerIdentity = $actualIdentity } | ConvertTo-Json -Compress
+@{ ready = $true; providerIdentity = $actualIdentity; created = $created } | ConvertTo-Json -Compress
 `;
 
 const START_SCRIPT = String.raw`

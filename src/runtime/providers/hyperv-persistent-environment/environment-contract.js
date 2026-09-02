@@ -27,14 +27,17 @@ function fileIdentity(info) {
 
 export class HyperVEnvironmentContract {
   #directory;
+  #machineRoot;
   #sourceRoot;
   #identity;
   #normalizeProtection;
 
-  constructor({ directory, sourceRoot, identity, normalizeProtection }) {
+  constructor({ directory, machineRoot, sourceRoot, identity, normalizeProtection }) {
+    if (typeof machineRoot !== 'string' || machineRoot.length === 0 || machineRoot.includes('\0')) throw new TypeError('environment machine root is invalid');
     if (typeof identity !== 'string' || !TOKEN.test(identity)) throw new TypeError('environment identity is invalid');
     if (typeof normalizeProtection !== 'function') throw new TypeError('environment protection normalizer is required');
     this.#directory = path.resolve(directory);
+    this.#machineRoot = path.resolve(machineRoot);
     this.#sourceRoot = path.resolve(sourceRoot);
     this.#identity = identity;
     this.#normalizeProtection = normalizeProtection;
@@ -47,11 +50,14 @@ export class HyperVEnvironmentContract {
   descriptor(identity) {
     if (typeof identity !== 'string' || !ENVIRONMENT.test(identity)) throw new TypeError('environment identity is invalid');
     const local = path.join(this.#directory, 'objects', identity);
+    const name = `db-env-${createHash('sha256').update(`${this.#identity}:persistent:${identity}`).digest('hex').slice(0, 16)}`;
     return {
-      name: `db-env-${createHash('sha256').update(`${this.#identity}:persistent:${identity}`).digest('hex').slice(0, 16)}`,
+      name,
       marker: `devbridge-owned:${this.#identity}:persistent:${identity}:v1`,
       local,
-      configPath: path.join(local, 'machine'),
+      machineRoot: this.#machineRoot,
+      configPath: path.join(this.#machineRoot, name),
+      legacyConfigPath: path.join(local, 'machine'),
     };
   }
 
@@ -91,7 +97,10 @@ export class HyperVEnvironmentContract {
     if (!['vhd', 'vhdx'].includes(record.diskFormat)) throw new Error('environment adapter record format is invalid');
     if (record.providerIdentity != null && !PROVIDER_ID.test(String(record.providerIdentity))) throw new Error('environment adapter provider identity is invalid');
     const expectedDisk = path.join(descriptor.local, `state.${record.diskFormat}`);
-    if (path.resolve(record.diskPath) !== expectedDisk || path.resolve(record.configPath) !== descriptor.configPath || record.name !== descriptor.name || record.marker !== descriptor.marker) {
+    const configPath = path.resolve(record.configPath);
+    if (path.resolve(record.diskPath) !== expectedDisk
+        || (configPath !== descriptor.configPath && configPath !== descriptor.legacyConfigPath)
+        || record.name !== descriptor.name || record.marker !== descriptor.marker) {
       throw new Error('environment adapter record escaped its local contract');
     }
     const parent = path.resolve(record.parentPath);
