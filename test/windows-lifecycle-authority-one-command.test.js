@@ -1116,6 +1116,7 @@ test('elevated child entry requires the parent marker and accepts no constructio
     /bounded UAC parent contract/u,
   );
   let request = null;
+  let activationRequest = null;
   const result = await runWindowsLifecycleAuthoritySetupChild({
     env: {
       DEVBRIDGE_HOME: 'C:\\Users\\Operator\\.devbridge',
@@ -1129,12 +1130,38 @@ test('elevated child entry requires the parent marker and accepts no constructio
       request = value;
       return { ready: true, changed: true, service: 'ready', protectedState: 'ready' };
     },
+    activationReconciler: async (value) => {
+      activationRequest = value;
+      return { ready: true, changed: true };
+    },
   });
   assert.equal(result.ready, true);
+  assert.equal(result.changed, true);
   assert.equal(request.mode, 'elevated-child');
   assert.equal(request.requestElevation, null);
   assert.equal(Object.hasOwn(request, 'configuration'), false);
   assert.equal(Object.hasOwn(request, 'construct'), false);
+  assert.deepEqual(activationRequest, {
+    stateDirectory: 'C:\\Users\\Operator\\.devbridge\\state',
+    platform: 'win32',
+  });
+});
+
+test('elevated child does not activate environments before protected readiness', async () => {
+  let activated = false;
+  const result = await runWindowsLifecycleAuthoritySetupChild({
+    env: {
+      DEVBRIDGE_HOME: 'C:\\Users\\Operator\\.devbridge',
+      DEVBRIDGE_LIFECYCLE_AUTHORITY_ELEVATED_CHILD: '1',
+    },
+  }, {
+    platform: 'win32',
+    reconciler: async () => ({ ready: false, changed: false, blocker: 'service unavailable' }),
+    activationReconciler: async () => { activated = true; },
+  });
+  assert.equal(result.ready, false);
+  assert.equal(activated, false);
+  assert.match(result.blocker, /service unavailable/u);
 });
 
 test('lifecycle child admits only an exact entry-injected broker home', () => {
