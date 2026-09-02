@@ -40,6 +40,41 @@ export class HyperVImageConstruction {
 
   #descriptor(record) { return this.#request.descriptor(record); }
 
+  async #prepareQualificationHost(state, record, observed) {
+    let preparation = record.qualificationHostPreparation ?? null;
+    if (preparation != null && (
+      preparation.protocol !== 'devbridge/hyperv-qualification-host-preparation-v1'
+      || !['planned', 'completed'].includes(preparation.phase)
+      || !Number.isSafeInteger(preparation.baselineUptimeMilliseconds)
+      || preparation.baselineUptimeMilliseconds < 0
+      || (preparation.phase === 'completed' && typeof preparation.cycled !== 'boolean')
+    )) throw new Error('construction qualification host preparation state is invalid');
+    if (preparation == null) {
+      if (observed.state !== 'running') throw new Error('construction machine must be running to plan qualification host preparation');
+      preparation = {
+        protocol: 'devbridge/hyperv-qualification-host-preparation-v1',
+        phase: 'planned',
+        baselineUptimeMilliseconds: observed.uptimeMilliseconds,
+      };
+      record.qualificationHostPreparation = preparation;
+      await this.#ledger.save(state);
+    }
+    const cycle = preparation.phase === 'planned';
+    const result = await this.#channel.prepareQualification({
+      ...this.#descriptor(record),
+      cycle,
+      baselineUptimeMilliseconds: preparation.baselineUptimeMilliseconds,
+    });
+    if (result.ready !== true || typeof result.cycled !== 'boolean' || typeof result.contact !== 'boolean') {
+      throw new Error('construction qualification host service did not become ready');
+    }
+    if (cycle) {
+      record.qualificationHostPreparation = { ...preparation, phase: 'completed', cycled: result.cycled };
+      await this.#ledger.save(state);
+    }
+    return Object.freeze({ cycled: result.cycled, contact: result.contact });
+  }
+
   async prepare(rawRequest) {
     const request = this.#request.normalize(rawRequest);
     await this.#ledger.ensure();
@@ -135,8 +170,7 @@ export class HyperVImageConstruction {
     if (!observed.exists || !observed.owned || observed.state !== 'running' || !observed.diskAttached || observed.mediaCount !== 0) {
       throw new Error('construction is not running from its installed disk for qualification');
     }
-    const prepared = await this.#channel.prepareQualification(this.#descriptor(record));
-    if (prepared.ready !== true) throw new Error('construction qualification host service did not become ready');
+    await this.#prepareQualificationHost(state, record, observed);
     return Object.freeze({ reference: record.name, proof: record.marker });
   }
 
@@ -145,12 +179,19 @@ export class HyperVImageConstruction {
     const state = await this.#ledger.load();
     const record = state.records[identity];
     if (!record || record.phase !== 'qualifying' || !record.providerIdentity) throw new Error('construction is not available for access');
-    const observed = await this.#channel.address({
+    const observed = await this.status(identity);
+    const planned = record.qualificationHostPreparation?.phase === 'planned';
+    if (!observed.exists || !observed.owned || !observed.diskAttached || observed.mediaCount !== 0 || (observed.state !== 'running' && !(planned && observed.state === 'off'))) {
+      throw new Error('construction is not available for qualification host preparation');
+    }
+    const preparation = await this.#prepareQualificationHost(state, record, observed);
+    if (preparation.cycled) return Object.freeze({ ready: false, reason: 'construction guest restarted after qualification host-service activation', address: null });
+    const endpoint = await this.#channel.address({
       ...this.#descriptor(record),
       networkControl: record.network.control,
       networkReference: record.network.reference,
     });
-    return this.#observation.address(observed);
+    return this.#observation.address(endpoint);
   }
 
   async startInstall(rawIdentity) {
