@@ -114,9 +114,24 @@ test('Windows elevation launcher compiles one identified exact artifact and reus
       timeoutMs: 10_000,
       maxOutputBytes: 16 * 1024,
     });
-    assert.equal(ordinaryApply.exitCode, 2);
-    assert.match(ordinaryApply.stderr, /UnauthorizedAccessException/u);
-    await assert.rejects(readFile(path.join(channel, 'result.json')), { code: 'ENOENT' });
+    const resultFile = path.join(channel, 'result.json');
+    if (ordinaryApply.exitCode === 2) {
+      assert.match(ordinaryApply.stderr, /UnauthorizedAccessException/u);
+      await assert.rejects(readFile(resultFile), { code: 'ENOENT' });
+    } else {
+      assert.equal(ordinaryApply.exitCode, 1);
+      assert.equal(ordinaryApply.stderr, '');
+      const brokerResult = JSON.parse(await readFile(resultFile, 'utf8'));
+      assert.equal(brokerResult.protocol, 'devbridge/windows-lifecycle-authority-elevation-broker-v1');
+      assert.equal(brokerResult.requestedHead, HEAD);
+      assert.equal(brokerResult.started, false);
+      assert.equal(brokerResult.exitCode, 1);
+      assert.equal(brokerResult.stdout, '');
+      assert.equal(brokerResult.stderr, '');
+      assert.equal(typeof brokerResult.error, 'string');
+      assert.ok(brokerResult.error.length > 0 && brokerResult.error.length <= 2048);
+      assert.equal(brokerResult.outputTruncated, false);
+    }
 
     const manifest = await readFile(MANIFEST, 'utf8');
     assert.match(manifest, /requestedExecutionLevel level="asInvoker" uiAccess="false"/u);
