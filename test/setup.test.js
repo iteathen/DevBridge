@@ -312,6 +312,10 @@ test('setup keeps the ordinary command invoker outside the elevation transaction
   let order = [];
   const configurationRecord = { revision: 1, digest: 'a'.repeat(64), configuration: { declarations: [{ profile: 'linux-development' }] } };
   fixture.deps.invoke = ordinaryInvoke;
+  fixture.deps.elevationPreparer = async (request) => {
+    assert.equal(request.invoke, ordinaryInvoke);
+    return { prepared: true };
+  };
   fixture.deps.profileConfigurationRecordReader = async () => configurationRecord;
   fixture.deps.protectedApplyFrontierFactory = () => ({
     async current() { return frontier; },

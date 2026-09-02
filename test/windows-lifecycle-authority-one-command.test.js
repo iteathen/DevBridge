@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { lstat, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { invokeCommand } from '../src/runtime/command-invocation.js';
 import {
   requestWindowsLifecycleAuthorityElevation,
   resolveWindowsLifecycleAuthorityElevationRunner,
@@ -81,6 +80,31 @@ async function elevationRunner(root, head, source = 'export {};\n') {
   await writeFile(path.join(runnerRoot, '.git', 'HEAD'), `${head}\n`);
   await writeFile(launcher, source);
   return Object.freeze({ head, root: runnerRoot, launcher });
+}
+
+function elevationLauncher(root, runner, node) {
+  const bindingDigest = 'd'.repeat(64);
+  return Object.freeze({
+    executable: path.join(root, 'state', 'windows-elevation-launchers', 'test', 'DevBridge-Protected-Setup-Reconcile-Lifecycle-Service-and-Environment.exe'),
+    bindingDigest,
+    input: Object.freeze({
+      protocol: 'devbridge/windows-lifecycle-authority-elevation-input-v2',
+      home: path.resolve(root),
+      node: path.resolve(node),
+      nodeSha256: '1'.repeat(64),
+      launcher: runner.launcher,
+      launcherSha256: '2'.repeat(64),
+      runnerHead: runner.head,
+      bindingDigest,
+    }),
+  });
+}
+
+function elevationDependencies(root, runner, node) {
+  return Object.freeze({
+    resolveRunner: async () => runner,
+    resolveLauncher: async () => elevationLauncher(root, runner, node),
+  });
 }
 
 function readinessDeps({ elevated = false, serviceReconciler, legacyRuntimeMigration = async () => ({ ready: true }) } = {}) {
@@ -482,9 +506,10 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
         assert.equal(request.executable, 'powershell.exe');
         assert.equal(request.timeoutMs, 45 * 60_000);
         const outer = JSON.parse(request.input);
-        assert.equal(typeof outer.brokerCommand, 'string');
-        assert.ok(outer.brokerCommand.length > 0);
+        assert.equal(outer.launcher, elevationLauncher(root, runner, node).executable);
+        assert.equal(outer.expectedHead, runnerHead);
         const channel = await elevationChannel(root);
+        assert.equal(outer.inputFile, channel.inputFile);
         const input = JSON.parse(await readFile(channel.inputFile, 'utf8'));
         const { resultFile } = channel;
         assert.equal(input.home, path.resolve(root));
@@ -510,9 +535,7 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
         })}\n`);
         return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":0}' };
       },
-    }, {
-      resolveRunner: async () => runner,
-    });
+    }, elevationDependencies(root, runner, node));
     assert.equal(invoked, 1);
     assert.equal(result.completed, true);
     assert.equal(result.exitCode, 0);
@@ -546,8 +569,9 @@ test('elevation runner descriptor binds one detached checkout to its fixed direc
 
 test('elevation adapter default composes the explicit long-transaction invocation policy', async () => {
   const source = await readFile(new URL('../src/setup/windows-lifecycle-authority-elevation.js', import.meta.url), 'utf8');
-  assert.match(source, /createCommandInvoker\(\{ maximumTimeoutMs: ELEVATION_TRANSACTION_TIMEOUT_MS \}\)/u);
+  assert.match(source, /createCommandInvoker\(\{ maximumTimeoutMs: ELEVATION_TRANSACTION_TIMEOUT_MS, windowsHide: false \}\)/u);
   assert.match(source, /invoke = invokeElevationCommand/u);
+  assert.match(source, /-Verb RunAs -WindowStyle Normal/u);
   assert.doesNotMatch(source, /import \{ invokeCommand \}/u);
 });
 
@@ -613,9 +637,7 @@ test('elevation adapter defers old terminal receipt cleanup until after the UAC 
         })}\n`);
         return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":0}' };
       },
-    }, {
-      resolveRunner: async () => runner,
-    });
+    }, elevationDependencies(root, runner, node));
 
     assert.equal(result.completed, true);
     assert.equal((await lstat(ambiguousDirectory)).isDirectory(), true);
@@ -651,9 +673,7 @@ test('elevation adapter preserves its exact channel when the outer wait expires'
         stdout: '',
         stderr: '',
       }),
-    }, {
-      resolveRunner: async () => runner,
-    });
+    }, elevationDependencies(root, runner, node));
 
     assert.equal(result.completed, false);
     assert.match(result.blocker, /did not complete/u);
@@ -801,9 +821,7 @@ test('legacy generation health proof stops at its exact deadline', async () => {
   assert.equal(attempts, 3);
 });
 
-test('rendered elevation broker reads its bounded input and returns exact child evidence', {
-  skip: os.platform() !== 'win32',
-}, async () => {
+test('elevation adapter gives the identified launcher one bounded exact input and returns child evidence', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
   try {
     const bin = path.join(root, 'bin');
@@ -812,16 +830,7 @@ test('rendered elevation broker reads its bounded input and returns exact child 
     const launcher = path.join(bin, 'devbridge-entry.mjs');
     const runnerHead = 'd'.repeat(40);
     await writeFile(launcher, 'export {};\n');
-    const runner = await elevationRunner(root, runnerHead, `const expected = ['setup', '--lifecycle-authority-child', '--no-update'];
-if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(expected)) process.exit(2);
-process.stdout.write(JSON.stringify({
-      protocol: 'devbridge/windows-lifecycle-authority-elevated-child-v1',
-      ready: true,
-      changed: false,
-      service: 'ready',
-      protectedState: 'ready',
-      blocker: null,
-    }));\n`);
+    const runner = await elevationRunner(root, runnerHead);
     const result = await requestWindowsLifecycleAuthorityElevation({
       home: root,
       launcher,
@@ -829,22 +838,31 @@ process.stdout.write(JSON.stringify({
       platform: 'win32',
       invoke: async (request) => {
         const outer = JSON.parse(request.input);
-        const broker = await invokeCommand({
-          executable: 'powershell.exe',
-          arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', outer.brokerCommand],
-          timeoutMs: 30_000,
-          maxOutputBytes: 64 * 1024,
-          environment: process.env,
-        });
-        return {
-          ...broker,
+        assert.equal(outer.launcher, elevationLauncher(root, runner, process.execPath).executable);
+        assert.equal(outer.expectedHead, runnerHead);
+        const channel = await elevationChannel(root);
+        assert.equal(outer.inputFile, channel.inputFile);
+        assert.deepEqual(JSON.parse(await readFile(channel.inputFile, 'utf8')), elevationLauncher(root, runner, process.execPath).input);
+        await writeFile(channel.resultFile, `${JSON.stringify({
+          protocol: 'devbridge/windows-lifecycle-authority-elevation-broker-v1',
+          requestedHead: runnerHead,
+          started: true,
           exitCode: 0,
-          stdout: JSON.stringify({ started: true, exitCode: broker.exitCode }),
-        };
+          stdout: JSON.stringify({
+            protocol: 'devbridge/windows-lifecycle-authority-elevated-child-v1',
+            ready: true,
+            changed: false,
+            service: 'ready',
+            protectedState: 'ready',
+            blocker: null,
+          }),
+          stderr: '',
+          error: null,
+          outputTruncated: false,
+        })}\n`);
+        return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":0}' };
       },
-    }, {
-      resolveRunner: async () => runner,
-    });
+    }, elevationDependencies(root, runner, process.execPath));
     assert.equal(result.completed, true, JSON.stringify(result));
     assert.equal(result.exitCode, 0);
     assert.deepEqual(await readdir(path.join(root, 'state')), []);
@@ -872,8 +890,7 @@ test('elevation adapter returns the bounded child blocker and cleans its result 
       platform: 'win32',
       invoke: async (request) => {
         const outer = JSON.parse(request.input);
-        assert.equal(typeof outer.brokerCommand, 'string');
-        assert.ok(outer.brokerCommand.length > 0);
+        assert.equal(outer.launcher, elevationLauncher(root, runner, node).executable);
         const channel = await elevationChannel(root);
         const input = JSON.parse(await readFile(channel.inputFile, 'utf8'));
         const { resultFile } = channel;
@@ -922,9 +939,7 @@ test('elevation adapter returns the bounded child blocker and cleans its result 
         })}\n`);
         return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":3}' };
       },
-    }, {
-      resolveRunner: async () => runner,
-    });
+    }, elevationDependencies(root, runner, node));
     assert.equal(result.completed, false);
     assert.equal(result.exitCode, 3);
     assert.match(result.blocker, /exact protected blocker/u);
@@ -955,8 +970,7 @@ test('elevation adapter returns a bounded broker error when the lifecycle child 
       platform: 'win32',
       invoke: async (request) => {
         const outer = JSON.parse(request.input);
-        assert.equal(typeof outer.brokerCommand, 'string');
-        assert.ok(outer.brokerCommand.length > 0);
+        assert.equal(outer.launcher, elevationLauncher(root, runner, node).executable);
         const channel = await elevationChannel(root);
         const input = JSON.parse(await readFile(channel.inputFile, 'utf8'));
         const { resultFile } = channel;
@@ -973,9 +987,7 @@ test('elevation adapter returns a bounded broker error when the lifecycle child 
         })}\n`);
         return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":1}' };
       },
-    }, {
-      resolveRunner: async () => runner,
-    });
+    }, elevationDependencies(root, runner, node));
     assert.equal(result.completed, false);
     assert.equal(result.exitCode, 1);
     assert.match(result.blocker, /exact launcher startup failure/u);
@@ -1030,9 +1042,7 @@ test('elevation adapter admits a proved detached runner outside the installation
       nodeExecutable: node,
       platform: 'win32',
       invoke: async () => { invoked = true; throw new Error('stop before UAC'); },
-    }, {
-      resolveRunner: async () => runner,
-    });
+    }, elevationDependencies(root, runner, node));
     assert.equal(invoked, true);
     assert.equal(result.attempted, true);
     assert.equal(result.completed, false);
