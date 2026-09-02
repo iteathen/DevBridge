@@ -1142,7 +1142,7 @@ test('elevated child entry requires the parent marker and accepts no constructio
   assert.equal(Object.hasOwn(request, 'configuration'), false);
   assert.equal(Object.hasOwn(request, 'construct'), false);
   assert.deepEqual(activationRequest, {
-    stateDirectory: 'C:\\Users\\Operator\\.devbridge\\state',
+    stateDirectory: path.join(path.resolve('C:\\Users\\Operator\\.devbridge'), 'state'),
     platform: 'win32',
   });
 });
