@@ -11,9 +11,24 @@ function parseJson(result) {
   try { return JSON.parse(String(result.stdout ?? '')); } catch { throw new Error('construction management operation returned invalid structured output'); }
 }
 
+const GUEST_FILE_SERVICE = String.raw`
+function Enable-DevBridgeGuestFileService {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$VMName)
+  $matches = @(Get-VMIntegrationService -VMName $VMName -ErrorAction Stop | Where-Object { $_.Name -eq 'Guest Service Interface' })
+  if ($matches.Count -ne 1) { throw 'construction guest file integration service is unavailable' }
+  if (-not [bool]$matches[0].Enabled) {
+    Enable-VMIntegrationService -VMIntegrationService $matches[0] -ErrorAction Stop | Out-Null
+  }
+  $confirmed = @(Get-VMIntegrationService -VMName $VMName -ErrorAction Stop | Where-Object { $_.Name -eq 'Guest Service Interface' })
+  if ($confirmed.Count -ne 1 -or -not [bool]$confirmed[0].Enabled) { throw 'construction guest file integration service did not become enabled' }
+}
+`;
+
 const PREPARE_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+${GUEST_FILE_SERVICE}
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 Import-Module Hyper-V -ErrorAction Stop
 if (-not (Test-Path -LiteralPath $data.installerPath -PathType Leaf)) { throw 'installer media is absent' }
@@ -67,6 +82,7 @@ if ($alreadyOwned) {
   }
   Set-VM -Name ([string]$data.name) -Notes ([string]$data.marker) -ErrorAction Stop
 }
+Enable-DevBridgeGuestFileService -VMName ([string]$data.name)
 $nets = @(Get-VMNetworkAdapter -VMName ([string]$data.name) -ErrorAction Stop)
 if ($nets.Count -eq 0) {
   Add-VMNetworkAdapter -VMName ([string]$data.name) -Name 'Network Adapter' -SwitchName ([string]$switch.Name) -ErrorAction Stop | Out-Null
@@ -99,6 +115,20 @@ if ($dvd.Count -ne 2) { throw 'construction media attachment count is incompatib
 Set-VMFirmware -VMName ([string]$data.name) -FirstBootDevice $installer -ErrorAction Stop
 $item = Get-VM -Name ([string]$data.name) -ErrorAction Stop
 @{ ready = $true; providerIdentity = ([string]$item.Id).ToLowerInvariant() } | ConvertTo-Json -Compress
+`;
+
+const PREPARE_QUALIFICATION_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+${GUEST_FILE_SERVICE}
+$data = [Console]::In.ReadToEnd() | ConvertFrom-Json
+Import-Module Hyper-V -ErrorAction Stop
+$item = Get-VM -Name ([string]$data.name) -ErrorAction Stop
+if ([string]$item.Notes -ne [string]$data.marker) { throw 'construction ownership evidence does not match' }
+if (([string]$item.Id).ToLowerInvariant() -ne ([string]$data.providerIdentity).ToLowerInvariant()) { throw 'construction provider identity does not match' }
+if ([string]$item.State -ne 'Running') { throw 'construction machine must be running during qualification preparation' }
+Enable-DevBridgeGuestFileService -VMName ([string]$data.name)
+@{ ready = $true } | ConvertTo-Json -Compress
 `;
 
 const OBSERVE_SCRIPT = String.raw`
@@ -313,6 +343,7 @@ export class HyperVConstructionChannel {
   }
 
   prepare(payload) { return this.#run(PREPARE_SCRIPT, payload, 120_000); }
+  prepareQualification(payload) { return this.#run(PREPARE_QUALIFICATION_SCRIPT, payload, 30_000); }
   observe(payload) { return this.#run(OBSERVE_SCRIPT, payload, 30_000); }
   console(payload) { return this.#run(INSTALL_CONSOLE_SCRIPT, payload, 30_000); }
   startInstall(payload) { return this.#run(START_INSTALL_SCRIPT, payload, 60_000); }

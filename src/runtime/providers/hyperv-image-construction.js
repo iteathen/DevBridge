@@ -135,6 +135,8 @@ export class HyperVImageConstruction {
     if (!observed.exists || !observed.owned || observed.state !== 'running' || !observed.diskAttached || observed.mediaCount !== 0) {
       throw new Error('construction is not running from its installed disk for qualification');
     }
+    const prepared = await this.#channel.prepareQualification(this.#descriptor(record));
+    if (prepared.ready !== true) throw new Error('construction qualification host service did not become ready');
     return Object.freeze({ reference: record.name, proof: record.marker });
   }
 

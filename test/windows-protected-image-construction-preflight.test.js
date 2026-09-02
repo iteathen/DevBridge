@@ -23,6 +23,8 @@ test('protected image construction preflight proves exact read-only provider pre
     const script = Buffer.from(calls[0].arguments.at(-1), 'base64').toString('utf16le');
     assert.match(script, /Set-VMKeyProtector/u);
     assert.match(script, /Enable-VMTPM/u);
+    assert.match(script, /Get-VMIntegrationService/u);
+    assert.match(script, /Enable-VMIntegrationService/u);
     assert.match(script, /MsftFileSystemImage/u);
     assert.doesNotMatch(script, /\b(?:New-VM|Start-VM|Set-VMKeyProtector|Enable-VMTPM)\s+-/u);
   } finally { await rm(root, { recursive: true, force: true }); }

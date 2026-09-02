@@ -32,6 +32,7 @@ function fakeHost() {
     consoleResult: null,
     bootCompatible: true,
     bootReason: null,
+    guestFileServiceEnabled: false,
   };
   return {
     state,
@@ -53,7 +54,11 @@ function fakeHost() {
         state.mediaCount = 2;
         state.bootCompatible = true;
         state.bootReason = null;
+        state.guestFileServiceEnabled = true;
         body = { ready: true, providerIdentity: state.providerIdentity };
+      } else if (script.includes('construction machine must be running during qualification preparation')) {
+        state.guestFileServiceEnabled = true;
+        body = { ready: true };
       } else if (script.includes("diskPresent = (Test-Path")) {
         body = {
           exists: state.exists,
@@ -187,6 +192,14 @@ test('Hyper-V image construction resumes exact intent through install, qualifica
     const location = await resumed.locate(data.request.identity);
     assert.match(location.reference, /^db-image-build-[a-f0-9]{16}$/u);
     assert.equal(location.proof, `devbridge-owned:${'a'.repeat(32)}:image-build:${data.request.identity}:v1`);
+    assert.equal(host.state.guestFileServiceEnabled, true);
+    const qualificationPreparation = host.state.calls.find((entry) => entry.script.includes('construction machine must be running during qualification preparation'));
+    assert.ok(qualificationPreparation);
+    assert.match(qualificationPreparation.script, /Get-VMIntegrationService/u);
+    assert.match(qualificationPreparation.script, /Enable-VMIntegrationService/u);
+    assert.match(qualificationPreparation.script, /provider identity does not match/u);
+    assert.match(qualificationPreparation.script, /\$matches\.Count -ne 1/u);
+    assert.match(qualificationPreparation.script, /\$confirmed\.Count -ne 1 -or -not \[bool\]\$confirmed\[0\]\.Enabled/u);
 
     await resumed.stop(data.request.identity);
     const stopScript = host.state.calls.find((entry) => entry.script.includes('if ($data.force -eq $true)')).script;
@@ -482,6 +495,8 @@ test('Windows Hyper-V construction reconciles only the exact default-adapter New
     const prepareScript = Buffer.from(prepareRequest.arguments.at(-1), 'base64').toString('utf16le');
     assert.match(prepareScript, /New-VM[^\r\n]+-SwitchName \(\[string\]\$switch\.Name\)/u);
     assert.match(prepareScript, /ConfigurationLocation/u);
+    assert.match(prepareScript, /Get-VMIntegrationService/u);
+    assert.match(prepareScript, /Enable-VMIntegrationService/u);
 
     const mocks = ({ foreignConfig = false, foreignAdapter = false } = {}) => String.raw`
 function Import-Module { [CmdletBinding()] param([Parameter(Position=0)]$Name) }
@@ -492,6 +507,7 @@ $script:dvd = @()
 $script:secureBoot = 'Off'
 $script:secureBootTemplate = 'MicrosoftWindows'
 $script:tpmEnabled = $false
+$script:guestFileServiceEnabled = $false
 function Get-VMSwitch { [CmdletBinding()] param([guid]$Id, [string]$Name) [pscustomobject]@{ Id = [guid]'${networkId}'; Name = 'Default Switch'; Notes = ''; SwitchType = 'Internal' } }
 function Get-VM {
   [CmdletBinding()] param([string]$Name)
@@ -536,6 +552,8 @@ function Get-VMFirmware { [CmdletBinding()] param([string]$VMName) [pscustomobje
 function Get-VMSecurity { [CmdletBinding()] param([string]$VMName) [pscustomobject]@{ TpmEnabled = $script:tpmEnabled } }
 function Set-VMKeyProtector { [CmdletBinding()] param([string]$VMName, [switch]$NewLocalKeyProtector) if (-not $NewLocalKeyProtector) { throw 'local key protector was not requested' } }
 function Enable-VMTPM { [CmdletBinding()] param([string]$VMName) if ([string]$script:item.Notes -ne '') { throw 'TPM mutation followed ownership admission' }; $script:tpmEnabled = $true }
+function Get-VMIntegrationService { [CmdletBinding()] param([string]$VMName) [pscustomobject]@{ Name = 'Guest Service Interface'; Enabled = $script:guestFileServiceEnabled } }
+function Enable-VMIntegrationService { [CmdletBinding()] param($VMIntegrationService) if ([string]$script:item.Notes -ne [string]$data.marker) { throw 'integration mutation preceded ownership proof' }; $script:guestFileServiceEnabled = $true }
 function Add-VMNetworkAdapter { [CmdletBinding()] param() throw 'the default adapter was not reconciled' }
 function Connect-VMNetworkAdapter {
   [CmdletBinding()] param($VMNetworkAdapter, $VMSwitch)
