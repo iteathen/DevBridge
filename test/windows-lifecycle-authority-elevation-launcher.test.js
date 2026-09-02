@@ -39,6 +39,18 @@ test('non-Windows elevation launcher preparation is an exact no-op', async () =>
   assert.deepEqual(result, { protocol: 'devbridge/windows-lifecycle-authority-elevation-launcher-v1', prepared: false, required: false, launcher: null });
 });
 
+test('elevation launcher serialization has no ambient System.Web configuration dependency', async () => {
+  const [source, adapter] = await Promise.all([
+    readFile(SOURCE, 'utf8'),
+    readFile(new URL('../src/setup/windows-lifecycle-authority-elevation-launcher.js', import.meta.url), 'utf8'),
+  ]);
+  assert.doesNotMatch(source, /System\.Web|JavaScriptSerializer/u);
+  assert.doesNotMatch(adapter, /System\.Web\.Extensions/u);
+  assert.match(source, /DataContractJsonSerializer/u);
+  assert.match(adapter, /System\.Runtime\.Serialization\.dll/u);
+  assert.match(adapter, /System\.Xml\.dll/u);
+});
+
 test('Windows elevation launcher compiles one identified exact artifact and reuses it', {
   skip: process.platform !== 'win32',
 }, async () => {

@@ -36,7 +36,8 @@ $parameters.OutputAssembly = $output
 $parameters.CompilerOptions = $options
 [void]$parameters.ReferencedAssemblies.Add('System.dll')
 [void]$parameters.ReferencedAssemblies.Add('System.Core.dll')
-[void]$parameters.ReferencedAssemblies.Add('System.Web.Extensions.dll')
+[void]$parameters.ReferencedAssemblies.Add('System.Runtime.Serialization.dll')
+[void]$parameters.ReferencedAssemblies.Add('System.Xml.dll')
 Add-Type -LiteralPath $source -CompilerParameters $parameters -ErrorAction Stop
 $item = Get-Item -LiteralPath $output -Force
 $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($output)
