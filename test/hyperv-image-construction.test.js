@@ -189,6 +189,10 @@ test('Hyper-V image construction resumes exact intent through install, qualifica
     assert.equal(location.proof, `devbridge-owned:${'a'.repeat(32)}:image-build:${data.request.identity}:v1`);
 
     await resumed.stop(data.request.identity);
+    const stopScript = host.state.calls.find((entry) => entry.script.includes('if ($data.force -eq $true)')).script;
+    assert.match(stopScript, /else \{ Stop-VM -Name \(\[string\]\$data\.name\) -Confirm:\$false/u);
+    assert.match(stopScript, /\$data\.force -eq \$true.*Stop-VM -Name \(\[string\]\$data\.name\) -TurnOff/su);
+    assert.doesNotMatch(stopScript, /-Shutdown\b/u);
     await resumed.markQualified(data.request.identity, { protocol: 'test/qualification-v1', passed: true });
     const retained = await resumed.retain(data.request.identity);
     assert.equal(retained.phase, 'retained');

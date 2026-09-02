@@ -223,7 +223,7 @@ if ([string]$item.Notes -ne [string]$data.marker) { throw 'construction machine 
 if (([string]$item.Id).ToLowerInvariant() -ne ([string]$data.providerIdentity).ToLowerInvariant()) { throw 'construction provider identity changed' }
 if ([string]$item.State -ne 'Off') {
   if ($data.force -eq $true) { Stop-VM -Name ([string]$data.name) -TurnOff -Confirm:$false -ErrorAction Stop }
-  else { Stop-VM -Name ([string]$data.name) -Shutdown -Confirm:$false -ErrorAction Stop }
+  else { Stop-VM -Name ([string]$data.name) -Confirm:$false -ErrorAction Stop }
 }
 @{ stopped = $true; absent = $false } | ConvertTo-Json -Compress
 `;
