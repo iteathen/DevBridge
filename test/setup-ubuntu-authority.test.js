@@ -61,10 +61,11 @@ test('setup authority binds source policy, exact snapshot and current payload ge
   assert.equal(authority.packages.snapshot, SNAPSHOT);
   assert.equal(authority.packages.generation, 'ubuntu-2604-tools-v4');
   assert.equal(authority.packages.packages.find((entry) => entry.name === 'openssh-server')?.version, '1:9.9p1-3ubuntu3');
-  assert.deepEqual(authority.qualification.commands, ['hv_kvp_daemon', 'make']);
+  assert.deepEqual(authority.qualification.commands, ['hv_fcopy_uio_daemon', 'hv_kvp_daemon', 'make']);
+  assert.deepEqual(authority.qualification.services, ['hv-fcopy-daemon.service']);
   assert.equal(authority.payload.generation, CURRENT_PAYLOAD_GENERATION);
-  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v10');
-  assert.equal(authority.output.generation, 'ubuntu-2604-production-v6');
+  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v11');
+  assert.equal(authority.output.generation, 'ubuntu-2604-production-v7');
   assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 2, ...UBUNTU_SETUP_BOOT_PATCH }]);
 });
 

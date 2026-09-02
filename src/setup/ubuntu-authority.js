@@ -21,9 +21,9 @@ const SOURCE = Object.freeze({
   signerFingerprint: '843938DF228D22F7B3742BC0D94AA3F0EFE21092',
 });
 
-const OUTPUT = Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v6', bootstrap: 'guest-image-v1' });
+const OUTPUT = Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v7', bootstrap: 'guest-image-v1' });
 const OUTPUT_PAYLOAD_GENERATION = 'guest-image-6c102cff53ad6d9f10f03530';
-const RECIPE_GENERATION = 'ubuntu-2604-autoinstall-v10';
+const RECIPE_GENERATION = 'ubuntu-2604-autoinstall-v11';
 const PACKAGE_GENERATION = 'ubuntu-2604-tools-v4';
 
 const BOOT_PATCH = Object.freeze({
@@ -127,7 +127,10 @@ function authorityFrom({ snapshot, packages, payloadGeneration }) {
       packages: Object.freeze(packages.map((entry) => Object.freeze({ ...entry }))),
     }),
     payload: Object.freeze({ generation: payloadGeneration }),
-    qualification: Object.freeze({ commands: Object.freeze(['hv_kvp_daemon', 'make']) }),
+    qualification: Object.freeze({
+      commands: Object.freeze(['hv_fcopy_uio_daemon', 'hv_kvp_daemon', 'make']),
+      services: Object.freeze(['hv-fcopy-daemon.service']),
+    }),
     output: OUTPUT,
   });
 }
