@@ -187,6 +187,49 @@ test('Windows replay-safe operation retries only stale zero-response transaction
   assert.equal(transactions, 2);
 });
 
+test('Windows replay-safe operation re-arms after only a zero-response clean terminal disconnect', async () => {
+  const fixture = connectionFactory([null, null]);
+  let transactions = 0;
+  const value = await transactBoundedLocalAuthoritySocket({
+    endpoint: '\\\\.\\pipe\\devbridge-test',
+    timeoutMs: 1000,
+    replaySafe: true,
+    transact: async () => {
+      transactions += 1;
+      if (transactions !== 1) return 'ready';
+      const stale = responseSocket();
+      const pending = acknowledgedTransaction(stale);
+      stale.emit('close');
+      return pending;
+    },
+  }, {
+    createConnection: fixture.createConnection,
+    wait: async () => {},
+  });
+  assert.equal(value, 'ready');
+  assert.equal(transactions, 2);
+
+  const partialFixture = connectionFactory([null, null]);
+  let partialTransactions = 0;
+  await assert.rejects(transactBoundedLocalAuthoritySocket({
+    endpoint: '\\\\.\\pipe\\devbridge-test',
+    timeoutMs: 1000,
+    replaySafe: true,
+    transact: async () => {
+      partialTransactions += 1;
+      const partial = responseSocket();
+      const pending = acknowledgedTransaction(partial);
+      partial.emit('data', '{"ok":');
+      partial.emit('close');
+      return pending;
+    },
+  }, {
+    createConnection: partialFixture.createConnection,
+    wait: async () => {},
+  }), (error) => error?.code === 'FIXTURE_UNAVAILABLE');
+  assert.equal(partialTransactions, 1);
+});
+
 test('late Windows zero-response replay receives one fresh bounded connection window', async () => {
   const fixture = connectionFactory([null, 'ENOENT', null]);
   let clock = 0;
