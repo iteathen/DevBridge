@@ -157,6 +157,7 @@ export class ExactCheckoutRunnerProvider {
   #launch;
   #allowFetch;
   #admitSubject;
+  #source;
   #ownership;
   #artifacts;
   #normalize;
@@ -170,17 +171,20 @@ export class ExactCheckoutRunnerProvider {
     launch = defaultLaunch,
     allowFetch = true,
     admitSubject = null,
+    source = null,
   } = {}) {
     if (typeof cacheRoot !== 'string' || !path.isAbsolute(cacheRoot)) throw new TypeError('exact checkout cacheRoot must be an absolute local path');
     if (typeof run !== 'function' || typeof launch !== 'function') throw new TypeError('exact checkout execution ports must be functions');
     if (typeof allowFetch !== 'boolean') throw new TypeError('exact checkout allowFetch must be a boolean');
     if (admitSubject != null && typeof admitSubject !== 'function') throw new TypeError('exact checkout admitSubject must be a function');
+    if (source != null && typeof source.materialize !== 'function') throw new TypeError('exact checkout source port is invalid');
     if (typeof normalizeSubject !== 'function') throw new TypeError('exact checkout subject contract is incomplete');
     this.#root = path.resolve(cacheRoot);
     this.#run = run;
     this.#launch = launch;
     this.#allowFetch = allowFetch;
     this.#admitSubject = admitSubject;
+    this.#source = source;
     this.#ownership = requirePort(ownership, ['withActivity', 'duringActivity', 'observe'], 'exact checkout ownership');
     this.#artifacts = requirePort(artifacts, ['plan', 'discover', 'observe', 'remove'], 'exact checkout artifact action');
     this.#normalize = normalizeSubject;
@@ -308,11 +312,15 @@ export class ExactCheckoutRunnerProvider {
       try { await this.#verify(temporary, subject, context); }
       catch { fail('exact checkout preserved ambiguous pending material'); }
     } else {
-      await mkdir(temporary, { mode: 0o700 });
       try {
-        await runChecked(this.#run, ['init', '--quiet', temporary], context, 'initialization');
-        await runChecked(this.#run, ['-C', temporary, 'fetch', '--no-tags', '--depth', '1', FIXED_REMOTE, subject.head], context, 'exact fetch');
-        await runChecked(this.#run, ['-C', temporary, 'checkout', '--detach', '--force', subject.head], context, 'exact checkout');
+        if (this.#source == null) {
+          await mkdir(temporary, { mode: 0o700 });
+          await runChecked(this.#run, ['init', '--quiet', temporary], context, 'initialization');
+          await runChecked(this.#run, ['-C', temporary, 'fetch', '--no-tags', '--depth', '1', FIXED_REMOTE, subject.head], context, 'exact fetch');
+          await runChecked(this.#run, ['-C', temporary, 'checkout', '--detach', '--force', subject.head], context, 'exact checkout');
+        } else {
+          await this.#source.materialize({ subject, destination: temporary });
+        }
         await this.#verify(temporary, subject, context);
       } catch (error) {
         try {

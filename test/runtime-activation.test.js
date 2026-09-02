@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -87,6 +87,50 @@ test('candidate preparation validates and returns the exact tested separate runt
   assert.equal(candidate.validation.artifactSha256, candidate.artifactSha256);
   assert.equal(candidate.validation.execution.identity, 'fixture-execution');
   assert.equal(candidate.releaseIntegrity.mode, 'development');
+});
+
+test('candidate preparation accepts exact source availability without invoking the GitHub materializer', async () => {
+  const paths = fixturePaths();
+  const head = '7'.repeat(40);
+  const runtimeDir = candidateRuntimePath(paths, head);
+  const sourceCalls = [];
+  const runner = (_executable, args) => {
+    const command = args.at(-3) === 'remote' ? 'remote' : args.at(-2) === 'status' ? 'status' : args.at(-2) === 'rev-parse' ? 'rev-parse' : null;
+    if (command === 'remote') return { status: 0, stdout: 'https://github.com/iteathen/DevBridge.git\n', stderr: '' };
+    if (command === 'status') return { status: 0, stdout: '', stderr: '' };
+    if (command === 'rev-parse') return { status: 0, stdout: `${head}\n`, stderr: '' };
+    throw new Error(`unexpected Git command: ${args.join(' ')}`);
+  };
+  const candidate = await prepareRuntimeCandidate(
+    { channel: 'testing', update: true, releaseMode: 'development' },
+    paths,
+    {
+      desiredRef: 'main',
+      desiredHead: head,
+      runner,
+      source: {
+        async prepare(input) {
+          sourceCalls.push(input);
+          mkdirSync(path.join(runtimeDir, '.git'), { recursive: true });
+          mkdirSync(path.join(runtimeDir, 'src'), { recursive: true });
+          writeFileSync(path.join(runtimeDir, 'package.json'), '{"name":"devbridge","version":"0.1.0"}\n');
+          writeFileSync(path.join(runtimeDir, 'src', 'cli.js'), 'export {};\n');
+          return { head, root: runtimeDir };
+        },
+      },
+      ensureRuntimeFn() { throw new Error('network materializer must not run'); },
+      validateCandidateFn: (_paths, _runtime, _runner, options) => ({
+        tests: 'passed',
+        artifactSha256: options.expectedArtifactSha256,
+        execution: { identity: 'source-port-fixture', ready: true },
+      }),
+    },
+  );
+  assert.equal(sourceCalls.length, 1);
+  assert.equal(sourceCalls[0].head, head);
+  assert.equal(candidate.head, head);
+  assert.equal(candidate.runtimeDir, runtimeDir);
+  assert.equal(candidate.validation.execution.identity, 'source-port-fixture');
 });
 
 test('activation journal is atomic JSON and only a contained exact healthy runtime is rehydrated', () => {

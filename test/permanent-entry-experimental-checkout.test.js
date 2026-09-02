@@ -292,6 +292,38 @@ test('development checkout provider launches the exact stable development contro
   }
 });
 
+test('development checkout provider accepts a replaceable exact source materialization port', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-entry-checkout-source-port-'));
+  try {
+    const head = '7'.repeat(40);
+    const bytes = Buffer.from('source-port-runner');
+    const exact = subject(head, bytes, { channel: 'stable', releaseId: `development-${head}` });
+    const git = fakeGit({ head, artifactBytes: bytes });
+    const calls = [];
+    const provider = new DevelopmentCheckoutRunnerProvider({
+      ...cachePorts(root),
+      run: git.run,
+      source: {
+        async materialize({ subject: selected, destination }) {
+          calls.push({ selected, destination });
+          await mkdir(path.join(destination, '.git'), { recursive: true });
+          await mkdir(path.join(destination, 'src'), { recursive: true });
+          await writeFile(path.join(destination, 'devbridge.mjs'), bytes);
+          await writeFile(path.join(destination, 'src', 'cli.js'), '#!/usr/bin/env node\n');
+          return { head, root: destination };
+        },
+      },
+      launch() { return 0; },
+    });
+    await provider.prepare(exact);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].selected.head, head);
+    assert.equal(fetchCalls(git.calls).length, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('development checkout provider refuses production-like subjects and disabled refresh cannot acquire a missing checkout', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-entry-checkout-development-denial-'));
   try {
