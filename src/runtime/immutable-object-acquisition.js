@@ -13,6 +13,7 @@ const SHA256 = /^[a-f0-9]{64}$/u;
 const STATES = Object.freeze(['planned', 'acquiring', 'object-complete', 'verified', 'cache-committed']);
 const STATE_BYTES = 1024 * 1024;
 const COPY_BYTES = 4 * 1024 * 1024;
+const SOURCE_ATTEMPT_FAILURE = Symbol('immutable-object-source-attempt-failure');
 
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
@@ -199,6 +200,17 @@ function requireBody(value) {
   return result.body;
 }
 
+function sourceAttemptFailure(error) {
+  const wrapped = new Error('immutable object byte source failed', { cause: error });
+  if (typeof error?.name === 'string') wrapped.name = error.name;
+  wrapped[SOURCE_ATTEMPT_FAILURE] = true;
+  return wrapped;
+}
+
+async function releaseIterator(iterator) {
+  if (typeof iterator.return === 'function') await Promise.resolve().then(() => iterator.return()).catch(() => {});
+}
+
 function aborted(signal) {
   if (!signal?.aborted) return;
   const error = new Error('immutable object acquisition was interrupted', { cause: signal.reason });
@@ -208,17 +220,38 @@ function aborted(signal) {
 
 async function writeSourceAttempt({ source, request, destination, signal }) {
   aborted(signal);
-  const response = await source.fetch({ ...request, signal });
-  const body = requireBody(response);
-  const handle = await open(destination, 'wx', 0o600);
+  let body;
+  let iterator;
+  try {
+    body = requireBody(await source.fetch({ ...request, signal }));
+    iterator = body[Symbol.asyncIterator]();
+    if (!iterator || typeof iterator.next !== 'function') throw new Error('immutable object source body iterator is invalid');
+  }
+  catch (error) { throw sourceAttemptFailure(error); }
+  let handle;
+  try { handle = await open(destination, 'wx', 0o600); }
+  catch (error) { await releaseIterator(iterator); throw error; }
   const hash = createHash('sha256');
   let size = 0;
+  let failure = null;
   try {
-    for await (const raw of body) {
+    while (true) {
       aborted(signal);
-      const chunk = Buffer.from(raw);
+      let step;
+      try { step = await iterator.next(); }
+      catch (error) { throw sourceAttemptFailure(error); }
+      if (!step || typeof step.done !== 'boolean') {
+        throw sourceAttemptFailure(new Error('immutable object source body iterator returned an invalid result'));
+      }
+      if (step.done) break;
+      if (!(step.value instanceof Uint8Array)) {
+        throw sourceAttemptFailure(new Error('immutable object source body yielded a non-byte value'));
+      }
+      const chunk = Buffer.from(step.value);
       if (chunk.length === 0) continue;
-      if (chunk.length > request.chunk.size - size) throw new Error('immutable object source exceeded the exact chunk byte count');
+      if (chunk.length > request.chunk.size - size) {
+        throw sourceAttemptFailure(new Error('immutable object source exceeded the exact chunk byte count'));
+      }
       const { bytesWritten } = await handle.write(chunk, 0, chunk.length, size);
       if (bytesWritten !== chunk.length) throw new Error('immutable object source write was incomplete');
       hash.update(chunk);
@@ -226,12 +259,24 @@ async function writeSourceAttempt({ source, request, destination, signal }) {
     }
     aborted(signal);
     await handle.sync();
-  } finally { await handle.close(); }
-  if (size !== request.chunk.size) throw new Error('immutable object source did not provide the exact chunk byte count');
-  if (hash.digest('hex') !== request.chunk.sha256) throw new Error('immutable object source chunk digest does not match authority');
+  } catch (error) {
+    await releaseIterator(iterator);
+    failure = error;
+  }
+  try { await handle.close(); }
+  catch (error) { if (failure == null) failure = error; }
+  if (failure == null && size !== request.chunk.size) {
+    failure = sourceAttemptFailure(new Error('immutable object source did not provide the exact chunk byte count'));
+  }
+  if (failure == null && hash.digest('hex') !== request.chunk.sha256) {
+    failure = sourceAttemptFailure(new Error('immutable object source chunk digest does not match authority'));
+  }
+  if (failure == null) return;
+  await rm(destination, { force: true }).catch(() => {});
+  throw failure;
 }
 
-async function acquireChunk({ sources, descriptor, object, chunk, directory, signal }) {
+async function acquireChunk({ sources, unavailableSources, descriptor, object, chunk, directory, signal }) {
   const final = path.join(directory, `${String(chunk.ordinal).padStart(6, '0')}-${chunk.sha256}`);
   if (await verifiedFile(final, chunk)) return Object.freeze({ location: final, reused: true, attempts: 0 });
   try {
@@ -241,6 +286,7 @@ async function acquireChunk({ sources, descriptor, object, chunk, directory, sig
   } catch (error) { if (error?.code !== 'ENOENT') throw error; }
   let attempts = 0;
   for (const source of sources) {
+    if (unavailableSources.has(source)) continue;
     attempts += 1;
     const temporary = path.join(directory, `.download-${randomUUID()}.tmp`);
     try {
@@ -248,8 +294,9 @@ async function acquireChunk({ sources, descriptor, object, chunk, directory, sig
       await rename(temporary, final);
       return Object.freeze({ location: final, reused: false, attempts });
     } catch (error) {
-      await rm(temporary, { force: true }).catch(() => {});
-      if (error?.name === 'AbortError' || signal?.aborted) throw error;
+      if (signal?.aborted) throw error;
+      if (error?.[SOURCE_ATTEMPT_FAILURE] !== true) throw error;
+      unavailableSources.add(source);
     }
   }
   const error = new Error(`immutable object is unavailable: ${object.name} chunk ${chunk.ordinal} after ${attempts} source attempt(s)`);
@@ -329,6 +376,7 @@ export class ImmutableObjectAcquisition {
     let sourceAttempts = 0;
     let reusedChunks = 0;
     let allCached = true;
+    const unavailableSources = new Set();
 
     for (const object of descriptor.objects) {
       aborted(signal);
@@ -354,7 +402,7 @@ export class ImmutableObjectAcquisition {
       await removeOwnedTemps(chunkRoot, /^\.download-[a-f0-9-]{36}\.tmp$/u);
       const chunks = [];
       for (const chunk of object.chunks) {
-        const acquired = await acquireChunk({ sources: this.#sources, descriptor, object, chunk, directory: chunkRoot, signal });
+        const acquired = await acquireChunk({ sources: this.#sources, unavailableSources, descriptor, object, chunk, directory: chunkRoot, signal });
         chunks.push(acquired.location);
         sourceAttempts += acquired.attempts;
         if (acquired.reused) reusedChunks += 1;
