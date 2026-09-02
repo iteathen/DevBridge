@@ -24,7 +24,10 @@ import { selectSerialProfileAction } from '../setup/serial-profile-action.js';
 import { createUbuntuSetupAuthority, defaultUbuntuPackageSnapshot } from '../setup/ubuntu-authority.js';
 import { createUbuntuEnvironmentProfileSource } from '../setup/ubuntu-environment-profile-source.js';
 import { establishUbuntuReleaseAuthority } from '../setup/ubuntu-release-authority.js';
-import { requestWindowsLifecycleAuthorityElevation } from '../setup/windows-lifecycle-authority-elevation.js';
+import {
+  prepareWindowsLifecycleAuthorityElevation,
+  requestWindowsLifecycleAuthorityElevation,
+} from '../setup/windows-lifecycle-authority-elevation.js';
 import { createLinuxEnvironmentProfileConfiguration } from '../setup/linux-environment-profile-configuration.js';
 import { createLinuxEnvironmentActivityProjection } from '../setup/linux-environment-activity-projection.js';
 import { createWindowsEnvironmentProfileConfiguration } from '../setup/windows-environment-profile-configuration.js';
@@ -771,6 +774,7 @@ export async function runDevBridgeSetup({
   profileConfigurationFactory = createPlatformEnvironmentProfileConfiguration,
   resourceConflictFactory = createSetupResourceConflict,
   resourceConflictConsentStoreFactory = createSetupResourceConflictConsentStore,
+  elevationPreparer = prepareWindowsLifecycleAuthorityElevation,
   elevationRequester = requestWindowsLifecycleAuthorityElevation,
   lifecycleClientFactory = createConfiguredLifecycleAuthorityClient,
   environmentActivationReconciler = reconcileSetupEnvironmentActivation,
@@ -873,7 +877,11 @@ export async function runDevBridgeSetup({
           visibility: 'available',
         });
         const configuration = profileConfigurationFactory({ stateDirectory, platform, invoke });
-        progress.emit('elevation-consent', 'requested', 'Windows will request consent now');
+        progress.emit(
+          'elevation-consent',
+          'requesting',
+          'DevBridge Protected Setup needs administrator permission to reconcile the DevBridge-owned lifecycle service and protected environment configuration; Windows consent follows now',
+        );
         const elevationOutcome = await progress.watch('protected-transaction', () => elevationRequester({
           home: root,
           launcher: pathStatus.launcher,
@@ -1358,6 +1366,14 @@ export async function runDevBridgeSetup({
   }
   if (platform === 'win32' && lifecycleAuthority?.ready !== true && lifecycleAuthority?.elevationRequired === true) {
     try {
+      const elevationPreparation = await progress.run('elevation-launcher-preparation', () => elevationPreparer({
+        home: root,
+        platform,
+        invoke,
+      }));
+      if (elevationPreparation?.prepared !== true) {
+        throw new Error('the identified Windows elevation launcher did not verify ready');
+      }
       const acceptedSetup = setupState(previous, { identity: scope.identity, repositories, snapshot });
       protectedApply = (await protectedApplyFrontier.prepare(profileConfigurationRecord, profileSelection.revision, acceptedSetup)).record;
       progress.emit('protected-apply', 'checkpointed', 'ordinary preparation complete');

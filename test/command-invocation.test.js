@@ -66,3 +66,20 @@ test('a locally composed command invoker admits only its explicit long-transacti
   assert.throws(() => createCommandInvoker({ maximumTimeoutMs: (45 * 60_000) + 1 }), /command invoker policy.maximumTimeoutMs/u);
   assert.throws(() => createCommandInvoker({ maximumTimeoutMs: 45 * 60_000, executable: process.execPath }), /policy.executable is not allowed/u);
 });
+
+test('local command visibility is a closed composition policy and remains hidden by default', async () => {
+  const request = {
+    executable: process.execPath,
+    arguments: ['-e', 'process.stdout.write("visibility-policy-ok")'],
+    timeoutMs: 5_000,
+    maxOutputBytes: 4_096,
+  };
+  const defaultInvoker = createCommandInvoker({ maximumTimeoutMs: 45 * 60_000 });
+  const visibleInvoker = createCommandInvoker({ maximumTimeoutMs: 45 * 60_000, windowsHide: false });
+  assert.equal((await defaultInvoker(request)).stdout, 'visibility-policy-ok');
+  assert.equal((await visibleInvoker(request)).stdout, 'visibility-policy-ok');
+  assert.throws(
+    () => createCommandInvoker({ maximumTimeoutMs: 45 * 60_000, windowsHide: 'false' }),
+    /policy.windowsHide must be a boolean/u,
+  );
+});

@@ -39,7 +39,7 @@ function appendBounded(chunks, chunk, state, limit) {
   state.bytes += buffer.length;
 }
 
-async function invokeCommandWithin(raw, maximumTimeoutMs) {
+async function invokeCommandWithin(raw, { maximumTimeoutMs, windowsHide }) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('command request must be an object');
   const executable = boundedText(raw.executable, 'command executable', { maxBytes: 4_096 });
   const argumentsList = raw.arguments ?? [];
@@ -70,7 +70,7 @@ async function invokeCommandWithin(raw, maximumTimeoutMs) {
       child = spawn(executable, args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         shell: false,
-        windowsHide: true,
+        windowsHide,
         env: raw.environment ?? process.env,
       });
     } catch (error) {
@@ -143,12 +143,15 @@ async function invokeCommandWithin(raw, maximumTimeoutMs) {
 export function createCommandInvoker(raw = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('command invoker policy must be an object');
   for (const key of Object.keys(raw)) {
-    if (key !== 'maximumTimeoutMs') throw new TypeError(`command invoker policy.${key} is not allowed`);
+    if (!['maximumTimeoutMs', 'windowsHide'].includes(key)) throw new TypeError(`command invoker policy.${key} is not allowed`);
   }
   const maximumTimeoutMs = integer(raw.maximumTimeoutMs, 'command invoker policy.maximumTimeoutMs', MAX_TIMEOUT_MS, MAX_CONFIGURED_TIMEOUT_MS);
-  return (request) => invokeCommandWithin(request, maximumTimeoutMs);
+  const windowsHide = raw.windowsHide ?? true;
+  if (typeof windowsHide !== 'boolean') throw new TypeError('command invoker policy.windowsHide must be a boolean');
+  const policy = Object.freeze({ maximumTimeoutMs, windowsHide });
+  return (request) => invokeCommandWithin(request, policy);
 }
 
 export function invokeCommand(raw) {
-  return invokeCommandWithin(raw, MAX_TIMEOUT_MS);
+  return invokeCommandWithin(raw, Object.freeze({ maximumTimeoutMs: MAX_TIMEOUT_MS, windowsHide: true }));
 }
