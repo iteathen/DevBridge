@@ -141,7 +141,12 @@ export function transactAcknowledgedLocalAuthorityJsonLine({
       if (settled) return;
       const complete = completeResponse();
       if (settled) return;
-      if (!complete) return finish(fail('closed without a result'));
+      if (!complete) {
+        const error = fail('closed without a result');
+        error.localAuthorityResponseBytes = Buffer.byteLength(buffer, 'utf8');
+        error.localAuthorityTerminal = 'disconnect';
+        return finish(error);
+      }
       finish(null, parsed);
     };
     if (signal?.aborted) return finish(fail('exchange was interrupted'));
@@ -234,8 +239,8 @@ export async function transactBoundedLocalAuthoritySocket({
     } catch (error) {
       retry = replaySafe === true
         && WINDOWS_PIPE.test(selectedEndpoint)
-        && error?.code === 'EPIPE'
-        && error?.localAuthorityResponseBytes === 0;
+        && error?.localAuthorityResponseBytes === 0
+        && (error?.code === 'EPIPE' || error?.localAuthorityTerminal === 'disconnect');
       if (!retry) throw error;
       const transactionFinished = now();
       if (replayConnectionDeadline == null) replayConnectionDeadline = transactionFinished + selectedTimeout;
