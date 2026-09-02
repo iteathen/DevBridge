@@ -90,6 +90,101 @@ test('Windows replay-safe operation retries only stale zero-response transaction
   assert.equal(transactions, 2);
 });
 
+test('late Windows zero-response replay receives one fresh bounded connection window', async () => {
+  const fixture = connectionFactory([null, 'ENOENT', null]);
+  let clock = 0;
+  let transactions = 0;
+  const value = await transactBoundedLocalAuthoritySocket({
+    endpoint: '\\\\.\\pipe\\devbridge-test',
+    timeoutMs: 1000,
+    replaySafe: true,
+    transact: async () => {
+      transactions += 1;
+      if (transactions === 1) {
+        clock = 5000;
+        throw Object.assign(new Error('late stale pipe'), { code: 'EPIPE', localAuthorityResponseBytes: 0 });
+      }
+      return 'ready';
+    },
+  }, {
+    createConnection: fixture.createConnection,
+    now: () => clock,
+    wait: async () => {},
+  });
+  assert.equal(value, 'ready');
+  assert.equal(transactions, 2);
+  assert.equal(fixture.attempts(), 3);
+});
+
+test('replayed Windows transactions do not spend the bounded connection re-arm budget', async () => {
+  const fixture = connectionFactory([null, null, null]);
+  let clock = 0;
+  let transactions = 0;
+  const value = await transactBoundedLocalAuthoritySocket({
+    endpoint: '\\\\.\\pipe\\devbridge-test',
+    timeoutMs: 1000,
+    replaySafe: true,
+    transact: async () => {
+      transactions += 1;
+      if (transactions === 3) return 'ready';
+      clock += 5000;
+      throw Object.assign(new Error('persistently stale pipe'), { code: 'EPIPE', localAuthorityResponseBytes: 0 });
+    },
+  }, {
+    createConnection: fixture.createConnection,
+    now: () => clock,
+    wait: async () => { clock += 25; },
+  });
+  assert.equal(value, 'ready');
+  assert.equal(transactions, 3);
+  assert.equal(fixture.attempts(), 3);
+});
+
+test('Windows zero-response retries cannot renew exhausted connection re-arm budget', async () => {
+  const fixture = connectionFactory([null, null, null]);
+  let clock = 0;
+  let transactions = 0;
+  await assert.rejects(transactBoundedLocalAuthoritySocket({
+    endpoint: '\\\\.\\pipe\\devbridge-test',
+    timeoutMs: 1000,
+    replaySafe: true,
+    transact: async () => {
+      transactions += 1;
+      throw Object.assign(new Error('persistently stale pipe'), { code: 'EPIPE', localAuthorityResponseBytes: 0 });
+    },
+  }, {
+    createConnection: fixture.createConnection,
+    now: () => clock,
+    wait: async () => { clock += 600; },
+  }), (error) => error?.code === 'ETIMEDOUT');
+  assert.equal(transactions, 2);
+  assert.equal(fixture.attempts(), 2);
+});
+
+test('Windows zero-response replay remains cancellation-aware', async () => {
+  const fixture = connectionFactory([null, null]);
+  const controller = new AbortController();
+  let transactions = 0;
+  await assert.rejects(transactBoundedLocalAuthoritySocket({
+    endpoint: '\\\\.\\pipe\\devbridge-test',
+    timeoutMs: 1000,
+    signal: controller.signal,
+    replaySafe: true,
+    transact: async () => {
+      transactions += 1;
+      throw Object.assign(new Error('stale pipe'), { code: 'EPIPE', localAuthorityResponseBytes: 0 });
+    },
+  }, {
+    createConnection: fixture.createConnection,
+    wait: async (_milliseconds, signal) => {
+      controller.abort();
+      if (signal.aborted) throw Object.assign(new Error('interrupted'), { code: 'ABORT_ERR' });
+    },
+  }), (error) => error?.code === 'ABORT_ERR');
+  assert.equal(transactions, 1);
+  assert.equal(fixture.attempts(), 1);
+});
+
 test('local authority transaction does not retry replay-unsafe operations or partial responses', async () => {
   for (const input of [
     { replaySafe: false, localAuthorityResponseBytes: 0 },

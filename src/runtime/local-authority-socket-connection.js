@@ -114,15 +114,16 @@ export async function transactBoundedLocalAuthoritySocket({
   const now = dependencies.now ?? Date.now;
   const wait = dependencies.wait ?? retryDelay;
   if (typeof now !== 'function' || typeof wait !== 'function') throw new TypeError('local authority transaction timing is invalid');
-  const deadline = now() + selectedTimeout;
+  let replayConnectionDeadline = null;
   for (;;) {
-    const remaining = deadline - now();
-    if (remaining <= 0) throw connectionFailure('local authority connection timed out', 'ETIMEDOUT');
+    const remaining = replayConnectionDeadline == null ? selectedTimeout : replayConnectionDeadline - now();
+    if (remaining <= 0) throw connectionFailure('local authority re-arm timed out', 'ETIMEDOUT');
     const socket = await connectBoundedLocalAuthoritySocket({
       endpoint: selectedEndpoint,
       timeoutMs: remaining,
       signal,
     }, dependencies);
+    const transactionStarted = now();
     let retry = false;
     try {
       return await transact(socket);
@@ -132,14 +133,17 @@ export async function transactBoundedLocalAuthoritySocket({
         && error?.code === 'EPIPE'
         && error?.localAuthorityResponseBytes === 0;
       if (!retry) throw error;
-      const retryRemaining = deadline - now();
+      const transactionFinished = now();
+      if (replayConnectionDeadline == null) replayConnectionDeadline = transactionFinished + selectedTimeout;
+      else replayConnectionDeadline += Math.max(0, transactionFinished - transactionStarted);
+      const retryRemaining = replayConnectionDeadline - transactionFinished;
       if (retryRemaining <= 0) throw error;
     } finally {
       socket.destroy();
     }
     if (retry) {
-      const retryRemaining = deadline - now();
-      if (retryRemaining <= 0) throw connectionFailure('local authority connection timed out', 'ETIMEDOUT');
+      const retryRemaining = replayConnectionDeadline - now();
+      if (retryRemaining <= 0) throw connectionFailure('local authority re-arm timed out', 'ETIMEDOUT');
       await wait(Math.min(RETRY_DELAY_MS, retryRemaining), signal);
     }
   }
