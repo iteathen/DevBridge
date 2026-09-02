@@ -151,6 +151,7 @@ test('solver binds one explicit private state to a complete combined no-removal 
     assert.deepEqual(calls[0].args.slice(-3), ['--with-new-pkgs', '--no-remove', 'upgrade']);
     assert.ok(calls[0].args.includes('--simulate'));
     assert.ok(calls[0].args.includes(SNAPSHOT));
+    assert.ok(!calls[0].args.includes('--no-list-columns'));
     assert.deepEqual(calls[1].args.slice(-6), [
       '--no-remove', '--no-install-recommends', 'install', 'libc6:amd64=2.0', 'build-essential', 'cmake',
     ]);
