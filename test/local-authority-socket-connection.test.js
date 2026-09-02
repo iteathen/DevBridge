@@ -88,6 +88,22 @@ test('local authority response accepts a complete acknowledged frame before a cl
   assert.deepEqual(socket.endedWith, [LOCAL_AUTHORITY_RESPONSE_ACKNOWLEDGEMENT]);
 });
 
+test('local authority response accepts only a complete acknowledged frame on close-only delivery', async () => {
+  const complete = responseSocket();
+  const completeResult = acknowledgedTransaction(complete);
+  complete.emit('data', '{"ok":true}\n');
+  complete.emit('close');
+  assert.deepEqual(await completeResult, { ok: true });
+  assert.deepEqual(complete.endedWith, [LOCAL_AUTHORITY_RESPONSE_ACKNOWLEDGEMENT]);
+
+  const partial = responseSocket();
+  const partialResult = acknowledgedTransaction(partial);
+  partial.emit('data', '{"ok":');
+  partial.emit('close');
+  await assert.rejects(partialResult, (error) => error?.code === 'FIXTURE_UNAVAILABLE');
+  assert.deepEqual(partial.endedWith, []);
+});
+
 test('local authority response distinguishes a complete null JSON value from an incomplete frame', async () => {
   const socket = responseSocket();
   const pending = acknowledgedTransaction(socket);

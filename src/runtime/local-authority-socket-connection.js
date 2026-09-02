@@ -165,7 +165,7 @@ export function transactAcknowledgedLocalAuthorityJsonLine({
       error.localAuthorityResponseBytes = Buffer.byteLength(buffer, 'utf8');
       finish(error);
     });
-    socket.once('close', () => { if (!settled) finish(fail('connection closed ambiguously')); });
+    socket.once('close', acceptResponse);
     let wire;
     try { wire = `${JSON.stringify(request)}\n`; }
     catch { return finish(fail('request could not be encoded')); }
