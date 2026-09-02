@@ -56,7 +56,7 @@ test('acquisition fails over between injected sources without changing exact byt
     const result = await new ImmutableObjectAcquisition({ directory: root, sources: [unavailable, exact] }).ensure({ descriptor: value.descriptor });
     assert.equal(result.state, 'cache-committed');
     assert.deepEqual(await readFile(result.objects[0].location), value.bytes);
-    assert.equal(unavailable.calls.length, value.descriptor.objects[0].chunks.length);
+    assert.equal(unavailable.calls.length, 1);
     assert.equal(exact.calls.length, value.descriptor.objects[0].chunks.length);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -90,6 +90,24 @@ test('a source that fails after its last byte cannot publish that attempt', asyn
     const result = await new ImmutableObjectAcquisition({ directory: root, sources: [lateFailure, exact] }).ensure({ descriptor: value.descriptor });
     assert.equal(lateFailure.calls.length, 1);
     assert.equal(exact.calls.length, 1);
+    assert.deepEqual(await readFile(result.objects[0].location), value.bytes);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('a malformed source iterator fails over before opening destination state', async () => {
+  const root = await tempRoot();
+  try {
+    const value = fixture({ bytes: Buffer.from('abcd'), chunkBytes: 4 });
+    let malformedCalls = 0;
+    const malformed = {
+      async fetch() {
+        malformedCalls += 1;
+        return { body: { [Symbol.asyncIterator]() { throw new Error('malformed iterator'); } } };
+      },
+    };
+    const exact = sourceFor(value);
+    const result = await new ImmutableObjectAcquisition({ directory: root, sources: [malformed, exact] }).ensure({ descriptor: value.descriptor });
+    assert.equal(malformedCalls, 1);
     assert.deepEqual(await readFile(result.objects[0].location), value.bytes);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
