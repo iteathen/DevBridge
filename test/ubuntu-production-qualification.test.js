@@ -20,6 +20,7 @@ const expected = {
   ],
   commands: ['hv_fcopy_uio_daemon'],
   services: ['hv-fcopy-daemon.service'],
+  capabilities: ['hyperv-fcopy-uio-v1'],
 };
 
 function bridgeResponse(frame, body) {
@@ -80,6 +81,9 @@ function successfulBridge(calls) {
         assert.match(script, /systemctl is-enabled --quiet/u);
         assert.match(script, /systemctl is-active --quiet/u);
         assert.match(script, /hv-fcopy-daemon\.service/u);
+        assert.match(script, /eb765408-105f-49b6-b4aa-c123b64d17d4/u);
+        assert.match(script, /uio_hv_generic/u);
+        assert.match(script, /10-devbridge-uio\.conf/u);
         assert.match(script, /cmake -S/u);
         assert.match(script, /ctest --test-dir/u);
         assert.match(script, /curl --fail/u);
@@ -109,6 +113,7 @@ test('Ubuntu production probe proves exact files/packages/snapshot/network/build
   assert.equal(result.packageSnapshot, snapshot);
   assert.deepEqual(result.commands, ['hv_fcopy_uio_daemon']);
   assert.deepEqual(result.services, ['hv-fcopy-daemon.service']);
+  assert.deepEqual(result.capabilities, ['hyperv-fcopy-uio-v1']);
   assert.equal(result.network, true);
   assert.equal(result.cmakeCtest, true);
   assert.equal(result.sanitized, false);
@@ -164,6 +169,10 @@ test('Ubuntu production qualification rejects mutable authority before guest eff
     target,
     expected: { ...expected, services: ['../hv-fcopy-daemon.service'] },
   }), /service 0 is invalid/u);
+  await assert.rejects(() => qualifier.probe({
+    target,
+    expected: { ...expected, capabilities: ['future-capability-v1'] },
+  }), /capability 0 is unsupported/u);
   assert.equal(effects, 0);
 });
 

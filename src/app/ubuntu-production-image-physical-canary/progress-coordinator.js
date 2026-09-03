@@ -61,14 +61,21 @@ export function createProgressCoordinator({ maximumAdvances, measureReadiness, m
       if (current.phase === 'active') {
         const observed = await observeLifecycle();
         if (observed.state !== 'running' || observed.mediaCount !== 0) return present(current, { state: 'waiting', reason: messages.outputNotReady });
-        const pendingEndpoint = (reason) => {
-          const readiness = measureReadiness(observed.uptimeMilliseconds);
+        const pendingEndpoint = (reason, lifecycle = observed) => {
+          const readiness = measureReadiness(lifecycle.uptimeMilliseconds);
           if (readiness.classification === 'expired') return present(current, { state: 'blocked', reason: messages.readinessExpired(reason), readiness });
           return present(current, { state: 'waiting', reason, readiness });
         };
         let endpoint;
         try { endpoint = await resolveEndpoint(); }
-        catch (error) { return pendingEndpoint(messages.endpointNotReady(error.message)); }
+        catch (error) {
+          const reason = messages.endpointNotReady(error.message);
+          let refreshed;
+          try { refreshed = await observeLifecycle(); }
+          catch { return present(current, { state: 'waiting', reason }); }
+          if (refreshed.state !== 'running' || refreshed.mediaCount !== 0) return present(current, { state: 'waiting', reason: messages.outputNotReady });
+          return pendingEndpoint(reason, refreshed);
+        }
         const inspected = await inspectEndpoint(endpoint);
         if (inspected.ready !== true) return pendingEndpoint(messages.endpointUnready(inspected.reason ?? 'unknown failure'));
       }

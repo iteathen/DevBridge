@@ -45,7 +45,7 @@ function authority(overrides = {}) {
       ],
     },
     payload: { generation: 'guest-image-0123456789abcdef01234567' },
-    qualification: { commands: ['make'], services: ['hv-fcopy-daemon.service'] },
+    qualification: { commands: ['make'], services: ['hv-fcopy-daemon.service'], capabilities: ['hyperv-fcopy-uio-v1'] },
     output: { profile: 'linux-development', generation: 'ubuntu-2604-production-v1', bootstrap: 'guest-image-v1' },
     ...overrides,
   };
@@ -68,6 +68,7 @@ test('Ubuntu construction authority is content-addressed and normalizes stable o
   assert.equal(normalized.output.profile, 'linux-development');
   assert.deepEqual(normalized.qualification.commands, ['make']);
   assert.deepEqual(normalized.qualification.services, ['hv-fcopy-daemon.service']);
+  assert.deepEqual(normalized.qualification.capabilities, ['hyperv-fcopy-uio-v1']);
   assert.match(ubuntuConstructionAuthoritySubject(first), /^subject-[a-f0-9]{32}$/u);
   assert.equal(ubuntuConstructionAuthoritySubject(first), ubuntuConstructionAuthoritySubject(reordered));
 });
@@ -103,6 +104,20 @@ test('Ubuntu construction authority binds required services and rejects unsafe o
     ...first,
     qualification: { ...first.qualification, services: ['hv-fcopy-daemon.service', 'hv-fcopy-daemon.service'] },
   }), /qualification service 1 is invalid/u);
+});
+
+test('Ubuntu construction authority binds bounded guest capabilities', () => {
+  const first = authority();
+  const changed = { ...first, qualification: { ...first.qualification, capabilities: ['future-capability-v1'] } };
+  assert.notEqual(ubuntuConstructionAuthoritySubject(first), ubuntuConstructionAuthoritySubject(changed));
+  assert.throws(() => normalizeUbuntuConstructionAuthority({
+    ...first,
+    qualification: { ...first.qualification, capabilities: ['../hyperv-fcopy-uio-v1'] },
+  }), /qualification capability 0 is invalid/u);
+  assert.throws(() => normalizeUbuntuConstructionAuthority({
+    ...first,
+    qualification: { ...first.qualification, capabilities: ['hyperv-fcopy-uio-v1', 'hyperv-fcopy-uio-v1'] },
+  }), /qualification capability 1 is invalid/u);
 });
 
 test('Ubuntu construction authority preserves historical command-only subject bytes', () => {
