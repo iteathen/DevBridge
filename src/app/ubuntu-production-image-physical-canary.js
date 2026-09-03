@@ -127,6 +127,7 @@ function neutralPayload(payload) {
 function requestFor(config, subject, payload) {
   if (payload.generation !== config.authority.payload.generation) throw new Error('current guest payload generation does not match construction authority');
   const services = config.authority.qualification.services;
+  const capabilities = config.authority.qualification.capabilities;
   return Object.freeze({
     identity: subject,
     work: Object.freeze({ subject }),
@@ -138,6 +139,7 @@ function requestFor(config, subject, payload) {
       packages: Object.freeze(config.authority.packages.packages.map((entry) => Object.freeze({ ...entry }))),
       commands: Object.freeze([...config.authority.qualification.commands]),
       ...(services === undefined ? {} : { services: Object.freeze([...services]) }),
+      ...(capabilities === undefined ? {} : { capabilities: Object.freeze([...capabilities]) }),
     }),
     output: Object.freeze({
       profile: config.authority.output.profile,
@@ -268,6 +270,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
         payloadSet: async () => neutralPayload(payload),
         packageSet: async () => authority.packages,
         services: authority.qualification.services ?? [],
+        capabilities: authority.qualification.capabilities ?? [],
       });
       const media = createUbuntuAutoinstallMediaPreparer({
         recipeLookup: async (reference) => {
@@ -300,6 +303,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
         || prepared.evidence?.seed?.packageGeneration !== authority.packages.generation
         || prepared.evidence?.seed?.packageSnapshot !== authority.packages.snapshot
         || JSON.stringify(prepared.evidence?.seed?.services) !== JSON.stringify(authority.qualification.services ?? [])
+        || JSON.stringify(prepared.evidence?.seed?.capabilities) !== JSON.stringify(authority.qualification.capabilities ?? [])
         || prepared.evidence?.seed?.networkMethod !== selectedNetwork.addressing.method
       ) throw new Error('prepared seed evidence does not match construction authority');
       await rm(paths.releaseDirectory, { recursive: true, force: true });

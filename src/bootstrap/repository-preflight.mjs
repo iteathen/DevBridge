@@ -163,6 +163,7 @@ const SYNTAX_FILES = [
   'src/state/setup-resource-conflict-consent-store.js',
   'src/state/immutable-subject-record-state-store.js',
   'src/setup/ubuntu-authority.js',
+  'src/runtime/image-builders/ubuntu-guest-capabilities.js',
   'src/setup/ubuntu-package-capsule-release-input.mjs',
   'src/setup/resource-conflict.js',
   'src/setup/operational-configuration.js',
@@ -505,6 +506,7 @@ const TARGETED_TESTS = [
   'test/windows-protected-image-construction-preflight.test.js',
   'test/ubuntu-production-image-physical-canary-nested-lego.test.js',
   'test/ubuntu-production-image-physical-canary.test.js',
+  'test/ubuntu-guest-capabilities.test.js',
   'test/windows-production-image-physical-canary.test.js',
   'test/windows-production-image-canary-entry.test.js',
 ];

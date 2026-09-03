@@ -16,6 +16,7 @@ const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
 const PATCH_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const COMMAND = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/u;
 const SERVICE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,122}\.service$/u;
+const CAPABILITY = /^[a-z0-9][a-z0-9-]{0,62}-v[1-9][0-9]{0,3}$/u;
 const MUTABLE_VERSION = /^(?:latest|stable|current|head|main|master)$/iu;
 const APPROVED_SOURCE_HOSTS = new Set(['releases.ubuntu.com', 'cdimage.ubuntu.com']);
 const MAX_PATCH_BYTES = 64 * 1024;
@@ -128,7 +129,7 @@ function normalizePayload(raw) {
 }
 
 function normalizeQualification(raw = {}) {
-  const value = onlyKeys(raw, new Set(['commands', 'services']), 'construction qualification');
+  const value = onlyKeys(raw, new Set(['commands', 'services', 'capabilities']), 'construction qualification');
   const commandSource = value.commands ?? [];
   if (!Array.isArray(commandSource) || commandSource.length > 32) throw new TypeError('construction qualification commands is invalid');
   const commandNames = new Set();
@@ -147,6 +148,15 @@ function normalizeQualification(raw = {}) {
   });
   const normalized = { commands: Object.freeze(commands.sort()) };
   if (value.services !== undefined) normalized.services = Object.freeze(services.sort());
+  if (value.capabilities !== undefined) {
+    if (!Array.isArray(value.capabilities) || value.capabilities.length > 16) throw new TypeError('construction qualification capabilities is invalid');
+    const capabilityNames = new Set();
+    normalized.capabilities = Object.freeze(value.capabilities.map((entry, index) => {
+      if (typeof entry !== 'string' || !CAPABILITY.test(entry) || capabilityNames.has(entry)) throw new TypeError(`construction qualification capability ${index} is invalid`);
+      capabilityNames.add(entry);
+      return entry;
+    }).sort());
+  }
   return Object.freeze(normalized);
 }
 

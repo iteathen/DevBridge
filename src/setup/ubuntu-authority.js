@@ -2,6 +2,7 @@ import { gunzipSync } from 'node:zlib';
 import { createGuestImagePayload } from '../guest/image-payload.js';
 import { normalizeUbuntuConstructionAuthority } from '../runtime/image-builders/ubuntu-construction-authority.js';
 import { comparePackageVersions } from './package-version.js';
+import { UBUNTU_HYPERV_FCOPY_UIO_CAPABILITY } from '../runtime/image-builders/ubuntu-guest-capabilities.js';
 
 const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
 const PACKAGE_NAMES = Object.freeze(['build-essential', 'cmake', 'git', 'linux-cloud-tools-virtual', 'nodejs', 'npm', 'openssh-server']);
@@ -21,9 +22,9 @@ const SOURCE = Object.freeze({
   signerFingerprint: '843938DF228D22F7B3742BC0D94AA3F0EFE21092',
 });
 
-const OUTPUT = Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v7', bootstrap: 'guest-image-v1' });
+const OUTPUT = Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v8', bootstrap: 'guest-image-v1' });
 const OUTPUT_PAYLOAD_GENERATION = 'guest-image-6c102cff53ad6d9f10f03530';
-const RECIPE_GENERATION = 'ubuntu-2604-autoinstall-v11';
+const RECIPE_GENERATION = 'ubuntu-2604-autoinstall-v12';
 const PACKAGE_GENERATION = 'ubuntu-2604-tools-v4';
 
 const BOOT_PATCH = Object.freeze({
@@ -130,6 +131,7 @@ function authorityFrom({ snapshot, packages, payloadGeneration }) {
     qualification: Object.freeze({
       commands: Object.freeze(['hv_fcopy_uio_daemon', 'hv_kvp_daemon', 'make']),
       services: Object.freeze(['hv-fcopy-daemon.service']),
+      capabilities: Object.freeze([UBUNTU_HYPERV_FCOPY_UIO_CAPABILITY]),
     }),
     output: OUTPUT,
   });

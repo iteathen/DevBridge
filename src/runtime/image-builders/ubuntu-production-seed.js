@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { resolveUbuntuGuestCapabilities } from './ubuntu-guest-capabilities.js';
 
 const PROTOCOL = 'devbridge/ubuntu-production-seed-v1';
 const SUBJECT = /^subject-[a-f0-9]{32}$/u;
@@ -127,13 +128,15 @@ export class UbuntuProductionSeedFactory {
   #payloadSet;
   #packageSet;
   #services;
+  #capabilities;
 
-  constructor({ payloadSet, packageSet, services = [] } = {}) {
+  constructor({ payloadSet, packageSet, services = [], capabilities = [] } = {}) {
     if (typeof payloadSet !== 'function') throw new TypeError('payloadSet must be a function');
     if (typeof packageSet !== 'function') throw new TypeError('packageSet must be a function');
     this.#payloadSet = payloadSet;
     this.#packageSet = packageSet;
     this.#services = normalizeServices(services);
+    this.#capabilities = resolveUbuntuGuestCapabilities(capabilities);
   }
 
   async create(rawRequest) {
@@ -150,6 +153,7 @@ export class UbuntuProductionSeedFactory {
     }
     lines.push('  ssh:', '    install-server: true', '    allow-pw: false', '  late-commands:', `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--error-on=any', '--snapshot', packages.snapshot, 'update'])}`, `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--snapshot', packages.snapshot, 'upgrade', '-y', '--with-new-pkgs', '--no-remove'])}`, `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--snapshot', packages.snapshot, 'install', '-y', '--no-install-recommends', ...packageSpecifications])}`, '  shutdown: poweroff', '  user-data:', '    users:', '      - name: devbridge', '        gecos: DevBridge Image Builder', '        groups: [adm, sudo]', '        shell: /bin/bash', '        lock_passwd: true', '        ssh_authorized_keys:', `          - ${yamlString(request.authorizedKey)}`, '    ssh_deletekeys: true', '    ssh_keys:', `      ed25519_private: ${yamlString(request.hostPrivateKey)}`, `      ed25519_public: ${yamlString(request.hostPublicKey)}`, '    write_files:');
     for (const file of payload.files) writeFileYaml(lines, file);
+    for (const file of this.#capabilities.files) writeFileYaml(lines, file);
     writeFileYaml(lines, { path: '/etc/systemd/system/devbridge-network-seed.service', content: NETWORK_UNIT, permissions: '0644' });
     writeFileYaml(lines, { path: '/etc/systemd/system/devbridge-access-seed.service', content: ACCESS_UNIT, permissions: '0644' });
     writeFileYaml(lines, { path: SANITIZER_PATH, content: SANITIZER, permissions: '0755' });
@@ -171,6 +175,7 @@ export class UbuntuProductionSeedFactory {
         packageSnapshot: packages.snapshot,
         packages: packages.packages.map(({ name, version }) => ({ name, version })),
         services: [...this.#services],
+        capabilities: [...this.#capabilities.ids],
         networkMethod: request.network.method,
         userDataSha256: digest(userData),
       }),

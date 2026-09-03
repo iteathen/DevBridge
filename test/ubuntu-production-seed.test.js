@@ -45,6 +45,7 @@ function factory(overrides = {}) {
       ],
     }),
     services: ['hv-fcopy-daemon.service'],
+    capabilities: ['hyperv-fcopy-uio-v1'],
     ...overrides,
   });
 }
@@ -65,6 +66,10 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.match(result.userData, /"nodejs=22\.16\.0\+dfsg-1"/u);
   assert.match(result.userData, /"linux-cloud-tools-virtual=6\.14\.0\.29\.29"/u);
   assert.match(result.userData, /\["systemctl", "enable", "--now", "hv-fcopy-daemon\.service"\]/u);
+  assert.match(result.userData, /path: "\/etc\/systemd\/system\/hv-fcopy-daemon\.service\.d\/10-devbridge-uio\.conf"/u);
+  const capability = embeddedContents(result.userData).find((entry) => entry.includes('modprobe uio_hv_generic'));
+  assert.ok(capability);
+  assert.match(capability, /34d14be3-dee4-41c8-9ae7-6b174977c192/u);
   assert.match(result.userData, /dhcp4: true/u);
   assert.doesNotMatch(result.userData, /192\.168\.77/u);
   assert.match(result.userData, /apt:\n    conf: \|\n      Unattended-Upgrade::Package-Blacklist \{\n        "\.\*";\n      \};/u);
@@ -86,6 +91,7 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.equal(result.evidence.packageSnapshot, snapshot);
   assert.equal(result.evidence.networkMethod, 'automatic');
   assert.deepEqual(result.evidence.services, ['hv-fcopy-daemon.service']);
+  assert.deepEqual(result.evidence.capabilities, ['hyperv-fcopy-uio-v1']);
   assert.equal(result.evidence.packages.find((entry) => entry.name === 'git').version, '1:2.48.1-0ubuntu1');
   assert.equal(result.evidence.files.length, 3);
   assert.match(result.evidence.userDataSha256, /^[a-f0-9]{64}$/u);

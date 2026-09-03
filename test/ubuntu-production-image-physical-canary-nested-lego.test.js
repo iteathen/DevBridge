@@ -254,3 +254,58 @@ test('progress coordinator owns a bounded neutral frontier without advancing wai
   assert.equal(result.reason, 'pending');
   assert.equal(advances, 0);
 });
+
+test('progress coordinator measures endpoint failure from fresh post-transition lifecycle evidence', async () => {
+  const uptimes = [3_815_000, 36_000];
+  const measured = [];
+  let advances = 0;
+  const coordinator = createProgressCoordinator({
+    maximumAdvances: 2,
+    measureReadiness(uptime) {
+      measured.push(uptime);
+      return { classification: uptime >= 600_000 ? 'expired' : 'observing' };
+    },
+    messages: progressMessages(),
+  });
+  const result = await coordinator.run({
+    async inspect() { return { phase: 'active', complete: false, blocked: false }; },
+    async advance() { advances += 1; return {}; },
+    async observeProgress() { throw new Error('unused'); },
+    async observeLifecycle() { return { state: 'running', mediaCount: 0, uptimeMilliseconds: uptimes.shift() }; },
+    async resolveEndpoint() { throw new Error('owned lifecycle transition completed'); },
+    async inspectEndpoint() { throw new Error('unused'); },
+    async reconcileCompletion() { throw new Error('unused'); },
+    present(current, details) { return { current, ...details }; },
+  });
+  assert.equal(result.state, 'waiting');
+  assert.equal(result.reason, 'endpoint:owned lifecycle transition completed');
+  assert.equal(result.readiness.classification, 'observing');
+  assert.deepEqual(measured, [36_000]);
+  assert.equal(advances, 0);
+});
+
+test('progress coordinator does not apply stale readiness after endpoint resolution changes lifecycle state', async () => {
+  const observations = [
+    { state: 'running', mediaCount: 0, uptimeMilliseconds: 3_815_000 },
+    { state: 'off', mediaCount: 0, uptimeMilliseconds: 0 },
+  ];
+  let measurements = 0;
+  const coordinator = createProgressCoordinator({
+    maximumAdvances: 1,
+    measureReadiness() { measurements += 1; return { classification: 'expired' }; },
+    messages: progressMessages(),
+  });
+  const result = await coordinator.run({
+    async inspect() { return { phase: 'active', complete: false, blocked: false }; },
+    async advance() { throw new Error('unused'); },
+    async observeProgress() { throw new Error('unused'); },
+    async observeLifecycle() { return observations.shift(); },
+    async resolveEndpoint() { throw new Error('transition pending'); },
+    async inspectEndpoint() { throw new Error('unused'); },
+    async reconcileCompletion() { throw new Error('unused'); },
+    present(current, details) { return { current, ...details }; },
+  });
+  assert.equal(result.state, 'waiting');
+  assert.equal(result.reason, 'output pending');
+  assert.equal(measurements, 0);
+});
