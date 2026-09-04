@@ -226,7 +226,11 @@ test('GitHub Release destination rejects conflicting and incomplete existing ass
   };
   const fake = githubFake({ initial: [wrong] });
   const selected = adapter(fake);
-  await assert.rejects(selected.ensureObject({ sha256: digest, size: bytes.length, location: 'C:\\not-used' }), /metadata does not match/u);
+  await assert.rejects(selected.ensureObject({
+    sha256: digest,
+    size: bytes.length,
+    location: path.resolve('not-used-conflicting-object'),
+  }), /metadata does not match/u);
   assert.equal(fake.calls.some((call) => call.url.startsWith('https://uploads.github.com/')), false);
 });
 

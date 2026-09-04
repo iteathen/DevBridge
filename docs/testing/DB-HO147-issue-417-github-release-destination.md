@@ -82,3 +82,5 @@ The initial focused run exposed that a 999 ms duration was accepted. The constru
 - example-configuration doctor: exit zero and `ok: true`, with repository execution truthfully unavailable because the example has no persistent-environment route.
 
 Cleanup revalidated the exact qualification path directly under the local non-OneDrive Temp directory, found zero external process references, removed the runtime and TAP log (2 files / 85,666,170 bytes), and verified that the qualification root and every attributable `db-github-release-*` test root were absent. The retained installation, package cache, release evidence, and VMs were untouched.
+
+Candidate CI run `33922445176` passed both Windows jobs and failed both Ubuntu jobs at one exact test-only assertion. The conflicting-existing-asset fixture supplied `C:\\not-used`; on Ubuntu the adapter correctly rejected that non-absolute path before it could exercise the intended remote-metadata conflict. The fixture now uses `path.resolve('not-used-conflicting-object')` on every platform. No product behavior, validation boundary, timeout, or runtime code changed in response.
