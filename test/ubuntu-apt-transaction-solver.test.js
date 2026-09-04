@@ -119,7 +119,7 @@ test('installed-state parser and digest are canonical and ignore non-installed s
 
 test('simulation parser accepts exact Inst/Conf evidence and rejects removals or prose', () => {
   assert.deepEqual(parseUbuntuAptSimulation([
-    'Inst libc6:amd64 [1.0] (2.0 resolute-updates [amd64])',
+    'Inst libc6:amd64 [1.0] (2.0 resolute-updates [amd64]) [systemd:amd64 on libsystemd-shared:amd64] [libc6-dev:amd64 ]',
     'Inst linux-libc-dev (6.14 resolute [all]) [libc6-dev:amd64 ]',
     'Inst zlib1g (1.3 resolute [amd64]) []',
     'Conf libc6 (2.0 resolute-updates [amd64]) [libc6-dev:amd64 ]',

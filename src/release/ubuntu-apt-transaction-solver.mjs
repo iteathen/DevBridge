@@ -33,8 +33,25 @@ const MAX_STDERR_BYTES = 4 * 1024 * 1024;
 const MAX_ARGUMENT_BYTES = 512 * 1024;
 const SIMULATION_PACKAGE = '[a-z0-9][a-z0-9+.-]{0,99}(?::[a-z0-9][a-z0-9-]{0,31})?';
 const SIMULATION_BREAKS = new RegExp(`^(?:${SIMULATION_PACKAGE}(?: ${SIMULATION_PACKAGE})* ?)?$`, 'u');
+const SIMULATION_RELATION = new RegExp(`^${SIMULATION_PACKAGE} on ${SIMULATION_PACKAGE}$`, 'u');
+const MAX_SIMULATION_TAIL_BYTES = 4096;
+const MAX_SIMULATION_TAIL_GROUPS = 64;
 
 function fail(message) { throw new Error(message); }
+
+function validSimulationTail(value) {
+  if (value === '') return true;
+  if (Buffer.byteLength(value, 'utf8') > MAX_SIMULATION_TAIL_BYTES) return false;
+  const groups = value.matchAll(/ \[([^\]\r\n]*)\]/gu);
+  let offset = 0;
+  let count = 0;
+  for (const group of groups) {
+    if (group.index !== offset || ++count > MAX_SIMULATION_TAIL_GROUPS
+        || (!SIMULATION_RELATION.test(group[1]) && !SIMULATION_BREAKS.test(group[1]))) return false;
+    offset += group[0].length;
+  }
+  return count > 0 && offset === value.length;
+}
 
 function exactObject(raw, allowed, name) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError(`${name} must be an object`);
@@ -238,16 +255,16 @@ export function parseUbuntuAptSimulation(output) {
   for (const line of output.replaceAll('\r\n', '\n').split('\n')) {
     if (!line) continue;
     if (line.startsWith('Conf ')) {
-      const configured = /^Conf [a-z0-9][a-z0-9+.-]{0,99}(?::[a-z0-9][a-z0-9-]{0,31})? \([^()[\]\r\n]+ \[[a-z0-9][a-z0-9-]{0,31}\]\)(?: \[([^\]\r\n]*)\])?$/u.exec(line);
-      if (!configured || (configured[1] != null && !SIMULATION_BREAKS.test(configured[1]))) {
+      const configured = /^Conf [a-z0-9][a-z0-9+.-]{0,99}(?::[a-z0-9][a-z0-9-]{0,31})? \([^()[\]\r\n]+ \[[a-z0-9][a-z0-9-]{0,31}\]\)((?: \[[^\]\r\n]*\])*)$/u.exec(line);
+      if (!configured || !validSimulationTail(configured[1])) {
         fail(`Ubuntu APT simulation emitted unsupported output: ${line}`);
       }
       continue;
     }
     if (line.startsWith('Remv ')) fail('Ubuntu APT simulation requested package removal');
-    const match = /^Inst ([a-z0-9][a-z0-9+.-]{0,99})(?::([a-z0-9][a-z0-9-]{0,31}))?(?: \[[^\]\r\n]+\])? \(([^ ()\r\n]+)(?: [^()[\]\r\n]*)? \[([a-z0-9][a-z0-9-]{0,31})\]\)(?: \[([^\]\r\n]*)\])?$/u.exec(line);
+    const match = /^Inst ([a-z0-9][a-z0-9+.-]{0,99})(?::([a-z0-9][a-z0-9-]{0,31}))?(?: \[[^\]\r\n]+\])? \(([^ ()\r\n]+)(?: [^()[\]\r\n]*)? \[([a-z0-9][a-z0-9-]{0,31})\]\)((?: \[[^\]\r\n]*\])*)$/u.exec(line);
     if (!match) fail(`Ubuntu APT simulation emitted unsupported output: ${line}`);
-    if (match[5] != null && !SIMULATION_BREAKS.test(match[5])) {
+    if (!validSimulationTail(match[5])) {
       fail(`Ubuntu APT simulation emitted unsupported output: ${line}`);
     }
     const selectedArchitecture = match[2] ?? match[4];
