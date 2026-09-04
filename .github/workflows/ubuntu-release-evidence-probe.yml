@@ -1,0 +1,97 @@
+name: Ubuntu release evidence probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-release-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install read-only media tools
+        run: |
+          sudo apt-get update --quiet=2
+          sudo apt-get install --yes --no-install-recommends xorriso squashfs-tools
+      - name: Observe exact ISO target and snapshot inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/devbridge-ubuntu-release-evidence"
+          iso="$root/ubuntu-26.04-live-server-amd64.iso"
+          mkdir -p "$root/layers" "$root/workspace/lists" "$root/workspace/source-parts"
+          curl --fail --location --silent --show-error --max-time 1200 \
+            --output "$iso" \
+            https://releases.ubuntu.com/26.04/ubuntu-26.04-live-server-amd64.iso
+          printf '%s  %s\n' \
+            dec49008a71f6098d0bcfc822021f4d042d5f2db279e4d75bdd981304f1ca5d9 \
+            "$iso" | sha256sum --check --strict
+          test "$(stat --format=%s "$iso")" = 2918598656
+
+          for name in ubuntu-server-minimal ubuntu-server-minimal.ubuntu-server; do
+            xorriso -osirrox on -indev "$iso" \
+              -extract "/casper/$name.squashfs" "$root/layers/$name.squashfs"
+          done
+
+          selected=''
+          for name in ubuntu-server-minimal.ubuntu-server ubuntu-server-minimal; do
+            candidate="$root/$name.status"
+            if unsquashfs -cat "$root/layers/$name.squashfs" var/lib/dpkg/status >"$candidate" 2>/dev/null \
+                && test -s "$candidate"; then
+              selected="$candidate"
+              printf 'status-layer=%s\n' "$name"
+              break
+            fi
+            rm -f -- "$candidate"
+          done
+          test -n "$selected"
+          cp --reflink=auto "$selected" "$root/workspace/status"
+          printf 'status-bytes=%s\n' "$(stat --format=%s "$root/workspace/status")"
+          printf 'status-sha256=%s\n' "$(sha256sum "$root/workspace/status" | cut -d' ' -f1)"
+          printf 'installed-packages=%s\n' "$(grep -c '^Status: install ok installed$' "$root/workspace/status")"
+
+          keyring=''
+          for name in ubuntu-server-minimal.ubuntu-server ubuntu-server-minimal; do
+            candidate="$root/$name.ubuntu-archive-keyring.gpg"
+            if unsquashfs -cat "$root/layers/$name.squashfs" \
+                usr/share/keyrings/ubuntu-archive-keyring.gpg >"$candidate" 2>/dev/null \
+                && test -s "$candidate"; then
+              keyring="$candidate"
+              printf 'keyring-layer=%s\n' "$name"
+              break
+            fi
+            rm -f -- "$candidate"
+          done
+          test -n "$keyring"
+          cp --reflink=auto "$keyring" "$root/workspace/ubuntu-archive-keyring.gpg"
+          printf 'keyring-bytes=%s\n' "$(stat --format=%s "$root/workspace/ubuntu-archive-keyring.gpg")"
+          printf 'keyring-sha256=%s\n' "$(sha256sum "$root/workspace/ubuntu-archive-keyring.gpg" | cut -d' ' -f1)"
+
+          printf 'Dir::Etc::main "/dev/null";\nDir::Etc::parts "/dev/null";\n' \
+            >"$root/workspace/apt.conf"
+          key="$root/workspace/ubuntu-archive-keyring.gpg"
+          cat >"$root/workspace/sources.list" <<EOF
+          deb [arch=amd64 snapshot=yes signed-by=$key] http://archive.ubuntu.com/ubuntu resolute main universe
+          deb [arch=amd64 snapshot=yes signed-by=$key] http://archive.ubuntu.com/ubuntu resolute-updates main universe
+          deb [arch=amd64 snapshot=yes signed-by=$key] http://security.ubuntu.com/ubuntu resolute-security main universe
+          EOF
+
+          timeout --signal=TERM --kill-after=30s 600s /usr/bin/apt-get \
+            -o "Dir::State::status=$root/workspace/status" \
+            -o "Dir::State::lists=$root/workspace/lists" \
+            -o "Dir::Etc::sourcelist=$root/workspace/sources.list" \
+            -o "Dir::Etc::sourceparts=$root/workspace/source-parts" \
+            -o Dir::Cache::pkgcache= \
+            -o Dir::Cache::srcpkgcache= \
+            -o Debug::NoLocking=true \
+            -o Acquire::Languages=none \
+            --error-on=any --snapshot 20260821T230000Z update --quiet=2
+          rm -rf -- "$root/workspace/lists/partial" "$root/workspace/lists/auxfiles"
+          rm -f -- "$root/workspace/lists/lock"
+          find "$root/workspace/lists" -maxdepth 1 -type l -print -quit | grep -q . && exit 1 || true
+          find "$root/workspace/lists" -maxdepth 1 -type f -printf '%f\t%s\n' | LC_ALL=C sort
+          printf 'list-files=%s\n' "$(find "$root/workspace/lists" -maxdepth 1 -type f | wc -l)"
+          printf 'list-bytes=%s\n' "$(find "$root/workspace/lists" -maxdepth 1 -type f -printf '%s\n' | awk '{total += $1} END {print total + 0}')"
