@@ -2,7 +2,7 @@
 
 Date: 2026-09-04
 
-Status: implementation in progress
+Status: candidate validation
 
 Coordinates with: #197, #417, DB-003, DB-008, DB-009, DB-017, DB-019, DB-020, and DB-HO129 through DB-HO145.
 
@@ -116,4 +116,14 @@ Commit `2bf67ad9c856512420cf64aa6dc7e316c78dc27e` introduced that product-owned 
 
 The product preparer streams the 2.9 GB media and extracted-layer hashes instead of loading those objects into memory. It refuses existing destinations, uses one caller-bounded/no-retry APT update, and removes only its newly created workspace on failure. Local focused proof passed 19 tests with the one expected Linux-only skip; bounded repository preflight passed 288 syntax files and all 228 targeted tests before this hosted run.
 
-The remaining implementation seam in this slice is producer admission: capsule production must require this versioned preparation result and re-observe its bound files immediately before DB-HO131 solves. That admission check, product-level hosted proof, removal of the temporary workflow, candidate CI, integration, and fresh integrated CI are still required before DB-HO146 can be accepted.
+That product proof left one implementation seam in this slice: producer admission had to require the versioned preparation result and re-observe its bound files immediately before DB-HO131 solved.
+
+Commit `03601e64ead0e180ef721a051d8e2da2c937e5f8` made the production composition require that preparation and reject a substituted top-level solver request. Temporary hosted run `33918106659` (job `101169882615`) completed in 57 seconds: the admission verifier re-observed the exact media identity, receipt, status, keyring, isolated configuration, canonical sources, empty source-parts directory, and nine hashed list files immediately before the real DB-HO131 solve. The solve again produced the same base/result digests, 546-package selection, and seven exact requested versions.
+
+The temporary branch-only workflow is removed after that successful run; it is not part of the candidate. DB-HO146 now requires the ordinary exact-Node/full-suite and all-four candidate/integrated CI gates. Real capsule signing and multi-origin publication remain separately blocked on explicit external authority and are not disguised as completion of this preparation slice.
+
+## Candidate-local validation
+
+An initial `npm exec --package=node@22.16.0` qualification exposed a wrapper-topology artifact: npm's cached `node.exe` was hard-linked and npm's modified `PATH` caused exactly four strict executable-identity fixture failures plus two guest runtime-probe failures. Re-running those two implicated test files with a direct unlinked copy of the same cached Node.js 22.16.0 binary and its directory first on `PATH` passed 14 tests with one expected Linux-only skip. No product correction was made for that wrapper artifact.
+
+Using that exact direct runtime, bounded preflight passed 288 syntax files and all 228 targeted tests. The complete serialized suite then passed all 2,262 runnable tests with 22 platform-expected skips and zero failures. The exact temporary 85,119,640-byte Node copy and its now-empty qualification directory were removed afterward; the pre-existing npm cache entry was retained. Candidate `doctor` cannot yet run because the canonical installation has no operational `config.json`; no configuration was invented to make that check pass.
