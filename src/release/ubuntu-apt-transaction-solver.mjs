@@ -105,7 +105,7 @@ function normalizeRequested(raw) {
 function normalizeSolution(raw, expected = null) {
   const value = exactObject(raw, new Set([
     'protocol', 'snapshot', 'architecture', 'basePackages', 'resultPackages',
-    'selectedPackages', 'requestedPackages',
+    'selectedPackages', 'requestedPackages', 'transaction',
   ]), 'Ubuntu APT transaction solution');
   if (value.protocol !== UBUNTU_APT_TRANSACTION_SOLUTION_PROTOCOL) fail('Ubuntu APT transaction solution protocol is unsupported');
   if (typeof value.snapshot !== 'string' || !SNAPSHOT.test(value.snapshot)) throw new TypeError('Ubuntu APT transaction snapshot is invalid');
@@ -146,6 +146,31 @@ function normalizeSolution(raw, expected = null) {
       fail(`Ubuntu APT requested package ${name} is not exact in the result state`);
     }
   }
+  const transaction = Object.freeze({
+    protocol: UBUNTU_PACKAGE_CAPSULE_TRANSACTION_PROTOCOL,
+    packageStateProtocol: UBUNTU_PACKAGE_STATE_PROTOCOL,
+    basePackageStateSha256: ubuntuPackageStateSha256(basePackages),
+    resultPackageStateSha256: ubuntuPackageStateSha256(resultPackages),
+    requestedPackages: Object.freeze(requestedPackages.map((item) => Object.freeze({ name: item.package, version: item.version }))),
+  });
+  if (value.transaction != null) {
+    const supplied = exactObject(value.transaction, new Set([
+      'protocol', 'packageStateProtocol', 'basePackageStateSha256', 'resultPackageStateSha256', 'requestedPackages',
+    ]), 'Ubuntu APT transaction solution derived transaction');
+    if (supplied.protocol !== transaction.protocol || supplied.packageStateProtocol !== transaction.packageStateProtocol
+        || supplied.basePackageStateSha256 !== transaction.basePackageStateSha256
+        || supplied.resultPackageStateSha256 !== transaction.resultPackageStateSha256
+        || !Array.isArray(supplied.requestedPackages)
+        || supplied.requestedPackages.length !== transaction.requestedPackages.length) {
+      fail('Ubuntu APT transaction solution derived transaction does not match its package states');
+    }
+    for (let index = 0; index < transaction.requestedPackages.length; index += 1) {
+      const item = exactObject(supplied.requestedPackages[index], new Set(['name', 'version']), `Ubuntu APT transaction solution derived requested package ${index}`);
+      if (item.name !== transaction.requestedPackages[index].name || item.version !== transaction.requestedPackages[index].version) {
+        fail('Ubuntu APT transaction solution derived transaction does not match its package states');
+      }
+    }
+  }
   return Object.freeze({
     protocol: UBUNTU_APT_TRANSACTION_SOLUTION_PROTOCOL,
     snapshot: value.snapshot,
@@ -154,13 +179,7 @@ function normalizeSolution(raw, expected = null) {
     resultPackages,
     selectedPackages,
     requestedPackages,
-    transaction: Object.freeze({
-      protocol: UBUNTU_PACKAGE_CAPSULE_TRANSACTION_PROTOCOL,
-      packageStateProtocol: UBUNTU_PACKAGE_STATE_PROTOCOL,
-      basePackageStateSha256: ubuntuPackageStateSha256(basePackages),
-      resultPackageStateSha256: ubuntuPackageStateSha256(resultPackages),
-      requestedPackages: Object.freeze(requestedPackages.map((item) => Object.freeze({ name: item.package, version: item.version }))),
-    }),
+    transaction,
   });
 }
 

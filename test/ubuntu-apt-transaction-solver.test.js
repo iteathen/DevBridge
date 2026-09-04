@@ -191,6 +191,10 @@ test('solution normalization is order-independent and rejects invented changes o
   const first = normalizeUbuntuAptTransactionSolution(raw);
   const second = normalizeUbuntuAptTransactionSolution({ ...raw, resultPackages: [...raw.resultPackages].reverse() });
   assert.deepEqual(first, second);
+  assert.deepEqual(normalizeUbuntuAptTransactionSolution(first), first);
+  const changedTransaction = structuredClone(first);
+  changedTransaction.transaction.resultPackageStateSha256 = 'f'.repeat(64);
+  assert.throws(() => normalizeUbuntuAptTransactionSolution(changedTransaction), /derived transaction does not match/u);
   assert.throws(() => normalizeUbuntuAptTransactionSolution({ ...raw, basePackages: [...raw.basePackages, { package: 'removed', version: '1', architecture: 'amd64' }] }), /removes removed/u);
   assert.throws(() => normalizeUbuntuAptTransactionSolution({ ...raw, resultPackages: [...raw.resultPackages, { package: 'invented', version: '1', architecture: 'amd64' }] }), /not selected/u);
   assert.throws(() => normalizeUbuntuAptTransactionSolution({

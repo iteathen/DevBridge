@@ -2,7 +2,7 @@
 
 Date: 2026-09-04
 
-Status: candidate locally qualified; hosted acceptance pending
+Status: accepted
 
 Coordinates with: #197, #417, DB-003, DB-008, DB-009, DB-019, DB-HO124 through DB-HO131, and DB-HO141.
 
@@ -57,3 +57,9 @@ Exact Windows evidence on 2026-09-04:
 - complete suite: 2,261 total, 2,239 passed, 22 expected skips, zero failed or cancelled in 80.136 seconds;
 - example-configuration doctor exited zero with `ok: true` and truthfully reported repository execution unavailable because that example supplies no persistent-environment route; and
 - no physical setup, UAC, service, PATH, provider, or VM action occurred.
+
+## Hosted acceptance
+
+PR #468 qualified candidate `4d9fb5ec0c96ceb897662ec3435b08ca8991da78`; CI run `33903510501` passed Ubuntu smoke/full and Windows smoke/full+doctor. It rebase-merged as exact Stage 8 head `6362f61bcca30ce66738eab87299fd372708a3a5`. Fresh integrated run `33903915561` passed Ubuntu smoke in 36 seconds, Ubuntu full in 1 minute 1 second, Windows smoke in 3 minutes 21 seconds, and Windows full plus doctor in 4 minutes 22 seconds.
+
+The source adapter is accepted. It does not authorize a physical retry. DB-HO143 owns the next thin release-production composition.
