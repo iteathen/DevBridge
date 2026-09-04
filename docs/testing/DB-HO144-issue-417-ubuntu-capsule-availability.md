@@ -2,7 +2,7 @@
 
 Date: 2026-09-04
 
-Status: locally qualified candidate; hosted qualification pending
+Status: accepted
 
 Coordinates with: #197, #417, DB-003, DB-008, DB-009, DB-017, DB-019, and DB-HO124 through DB-HO143.
 
@@ -59,3 +59,5 @@ Exact Node.js 22.16.0 qualification uses a single-link 85,119,640-byte runtime w
 Require diff/cleanup hygiene, candidate all-four hosted CI, exact integration, and a fresh integrated all-four run before acceptance. A real production capsule, remote publication mechanism, #197 consumption, and physical replacement construction remain later gates; this candidate authorizes none of them.
 
 Cleanup measured 126 inactive direct-child `db-*`/`devbridge-*` qualification roots in the exact Windows Temp directory containing 5,680 files and 112,978,898 bytes. A live-process scan found zero references. One PowerShell removal attempt was blocked by host policy before execution; the established one-use Node.js helper then revalidated every exact direct real-directory target, excluded resource-lease state, removed all 126 roots, and verified zero matching root remains. The helper was removed from the worktree. Installation, VM, image, and recovery evidence were untouched.
+
+Candidate commit `4f97454f170cfc7f436b8e735f47907791618ece` passed all four jobs in run `33910465185`. PR #470 rebase-merged it as exact Stage 8 head `d56d26f2428b6f79de4479830b1c03b3f740c70f`; fresh integrated run `33910884954` passed Ubuntu smoke/full and Windows smoke/full. DB-HO144 is accepted. No physical retry follows from this acceptance.
