@@ -73,13 +73,16 @@ jobs:
           printf 'keyring-bytes=%s\n' "$(stat --format=%s "$root/workspace/ubuntu-archive-keyring.gpg")"
           printf 'keyring-sha256=%s\n' "$(sha256sum "$root/workspace/ubuntu-archive-keyring.gpg" | cut -d' ' -f1)"
 
-          printf 'Dir::Etc::main "/dev/null";\nDir::Etc::parts "/dev/null";\n' \
+          printf '%s\n' \
+            'Dir::Etc::main "/dev/null";' \
+            'Dir::Etc::parts "/dev/null";' \
             >"$root/workspace/apt.conf"
           key="$root/workspace/ubuntu-archive-keyring.gpg"
+          archive='https://snapshot.ubuntu.com/ubuntu/20260821T230000Z'
           cat >"$root/workspace/sources.list" <<EOF
-          deb [arch=amd64 snapshot=yes signed-by=$key] http://archive.ubuntu.com/ubuntu resolute main universe
-          deb [arch=amd64 snapshot=yes signed-by=$key] http://archive.ubuntu.com/ubuntu resolute-updates main universe
-          deb [arch=amd64 snapshot=yes signed-by=$key] http://security.ubuntu.com/ubuntu resolute-security main universe
+          deb [arch=amd64 signed-by=$key] $archive resolute main universe
+          deb [arch=amd64 signed-by=$key] $archive resolute-updates main universe
+          deb [arch=amd64 signed-by=$key] $archive resolute-security main universe
           EOF
 
           timeout --signal=TERM --kill-after=30s 600s /usr/bin/apt-get \
@@ -91,6 +94,8 @@ jobs:
             -o Dir::Cache::srcpkgcache= \
             -o Debug::NoLocking=true \
             -o Acquire::Languages=none \
+            -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false \
+            -o Acquire::IndexTargets::deb::DEP-11::DefaultEnabled=false \
             --error-on=any --snapshot 20260821T230000Z update --quiet=2
           rm -rf -- "$root/workspace/lists/partial" "$root/workspace/lists/auxfiles"
           rm -f -- "$root/workspace/lists/lock"
@@ -98,3 +103,29 @@ jobs:
           find "$root/workspace/lists" -maxdepth 1 -type f -printf '%f\t%s\n' | LC_ALL=C sort
           printf 'list-files=%s\n' "$(find "$root/workspace/lists" -maxdepth 1 -type f | wc -l)"
           printf 'list-bytes=%s\n' "$(find "$root/workspace/lists" -maxdepth 1 -type f -printf '%s\n' | awk '{total += $1} END {print total + 0}')"
+
+          export DEVBRIDGE_EVIDENCE_ROOT="$root"
+          node --input-type=module <<'NODE'
+          import path from 'node:path';
+          import { UbuntuAptTransactionSolver } from './src/release/ubuntu-apt-transaction-solver.mjs';
+          const root = process.env.DEVBRIDGE_EVIDENCE_ROOT;
+          const workspace = path.join(root, 'workspace');
+          const solution = await new UbuntuAptTransactionSolver({ executable: '/usr/bin/apt-get' }).solve({
+            workspace,
+            configurationFile: path.join(workspace, 'apt.conf'),
+            statusFile: path.join(workspace, 'status'),
+            sourcesListFile: path.join(workspace, 'sources.list'),
+            sourcePartsDirectory: path.join(workspace, 'source-parts'),
+            listsDirectory: path.join(workspace, 'lists'),
+            snapshot: '20260821T230000Z',
+            architecture: 'amd64',
+            requestedPackages: [
+              'build-essential', 'cmake', 'git', 'linux-cloud-tools-virtual',
+              'nodejs', 'npm', 'openssh-server',
+            ],
+          });
+          console.log(`solution-base=${solution.transaction.basePackageStateSha256}`);
+          console.log(`solution-result=${solution.transaction.resultPackageStateSha256}`);
+          console.log(`solution-selected=${solution.selectedPackages.length}`);
+          console.log(`solution-requested=${JSON.stringify(solution.transaction.requestedPackages)}`);
+          NODE
