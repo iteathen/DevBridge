@@ -2,6 +2,9 @@ name: Ubuntu release evidence probe
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/issue-417-ubuntu-release-evidence-preparation
 
 permissions:
   contents: read
