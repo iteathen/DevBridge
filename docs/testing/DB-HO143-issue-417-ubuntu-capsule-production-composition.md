@@ -2,7 +2,7 @@
 
 Date: 2026-09-04
 
-Status: locally qualified candidate; hosted qualification pending
+Status: accepted
 
 Coordinates with: #197, #417, DB-003, DB-008, DB-009, DB-019, and DB-HO124 through DB-HO142.
 
@@ -57,3 +57,5 @@ Exact Node.js 22.16.0 final local qualification passes:
 A preceding Node.js 24.15.0 diagnostic full run also passed the same 2,265/2,243/22 result but is not counted as the exact qualification runtime. Before acceptance require diff and cleanup hygiene, candidate four-job CI, exact integration, and a fresh integrated four-job CI. Then produce and independently reacquire a real signed capsule through the separately owned immutable publication gate before #197 consumes it. No physical retry is authorized by this candidate.
 
 Hygiene measured 852 inactive, direct-child `db-*`/`devbridge-*` qualification roots in Windows Temp containing 48,546 files and 313,776,919 bytes, including the independently SHA-256-verified 85,119,640-byte single-link Node.js 22.16.0 qualification copy. A live-process scan found zero references and no resource-lease root. Cleanup revalidated every target beneath the exact Windows Temp parent, removed the complete set, and verified zero matching root remains. The one-use cleanup helper was then removed from the worktree. Retained installation, VM, image, and recovery evidence were untouched.
+
+Candidate commit `53061eda1463a7579d2915b4010c7d5ef548485f` passed all four jobs in run `33907353724`. PR #469 rebase-merged it as exact Stage 8 head `2826f35bfaf79d37e3eecb1e17fe20b6a5cce939`; fresh integrated run `33907863585` passed Ubuntu smoke/full and Windows smoke/full. DB-HO143 is accepted. Continue #417 with independently verified capsule reacquisition before the separately owned #197 construction consumer. No physical retry follows from this acceptance.
