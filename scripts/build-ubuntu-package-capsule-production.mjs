@@ -97,8 +97,8 @@ let recipe;
 try { recipe = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(recipeBytes)); }
 catch { throw new Error('Ubuntu capsule production recipe is not valid JSON'); }
 if (!recipe || typeof recipe !== 'object' || Array.isArray(recipe)
-    || Object.keys(recipe).some((key) => !['policy', 'solverRequest'].includes(key))
-    || !recipe.policy || !recipe.solverRequest) {
+    || Object.keys(recipe).some((key) => !['policy', 'solverRequest', 'preparation'].includes(key))
+    || !recipe.policy || !recipe.solverRequest || !recipe.preparation) {
   throw new TypeError('Ubuntu capsule production recipe has unsupported fields');
 }
 
@@ -120,6 +120,7 @@ process.once('SIGTERM', onTerminate);
 const request = {
   policy: recipe.policy,
   solverRequest: recipe.solverRequest,
+  preparation: recipe.preparation,
   captureDestination: args.captureDestination,
   releaseDestination: args.releaseDestination,
   keyId: args.keyId,

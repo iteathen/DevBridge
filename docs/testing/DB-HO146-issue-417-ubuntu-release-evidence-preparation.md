@@ -111,3 +111,9 @@ Temporary hosted run `33916333664` (job `101164243358`) completed in 52 seconds 
 - `openssh-server` `1:10.2p1-2ubuntu3.5`
 
 This closes the diagnostic uncertainty at the input seam. The reusable preparer must now reproduce the same media/status/keyring/list identities and solver request through product-owned contracts; after that product-level hosted proof, the diagnostic workflow must be removed.
+
+Commit `2bf67ad9c856512420cf64aa6dc7e316c78dc27e` introduced that product-owned composition. Temporary hosted run `33917529312` (job `101168057478`) completed in 51 seconds using `UbuntuInstallerLayerEntrySource`, `UbuntuSnapshotAptLists`, and `UbuntuCapsuleSolverInputPreparer`, rather than workflow-owned extraction or list filtering. It reproduced the exact status, keyring, base state, result state, 546 selected packages, and seven requested versions above. Its exact retained-list inventory digest was `110bfd302869c886b6f1ffb8846b923269791022ac61c820e8c3c7cb445af404`.
+
+The product preparer streams the 2.9 GB media and extracted-layer hashes instead of loading those objects into memory. It refuses existing destinations, uses one caller-bounded/no-retry APT update, and removes only its newly created workspace on failure. Local focused proof passed 19 tests with the one expected Linux-only skip; bounded repository preflight passed 288 syntax files and all 228 targeted tests before this hosted run.
+
+The remaining implementation seam in this slice is producer admission: capsule production must require this versioned preparation result and re-observe its bound files immediately before DB-HO131 solves. That admission check, product-level hosted proof, removal of the temporary workflow, candidate CI, integration, and fresh integrated CI are still required before DB-HO146 can be accepted.

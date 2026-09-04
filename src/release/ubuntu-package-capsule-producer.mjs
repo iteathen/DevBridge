@@ -3,6 +3,7 @@ import path from 'node:path';
 import { normalizeUbuntuAptTransactionSolution } from './ubuntu-apt-transaction-solver.mjs';
 import { captureUbuntuPackageCapsule } from './ubuntu-package-capsule-capture.mjs';
 import { buildUbuntuPackageCapsuleRelease } from './ubuntu-package-capsule-release-builder.mjs';
+import { verifyUbuntuCapsuleSolverInputPreparation } from './ubuntu-capsule-solver-input-preparer.mjs';
 
 export const UBUNTU_PACKAGE_CAPSULE_PRODUCTION_PROTOCOL = 'devbridge/ubuntu-package-capsule-production-v1';
 
@@ -37,24 +38,37 @@ function port(value, method, name) {
   return value;
 }
 
+function sameSolverRequest(left, right) {
+  const paths = [
+    'workspace', 'configurationFile', 'statusFile', 'sourcesListFile', 'sourcePartsDirectory', 'listsDirectory',
+  ];
+  return paths.every((name) => path.resolve(left?.[name] ?? '') === path.resolve(right?.[name] ?? ''))
+    && left?.snapshot === right?.snapshot && left?.architecture === right?.architecture
+    && Array.isArray(left?.requestedPackages) && Array.isArray(right?.requestedPackages)
+    && left.requestedPackages.length === right.requestedPackages.length
+    && left.requestedPackages.every((name, index) => name === right.requestedPackages[index]);
+}
+
 export class UbuntuPackageCapsuleProducer {
   constructor(raw = {}) {
     const value = exactObject(raw, new Set([
-      'solver', 'archiveSource', 'inReleaseVerifier', 'capture', 'seal',
+      'solver', 'archiveSource', 'inReleaseVerifier', 'capture', 'seal', 'verifyPreparation',
     ]), 'Ubuntu package-capsule producer options');
     this.solver = port(value.solver, 'solve', 'Ubuntu package-capsule solver');
     this.archiveSource = port(value.archiveSource, 'read', 'Ubuntu package-capsule archive source');
     this.inReleaseVerifier = port(value.inReleaseVerifier, 'verify', 'Ubuntu package-capsule InRelease verifier');
     this.capture = value.capture ?? captureUbuntuPackageCapsule;
     this.seal = value.seal ?? buildUbuntuPackageCapsuleRelease;
+    this.verifyPreparation = value.verifyPreparation ?? verifyUbuntuCapsuleSolverInputPreparation;
     if (typeof this.capture !== 'function') throw new TypeError('Ubuntu package-capsule capture port is invalid');
     if (typeof this.seal !== 'function') throw new TypeError('Ubuntu package-capsule sealer port is invalid');
+    if (typeof this.verifyPreparation !== 'function') throw new TypeError('Ubuntu solver-input preparation verifier port is invalid');
   }
 
   async produce(raw = {}) {
     const request = exactObject(raw, new Set([
       'policy', 'solverRequest', 'captureDestination', 'releaseDestination',
-      'keyId', 'privateKeyBytes', 'publicKeyBytes', 'chunkBytes', 'signal',
+      'preparation', 'keyId', 'privateKeyBytes', 'publicKeyBytes', 'chunkBytes', 'signal',
     ]), 'Ubuntu package-capsule production request');
     const policy = exactObject(request.policy, new Set([
       'distribution', 'release', 'codename', 'architecture', 'snapshot', 'baseMediaSha256',
@@ -76,11 +90,15 @@ export class UbuntuPackageCapsuleProducer {
     const captureDestination = absolutePath(request.captureDestination, 'Ubuntu capsule capture destination');
     const releaseDestination = absolutePath(request.releaseDestination, 'Ubuntu capsule release destination');
     requireSeparateRoots(captureDestination, releaseDestination);
+    const admittedSolverRequest = await this.verifyPreparation(request.preparation, policy);
+    if (!sameSolverRequest(admittedSolverRequest, solverRequest)) {
+      fail('Ubuntu package-capsule production solver input does not match its preparation');
+    }
 
     let ownedCaptureRoot = null;
     try {
       const solution = normalizeUbuntuAptTransactionSolution(
-        await this.solver.solve(Object.freeze({ ...solverRequest, signal: request.signal ?? null })),
+        await this.solver.solve(Object.freeze({ ...admittedSolverRequest, signal: request.signal ?? null })),
       );
       const captured = await this.capture(Object.freeze({
         policy,

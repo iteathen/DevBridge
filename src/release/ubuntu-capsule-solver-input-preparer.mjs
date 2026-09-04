@@ -211,6 +211,177 @@ function inventorySha256(files) {
   }), 'utf8'));
 }
 
+function sameValues(left, right) {
+  return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+    && left.every((value, index) => value === right[index]);
+}
+
+async function observeDirectIdentity(location, context) {
+  const selected = absolutePath(location, `${context} path`);
+  if (!await sameFilesystemIdentity(selected, await realpath(selected))) fail(`${context} must use a direct nonsymbolic path`);
+  const info = await lstat(selected, { bigint: true });
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1n || info.size < 1n) {
+    fail(`${context} must be one unlinked regular file`);
+  }
+  return Object.freeze({
+    location: selected,
+    observation: Object.freeze({
+      device: String(info.dev), inode: String(info.ino), size: Number(info.size),
+      mtimeNs: String(info.mtimeNs), ctimeNs: String(info.ctimeNs),
+    }),
+  });
+}
+
+function exactObservation(raw, context) {
+  const value = exactObject(raw, new Set(['device', 'inode', 'size', 'mtimeNs', 'ctimeNs']), `${context} observation`);
+  for (const name of ['device', 'inode', 'mtimeNs', 'ctimeNs']) {
+    if (typeof value[name] !== 'string' || !/^\d+$/u.test(value[name])) throw new TypeError(`${context} observation is invalid`);
+  }
+  positiveInteger(value.size, `${context} observed byte count`);
+  return value;
+}
+
+function observationsEqual(left, right) {
+  return left.device === right.device && left.inode === right.inode && left.size === right.size
+    && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
+}
+
+export async function verifyUbuntuCapsuleSolverInputPreparation(raw, rawPolicy) {
+  const prepared = exactObject(raw, new Set(['protocol', 'root', 'receiptFile', 'receipt', 'solverRequest']), 'Ubuntu solver-input preparation');
+  if (prepared.protocol !== UBUNTU_CAPSULE_SOLVER_INPUT_PREPARATION_PROTOCOL) fail('Ubuntu solver-input preparation protocol is unsupported');
+  const policy = exactObject(rawPolicy, new Set([
+    'distribution', 'release', 'codename', 'architecture', 'snapshot', 'baseMediaSha256',
+    'releaseId', 'sequence', 'upstreamKeyFingerprint',
+  ]), 'Ubuntu package-capsule production policy');
+  const root = absolutePath(prepared.root, 'Ubuntu solver-input preparation root');
+  const receiptFile = absolutePath(prepared.receiptFile, 'Ubuntu solver-input preparation receipt');
+  if (receiptFile !== path.join(root, 'preparation-receipt.json')) fail('Ubuntu solver-input preparation receipt path is invalid');
+  const receipt = exactObject(prepared.receipt, new Set([
+    'protocol', 'distribution', 'release', 'codename', 'architecture', 'snapshot',
+    'media', 'installer', 'apt', 'requestedPackages',
+  ]), 'Ubuntu solver-input preparation receipt');
+  if (receipt.protocol !== UBUNTU_CAPSULE_SOLVER_INPUT_PREPARATION_PROTOCOL
+      || receipt.distribution !== policy.distribution || receipt.release !== policy.release
+      || receipt.codename !== policy.codename || receipt.architecture !== policy.architecture
+      || receipt.snapshot !== policy.snapshot) {
+    fail('Ubuntu solver-input preparation receipt does not match production policy');
+  }
+  exactString(receipt.distribution, TOKEN, 'Ubuntu solver-input preparation distribution');
+  exactString(receipt.release, TOKEN, 'Ubuntu solver-input preparation release');
+  exactString(receipt.codename, TOKEN, 'Ubuntu solver-input preparation codename');
+  exactString(receipt.architecture, ARCHITECTURE, 'Ubuntu solver-input preparation architecture');
+  exactString(receipt.snapshot, SNAPSHOT, 'Ubuntu solver-input preparation snapshot');
+  const media = exactObject(receipt.media, new Set(['location', 'bytes', 'sha256', 'observation']), 'Ubuntu solver-input preparation media');
+  const mediaLocation = absolutePath(media.location, 'Ubuntu solver-input preparation media');
+  const mediaBytes = positiveInteger(media.bytes, 'Ubuntu solver-input preparation media byte count');
+  const mediaSha256 = exactString(media.sha256, SHA256, 'Ubuntu solver-input preparation media SHA-256');
+  const mediaObservation = exactObservation(media.observation, 'Ubuntu solver-input preparation media');
+  if (mediaSha256 !== policy.baseMediaSha256 || mediaBytes !== mediaObservation.size) {
+    fail('Ubuntu solver-input preparation media does not match production policy');
+  }
+  const currentMedia = await observeDirectIdentity(mediaLocation, 'Ubuntu solver-input preparation media');
+  if (!observationsEqual(mediaObservation, currentMedia.observation)) fail('Ubuntu solver-input preparation media changed after preparation');
+
+  const installer = exactObject(receipt.installer, new Set([
+    'installSource', 'leafLayer', 'orderedLayers', 'statusLayer', 'statusBytes', 'statusSha256',
+    'basePackageStateSha256', 'keyringLayer', 'keyringBytes', 'keyringSha256',
+  ]), 'Ubuntu solver-input preparation installer evidence');
+  exactString(installer.installSource, TOKEN, 'Ubuntu solver-input preparation install source');
+  const leafLayer = exactString(installer.leafLayer, TOKEN, 'Ubuntu solver-input preparation leaf layer');
+  if (!Array.isArray(installer.orderedLayers) || installer.orderedLayers.length < 1 || installer.orderedLayers.length > 16) {
+    throw new TypeError('Ubuntu solver-input preparation ordered layer evidence is invalid');
+  }
+  const layerNames = [];
+  for (let index = 0; index < installer.orderedLayers.length; index += 1) {
+    const layer = exactObject(installer.orderedLayers[index], new Set(['name', 'bytes', 'sha256']), `Ubuntu solver-input preparation layer ${index}`);
+    layerNames.push(exactString(layer.name, TOKEN, `Ubuntu solver-input preparation layer ${index} name`));
+    positiveInteger(layer.bytes, `Ubuntu solver-input preparation layer ${index} byte count`);
+    exactString(layer.sha256, SHA256, `Ubuntu solver-input preparation layer ${index} SHA-256`);
+  }
+  exactString(installer.statusLayer, TOKEN, 'Ubuntu solver-input preparation status layer');
+  exactString(installer.keyringLayer, TOKEN, 'Ubuntu solver-input preparation keyring layer');
+  if (new Set(layerNames).size !== layerNames.length || layerNames.at(-1) !== leafLayer
+      || !layerNames.includes(installer.statusLayer) || !layerNames.includes(installer.keyringLayer)) {
+    fail('Ubuntu solver-input preparation layer evidence is inconsistent');
+  }
+  const statusBytes = positiveInteger(installer.statusBytes, 'Ubuntu solver-input preparation status byte count');
+  const statusSha256 = exactString(installer.statusSha256, SHA256, 'Ubuntu solver-input preparation status SHA-256');
+  const basePackageStateSha256 = exactString(installer.basePackageStateSha256, SHA256, 'Ubuntu solver-input preparation base state SHA-256');
+  const keyringBytes = positiveInteger(installer.keyringBytes, 'Ubuntu solver-input preparation keyring byte count');
+  const keyringSha256 = exactString(installer.keyringSha256, SHA256, 'Ubuntu solver-input preparation keyring SHA-256');
+
+  const apt = exactObject(receipt.apt, new Set([
+    'configurationSha256', 'sourcesSha256', 'listInventorySha256', 'lists',
+  ]), 'Ubuntu solver-input preparation APT evidence');
+  const configurationSha256 = exactString(apt.configurationSha256, SHA256, 'Ubuntu solver-input preparation configuration SHA-256');
+  const sourcesSha256 = exactString(apt.sourcesSha256, SHA256, 'Ubuntu solver-input preparation sources SHA-256');
+  const listInventorySha256 = exactString(apt.listInventorySha256, SHA256, 'Ubuntu solver-input preparation list inventory SHA-256');
+  if (!Array.isArray(apt.lists) || apt.lists.length !== 9) throw new TypeError('Ubuntu solver-input preparation list evidence is invalid');
+  const recordedLists = apt.lists.map((rawList, index) => {
+    const item = exactObject(rawList, new Set(['name', 'bytes', 'sha256']), `Ubuntu solver-input preparation list ${index}`);
+    return Object.freeze({
+      name: item.name,
+      bytes: positiveInteger(item.bytes, `Ubuntu solver-input preparation list ${index} byte count`),
+      sha256: exactString(item.sha256, SHA256, `Ubuntu solver-input preparation list ${index} SHA-256`),
+    });
+  });
+  const expectedNames = expectedListNames(receipt.snapshot, receipt.codename, receipt.architecture);
+  if (!sameValues(recordedLists.map((item) => item.name), expectedNames)
+      || inventorySha256(recordedLists) !== listInventorySha256) {
+    fail('Ubuntu solver-input preparation list evidence is inconsistent');
+  }
+  const requestedPackages = normalizeRequested(receipt.requestedPackages);
+  if (!sameValues(requestedPackages, receipt.requestedPackages)) fail('Ubuntu solver-input preparation requested packages are not canonical');
+
+  const solverRequest = exactObject(prepared.solverRequest, new Set([
+    'workspace', 'configurationFile', 'statusFile', 'sourcesListFile', 'sourcePartsDirectory',
+    'listsDirectory', 'snapshot', 'architecture', 'requestedPackages',
+  ]), 'Ubuntu solver-input preparation solver request');
+  const expectedPaths = Object.freeze({
+    workspace: root,
+    configurationFile: path.join(root, 'apt.conf'),
+    statusFile: path.join(root, 'status'),
+    sourcesListFile: path.join(root, 'sources.list'),
+    sourcePartsDirectory: path.join(root, 'source-parts'),
+    listsDirectory: path.join(root, 'lists'),
+  });
+  for (const [name, expected] of Object.entries(expectedPaths)) {
+    if (absolutePath(solverRequest[name], `Ubuntu solver-input ${name}`) !== expected) fail('Ubuntu solver-input preparation solver paths are inconsistent');
+  }
+  if (solverRequest.snapshot !== receipt.snapshot || solverRequest.architecture !== receipt.architecture
+      || !sameValues(solverRequest.requestedPackages, requestedPackages)) {
+    fail('Ubuntu solver-input preparation solver authority is inconsistent');
+  }
+  const [receiptRecord, status, keyring, configuration, sources] = await Promise.all([
+    readDirectFile(receiptFile, 'Ubuntu solver-input preparation receipt', MAX_CONFIGURATION_BYTES),
+    readDirectFile(expectedPaths.statusFile, 'Ubuntu solver-input prepared status', MAX_STATUS_BYTES),
+    readDirectFile(path.join(root, 'ubuntu-archive-keyring.gpg'), 'Ubuntu solver-input prepared keyring', MAX_KEYRING_BYTES),
+    readDirectFile(expectedPaths.configurationFile, 'Ubuntu solver-input prepared configuration', MAX_CONFIGURATION_BYTES),
+    readDirectFile(expectedPaths.sourcesListFile, 'Ubuntu solver-input prepared sources', MAX_CONFIGURATION_BYTES),
+  ]);
+  if (!receiptRecord.bytes.equals(Buffer.from(`${JSON.stringify(receipt)}\n`, 'utf8'))) fail('Ubuntu solver-input preparation receipt file does not match its value');
+  if (status.bytes.byteLength !== statusBytes || status.sha256 !== statusSha256
+      || ubuntuPackageStateSha256(parseUbuntuInstalledPackageState(status.bytes)) !== basePackageStateSha256
+      || keyring.bytes.byteLength !== keyringBytes || keyring.sha256 !== keyringSha256
+      || configuration.sha256 !== configurationSha256 || sources.sha256 !== sourcesSha256) {
+    fail('Ubuntu solver-input preparation bound file changed after preparation');
+  }
+  if (!configuration.bytes.equals(Buffer.from(UBUNTU_APT_ISOLATED_CONFIGURATION, 'utf8'))
+      || !sources.bytes.equals(Buffer.from(ubuntuSnapshotSources({
+        codename: receipt.codename, architecture: receipt.architecture, keyring: keyring.location,
+      }), 'utf8'))) {
+    fail('Ubuntu solver-input preparation configuration or sources are inconsistent');
+  }
+  const [sourceParts, listsDirectory] = await Promise.all([
+    directDirectory(expectedPaths.sourcePartsDirectory, root, 'Ubuntu solver-input prepared source-parts directory'),
+    directDirectory(expectedPaths.listsDirectory, root, 'Ubuntu solver-input prepared lists directory'),
+  ]);
+  if ((await readdir(sourceParts.location)).length !== 0) fail('Ubuntu solver-input prepared source-parts directory changed after preparation');
+  const currentLists = await observeListInventory(listsDirectory, expectedNames);
+  if (inventorySha256(currentLists) !== listInventorySha256) fail('Ubuntu solver-input preparation list inventory changed after preparation');
+  return Object.freeze({ ...solverRequest, requestedPackages });
+}
+
 function port(value, method, name) {
   if (!value || typeof value !== 'object' || typeof value[method] !== 'function') throw new TypeError(`${name} port is invalid`);
   return value;

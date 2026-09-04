@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   UBUNTU_CAPSULE_SOLVER_INPUT_PREPARATION_PROTOCOL,
   UbuntuCapsuleSolverInputPreparer,
+  verifyUbuntuCapsuleSolverInputPreparation,
 } from '../src/release/ubuntu-capsule-solver-input-preparer.mjs';
 import { UBUNTU_APT_ISOLATED_CONFIGURATION } from '../src/release/ubuntu-apt-transaction-solver.mjs';
 
@@ -111,6 +112,14 @@ function request(f, overrides = {}) {
   };
 }
 
+function policy(f) {
+  return {
+    distribution: 'ubuntu', release: '26.04', codename: CODENAME, architecture: ARCHITECTURE,
+    snapshot: SNAPSHOT, baseMediaSha256: hash(f.mediaBytes), releaseId: 'release-1', sequence: 1,
+    upstreamKeyFingerprint: 'A'.repeat(40),
+  };
+}
+
 test('preparer binds exact installer and snapshot evidence into one solver request and receipt', async () => {
   const f = await fixture();
   try {
@@ -129,6 +138,23 @@ test('preparer binds exact installer and snapshot evidence into one solver reque
     assert.deepEqual(result.solverRequest.requestedPackages, ['build-essential', 'cmake']);
     assert.equal(result.solverRequest.snapshot, SNAPSHOT);
     assert.deepEqual(JSON.parse(await readFile(result.receiptFile, 'utf8')), result.receipt);
+    assert.deepEqual(await verifyUbuntuCapsuleSolverInputPreparation(result, policy(f)), result.solverRequest);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('preparation admission rejects solver substitution and post-preparation file drift', async () => {
+  const f = await fixture();
+  try {
+    const result = await new UbuntuCapsuleSolverInputPreparer(ports()).prepare(request(f));
+    await assert.rejects(verifyUbuntuCapsuleSolverInputPreparation({
+      ...result,
+      solverRequest: { ...result.solverRequest, requestedPackages: ['cmake'] },
+    }, policy(f)), /solver authority is inconsistent/u);
+    await writeFile(result.solverRequest.statusFile, `${STATUS.toString('utf8')}\n`, { flag: 'w' });
+    await assert.rejects(
+      verifyUbuntuCapsuleSolverInputPreparation(result, policy(f)),
+      /bound file changed after preparation/u,
+    );
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 
