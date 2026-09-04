@@ -60,6 +60,7 @@ async function input() {
 
 function reader(archive, mutate = null) {
   return async (request) => {
+    assert.ok(Number.isSafeInteger(request.maximum) && request.maximum > 0);
     const bytes = archive.get(request.path);
     if (!bytes) throw new Error(`fixture archive path is absent: ${request.path}`);
     return mutate?.(request, bytes) ?? bytes;
