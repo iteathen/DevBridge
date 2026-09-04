@@ -78,11 +78,10 @@ jobs:
             'Dir::Etc::parts "/dev/null";' \
             >"$root/workspace/apt.conf"
           key="$root/workspace/ubuntu-archive-keyring.gpg"
-          archive='https://snapshot.ubuntu.com/ubuntu/20260821T230000Z'
           cat >"$root/workspace/sources.list" <<EOF
-          deb [arch=amd64 signed-by=$key] $archive resolute main universe
-          deb [arch=amd64 signed-by=$key] $archive resolute-updates main universe
-          deb [arch=amd64 signed-by=$key] $archive resolute-security main universe
+          deb [arch=amd64 snapshot=yes signed-by=$key] http://archive.ubuntu.com/ubuntu resolute main universe
+          deb [arch=amd64 snapshot=yes signed-by=$key] http://archive.ubuntu.com/ubuntu resolute-updates main universe
+          deb [arch=amd64 snapshot=yes signed-by=$key] http://security.ubuntu.com/ubuntu resolute-security main universe
           EOF
 
           timeout --signal=TERM --kill-after=30s 600s /usr/bin/apt-get \
@@ -99,6 +98,10 @@ jobs:
             --error-on=any --snapshot 20260821T230000Z update --quiet=2
           rm -rf -- "$root/workspace/lists/partial" "$root/workspace/lists/auxfiles"
           rm -f -- "$root/workspace/lists/lock"
+          find "$root/workspace/lists" -maxdepth 1 -type f \
+            ! -name 'snapshot.ubuntu.com_ubuntu_20260821T230000Z_dists_*_InRelease' \
+            ! -name 'snapshot.ubuntu.com_ubuntu_20260821T230000Z_dists_*_binary-amd64_Packages' \
+            -delete
           find "$root/workspace/lists" -maxdepth 1 -type l -print -quit | grep -q . && exit 1 || true
           find "$root/workspace/lists" -maxdepth 1 -type f -printf '%f\t%s\n' | LC_ALL=C sort
           printf 'list-files=%s\n' "$(find "$root/workspace/lists" -maxdepth 1 -type f | wc -l)"
