@@ -66,7 +66,7 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.match(result.userData, /"nodejs=22\.16\.0\+dfsg-1"/u);
   assert.match(result.userData, /"linux-cloud-tools-virtual=6\.14\.0\.29\.29"/u);
   assert.match(result.userData, /\["systemctl", "enable", "--now", "hv-fcopy-daemon\.service"\]/u);
-  assert.match(result.userData, /path: "\/etc\/systemd\/system\/hv-fcopy-daemon\.service\.d\/10-devbridge-uio\.conf"/u);
+  assert.match(result.userData, /path: "\/etc\/systemd\/system\/hv-fcopy-daemon\.service"/u);
   const capability = embeddedContents(result.userData).find((entry) => entry.includes('modprobe uio_hv_generic'));
   assert.ok(capability);
   assert.match(capability, /34d14be3-dee4-41c8-9ae7-6b174977c192/u);
