@@ -2,7 +2,7 @@
 
 Date: 2026-09-04
 
-Status: implementation planned
+Status: implementation in progress
 
 Coordinates with: #197, #417, DB-003, DB-008, DB-009, DB-017, DB-019, DB-020, and DB-HO129 through DB-HO145.
 
@@ -87,3 +87,13 @@ The producer must accept this receipt only when its policy and solver request ma
 5. Require all-four candidate CI, exact integration, and fresh all-four integrated CI before using the resulting workspace for a real signed capsule.
 
 This slice creates no signing key, retained capsule, remote release, second-provider credential, setup/UAC effect, provider action, VM action, or physical construction retry. Real capsule publication still requires a locally authorized release-signing key and an independently controlled second production origin in addition to offline media.
+
+## Hosted evidence and solver reassessment
+
+Temporary branch-only workflow run `33915416877` completed in 39 seconds against the exact ISO. It proved that the declared `ubuntu-server` upper layer contains the complete 701,291-byte dpkg status database for 710 installed packages at SHA-256 `c115ab22b1194ae259cd0763887432f8bb702cb1d51e34ca03cbec0c3af747e2`. The Ubuntu archive keyring resolves from the base layer as 3,607 bytes at SHA-256 `80a36b0a6de2f69f49d2df75ef473ccde121e9e190b9ea01d20a4f63778d5c31`.
+
+The first APT observation also showed why the preparer must own a strict retained-list projection. A normal canonical-source snapshot update left both discovery/live and selected-snapshot records plus CNF and DEP-11 indexes: 42 files / 203,565,061 bytes. A direct-snapshot-URL experiment in run `33915575649` reduced that to the intended three InRelease and six `Packages` files, but DB-HO131 could not locate packages because its required `--snapshot` mapping expects canonical archive source identities. That URL form is rejected.
+
+Run `33915714653` used the correct composition: canonical snapshot-enabled sources for discovery/update, then removal of every non-snapshot and non-InRelease/Packages transport file before solve. It produced exactly nine regular files / 91,529,027 bytes and DB-HO131 reached the real no-removal upgrade. The run then exposed an adjacent parser defect rather than a release-evidence failure: APT 3.0 emitted a documented `ShortBreaks()` dependency-impact suffix (`[libc6-dev:amd64 ]`) on an otherwise valid `Inst` line, which the strict parser did not admit.
+
+The focused correction accepts only an optional bounded bracketed sequence of syntactically valid package identities after the selected architecture. Removal records, prose, malformed identities, bracket ambiguity, architecture disagreement, stderr, nonzero exit, and final transaction drift remain rejected. Local parser/solver/producer proof passes 12 tests with one expected hosted-Linux skip. The next temporary hosted run must prove the complete exact transaction before the release-evidence preparer is encoded and the diagnostic workflow is removed.

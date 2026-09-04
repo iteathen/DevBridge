@@ -31,6 +31,8 @@ const MAX_LIST_FILES = 64;
 const MAX_STDOUT_BYTES = 16 * 1024 * 1024;
 const MAX_STDERR_BYTES = 4 * 1024 * 1024;
 const MAX_ARGUMENT_BYTES = 512 * 1024;
+const SIMULATION_PACKAGE = '[a-z0-9][a-z0-9+.-]{0,99}(?::[a-z0-9][a-z0-9-]{0,31})?';
+const SIMULATION_BREAKS = new RegExp(`^(?:${SIMULATION_PACKAGE}(?: ${SIMULATION_PACKAGE})* ?)?$`, 'u');
 
 function fail(message) { throw new Error(message); }
 
@@ -242,8 +244,11 @@ export function parseUbuntuAptSimulation(output) {
       continue;
     }
     if (line.startsWith('Remv ')) fail('Ubuntu APT simulation requested package removal');
-    const match = /^Inst ([a-z0-9][a-z0-9+.-]{0,99})(?::([a-z0-9][a-z0-9-]{0,31}))?(?: \[[^\]\r\n]+\])? \(([^ ()\r\n]+)(?: [^\r\n]*)? \[([a-z0-9][a-z0-9-]{0,31})\]\)$/u.exec(line);
+    const match = /^Inst ([a-z0-9][a-z0-9+.-]{0,99})(?::([a-z0-9][a-z0-9-]{0,31}))?(?: \[[^\]\r\n]+\])? \(([^ ()\r\n]+)(?: [^()[\]\r\n]*)? \[([a-z0-9][a-z0-9-]{0,31})\]\)(?: \[([^\]\r\n]*)\])?$/u.exec(line);
     if (!match) fail(`Ubuntu APT simulation emitted unsupported output: ${line}`);
+    if (match[5] != null && !SIMULATION_BREAKS.test(match[5])) {
+      fail(`Ubuntu APT simulation emitted unsupported output: ${line}`);
+    }
     const selectedArchitecture = match[2] ?? match[4];
     if (match[2] && match[2] !== match[4] && match[4] !== 'all') {
       fail(`Ubuntu APT simulation architecture disagrees for ${match[1]}`);
