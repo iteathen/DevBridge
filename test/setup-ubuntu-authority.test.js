@@ -65,8 +65,8 @@ test('setup authority binds source policy, exact snapshot and current payload ge
   assert.deepEqual(authority.qualification.services, ['hv-fcopy-daemon.service']);
   assert.deepEqual(authority.qualification.capabilities, ['hyperv-fcopy-uio-v1']);
   assert.equal(authority.payload.generation, CURRENT_PAYLOAD_GENERATION);
-  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v12');
-  assert.equal(authority.output.generation, 'ubuntu-2604-production-v8');
+  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v13');
+  assert.equal(authority.output.generation, 'ubuntu-2604-production-v9');
   assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 2, ...UBUNTU_SETUP_BOOT_PATCH }]);
 });
 

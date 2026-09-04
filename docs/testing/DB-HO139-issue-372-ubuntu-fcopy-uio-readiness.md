@@ -2,7 +2,7 @@
 
 Date: 2026-09-02
 
-Status: locally qualified candidate; hosted acceptance and physical proof pending
+Status: hosted accepted; physical v8 qualification exposed DB-HO140
 
 Coordinates with: #372, DB-HO136, DB-HO137, DB-HO138, and the accepted Stage 8 protected lifecycle authority.
 
@@ -37,3 +37,7 @@ Focused capability, authority, seed, qualification, canary, and progress-coordin
 The first preflight exposed one stale test fixture that still published the formerly current v7 generation; changing only that current-generation fixture to v8 made its 3/3 focused tests pass. Review then added the new capability module and its direct contract test to the preflight's closed inventories, advancing the final counts from 276/218 to 277/219. Two independently verified 85,119,640-byte private Node runtime roots were removed after their gates, and both exact paths are absent. No setup, UAC, protected-host, service/ACL/PATH, provider, VM/image, manual guest repair, timeout, or retry action occurred.
 
 Publish this exact candidate and require all four hosted jobs. After exact Stage 8 integration and a fresh four-job integrated run, install only that exact head and authorize one public v8 construction attempt. Formal v8 acceptance remains conditional on physical image qualification and the GitHub-delivered Hello World compile/test proof.
+
+## Hosted and physical result
+
+Candidate `e68bdb81bf89fd35a1befcf7a005a6245c034071` passed all four jobs in run `33697780530`; PR #464 rebase-merged as Stage 8 head `d138052b68ec3b8bd557e62401adadaa264a492f`, both trees equal `755c549454e536d5f73d391e05e9b31c634ef197`, and fresh run `33698130931` passed all four jobs. Public exact-ref setup constructed v8 subject `subject-703bd658a613b57e2d1216f713759dda` and proved the fresh-uptime recovery path, but guest qualification failed because the vendor unit's legacy `BindsTo` remained effective despite the drop-in's empty reset. Read-only evidence and the isolated correction are recorded in `docs/testing/DB-HO140-issue-372-fcopy-unit-authority.md`. The v8 canary was preserved and running at the final direct physical observation; no manual repair followed, and no later running-state claim is inferred without fresh evidence.

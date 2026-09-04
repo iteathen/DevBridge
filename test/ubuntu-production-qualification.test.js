@@ -83,7 +83,7 @@ function successfulBridge(calls) {
         assert.match(script, /hv-fcopy-daemon\.service/u);
         assert.match(script, /eb765408-105f-49b6-b4aa-c123b64d17d4/u);
         assert.match(script, /uio_hv_generic/u);
-        assert.match(script, /10-devbridge-uio\.conf/u);
+        assert.match(script, /\/etc\/systemd\/system\/hv-fcopy-daemon\.service/u);
         assert.match(script, /cmake -S/u);
         assert.match(script, /ctest --test-dir/u);
         assert.match(script, /curl --fail/u);
