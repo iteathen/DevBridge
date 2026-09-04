@@ -204,7 +204,8 @@ function policy(raw, solution) {
 }
 
 async function readExact(readArchive, request, maximum) {
-  const bytes = exactBytes(await readArchive(Object.freeze(request)), `Ubuntu archive ${request.path}`, maximum);
+  const boundedRequest = Object.freeze({ ...request, maximum });
+  const bytes = exactBytes(await readArchive(boundedRequest), `Ubuntu archive ${request.path}`, maximum);
   if (request.size != null && (bytes.length !== request.size || sha256(bytes) !== request.sha256)) {
     fail(`Ubuntu archive ${request.path} does not match signed size and SHA-256`);
   }
