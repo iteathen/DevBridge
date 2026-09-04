@@ -48,6 +48,7 @@ test('source-bundle materialization rechecks authority, acquisition evidence, an
         async ensure(input) {
           seen.push(input);
           return {
+            state: 'cache-committed',
             subject: fixture.descriptor.subject,
             descriptorSha256: (await import('../src/runtime/immutable-object-set.js')).immutableObjectSetDigest(fixture.descriptor),
             objects: [{
@@ -56,6 +57,8 @@ test('source-bundle materialization rechecks authority, acquisition evidence, an
               sha256: fixture.objectSha256,
               location: object,
             }],
+            sourceAttempts: 1,
+            reusedChunks: 0,
           };
         },
       },
@@ -83,9 +86,12 @@ test('source-bundle materialization rejects forged acquisition and checkout evid
     const fixture = sourceBundleAuthority();
     await writeFile(object, fixture.bundleBytes);
     const base = {
+      state: 'cache-committed',
       subject: fixture.descriptor.subject,
       descriptorSha256: (await import('../src/runtime/immutable-object-set.js')).immutableObjectSetDigest(fixture.descriptor),
       objects: [{ name: fixture.descriptor.objects[0].name, size: fixture.bundleBytes.length, sha256: fixture.objectSha256, location: object }],
+      sourceAttempts: 1,
+      reusedChunks: 0,
     };
     const checkout = { async materialize() { return { head: fixture.head, tree: fixture.tree, root: path.join(root, 'checkout') }; } };
     await assert.rejects(
