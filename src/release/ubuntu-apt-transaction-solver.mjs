@@ -238,7 +238,8 @@ export function parseUbuntuAptSimulation(output) {
   for (const line of output.replaceAll('\r\n', '\n').split('\n')) {
     if (!line) continue;
     if (line.startsWith('Conf ')) {
-      if (!/^Conf [a-z0-9][a-z0-9+.-]{0,99}(?::[a-z0-9][a-z0-9-]{0,31})? \([^\r\n()]+\)$/u.test(line)) {
+      const configured = /^Conf [a-z0-9][a-z0-9+.-]{0,99}(?::[a-z0-9][a-z0-9-]{0,31})? \([^()[\]\r\n]+ \[[a-z0-9][a-z0-9-]{0,31}\]\)(?: \[([^\]\r\n]*)\])?$/u.exec(line);
+      if (!configured || (configured[1] != null && !SIMULATION_BREAKS.test(configured[1]))) {
         fail(`Ubuntu APT simulation emitted unsupported output: ${line}`);
       }
       continue;
