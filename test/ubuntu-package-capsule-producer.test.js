@@ -69,7 +69,22 @@ test('producer composes exact solve, archive capture, Canonical verification, se
     const archive = await archiveFrom(fixture);
     const solved = solution(fixture.capture);
     const observed = [];
+    const solverRequest = {
+      workspace: path.join(root, 'unused-workspace'),
+      configurationFile: path.join(root, 'unused-apt.conf'),
+      statusFile: path.join(root, 'unused-status'),
+      sourcesListFile: path.join(root, 'unused-sources.list'),
+      sourcePartsDirectory: path.join(root, 'unused-sources.list.d'),
+      listsDirectory: path.join(root, 'unused-lists'),
+      snapshot: fixture.capture.snapshot,
+      architecture: fixture.capture.architecture,
+      requestedPackages: ['build-essential', 'cmake'],
+    };
     const producer = new UbuntuPackageCapsuleProducer({
+      async verifyPreparation(preparation) {
+        observed.push(['admit', preparation.protocol]);
+        return preparation.solverRequest;
+      },
       solver: {
         async solve(request) {
           observed.push(['solve', request.snapshot, request.architecture]);
@@ -96,17 +111,8 @@ test('producer composes exact solve, archive capture, Canonical verification, se
     const signingKeys = keys();
     const result = await producer.produce({
       policy: policy(fixture.capture),
-      solverRequest: {
-        workspace: path.join(root, 'unused-workspace'),
-        configurationFile: path.join(root, 'unused-apt.conf'),
-        statusFile: path.join(root, 'unused-status'),
-        sourcesListFile: path.join(root, 'unused-sources.list'),
-        sourcePartsDirectory: path.join(root, 'unused-sources.list.d'),
-        listsDirectory: path.join(root, 'unused-lists'),
-        snapshot: fixture.capture.snapshot,
-        architecture: fixture.capture.architecture,
-        requestedPackages: ['build-essential', 'cmake'],
-      },
+      solverRequest,
+      preparation: { protocol: 'fixture-preparation', solverRequest },
       captureDestination,
       releaseDestination,
       keyId: 'production-test-key',
@@ -118,7 +124,7 @@ test('producer composes exact solve, archive capture, Canonical verification, se
     assert.equal(result.release.snapshot, fixture.capture.snapshot);
     assert.equal(result.solution.selectedPackages, solved.selectedPackages.length);
     assert.ok(result.capture.artifactCount > 0);
-    assert.equal(observed[0][0], 'solve');
+    assert.deepEqual(observed.slice(0, 2).map(([name]) => name), ['admit', 'solve']);
     assert.ok(observed.findIndex(([name]) => name === 'read') > 0);
     assert.ok(observed.filter(([name]) => name === 'verify').length >= 6);
     await assert.rejects(lstat(captureDestination), /ENOENT/u);
@@ -136,6 +142,7 @@ test('producer composes exact solve, archive capture, Canonical verification, se
 test('producer rejects split authority and overlapping output before solving', async () => {
   let solves = 0;
   const producer = new UbuntuPackageCapsuleProducer({
+    verifyPreparation: async (preparation) => preparation.solverRequest,
     solver: { async solve() { solves += 1; return {}; } },
     archiveSource: { async read() { return Buffer.of(1); } },
     inReleaseVerifier: { async verify() { return {}; } },
@@ -157,8 +164,12 @@ test('producer rejects split authority and overlapping output before solving', a
     },
     captureDestination: path.join(root, 'capture'), releaseDestination: path.join(root, 'release'),
   };
+  request.preparation = { solverRequest: request.solverRequest };
   await assert.rejects(producer.produce(request), /policy does not match its solver input/u);
   request.solverRequest.snapshot = request.policy.snapshot;
+  request.preparation.solverRequest = { ...request.solverRequest, requestedPackages: ['git'] };
+  await assert.rejects(producer.produce(request), /does not match its preparation/u);
+  request.preparation.solverRequest = request.solverRequest;
   request.releaseDestination = path.join(request.captureDestination, 'release');
   await assert.rejects(producer.produce(request), /separate non-nested roots/u);
   assert.equal(solves, 0);
@@ -170,6 +181,7 @@ test('producer removes only its completed capture when sealing fails', async () 
   const releaseDestination = path.join(root, 'release');
   try {
     const producer = new UbuntuPackageCapsuleProducer({
+      verifyPreparation: async (preparation) => preparation.solverRequest,
       solver: {
         async solve() {
           return {
@@ -194,18 +206,20 @@ test('producer removes only its completed capture when sealing fails', async () 
       },
       seal: async () => { throw new Error('bounded sealer failure'); },
     });
+    const solverRequest = {
+      workspace: path.join(root, 'workspace'), configurationFile: path.join(root, 'apt.conf'),
+      statusFile: path.join(root, 'status'), sourcesListFile: path.join(root, 'sources.list'),
+      sourcePartsDirectory: path.join(root, 'sources.list.d'), listsDirectory: path.join(root, 'lists'),
+      snapshot: '20260821T230000Z', architecture: 'amd64', requestedPackages: ['cmake'],
+    };
     await assert.rejects(producer.produce({
       policy: {
         distribution: 'ubuntu', release: '26.04', codename: 'resolute', architecture: 'amd64',
         snapshot: '20260821T230000Z', baseMediaSha256: 'a'.repeat(64), releaseId: 'release-1',
         sequence: 1, upstreamKeyFingerprint: 'A'.repeat(40),
       },
-      solverRequest: {
-        workspace: path.join(root, 'workspace'), configurationFile: path.join(root, 'apt.conf'),
-        statusFile: path.join(root, 'status'), sourcesListFile: path.join(root, 'sources.list'),
-        sourcePartsDirectory: path.join(root, 'sources.list.d'), listsDirectory: path.join(root, 'lists'),
-        snapshot: '20260821T230000Z', architecture: 'amd64', requestedPackages: ['cmake'],
-      },
+      solverRequest,
+      preparation: { solverRequest },
       captureDestination,
       releaseDestination,
     }), /bounded sealer failure/u);

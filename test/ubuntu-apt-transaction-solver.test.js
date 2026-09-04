@@ -119,18 +119,23 @@ test('installed-state parser and digest are canonical and ignore non-installed s
 
 test('simulation parser accepts exact Inst/Conf evidence and rejects removals or prose', () => {
   assert.deepEqual(parseUbuntuAptSimulation([
-    'Inst libc6:amd64 [1.0] (2.0 resolute-updates [amd64])',
-    'Inst linux-libc-dev (6.14 resolute [all])',
-    'Conf libc6 (2.0 resolute-updates [amd64])',
+    'Inst libc6:amd64 [1.0] (2.0 resolute-updates [amd64]) [systemd:amd64 on libsystemd-shared:amd64] [libc6-dev:amd64 ]',
+    'Inst linux-libc-dev (6.14 resolute [all]) [libc6-dev:amd64 ]',
+    'Inst zlib1g (1.3 resolute [amd64]) []',
+    'Conf libc6 (2.0 resolute-updates [amd64]) [libc6-dev:amd64 ]',
     '',
   ].join('\n')), [
     { package: 'libc6', version: '2.0', architecture: 'amd64' },
     { package: 'linux-libc-dev', version: '6.14', architecture: 'all' },
+    { package: 'zlib1g', version: '1.3', architecture: 'amd64' },
   ]);
   assert.throws(() => parseUbuntuAptSimulation('Remv openssh-server [1.0]\n'), /requested package removal/u);
   assert.throws(() => parseUbuntuAptSimulation('The following packages will be installed:\n'), /unsupported output/u);
   assert.throws(() => parseUbuntuAptSimulation('Conf malformed\n'), /unsupported output/u);
+  assert.throws(() => parseUbuntuAptSimulation('Conf libc6 broken\n'), /unsupported output/u);
+  assert.throws(() => parseUbuntuAptSimulation('Conf libc6 (2.0 resolute [amd64]) [../escape ]\n'), /unsupported output/u);
   assert.throws(() => parseUbuntuAptSimulation('Inst libc6:arm64 [1.0] (2.0 resolute [amd64])\n'), /architecture disagrees/u);
+  assert.throws(() => parseUbuntuAptSimulation('Inst libc6 (2.0 resolute [amd64]) [../../escape ]\n'), /unsupported output/u);
 });
 
 test('solver binds one explicit private state to a complete combined no-removal result', async () => {
