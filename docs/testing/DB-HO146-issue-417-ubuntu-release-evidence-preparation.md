@@ -98,4 +98,16 @@ Run `33915714653` used the correct composition: canonical snapshot-enabled sourc
 
 The focused correction accepts only bounded source-defined groups after the selected architecture. Run `33915999646` confirmed APT uses the same `ShortBreaks()` suffix on `Conf` records. Run `33916158484` then exposed the companion conflict/pre-dependency group before the short list: `[systemd:amd64 on libsystemd-shared:amd64] [udev:amd64 systemd:amd64 systemd-cryptsetup:amd64 ]`. The parser now admits at most 64 groups / 4,096 bytes, where every group is either one exact package-to-package `on` relation or a whitespace-separated exact package-identity list. The identical validator covers both admitted operation types.
 
-Removal records, literal broken configuration, prose, malformed identities, bracket ambiguity, architecture disagreement, stderr, nonzero exit, and final transaction drift remain rejected. Local parser/solver/producer proof passes 12 tests with one expected hosted-Linux skip. The next temporary hosted run must prove the complete exact transaction before the release-evidence preparer is encoded and the diagnostic workflow is removed.
+Removal records, literal broken configuration, prose, malformed identities, bracket ambiguity, architecture disagreement, stderr, nonzero exit, and final transaction drift remain rejected. Local parser/solver/producer proof passes 12 tests with one expected hosted-Linux skip.
+
+Temporary hosted run `33916333664` (job `101164243358`) completed in 52 seconds and proved the complete exact transaction against those nine retained list files. DB-HO131 selected 546 packages from the real layered installer state and exact `20260821T230000Z` snapshot. The base package-state semantic digest was `a6df9eb75cd023b9bf06cffd0732f491c12fb342138d360909ec49f3e0df3f6f`; the result digest was `0d1172910b629988b6df07286506dc853982c3d2019d8678ff2c1cb8b0a3f42f`. The requested packages resolved exactly as follows:
+
+- `build-essential` `12.12ubuntu2.26.04.2`
+- `cmake` `4.2.3-2ubuntu2`
+- `git` `1:2.53.0-1ubuntu1`
+- `linux-cloud-tools-virtual` `7.0.0-30.30`
+- `nodejs` `22.22.1+dfsg+~cs22.19.15-1ubuntu1`
+- `npm` `9.2.0~ds3-1`
+- `openssh-server` `1:10.2p1-2ubuntu3.5`
+
+This closes the diagnostic uncertainty at the input seam. The reusable preparer must now reproduce the same media/status/keyring/list identities and solver request through product-owned contracts; after that product-level hosted proof, the diagnostic workflow must be removed.
