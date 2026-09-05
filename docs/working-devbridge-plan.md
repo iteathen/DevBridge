@@ -4,6 +4,8 @@ Status (2026-09-05): active dependency-ordered plan; historical phase and physic
 
 Current slice: `fix/159-exact-cache-revalidation`, rooted at the exact Stage 8 baseline above. The generic artifact owner revalidates complete content below unchanged directories; the generic state owner appends one completed CAS generation; the existing checkout owner composes them under its activity lease. Ordinary identity validation remains strict. Focused tests pass 38/38 on Node 24.15.0 and 22.16.0; preflight and architecture/product/standalone gates pass. Require complete exact-head qualification, full-diff review, exact protected integration authorization and fresh integrated qualification before native install/cache recovery. See `docs/testing/DB-HO168-exact-cache-revalidation.md`. Preserve the stopped superseded construction subject until a fresh owner-produced retirement plan permits removal; do not create a duplicate VM.
 
+Qualification dependency: CI33959956279 for initial PR #492 candidate `318d30b` passed Ubuntu smoke/full and Windows full, but Windows smoke reached its unchanged deadline twice. DB-HO169 demonstrates that npm10.9.2's PowerShell wrapper drops the scheduling argument and selects the published `npm.cmd` entry point at the two Windows workflow edges. Runtime source and scheduling/deadline policies are unchanged. Require a fresh exact-head matrix; retain both failures and keep #475's broader progress/deadline work separate.
+
 ## Governing method
 
 Each implementation slice follows:

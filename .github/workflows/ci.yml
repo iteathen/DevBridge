@@ -38,7 +38,7 @@ jobs:
       - name: Cheap preflight (Windows bounded)
         if: runner.os == 'Windows'
         timeout-minutes: 3
-        run: npm run preflight -- --bound-targeted-test-concurrency
+        run: npm.cmd run preflight -- --bound-targeted-test-concurrency
       - name: DevBridge identity audit
         timeout-minutes: 1
         run: node --test test/product-identity.test.js
@@ -73,7 +73,7 @@ jobs:
       - name: Tests (Windows serialized)
         if: runner.os == 'Windows'
         timeout-minutes: 6
-        run: npm test -- --test-concurrency=1
+        run: npm.cmd test -- --test-concurrency=1
       - name: Doctor smoke test
         timeout-minutes: 1
         run: node src/cli.js doctor --config config/devbridge.example.json
