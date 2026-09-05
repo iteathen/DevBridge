@@ -17,6 +17,54 @@ import {
 
 function clone(value) { return structuredClone(value); }
 
+function sourceComponentRelease(count) {
+  const release = ubuntuPackageCapsuleRelease();
+  const source = release.sources.packages[0];
+  const template = release.sources.descriptor.objects.find((object) => object.name === source.files[0].object);
+  for (let index = 1; index < count; index++) {
+    const name = `source-component-${index}`;
+    const object = clone(template);
+    object.name = name;
+    object.chunks[0].name = `${name}.chunk`;
+    release.sources.descriptor.objects.push(object);
+    source.files.push({ filename: `component-${index}.tar.xz`, object: name });
+  }
+  return release;
+}
+
+test('source component coverage follows the bounded descriptor rather than a 64-file cutoff', () => {
+  for (const count of [65, 291]) {
+    const release = sourceComponentRelease(count);
+    const fixture = ubuntuPackageCapsuleAuthority({ release });
+    const accepted = verifyUbuntuPackageCapsuleReleaseInput(fixture.authority);
+    assert.equal(accepted.sources.packages[0].files.length, count);
+    const reordered = clone(release);
+    reordered.sources.packages.reverse();
+    reordered.sources.descriptor.objects.reverse();
+    for (const source of reordered.sources.packages) source.files.reverse();
+    assert.deepEqual(ubuntuPackageCapsuleReleasePayload(reordered), ubuntuPackageCapsuleReleasePayload(release));
+  }
+  const atLimit = sourceComponentRelease(8185);
+  assert.equal(atLimit.sources.descriptor.objects.length, 8192);
+  assert.doesNotThrow(() => ubuntuPackageCapsuleReleasePayload(atLimit));
+  assert.throws(() => ubuntuPackageCapsuleReleasePayload(sourceComponentRelease(8186)), /objects/u);
+});
+
+test('large source inventories retain exact coverage, distinct claims, and descriptor cardinality checks', () => {
+  const mutations = [
+    [(r) => r.sources.packages[0].files.push(clone(r.sources.packages[0].files[0])), /reuses an immutable object/u],
+    [(r) => r.sources.descriptor.objects.pop(), /does not identify a descriptor object/u],
+    [(r) => r.sources.packages[0].files.pop(), /exactly cover/u],
+    [(r) => { r.sources.packages[0].files = []; }, /files is invalid/u],
+    [(r) => { r.sources.packages[0].files = Array(r.sources.descriptor.objects.length).fill(r.sources.packages[0].files[0]); }, /files is invalid/u],
+  ];
+  for (const [mutate, expected] of mutations) {
+    const release = sourceComponentRelease(291);
+    mutate(release);
+    assert.throws(() => ubuntuPackageCapsuleReleasePayload(release), expected);
+  }
+});
+
 test('signed Ubuntu package capsule binds exact snapshot, transaction, metadata, binaries, and sources', () => {
   const fixture = ubuntuPackageCapsuleAuthority();
   const accepted = verifyUbuntuPackageCapsuleReleaseInput(fixture.authority);
