@@ -4,6 +4,8 @@ Status: implementation in progress; no installation or physical qualification cl
 
 Current checkpoint: HO162 proved the complete capsule's native Windows UDF write/readback; HO163 implemented the owned optional construction data-disc lifecycle and qualified its mocked provider boundary. See `DB-HO162-exact-file-media.md` and `DB-HO163-construction-data-media.md`. Exact offline APT consumption and installer/setup composition remain incomplete. The original scoped plan below remains the branch's full objective; do not restart completed projection/media/provider work.
 
+Superseding next action: HO164 / #488 demonstrated that the published capsule was solved for full ubuntu-server, while the actual installer deliberately uses ubuntu-server-minimal. Correct source binding through the release-input owner before wiring this capsule into construction; preserve #354's qualified minimal-source correction. See `DB-HO164-capsule-install-source-binding.md`. Earlier next-action paragraphs below are historical checkpoints, not instructions to repeat completed work.
+
 ## Assessment and governing boundaries
 
 Baseline `279fda350a39067047dc76c18c1c8f5c64f1766e`, tree `2f411f8f488beb4b3a7f5e660adb75ee17dbe56a`; integrated CI33949874380 all four green. HO160 completed real GitHub/R2 publication of the unchanged b5b912b source and Ubuntu manifest66956be8bec7b04631d9510c99b90f1d45edd6989ea6ff8570d7b9531f54f6ce. That is available input, not installer consumption or VM readiness.
