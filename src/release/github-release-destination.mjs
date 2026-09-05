@@ -21,7 +21,11 @@ const MAX_DURATION_MS = 2 * 60 * 60 * 1000;
 const MAX_AUTHORITY_BYTES = 16 * 1024 * 1024;
 const MAX_JSON_BYTES = 4 * 1024 * 1024;
 const ASSETS_PER_PAGE = 100;
-const MAX_ASSET_PAGES = 164;
+// Provider compatibility facts, not neutral descriptor or package policy.
+// https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases
+const MAX_RELEASE_ASSETS = 1000;
+const MAX_RELEASE_ASSET_BYTES = 2 * 1024 ** 3 - 1;
+const MAX_ASSET_PAGES = Math.floor(MAX_RELEASE_ASSETS / ASSETS_PER_PAGE) + 1;
 const API_VERSION = '2022-11-28';
 
 function fail(message) { throw new Error(message); }
@@ -228,6 +232,10 @@ export class GitHubReleaseDestination {
 
   get protocol() { return GITHUB_RELEASE_DESTINATION_PROTOCOL; }
 
+  get limits() {
+    return Object.freeze({ maxAssets: MAX_RELEASE_ASSETS, maxAssetBytes: MAX_RELEASE_ASSET_BYTES });
+  }
+
   get identity() {
     return `github-release:${sha256(Buffer.from(`${this.#owner}/${this.#repository}#${this.#releaseId}`, 'utf8'))}`;
   }
@@ -242,6 +250,43 @@ export class GitHubReleaseDestination {
         read: (request) => this.readAuthority(request),
       }),
     });
+  }
+
+  async preparePublication(raw = {}) {
+    const value = exactObject(raw, new Set(['objects', 'authority', 'signal']), 'GitHub Release publication admission');
+    if (!Array.isArray(value.objects) || !Array.isArray(value.authority)
+        || value.objects.length + value.authority.length < 1
+        || value.objects.length + value.authority.length > MAX_RELEASE_ASSETS) {
+      fail('GitHub Release publication exceeds asset capacity');
+    }
+    const desired = new Map();
+    const add = (name, size, digest) => {
+      exactPositive(size, 'GitHub Release admitted asset size', MAX_RELEASE_ASSET_BYTES);
+      if (typeof digest !== 'string' || !DIGEST.test(digest) || desired.has(name)) fail('GitHub Release admitted asset identity is invalid');
+      desired.set(name, { size, digest });
+    };
+    for (const item of value.objects) {
+      const object = exactObject(item, new Set(['sha256', 'size']), 'GitHub Release admitted object');
+      add(assetName('object', object.sha256), object.size, object.sha256);
+    }
+    for (const item of value.authority) {
+      const authority = authorityRequest(item, 'read');
+      if (authority.signal != null) throw new TypeError('GitHub Release admitted authority signal is unsupported');
+      add(assetName('authority', authority.name), authority.size, authority.sha256);
+    }
+    const signal = this.#signal(signalShape(value.signal, 'GitHub Release publication admission signal'), 'GitHub Release publication admission');
+    interrupted(signal);
+    // Fresh read is required: an earlier cached listing cannot admit a later plan.
+    this.#assets = null;
+    const existing = await this.#loadAssets(signal);
+    let missing = 0;
+    for (const [name, item] of desired) {
+      const found = existing.get(name);
+      if (found == null) missing++;
+      else assetMetadata(found, name, item.size, item.digest, this.#apiAssetUrl);
+    }
+    if (existing.size + missing > MAX_RELEASE_ASSETS) fail('GitHub Release publication exceeds remaining asset capacity');
+    return Object.freeze({ identity: this.identity, existingAssets: existing.size, newAssets: missing, totalAssets: existing.size + missing });
   }
 
   #signal(caller, name) {
@@ -288,6 +333,7 @@ export class GitHubReleaseDestination {
           fail('GitHub Release asset listing contains ambiguous metadata');
         }
         selected.set(asset.name, asset);
+        if (selected.size > MAX_RELEASE_ASSETS) fail('GitHub Release listing exceeds provider asset capacity');
       }
       if (values.length < ASSETS_PER_PAGE) {
         this.#assets = selected;
@@ -304,6 +350,7 @@ export class GitHubReleaseDestination {
   }
 
   async #uploadBytes(name, bytes, size, digest, signal, extra = {}) {
+    if (size > MAX_RELEASE_ASSET_BYTES || this.#assets.size >= MAX_RELEASE_ASSETS) fail('GitHub Release asset exceeds provider capacity');
     const url = `${this.#uploadUrl}?name=${encodeURIComponent(name)}`;
     const response = await this.#apiFetch(url, {
       method: 'POST',

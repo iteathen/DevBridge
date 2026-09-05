@@ -120,6 +120,30 @@ test('GitHub Release destination exposes one exact accepted publication shape', 
   assert.throws(() => adapter(fake, { maxDurationMs: 999 }), /duration/u);
 });
 
+test('GitHub Release capacity admission rejects impossible plans before credentials or mutation', async () => {
+  const fake = githubFake(); const selected = adapter(fake);
+  const authority = [{ name: 'manifest', size: 1, sha256: sha256(Buffer.from('m')) }];
+  await assert.rejects(selected.preparePublication({ objects: Array.from({ length: 1000 }, (_, i) => ({ size: 1, sha256: sha256(Buffer.from(String(i))) })), authority }), /asset capacity/);
+  await assert.rejects(selected.preparePublication({ objects: [{ size: 2 * 1024 ** 3, sha256: 'a'.repeat(64) }], authority }), /asset size/);
+  await assert.rejects(selected.preparePublication({ objects: [], authority, extra: true }), /unsupported/);
+  assert.equal(fake.calls.length, 0);
+});
+
+test('GitHub Release admission includes existing assets, authority reservations and exact reuse', async () => {
+  const initial = Array.from({ length: 999 }, (_, i) => ({ id: i + 1, name: `other-${i}`, state: 'uploaded', size: 1, url: `${API_ASSET}/${i + 1}` }));
+  const fake = githubFake({ initial }); const selected = adapter(fake);
+  const authority = [{ name: 'manifest', size: 1, sha256: sha256(Buffer.from('m')) }];
+  await assert.rejects(selected.preparePublication({ objects: [{ size: 1, sha256: 'a'.repeat(64) }], authority }), /remaining asset capacity/);
+  const admitted = await selected.preparePublication({ objects: [], authority });
+  assert.deepEqual(admitted, { identity: selected.identity, existingAssets: 999, newAssets: 1, totalAssets: 1000 });
+  await selected.ensureAuthority({ ...authority[0], bytes: Buffer.from('m') });
+  const reused = await selected.preparePublication({ objects: [], authority });
+  assert.equal(reused.newAssets, 0); assert.equal(reused.totalAssets, 1000);
+  await assert.rejects(selected.preparePublication({ objects: [], authority: [{ ...authority[0], sha256: 'b'.repeat(64) }] }), /digest/);
+  await assert.rejects(selected.ensureAuthority({ name: 'another', bytes: Buffer.from('x'), size: 1, sha256: sha256(Buffer.from('x')) }), /capacity/);
+  assert.equal(fake.calls.filter(c => c.options.method === 'POST').length, 1);
+});
+
 test('GitHub Release destination uploads an exact object once and streams it back by numeric asset id', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-github-release-object-'));
   try {
