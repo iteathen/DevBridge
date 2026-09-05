@@ -25,14 +25,37 @@ function Enable-DevBridgeGuestFileService {
 }
 `;
 
+const MEDIA_ATTACHMENTS = String.raw`
+function Get-DevBridgeExpectedMedia {
+  [pscustomobject]@{ Location = 1; Path = [string]$data.installerPath }
+  [pscustomobject]@{ Location = 2; Path = [string]$data.seedPath }
+  if ($null -ne $data.dataPath) { [pscustomobject]@{ Location = 3; Path = [string]$data.dataPath } }
+}
+function Assert-DevBridgeMediaAttachments {
+  param([object[]]$Drives, [switch]$Complete)
+  $expected = @(Get-DevBridgeExpectedMedia)
+  $seen = @{}
+  foreach ($drive in $Drives) {
+    $slot = [int]$drive.ControllerLocation
+    $matches = @($expected | Where-Object { $_.Location -eq $slot })
+    if ([int]$drive.ControllerNumber -ne 0 -or $matches.Count -ne 1 -or $seen.ContainsKey($slot)) { throw 'construction media attachment identity is incompatible' }
+    if (-not [StringComparer]::OrdinalIgnoreCase.Equals([IO.Path]::GetFullPath([string]$drive.Path), [IO.Path]::GetFullPath([string]$matches[0].Path))) { throw 'construction media attachment path changed' }
+    $seen[$slot] = $true
+  }
+  if ($Complete -and $Drives.Count -ne $expected.Count) { throw 'construction media attachment set is incomplete' }
+}
+`;
+
 const PREPARE_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 ${GUEST_FILE_SERVICE}
+${MEDIA_ATTACHMENTS}
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 Import-Module Hyper-V -ErrorAction Stop
 if (-not (Test-Path -LiteralPath $data.installerPath -PathType Leaf)) { throw 'installer media is absent' }
 if (-not (Test-Path -LiteralPath $data.seedPath -PathType Leaf)) { throw 'seed media is absent' }
+if ($null -ne $data.dataPath -and -not (Test-Path -LiteralPath $data.dataPath -PathType Leaf)) { throw 'data media is absent' }
 $switch = if ([string]$data.networkControl -eq 'owned') {
   Get-VMSwitch -Name ([string]$data.networkReference) -ErrorAction Stop
 } elseif ([string]$data.networkControl -eq 'system') {
@@ -41,9 +64,13 @@ $switch = if ([string]$data.networkControl -eq 'owned') {
 if ([string]$data.networkControl -eq 'owned' -and [string]$switch.Notes -ne [string]$data.networkProof) { throw 'construction network ownership proof does not match' }
 if ([string]$data.networkControl -eq 'system' -and ([string]$data.networkProof).ToLowerInvariant() -ne ([string]$switch.Id).ToLowerInvariant()) { throw 'construction system-network proof does not match' }
 if ([string]$switch.SwitchType -ne 'Internal') { throw 'construction network type is incompatible' }
-$null = New-Item -ItemType Directory -Path ([string]$data.configPath) -Force -ErrorAction Stop
 $item = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq [string]$data.name } | Select-Object -First 1
+if ($null -ne $item) {
+  if (-not [string]::IsNullOrWhiteSpace([string]$data.providerIdentity) -and ([string]$item.Id).ToLowerInvariant() -ne ([string]$data.providerIdentity).ToLowerInvariant()) { throw 'construction provider identity changed' }
+  Assert-DevBridgeMediaAttachments -Drives @(Get-VMDvdDrive -VMName ([string]$data.name) -ErrorAction Stop)
+}
 if ($null -eq $item) {
+  $null = New-Item -ItemType Directory -Path ([string]$data.configPath) -Force -ErrorAction Stop
   $item = New-VM -Name ([string]$data.name) -Generation 2 -NoVHD -MemoryStartupBytes ([long]$data.memoryBytes) -Path ([string]$data.configPath) -SwitchName ([string]$switch.Name) -ErrorAction Stop
 }
 if ([string]$item.State -ne 'Off') { throw 'construction machine must be stopped during preparation' }
@@ -110,8 +137,14 @@ elseif ([IO.Path]::GetFullPath([string]$installer.Path) -ne [IO.Path]::GetFullPa
 $seed = $dvd | Where-Object { $_.ControllerNumber -eq 0 -and $_.ControllerLocation -eq 2 } | Select-Object -First 1
 if ($null -eq $seed) { Add-VMDvdDrive -VMName ([string]$data.name) -ControllerNumber 0 -ControllerLocation 2 -Path ([string]$data.seedPath) -ErrorAction Stop; $seed = Get-VMDvdDrive -VMName ([string]$data.name) -ControllerNumber 0 -ControllerLocation 2 -ErrorAction Stop }
 elseif ([IO.Path]::GetFullPath([string]$seed.Path) -ne [IO.Path]::GetFullPath([string]$data.seedPath)) { throw 'seed media attachment does not match' }
+if ($null -ne $data.dataPath) {
+  $medium = $dvd | Where-Object { $_.ControllerNumber -eq 0 -and $_.ControllerLocation -eq 3 } | Select-Object -First 1
+  if ($null -eq $medium) { Add-VMDvdDrive -VMName ([string]$data.name) -ControllerNumber 0 -ControllerLocation 3 -Path ([string]$data.dataPath) -ErrorAction Stop }
+}
 $dvd = @(Get-VMDvdDrive -VMName ([string]$data.name) -ErrorAction Stop)
-if ($dvd.Count -ne 2) { throw 'construction media attachment count is incompatible' }
+$expectedCount = @(Get-DevBridgeExpectedMedia).Count
+if ($dvd.Count -ne $expectedCount) { throw 'construction media attachment count is incompatible' }
+Assert-DevBridgeMediaAttachments -Drives $dvd -Complete
 Set-VMFirmware -VMName ([string]$data.name) -FirstBootDevice $installer -ErrorAction Stop
 $item = Get-VM -Name ([string]$data.name) -ErrorAction Stop
 @{ ready = $true; providerIdentity = ([string]$item.Id).ToLowerInvariant() } | ConvertTo-Json -Compress
@@ -214,11 +247,13 @@ $bytes = [byte[]]$result.ImageData
 const START_INSTALL_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+${MEDIA_ATTACHMENTS}
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 Import-Module Hyper-V -ErrorAction Stop
 $item = Get-VM -Name ([string]$data.name) -ErrorAction Stop
 if ([string]$item.Notes -ne [string]$data.marker) { throw 'construction machine ownership proof does not match' }
 if (([string]$item.Id).ToLowerInvariant() -ne ([string]$data.providerIdentity).ToLowerInvariant()) { throw 'construction provider identity changed' }
+Assert-DevBridgeMediaAttachments -Drives @(Get-VMDvdDrive -VMName ([string]$data.name) -ErrorAction Stop) -Complete
 if ([string]$item.State -eq 'Off') { Start-VM -Name ([string]$data.name) -ErrorAction Stop | Out-Null }
 elseif ([string]$item.State -ne 'Running') { throw 'construction machine is not startable' }
 $item = Get-VM -Name ([string]$data.name) -ErrorAction Stop
@@ -244,6 +279,7 @@ if (-not $matches) { throw 'construction network binding changed' }
 const BOOT_INSTALLED_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+${MEDIA_ATTACHMENTS}
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 Import-Module Hyper-V -ErrorAction Stop
 $item = Get-VM -Name ([string]$data.name) -ErrorAction Stop
@@ -252,7 +288,10 @@ if (([string]$item.Id).ToLowerInvariant() -ne ([string]$data.providerIdentity).T
 if ([string]$item.State -ne 'Off') { throw 'installer must finish and power off before installed boot' }
 $hard = @(Get-VMHardDiskDrive -VMName ([string]$data.name) -ErrorAction Stop)
 if ($hard.Count -ne 1 -or [IO.Path]::GetFullPath([string]$hard[0].Path) -ne [IO.Path]::GetFullPath([string]$data.diskPath)) { throw 'construction disk attachment does not match' }
-Get-VMDvdDrive -VMName ([string]$data.name) -ErrorAction Stop | Remove-VMDvdDrive -ErrorAction Stop
+$dvd = @(Get-VMDvdDrive -VMName ([string]$data.name) -ErrorAction Stop)
+Assert-DevBridgeMediaAttachments -Drives $dvd
+$dvd | Remove-VMDvdDrive -ErrorAction Stop
+if (@(Get-VMDvdDrive -VMName ([string]$data.name) -ErrorAction Stop).Count -ne 0) { throw 'construction media remains attached after detachment' }
 Set-VMFirmware -VMName ([string]$data.name) -FirstBootDevice $hard[0] -ErrorAction Stop
 Start-VM -Name ([string]$data.name) -ErrorAction Stop | Out-Null
 @{ started = $true } | ConvertTo-Json -Compress

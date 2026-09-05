@@ -53,7 +53,7 @@ function fakeHost() {
         state.machineState = 'off';
         state.diskPresent = true;
         state.diskAttached = true;
-        state.mediaCount = 2;
+        state.mediaCount = payload.dataPath ? 3 : 2;
         state.bootCompatible = true;
         state.bootReason = null;
         state.guestFileServiceEnabled = true;
@@ -175,6 +175,148 @@ async function fixture() {
 function constructor(data, host, identity = 'a'.repeat(32), options = {}) {
   return new HyperVImageConstruction({ directory: data.stateRoot, sourceRoot: data.sourceRoot, outputRoot: data.outputRoot, identity, invoke: host.invoke, ...options });
 }
+
+test('construction owns an exact optional data medium across replay, start and detached boot', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const location = path.join(data.sourceRoot, 'data.iso');
+    await writeFile(location, 'binary-data');
+    data.request.dataMedia = { location, bytes: 11, sha256: sha256('binary-data') };
+    const construction = constructor(data, host);
+    assert.equal((await construction.prepare(data.request)).mediaCount, 3);
+    assert.equal(host.state.calls[0].payload.dataPath, location);
+    const stateFile = path.join(data.stateRoot, 'state.json');
+    const persisted = JSON.parse(await readFile(stateFile, 'utf8'));
+    assert.equal(persisted.protocol, 'devbridge/hyperv-image-construction-v3');
+    assert.deepEqual(persisted.records[data.request.identity].dataMedia, data.request.dataMedia);
+    const initialCalls = host.state.calls.length;
+    for (const invalid of [
+      { ...persisted, protocol: 'devbridge/hyperv-image-construction-v2' },
+      { ...persisted, records: { [data.request.identity]: { ...persisted.records[data.request.identity], dataMedia: null } } },
+      { ...persisted, records: { [data.request.identity]: { ...persisted.records[data.request.identity], dataMedia: { ...data.request.dataMedia, ignored: true } } } },
+    ]) {
+      await writeFile(stateFile, JSON.stringify(invalid));
+      await assert.rejects(() => construction.startInstall(data.request.identity));
+      assert.equal(host.state.calls.length, initialCalls);
+    }
+    await writeFile(stateFile, JSON.stringify(persisted));
+    const resumed = constructor(data, host);
+    await resumed.prepare(data.request);
+    const before = host.state.calls.length;
+    const { dataMedia, ...withoutData } = data.request;
+    await assert.rejects(() => resumed.prepare(withoutData), /request changed/u);
+    await writeFile(location, 'other-bytes');
+    await assert.rejects(() => resumed.startInstall(data.request.identity), /digest changed/u);
+    assert.equal(host.state.calls.length, before);
+    await writeFile(location, 'binary-data');
+    const changed = { ...data.request, dataMedia: { ...data.request.dataMedia, sha256: sha256('other-bytes') } };
+    await writeFile(location, 'other-bytes');
+    await assert.rejects(() => resumed.prepare(changed), /request changed/u);
+    assert.equal(host.state.calls.length, before);
+    await writeFile(location, 'binary-data');
+    await resumed.startInstall(data.request.identity);
+    const start = host.state.calls.find((entry) => entry.script.includes('construction machine is not startable'));
+    assert.equal(start.payload.dataPath, location);
+    host.state.machineState = 'off';
+    host.state.mediaCount = 1; // Exact remaining subset after interrupted detach; native channel must validate it.
+    assert.equal((await resumed.bootInstalled(data.request.identity)).mediaCount, 0);
+    const boot = host.state.calls.find((entry) => entry.script.includes('installer must finish and power off before installed boot'));
+    assert.equal(boot.payload.dataPath, location);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('construction rejects invalid data before platform effects and cannot add it to old intent', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const construction = constructor(data, host);
+    for (const dataMedia of [null, {}, { ...data.request.seed, extra: true }, { ...data.request.seed, sha256: '0'.repeat(64) }]) {
+      await assert.rejects(() => construction.prepare({ ...data.request, dataMedia }));
+      assert.equal(host.state.calls.length, 0);
+    }
+    await assert.rejects(() => readFile(path.join(data.stateRoot, 'state.json')), { code: 'ENOENT' });
+    await construction.prepare(data.request);
+    const previous = await readFile(path.join(data.stateRoot, 'state.json'), 'utf8');
+    assert.equal(JSON.parse(previous).protocol, 'devbridge/hyperv-image-construction-v2');
+    const calls = host.state.calls.length;
+    await assert.rejects(() => construction.prepare({ ...data.request, dataMedia: data.request.seed }), /request changed/u);
+    assert.equal(host.state.calls.length, calls);
+    assert.equal(await readFile(path.join(data.stateRoot, 'state.json'), 'utf8'), previous);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('Windows construction media scripts deny foreign attachments and reconcile exact remaining discs', { skip: process.platform !== 'win32' }, async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const location = path.join(data.sourceRoot, 'data.iso');
+    await writeFile(location, 'data');
+    data.request.dataMedia = { location, bytes: 4, sha256: sha256('data') };
+    const construction = constructor(data, host);
+    await construction.prepare(data.request);
+    await construction.startInstall(data.request.identity);
+    host.state.machineState = 'off';
+    await construction.bootInstalled(data.request.identity);
+    const start = host.state.calls.find((entry) => entry.script.includes('construction machine is not startable'));
+    const boot = host.state.calls.find((entry) => entry.script.includes('installer must finish and power off before installed boot'));
+    const run = async (call, variant) => {
+      const mocks = String.raw`
+$script:variant = '${variant}'
+$script:drives = $null
+function Import-Module { [CmdletBinding()] param([Parameter(Position=0)]$Name) }
+function Get-VM { [CmdletBinding()] param([string]$Name) [pscustomobject]@{ Notes = $data.marker; Id = $data.providerIdentity; State = 'Off' } }
+function Get-VMHardDiskDrive { [CmdletBinding()] param([string]$VMName) [pscustomobject]@{ Path = $data.diskPath } }
+function Get-VMDvdDrive {
+  [CmdletBinding()] param([string]$VMName)
+  if ($null -eq $script:drives) {
+    $script:drives = @(
+      [pscustomobject]@{ ControllerNumber = 0; ControllerLocation = 1; Path = $data.installerPath }
+      [pscustomobject]@{ ControllerNumber = 0; ControllerLocation = 2; Path = $data.seedPath }
+      [pscustomobject]@{ ControllerNumber = 0; ControllerLocation = 3; Path = $data.dataPath }
+    )
+    switch ($script:variant) {
+      'partial' { $script:drives = @($script:drives[2]) }
+      'empty' { $script:drives = @() }
+      'foreign' { $script:drives[2].Path = Join-Path ([string]$data.configPath) 'foreign.iso' }
+      'duplicate' { $script:drives += $script:drives[2] }
+      'extra' { $script:drives += [pscustomobject]@{ ControllerNumber = 0; ControllerLocation = 4; Path = $data.dataPath } }
+    }
+  }
+  $script:drives
+}
+function Remove-VMDvdDrive {
+  [CmdletBinding()] param([Parameter(ValueFromPipeline)]$Drive)
+  process {
+    if ($script:variant -in @('foreign','duplicate','extra')) { throw 'foreign disc was mutated' }
+    if ($script:variant -ne 'retained') { $script:drives = @($script:drives | Where-Object { $_.ControllerLocation -ne $Drive.ControllerLocation }) }
+  }
+}
+function Set-VMFirmware { [CmdletBinding()] param([string]$VMName, $FirstBootDevice) if ($script:drives.Count -ne 0) { throw 'firmware mutated with media attached' } }
+function Start-VM { [CmdletBinding()] param([string]$Name) if ($script:variant -in @('foreign','duplicate','extra','retained')) { throw 'start preceded media admission' } }
+`;
+      const scriptPath = path.join(data.directory, 'media-contract-test.ps1');
+      await writeFile(scriptPath, `${mocks}\n${call.script}`);
+      return invokeCommand({ executable: 'powershell.exe', arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], input: JSON.stringify(call.payload), timeoutMs: 60_000, maxOutputBytes: 64 * 1024 });
+    };
+    assert.equal((await run(start, 'exact')).exitCode, 0);
+    for (const variant of ['partial', 'empty', 'foreign', 'duplicate', 'extra']) {
+      const result = await run(start, variant);
+      assert.equal(result.exitCode, 1, variant);
+      assert.match(result.stderr, /construction media attachment (?:set is incomplete|path changed|identity is incompatible)/u);
+    }
+    for (const variant of ['exact', 'partial', 'empty']) {
+      const result = await run(boot, variant);
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).started, true);
+    }
+    for (const variant of ['foreign', 'duplicate', 'extra', 'retained']) {
+      const result = await run(boot, variant);
+      assert.equal(result.exitCode, 1, variant);
+      assert.match(result.stderr, /construction media (?:attachment (?:path changed|identity is incompatible)|remains attached after detachment)/u);
+    }
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
 
 test('Hyper-V image construction resumes exact intent through install, qualification, and retained disk', async () => {
   const data = await fixture();
@@ -572,6 +714,9 @@ test('Windows Hyper-V construction reconciles only the exact default-adapter New
   let prepareRequest;
   const providerIdentity = '11111111-2222-3333-4444-555555555555';
   try {
+    const dataLocation = path.join(data.sourceRoot, 'data.iso');
+    await writeFile(dataLocation, 'data-media');
+    data.request.dataMedia = { location: dataLocation, bytes: 10, sha256: sha256('data-media') };
     const construction = constructor(data, {
       async invoke(request) {
         const script = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
@@ -589,7 +734,7 @@ test('Windows Hyper-V construction reconciles only the exact default-adapter New
     assert.match(prepareScript, /Get-VMIntegrationService/u);
     assert.match(prepareScript, /Enable-VMIntegrationService/u);
 
-    const mocks = ({ foreignConfig = false, foreignAdapter = false } = {}) => String.raw`
+    const mocks = ({ foreignConfig = false, foreignAdapter = false, foreignMedia = false, partialMedia = false } = {}) => String.raw`
 function Import-Module { [CmdletBinding()] param([Parameter(Position=0)]$Name) }
 $script:item = $null
 $script:adapter = $null
@@ -599,12 +744,19 @@ $script:secureBoot = 'Off'
 $script:secureBootTemplate = 'MicrosoftWindows'
 $script:tpmEnabled = $false
 $script:guestFileServiceEnabled = $false
+$script:foreignMedia = ${foreignMedia ? '$true' : '$false'}
 function Get-VMSwitch { [CmdletBinding()] param([guid]$Id, [string]$Name) [pscustomobject]@{ Id = [guid]'${networkId}'; Name = 'Default Switch'; Notes = ''; SwitchType = 'Internal' } }
 function Get-VM {
   [CmdletBinding()] param([string]$Name)
   if ($null -eq $script:item) {
     $location = if (${foreignConfig ? '$true' : '$false'}) { Join-Path ([string]$data.configPath) 'foreign' } else { Join-Path ([string]$data.configPath) ([string]$data.name) }
     $script:item = [pscustomobject]@{ Name = [string]$data.name; Id = [guid]'${providerIdentity}'; Generation = 2; State = 'Off'; Notes = ''; MemoryStartup = [long]$data.memoryBytes; ConfigurationLocation = $location }
+    if (${partialMedia || foreignMedia ? '$true' : '$false'}) {
+      $script:item.Notes = [string]$data.marker
+      $script:secureBoot = 'On'; $script:tpmEnabled = $true
+      $mediaPath = if ($script:foreignMedia) { Join-Path ([string]$data.configPath) 'foreign.iso' } else { [string]$data.dataPath }
+      $script:dvd = @([pscustomobject]@{ Path = $mediaPath; ControllerNumber = 0; ControllerLocation = 3 })
+    }
   }
   $script:item
 }
@@ -628,6 +780,7 @@ function Get-VMNetworkAdapter {
 }
 function Set-VM {
   [CmdletBinding()] param([string]$Name, [string]$Notes, [bool]$AutomaticCheckpointsEnabled, $AutomaticStartAction, $AutomaticStopAction, [long]$MemoryStartupBytes)
+  if ($script:foreignMedia) { throw 'mutation preceded foreign-media rejection' }
   if ($PSBoundParameters.ContainsKey('Notes')) {
     if ($script:secureBoot -ne 'On' -or -not $script:tpmEnabled) { throw 'ownership preceded protected boot' }
     $script:item.Notes = $Notes
@@ -677,6 +830,12 @@ function Add-VMDvdDrive {
     assert.equal(exact.timedOut, false, 'exact partial reconciliation timed out');
     assert.equal(exact.exitCode, 0, exact.stderr);
     assert.deepEqual(JSON.parse(exact.stdout), { ready: true, providerIdentity });
+
+    const partial = await run(mocks({ partialMedia: true }));
+    assert.equal(partial.exitCode, 0, partial.stderr);
+    const foreignMedia = await run(mocks({ foreignMedia: true }));
+    assert.equal(foreignMedia.exitCode, 1);
+    assert.match(foreignMedia.stderr, /construction media attachment path changed/u);
 
     const foreignConfig = await run(mocks({ foreignConfig: true }));
     assert.equal(foreignConfig.timedOut, false, 'foreign configuration rejection timed out');
