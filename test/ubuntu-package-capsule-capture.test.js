@@ -97,7 +97,7 @@ test(`capture maps one solved transaction through signed metadata to exact binar
   if (emptyAncillaryIndex) {
     for (const pocket of fixture.capture.metadata.pockets) {
       archive.set(pocket.inRelease.path, Buffer.from(archive.get(pocket.inRelease.path).toString('utf8')
-        .replace('SHA256:\n', `SHA256:\n ${sha256(Buffer.alloc(0))} 0 main/debian-installer/binary-amd64/Packages\n`)));
+        .replace('SHA256:\n', `SHA256:\n ${sha256(Buffer.alloc(0))} 0 main/debian-installer/binary-amd64/Packages\n ${'a'.repeat(64)} 48777 main/dep11/icons-128x128@2.tar.gz\n`)));
     }
   }
   const destination = path.join(fixtureRoot, 'capture');
@@ -233,6 +233,75 @@ for (const invalid of ['wrong-empty-digest', 'duplicate-empty-path', 'selected-e
       archive.set(pocket.inRelease.path, original);
       const retry = await captureUbuntuPackageCapsule(request);
       assert.equal(retry.artifactCount, 26);
+    } finally { await rm(fixtureRoot, { recursive: true, force: true }); }
+  });
+}
+
+test('ancillary HiDPI index names do not weaken path containment or select extra downloads', async () => {
+  const { fixtureRoot, fixture, archive } = await input();
+  const pocket = fixture.capture.metadata.pockets[0], original = archive.get(pocket.inRelease.path);
+  const paths = ['../icons@2.tar', '%2e%2e/icons@2.tar', 'main%2fdep11/icons@2.tar',
+    'main%5cdep11/icons@2.tar', '/icons@2.tar', '//host/icons@2.tar',
+    'https://host/icons@2.tar', 'main/icons@2.tar?redirect=1', 'main/icons@2.tar#fragment'];
+  const destination = path.join(fixtureRoot, 'capture');
+  try {
+    for (const selectedPath of paths) {
+      archive.set(pocket.inRelease.path, Buffer.from(original.toString('utf8').replace('SHA256:\n',
+        `SHA256:\n ${'a'.repeat(64)} 123 ${selectedPath}\n`)));
+      const requests = [];
+      await assert.rejects(captureUbuntuPackageCapsule({
+        policy: policy(fixture.capture), solution: solution(fixture.capture), destination,
+        readArchive: async request => { requests.push(request.path); return reader(archive)(request); },
+        verifyInRelease: verifier(fixture.capture.upstreamKeyFingerprint),
+      }), /InRelease path is invalid/u);
+      assert.deepEqual(requests, [pocket.inRelease.path]);
+      await assert.rejects(readFile(destination), /ENOENT/u);
+    }
+    archive.set(pocket.inRelease.path, Buffer.from(original.toString('utf8').replace('SHA256:\n',
+      `SHA256:\n ${'a'.repeat(64)} 123 main/dep11/icons-128x128@2.tar.gz\n`)));
+    const requests = [];
+    await captureUbuntuPackageCapsule({
+      policy: policy(fixture.capture), solution: solution(fixture.capture), destination,
+      readArchive: async request => { requests.push(request.path); return reader(archive)(request); },
+      verifyInRelease: verifier(fixture.capture.upstreamKeyFingerprint),
+    });
+    assert.equal(requests.some(entry => entry.includes('@')), false);
+  } finally { await rm(fixtureRoot, { recursive: true, force: true }); }
+});
+
+for (const selectedOversize of [false, true]) {
+  test(`binary size ceiling belongs to selected acquisition (selected oversized: ${selectedOversize})`, async () => {
+    const { fixtureRoot, fixture, archive } = await input();
+    for (const pocket of fixture.capture.metadata.pockets) {
+      for (const component of pocket.components) {
+        const indexPath = `dists/${pocket.pocket}/${component.binaryIndex.path}`;
+        const original = archive.get(indexPath);
+        let text = gunzipSync(original).toString('utf8');
+        if (selectedOversize) text = text.replace(/\nSize: [0-9]+/u, '\nSize: 3197044082');
+        else text += `\nPackage: qgis-api-doc\nVersion: 1.0\nArchitecture: all\nFilename: pool/universe/q/qgis/qgis-api-doc_1.0_all.deb\nSize: 3197044082\nSHA256: ${'a'.repeat(64)}\n`;
+        const changed = gzipSync(Buffer.from(text), { level: 9, mtime: 0 });
+        archive.set(indexPath, changed);
+        archive.set(pocket.inRelease.path, Buffer.from(archive.get(pocket.inRelease.path).toString('utf8')
+          .replace(`${sha256(original)} ${original.length} ${component.binaryIndex.path}`,
+            `${sha256(changed)} ${changed.length} ${component.binaryIndex.path}`)));
+      }
+    }
+    const destination = path.join(fixtureRoot, 'capture'), requests = [];
+    try {
+      const operation = captureUbuntuPackageCapsule({
+        policy: policy(fixture.capture), solution: solution(fixture.capture), destination,
+        readArchive: async request => { requests.push(request.path); return reader(archive)(request); },
+        verifyInRelease: verifier(fixture.capture.upstreamKeyFingerprint),
+      });
+      if (selectedOversize) {
+        await assert.rejects(operation, /exceeds its byte bound/u);
+        assert.equal(requests.some(entry => entry.startsWith('pool/')), false);
+        await assert.rejects(readFile(destination), /ENOENT/u);
+      } else {
+        const result = await operation;
+        assert.equal(result.capture.binaries.packages.length, 3);
+        assert.equal(requests.some(entry => entry.includes('qgis')), false);
+      }
     } finally { await rm(fixtureRoot, { recursive: true, force: true }); }
   });
 }
