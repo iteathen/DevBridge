@@ -324,7 +324,9 @@ function normalizeSources(raw, { releaseId, binaries }) {
     if (identities.has(identity)) throw new TypeError('Ubuntu capsule source package identities must be unique');
     identities.add(identity);
     const directory = archivePath(item.directory, `Ubuntu capsule source ${index}.directory`);
-    if (!Array.isArray(item.files) || item.files.length < 1 || item.files.length > 64) {
+    // The normalized descriptor owns the object bound; this package also
+    // needs its distinct .dsc. Exact global claims below prevent reuse/extras.
+    if (!Array.isArray(item.files) || item.files.length < 1 || item.files.length + 1 > objects.size) {
       throw new TypeError(`Ubuntu capsule source ${index}.files is invalid`);
     }
     const dsc = normalizeSourceFile(item.dsc, {
