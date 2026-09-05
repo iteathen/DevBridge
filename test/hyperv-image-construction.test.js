@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { invokeCommand } from '../src/runtime/command-invocation.js';
@@ -182,14 +182,17 @@ test('construction owns an exact optional data medium across replay, start and d
   try {
     const location = path.join(data.sourceRoot, 'data.iso');
     await writeFile(location, 'binary-data');
+    // Hosted Windows TEMP can use an 8.3 alias; admission owns resolved paths.
+    const admittedLocation = await realpath(location);
     data.request.dataMedia = { location, bytes: 11, sha256: sha256('binary-data') };
     const construction = constructor(data, host);
     assert.equal((await construction.prepare(data.request)).mediaCount, 3);
-    assert.equal(host.state.calls[0].payload.dataPath, location);
+    assert.equal(host.state.calls[0].payload.dataPath, admittedLocation);
+    assert.equal(data.request.dataMedia.location, location);
     const stateFile = path.join(data.stateRoot, 'state.json');
     const persisted = JSON.parse(await readFile(stateFile, 'utf8'));
     assert.equal(persisted.protocol, 'devbridge/hyperv-image-construction-v3');
-    assert.deepEqual(persisted.records[data.request.identity].dataMedia, data.request.dataMedia);
+    assert.deepEqual(persisted.records[data.request.identity].dataMedia, { ...data.request.dataMedia, location: admittedLocation });
     const initialCalls = host.state.calls.length;
     for (const invalid of [
       { ...persisted, protocol: 'devbridge/hyperv-image-construction-v2' },
@@ -217,12 +220,12 @@ test('construction owns an exact optional data medium across replay, start and d
     await writeFile(location, 'binary-data');
     await resumed.startInstall(data.request.identity);
     const start = host.state.calls.find((entry) => entry.script.includes('construction machine is not startable'));
-    assert.equal(start.payload.dataPath, location);
+    assert.equal(start.payload.dataPath, admittedLocation);
     host.state.machineState = 'off';
     host.state.mediaCount = 1; // Exact remaining subset after interrupted detach; native channel must validate it.
     assert.equal((await resumed.bootInstalled(data.request.identity)).mediaCount, 0);
     const boot = host.state.calls.find((entry) => entry.script.includes('installer must finish and power off before installed boot'));
-    assert.equal(boot.payload.dataPath, location);
+    assert.equal(boot.payload.dataPath, admittedLocation);
   } finally { await rm(data.directory, { recursive: true, force: true }); }
 });
 

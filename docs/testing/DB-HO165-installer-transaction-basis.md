@@ -1,6 +1,6 @@
 # HO165 — preserve the actual installer transaction basis
 
-Status: implemented, under exact-head qualification; not native installation proof.
+Status: implemented; Ubuntu exact-head qualification passed, Windows test expectation corrected and awaiting fresh matrix. Not native installation proof.
 
 Tracking: #489 (installation capture owner), dependency of #197 and the #488 release-input/consumer qualification path. This does not replace #417's capsule availability owner.
 
@@ -31,3 +31,11 @@ Then run focused tests, preflight and exact-head wider qualification. No physica
 The new first-late-command regression failed on the original three-command seed, then passed with capture composed before APT. Focused Windows checks passed24/36 with12 Linux-only skips at that point; separate setup/authority/qualification/architecture checks passed29/29. Additional permanent tests cover SIGKILL and cleanup refusal without falsely reporting successful capture. Local Windows runs do not execute those Linux shell tests.
 
 Preflight12719 failed on the stale v9 fixture. After that fixture correction, preflight18589 passed3 artifacts /295 syntax /2 JSON /234 selected test files. The final cleanup-error propagation edit occurred at that checkpoint, so exact-final-head qualification still requires the ensuing CI; the earlier preflight is not presented as its proof. Author review checked this unit's path ownership, no-replacement publication, replay behavior, temporary-file cleanup, source/record indirection rejection and unchanged APT policy. Independent review and native installer evidence remain absent.
+
+## Exact-head CI and Windows assertion correction
+
+CI33956255282 checked head83a219b7ad0ac6965e437a7343cc6fc9d8d65e1c (treefbde1e0933ff66b80313d9d2be254d622a97d764). Ubuntu full101280031712 and smoke101280031752 succeeded. Full suite:2363 total/2318 passed/45 skips/0 failed, architecture34/34. All15 installer-basis tests executed on actual Linux, including publication collision, catchable interruption, SIGKILL uncertain-state retention and cleanup refusal. This is Linux process/filesystem evidence, not installer/Hyper-V evidence.
+
+Windows full101280031664 and smoke101280031817 failed on the same HO163 test at hyperv-image-construction.test.js:188. Actual path contained runneradmin; expected input contained the RUNNER~1 8.3 alias. Existing HyperVConstructionMedia.admit already returns realpath and the parent persists/passes that admitted identity. The assertion incorrectly required the original lexical spelling. Node's public realpath contract governs this expectation (https://nodejs.org/api/fs.html#fsrealpathpath-options-callback); no new path library or production change is needed.
+
+Correct only the test's prepare/persist/start/detach expectations to the observed realpath and additionally prove the caller's request remains unchanged. Preserve exact equality, hash/size, replay, changed-intent and corrupt-media rejection. Focused Windows construction tests passed21/21 in7833.9793ms, with actual PowerShell and mocked Hyper-V. Author review found no production diff or validation relaxation. Fresh exact-head matrix remains required; no VM, installation, UAC or protected integration action occurred.
