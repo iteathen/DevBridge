@@ -36,10 +36,11 @@ function exactText(value, expression, name) {
   return value;
 }
 
-function archivePath(value, name) {
+function archivePath(value, name, { index = false } = {}) {
   if (typeof value !== 'string' || value.length < 1 || value.length > 512 || value.startsWith('/') || value.endsWith('/')
       || value.includes('\\') || value.includes('//') || /[?#\u0000-\u001f\u007f]/u.test(value)
-      || !/^[A-Za-z0-9._+%~/-]+$/u.test(value)) throw new TypeError(`${name} is invalid`);
+      || !/^[A-Za-z0-9._+%~@/-]+$/u.test(value)
+      || (!index && value.includes('@'))) throw new TypeError(`${name} is invalid`);
   for (const segment of value.split('/')) {
     let decoded;
     try { decoded = decodeURIComponent(segment); } catch { throw new TypeError(`${name} is invalid`); }
@@ -119,7 +120,7 @@ function checksums(value, name, { leaf = false, allowEmpty = false } = {}) {
     if (!entry) fail(`${name} checksum is invalid`);
     const filename = leaf
       ? archiveLeaf(entry.filename, `${name} filename`)
-      : archivePath(entry.filename, `${name} path`);
+      : archivePath(entry.filename, `${name} path`, { index: true });
     if (result.has(filename)) fail(`${name} checksum is invalid`);
     result.set(filename, Object.freeze({ sha256: entry.sha256, size: entry.size }));
   }
@@ -144,7 +145,7 @@ function parseBinaryIndex(bytes, name, records) {
     if (!filename.endsWith('.deb')) fail(`${name} Filename does not identify a .deb`);
     const size = Number(field(stanza, 'Size', name));
     const digest = field(stanza, 'SHA256', name).toLowerCase();
-    if (!Number.isSafeInteger(size) || size < 1 || size > MAX_ARTIFACT_BYTES || !DIGEST.test(digest)) fail(`${name} binary identity is invalid`);
+    if (!Number.isSafeInteger(size) || size < 1 || !DIGEST.test(digest)) fail(`${name} binary identity is invalid`);
     const record = Object.freeze({
       package: packageName, version, architecture,
       source: exactText(source.package, PACKAGE_NAME, `${name} source package`),
@@ -204,6 +205,7 @@ function policy(raw, solution) {
 }
 
 async function readExact(readArchive, request, maximum) {
+  if (request.size != null && request.size > maximum) fail(`Ubuntu archive ${request.path} exceeds its byte bound`);
   const boundedRequest = Object.freeze({ ...request, maximum });
   const bytes = exactBytes(await readArchive(boundedRequest), `Ubuntu archive ${request.path}`, maximum);
   if (request.size != null && (bytes.length !== request.size || sha256(bytes) !== request.sha256)) {
