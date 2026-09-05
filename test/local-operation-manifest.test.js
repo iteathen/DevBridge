@@ -119,6 +119,15 @@ test('requireAnyParameter prevents a generated wrapper from invoking an empty de
   assert.deepEqual(adapter.validate({ verbose: true }), { verbose: true });
 });
 
+test('operator manifests can declare long bounded qualification timeouts', () => {
+  const manifest = validateLocalOperationManifest(fixtureManifest({
+    timeoutMs: 1_800_000,
+    requireAnyParameter: false,
+  }));
+  assert.equal(manifest.timeoutMs, 1_800_000);
+  assert.throws(() => validateLocalOperationManifest(fixtureManifest({ timeoutMs: 28_800_001 })), /timeoutMs/u);
+});
+
 test('local manifest directory loading is deterministic and collisions fail closed', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-local-manifests-'));
   try {

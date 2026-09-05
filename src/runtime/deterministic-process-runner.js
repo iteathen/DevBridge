@@ -74,6 +74,7 @@ export class DeterministicProcessRunner {
     repository = null,
     repositoryId = null,
     runId = null,
+    requestedCapabilities = [],
     repositoryTool = null,
     repositoryWorkingDirectory = '.',
     signal = null,
@@ -92,10 +93,15 @@ export class DeterministicProcessRunner {
       if (typeof repository !== 'string' || repository.length === 0) throw new PolicyError('repository-code execution requires repository identity');
       if (typeof runId !== 'string' || runId.length === 0) throw new PolicyError('repository-code execution requires run identity');
       if (typeof repositoryTool !== 'string' || repositoryTool.length === 0) throw new PolicyError('repository-code execution requires a logical repository tool identity');
+      if (!Array.isArray(requestedCapabilities) || requestedCapabilities.some((entry) => typeof entry !== 'string')) {
+        throw new PolicyError('repository-code execution requestedCapabilities must be structural strings');
+      }
+      const scope = { repository, repositoryId, runId };
+      if (requestedCapabilities.length > 0) scope.requestedCapabilities = requestedCapabilities;
       const result = normalizeRepositoryExecutionResult(await this.#repositoryExecution.execute({
         protocol: REPOSITORY_EXECUTION_REQUEST_PROTOCOL,
         operation: operation ?? 'repository.operation',
-        scope: { repository, repositoryId, runId },
+        scope,
         invocation: {
           tool: repositoryTool,
           arguments: args,

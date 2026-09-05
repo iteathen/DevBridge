@@ -6,6 +6,7 @@ export const REPOSITORY_EXECUTION_RESULT_PROTOCOL = 'devbridge/repository-execut
 
 const SAFE_OPERATION = /^[A-Za-z0-9_.:-]{1,160}$/u;
 const SAFE_NAME = /^[A-Za-z][A-Za-z0-9_.-]{0,127}$/u;
+const SAFE_CAPABILITY = /^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,79}$/u;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
 const MAX_ARGUMENTS = 256;
@@ -14,6 +15,7 @@ const MAX_STDIN_BYTES = 4 * 1024 * 1024;
 const MAX_TIMEOUT_MS = 28_800_000;
 const MAX_OUTPUT_BYTES = 16_777_216;
 const MAX_REASON_BYTES = 1_024;
+const MAX_CAPABILITIES = 32;
 const ARGUMENT_KINDS = new Set(['literal', 'input', 'output']);
 const TRANSFER_DIRECTIONS = new Set(['input', 'output']);
 const RESERVED_ENVIRONMENT_NAMES = new Set([
@@ -70,7 +72,7 @@ function logicalPath(value, name) {
 
 function normalizeScope(raw) {
   const scope = requireObject(raw, 'repository execution scope');
-  onlyKeys(scope, new Set(['repository', 'repositoryId', 'runId']), 'repository execution scope');
+  onlyKeys(scope, new Set(['repository', 'repositoryId', 'runId', 'requestedCapabilities']), 'repository execution scope');
   if (typeof scope.repository !== 'string' || !REPOSITORY.test(scope.repository)) {
     throw new PolicyError('repository execution scope.repository is invalid');
   }
@@ -80,7 +82,23 @@ function normalizeScope(raw) {
   if (typeof scope.runId !== 'string' || !SAFE_NAME.test(scope.runId)) {
     throw new PolicyError('repository execution scope.runId is invalid');
   }
-  return { repository: scope.repository, repositoryId: scope.repositoryId ?? null, runId: scope.runId };
+  const result = { repository: scope.repository, repositoryId: scope.repositoryId ?? null, runId: scope.runId };
+  if (scope.requestedCapabilities != null) {
+    if (!Array.isArray(scope.requestedCapabilities) || scope.requestedCapabilities.length > MAX_CAPABILITIES) {
+      throw new PolicyError(`repository execution scope.requestedCapabilities must contain 0-${MAX_CAPABILITIES} capability tokens`);
+    }
+    const seen = new Set();
+    const requestedCapabilities = [];
+    for (const [index, entry] of scope.requestedCapabilities.entries()) {
+      if (typeof entry !== 'string' || !SAFE_CAPABILITY.test(entry)) {
+        throw new PolicyError(`repository execution scope.requestedCapabilities[${index}] is invalid`);
+      }
+      if (!seen.has(entry)) requestedCapabilities.push(entry);
+      seen.add(entry);
+    }
+    if (requestedCapabilities.length > 0) result.requestedCapabilities = requestedCapabilities;
+  }
+  return result;
 }
 
 function normalizeArgument(raw, index) {

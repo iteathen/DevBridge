@@ -15,6 +15,7 @@ const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_MANIFESTS = 64;
 const MAX_ARGUMENTS = 64;
 const MAX_ENUM_VALUES = 64;
+const MAX_TIMEOUT_MS = 28_800_000;
 const VALUE_TYPES = new Set(['string', 'project-path', 'integer', 'enum']);
 const FORBIDDEN_PARAMETER_NAMES = new Set([
   'command', 'shell', 'argv', 'args', 'executable', 'cwd', 'localpath', 'absolutepath',
@@ -165,7 +166,7 @@ export function validateLocalOperationManifest(raw) {
     operation,
     executable,
     arguments: args,
-    timeoutMs: safeInteger(manifest.timeoutMs ?? 120_000, 'local operation manifest timeoutMs', { min: 1_000, max: 900_000 }),
+    timeoutMs: safeInteger(manifest.timeoutMs ?? 120_000, 'local operation manifest timeoutMs', { min: 1_000, max: MAX_TIMEOUT_MS }),
     maxOutputBytes: safeInteger(manifest.maxOutputBytes ?? 1024 * 1024, 'local operation manifest maxOutputBytes', { min: 1_024, max: 4 * 1024 * 1024 }),
     requireAnyParameter: manifest.requireAnyParameter === true,
     source: normalizedSource,

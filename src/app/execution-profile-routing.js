@@ -77,12 +77,25 @@ function routeIndex(policy) {
   return { byTarget, byProfile, bySubject };
 }
 
-function preferredSubjectRoute(index, subject) {
+function routingCapabilities(requestedCapabilities = []) {
+  return requestedCapabilities.filter((capability) => capability.startsWith('profile:'));
+}
+
+function routeSatisfies(route, requestedCapabilities = []) {
+  const required = routingCapabilities(requestedCapabilities);
+  if (required.length === 0) return true;
+  const available = new Set([`profile:${route.profile}`, ...(route.capabilities ?? [])]);
+  return required.every((capability) => available.has(capability));
+}
+
+function preferredSubjectRoute(index, subject, requestedCapabilities = []) {
   const matches = index.bySubject.get(opaqueSubject(subject)) ?? [];
   if (matches.length === 0) throw new Error('no local workspace route exists for the repository subject');
-  if (matches.length === 1) return matches[0];
-  const preferred = matches.filter((entry) => entry.route.preferred);
-  if (preferred.length !== 1) throw new Error('repository subject has multiple workspace profiles and no unique preferred route');
+  const capable = matches.filter((entry) => routeSatisfies(entry.route, requestedCapabilities));
+  if (capable.length === 0) throw new Error('no local workspace route satisfies the requested capabilities for the repository subject');
+  if (capable.length === 1) return capable[0];
+  const preferred = capable.filter((entry) => entry.route.preferred);
+  if (preferred.length !== 1) throw new Error('repository subject has multiple matching workspace profiles and no unique preferred route');
   return preferred[0];
 }
 
@@ -164,8 +177,8 @@ export function createExecutionProfileRouting({ state, policy }) {
     },
     physicalTarget,
     representativeTarget,
-    targetForSubject(subject) {
-      return preferredSubjectRoute(index, subject).target;
+    targetForSubject(subject, requestedCapabilities = []) {
+      return preferredSubjectRoute(index, subject, requestedCapabilities).target;
     },
     workspaceIdentity(target) {
       const route = routeForTarget(target);
@@ -281,7 +294,8 @@ function createMappedPreparation(preparation, routing) {
 function lifecycleScopeTarget(routing, resolveSubject, scope) {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)) throw new TypeError('workspace lifecycle scope is invalid');
   if (typeof resolveSubject !== 'function') throw new TypeError('workspace lifecycle subject resolver is unavailable');
-  return Promise.resolve(resolveSubject(structuredClone(scope))).then((subject) => routing.targetForSubject(String(subject)));
+  return Promise.resolve(resolveSubject(structuredClone(scope)))
+    .then((subject) => routing.targetForSubject(String(subject), scope.requestedCapabilities ?? []));
 }
 
 export async function createExecutionProfileRepositoryExecution({

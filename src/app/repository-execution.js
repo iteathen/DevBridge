@@ -21,6 +21,7 @@ import {
 
 export const ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL = 'devbridge/environment-execution-routes-v1';
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
+const SAFE_CAPABILITY = /^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,79}$/u;
 const SAFE_NAME = /^[A-Za-z][A-Za-z0-9_.+-]{0,159}$/u;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
 const MAX_ROUTE_BYTES = 1024 * 1024;
@@ -30,11 +31,13 @@ const TRANSFER_LIMIT = 16 * 1024 * 1024;
 const MANIFEST_LIMIT = 24 * 1024 * 1024;
 const TOOL_RESOURCE_LIMIT = 4 * 1024 * 1024;
 const TOOL_RESOURCE_COUNT = 32;
+const MAX_ROUTE_CAPABILITIES = 32;
 const AGENT_FILE = fileURLToPath(new URL('../guest/workspace-agent.mjs', import.meta.url));
 
 function requireObject(value, name) { if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`); return value; }
 function onlyKeys(value, allowed, name) { for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`${name}.${key} is not allowed`); }
 function safeId(value, name) { if (typeof value !== 'string' || !SAFE_ID.test(value)) throw new TypeError(`${name} is invalid`); return value; }
+function safeCapability(value, name) { if (typeof value !== 'string' || !SAFE_CAPABILITY.test(value)) throw new TypeError(`${name} is invalid`); return value; }
 function stableSubject(value, name) { if (typeof value !== 'string' || !/^\d+$/u.test(value)) throw new TypeError(`${name} must be a numeric stable identity`); return value; }
 function bounded(value, name, maxBytes = 4096) { if (typeof value !== 'string' || value.length === 0 || value.includes('\0') || Buffer.byteLength(value, 'utf8') > maxBytes) throw new TypeError(`${name} is invalid`); return value; }
 function hashIdentity(value) { return `execution-${createHash('sha256').update(JSON.stringify(value), 'utf8').digest('hex')}`; }
@@ -96,10 +99,21 @@ export function normalizeEnvironmentExecutionRoutes(raw) {
   const seen = new Set();
   const routes = value.routes.map((rawRoute, index) => {
     const route = requireObject(rawRoute, `execution route[${index}]`);
-    onlyKeys(route, new Set(['subject', 'profile', 'preferred', 'validation', 'access']), `execution route[${index}]`);
+    onlyKeys(route, new Set(['subject', 'profile', 'capabilities', 'preferred', 'validation', 'access']), `execution route[${index}]`);
+    if (route.capabilities != null && (!Array.isArray(route.capabilities) || route.capabilities.length > MAX_ROUTE_CAPABILITIES)) {
+      throw new TypeError(`execution route[${index}].capabilities must contain 0-${MAX_ROUTE_CAPABILITIES} entries`);
+    }
+    const capabilities = [];
+    const capabilitySet = new Set();
+    for (const [capabilityIndex, capability] of (route.capabilities ?? []).entries()) {
+      const normalizedCapability = safeCapability(capability, `execution route[${index}].capabilities[${capabilityIndex}]`);
+      if (!capabilitySet.has(normalizedCapability)) capabilities.push(normalizedCapability);
+      capabilitySet.add(normalizedCapability);
+    }
     const normalized = {
       subject: stableSubject(route.subject, `execution route[${index}].subject`),
       profile: safeId(route.profile, `execution route[${index}].profile`),
+      capabilities,
       preferred: route.preferred === true,
       validation: route.validation === true,
       access: normalizeRouteAccess(route.access, index),
@@ -117,7 +131,7 @@ export function normalizeEnvironmentExecutionRoutes(raw) {
   }
   const validation = routes.filter((route) => route.validation);
   if (validation.length > 1) throw new TypeError('environment execution routes contain multiple validation routes');
-  return Object.freeze({ protocol: ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL, routes: Object.freeze(routes.map((route) => Object.freeze({ ...route, access: Object.freeze({ ...route.access }) }))) });
+  return Object.freeze({ protocol: ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL, routes: Object.freeze(routes.map((route) => Object.freeze({ ...route, capabilities: Object.freeze([...route.capabilities]), access: Object.freeze({ ...route.access }) }))) });
 }
 
 export async function loadEnvironmentExecutionRoutes(stateDirectory) {
@@ -140,12 +154,25 @@ export function validationEnvironmentExecutionRoute(policy) {
   return matches[0];
 }
 
-function routeForSubject(policy, subject) {
+function routingCapabilities(requestedCapabilities = []) {
+  return requestedCapabilities.filter((capability) => capability.startsWith('profile:'));
+}
+
+function routeSatisfies(route, requestedCapabilities = []) {
+  const required = routingCapabilities(requestedCapabilities);
+  if (required.length === 0) return true;
+  const available = new Set([`profile:${route.profile}`, ...route.capabilities]);
+  return required.every((capability) => available.has(capability));
+}
+
+function routeForSubject(policy, subject, requestedCapabilities = []) {
   const matches = policy.routes.filter((route) => route.subject === subject);
   if (matches.length === 0) throw new Error('no local execution route exists for the repository subject');
-  if (matches.length === 1) return matches[0];
-  const preferred = matches.filter((route) => route.preferred);
-  if (preferred.length !== 1) throw new Error('repository subject has multiple execution profiles and no unique preferred route');
+  const capable = matches.filter((route) => routeSatisfies(route, requestedCapabilities));
+  if (capable.length === 0) throw new Error('no local execution route satisfies the requested capabilities for the repository subject');
+  if (capable.length === 1) return capable[0];
+  const preferred = capable.filter((route) => route.preferred);
+  if (preferred.length !== 1) throw new Error('repository subject has multiple matching execution profiles and no unique preferred route');
   return preferred[0];
 }
 
@@ -343,7 +370,7 @@ export async function createRepositoryExecution({
     status,
     open: async (scope) => {
       const subject = stableSubject(await resolveSubject(structuredClone(scope)), 'repository execution subject');
-      const route = routeForSubject(policy, subject);
+      const route = routeForSubject(policy, subject, scope.requestedCapabilities ?? []);
       const matches = (await state.listEnvironments()).filter((entry) => entry.record?.subject === subject && entry.record?.profile === route.profile);
       if (matches.length !== 1) throw new Error(matches.length === 0 ? 'routed persistent environment is absent' : 'routed persistent environment is ambiguous');
       const selected = matches[0];

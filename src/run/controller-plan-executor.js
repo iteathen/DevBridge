@@ -337,6 +337,10 @@ export class ControllerPlanExecutor {
         const result = await this.#registry.execute(operation.operation, operation.params, {
           projectDir: workspace.worktreeDir,
           processRunner: this.#processRunner,
+          repository: state.task?.envelope?.target?.repository ?? null,
+          repositoryId: null,
+          runId: state.runId,
+          requestedCapabilities: state.task?.envelope?.requestedCapabilities ?? [],
           scratch,
           onActivity: (activity) => onLiveness?.({ operationId: operation.id, operation: operation.operation, ...activity }),
         });

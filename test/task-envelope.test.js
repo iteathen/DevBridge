@@ -13,13 +13,14 @@ test('parses a bounded task envelope and produces a stable exact-body-bound revi
     protocol: 'devbridge/task-v1',
     target: { repository: 'iteathen/example' },
     instructions: 'Fix the thing.',
-    requestedCapabilities: ['project.write'],
+    requestedCapabilities: ['project.write', 'profile:linux', 'profile:cuda', 'profile:cuda'],
     preferredTool: 'codex'
   };
   const raw = body(task);
   const a = parseTaskEnvelope(raw);
   const b = parseTaskEnvelope(raw);
   assert.equal(a.envelope.target.repository, 'iteathen/example');
+  assert.deepEqual(a.envelope.requestedCapabilities, ['project.write', 'profile:linux', 'profile:cuda']);
   assert.equal(a.revision, b.revision);
   assert.equal(a.contentSha256, contentSha256(raw));
   assert.match(a.revision, /^[0-9a-f]{64}$/);
@@ -62,6 +63,17 @@ test('rejects remote command authority', () => {
     instructions: 'Do work.',
     command: 'rm -rf /'
   })), ProtocolError);
+});
+
+test('rejects authority-shaped or unbounded requested capabilities', () => {
+  const base = {
+    protocol: 'devbridge/task-v1',
+    target: { repository: 'iteathen/example' },
+    instructions: 'Do work.',
+  };
+  assert.throws(() => parseTaskEnvelope(body({ ...base, requestedCapabilities: ['linux cuda'] })), /capability token/u);
+  assert.throws(() => parseTaskEnvelope(body({ ...base, requestedCapabilities: ['x'.repeat(81)] })), /capability token/u);
+  assert.throws(() => parseTaskEnvelope(body({ ...base, requestedCapabilities: Array.from({ length: 33 }, (_, index) => `cap${index}`) })), /0-32/u);
 });
 
 test('requires exactly one unquoted machine envelope', () => {

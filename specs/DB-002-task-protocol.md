@@ -29,7 +29,9 @@ Creator identity alone is not sufficient because GitHub allows mutable issue des
 
 A REST/GraphQL race is never accepted. DevBridge clears the persisted REST conditional validator so latest bytes can be fetched and reverified on a later bounded poll.
 
-No task can grant machine privileges. A task may request capabilities or a preferred locally configured tool profile, but local policy decides whether those requests are allowed.
+No task can grant machine privileges. A task may request bounded neutral capabilities or a preferred locally configured tool profile, but local policy decides whether those requests are allowed.
+
+`requestedCapabilities` tokens are capability requests, not provider authority. Tokens in the `profile:*` namespace, such as `profile:linux` or `profile:cuda`, may select among already admitted local execution routes only when the local route table explicitly exposes matching neutral capability metadata. Other tokens remain task-level policy/context data and do not constrain execution-profile routing. A task cannot use this field to name provider-native GPU identifiers, PCI addresses, partition identifiers, sockets, services, drivers, commands, paths, credentials, or VM attachment objects.
 
 ### `trustedActorIds` is job-submission authority
 
@@ -72,6 +74,8 @@ The issue body must contain exactly one top-level fenced block:
 Required fields are `protocol`, `target.repository`, and `instructions`.
 
 The task protocol deliberately has no `command`, `shell`, `cwd`, `localPath`, `executable`, raw environment, credential, sandbox exception, peer key, Git-force mode, or daemon-control fields.
+
+`requestedCapabilities`, when present, is an array of bounded neutral capability tokens. Duplicate tokens normalize away during task-envelope parsing.
 
 Current v1 also has no destination-agent/installation field. Do not infer one from task text, issue labels, repository branch names, or a DB-016 lease owner.
 

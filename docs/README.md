@@ -19,6 +19,7 @@ DevBridge has accumulated implementation plans, migration records, normative spe
 | Understand engineering rules | [`design-principles.md`](design-principles.md) and [`../AGENTS.md`](../AGENTS.md) |
 | Understand persistent VM/workspace ownership | [`execution-profile-environments.md`](execution-profile-environments.md) |
 | Understand post-recovery CUDA/GPU direction | [`gpu-execution-profiles.md`](gpu-execution-profiles.md) |
+| Understand CUDA-JS issue #4 through DevBridge | [`cuda-js-issue-4-devbridge.md`](cuda-js-issue-4-devbridge.md) |
 | Understand Stage 0 and self-update | [`bootstrap.md`](bootstrap.md) and [`bootstrap-compatibility.md`](bootstrap-compatibility.md) |
 | Understand current VM-program status | [`roadmap.md`](roadmap.md) |
 
@@ -146,6 +147,7 @@ These documents describe current implementation structure and intended operator 
 - [`agent-execution-runtime.md`](agent-execution-runtime.md) — agent-natural POSIX-style execution surface, structured process graph, Nushell role, named buffers/caches/history, read-only SQL, content-addressed storage, causal errors, and implementation ownership.
 - [`execution-profile-environments.md`](execution-profile-environments.md) — physical profile VM ownership and repository workspace routing.
 - [`gpu-execution-profiles.md`](gpu-execution-profiles.md) — recovery-first real-CUDA/GPU sequencing, capability/evidence boundaries, and follow-on generalized compute routing.
+- [`cuda-js-issue-4-devbridge.md`](cuda-js-issue-4-devbridge.md) — exact gaps and GitHub-task recipe for using DevBridge to attempt the CUDA-JS Linux gate without re-opening the separate GPU gate.
 - [`tool-profiles.md`](tool-profiles.md) — tool/profile surface and execution policy.
 - [`bootstrap.md`](bootstrap.md) — standalone launcher and secure-bootstrap flow.
 - [`bootstrap-compatibility.md`](bootstrap-compatibility.md) — Stage-0 protocol compatibility, accepted-runtime selection, installation tags, one-time legacy migration.

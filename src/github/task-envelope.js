@@ -4,10 +4,12 @@ import { normalizeControllerPlan } from '../run/controller-plan.js';
 import { contentSha256 } from './content-provenance.js';
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const CAPABILITY_RE = /^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,79}$/u;
 const MAX_BODY_BYTES = 96_000;
 const MAX_INSTRUCTION_BYTES = 48_000;
 const MAX_CONTEXT_BYTES = 32_000;
 const MAX_HANDOFF_BYTES = 16_000;
+const MAX_CAPABILITIES = 32;
 
 function byteLength(value) {
   return Buffer.byteLength(value, 'utf8');
@@ -15,6 +17,23 @@ function byteLength(value) {
 
 function stableEnvelope(value) {
   return JSON.stringify(value);
+}
+
+function normalizeCapabilities(raw) {
+  if (raw == null) return [];
+  if (!Array.isArray(raw) || raw.length > MAX_CAPABILITIES) {
+    throw new ProtocolError(`requestedCapabilities must contain 0-${MAX_CAPABILITIES} capability tokens`);
+  }
+  const result = [];
+  const seen = new Set();
+  for (const [index, entry] of raw.entries()) {
+    if (typeof entry !== 'string' || !CAPABILITY_RE.test(entry)) {
+      throw new ProtocolError(`requestedCapabilities[${index}] must be a bounded neutral capability token`);
+    }
+    if (!seen.has(entry)) result.push(entry);
+    seen.add(entry);
+  }
+  return result;
 }
 
 export function parseTaskEnvelope(body) {
@@ -50,9 +69,7 @@ export function parseTaskEnvelope(body) {
     }
   }
 
-  if (envelope.requestedCapabilities != null && (!Array.isArray(envelope.requestedCapabilities) || envelope.requestedCapabilities.some((entry) => typeof entry !== 'string'))) {
-    throw new ProtocolError('requestedCapabilities must be an array of strings');
-  }
+  const requestedCapabilities = normalizeCapabilities(envelope.requestedCapabilities);
 
   if (envelope.preferredTool != null && !/^[A-Za-z0-9_.-]+$/.test(envelope.preferredTool)) {
     throw new ProtocolError('preferredTool must be a safe local profile name');
@@ -71,7 +88,7 @@ export function parseTaskEnvelope(body) {
     protocol: envelope.protocol,
     target: { repository: envelope.target.repository },
     instructions: envelope.instructions,
-    requestedCapabilities: envelope.requestedCapabilities ?? [],
+    requestedCapabilities,
     preferredTool: envelope.preferredTool ?? null,
     controllerPlan,
     context: envelope.context ?? null

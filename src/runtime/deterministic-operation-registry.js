@@ -102,6 +102,7 @@ function scopedProcessRunner(processRunner, security, context) {
         repository: context.repository ?? null,
         repositoryId: context.repositoryId ?? null,
         runId: context.runId ?? null,
+        requestedCapabilities: context.requestedCapabilities ?? [],
       });
     },
   };

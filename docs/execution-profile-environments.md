@@ -116,6 +116,8 @@ A repository may be compatible with more than one profile. Routing should use lo
 
 The routing contract must use neutral capability/profile data rather than hard-coding repository names into profile internals.
 
+The local route table may attach bounded neutral capability tokens to a route. Task `requestedCapabilities` entries in the `profile:*` namespace can select among already admitted local routes only when the route profile name or route capability list satisfies every requested profile token. Other requested-capability tokens remain task-level policy/context data and do not constrain execution-profile routing. This does not let remote task text name provider-native GPU IDs, PCI addresses, partition IDs, sockets, service names, driver paths, commands, or VM attachment objects.
+
 If no compatible ready profile exists, execution fails/degrades or setup offers to provision one. It must not synthesize a repository-specific VM as an implicit fallback.
 
 The initial implementation preserves the existing local route file as a repository-to-profile compatibility table while moving physical environment lookup to a deterministic profile subject. This is intentionally an ownership correction rather than a provider rewrite.

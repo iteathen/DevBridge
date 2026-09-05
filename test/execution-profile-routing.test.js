@@ -60,6 +60,29 @@ function physicalState() {
   };
 }
 
+function physicalStateForProfiles(profiles) {
+  const entries = profiles.map((profile, index) => ({
+    record: {
+      identity: `env-${String.fromCharCode(97 + index).repeat(32)}`,
+      subject: executionProfileSubject(profile),
+      profile,
+      generation: 1,
+      source: { identity: `img-${String.fromCharCode(99 + index).repeat(32)}`, revision: 'v1', digest: String.fromCharCode(101 + index).repeat(64) },
+      settings: { memoryBytes: 4096, processorCount: 4, firmware: 'efi' },
+    },
+    observation: { identity: `env-${String.fromCharCode(97 + index).repeat(32)}`, exists: true, owned: true, compatible: true, state: 'running', reason: null, storage: null },
+  }));
+  return {
+    async inspect() { return { ready: true, state: 'ready' }; },
+    async listEnvironments() { return structuredClone(entries); },
+    async observeEnvironment(target) {
+      const entry = entries.find((candidate) => candidate.record.identity === target);
+      assert.ok(entry);
+      return structuredClone(entry);
+    },
+  };
+}
+
 test('execution profile identity is independent of repository identity', () => {
   const profile = executionProfileSubject(PROFILE);
   assert.equal(profile, executionProfileSubject(PROFILE));
@@ -82,6 +105,26 @@ test('multiple repository workspaces resolve to one physical profile environment
   assert.equal(await routing.physicalTarget(environments[1].record.identity), PHYSICAL);
   assert.notEqual(routing.workspaceIdentity(environments[0].record.identity), routing.workspaceIdentity(environments[1].record.identity));
   assert.equal(await routing.representativeTarget(PHYSICAL), environments[0].record.identity);
+});
+
+test('requested capabilities select the matching local profile route without provider-native selectors', async () => {
+  const routing = createExecutionProfileRouting({
+    state: physicalStateForProfiles(['linux-development', 'linux-cuda']),
+    policy: {
+      protocol: 'devbridge/environment-execution-routes-v1',
+      routes: [
+        { subject: '101', profile: 'linux-development', capabilities: ['profile:linux'], preferred: true, validation: true, access: ACCESS },
+        { subject: '101', profile: 'linux-cuda', capabilities: ['profile:linux', 'profile:cuda'], preferred: false, validation: false, access: ACCESS },
+      ],
+    },
+  });
+  const defaultTarget = routing.targetForSubject('101');
+  assert.equal(routing.targetForSubject('101', ['project.write']), defaultTarget);
+  const cudaTarget = routing.targetForSubject('101', ['project.write', 'profile:linux', 'profile:cuda']);
+  assert.notEqual(cudaTarget, defaultTarget);
+  assert.equal(routing.profileForTarget(cudaTarget), 'linux-cuda');
+  assert.equal(await routing.physicalTarget(cudaTarget), `env-${'b'.repeat(32)}`);
+  assert.throws(() => routing.targetForSubject('101', ['profile:windows']), /requested capabilities/u);
 });
 
 test('one execution profile rejects conflicting guest-access topology', () => {

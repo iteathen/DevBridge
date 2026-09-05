@@ -45,7 +45,8 @@ export function buildContextCapsule({ task, sequence = 1, prior = null, runtime 
       issueNumber: task.issueNumber,
       revision: task.revision,
       contentSha256: task.contentSha256 ?? taskProvenance?.contentSha256 ?? null,
-      targetRepository: task.envelope.target.repository
+      targetRepository: task.envelope.target.repository,
+      requestedCapabilities: task.envelope.requestedCapabilities ?? []
     },
     objective: task.envelope.instructions,
     constraints: Array.isArray(context.constraints) ? context.constraints : [],
