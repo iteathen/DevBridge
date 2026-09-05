@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { invokeCommand } from '../src/runtime/command-invocation.js';
@@ -32,13 +32,16 @@ function fakeHost() {
     consoleResult: null,
     bootCompatible: true,
     bootReason: null,
+    guestFileServiceEnabled: false,
+    guestFileServiceContact: true,
+    failAfterQualificationCycleEffect: false,
   };
   return {
     state,
     async invoke(request) {
       const script = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
       const payload = JSON.parse(request.input);
-      state.calls.push({ script, payload });
+      state.calls.push({ script, payload, timeoutMs: request.timeoutMs });
       let body;
       if (script.includes('construction media attachment count is incompatible')) {
         if (state.failPrepare) {
@@ -50,10 +53,22 @@ function fakeHost() {
         state.machineState = 'off';
         state.diskPresent = true;
         state.diskAttached = true;
-        state.mediaCount = 2;
+        state.mediaCount = payload.dataPath ? 3 : 2;
         state.bootCompatible = true;
         state.bootReason = null;
+        state.guestFileServiceEnabled = true;
         body = { ready: true, providerIdentity: state.providerIdentity };
+      } else if (script.includes('construction machine did not stop for qualification host reconciliation')) {
+        state.guestFileServiceEnabled = true;
+        const cycled = payload.cycle === true
+          && state.guestFileServiceContact === false
+          && state.uptimeMilliseconds >= payload.baselineUptimeMilliseconds;
+        if (cycled) state.uptimeMilliseconds = 0;
+        if (cycled && state.failAfterQualificationCycleEffect) {
+          state.failAfterQualificationCycleEffect = false;
+          return { exitCode: 1, stdout: '', stderr: 'simulated transport loss after qualification cycle', timedOut: false, aborted: false, outputTruncated: false };
+        }
+        body = { ready: true, cycled, contact: state.guestFileServiceContact };
       } else if (script.includes("diskPresent = (Test-Path")) {
         body = {
           exists: state.exists,
@@ -107,14 +122,22 @@ function fakeHost() {
           return { exitCode: 1, stdout: '', stderr: 'simulated transport loss after VM removal', timedOut: false, aborted: false, outputTruncated: false };
         }
         body = { retained: true, virtualBytes: 34359738368, allocatedBytes: 4294967296, diskIdentity: 'disk-subject' };
-      } else if (script.includes('discarded = $true')) {
+      } else if (script.includes('construction machine remains after retirement')) {
         state.exists = false;
         state.owned = false;
         state.machineState = 'absent';
-        state.diskPresent = false;
         state.diskAttached = false;
         state.mediaCount = 0;
-        body = { discarded: true };
+        body = { retired: true, absent: false };
+      } else if (script.includes('diskIdentity = [string]$disk.DiskIdentifier')) {
+        body = {
+          exists: state.diskPresent,
+          attached: state.exists && state.diskAttached,
+          compatible: true,
+          allocatedBytes: state.diskPresent ? state.diskAllocatedBytes : 0,
+          virtualBytes: state.diskPresent ? 32 * 1024 * 1024 * 1024 : 0,
+          diskIdentity: state.diskPresent ? 'disk-subject' : null,
+        };
       } else {
         throw new Error('unexpected construction script');
       }
@@ -153,6 +176,151 @@ function constructor(data, host, identity = 'a'.repeat(32), options = {}) {
   return new HyperVImageConstruction({ directory: data.stateRoot, sourceRoot: data.sourceRoot, outputRoot: data.outputRoot, identity, invoke: host.invoke, ...options });
 }
 
+test('construction owns an exact optional data medium across replay, start and detached boot', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const location = path.join(data.sourceRoot, 'data.iso');
+    await writeFile(location, 'binary-data');
+    // Hosted Windows TEMP can use an 8.3 alias; admission owns resolved paths.
+    const admittedLocation = await realpath(location);
+    data.request.dataMedia = { location, bytes: 11, sha256: sha256('binary-data') };
+    const construction = constructor(data, host);
+    assert.equal((await construction.prepare(data.request)).mediaCount, 3);
+    assert.equal(host.state.calls[0].payload.dataPath, admittedLocation);
+    assert.equal(data.request.dataMedia.location, location);
+    const stateFile = path.join(data.stateRoot, 'state.json');
+    const persisted = JSON.parse(await readFile(stateFile, 'utf8'));
+    assert.equal(persisted.protocol, 'devbridge/hyperv-image-construction-v3');
+    assert.deepEqual(persisted.records[data.request.identity].dataMedia, { ...data.request.dataMedia, location: admittedLocation });
+    const initialCalls = host.state.calls.length;
+    for (const invalid of [
+      { ...persisted, protocol: 'devbridge/hyperv-image-construction-v2' },
+      { ...persisted, records: { [data.request.identity]: { ...persisted.records[data.request.identity], dataMedia: null } } },
+      { ...persisted, records: { [data.request.identity]: { ...persisted.records[data.request.identity], dataMedia: { ...data.request.dataMedia, ignored: true } } } },
+    ]) {
+      await writeFile(stateFile, JSON.stringify(invalid));
+      await assert.rejects(() => construction.startInstall(data.request.identity));
+      assert.equal(host.state.calls.length, initialCalls);
+    }
+    await writeFile(stateFile, JSON.stringify(persisted));
+    const resumed = constructor(data, host);
+    await resumed.prepare(data.request);
+    const before = host.state.calls.length;
+    const { dataMedia, ...withoutData } = data.request;
+    await assert.rejects(() => resumed.prepare(withoutData), /request changed/u);
+    await writeFile(location, 'other-bytes');
+    await assert.rejects(() => resumed.startInstall(data.request.identity), /digest changed/u);
+    assert.equal(host.state.calls.length, before);
+    await writeFile(location, 'binary-data');
+    const changed = { ...data.request, dataMedia: { ...data.request.dataMedia, sha256: sha256('other-bytes') } };
+    await writeFile(location, 'other-bytes');
+    await assert.rejects(() => resumed.prepare(changed), /request changed/u);
+    assert.equal(host.state.calls.length, before);
+    await writeFile(location, 'binary-data');
+    await resumed.startInstall(data.request.identity);
+    const start = host.state.calls.find((entry) => entry.script.includes('construction machine is not startable'));
+    assert.equal(start.payload.dataPath, admittedLocation);
+    host.state.machineState = 'off';
+    host.state.mediaCount = 1; // Exact remaining subset after interrupted detach; native channel must validate it.
+    assert.equal((await resumed.bootInstalled(data.request.identity)).mediaCount, 0);
+    const boot = host.state.calls.find((entry) => entry.script.includes('installer must finish and power off before installed boot'));
+    assert.equal(boot.payload.dataPath, admittedLocation);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('construction rejects invalid data before platform effects and cannot add it to old intent', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const construction = constructor(data, host);
+    for (const dataMedia of [null, {}, { ...data.request.seed, extra: true }, { ...data.request.seed, sha256: '0'.repeat(64) }]) {
+      await assert.rejects(() => construction.prepare({ ...data.request, dataMedia }));
+      assert.equal(host.state.calls.length, 0);
+    }
+    await assert.rejects(() => readFile(path.join(data.stateRoot, 'state.json')), { code: 'ENOENT' });
+    await construction.prepare(data.request);
+    const previous = await readFile(path.join(data.stateRoot, 'state.json'), 'utf8');
+    assert.equal(JSON.parse(previous).protocol, 'devbridge/hyperv-image-construction-v2');
+    const calls = host.state.calls.length;
+    await assert.rejects(() => construction.prepare({ ...data.request, dataMedia: data.request.seed }), /request changed/u);
+    assert.equal(host.state.calls.length, calls);
+    assert.equal(await readFile(path.join(data.stateRoot, 'state.json'), 'utf8'), previous);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('Windows construction media scripts deny foreign attachments and reconcile exact remaining discs', { skip: process.platform !== 'win32' }, async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const location = path.join(data.sourceRoot, 'data.iso');
+    await writeFile(location, 'data');
+    data.request.dataMedia = { location, bytes: 4, sha256: sha256('data') };
+    const construction = constructor(data, host);
+    await construction.prepare(data.request);
+    await construction.startInstall(data.request.identity);
+    host.state.machineState = 'off';
+    await construction.bootInstalled(data.request.identity);
+    const start = host.state.calls.find((entry) => entry.script.includes('construction machine is not startable'));
+    const boot = host.state.calls.find((entry) => entry.script.includes('installer must finish and power off before installed boot'));
+    const run = async (call, variant) => {
+      const mocks = String.raw`
+$script:variant = '${variant}'
+$script:drives = $null
+function Import-Module { [CmdletBinding()] param([Parameter(Position=0)]$Name) }
+function Get-VM { [CmdletBinding()] param([string]$Name) [pscustomobject]@{ Notes = $data.marker; Id = $data.providerIdentity; State = 'Off' } }
+function Get-VMHardDiskDrive { [CmdletBinding()] param([string]$VMName) [pscustomobject]@{ Path = $data.diskPath } }
+function Get-VMDvdDrive {
+  [CmdletBinding()] param([string]$VMName)
+  if ($null -eq $script:drives) {
+    $script:drives = @(
+      [pscustomobject]@{ ControllerNumber = 0; ControllerLocation = 1; Path = $data.installerPath }
+      [pscustomobject]@{ ControllerNumber = 0; ControllerLocation = 2; Path = $data.seedPath }
+      [pscustomobject]@{ ControllerNumber = 0; ControllerLocation = 3; Path = $data.dataPath }
+    )
+    switch ($script:variant) {
+      'partial' { $script:drives = @($script:drives[2]) }
+      'empty' { $script:drives = @() }
+      'foreign' { $script:drives[2].Path = Join-Path ([string]$data.configPath) 'foreign.iso' }
+      'duplicate' { $script:drives += $script:drives[2] }
+      'extra' { $script:drives += [pscustomobject]@{ ControllerNumber = 0; ControllerLocation = 4; Path = $data.dataPath } }
+    }
+  }
+  $script:drives
+}
+function Remove-VMDvdDrive {
+  [CmdletBinding()] param([Parameter(ValueFromPipeline)]$Drive)
+  process {
+    if ($script:variant -in @('foreign','duplicate','extra')) { throw 'foreign disc was mutated' }
+    if ($script:variant -ne 'retained') { $script:drives = @($script:drives | Where-Object { $_.ControllerLocation -ne $Drive.ControllerLocation }) }
+  }
+}
+function Set-VMFirmware { [CmdletBinding()] param([string]$VMName, $FirstBootDevice) if ($script:drives.Count -ne 0) { throw 'firmware mutated with media attached' } }
+function Start-VM { [CmdletBinding()] param([string]$Name) if ($script:variant -in @('foreign','duplicate','extra','retained')) { throw 'start preceded media admission' } }
+`;
+      const scriptPath = path.join(data.directory, 'media-contract-test.ps1');
+      await writeFile(scriptPath, `${mocks}\n${call.script}`);
+      return invokeCommand({ executable: 'powershell.exe', arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], input: JSON.stringify(call.payload), timeoutMs: 60_000, maxOutputBytes: 64 * 1024 });
+    };
+    assert.equal((await run(start, 'exact')).exitCode, 0);
+    for (const variant of ['partial', 'empty', 'foreign', 'duplicate', 'extra']) {
+      const result = await run(start, variant);
+      assert.equal(result.exitCode, 1, variant);
+      assert.match(result.stderr, /construction media attachment (?:set is incomplete|path changed|identity is incompatible)/u);
+    }
+    for (const variant of ['exact', 'partial', 'empty']) {
+      const result = await run(boot, variant);
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).started, true);
+    }
+    for (const variant of ['foreign', 'duplicate', 'extra', 'retained']) {
+      const result = await run(boot, variant);
+      assert.equal(result.exitCode, 1, variant);
+      assert.match(result.stderr, /construction media (?:attachment (?:path changed|identity is incompatible)|remains attached after detachment)/u);
+    }
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
 test('Hyper-V image construction resumes exact intent through install, qualification, and retained disk', async () => {
   const data = await fixture();
   const host = fakeHost();
@@ -179,8 +347,24 @@ test('Hyper-V image construction resumes exact intent through install, qualifica
     const location = await resumed.locate(data.request.identity);
     assert.match(location.reference, /^db-image-build-[a-f0-9]{16}$/u);
     assert.equal(location.proof, `devbridge-owned:${'a'.repeat(32)}:image-build:${data.request.identity}:v1`);
+    assert.equal(host.state.guestFileServiceEnabled, true);
+    const qualificationPreparation = host.state.calls.find((entry) => entry.script.includes('construction machine did not stop for qualification host reconciliation'));
+    assert.ok(qualificationPreparation);
+    assert.match(qualificationPreparation.script, /Get-VMIntegrationService/u);
+    assert.match(qualificationPreparation.script, /Enable-VMIntegrationService/u);
+    assert.match(qualificationPreparation.script, /PrimaryOperationalStatus/u);
+    assert.match(qualificationPreparation.script, /provider identity does not match/u);
+    assert.match(qualificationPreparation.script, /\$matches\.Count -ne 1/u);
+    assert.match(qualificationPreparation.script, /\$confirmed\.Count -ne 1 -or -not \[bool\]\$confirmed\[0\]\.Enabled/u);
+    assert.match(qualificationPreparation.script, /Stop-VM -Name \(\[string\]\$data\.name\) -Confirm:\$false/u);
+    assert.match(qualificationPreparation.script, /Start-VM -Name \(\[string\]\$data\.name\)/u);
+    assert.equal(qualificationPreparation.timeoutMs, 120_000);
 
     await resumed.stop(data.request.identity);
+    const stopScript = host.state.calls.find((entry) => entry.script.includes('if ($data.force -eq $true)')).script;
+    assert.match(stopScript, /else \{ Stop-VM -Name \(\[string\]\$data\.name\) -Confirm:\$false/u);
+    assert.match(stopScript, /\$data\.force -eq \$true.*Stop-VM -Name \(\[string\]\$data\.name\) -TurnOff/su);
+    assert.doesNotMatch(stopScript, /-Shutdown\b/u);
     await resumed.markQualified(data.request.identity, { protocol: 'test/qualification-v1', passed: true });
     const retained = await resumed.retain(data.request.identity);
     assert.equal(retained.phase, 'retained');
@@ -193,6 +377,35 @@ test('Hyper-V image construction resumes exact intent through install, qualifica
     assert.equal(location.reference, preparePayload.name);
     assert.equal(location.proof, preparePayload.marker);
     assert.equal(preparePayload.diskPath, retained.location);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('Hyper-V construction retirement separates provider, disk, and durable record effects', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const construction = constructor(data, host);
+    await construction.prepare(data.request);
+    const records = await construction.listRetirementRecords();
+    assert.deepEqual(records.map((entry) => entry.identity), [data.request.identity]);
+    const before = await construction.retirementStatus(data.request.identity);
+    assert.equal(before.provider.exists, true);
+    assert.equal(before.provider.state, 'off');
+    assert.equal(before.disk.exists, true);
+    assert.equal(before.disk.attached, true);
+
+    await construction.retireProvider(data.request.identity);
+    const after = await construction.retirementStatus(data.request.identity);
+    assert.equal(after.provider.exists, false);
+    assert.equal(after.disk.exists, true);
+    assert.equal(after.disk.attached, false);
+    await assert.rejects(() => construction.retireRecord(data.request.identity), /provider artifacts/u);
+
+    host.state.diskPresent = false;
+    const retired = await construction.retireRecord(data.request.identity);
+    assert.equal(retired.retired, true);
+    assert.equal((await construction.listRetirementRecords()).length, 0);
+    assert.equal((await construction.retirementStatus(data.request.identity)).exists, false);
   } finally { await rm(data.directory, { recursive: true, force: true }); }
 });
 
@@ -419,6 +632,83 @@ test('Hyper-V image construction binds an exact system-managed switch and resolv
   } finally { await rm(data.directory, { recursive: true, force: true }); }
 });
 
+test('Hyper-V qualification host cycle is durable and reconciles transport loss without a second cycle', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const construction = constructor(data, host, '7'.repeat(32));
+    await construction.prepare(data.request);
+    await construction.startInstall(data.request.identity);
+    host.state.machineState = 'off';
+    await construction.bootInstalled(data.request.identity);
+    host.state.uptimeMilliseconds = 600_000;
+    host.state.guestFileServiceContact = false;
+    host.state.guestAddresses = ['172.27.17.42'];
+    host.state.failAfterQualificationCycleEffect = true;
+
+    await assert.rejects(() => construction.connectionAddress(data.request.identity), /transport loss after qualification cycle/u);
+    assert.equal(host.state.uptimeMilliseconds, 0);
+
+    const resumed = constructor(data, host, '7'.repeat(32));
+    assert.deepEqual(await resumed.connectionAddress(data.request.identity), { ready: true, reason: null, address: '172.27.17.42' });
+    const preparations = host.state.calls.filter((entry) => entry.script.includes('construction machine did not stop for qualification host reconciliation'));
+    assert.equal(preparations.length, 2);
+    assert.equal(preparations[0].payload.cycle, true);
+    assert.equal(preparations[1].payload.cycle, true);
+    assert.equal(preparations.filter((entry) => entry.payload.baselineUptimeMilliseconds === 600_000).length, 2);
+    assert.equal(host.state.uptimeMilliseconds, 0, 'resume must not cycle a second time');
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('Hyper-V qualification host cycle returns one durable guest-restart frontier', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const construction = constructor(data, host, '6'.repeat(32));
+    await construction.prepare(data.request);
+    await construction.startInstall(data.request.identity);
+    host.state.machineState = 'off';
+    await construction.bootInstalled(data.request.identity);
+    host.state.uptimeMilliseconds = 600_000;
+    host.state.guestFileServiceContact = false;
+    host.state.guestAddresses = ['172.27.17.42'];
+
+    assert.deepEqual(await construction.connectionAddress(data.request.identity), {
+      ready: false,
+      reason: 'construction guest restarted after qualification host-service activation',
+      address: null,
+    });
+    assert.deepEqual(await construction.connectionAddress(data.request.identity), { ready: true, reason: null, address: '172.27.17.42' });
+    const preparations = host.state.calls.filter((entry) => entry.script.includes('construction machine did not stop for qualification host reconciliation'));
+    assert.equal(preparations.length, 2);
+    assert.deepEqual(preparations.map((entry) => entry.payload.cycle), [true, false]);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('Hyper-V qualification host preparation rejects invalid durable state before effects', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const construction = constructor(data, host, '5'.repeat(32));
+    await construction.prepare(data.request);
+    await construction.startInstall(data.request.identity);
+    host.state.machineState = 'off';
+    await construction.bootInstalled(data.request.identity);
+    const stateFile = path.join(data.stateRoot, 'state.json');
+    const state = JSON.parse(await readFile(stateFile, 'utf8'));
+    state.records[data.request.identity].qualificationHostPreparation = {
+      protocol: 'devbridge/hyperv-qualification-host-preparation-v1',
+      phase: 'completed',
+      baselineUptimeMilliseconds: -1,
+      cycled: true,
+    };
+    await writeFile(stateFile, `${JSON.stringify(state)}\n`);
+    const calls = host.state.calls.length;
+    await assert.rejects(() => construction.connectionAddress(data.request.identity), /preparation state is invalid/u);
+    assert.equal(host.state.calls.length, calls + 1, 'only the read-only status observation may precede state rejection');
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
 test('Windows Hyper-V construction reconciles only the exact default-adapter New-VM partial effect', { skip: process.platform !== 'win32' }, async () => {
   const data = await fixture();
   const networkId = 'c08cb7b8-9b3c-408e-8e30-5e16a3aeb444';
@@ -427,6 +717,9 @@ test('Windows Hyper-V construction reconciles only the exact default-adapter New
   let prepareRequest;
   const providerIdentity = '11111111-2222-3333-4444-555555555555';
   try {
+    const dataLocation = path.join(data.sourceRoot, 'data.iso');
+    await writeFile(dataLocation, 'data-media');
+    data.request.dataMedia = { location: dataLocation, bytes: 10, sha256: sha256('data-media') };
     const construction = constructor(data, {
       async invoke(request) {
         const script = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
@@ -441,8 +734,10 @@ test('Windows Hyper-V construction reconciles only the exact default-adapter New
     const prepareScript = Buffer.from(prepareRequest.arguments.at(-1), 'base64').toString('utf16le');
     assert.match(prepareScript, /New-VM[^\r\n]+-SwitchName \(\[string\]\$switch\.Name\)/u);
     assert.match(prepareScript, /ConfigurationLocation/u);
+    assert.match(prepareScript, /Get-VMIntegrationService/u);
+    assert.match(prepareScript, /Enable-VMIntegrationService/u);
 
-    const mocks = ({ foreignConfig = false, foreignAdapter = false } = {}) => String.raw`
+    const mocks = ({ foreignConfig = false, foreignAdapter = false, foreignMedia = false, partialMedia = false } = {}) => String.raw`
 function Import-Module { [CmdletBinding()] param([Parameter(Position=0)]$Name) }
 $script:item = $null
 $script:adapter = $null
@@ -451,12 +746,20 @@ $script:dvd = @()
 $script:secureBoot = 'Off'
 $script:secureBootTemplate = 'MicrosoftWindows'
 $script:tpmEnabled = $false
+$script:guestFileServiceEnabled = $false
+$script:foreignMedia = ${foreignMedia ? '$true' : '$false'}
 function Get-VMSwitch { [CmdletBinding()] param([guid]$Id, [string]$Name) [pscustomobject]@{ Id = [guid]'${networkId}'; Name = 'Default Switch'; Notes = ''; SwitchType = 'Internal' } }
 function Get-VM {
   [CmdletBinding()] param([string]$Name)
   if ($null -eq $script:item) {
     $location = if (${foreignConfig ? '$true' : '$false'}) { Join-Path ([string]$data.configPath) 'foreign' } else { Join-Path ([string]$data.configPath) ([string]$data.name) }
     $script:item = [pscustomobject]@{ Name = [string]$data.name; Id = [guid]'${providerIdentity}'; Generation = 2; State = 'Off'; Notes = ''; MemoryStartup = [long]$data.memoryBytes; ConfigurationLocation = $location }
+    if (${partialMedia || foreignMedia ? '$true' : '$false'}) {
+      $script:item.Notes = [string]$data.marker
+      $script:secureBoot = 'On'; $script:tpmEnabled = $true
+      $mediaPath = if ($script:foreignMedia) { Join-Path ([string]$data.configPath) 'foreign.iso' } else { [string]$data.dataPath }
+      $script:dvd = @([pscustomobject]@{ Path = $mediaPath; ControllerNumber = 0; ControllerLocation = 3 })
+    }
   }
   $script:item
 }
@@ -480,6 +783,7 @@ function Get-VMNetworkAdapter {
 }
 function Set-VM {
   [CmdletBinding()] param([string]$Name, [string]$Notes, [bool]$AutomaticCheckpointsEnabled, $AutomaticStartAction, $AutomaticStopAction, [long]$MemoryStartupBytes)
+  if ($script:foreignMedia) { throw 'mutation preceded foreign-media rejection' }
   if ($PSBoundParameters.ContainsKey('Notes')) {
     if ($script:secureBoot -ne 'On' -or -not $script:tpmEnabled) { throw 'ownership preceded protected boot' }
     $script:item.Notes = $Notes
@@ -495,6 +799,8 @@ function Get-VMFirmware { [CmdletBinding()] param([string]$VMName) [pscustomobje
 function Get-VMSecurity { [CmdletBinding()] param([string]$VMName) [pscustomobject]@{ TpmEnabled = $script:tpmEnabled } }
 function Set-VMKeyProtector { [CmdletBinding()] param([string]$VMName, [switch]$NewLocalKeyProtector) if (-not $NewLocalKeyProtector) { throw 'local key protector was not requested' } }
 function Enable-VMTPM { [CmdletBinding()] param([string]$VMName) if ([string]$script:item.Notes -ne '') { throw 'TPM mutation followed ownership admission' }; $script:tpmEnabled = $true }
+function Get-VMIntegrationService { [CmdletBinding()] param([string]$VMName) [pscustomobject]@{ Name = 'Guest Service Interface'; Enabled = $script:guestFileServiceEnabled } }
+function Enable-VMIntegrationService { [CmdletBinding()] param($VMIntegrationService) if ([string]$script:item.Notes -ne [string]$data.marker) { throw 'integration mutation preceded ownership proof' }; $script:guestFileServiceEnabled = $true }
 function Add-VMNetworkAdapter { [CmdletBinding()] param() throw 'the default adapter was not reconciled' }
 function Connect-VMNetworkAdapter {
   [CmdletBinding()] param($VMNetworkAdapter, $VMSwitch)
@@ -519,19 +825,28 @@ function Add-VMDvdDrive {
       return invokeCommand({
         ...prepareRequest,
         arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
-        timeoutMs: 20_000,
+        timeoutMs: 60_000,
       });
     };
 
     const exact = await run(mocks());
+    assert.equal(exact.timedOut, false, 'exact partial reconciliation timed out');
     assert.equal(exact.exitCode, 0, exact.stderr);
     assert.deepEqual(JSON.parse(exact.stdout), { ready: true, providerIdentity });
 
+    const partial = await run(mocks({ partialMedia: true }));
+    assert.equal(partial.exitCode, 0, partial.stderr);
+    const foreignMedia = await run(mocks({ foreignMedia: true }));
+    assert.equal(foreignMedia.exitCode, 1);
+    assert.match(foreignMedia.stderr, /construction media attachment path changed/u);
+
     const foreignConfig = await run(mocks({ foreignConfig: true }));
+    assert.equal(foreignConfig.timedOut, false, 'foreign configuration rejection timed out');
     assert.equal(foreignConfig.exitCode, 1);
     assert.match(foreignConfig.stderr, /occupied without matching ownership evidence/u);
 
     const foreignAdapter = await run(mocks({ foreignAdapter: true }));
+    assert.equal(foreignAdapter.timedOut, false, 'foreign adapter rejection timed out');
     assert.equal(foreignAdapter.exitCode, 1);
     assert.match(foreignAdapter.stderr, /occupied without matching ownership evidence/u);
   } finally { await rm(data.directory, { recursive: true, force: true }); }

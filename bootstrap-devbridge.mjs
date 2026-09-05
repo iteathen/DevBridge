@@ -1,306 +1,91 @@
 #!/usr/bin/env node
-import { randomUUID } from 'node:crypto';
-import {
-  existsSync,
-  linkSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
+// Generated from src/bootstrap/zero-state-bootstrap.mjs; edit modular sources and regenerate.
 import { homedir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
+import {
+  assertSupportedNode,
+  isExactHead,
+  normalizeBootstrapRef,
+  parseBootstrapArgs,
+} from 'data:text/javascript;base64,aW1wb3J0IHsgaG9tZWRpciB9IGZyb20gJ25vZGU6b3MnOwppbXBvcnQgcGF0aCBmcm9tICdub2RlOnBhdGgnOwppbXBvcnQgcHJvY2VzcyBmcm9tICdub2RlOnByb2Nlc3MnOwoKY29uc3QgTUlOSU1VTV9OT0RFID0gT2JqZWN0LmZyZWV6ZShbMjIsIDE2LCAwXSk7CmNvbnN0IEVYQUNUX0hFQUQgPSAvXlswLTlhLWZdezQwfSQvdTsKY29uc3QgU0FGRV9SRUYgPSAvXltBLVphLXowLTldW0EtWmEtejAtOS5fLy1dezAsMjM5fSQvdTsKCmZ1bmN0aW9uIGZhaWwobWVzc2FnZSkgeyB0aHJvdyBuZXcgRXJyb3IobWVzc2FnZSk7IH0KCmV4cG9ydCBmdW5jdGlvbiBhc3NlcnRTdXBwb3J0ZWROb2RlKHZlcnNpb24gPSBwcm9jZXNzLnZlcnNpb25zLm5vZGUpIHsKICBjb25zdCBwYXJ0cyA9IFN0cmluZyh2ZXJzaW9uKS5zcGxpdCgnLicpLm1hcCgodmFsdWUpID0+IE51bWJlci5wYXJzZUludCh2YWx1ZSwgMTApKTsKICBpZiAocGFydHMubGVuZ3RoIDwgMyB8fCBwYXJ0cy5zb21lKCh2YWx1ZSkgPT4gIU51bWJlci5pc0ludGVnZXIodmFsdWUpKSkgZmFpbChgQ291bGQgbm90IHBhcnNlIE5vZGUuanMgdmVyc2lvbjogJHt2ZXJzaW9ufWApOwogIGZvciAobGV0IGluZGV4ID0gMDsgaW5kZXggPCBNSU5JTVVNX05PREUubGVuZ3RoOyBpbmRleCArPSAxKSB7CiAgICBpZiAocGFydHNbaW5kZXhdID4gTUlOSU1VTV9OT0RFW2luZGV4XSkgcmV0dXJuOwogICAgaWYgKHBhcnRzW2luZGV4XSA8IE1JTklNVU1fTk9ERVtpbmRleF0pIGZhaWwoJ0RldkJyaWRnZSByZXF1aXJlcyBOb2RlLmpzIDIyLjE2LjAgb3IgbmV3ZXIuJyk7CiAgfQp9CgpmdW5jdGlvbiBleHBhbmRQYXRoKHZhbHVlLCBob21lRGlyZWN0b3J5KSB7CiAgaWYgKHZhbHVlID09PSAnficpIHJldHVybiBob21lRGlyZWN0b3J5OwogIGlmICh2YWx1ZS5zdGFydHNXaXRoKCd+LycpIHx8IHZhbHVlLnN0YXJ0c1dpdGgoJ35cXCcpKSByZXR1cm4gcGF0aC5qb2luKGhvbWVEaXJlY3RvcnksIHZhbHVlLnNsaWNlKDIpKTsKICByZXR1cm4gdmFsdWU7Cn0KCmZ1bmN0aW9uIHRha2VWYWx1ZShhcmd2LCBpbmRleCwgZmxhZykgewogIGNvbnN0IHZhbHVlID0gYXJndltpbmRleCArIDFdOwogIGlmICh0eXBlb2YgdmFsdWUgIT09ICdzdHJpbmcnIHx8ICF2YWx1ZSB8fCB2YWx1ZS5zdGFydHNXaXRoKCctJykpIGZhaWwoYCR7ZmxhZ30gcmVxdWlyZXMgYSB2YWx1ZWApOwogIHJldHVybiB2YWx1ZTsKfQoKZXhwb3J0IGZ1bmN0aW9uIGlzRXhhY3RIZWFkKHZhbHVlKSB7CiAgcmV0dXJuIEVYQUNUX0hFQUQudGVzdChTdHJpbmcodmFsdWUgPz8gJycpLnRvTG93ZXJDYXNlKCkpOwp9CgpleHBvcnQgZnVuY3Rpb24gbm9ybWFsaXplQm9vdHN0cmFwUmVmKHZhbHVlKSB7CiAgY29uc3QgcmVmID0gU3RyaW5nKHZhbHVlID8/ICcnKTsKICBjb25zdCBleGFjdCA9IHJlZi50b0xvd2VyQ2FzZSgpOwogIGlmIChFWEFDVF9IRUFELnRlc3QoZXhhY3QpKSByZXR1cm4gT2JqZWN0LmZyZWV6ZSh7IGtpbmQ6ICdleGFjdCcsIHZhbHVlOiBleGFjdCB9KTsKICBjb25zdCBzZWdtZW50cyA9IHJlZi5zcGxpdCgnLycpOwogIGlmICghU0FGRV9SRUYudGVzdChyZWYpIHx8IHJlZi5zdGFydHNXaXRoKCctJykgfHwgcmVmLmluY2x1ZGVzKCdcXCcpIHx8IHJlZi5lbmRzV2l0aCgnLycpIHx8IHJlZi5lbmRzV2l0aCgnLmxvY2snKSB8fAogICAgICBzZWdtZW50cy5zb21lKChzZWdtZW50KSA9PiBzZWdtZW50ID09PSAnJyB8fCBzZWdtZW50ID09PSAnLicgfHwgc2VnbWVudCA9PT0gJy4uJykpIGZhaWwoJ0Jvb3RzdHJhcCByZWYgaXMgaW52YWxpZC4nKTsKICByZXR1cm4gT2JqZWN0LmZyZWV6ZSh7IGtpbmQ6ICdicmFuY2gnLCB2YWx1ZTogcmVmIH0pOwp9CgpleHBvcnQgZnVuY3Rpb24gcGFyc2VCb290c3RyYXBBcmdzKGFyZ3YsIHsgZW52aXJvbm1lbnQgPSBwcm9jZXNzLmVudiwgaG9tZURpcmVjdG9yeSA9IGhvbWVkaXIoKSB9ID0ge30pIHsKICBpZiAoIUFycmF5LmlzQXJyYXkoYXJndikpIHRocm93IG5ldyBUeXBlRXJyb3IoJ2Jvb3RzdHJhcCBhcmd2IG11c3QgYmUgYW4gYXJyYXknKTsKICBsZXQgaG9tZSA9IGVudmlyb25tZW50LkRFVkJSSURHRV9IT01FID8/IHBhdGguam9pbihob21lRGlyZWN0b3J5LCAnLmRldmJyaWRnZScpOwogIGxldCBzZWxlY3RvciA9IG51bGw7CiAgbGV0IHJlcGFpclNlbGVjdGlvbldpdGggPSBudWxsOwogIGxldCBoZWxwID0gZmFsc2U7CiAgbGV0IHJ1blNldHVwID0gdHJ1ZTsKICBmb3IgKGxldCBpbmRleCA9IDA7IGluZGV4IDwgYXJndi5sZW5ndGg7IGluZGV4ICs9IDEpIHsKICAgIGNvbnN0IHZhbHVlID0gYXJndltpbmRleF07CiAgICBpZiAodmFsdWUgPT09ICctLWhlbHAnIHx8IHZhbHVlID09PSAnLWgnKSB7IGhlbHAgPSB0cnVlOyBjb250aW51ZTsgfQogICAgaWYgKHZhbHVlID09PSAnLS1pbnN0YWxsLW9ubHknKSB7IHJ1blNldHVwID0gZmFsc2U7IGNvbnRpbnVlOyB9CiAgICBpZiAodmFsdWUgPT09ICctLWhvbWUnKSB7CiAgICAgIGhvbWUgPSB0YWtlVmFsdWUoYXJndiwgaW5kZXgsIHZhbHVlKTsKICAgICAgaW5kZXggKz0gMTsKICAgICAgY29udGludWU7CiAgICB9CiAgICBpZiAodmFsdWUgPT09ICctLXJlZicgfHwgdmFsdWUgPT09ICctLWJyYW5jaCcpIHsKICAgICAgaWYgKHNlbGVjdG9yICE9IG51bGwpIGZhaWwoJ09ubHkgb25lIGJvb3RzdHJhcCByZWYvYnJhbmNoIHNlbGVjdG9yIG1heSBiZSBzdXBwbGllZC4nKTsKICAgICAgc2VsZWN0b3IgPSBub3JtYWxpemVCb290c3RyYXBSZWYodGFrZVZhbHVlKGFyZ3YsIGluZGV4LCB2YWx1ZSkpOwogICAgICBpbmRleCArPSAxOwogICAgICBjb250aW51ZTsKICAgIH0KICAgIGlmICh2YWx1ZSA9PT0gJy0tcmVwYWlyLXNlbGVjdGlvbi13aXRoJykgewogICAgICBpZiAocmVwYWlyU2VsZWN0aW9uV2l0aCAhPSBudWxsKSBmYWlsKCdPbmx5IG9uZSBib290c3RyYXAgc2VsZWN0aW9uIHJlcGFpciBoZWFkIG1heSBiZSBzdXBwbGllZC4nKTsKICAgICAgY29uc3QgcmVwYWlyID0gbm9ybWFsaXplQm9vdHN0cmFwUmVmKHRha2VWYWx1ZShhcmd2LCBpbmRleCwgdmFsdWUpKTsKICAgICAgaWYgKHJlcGFpci5raW5kICE9PSAnZXhhY3QnKSBmYWlsKCctLXJlcGFpci1zZWxlY3Rpb24td2l0aCByZXF1aXJlcyBhbiBleGFjdCA0MC1oZXggaGVhZC4nKTsKICAgICAgcmVwYWlyU2VsZWN0aW9uV2l0aCA9IHJlcGFpci52YWx1ZTsKICAgICAgaW5kZXggKz0gMTsKICAgICAgY29udGludWU7CiAgICB9CiAgICBmYWlsKGBVbnN1cHBvcnRlZCBib290c3RyYXAgYXJndW1lbnQ6ICR7dmFsdWV9YCk7CiAgfQogIGlmIChyZXBhaXJTZWxlY3Rpb25XaXRoICE9IG51bGwgJiYgcnVuU2V0dXApIHsKICAgIGZhaWwoJy0tcmVwYWlyLXNlbGVjdGlvbi13aXRoIHJlcXVpcmVzIC0taW5zdGFsbC1vbmx5LicpOwogIH0KICByZXR1cm4gT2JqZWN0LmZyZWV6ZSh7CiAgICBoZWxwLAogICAgaG9tZTogcGF0aC5yZXNvbHZlKGV4cGFuZFBhdGgoU3RyaW5nKGhvbWUpLCBob21lRGlyZWN0b3J5KSksCiAgICBzZWxlY3Rvcjogc2VsZWN0b3IgPz8gT2JqZWN0LmZyZWV6ZSh7IGtpbmQ6ICdicmFuY2gnLCB2YWx1ZTogJ21haW4nIH0pLAogICAgZXhwbGljaXRTZWxlY3Rvcjogc2VsZWN0b3IgIT0gbnVsbCwKICAgIHJlcGFpclNlbGVjdGlvbldpdGgsCiAgICBydW5TZXR1cCwKICB9KTsKfQo=';
+import { createSelectionState } from 'data:text/javascript;base64,aW1wb3J0IHsgcmFuZG9tVVVJRCB9IGZyb20gJ25vZGU6Y3J5cHRvJzsKaW1wb3J0IHsKICBleGlzdHNTeW5jLAogIGxpbmtTeW5jLAogIGxzdGF0U3luYywKICBta2RpclN5bmMsCiAgcmVhZEZpbGVTeW5jLAogIHJlYWxwYXRoU3luYywKICB1bmxpbmtTeW5jLAogIHdyaXRlRmlsZVN5bmMsCn0gZnJvbSAnbm9kZTpmcyc7CmltcG9ydCBwYXRoIGZyb20gJ25vZGU6cGF0aCc7CmltcG9ydCBwcm9jZXNzIGZyb20gJ25vZGU6cHJvY2Vzcyc7Cgpjb25zdCBNQVhfUkVDT1JEX0JZVEVTID0gNDA5NjsKCmZ1bmN0aW9uIGZhaWwobWVzc2FnZSkgeyB0aHJvdyBuZXcgRXJyb3IobWVzc2FnZSk7IH0KCmZ1bmN0aW9uIGVuc3VyZVJlYWxEaXJlY3RvcnkoY2FuZGlkYXRlLCBuYW1lLCB7IGNyZWF0ZSA9IGZhbHNlLCByZWN1cnNpdmUgPSBmYWxzZSB9ID0ge30pIHsKICBpZiAoY3JlYXRlICYmICFleGlzdHNTeW5jKGNhbmRpZGF0ZSkpIG1rZGlyU3luYyhjYW5kaWRhdGUsIHsgcmVjdXJzaXZlLCBtb2RlOiAwbzcwMCB9KTsKICBjb25zdCBpbmZvID0gbHN0YXRTeW5jKGNhbmRpZGF0ZSk7CiAgaWYgKCFpbmZvLmlzRGlyZWN0b3J5KCkgfHwgaW5mby5pc1N5bWJvbGljTGluaygpKSBmYWlsKGAke25hbWV9IG11c3QgYmUgYSByZWFsIGRpcmVjdG9yeS5gKTsKICByZXR1cm4gcmVhbHBhdGhTeW5jLm5hdGl2ZShjYW5kaWRhdGUpOwp9CgpmdW5jdGlvbiBzYW1lU2VsZWN0b3IobGVmdCwgcmlnaHQpIHsKICByZXR1cm4gbGVmdD8ua2luZCA9PT0gcmlnaHQ/LmtpbmQgJiYgbGVmdD8udmFsdWUgPT09IHJpZ2h0Py52YWx1ZTsKfQoKZXhwb3J0IGZ1bmN0aW9uIGNyZWF0ZVNlbGVjdGlvblN0YXRlKHsgcHJvdG9jb2wsIHNvdXJjZSwgbm9ybWFsaXplU2VsZWN0b3IsIGlzRXhhY3RIZWFkLCBkaXJlY3RvcnlOYW1lLCByZWNvcmROYW1lIH0pIHsKICBpZiAodHlwZW9mIHByb3RvY29sICE9PSAnc3RyaW5nJyB8fCBwcm90b2NvbC5sZW5ndGggPCAxKSB0aHJvdyBuZXcgVHlwZUVycm9yKCdwcm90b2NvbCBtdXN0IGJlIG5vbi1lbXB0eSB0ZXh0Jyk7CiAgaWYgKHR5cGVvZiBzb3VyY2UgIT09ICdzdHJpbmcnIHx8IHNvdXJjZS5sZW5ndGggPCAxKSB0aHJvdyBuZXcgVHlwZUVycm9yKCdzb3VyY2UgbXVzdCBiZSBub24tZW1wdHkgdGV4dCcpOwogIGlmICh0eXBlb2Ygbm9ybWFsaXplU2VsZWN0b3IgIT09ICdmdW5jdGlvbicgfHwgdHlwZW9mIGlzRXhhY3RIZWFkICE9PSAnZnVuY3Rpb24nKSB0aHJvdyBuZXcgVHlwZUVycm9yKCdzZWxlY3Rpb24gdmFsaWRhdG9ycyBtdXN0IGJlIGZ1bmN0aW9ucycpOwogIGZvciAoY29uc3QgW25hbWUsIHZhbHVlXSBvZiBPYmplY3QuZW50cmllcyh7IGRpcmVjdG9yeU5hbWUsIHJlY29yZE5hbWUgfSkpIHsKICAgIGlmICh0eXBlb2YgdmFsdWUgIT09ICdzdHJpbmcnIHx8IHBhdGguYmFzZW5hbWUodmFsdWUpICE9PSB2YWx1ZSkgdGhyb3cgbmV3IFR5cGVFcnJvcihgJHtuYW1lfSBtdXN0IGJlIG9uZSBzYWZlIG5hbWVgKTsKICB9CgogIGZ1bmN0aW9uIHBhdGhGb3IoaG9tZSkgewogICAgcmV0dXJuIHBhdGguam9pbihwYXRoLnJlc29sdmUoaG9tZSksIGRpcmVjdG9yeU5hbWUsIHJlY29yZE5hbWUpOwogIH0KCiAgZnVuY3Rpb24gcm9vdHMocmVxdWVzdGVkSG9tZSkgewogICAgY29uc3QgaG9tZSA9IGVuc3VyZVJlYWxEaXJlY3RvcnkocmVxdWVzdGVkSG9tZSwgJ1N0YXRlIGhvbWUnLCB7IGNyZWF0ZTogdHJ1ZSwgcmVjdXJzaXZlOiB0cnVlIH0pOwogICAgY29uc3QgY2FuZGlkYXRlID0gcGF0aC5qb2luKGhvbWUsIGRpcmVjdG9yeU5hbWUpOwogICAgY29uc3QgYm9vdHN0cmFwID0gZW5zdXJlUmVhbERpcmVjdG9yeShjYW5kaWRhdGUsICdTdGF0ZSBkaXJlY3RvcnknLCB7IGNyZWF0ZTogdHJ1ZSB9KTsKICAgIHJldHVybiBPYmplY3QuZnJlZXplKHsgaG9tZSwgYm9vdHN0cmFwIH0pOwogIH0KCiAgZnVuY3Rpb24gdmFsaWRhdGUocmVjb3JkKSB7CiAgICBpZiAocmVjb3JkPy5wcm90b2NvbCAhPT0gcHJvdG9jb2wgfHwgcmVjb3JkPy5zb3VyY2UgIT09IHNvdXJjZSB8fCAhaXNFeGFjdEhlYWQocmVjb3JkPy5oZWFkKSkgZmFpbCgnU2VsZWN0aW9uIHJlY29yZCBpcyBpbnZhbGlkLicpOwogICAgY29uc3Qgc2VsZWN0b3IgPSBub3JtYWxpemVTZWxlY3RvcihyZWNvcmQ/LnNlbGVjdG9yPy52YWx1ZSk7CiAgICBpZiAoc2VsZWN0b3Iua2luZCAhPT0gcmVjb3JkPy5zZWxlY3Rvcj8ua2luZCB8fCBzZWxlY3Rvci52YWx1ZSAhPT0gcmVjb3JkPy5zZWxlY3Rvcj8udmFsdWUpIGZhaWwoJ1NlbGVjdGlvbiByZWNvcmQgaXMgaW52YWxpZC4nKTsKICAgIHJldHVybiBPYmplY3QuZnJlZXplKHsgcHJvdG9jb2wsIHNvdXJjZSwgc2VsZWN0b3IsIGhlYWQ6IFN0cmluZyhyZWNvcmQuaGVhZCkudG9Mb3dlckNhc2UoKSB9KTsKICB9CgogIGZ1bmN0aW9uIHJlYWQoaG9tZSkgewogICAgY29uc3Qgc2VsZWN0aW9uUGF0aCA9IHBhdGhGb3IoaG9tZSk7CiAgICBpZiAoIWV4aXN0c1N5bmMoc2VsZWN0aW9uUGF0aCkpIHJldHVybiBudWxsOwogICAgY29uc3QgaW5mbyA9IGxzdGF0U3luYyhzZWxlY3Rpb25QYXRoKTsKICAgIGlmICghaW5mby5pc0ZpbGUoKSB8fCBpbmZvLmlzU3ltYm9saWNMaW5rKCkgfHwgaW5mby5zaXplIDwgMSB8fCBpbmZvLnNpemUgPiBNQVhfUkVDT1JEX0JZVEVTKSBmYWlsKCdTZWxlY3Rpb24gcmVjb3JkIGlzIGludmFsaWQuJyk7CiAgICB0cnkgeyByZXR1cm4gdmFsaWRhdGUoSlNPTi5wYXJzZShyZWFkRmlsZVN5bmMoc2VsZWN0aW9uUGF0aCwgJ3V0ZjgnKSkpOyB9CiAgICBjYXRjaCAoZXJyb3IpIHsKICAgICAgaWYgKGVycm9yPy5tZXNzYWdlID09PSAnU2VsZWN0aW9uIHJlY29yZCBpcyBpbnZhbGlkLicpIHRocm93IGVycm9yOwogICAgICBmYWlsKCdTZWxlY3Rpb24gcmVjb3JkIGlzIGludmFsaWQuJyk7CiAgICB9CiAgfQoKICBhc3luYyBmdW5jdGlvbiByZXNvbHZlKG9wdGlvbnMsIHsgcmVzb2x2ZVN1YmplY3QgfSkgewogICAgaWYgKHR5cGVvZiByZXNvbHZlU3ViamVjdCAhPT0gJ2Z1bmN0aW9uJykgdGhyb3cgbmV3IFR5cGVFcnJvcigncmVzb2x2ZVN1YmplY3QgbXVzdCBiZSBhIGZ1bmN0aW9uJyk7CiAgICBjb25zdCBsb2NhdGlvbiA9IHJvb3RzKHBhdGgucmVzb2x2ZShvcHRpb25zLmhvbWUpKTsKICAgIGNvbnN0IGV4aXN0aW5nID0gcmVhZChsb2NhdGlvbi5ob21lKTsKICAgIGlmIChleGlzdGluZykgewogICAgICBpZiAoIXNhbWVTZWxlY3RvcihleGlzdGluZy5zZWxlY3Rvciwgb3B0aW9ucy5zZWxlY3RvcikpIHsKICAgICAgICBmYWlsKGBSZWNvdmVyeSBpcyBhbHJlYWR5IGJvdW5kIHRvICR7ZXhpc3Rpbmcuc2VsZWN0b3IudmFsdWV9IGF0ICR7ZXhpc3RpbmcuaGVhZH07IHJlc3VtZSB0aGF0IHNlbGVjdGlvbiBiZWZvcmUgc3RhcnRpbmcgYW5vdGhlciBzdWJqZWN0LmApOwogICAgICB9CiAgICAgIHJldHVybiBPYmplY3QuZnJlZXplKHsgLi4uZXhpc3RpbmcsIGhvbWU6IGxvY2F0aW9uLmhvbWUsIHJlc3VtZWQ6IHRydWUgfSk7CiAgICB9CgogICAgY29uc3QgaGVhZCA9IGF3YWl0IHJlc29sdmVTdWJqZWN0KG9wdGlvbnMuc2VsZWN0b3IpOwogICAgY29uc3QgcmVjb3JkID0gT2JqZWN0LmZyZWV6ZSh7IHByb3RvY29sLCBzb3VyY2UsIHNlbGVjdG9yOiBvcHRpb25zLnNlbGVjdG9yLCBoZWFkIH0pOwogICAgY29uc3QgdGVtcG9yYXJ5ID0gcGF0aC5qb2luKGxvY2F0aW9uLmJvb3RzdHJhcCwgYC5zZWxlY3Rpb24tJHtwcm9jZXNzLnBpZH0tJHtyYW5kb21VVUlEKCl9LnRtcGApOwogICAgd3JpdGVGaWxlU3luYyh0ZW1wb3JhcnksIGAke0pTT04uc3RyaW5naWZ5KHJlY29yZCl9XG5gLCB7IGVuY29kaW5nOiAndXRmOCcsIG1vZGU6IDBvNjAwLCBmbGFnOiAnd3gnLCBmbHVzaDogdHJ1ZSB9KTsKICAgIGNvbnN0IHNlbGVjdGlvblBhdGggPSBwYXRoLmpvaW4obG9jYXRpb24uYm9vdHN0cmFwLCByZWNvcmROYW1lKTsKICAgIHRyeSB7CiAgICAgIHRyeSB7IGxpbmtTeW5jKHRlbXBvcmFyeSwgc2VsZWN0aW9uUGF0aCk7IH0KICAgICAgY2F0Y2ggKGVycm9yKSB7CiAgICAgICAgaWYgKGVycm9yPy5jb2RlICE9PSAnRUVYSVNUJykgdGhyb3cgZXJyb3I7CiAgICAgICAgY29uc3Qgd2lubmVyID0gcmVhZChsb2NhdGlvbi5ob21lKTsKICAgICAgICBpZiAoIXdpbm5lciB8fCAhc2FtZVNlbGVjdG9yKHdpbm5lci5zZWxlY3Rvciwgb3B0aW9ucy5zZWxlY3RvcikpIGZhaWwoJ0EgZGlmZmVyZW50IHNlbGVjdGlvbiBiZWNhbWUgYXV0aG9yaXRhdGl2ZSBjb25jdXJyZW50bHkuJyk7CiAgICAgICAgcmV0dXJuIE9iamVjdC5mcmVlemUoeyAuLi53aW5uZXIsIGhvbWU6IGxvY2F0aW9uLmhvbWUsIHJlc3VtZWQ6IHRydWUgfSk7CiAgICAgIH0KICAgICAgcmV0dXJuIE9iamVjdC5mcmVlemUoeyAuLi5yZWNvcmQsIGhvbWU6IGxvY2F0aW9uLmhvbWUsIHJlc3VtZWQ6IGZhbHNlIH0pOwogICAgfSBmaW5hbGx5IHsKICAgICAgdHJ5IHsgdW5saW5rU3luYyh0ZW1wb3JhcnkpOyB9IGNhdGNoIHt9CiAgICB9CiAgfQoKICBmdW5jdGlvbiBjbGVhcihzdWJqZWN0KSB7CiAgICBjb25zdCBjdXJyZW50ID0gcmVhZChzdWJqZWN0LmhvbWUpOwogICAgaWYgKCFjdXJyZW50KSByZXR1cm47CiAgICBpZiAoY3VycmVudC5oZWFkICE9PSBzdWJqZWN0LmhlYWQgfHwgIXNhbWVTZWxlY3RvcihjdXJyZW50LnNlbGVjdG9yLCBzdWJqZWN0LnNlbGVjdG9yKSkgZmFpbCgnU2VsZWN0aW9uIGNoYW5nZWQgYmVmb3JlIGNvbW1pdCByZWNvbmNpbGlhdGlvbi4nKTsKICAgIHVubGlua1N5bmMocGF0aEZvcihzdWJqZWN0LmhvbWUpKTsKICB9CgogIHJldHVybiBPYmplY3QuZnJlZXplKHsgY2xlYXIsIHBhdGhGb3IsIHJlYWQsIHJlc29sdmUgfSk7Cn0K';
+import { createSourceChannel } from 'data:text/javascript;base64,Y29uc3QgTUFYX1NVQkpFQ1RfQllURVMgPSA2NCAqIDEwMjQ7CmNvbnN0IE1BWF9TVEFHRV9CWVRFUyA9IDUxMiAqIDEwMjQ7CmNvbnN0IE1BWF9IRUxQRVJfQllURVMgPSAxMjggKiAxMDI0OwoKZnVuY3Rpb24gZmFpbChtZXNzYWdlKSB7IHRocm93IG5ldyBFcnJvcihtZXNzYWdlKTsgfQoKYXN5bmMgZnVuY3Rpb24gcmVhZEJvdW5kZWRSZXNwb25zZShyZXNwb25zZSwgbmFtZSwgbWF4Qnl0ZXMpIHsKICBpZiAoIXJlc3BvbnNlIHx8IHJlc3BvbnNlLm9rICE9PSB0cnVlIHx8IHJlc3BvbnNlLnN0YXR1cyAhPT0gMjAwKSBmYWlsKGAke25hbWV9IHJlcXVlc3QgZmFpbGVkIHdpdGggc3RhdHVzICR7cmVzcG9uc2U/LnN0YXR1cyA/PyAndW5rbm93bid9LmApOwogIGNvbnN0IGRlY2xhcmVkID0gTnVtYmVyLnBhcnNlSW50KHJlc3BvbnNlLmhlYWRlcnM/LmdldD8uKCdjb250ZW50LWxlbmd0aCcpID8/ICcnLCAxMCk7CiAgaWYgKE51bWJlci5pc0ludGVnZXIoZGVjbGFyZWQpICYmIGRlY2xhcmVkID4gbWF4Qnl0ZXMpIGZhaWwoYCR7bmFtZX0gcmVzcG9uc2UgaXMgdG9vIGxhcmdlLmApOwogIGNvbnN0IGJ5dGVzID0gQnVmZmVyLmZyb20oYXdhaXQgcmVzcG9uc2UuYXJyYXlCdWZmZXIoKSk7CiAgaWYgKGJ5dGVzLmxlbmd0aCA8IDEgfHwgYnl0ZXMubGVuZ3RoID4gbWF4Qnl0ZXMpIGZhaWwoYCR7bmFtZX0gcmVzcG9uc2Ugc2l6ZSBpcyBpbnZhbGlkLmApOwogIHJldHVybiBieXRlczsKfQoKZXhwb3J0IGZ1bmN0aW9uIGNyZWF0ZVNvdXJjZUNoYW5uZWwoewogIGFwaUJhc2UsCiAgcmF3QmFzZSwKICB1c2VyQWdlbnQsCiAgc3RhZ2VQYXRoLAogIGhlbHBlclBhdGgsCiAgbm9ybWFsaXplU2VsZWN0b3IsCiAgaXNFeGFjdEhlYWQsCn0pIHsKICBmb3IgKGNvbnN0IFtuYW1lLCB2YWx1ZV0gb2YgT2JqZWN0LmVudHJpZXMoeyBhcGlCYXNlLCByYXdCYXNlLCB1c2VyQWdlbnQsIHN0YWdlUGF0aCwgaGVscGVyUGF0aCB9KSkgewogICAgaWYgKHR5cGVvZiB2YWx1ZSAhPT0gJ3N0cmluZycgfHwgdmFsdWUubGVuZ3RoIDwgMSkgdGhyb3cgbmV3IFR5cGVFcnJvcihgJHtuYW1lfSBtdXN0IGJlIG5vbi1lbXB0eSB0ZXh0YCk7CiAgfQogIGlmICh0eXBlb2Ygbm9ybWFsaXplU2VsZWN0b3IgIT09ICdmdW5jdGlvbicgfHwgdHlwZW9mIGlzRXhhY3RIZWFkICE9PSAnZnVuY3Rpb24nKSB0aHJvdyBuZXcgVHlwZUVycm9yKCdzb3VyY2UgdmFsaWRhdG9ycyBtdXN0IGJlIGZ1bmN0aW9ucycpOwoKICBhc3luYyBmdW5jdGlvbiByZXF1ZXN0KHVybCwgeyBmZXRjaGVyID0gZ2xvYmFsVGhpcy5mZXRjaCwgbmFtZSwgbWF4Qnl0ZXMsIGFjY2VwdCB9KSB7CiAgICBpZiAodHlwZW9mIGZldGNoZXIgIT09ICdmdW5jdGlvbicpIGZhaWwoJ05vZGUgZmV0Y2ggc3VwcG9ydCBpcyB1bmF2YWlsYWJsZS4nKTsKICAgIGNvbnN0IHJlc3BvbnNlID0gYXdhaXQgZmV0Y2hlcih1cmwsIHsKICAgICAgbWV0aG9kOiAnR0VUJywKICAgICAgcmVkaXJlY3Q6ICdlcnJvcicsCiAgICAgIGhlYWRlcnM6IE9iamVjdC5mcmVlemUoeyBBY2NlcHQ6IGFjY2VwdCwgJ1VzZXItQWdlbnQnOiB1c2VyQWdlbnQgfSksCiAgICB9KTsKICAgIHJldHVybiByZWFkQm91bmRlZFJlc3BvbnNlKHJlc3BvbnNlLCBuYW1lLCBtYXhCeXRlcyk7CiAgfQoKICBmdW5jdGlvbiByYXdVcmwoaGVhZCwgcmVsYXRpdmUpIHsKICAgIGNvbnN0IGVuY29kZWQgPSBTdHJpbmcocmVsYXRpdmUpLnNwbGl0KCcvJykubWFwKChzZWdtZW50KSA9PiBlbmNvZGVVUklDb21wb25lbnQoc2VnbWVudCkpLmpvaW4oJy8nKTsKICAgIHJldHVybiBgJHtyYXdCYXNlfSR7aGVhZH0vJHtlbmNvZGVkfWA7CiAgfQoKICBhc3luYyBmdW5jdGlvbiByZXNvbHZlKHNlbGVjdG9yLCB7IGZldGNoZXIgPSBnbG9iYWxUaGlzLmZldGNoIH0gPSB7fSkgewogICAgY29uc3Qgbm9ybWFsaXplZCA9IG5vcm1hbGl6ZVNlbGVjdG9yKHNlbGVjdG9yPy52YWx1ZSA/PyBzZWxlY3Rvcik7CiAgICBpZiAobm9ybWFsaXplZC5raW5kID09PSAnZXhhY3QnKSByZXR1cm4gbm9ybWFsaXplZC52YWx1ZTsKICAgIGNvbnN0IGVuY29kZWRSZWYgPSBub3JtYWxpemVkLnZhbHVlLnNwbGl0KCcvJykubWFwKChzZWdtZW50KSA9PiBlbmNvZGVVUklDb21wb25lbnQoc2VnbWVudCkpLmpvaW4oJy8nKTsKICAgIGNvbnN0IGJ5dGVzID0gYXdhaXQgcmVxdWVzdChgJHthcGlCYXNlfSR7ZW5jb2RlZFJlZn1gLCB7CiAgICAgIGZldGNoZXIsCiAgICAgIG5hbWU6ICdTdWJqZWN0JywKICAgICAgbWF4Qnl0ZXM6IE1BWF9TVUJKRUNUX0JZVEVTLAogICAgICBhY2NlcHQ6ICdhcHBsaWNhdGlvbi92bmQuZ2l0aHViK2pzb24nLAogICAgfSk7CiAgICBsZXQgcGF5bG9hZDsKICAgIHRyeSB7IHBheWxvYWQgPSBKU09OLnBhcnNlKGJ5dGVzLnRvU3RyaW5nKCd1dGY4JykpOyB9CiAgICBjYXRjaCB7IGZhaWwoJ1N1YmplY3QgcmVzcG9uc2UgaXMgaW52YWxpZC4nKTsgfQogICAgY29uc3QgZXhwZWN0ZWRSZWYgPSBgcmVmcy9oZWFkcy8ke25vcm1hbGl6ZWQudmFsdWV9YDsKICAgIGNvbnN0IGhlYWQgPSBTdHJpbmcocGF5bG9hZD8ub2JqZWN0Py5zaGEgPz8gJycpLnRvTG93ZXJDYXNlKCk7CiAgICBpZiAocGF5bG9hZD8ucmVmICE9PSBleHBlY3RlZFJlZiB8fCAhaXNFeGFjdEhlYWQoaGVhZCkpIGZhaWwoJ1N1YmplY3QgcmVzcG9uc2UgaXMgaW52YWxpZC4nKTsKICAgIHJldHVybiBoZWFkOwogIH0KCiAgYXN5bmMgZnVuY3Rpb24gZmV0Y2hTdGFnZShoZWFkLCB7IGZldGNoZXIgPSBnbG9iYWxUaGlzLmZldGNoIH0gPSB7fSkgewogICAgY29uc3QgZXhhY3QgPSBTdHJpbmcoaGVhZCA/PyAnJykudG9Mb3dlckNhc2UoKTsKICAgIGlmICghaXNFeGFjdEhlYWQoZXhhY3QpKSBmYWlsKCdTdGFnZSByZXF1aXJlcyBhbiBleGFjdCBzdWJqZWN0LicpOwogICAgcmV0dXJuIHJlcXVlc3QocmF3VXJsKGV4YWN0LCBzdGFnZVBhdGgpLCB7CiAgICAgIGZldGNoZXIsCiAgICAgIG5hbWU6ICdTdGFnZScsCiAgICAgIG1heEJ5dGVzOiBNQVhfU1RBR0VfQllURVMsCiAgICAgIGFjY2VwdDogJ2FwcGxpY2F0aW9uL29jdGV0LXN0cmVhbScsCiAgICB9KTsKICB9CgogIGFzeW5jIGZ1bmN0aW9uIGZldGNoSGVscGVyKGhlYWQsIHsgZmV0Y2hlciA9IGdsb2JhbFRoaXMuZmV0Y2ggfSA9IHt9KSB7CiAgICBjb25zdCBleGFjdCA9IFN0cmluZyhoZWFkID8/ICcnKS50b0xvd2VyQ2FzZSgpOwogICAgaWYgKCFpc0V4YWN0SGVhZChleGFjdCkpIGZhaWwoJ0hlbHBlciByZXF1aXJlcyBhbiBleGFjdCBzdWJqZWN0LicpOwogICAgcmV0dXJuIHJlcXVlc3QocmF3VXJsKGV4YWN0LCBoZWxwZXJQYXRoKSwgewogICAgICBmZXRjaGVyLAogICAgICBuYW1lOiAnU291cmNlLWFjcXVpc2l0aW9uIHN0YWdlJywKICAgICAgbWF4Qnl0ZXM6IE1BWF9IRUxQRVJfQllURVMsCiAgICAgIGFjY2VwdDogJ2FwcGxpY2F0aW9uL29jdGV0LXN0cmVhbScsCiAgICB9KTsKICB9CgogIHJldHVybiBPYmplY3QuZnJlZXplKHsgZmV0Y2hIZWxwZXIsIGZldGNoU3RhZ2UsIHJlc29sdmUgfSk7Cn0K';
+import { createTemporaryMaterialization } from 'data:text/javascript;base64,aW1wb3J0IHsgcmFuZG9tVVVJRCB9IGZyb20gJ25vZGU6Y3J5cHRvJzsKaW1wb3J0IHsgcm1TeW5jLCB3cml0ZUZpbGVTeW5jIH0gZnJvbSAnbm9kZTpmcyc7CmltcG9ydCBwYXRoIGZyb20gJ25vZGU6cGF0aCc7CmltcG9ydCBwcm9jZXNzIGZyb20gJ25vZGU6cHJvY2Vzcyc7CmltcG9ydCB7IHBhdGhUb0ZpbGVVUkwgfSBmcm9tICdub2RlOnVybCc7Cgphc3luYyBmdW5jdGlvbiBkZWZhdWx0TG9hZGVyKG1vZHVsZVBhdGgpIHsKICByZXR1cm4gaW1wb3J0KHBhdGhUb0ZpbGVVUkwobW9kdWxlUGF0aCkuaHJlZik7Cn0KCmV4cG9ydCBmdW5jdGlvbiBjcmVhdGVUZW1wb3JhcnlNYXRlcmlhbGl6YXRpb24oKSB7CiAgZnVuY3Rpb24gd3JpdGUocm9vdCwgaGVhZCwgYnl0ZXMsIHJvbGUgPSAnc3RhZ2UnKSB7CiAgICBpZiAoIUJ1ZmZlci5pc0J1ZmZlcihieXRlcykgfHwgYnl0ZXMubGVuZ3RoIDwgMSkgdGhyb3cgbmV3IFR5cGVFcnJvcigndGVtcG9yYXJ5IG1vZHVsZSBieXRlcyBtdXN0IGJlIGEgbm9uLWVtcHR5IGJ1ZmZlcicpOwogICAgY29uc3QgdGFyZ2V0ID0gcGF0aC5qb2luKHJvb3QsIGAuJHtyb2xlfS0ke2hlYWQuc2xpY2UoMCwgMTIpfS0ke3Byb2Nlc3MucGlkfS0ke3JhbmRvbVVVSUQoKX0ubWpzYCk7CiAgICB3cml0ZUZpbGVTeW5jKHRhcmdldCwgYnl0ZXMsIHsgbW9kZTogMG82MDAsIGZsYWc6ICd3eCcsIGZsdXNoOiB0cnVlIH0pOwogICAgcmV0dXJuIHRhcmdldDsKICB9CgogIGZ1bmN0aW9uIGRpcmVjdG9yeShyb290LCBoZWFkKSB7CiAgICByZXR1cm4gcGF0aC5qb2luKHJvb3QsIGAuc291cmNlLSR7aGVhZC5zbGljZSgwLCAxMil9LSR7cHJvY2Vzcy5waWR9LSR7cmFuZG9tVVVJRCgpfWApOwogIH0KCiAgYXN5bmMgZnVuY3Rpb24gbG9hZChtb2R1bGVQYXRoLCBsb2FkZXIgPSBkZWZhdWx0TG9hZGVyKSB7CiAgICBpZiAodHlwZW9mIGxvYWRlciAhPT0gJ2Z1bmN0aW9uJykgdGhyb3cgbmV3IFR5cGVFcnJvcignbG9hZGVyIG11c3QgYmUgYSBmdW5jdGlvbicpOwogICAgcmV0dXJuIGxvYWRlcihtb2R1bGVQYXRoKTsKICB9CgogIGZ1bmN0aW9uIHJlbW92ZUZpbGUodGFyZ2V0KSB7CiAgICB0cnkgeyBybVN5bmModGFyZ2V0LCB7IGZvcmNlOiB0cnVlIH0pOyB9IGNhdGNoIHt9CiAgfQoKICBmdW5jdGlvbiByZW1vdmVUcmVlKHRhcmdldCkgewogICAgdHJ5IHsgcm1TeW5jKHRhcmdldCwgeyByZWN1cnNpdmU6IHRydWUsIGZvcmNlOiB0cnVlLCBtYXhSZXRyaWVzOiA0LCByZXRyeURlbGF5OiA1MCB9KTsgfSBjYXRjaCB7fQogIH0KCiAgcmV0dXJuIE9iamVjdC5mcmVlemUoeyBkaXJlY3RvcnksIGxvYWQsIHJlbW92ZUZpbGUsIHJlbW92ZVRyZWUsIHdyaXRlIH0pOwp9Cg==';
 
 export const BOOTSTRAP_PROTOCOL = 'devbridge/zero-state-bootstrap-v1';
 export const SOURCE_ID = 'iteathen/DevBridge';
 export const STAGE_PATH = 'install-devbridge.mjs';
 export const SOURCE_STAGE_PATH = 'src/bootstrap/exact-source-acquisition.mjs';
 
-const MINIMUM_NODE = Object.freeze([22, 16, 0]);
-const EXACT_HEAD = /^[0-9a-f]{40}$/u;
-const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/u;
-const MAX_RECORD_BYTES = 4096;
-const MAX_STAGE_BYTES = 512 * 1024;
-const MAX_SOURCE_STAGE_BYTES = 128 * 1024;
 const USER_AGENT = 'DevBridge-zero-state-bootstrap/1';
 const SOURCE_RAW_BASE = 'https://raw.githubusercontent.com/iteathen/DevBridge/';
+const SOURCE_API_BASE = 'https://api.github.com/repos/iteathen/DevBridge/git/ref/heads/';
+
+const selectionState = createSelectionState({
+  protocol: BOOTSTRAP_PROTOCOL,
+  source: SOURCE_ID,
+  normalizeSelector: normalizeBootstrapRef,
+  isExactHead,
+  directoryName: 'bootstrap',
+  recordName: 'selection.json',
+});
+const sourceChannel = createSourceChannel({
+  apiBase: SOURCE_API_BASE,
+  rawBase: SOURCE_RAW_BASE,
+  userAgent: USER_AGENT,
+  stagePath: STAGE_PATH,
+  helperPath: SOURCE_STAGE_PATH,
+  normalizeSelector: normalizeBootstrapRef,
+  isExactHead,
+});
+const temporaryMaterialization = createTemporaryMaterialization();
 
 function fail(message) { throw new Error(message); }
 
-export function assertSupportedNode(version = process.versions.node) {
-  const parts = String(version).split('.').map((value) => Number.parseInt(value, 10));
-  if (parts.length < 3 || parts.some((value) => !Number.isInteger(value))) {
-    fail(`Could not parse Node.js version: ${version}`);
-  }
-  for (let index = 0; index < MINIMUM_NODE.length; index += 1) {
-    if (parts[index] > MINIMUM_NODE[index]) return;
-    if (parts[index] < MINIMUM_NODE[index]) fail('DevBridge requires Node.js 22.16.0 or newer.');
-  }
-}
-
-function expandHome(value, homeDirectory = homedir()) {
-  if (value === '~') return homeDirectory;
-  if (value.startsWith('~/') || value.startsWith('~\\')) return path.join(homeDirectory, value.slice(2));
-  return value;
-}
-
-function takeValue(argv, index, flag) {
-  const value = argv[index + 1];
-  if (typeof value !== 'string' || !value || value.startsWith('-')) fail(`${flag} requires a value`);
-  return value;
-}
-
-export function normalizeBootstrapRef(value) {
-  const ref = String(value ?? '');
-  const exact = ref.toLowerCase();
-  if (EXACT_HEAD.test(exact)) return Object.freeze({ kind: 'exact', value: exact });
-  const segments = ref.split('/');
-  if (!SAFE_REF.test(ref) || ref.startsWith('-') || ref.includes('\\') || ref.endsWith('/') || ref.endsWith('.lock') ||
-      segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
-    fail('Bootstrap ref is invalid.');
-  }
-  return Object.freeze({ kind: 'branch', value: ref });
-}
-
-export function parseBootstrapArgs(argv, { environment = process.env, homeDirectory = homedir() } = {}) {
-  if (!Array.isArray(argv)) throw new TypeError('bootstrap argv must be an array');
-  let home = environment.DEVBRIDGE_HOME ?? path.join(homeDirectory, '.devbridge');
-  let selector = null;
-  let help = false;
-  let runSetup = true;
-  for (let index = 0; index < argv.length; index += 1) {
-    const value = argv[index];
-    if (value === '--help' || value === '-h') { help = true; continue; }
-    if (value === '--install-only') { runSetup = false; continue; }
-    if (value === '--home') {
-      home = takeValue(argv, index, value);
-      index += 1;
-      continue;
-    }
-    if (value === '--ref' || value === '--branch') {
-      if (selector != null) fail('Only one bootstrap ref/branch selector may be supplied.');
-      selector = normalizeBootstrapRef(takeValue(argv, index, value));
-      index += 1;
-      continue;
-    }
-    fail(`Unsupported bootstrap argument: ${value}`);
-  }
-  return Object.freeze({
-    help,
-    home: path.resolve(expandHome(String(home), homeDirectory)),
-    selector: selector ?? Object.freeze({ kind: 'branch', value: 'main' }),
-    explicitSelector: selector != null,
-    runSetup,
-  });
-}
-
-function ensureRealDirectory(candidate, name, { create = false, recursive = false } = {}) {
-  if (create && !existsSync(candidate)) mkdirSync(candidate, { recursive, mode: 0o700 });
-  const info = lstatSync(candidate);
-  if (!info.isDirectory() || info.isSymbolicLink()) fail(`${name} must be a real directory.`);
-  return realpathSync.native(candidate);
-}
-
-function ensureChildDirectory(parent, name) {
-  const candidate = path.join(parent, name);
-  if (!existsSync(candidate)) mkdirSync(candidate, { mode: 0o700 });
-  return ensureRealDirectory(candidate, `Bootstrap ${name} directory`);
-}
-
-function sameSelector(left, right) {
-  return left?.kind === right?.kind && left?.value === right?.value;
-}
-
-function validateSelectionRecord(record) {
-  if (record?.protocol !== BOOTSTRAP_PROTOCOL || record?.source !== SOURCE_ID ||
-      !EXACT_HEAD.test(String(record?.head ?? '').toLowerCase())) {
-    fail('Bootstrap selection record is invalid.');
-  }
-  const selector = normalizeBootstrapRef(record?.selector?.value);
-  if (selector.kind !== record?.selector?.kind || selector.value !== record?.selector?.value) {
-    fail('Bootstrap selection record is invalid.');
-  }
-  return Object.freeze({
-    protocol: BOOTSTRAP_PROTOCOL,
-    source: SOURCE_ID,
-    selector,
-    head: String(record.head).toLowerCase(),
-  });
-}
+export { assertSupportedNode, normalizeBootstrapRef, parseBootstrapArgs };
 
 export function bootstrapSelectionPath(home) {
-  return path.join(path.resolve(home), 'bootstrap', 'selection.json');
+  return selectionState.pathFor(home);
 }
 
 export function readBootstrapSelection(home) {
-  const selectionPath = bootstrapSelectionPath(home);
-  if (!existsSync(selectionPath)) return null;
-  const info = lstatSync(selectionPath);
-  if (!info.isFile() || info.isSymbolicLink() || info.size < 1 || info.size > MAX_RECORD_BYTES) {
-    fail('Bootstrap selection record is invalid.');
-  }
-  try {
-    return validateSelectionRecord(JSON.parse(readFileSync(selectionPath, 'utf8')));
-  } catch (error) {
-    if (error?.message === 'Bootstrap selection record is invalid.') throw error;
-    fail('Bootstrap selection record is invalid.');
-  }
+  return selectionState.read(home);
 }
 
-async function readBoundedResponse(response, name, maxBytes) {
-  if (!response || response.ok !== true || response.status !== 200) {
-    fail(`${name} request failed with status ${response?.status ?? 'unknown'}.`);
-  }
-  const declared = Number.parseInt(response.headers?.get?.('content-length') ?? '', 10);
-  if (Number.isInteger(declared) && declared > maxBytes) fail(`${name} response is too large.`);
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.length < 1 || bytes.length > maxBytes) fail(`${name} response size is invalid.`);
-  return bytes;
-}
-
-async function requestBytes(url, { fetcher = globalThis.fetch, name, maxBytes, accept }) {
-  if (typeof fetcher !== 'function') fail('Node fetch support is unavailable.');
-  const response = await fetcher(url, {
-    method: 'GET',
-    redirect: 'error',
-    headers: Object.freeze({
-      Accept: accept,
-      'User-Agent': USER_AGENT,
-    }),
-  });
-  return readBoundedResponse(response, name, maxBytes);
-}
-
-function exactRawUrl(head, relative) {
-  const encoded = String(relative).split('/').map((segment) => encodeURIComponent(segment)).join('/');
-  return `${SOURCE_RAW_BASE}${head}/${encoded}`;
-}
-
-export async function resolveBootstrapSubject(selector, { fetcher = globalThis.fetch } = {}) {
-  const normalized = normalizeBootstrapRef(selector?.value ?? selector);
-  if (normalized.kind === 'exact') return normalized.value;
-  const encodedRef = normalized.value.split('/').map((segment) => encodeURIComponent(segment)).join('/');
-  const bytes = await requestBytes(`https://api.github.com/repos/iteathen/DevBridge/git/ref/heads/${encodedRef}`, {
-    fetcher,
-    name: 'Bootstrap subject',
-    maxBytes: 64 * 1024,
-    accept: 'application/vnd.github+json',
-  });
-  let payload;
-  try { payload = JSON.parse(bytes.toString('utf8')); }
-  catch { fail('Bootstrap subject response is invalid.'); }
-  const expectedRef = `refs/heads/${normalized.value}`;
-  const head = String(payload?.object?.sha ?? '').toLowerCase();
-  if (payload?.ref !== expectedRef || !EXACT_HEAD.test(head)) fail('Bootstrap subject response is invalid.');
-  return head;
-}
-
-function ensureBootstrapHome(requestedHome) {
-  if (!existsSync(requestedHome)) mkdirSync(requestedHome, { recursive: true, mode: 0o700 });
-  const home = ensureRealDirectory(requestedHome, 'DevBridge bootstrap home');
-  const bootstrap = ensureChildDirectory(home, 'bootstrap');
-  return Object.freeze({ home, bootstrap });
-}
-
-function writeSelectionCandidate(bootstrap, record) {
-  const temporary = path.join(bootstrap, `.selection-${process.pid}-${randomUUID()}.tmp`);
-  writeFileSync(temporary, `${JSON.stringify(record)}\n`, {
-    encoding: 'utf8', mode: 0o600, flag: 'wx', flush: true,
-  });
-  return temporary;
+export async function resolveBootstrapSubject(selector, dependencies = {}) {
+  return sourceChannel.resolve(selector, dependencies);
 }
 
 export async function resolveDurableBootstrapSubject(options, { fetcher = globalThis.fetch } = {}) {
-  const roots = ensureBootstrapHome(path.resolve(options.home));
-  const existing = readBootstrapSelection(roots.home);
-  if (existing) {
-    if (!sameSelector(existing.selector, options.selector)) {
-      fail(`Bootstrap recovery is already bound to ${existing.selector.value} at ${existing.head}; resume that selection before starting another subject.`);
-    }
-    return Object.freeze({ ...existing, home: roots.home, resumed: true });
-  }
-
-  const head = await resolveBootstrapSubject(options.selector, { fetcher });
-  const record = Object.freeze({
-    protocol: BOOTSTRAP_PROTOCOL,
-    source: SOURCE_ID,
-    selector: options.selector,
-    head,
+  return selectionState.resolve(options, {
+    resolveSubject: (selector) => sourceChannel.resolve(selector, { fetcher }),
   });
-  const temporary = writeSelectionCandidate(roots.bootstrap, record);
-  const selectionPath = path.join(roots.bootstrap, 'selection.json');
-  try {
-    try {
-      linkSync(temporary, selectionPath);
-    } catch (error) {
-      if (error?.code !== 'EEXIST') throw error;
-      const winner = readBootstrapSelection(roots.home);
-      if (!winner || !sameSelector(winner.selector, options.selector)) {
-        fail('A different bootstrap selection became authoritative concurrently.');
-      }
-      return Object.freeze({ ...winner, home: roots.home, resumed: true });
-    }
-    return Object.freeze({ ...record, home: roots.home, resumed: false });
-  } finally {
-    try { unlinkSync(temporary); } catch {}
-  }
 }
 
 export function clearBootstrapSelection(subject) {
-  const current = readBootstrapSelection(subject.home);
-  if (!current) return;
-  if (current.head !== subject.head || !sameSelector(current.selector, subject.selector)) {
-    fail('Bootstrap selection changed before installation commit reconciliation.');
-  }
-  unlinkSync(bootstrapSelectionPath(subject.home));
+  return selectionState.clear(subject);
 }
 
-export async function fetchBootstrapStage(head, { fetcher = globalThis.fetch } = {}) {
-  const exact = String(head ?? '').toLowerCase();
-  if (!EXACT_HEAD.test(exact)) fail('Bootstrap stage requires an exact subject.');
-  return requestBytes(exactRawUrl(exact, STAGE_PATH), {
-    fetcher,
-    name: 'Bootstrap stage',
-    maxBytes: MAX_STAGE_BYTES,
-    accept: 'application/octet-stream',
-  });
+export async function fetchBootstrapStage(head, dependencies = {}) {
+  return sourceChannel.fetchStage(head, dependencies);
 }
 
 async function defaultLoadStage(stagePath) {
-  return import(pathToFileURL(stagePath).href);
+  return temporaryMaterialization.load(stagePath);
 }
 
-function writeStage(bootstrapRoot, head, bytes, role = 'stage') {
-  const stagePath = path.join(bootstrapRoot, `.${role}-${head.slice(0, 12)}-${process.pid}-${randomUUID()}.mjs`);
-  writeFileSync(stagePath, bytes, { mode: 0o600, flag: 'wx', flush: true });
-  return stagePath;
-}
-
-async function defaultPrepareSource(stage, subject, { fetcher, bootstrapRoot }) {
+async function defaultPrepareSource(stage, subject, { fetcher, bootstrapRoot, installerHead }) {
   if (!Array.isArray(stage?.INSTALLED_COMPONENT_FILES) || stage.INSTALLED_COMPONENT_FILES.length < 1) {
     fail('Bootstrap stage source contract is unavailable.');
   }
-  const helperBytes = await requestBytes(exactRawUrl(subject.head, SOURCE_STAGE_PATH), {
-    fetcher,
-    name: 'Bootstrap source-acquisition stage',
-    maxBytes: MAX_SOURCE_STAGE_BYTES,
-    accept: 'application/octet-stream',
-  });
-  const helperPath = writeStage(bootstrapRoot, subject.head, helperBytes, 'source-stage');
-  const destination = path.join(
-    bootstrapRoot,
-    `.source-${subject.head.slice(0, 12)}-${process.pid}-${randomUUID()}`,
-  );
+  const helperBytes = await sourceChannel.fetchHelper(installerHead, { fetcher });
+  const helperPath = temporaryMaterialization.write(bootstrapRoot, installerHead, helperBytes, 'source-stage');
+  const destination = temporaryMaterialization.directory(bootstrapRoot, subject.head);
   try {
-    const helper = await import(pathToFileURL(helperPath).href);
-    if (typeof helper?.materializeExactSource !== 'function') {
-      fail('Bootstrap source-acquisition contract is unavailable.');
-    }
+    const helper = await temporaryMaterialization.load(helperPath);
+    if (typeof helper?.materializeExactSource !== 'function') fail('Bootstrap source-acquisition contract is unavailable.');
     const prepared = await helper.materializeExactSource({
       revision: subject.head,
       paths: stage.INSTALLED_COMPONENT_FILES,
@@ -313,13 +98,13 @@ async function defaultPrepareSource(stage, subject, { fetcher, bootstrapRoot }) 
       head: subject.head,
       root: prepared.root,
       cleanup() {
-        try { rmSync(prepared.root, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 }); } catch {}
-        try { rmSync(helperPath, { force: true }); } catch {}
+        temporaryMaterialization.removeTree(prepared.root);
+        temporaryMaterialization.removeFile(helperPath);
       },
     });
   } catch (error) {
-    try { rmSync(destination, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 }); } catch {}
-    try { rmSync(helperPath, { force: true }); } catch {}
+    temporaryMaterialization.removeTree(destination);
+    temporaryMaterialization.removeFile(helperPath);
     throw error;
   }
 }
@@ -335,27 +120,35 @@ export async function runZeroStateBootstrap(argv, {
   const options = parseBootstrapArgs(argv, { environment, homeDirectory });
   if (options.help) return Object.freeze({ help: true, status: 0 });
 
+  if (options.repairSelectionWith != null && readBootstrapSelection(options.home) == null) {
+    fail('--repair-selection-with requires an existing durable bootstrap selection.');
+  }
   const subject = await resolveDurableBootstrapSubject(options, { fetcher });
-  const bytes = await fetchBootstrapStage(subject.head, { fetcher });
+  if (options.repairSelectionWith != null && subject.resumed !== true) {
+    fail('Bootstrap selection repair requires a resumed durable subject.');
+  }
+  const installerHead = options.repairSelectionWith ?? subject.head;
+  const bytes = await fetchBootstrapStage(installerHead, { fetcher });
   const bootstrapRoot = path.dirname(bootstrapSelectionPath(subject.home));
-  const stagePath = writeStage(bootstrapRoot, subject.head, bytes);
+  const stagePath = temporaryMaterialization.write(bootstrapRoot, installerHead, bytes);
   try {
     const stage = await loadStage(stagePath);
     if (typeof stage?.installDevBridge !== 'function' || typeof stage?.runInstalledSetup !== 'function') {
       fail('Bootstrap stage contract is unavailable.');
     }
-    const prepared = await prepareSource(stage, subject, { fetcher, bootstrapRoot });
+    const prepared = await prepareSource(stage, subject, { fetcher, bootstrapRoot, installerHead });
     try {
-      const installed = stage.installDevBridge({
+      const installed = await stage.installDevBridge({
         home: subject.home,
         selector: Object.freeze({ kind: 'exact', value: subject.head }),
         selectedRunnerRef: options.explicitSelector ? options.selector.value : null,
-        pinSelectedRunner: options.explicitSelector && options.selector.kind === 'exact',
       }, {
         environment,
         preparedSource: Object.freeze({ head: subject.head, root: prepared.root }),
       });
-
+      if (options.repairSelectionWith != null && installed?.componentHead !== subject.head) {
+        fail('Bootstrap selection repair did not commit the exact selected subject.');
+      }
       clearBootstrapSelection(subject);
 
       if (!options.runSetup) return Object.freeze({ help: false, status: 0, installed, subject });
@@ -366,15 +159,16 @@ export async function runZeroStateBootstrap(argv, {
       try { prepared.cleanup?.(); } catch {}
     }
   } finally {
-    try { rmSync(stagePath, { force: true }); } catch {}
+    temporaryMaterialization.removeFile(stagePath);
   }
 }
 
 export function bootstrapHelp() {
-  return `DevBridge zero-state bootstrap\n\nUsage:\n  <Node first-byte loader> [--home <path>]\n  <Node first-byte loader> --ref <branch-or-exact-head> [--home <path>]\n  <Node first-byte loader> --install-only [--ref <branch-or-exact-head>] [--home <path>]\n\nThe first-byte loader requires only supported Node.js. A moving ref is durably bound to one exact subject before the next stage runs; an interrupted argument-equivalent retry resumes that exact subject.\n`;
+  return `DevBridge zero-state bootstrap\n\nUsage:\n  <Node first-byte loader> [--home <path>]\n  <Node first-byte loader> --ref <branch-or-exact-head> [--home <path>]\n  <Node first-byte loader> --install-only [--ref <branch-or-exact-head>] [--home <path>]\n  <Node first-byte loader> --install-only --ref <existing-selection> --repair-selection-with <exact-installer-head> [--home <path>]\n\nThe first-byte loader requires only supported Node.js. A moving ref is durably bound to one exact subject before the next stage runs; an interrupted argument-equivalent retry resumes that exact subject. Explicit selection repair keeps that durable subject unchanged and uses only the named exact installer head to finish its permanent-entry commit.\n`;
 }
 
-const invokedFromData = import.meta.url.startsWith('data:text/javascript');
+const invokedFromData = import.meta.url.startsWith('data:text/javascript')
+  && globalThis[Symbol.for('devbridge.first-byte-parent')] !== true;
 const invokedFromFile = process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
 if (invokedFromData || invokedFromFile) {
   const argv = invokedFromData ? process.argv.slice(1) : process.argv.slice(2);

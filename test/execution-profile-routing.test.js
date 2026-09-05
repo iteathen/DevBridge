@@ -7,25 +7,18 @@ import {
   executionWorkspaceIdentity,
   executionWorkspaceTarget,
 } from '../src/app/execution-profile-routing.js';
+import { ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL } from '../src/runtime/environment-activity-policy.js';
 
 const PROFILE = 'linux-development';
 const PHYSICAL = `env-${'a'.repeat(32)}`;
-const ACCESS = Object.freeze({
-  family: 'linux',
-  user: 'devbridge',
-  identityFile: '/host/id',
-  knownHostsFile: '/host/known-hosts',
-});
-
 function policy(routes) {
   return {
-    protocol: 'devbridge/environment-execution-routes-v1',
+    protocol: ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL,
     routes: routes.map((entry) => ({
       subject: entry.subject,
       profile: PROFILE,
       preferred: true,
       validation: entry.validation === true,
-      access: entry.access ?? ACCESS,
     })),
   };
 }
@@ -84,14 +77,14 @@ test('multiple repository workspaces resolve to one physical profile environment
   assert.equal(await routing.representativeTarget(PHYSICAL), environments[0].record.identity);
 });
 
-test('one execution profile rejects conflicting guest-access topology', () => {
+test('profile routing rejects credential-bearing topology in admission policy', () => {
   assert.throws(() => createExecutionProfileRouting({
     state: physicalState(),
-    policy: policy([
-      { subject: '101', validation: true },
-      { subject: '202', access: { ...ACCESS, user: 'other' } },
-    ]),
-  }), /conflicting guest-access configuration/u);
+    policy: {
+      protocol: ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL,
+      routes: [{ subject: '101', profile: PROFILE, preferred: true, validation: true, access: { family: 'linux' } }],
+    },
+  }), /access is not allowed/u);
 });
 
 test('workspace channel scopes every repository-controlled bridge location', async () => {

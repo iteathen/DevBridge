@@ -472,6 +472,9 @@ A target shape is conceptually:
 ```text
 src/guest/
   bridge-agent.mjs                 # bridge/protocol adapter
+  activity-store.mjs               # exact-attempt fence and bounded activity evidence
+  local-process.mjs                # bounded process lifecycle behind neutral control ports
+  transfer-channel.mjs             # exact byte transfer behind neutral location ports
   execution/
     execution-runtime.js
     execution-ir.js
@@ -495,7 +498,7 @@ src/guest/
 
 Exact filenames are not normative. The dependency direction is.
 
-The execution core must not depend on DevBridge controllers, GitHub, VM providers, host Git authority, or provider-specific transports. `bridge-agent.mjs` should become an adapter into the guest runtime rather than the owner of all execution semantics.
+The execution core must not depend on DevBridge controllers, GitHub, VM providers, host Git authority, or provider-specific transports. `bridge-agent.mjs` is the adapter into the guest runtime rather than the owner of process, attempt/activity, or transfer mechanics. The flat nested owners above are the current smallest complete split; the deeper `execution/` tree is a future shape whose individual files should exist only when a separately changeable owner is demonstrated.
 
 The existing host `DeterministicProcessRunner` remains narrow and should not grow into this shell-like agent runtime.
 

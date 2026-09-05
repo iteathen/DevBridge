@@ -7,7 +7,9 @@ const SAFE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
 const REQUEST_ID = /^[a-f0-9]{32}$/u;
 const SAFE_NAME = /^[A-Za-z][A-Za-z0-9_.-]{0,159}$/u;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
+const SHA256 = /^[a-f0-9]{64}$/u;
 const VERSION = /^(\d+)\.(\d+)\.(\d+)(?:[-+][A-Za-z0-9.-]+)?$/u;
+const REQUEST_KINDS = new Set(['health', 'execute', 'observe', 'cancel', 'put', 'get']);
 const REQUIRED_FEATURES = Object.freeze(['health', 'execute', 'observe', 'cancel', 'put', 'get']);
 const EXECUTION_CLASSES = new Set(['work', 'scratch', 'cache']);
 const ARGUMENT_CLASSES = new Set(['input', 'work', 'output', 'scratch', 'cache']);
@@ -160,7 +162,157 @@ function frameSize(value) {
   return size;
 }
 
-function responseFrame(raw, expected) {
+function emptyBody(raw, name) {
+  const value = requireObject(raw, name);
+  onlyKeys(value, new Set(), name);
+  return {};
+}
+
+function digest(value, name, { nullable = false } = {}) {
+  if (nullable && value == null) return null;
+  if (typeof value !== 'string' || !SHA256.test(value)) throw new TypeError(`${name} must be a sha256 digest`);
+  return value;
+}
+
+function normalizeRequestBody(kind, raw) {
+  if (kind === 'health' || kind === 'observe') return emptyBody(raw, `bridge ${kind} request`);
+  if (kind === 'execute') return normalizeOperation(raw);
+  if (kind === 'cancel') {
+    const value = requireObject(raw, 'bridge cancel request');
+    onlyKeys(value, new Set(['reason']), 'bridge cancel request');
+    if (!['abort', 'timeout'].includes(value.reason)) throw new TypeError('bridge cancel request.reason is invalid');
+    return { reason: value.reason };
+  }
+  if (kind === 'put') {
+    const value = requireObject(raw, 'bridge put request');
+    onlyKeys(value, new Set(['destination', 'offset', 'data', 'eof', 'digest']), 'bridge put request');
+    const destination = location(value.destination, 'bridge put request.destination', PUT_CLASSES);
+    const offset = integer(value.offset, 'bridge put request.offset', 0, MAX_TRANSFER_BYTES);
+    const data = canonicalBase64(value.data ?? '', 'bridge put request.data', CHUNK_BYTES);
+    if (typeof value.eof !== 'boolean') throw new TypeError('bridge put request.eof must be boolean');
+    if (!value.eof && data.length === 0) throw new TypeError('bridge put request made no progress');
+    if (offset + data.length > MAX_TRANSFER_BYTES) throw new TypeError('bridge put request exceeds the transfer limit');
+    const selectedDigest = digest(value.digest, 'bridge put request.digest', { nullable: !value.eof });
+    if (!value.eof && selectedDigest != null) throw new TypeError('bridge put request cannot expose a digest before EOF');
+    return { destination, offset, data: data.toString('base64'), eof: value.eof, digest: selectedDigest };
+  }
+  if (kind === 'get') {
+    const value = requireObject(raw, 'bridge get request');
+    onlyKeys(value, new Set(['source', 'offset', 'limit']), 'bridge get request');
+    const source = location(value.source, 'bridge get request.source', GET_CLASSES);
+    const offset = integer(value.offset, 'bridge get request.offset', 0, MAX_TRANSFER_BYTES - 1);
+    const limit = integer(value.limit, 'bridge get request.limit', 1, CHUNK_BYTES);
+    if (offset + limit > MAX_TRANSFER_BYTES) throw new TypeError('bridge get request exceeds the transfer limit');
+    return { source, offset, limit };
+  }
+  throw new TypeError('bridge request kind is invalid');
+}
+
+export function normalizeEnvironmentBridgeRequest(raw) {
+  const value = requireObject(raw, 'bridge request');
+  onlyKeys(value, new Set(['protocol', 'request', 'target', 'kind', 'body']), 'bridge request');
+  if (value.protocol !== ENVIRONMENT_BRIDGE_PROTOCOL) throw new TypeError('bridge request protocol is unsupported');
+  const request = requestToken(value.request);
+  const target = targetToken(value.target);
+  if (typeof value.kind !== 'string' || !REQUEST_KINDS.has(value.kind)) throw new TypeError('bridge request kind is invalid');
+  const result = {
+    protocol: ENVIRONMENT_BRIDGE_PROTOCOL,
+    request,
+    target,
+    kind: value.kind,
+    body: normalizeRequestBody(value.kind, value.body),
+  };
+  if (frameSize(result) > MAX_REQUEST_FRAME_BYTES) throw new EnvironmentBridgeError('bridge request exceeds the common transport frame limit', { code: 'limit', request, target });
+  return result;
+}
+
+function encodedResult(raw, maxOutputBytes = MAX_OUTPUT_BYTES) {
+  const value = requireObject(raw, 'bridge result');
+  onlyKeys(value, new Set(['exitCode', 'signal', 'timedOut', 'aborted', 'outputTruncated', 'stdout', 'stderr', 'startedAt', 'finishedAt', 'lastOutputAt']), 'bridge result');
+  if (value.exitCode != null && (!Number.isInteger(value.exitCode) || value.exitCode < -1 || value.exitCode > 255)) throw new EnvironmentBridgeError('bridge result.exitCode is invalid', { code: 'protocol' });
+  for (const name of ['timedOut', 'aborted', 'outputTruncated']) if (typeof value[name] !== 'boolean') throw new EnvironmentBridgeError(`bridge result.${name} must be boolean`, { code: 'protocol' });
+  const stdout = canonicalBase64(value.stdout ?? '', 'bridge result.stdout', maxOutputBytes);
+  const stderr = canonicalBase64(value.stderr ?? '', 'bridge result.stderr', maxOutputBytes);
+  if (stdout.length + stderr.length > maxOutputBytes) throw new EnvironmentBridgeError('bridge result output exceeds the requested aggregate limit', { code: 'protocol' });
+  const timestamp = (entry, name) => entry == null ? null : boundedString(entry, name, { allowEmpty: false, maxBytes: 128 });
+  const signal = value.signal == null ? null : boundedString(value.signal, 'bridge result.signal', { allowEmpty: false, maxBytes: 128 });
+  return {
+    exitCode: value.exitCode ?? null,
+    signal,
+    timedOut: value.timedOut,
+    aborted: value.aborted,
+    outputTruncated: value.outputTruncated,
+    stdout: stdout.toString('base64'),
+    stderr: stderr.toString('base64'),
+    startedAt: timestamp(value.startedAt, 'bridge result.startedAt'),
+    finishedAt: timestamp(value.finishedAt, 'bridge result.finishedAt'),
+    lastOutputAt: timestamp(value.lastOutputAt, 'bridge result.lastOutputAt'),
+  };
+}
+
+function encodedExecutionState(raw, maxOutputBytes) {
+  const value = requireObject(raw, 'bridge execution state');
+  onlyKeys(value, new Set(['state', 'result', 'reason']), 'bridge execution state');
+  if (!['absent', 'planned', 'running', 'completed', 'failed', 'indeterminate'].includes(value.state)) throw new EnvironmentBridgeError('bridge execution state is invalid', { code: 'protocol' });
+  const reason = value.reason == null ? null : boundedString(value.reason, 'bridge execution state.reason', { maxBytes: MAX_ERROR_BYTES });
+  if (value.state === 'completed') {
+    if (value.result == null) throw new EnvironmentBridgeError('completed bridge execution has no result', { code: 'protocol' });
+    return { state: value.state, result: encodedResult(value.result, maxOutputBytes), reason };
+  }
+  if (value.result != null) throw new EnvironmentBridgeError('non-completed bridge execution must not include a result', { code: 'protocol' });
+  return { state: value.state, result: null, reason };
+}
+
+function normalizeSuccessfulResponseBody(raw, expected) {
+  if (expected.kind === 'health') {
+    const value = requireObject(raw, 'bridge health response');
+    onlyKeys(value, new Set(['version', 'features']), 'bridge health response');
+    const version = boundedString(value.version, 'bridge health response.version', { maxBytes: 128 });
+    if (!VERSION.test(version)) throw new TypeError('bridge health response.version is invalid');
+    if (!Array.isArray(value.features) || value.features.length > 32 || value.features.some((entry) => typeof entry !== 'string' || !SAFE_NAME.test(entry))) {
+      throw new TypeError('bridge health response.features are invalid');
+    }
+    return { version, features: [...new Set(value.features)].sort() };
+  }
+  if (expected.kind === 'execute' || expected.kind === 'observe') {
+    const limit = expected.kind === 'execute' ? expected.body.maxOutputBytes : MAX_OUTPUT_BYTES;
+    return encodedExecutionState(raw, limit);
+  }
+  if (expected.kind === 'cancel') {
+    const value = requireObject(raw, 'bridge cancel response');
+    onlyKeys(value, new Set(['state']), 'bridge cancel response');
+    if (!['absent', 'running', 'completed', 'indeterminate'].includes(value.state)) throw new TypeError('bridge cancel response.state is invalid');
+    return { state: value.state };
+  }
+  if (expected.kind === 'put') {
+    const value = requireObject(raw, 'bridge put response');
+    onlyKeys(value, new Set(['nextOffset', 'complete', 'digest']), 'bridge put response');
+    const bytes = canonicalBase64(expected.body.data, 'bridge put request.data', CHUNK_BYTES);
+    const nextOffset = expected.body.offset + bytes.length;
+    if (!Number.isSafeInteger(value.nextOffset) || value.nextOffset !== nextOffset || typeof value.complete !== 'boolean') {
+      throw new TypeError('bridge put response offset is inconsistent');
+    }
+    const selectedDigest = digest(value.digest, 'bridge put response.digest', { nullable: !expected.body.eof });
+    if (expected.body.eof) {
+      if (!value.complete || selectedDigest !== expected.body.digest) throw new TypeError('bridge put response completion is inconsistent');
+    } else if (value.complete || selectedDigest != null) throw new TypeError('bridge put response completed before source EOF');
+    return { nextOffset, complete: value.complete, digest: selectedDigest };
+  }
+  if (expected.kind === 'get') {
+    const value = requireObject(raw, 'bridge get response');
+    onlyKeys(value, new Set(['offset', 'data', 'eof', 'digest']), 'bridge get response');
+    if (value.offset !== expected.body.offset || typeof value.eof !== 'boolean') throw new TypeError('bridge get response offset is inconsistent');
+    const data = canonicalBase64(value.data ?? '', 'bridge get response.data', expected.body.limit);
+    if (!value.eof && data.length === 0) throw new TypeError('bridge get response made no progress');
+    const selectedDigest = digest(value.digest, 'bridge get response.digest', { nullable: !value.eof });
+    if (!value.eof && selectedDigest != null) throw new TypeError('bridge get response exposed a digest before EOF');
+    return { offset: value.offset, data: data.toString('base64'), eof: value.eof, digest: selectedDigest };
+  }
+  throw new TypeError('bridge response kind is invalid');
+}
+
+export function normalizeEnvironmentBridgeResponse(raw, expectedRaw) {
+  const expected = normalizeEnvironmentBridgeRequest(expectedRaw);
   frameSize(raw);
   const value = requireObject(raw, 'bridge response');
   onlyKeys(value, new Set(['protocol', 'request', 'target', 'kind', 'ok', 'body', 'error']), 'bridge response');
@@ -173,10 +325,46 @@ function responseFrame(raw, expected) {
     onlyKeys(error, new Set(['code', 'message']), 'bridge response.error');
     const code = typeof error.code === 'string' && SAFE_NAME.test(error.code) ? error.code : 'remote-error';
     const message = boundedString(error.message ?? 'bridge request failed', 'bridge response.error.message', { maxBytes: MAX_ERROR_BYTES });
-    throw new EnvironmentBridgeError(message, { code, request: expected.request, target: expected.target });
+    return { protocol: ENVIRONMENT_BRIDGE_PROTOCOL, request: expected.request, target: expected.target, kind: expected.kind, ok: false, error: { code, message } };
   }
   if (value.error != null) throw new EnvironmentBridgeError('successful bridge response must not include error', { code: 'protocol', request: expected.request, target: expected.target });
-  return requireObject(value.body, 'bridge response.body');
+  const body = normalizeSuccessfulResponseBody(value.body, expected);
+  const result = { protocol: ENVIRONMENT_BRIDGE_PROTOCOL, request: expected.request, target: expected.target, kind: expected.kind, ok: true, body };
+  frameSize(result);
+  return result;
+}
+
+function prefixedLocation(raw, prefix) {
+  const selected = requireObject(raw, 'bridge location');
+  const nextPath = selected.path === '.' ? prefix : `${prefix}/${selected.path}`;
+  return { class: selected.class, path: nextPath };
+}
+
+export function rebindEnvironmentBridgeRequest(raw, { target: rawTarget, prefix: rawPrefix } = {}) {
+  const value = normalizeEnvironmentBridgeRequest(raw);
+  const target = targetToken(rawTarget);
+  const prefix = relativePath(rawPrefix, 'bridge request prefix');
+  let body = structuredClone(value.body);
+  if (value.kind === 'execute') {
+    body.directory = prefixedLocation(body.directory, prefix);
+    body.arguments = body.arguments.map((entry) => typeof entry === 'string' ? entry : prefixedLocation(entry, prefix));
+  } else if (value.kind === 'put') body.destination = prefixedLocation(body.destination, prefix);
+  else if (value.kind === 'get') body.source = prefixedLocation(body.source, prefix);
+  return normalizeEnvironmentBridgeRequest({ ...value, target, body });
+}
+
+export function rebindEnvironmentBridgeResponse(raw, { from: rawFrom, to: rawTo } = {}) {
+  const from = normalizeEnvironmentBridgeRequest(rawFrom);
+  const to = normalizeEnvironmentBridgeRequest(rawTo);
+  if (from.request !== to.request || from.kind !== to.kind) throw new TypeError('bridge response rebinding request identity is inconsistent');
+  const response = normalizeEnvironmentBridgeResponse(raw, from);
+  return normalizeEnvironmentBridgeResponse({ ...response, target: to.target }, to);
+}
+
+function responseFrame(raw, expected) {
+  const value = normalizeEnvironmentBridgeResponse(raw, expected);
+  if (!value.ok) throw new EnvironmentBridgeError(value.error.message, { code: value.error.code, request: expected.request, target: expected.target });
+  return value.body;
 }
 
 function executionState(raw, maxOutputBytes) {

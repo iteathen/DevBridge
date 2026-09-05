@@ -11,7 +11,10 @@ It deliberately does **not** restore normal repository-controlled execution. Pro
 Stage 4 is split into replaceable components with deliberately neutral studs:
 
 - `src/runtime/environment-bridge.js` owns the provider-neutral bridge protocol, request/result validation, bounded execution observation, cancellation, file transfer, and ambiguous-completion behavior.
-- `src/guest/bridge-agent.mjs` owns only guest-local execution/transfer mechanics and its durable request journal. It does not know the host provider, repository controller, worker topology, or host filesystem.
+- `src/guest/bridge-agent.mjs` owns the guest-local protocol/dispatch adapter, logical-location containment, and durable operation journal. It composes nested local owners without knowing the host provider, repository controller, worker topology, or host filesystem.
+- `src/guest/activity-store.mjs` owns the permanent exact-attempt fence, token-bound activity heartbeat, and cancellation mailbox.
+- `src/guest/local-process.mjs` owns one bounded local-process lifecycle through neutral pulse/stop ports. It does not know transfer, operation-journal, provider, repository, controller, or transport identities.
+- `src/guest/transfer-channel.mjs` owns exact chunk staging, replay, digest validation, and final movement through neutral location resolvers. It does not know process, activity, cancellation, provider, repository, controller, or transport identities.
 - `src/runtime/providers/hyperv-environment-bridge.js` owns only the Windows-host attachment details used to reach an exact Stage-3 environment.
 - `src/runtime/providers/libvirt-environment-bridge.js` owns only the Linux-host attachment details used to reach an exact Stage-3 environment.
 - `src/app/environment-bridge.js` is composition. It is the only Stage-4 module that selects a concrete host attachment and maps the current Stage-3 provider-local object convention into the neutral `locate(target)` stud.
@@ -98,7 +101,11 @@ This has two important properties:
 1. a long guest build is not coupled to a long-lived PowerShell Direct, SSH, QGA, or virsh call;
 2. a daemon/provider-session interruption does not grant permission to replay a side-effecting command.
 
-The helper rejects reuse of a request identity with a different operation body. Concurrent exact starts are fenced by a request-owned monitor claim so they cannot launch duplicate side effects. A `planned` record is the one safely restartable pre-effect state: before any guest command can start, the monitor must durably advance the record to `attempting`. If a monitor disappears while the record is still `planned`, the host observes that state and may re-present the exact same request so the helper can replace only a stale pre-effect monitor claim. Once `attempting` is durable, a dead/unobservable monitor becomes indeterminate rather than replayable.
+The helper rejects reuse of a request identity with a different operation body. Concurrent exact starts may launch multiple detached local activity processes, but those processes compete for one request-owned attempt fence created exclusively. Only the winner can cross into command side effects. The fence is permanent exact-effect evidence: its mere existence blocks replay even when its content is partial, malformed, or unreadable. It is never deleted, reclaimed, or interpreted as process identity.
+
+A `planned` record with no attempt fence is the only safely restartable pre-effect state. A `planned` record with a fence is indeterminate because the winner may have crossed the effect boundary before advancing the operation record. `attempting` and `running` records carry an opaque UUID that must match a fresh, strictly shaped activity heartbeat. Missing, stale, malformed, or substituted activity is indeterminate. Process identifiers, filenames, provider identities, process names, and test serialization do not establish liveness or permit replay.
+
+Because the fence, activity heartbeat, and operation state are separate atomic files, observation allows one fixed bounded reread window for a healthy cross-file transition to settle. Exhaustion remains indeterminate; the reread does not reclaim the fence, accept another token, probe a process, or grant replay.
 
 If the initial transport call fails, the common bridge observes the exact request before deciding whether the identical start request may be repeated. If observation itself is unavailable or contradictory, completion is `indeterminate` rather than guessed.
 
@@ -118,7 +125,7 @@ Possible outcomes are deliberately distinct:
 
 Indeterminate completion is not success and is not permission for a generic blind retry.
 
-Guest-side timeout independently terminates the local process tree and records the result. Stopping/cancelling one command never deletes the Stage-3 persistent environment or its writable disk.
+Cancellation is a durable exact-request message. Only the winning local activity process consumes it and terminates the child that it still owns in memory; an independent bridge invocation never reads a persisted process identifier or sends termination to one. Guest-side timeout uses the same owned-child path and records the result. Stopping/cancelling one command never deletes the Stage-3 persistent environment or its writable disk.
 
 ## File transfer
 
@@ -306,12 +313,14 @@ Command execution:
 
 1. exact request identity is chosen before the effect;
 2. guest journal persists `planned` before command launch;
-3. a request-owned monitor claim fences concurrent starters before the monitor advances `planned` to `attempting`;
-4. only still-`planned` pre-effect state may restart a stale monitor after observation;
+3. a permanent request-owned attempt fence elects exactly one activity process before any command side effect;
+4. only `planned` state with no attempt fence may start another activity process;
 5. same-body/same-ID replay is idempotent;
 6. different-body/same-ID replay is rejected;
 7. after a lost start response the host observes before repeating;
-8. any post-`attempting` state whose completion cannot be proved becomes indeterminate.
+8. a nonterminal operation is `running` only while its exact UUID-bound heartbeat is current;
+9. any fenced or post-`attempting` state whose completion/current activity cannot be proved becomes indeterminate;
+10. cancellation and timeout terminate only the winning activity process's still-owned in-memory child.
 
 File `put`:
 

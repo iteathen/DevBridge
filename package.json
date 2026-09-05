@@ -23,7 +23,10 @@
     "doctor": "node ./src/cli.js doctor",
     "poll-once": "node ./src/cli.js poll-once",
     "run-once": "node ./src/cli.js run-once",
-    "daemon": "node ./src/cli.js daemon"
+    "daemon": "node ./src/cli.js daemon",
+    "release:source-bundle": "node ./scripts/build-source-bundle-release.mjs",
+    "release:ubuntu-package-capsule": "node ./scripts/build-ubuntu-package-capsule-release.mjs",
+    "release:ubuntu-package-capsule-production": "node ./scripts/build-ubuntu-package-capsule-production.mjs"
   },
   "license": "AGPL-3.0-only"
 }

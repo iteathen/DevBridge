@@ -9,10 +9,13 @@ import { runOnce } from './app/run-once.js';
 import { runDaemon } from './app/daemon.js';
 import { createLinuxActivityAdmission } from './app/linux-activity-admission.js';
 import { createRuntime } from './app/runtime.js';
-import { createLocalEnvironmentOperator } from './app/environment-operator-runtime.js';
+import { selectConfiguredQueue } from './app/queue-selection.js';
+import { createConfiguredLifecycleAuthorityClient } from './runtime/environment-lifecycle-authority-transport.js';
 import { chatHandoffSeed, chatHandoffStatus } from './app/chat-handoff.js';
 import { formatSetupHandoff, runDevBridgeSetup } from './app/setup.js';
+import { formatSetupProgress } from './setup/setup-progress.js';
 import { runWindowsLifecycleAuthoritySetupChild } from './app/windows-lifecycle-authority-setup-child.js';
+import { runConstructionRetentionCli } from './app/construction-retention-cli.js';
 import { PolicyError } from './errors.js';
 import { parseSetupCommandOptions } from './setup/command-options.js';
 import { logicalEnvironmentIdentity } from './runtime/environment-declaration.js';
@@ -22,9 +25,12 @@ const installationTag = process.env.DEVBRIDGE_INSTALLATION_TAG;
 if (/^DB-[0-9A-F]{12}$/u.test(installationTag ?? '')) process.title = `DevBridge[${installationTag}]`;
 
 function usage() {
-  console.error('Usage: devbridge setup [--construct] [--track-ref <branch>] [--home <path>] [--repository owner/name|all]...');
+  console.error('Usage: devbridge setup [--profiles <linux|windows|both|none|defer>] [--construct] [--windows-distribution <local-reconstruction>] [--windows-activation <later>] [--track-ref <branch>] [--retire-conflict <subject>] [--home <path>] [--repository owner/name|all]...');
+  console.error('       devbridge setup [--windows-media <absolute-iso>] [--approve-windows-media <candidate> --windows-image-index <index> --windows-media-class <official-owned|evaluation>]');
   console.error('       devbridge <doctor|poll-once|run-once|daemon|status|pause|resume|stop|restart|handoff-status|handoff-seed|handoff-project|environment> --config <path> [options]');
   console.error('       devbridge environment <list|show|plan|create|repair|rebuild|reset|recreate|resume|setup-reentry> --config <path> [--identity id|--profile name] [--operation op] [--confirm subject]');
+  console.error('       devbridge construction-retention [inspect] [--home <path>]');
+  console.error('       devbridge construction-retention retire --subject <subject> --confirm <plan-digest> [--home <path>]');
 }
 
 function optionValue(argv, name) {
@@ -61,7 +67,7 @@ function environmentIdentity(args) {
 async function runEnvironmentCommand(config, args) {
   const [action] = args;
   if (!action) throw new PolicyError('environment command requires an action');
-  const operator = await createLocalEnvironmentOperator({ stateDirectory: config.state.directory });
+  const operator = createConfiguredLifecycleAuthorityClient({ stateDirectory: config.state.directory });
   const identity = environmentIdentity(args);
   if (action === 'list') return operator.list();
   if (action === 'setup-reentry') return operator.setupReentry(identity);
@@ -122,7 +128,7 @@ async function main() {
     let setupHome = selected.home;
     if (selected.trackRef != null) {
       try {
-        setupHome = trackInstalledRunnerRef({ home: selected.home, ref: selected.trackRef }).home;
+        setupHome = (await trackInstalledRunnerRef({ home: selected.home, ref: selected.trackRef })).home;
       } catch (error) {
         throw new PolicyError(`could not persist setup runner ref: ${error.message}`);
       }
@@ -130,10 +136,23 @@ async function main() {
     const result = await runDevBridgeSetup({
       home: setupHome,
       requestedRepositories: selected.repositories.length > 0 ? selected.repositories : null,
+      profileChoice: selected.profileChoice,
       construct: selected.construct,
+      retireConflict: selected.retireConflict,
+      discoverWindowsMedia: true,
+      windowsMediaLocation: selected.windowsMediaLocation,
+      windowsMediaApproval: selected.windowsMediaApproval,
+      windowsDistribution: selected.windowsDistribution,
+      windowsActivation: selected.windowsActivation,
+      onProgress: (event) => process.stderr.write(formatSetupProgress(event)),
     });
     process.stdout.write(formatSetupHandoff(result));
     if (result.blocked) process.exitCode = 3;
+    return;
+  }
+
+  if (command === 'construction-retention') {
+    await runConstructionRetentionCli(args);
     return;
   }
 
@@ -145,7 +164,8 @@ async function main() {
   }
 
   const config = await loadConfig(file);
-  const repository = optionValue(args, '--repository') ?? config.github.queueRepository;
+  const requestedRepository = optionValue(args, '--repository');
+  const repository = selectConfiguredQueue(config, requestedRepository);
   if (command === 'environment') {
     console.log(JSON.stringify(await runEnvironmentCommand(config, args), null, 2));
     return;
@@ -165,7 +185,7 @@ async function main() {
     return;
   }
   if (command === 'handoff-project') {
-    const runtime = await createRuntime(config);
+    const runtime = await createRuntime(config, { queueRepository: repository });
     const latest = await runtime.chatHandoffStore.loadLatest(repository);
     if (!latest) {
       console.log(JSON.stringify({ projected: false, reason: 'no-ready-handoff', repository }));
@@ -208,10 +228,10 @@ async function main() {
     return;
   }
   if (command === 'doctor') {
-    const environmentOperator = await createLocalEnvironmentOperator({ stateDirectory: config.state.directory });
+    const environmentOperator = createConfiguredLifecycleAuthorityClient({ stateDirectory: config.state.directory });
     console.log(JSON.stringify(await doctor(config, {
       checkRepositoryAdmission: true,
-      repositoryAdmissionTargets: [repository],
+      repositoryAdmissionTargets: requestedRepository == null ? config.github.queueRepositories : [repository],
       environmentOperator,
     }), null, 2));
     return;

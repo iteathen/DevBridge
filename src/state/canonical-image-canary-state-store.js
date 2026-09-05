@@ -8,5 +8,10 @@ export function createCanonicalImageCanaryStateStore(filePath) {
   return Object.freeze({
     load: (identity) => store.get(`${KEY_PREFIX}${identity}`),
     save: (identity, value) => store.set(`${KEY_PREFIX}${identity}`, value),
+    delete: (identity) => store.delete(`${KEY_PREFIX}${identity}`),
+    async list() {
+      const entries = await store.entries(KEY_PREFIX);
+      return entries.map(([key, value]) => Object.freeze({ identity: key.slice(KEY_PREFIX.length), value }));
+    },
   });
 }

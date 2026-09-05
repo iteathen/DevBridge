@@ -27,6 +27,24 @@ An incomplete activation journal is not silently resolved by loading older code.
 
 `--no-update` requires an existing managed runtime; it cannot bootstrap an empty home.
 
+### Exact installer repair for a blocked bootstrap selection
+
+An interrupted zero-state installation normally resumes only through an argument-equivalent invocation. A different selector cannot replace the durable exact subject.
+
+If the selected installer itself contains a proven defect that prevents its permanent-entry commit, a newer independently qualified exact installer may finish that existing selection through the explicit local repair form:
+
+```text
+<Node first-byte loader> \
+  --ref <EXISTING_SELECTION> \
+  --repair-selection-with <EXACT_INSTALLER_HEAD> \
+  --install-only \
+  --home <INSTALLATION_HOME>
+```
+
+This is not subject replacement. The existing selector and exact selected component remain authoritative. Only installer mechanics and the exact-source acquisition helper come from the separately named exact installer head; component bytes still come from the existing selected subject. Repair requires a pre-existing valid selection, refuses setup continuation, verifies the installed result committed that exact selected component, and clears the selection only after that commit. A missing, mismatched, failed, or differently committed selection remains durable and fail-closed.
+
+After successful install-only repair, a separate ordinary bootstrap invocation may select another subject. Do not delete or edit `bootstrap/selection.json` manually.
+
 ## Stage-0 compatibility and installation tag
 
 Stage 0 exposes a small integer compatibility protocol. Runtime packages declare the minimum Stage-0 protocol they require. Stage 0 checks the selected runtime before import, and candidate validation checks the same requirement before candidate-controlled VM execution.

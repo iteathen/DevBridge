@@ -3,10 +3,15 @@ import net from 'node:net';
 import path from 'node:path';
 import process from 'node:process';
 import {
+  transactAcknowledgedLocalAuthorityJsonLine,
+  transactBoundedLocalAuthoritySocket,
+} from './local-authority-socket-connection.js';
+import {
   ENVIRONMENT_LIFECYCLE_AUTHORITY_MAX_ENVELOPE_BYTES,
   LifecycleAuthorityClient,
   createLifecycleAuthorityMutationHandler,
   createLifecycleAuthorityReadHandler,
+  environmentLifecycleAuthorityOperationIsReadOnly,
 } from './environment-lifecycle-authority.js';
 
 const AUTHORITY_ID = /^[0-9a-f]{32}$/u;
@@ -73,50 +78,26 @@ function validateConnectTimeout(value) {
 export function createLifecycleAuthoritySocketExchange({ endpoint, connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS } = {}) {
   if (typeof endpoint !== 'string' || endpoint.length === 0) throw new TypeError('lifecycle authority endpoint is required');
   const timeoutMs = validateConnectTimeout(connectTimeoutMs);
-  return async (request) => new Promise((resolve, reject) => {
-    let settled = false;
-    let connected = false;
-    let buffer = '';
-    const socket = net.createConnection(endpoint);
-    const finish = (error, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(connectTimer);
-      socket.destroy();
-      if (error) reject(error);
-      else resolve(value);
-    };
-    const connectTimer = setTimeout(() => finish(transportFailure()), timeoutMs);
-    connectTimer.unref?.();
-    socket.setEncoding('utf8');
-    socket.once('connect', () => {
-      connected = true;
-      clearTimeout(connectTimer);
-      let wire;
-      try { wire = `${JSON.stringify(request)}\n`; }
-      catch { return finish(transportFailure('environment lifecycle authority request could not be encoded')); }
-      if (Buffer.byteLength(wire, 'utf8') > MAX_WIRE_BYTES) return finish(transportFailure('environment lifecycle authority request exceeded the transport bound'));
-      socket.write(wire);
-    });
-    socket.on('data', (chunk) => {
-      buffer += chunk;
-      if (Buffer.byteLength(buffer, 'utf8') > MAX_WIRE_BYTES) return finish(transportFailure('environment lifecycle authority response exceeded the transport bound'));
-      const newline = buffer.indexOf('\n');
-      if (newline < 0) return;
-      if (buffer.slice(newline + 1).trim() !== '') return finish(transportFailure('environment lifecycle authority response framing is invalid'));
-      let response;
-      try { response = JSON.parse(buffer.slice(0, newline)); }
-      catch { return finish(transportFailure('environment lifecycle authority response is malformed')); }
-      finish(null, response);
-    });
-    socket.once('end', () => {
-      if (!settled) finish(transportFailure('environment lifecycle authority closed without a result'));
-    });
-    socket.once('error', () => finish(transportFailure()));
-    socket.once('close', () => {
-      if (connected && !settled) finish(transportFailure('environment lifecycle authority connection closed ambiguously'));
-    });
-  });
+  return async (request) => {
+    try {
+      return await transactBoundedLocalAuthoritySocket({
+        endpoint,
+        timeoutMs,
+        replaySafe: environmentLifecycleAuthorityOperationIsReadOnly(request?.operation),
+        transact: (socket) => transactAcknowledgedLocalAuthorityJsonLine({
+          socket,
+          request,
+          maxRequestWireBytes: MAX_WIRE_BYTES,
+          maxResponseWireBytes: MAX_WIRE_BYTES,
+          authority: 'environment lifecycle authority',
+          failure: transportFailure,
+        }),
+      });
+    } catch (error) {
+      if (error?.code === 'LIFECYCLE_AUTHORITY_UNAVAILABLE') throw error;
+      throw transportFailure();
+    }
+  };
 }
 
 function listen(server, endpoint) {
@@ -165,6 +146,7 @@ export function createLifecycleAuthoritySocketServer({ endpoint, handler, maxCon
       if (Buffer.byteLength(wire, 'utf8') > MAX_WIRE_BYTES) return failClosed();
       answered = true;
       socket.end(wire);
+      socket.resume();
     };
     socket.on('data', async (chunk) => {
       if (processing || answered) return;

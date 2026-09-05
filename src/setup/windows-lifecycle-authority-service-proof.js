@@ -1,5 +1,6 @@
 import process from 'node:process';
 import { invokeCommand } from '../runtime/command-invocation.js';
+import { WINDOWS_LOCAL_SYSTEM_ACCOUNT } from './windows-lifecycle-authority.js';
 
 const PROTOCOL = 'devbridge/windows-lifecycle-authority-service-proof-v1';
 const POWERSHELL = 'powershell.exe';
@@ -44,6 +45,9 @@ function requirePlan(plan, operatorSid) {
   if (plan?.service?.account !== `NT SERVICE\\${plan.service.name}`) {
     throw new TypeError('Windows lifecycle authority service proof identity is invalid');
   }
+  if (plan?.service?.logonAccount !== WINDOWS_LOCAL_SYSTEM_ACCOUNT) {
+    throw new TypeError('Windows lifecycle authority service proof logon identity is invalid');
+  }
   if (typeof plan.serviceCommand !== 'string' || plan.serviceCommand.length === 0 || plan.serviceCommand.includes('\0')) {
     throw new TypeError('Windows lifecycle authority service proof plan is incomplete');
   }
@@ -81,7 +85,7 @@ export async function verifyWindowsLifecycleAuthorityService({
       arguments: [...POWERSHELL_ARGS, encodedScript(VERIFY_SERVICE_SCRIPT)],
       input: JSON.stringify({
         name: selected.service.name,
-        account: selected.service.account,
+        account: selected.service.logonAccount,
         command: selected.serviceCommand,
         description: selected.service.description,
       }),

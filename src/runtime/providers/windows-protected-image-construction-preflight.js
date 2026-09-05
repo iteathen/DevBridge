@@ -19,7 +19,8 @@ Import-Module Hyper-V -ErrorAction Stop
 $required = @(
   'Get-VMHost','Get-VM','New-VM','Remove-VM','Start-VM','Stop-VM','Set-VM','Set-VMProcessor','Set-VMFirmware',
   'Set-VMKeyProtector','Enable-VMTPM','Get-VHD','Test-VHD','New-VHD','Get-VMSwitch','Get-VMHardDiskDrive','Add-VMHardDiskDrive',
-  'Get-VMNetworkAdapter','Add-VMNetworkAdapter','Connect-VMNetworkAdapter','Get-VMDvdDrive','Add-VMDvdDrive','Remove-VMDvdDrive'
+  'Get-VMNetworkAdapter','Add-VMNetworkAdapter','Connect-VMNetworkAdapter','Get-VMDvdDrive','Add-VMDvdDrive','Remove-VMDvdDrive',
+  'Get-VMIntegrationService','Enable-VMIntegrationService'
 )
 foreach ($name in $required) {
   if (-not (Get-Command $name -ErrorAction SilentlyContinue)) { throw "required management operation is unavailable: $name" }

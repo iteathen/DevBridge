@@ -16,7 +16,7 @@ function plan() {
     ownershipManifest: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\0123456789abcdef0123456789abcdef\\ownership.json',
     service: {
       account: 'NT SERVICE\\DevBridgeLifecycle-0123456789abcdef0123456789abcdef',
-      hyperVGroupSid: 'S-1-5-32-578',
+      retiredCapabilityGroupSids: ['S-1-5-32-578', 'S-1-5-32-556'],
     },
     runtime: {
       generationsDirectory: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\0123456789abcdef0123456789abcdef\\generations',
@@ -82,7 +82,7 @@ test('ordinary protection proof fails closed when either negative capability pro
   );
 });
 
-test('structural proof is read-only and checks exact protected ACL and Hyper-V service membership', async () => {
+test('structural proof is read-only and checks exact protected ACL and retired service capability memberships', async () => {
   let encoded = null;
   let input = null;
   const selected = plan();
@@ -120,8 +120,21 @@ test('structural proof is read-only and checks exact protected ACL and Hyper-V s
     serviceHostExecutable: selected.runtime.serviceHostExecutable,
     workerEntry: selected.runtime.workerEntry,
     serviceAccount: selected.service.account,
-    hyperVGroupSid: selected.service.hyperVGroupSid,
+    retiredCapabilityGroupSids: selected.service.retiredCapabilityGroupSids,
   });
+});
+
+test('structural proof rejects caller-selected retired capability groups before invoking PowerShell', async () => {
+  const selected = plan();
+  selected.service.retiredCapabilityGroupSids[1] = 'S-1-5-32-544';
+  await assert.rejects(
+    verifyWindowsLifecycleAuthorityProtection({
+      plan: selected,
+      elevated: true,
+      invoke: async () => { throw new Error('must not run'); },
+    }),
+    /retired capability groups are invalid/u,
+  );
 });
 
 test('structural proof failure exposes no raw ACL or path diagnostic', async () => {

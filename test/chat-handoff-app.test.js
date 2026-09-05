@@ -8,7 +8,7 @@ import { CHAT_HANDOFF_PROTOCOL, chatHandoffDigest, parseChatResumeSeed } from '.
 
 function config(stateDirectory) {
   return {
-    github: { queueRepository: 'iteathen/DevBridge' },
+    github: { queueRepositories: ['iteathen/DevBridge'] },
     state: { directory: stateDirectory },
     contextRollover: { maxHandoffBytes: 32_768, maxRetained: 8 },
   };

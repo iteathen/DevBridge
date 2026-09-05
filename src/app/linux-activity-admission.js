@@ -138,7 +138,7 @@ async function protectedIdentity({ stateDirectory, authorityDirectory, paths }, 
   const plan = createLinuxLifecycleAuthorityPlan({
     stateDirectory,
     operatorName: raw.operatorName,
-    managementGroup: raw.managementGroup,
+    managementGroup: Object.freeze({ name: raw.managementGroup, id: raw.managementGid }),
     varLibDirectory,
     runDirectory: paths.parent,
   });
@@ -154,7 +154,8 @@ async function protectedIdentity({ stateDirectory, authorityDirectory, paths }, 
   }
   const identity = ownership.localIdentity;
   if (current.uid !== identity.serviceUid || current.gid !== identity.readGid
-      || !current.groups.includes(identity.coordinationGid)) {
+      || !current.groups.includes(identity.coordinationGid)
+      || !current.groups.includes(identity.managementGid)) {
     throw new Error('Linux activity process lacks its bound identity');
   }
   await topologyIdentity(paths, identity, ports.stat);

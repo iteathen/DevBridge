@@ -42,6 +42,8 @@ On Windows the installer also writes `devbridge-entry.cmd`; on Unix-like hosts i
 
 If setup reaches a real authentication/elevation/reboot/repository-selection/provider/readiness boundary, its exit status is preserved. The permanent entry remains installed, and the operator resumes through the normal `devbridge setup` re-entry surface rather than reinstalling.
 
+Setup separately verifies persistent command registration and the current caller's command visibility. If an agent/runtime supplied a reduced PATH, the handoff prints the exact owned `devbridge` launcher under the canonical installation home; callers use that stable launcher rather than invoking `devbridge-entry.mjs` or assuming another child process will reconstruct User PATH. In-repository integrations that know the installation home use the installation-owned resolver to verify that same command before invocation.
+
 For explicit installer-only qualification/recovery after acquiring the installer file, stop before the setup handoff with:
 
 ```text

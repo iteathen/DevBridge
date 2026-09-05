@@ -203,6 +203,8 @@ export class EnvironmentFoundation {
     return this.#images.collect({ ...options, protectedIdentities });
   }
 
+  async reconcileImages() { return this.#images.reconcile(); }
+
   async ensureNetwork() {
     await this.#control.ensureNetwork();
     const status = controlStatus(await this.#control.inspect(), this.#identity);

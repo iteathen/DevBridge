@@ -229,6 +229,14 @@ async function inspectCapability(id) {
     : { id, present: false, usable: false, version: null, reason: 'capability was not found in the local executable search path' };
 }
 
+async function observeSequence(values, observe) {
+  if (!Array.isArray(values) || values.length > MAX_REQUIREMENTS) throw new TypeError('observation values are invalid');
+  if (typeof observe !== 'function') throw new TypeError('observation function is invalid');
+  const results = [];
+  for (const value of values) results.push(await observe(value));
+  return results;
+}
+
 function withTimeout(promise, timeoutMs, message) {
   let timer;
   const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), timeoutMs); timer.unref?.(); });
@@ -287,7 +295,7 @@ async function observation(body) {
   const [state, network, capabilities] = await Promise.all([
     loadState(),
     inspectNetwork(body.networkRequired),
-    Promise.all(body.requirements.map((id) => inspectCapability(id))),
+    observeSequence(body.requirements, inspectCapability),
   ]);
   const protectedSet = new Set(body.protectedNames.map((entry) => process.platform === 'win32' ? entry.toUpperCase() : entry));
   const protectedPresent = Object.keys(process.env)
@@ -363,4 +371,4 @@ if (process.argv.includes('--exchange-stdin')) {
   }
 }
 
-export { handle as handleEnvironmentBootstrapRequest };
+export { handle as handleEnvironmentBootstrapRequest, observeSequence };

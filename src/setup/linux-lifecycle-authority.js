@@ -4,10 +4,21 @@ import {
   environmentLifecycleAuthorityEndpoint,
   environmentLifecycleAuthorityIdentity,
 } from '../runtime/environment-lifecycle-authority-transport.js';
+import {
+  environmentConfigurationAuthorityEndpoint,
+  environmentConfigurationAuthorityIdentity,
+} from '../runtime/environment-configuration-authority-transport.js';
+import {
+  environmentActivityAuthorityEndpoint,
+  environmentActivityAuthorityIdentity,
+} from '../runtime/environment-activity-authority-transport.js';
+import { linuxEnvironmentActivityHandoffTopology } from './linux-environment-activity-handoff.js';
+import { linuxEnvironmentConfigurationHandoffTopology } from './linux-environment-configuration-handoff.js';
 
-const PROTOCOL = 'devbridge/linux-lifecycle-authority-plan-v1';
+const PROTOCOL = 'devbridge/linux-lifecycle-authority-plan-v2';
 const DIGEST = /^[0-9a-f]{64}$/u;
 const LOCAL_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,30}$/u;
+const MAX_LOCAL_ID = 0xffff_fffe;
 const SERVICE_PREFIX = 'devbridge-lifecycle-authority-';
 const ACCOUNT_PREFIX = 'db-auth-';
 const READ_GROUP_PREFIX = 'db-read-';
@@ -27,6 +38,14 @@ function localName(value, name) {
     throw new TypeError(`${name} must be a portable bounded local account or group name`);
   }
   return value;
+}
+
+function groupIdentity(value, name) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} is invalid`);
+  const allowed = new Set(['name', 'id']);
+  for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`${name} contains an unknown field`);
+  if (!Number.isSafeInteger(value.id) || value.id < 1 || value.id > MAX_LOCAL_ID) throw new TypeError(`${name} id is invalid`);
+  return Object.freeze({ name: localName(value.name, `${name} name`), id: value.id });
 }
 
 function definitionPath(value, name) {
@@ -83,12 +102,16 @@ function systemdUnit(plan, runtime) {
     runtime.serviceEntry,
     '--state-directory', plan.stateDirectory,
     '--authority-directory', plan.authorityDirectory,
+    '--run-directory', plan.endpoints.parentDirectory,
   ].map(systemdQuote).join(' ');
   const writable = [
     plan.authorityDirectory,
     plan.coordination.directory,
     plan.endpoints.read.directory,
     plan.endpoints.mutation.directory,
+    plan.configuration.endpoint.directory,
+    plan.activity.endpoint.directory,
+    plan.activity.handoff.directory,
   ].map(systemdQuote).join(' ');
   return [
     '[Unit]',
@@ -98,7 +121,7 @@ function systemdUnit(plan, runtime) {
     'Type=exec',
     `User=${plan.service.user}`,
     `Group=${plan.service.readGroup}`,
-    `SupplementaryGroups=${plan.service.coordinationGroup} ${plan.service.managementGroup}`,
+    `SupplementaryGroups=${plan.service.coordinationGroup} ${plan.service.managementGroupId}`,
     'UMask=0007',
     `ExecStart=${execStart}`,
     'Restart=on-failure',
@@ -129,6 +152,12 @@ function volatileDefinition(plan) {
     [plan.coordination.directory, '3770', 'root', plan.coordination.group],
     [plan.endpoints.read.directory, '0750', plan.endpoints.read.directoryOwner, plan.endpoints.read.directoryGroup],
     [plan.endpoints.mutation.directory, '0700', plan.endpoints.mutation.directoryOwner, plan.endpoints.mutation.directoryGroup],
+    [plan.configuration.root, '0755', 'root', 'root'],
+    [plan.configuration.endpoint.directory, '2750', plan.configuration.endpoint.directoryOwner, plan.configuration.endpoint.directoryGroup],
+    [plan.configuration.handoff.directory, '3770', plan.configuration.handoff.directoryOwner, plan.configuration.handoff.directoryGroup],
+    [plan.activity.root, '0755', 'root', 'root'],
+    [plan.activity.endpoint.directory, '2750', plan.activity.endpoint.directoryOwner, plan.activity.endpoint.directoryGroup],
+    [plan.activity.handoff.directory, '3770', plan.activity.handoff.directoryOwner, plan.activity.handoff.directoryGroup],
   ];
   return `${lines.map(([target, mode, owner, group]) => `d ${target} ${mode} ${owner} ${group} -`).join('\n')}\n`
     + `f ${plan.coordination.lock.path} 0660 root ${plan.coordination.group} -\n`;
@@ -155,7 +184,7 @@ export function createLinuxLifecycleAuthorityPlan({
 } = {}) {
   const state = absoluteLinuxPath(stateDirectory, 'Linux lifecycle authority stateDirectory');
   const operator = localName(operatorName, 'Linux lifecycle authority operatorName');
-  const management = localName(managementGroup, 'Linux lifecycle authority managementGroup');
+  const management = groupIdentity(managementGroup, 'Linux lifecycle authority managementGroup');
   const varLib = absoluteLinuxPath(varLibDirectory, 'Linux lifecycle authority varLibDirectory');
   const run = definitionPath(runDirectory, 'Linux lifecycle authority runDirectory');
   const systemd = absoluteLinuxPath(systemdDirectory, 'Linux lifecycle authority systemdDirectory');
@@ -183,6 +212,26 @@ export function createLinuxLifecycleAuthorityPlan({
   const unitPath = under(systemd, serviceName);
   const readEndpoint = environmentLifecycleAuthorityEndpoint({ authorityIdentity, access: 'read', platform: 'linux', runDirectory: run });
   const mutationEndpoint = environmentLifecycleAuthorityEndpoint({ authorityIdentity, access: 'mutation', platform: 'linux', runDirectory: run });
+  const configurationIdentity = environmentConfigurationAuthorityIdentity(state, { platform: 'linux' });
+  const configurationTopology = linuxEnvironmentConfigurationHandoffTopology({ stateDirectory: state, runDirectory: run });
+  if (configurationTopology.identity !== configurationIdentity) throw new Error('Linux configuration authority identity is inconsistent');
+  const configurationEndpoint = environmentConfigurationAuthorityEndpoint({
+    authorityIdentity: configurationIdentity,
+    platform: 'linux',
+    runDirectory: run,
+  });
+  const activityIdentity = environmentActivityAuthorityIdentity(state, { platform: 'linux' });
+  const activityTopology = linuxEnvironmentActivityHandoffTopology({
+    stateDirectory: state,
+    authorityDirectory,
+    runDirectory: run,
+  });
+  if (activityTopology.identity !== activityIdentity) throw new Error('Linux activity authority identity is inconsistent');
+  const activityEndpoint = environmentActivityAuthorityEndpoint({
+    authorityIdentity: activityIdentity,
+    platform: 'linux',
+    runDirectory: run,
+  });
   const coordination = Object.freeze({
     directory: coordinationDirectory,
     group: coordinationGroup,
@@ -223,7 +272,56 @@ export function createLinuxLifecycleAuthorityPlan({
       socketMode: 0o770,
     }),
   };
-  endpoints.definition = Object.freeze({ ...endpoints.definition, content: volatileDefinition({ endpoints, coordination }) });
+  const configuration = Object.freeze({
+    authorityIdentity: configurationIdentity,
+    root: configurationTopology.root,
+    endpoint: Object.freeze({
+      endpoint: configurationEndpoint,
+      directory: configurationTopology.endpointDirectory,
+      directoryOwner: serviceUser,
+      directoryGroup: coordinationGroup,
+      directoryMode: 0o2750,
+      socketOwner: serviceUser,
+      socketGroup: coordinationGroup,
+      socketMode: 0o770,
+    }),
+    handoff: Object.freeze({
+      directory: configurationTopology.handoffDirectory,
+      record: configurationTopology.record,
+      directoryOwner: 'root',
+      directoryGroup: coordinationGroup,
+      directoryMode: 0o3770,
+      recordOwner: operator,
+      recordGroup: coordinationGroup,
+      recordMode: 0o640,
+    }),
+  });
+  const activity = Object.freeze({
+    authorityIdentity: activityIdentity,
+    root: activityTopology.root,
+    endpoint: Object.freeze({
+      endpoint: activityEndpoint,
+      directory: activityTopology.endpointDirectory,
+      directoryOwner: serviceUser,
+      directoryGroup: readGroup,
+      directoryMode: 0o2750,
+      socketOwner: serviceUser,
+      socketGroup: readGroup,
+      socketMode: 0o770,
+    }),
+    handoff: Object.freeze({
+      directory: activityTopology.handoffDirectory,
+      record: activityTopology.record,
+      source: activityTopology.source,
+      directoryOwner: 'root',
+      directoryGroup: readGroup,
+      directoryMode: 0o3770,
+      recordOwner: serviceUser,
+      recordGroup: readGroup,
+      recordMode: 0o640,
+    }),
+  });
+  endpoints.definition = Object.freeze({ ...endpoints.definition, content: volatileDefinition({ endpoints, coordination, configuration, activity }) });
 
   return Object.freeze({
     protocol: PROTOCOL,
@@ -244,12 +342,15 @@ export function createLinuxLifecycleAuthorityPlan({
       user: serviceUser,
       readGroup,
       coordinationGroup,
-      managementGroup: management,
+      managementGroup: management.name,
+      managementGroupId: management.id,
       operator,
       account: Object.freeze({ home: '/nonexistent', shell: '/usr/sbin/nologin', system: true }),
       restart: 'on-failure',
     }),
     coordination,
+    configuration,
+    activity,
     endpoints: Object.freeze(endpoints),
     access: Object.freeze({
       storageRoot: Object.freeze({ owner: 'root', group: 'root', mode: 0o755, serviceWrite: false, ordinaryUserWrite: false }),
@@ -261,7 +362,7 @@ export function createLinuxLifecycleAuthorityPlan({
       volatileDefinition: Object.freeze({ owner: 'root', group: 'root', mode: 0o644, serviceWrite: false, ordinaryUserWrite: false }),
       readCapability: Object.freeze({ group: readGroup, members: Object.freeze([serviceUser, operator]) }),
       coordination: Object.freeze({ group: coordinationGroup, members: Object.freeze([serviceUser, operator]) }),
-      management: Object.freeze({ group: management, members: Object.freeze([serviceUser]), ordinaryUserMember: false }),
+      management: Object.freeze({ group: management.name, groupId: management.id, members: Object.freeze([serviceUser]), ordinaryUserMember: false }),
     }),
   });
 }

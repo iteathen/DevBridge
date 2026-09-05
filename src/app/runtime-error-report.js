@@ -28,11 +28,11 @@ function capsuleFor(state, summary) {
 }
 
 export async function reportActiveRunRuntimeError(runtime, error) {
-  if (!runtime?.stateStore || !runtime?.statusReporter || !runtime?.config?.github?.queueRepository) {
+  if (!runtime?.stateStore || !runtime?.statusReporter || typeof runtime?.queueRepository !== 'string') {
     return { reported: false, reason: 'runtime-reporting-unavailable' };
   }
 
-  const prefix = `run.${runtime.config.github.queueRepository}#`;
+  const prefix = `run.${runtime.queueRepository}#`;
   const entries = await runtime.stateStore.entries(prefix);
   const pending = entries
     .map(([, value]) => value)

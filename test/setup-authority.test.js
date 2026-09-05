@@ -27,7 +27,11 @@ function memoryPort() {
   let value = null;
   return {
     async load() { return structuredClone(value); },
-    async save(next) { value = structuredClone(next); },
+    async mutate(transform) {
+      const outcome = await transform(structuredClone(value));
+      if (Object.hasOwn(outcome, 'next')) value = structuredClone(outcome.next);
+      return outcome.result;
+    },
     force(next) { value = structuredClone(next); },
   };
 }

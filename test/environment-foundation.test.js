@@ -83,6 +83,18 @@ test('published media becoming parented degrades image readiness without changin
   assert.equal(status.ready, false);
 });
 
+test('image-only reconciliation does not touch neighboring control state', async () => {
+  const { control, library } = fixtures();
+  let imageReconciliations = 0;
+  let controlReconciliations = 0;
+  library.reconcile = async () => { imageReconciliations += 1; return { ready: true }; };
+  control.reconcile = async () => { controlReconciliations += 1; };
+  const foundation = new EnvironmentFoundation({ identity: '0123456789abcdef0123456789abcdef', control, images: library });
+  assert.deepEqual(await foundation.reconcileImages(), { ready: true });
+  assert.equal(imageReconciliations, 1);
+  assert.equal(controlReconciliations, 0);
+});
+
 
 test('status normalization rejects provider-specific fields at the public stud', () => {
   const base = {

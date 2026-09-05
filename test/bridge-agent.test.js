@@ -35,6 +35,25 @@ async function exchange(root, frame, env = {}) {
 
 function frame(request, kind, body = {}) { return { protocol, request, target, kind, body }; }
 
+async function seedPlannedOperation(root, request, body) {
+  const operations = path.join(root, '.operations');
+  await mkdir(operations, { recursive: true });
+  const record = {
+    protocol: 'devbridge/environment-bridge-operation-v2',
+    request,
+    target,
+    digest: createHash('sha256').update(JSON.stringify(body), 'utf8').digest('hex'),
+    body,
+    state: 'planned',
+    createdAt: new Date().toISOString(),
+    activityToken: null,
+    result: null,
+    reason: null,
+  };
+  await writeFile(path.join(operations, `${request}.json`), `${JSON.stringify(record)}\n`, { encoding: 'utf8', flag: 'wx' });
+  return path.join(operations, `${request}.attempt.json`);
+}
+
 test('state root selection is local, persistent, absolute, and platform bounded', () => {
   assert.equal(
     selectStateRoot({ platform: 'linux', homeDirectory: '/home/local', variables: {} }),
@@ -165,17 +184,79 @@ test('execute is durable, asynchronous, and exact replay does not repeat side ef
 test('concurrent exact execute requests are fenced to one guest-side effect', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-bridge-concurrent-'));
   try {
-    const request = 'c'.repeat(32);
+    for (let round = 0; round < 6; round += 1) {
+      const request = (12 + round).toString(16).padStart(32, '0');
+      const result = `concurrent-${round}.txt`;
+      const operation = {
+        program: nodeProgram,
+        arguments: ['-e', `const fs=require('fs'); const p=${JSON.stringify(result)}; let n=0; try{n=+fs.readFileSync(p,'utf8')}catch{} fs.writeFileSync(p,String(n+1)); setTimeout(()=>{},150)`],
+        directory: { class: 'work', path: '.' }, environment: {}, input: null, timeoutMs: 5_000, maxOutputBytes: 4096,
+      };
+      const responses = await Promise.all(Array.from({ length: 4 }, () => exchange(root, frame(request, 'execute', operation))));
+      for (const response of responses) assert.equal(response.ok, true);
+      await observeUntil(root, request, (body) => body.state === 'completed');
+      assert.equal(await readFile(path.join(root, 'work', result), 'utf8'), '1');
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('an incomplete attempt fence makes a planned operation indeterminate without replay', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-bridge-attempt-partial-'));
+  try {
+    const request = '1'.repeat(32);
     const operation = {
       program: nodeProgram,
-      arguments: ['-e', "const fs=require('fs'); const p='concurrent.txt'; let n=0; try{n=+fs.readFileSync(p,'utf8')}catch{} fs.writeFileSync(p,String(n+1)); setTimeout(()=>{},150)"],
+      arguments: ['-e', "require('fs').writeFileSync('published.txt','1')"],
       directory: { class: 'work', path: '.' }, environment: {}, input: null, timeoutMs: 5_000, maxOutputBytes: 4096,
     };
-    const [left, right] = await Promise.all([exchange(root, frame(request, 'execute', operation)), exchange(root, frame(request, 'execute', operation))]);
-    assert.equal(left.ok, true);
-    assert.equal(right.ok, true);
+    const attemptFile = await seedPlannedOperation(root, request, operation);
+    await writeFile(attemptFile, '{', { encoding: 'utf8', flag: 'wx' });
+    const observed = await exchange(root, frame(request, 'execute', operation));
+    assert.equal(observed.ok, true);
+    assert.equal(observed.body.state, 'indeterminate');
+    assert.equal(observed.body.reason, 'bridge operation attempt identity is incomplete');
+    await assert.rejects(readFile(path.join(root, 'work', 'published.txt'), 'utf8'), { code: 'ENOENT' });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a planned operation with no attempt fence remains safely restartable', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-bridge-restart-planned-'));
+  try {
+    const request = '2'.repeat(32);
+    const operation = {
+      program: nodeProgram,
+      arguments: ['-e', "require('fs').writeFileSync('restarted.txt','1')"],
+      directory: { class: 'work', path: '.' }, environment: {}, input: null, timeoutMs: 5_000, maxOutputBytes: 4096,
+    };
+    await seedPlannedOperation(root, request, operation);
+    const restarted = await exchange(root, frame(request, 'execute', operation));
+    assert.equal(restarted.ok, true);
     await observeUntil(root, request, (body) => body.state === 'completed');
-    assert.equal(await readFile(path.join(root, 'work', 'concurrent.txt'), 'utf8'), '1');
+    assert.equal(await readFile(path.join(root, 'work', 'restarted.txt'), 'utf8'), '1');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('an attempt fence is permanent exact-effect evidence and cannot be reclaimed', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-bridge-attempt-permanent-'));
+  try {
+    const request = '3'.repeat(32);
+    const operation = {
+      program: nodeProgram,
+      arguments: ['-e', "require('fs').writeFileSync('forbidden.txt','1')"],
+      directory: { class: 'work', path: '.' }, environment: {}, input: null, timeoutMs: 5_000, maxOutputBytes: 4096,
+    };
+    const attemptFile = await seedPlannedOperation(root, request, operation);
+    await writeFile(attemptFile, '{}\n', { encoding: 'utf8', flag: 'wx' });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const rejected = await exchange(root, frame(request, 'execute', operation));
+      assert.equal(rejected.ok, true);
+      assert.equal(rejected.body.state, 'indeterminate');
+    }
+    await assert.rejects(readFile(path.join(root, 'work', 'forbidden.txt'), 'utf8'), { code: 'ENOENT' });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

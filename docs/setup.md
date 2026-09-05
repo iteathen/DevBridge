@@ -60,11 +60,15 @@ The exact current stable and `cuda-target` qualification commands are documented
 
 For a moving development selector, Stage 0 resolves the selector to one exact commit and persists that exact subject before permanent-entry publication. An argument-equivalent interrupted rerun resumes the persisted subject even if the branch moved in the meantime. The permanent-entry component set is then fetched from that exact commit with the nested Node exact-source acquisition LEGO; the zero-state exact-subject path does not use Git.
 
-The current #238 setup path deliberately stops after prerequisite reconciliation, Ubuntu construction-authority establishment, and the read-only production-image physical `status` gate. It never calls physical construction `run`. Reaching `ready-for-construction` therefore means the setup/status gate is satisfied; it does **not** mean an image or VM was constructed by that invocation. A nonblocked incomplete durable canary returns to the same gate with its resumable frontier identified instead of requiring the operator to bypass the public status contract.
+Ordinary setup remains read-only at each production-image physical `status` gate. Reaching `ready-for-construction` means that gate authorizes an explicit next action; it does **not** mean an image or VM was constructed by the observation. `devbridge setup --construct` advances only the first incomplete accepted profile through its existing restartable construction owner and then returns. A nonblocked incomplete durable canary preserves its resumable frontier for the next explicit invocation.
 
 The broader one-command target remains responsible for eventually carrying bounded local consent for routine setup changes, such as enabling a selected provider, constructing/qualifying the required image, and enabling repository execution after validation. Those later construction/provisioning steps remain coordinated by #192/#197 and their owning roadmap gates rather than being implied by #238 bootstrap completion.
 
 A setup invocation may pause only when the platform or policy genuinely requires human action. A missing ordinary dependency is not by itself such a boundary: its owning setup adapter must reconcile and verify it when bounded local authority permits, or prove the external authority that prevents safe reconciliation. Accepted repository selection and the exact Ubuntu package snapshot are durable across re-entry so an elevation, restart, authentication, or later readiness blocker does not restart the questionnaire.
+
+Windows protected apply uses an explicit two-step consent boundary. Ordinary setup first completes all network, media, package, construction-status, conflict, and accepted-configuration preparation without requesting elevation. If the exact accepted configuration needs protected reconciliation, setup prepares and verifies one content-addressed Windows launcher whose displayed identity is `DevBridge Protected Setup - reconcile lifecycle service and protected environment`, then writes one versioned `prepared` frontier bound to the configuration digest, profile-selection revision, and accepted identity/repository/package checkpoint, returns successfully, and asks the operator to re-enter `devbridge setup` while present. That re-entry performs only accepted profile-selection observation, exact local command resolution, exact frontier/configuration/checkpoint validation, and bounded launcher/runner validation. Immediately before invoking Windows `RunAs`, setup states that DevBridge needs administrator permission to reconcile the DevBridge-owned lifecycle service and protected environment configuration. The launcher filename carries the same requester-and-purpose identity if Windows falls back from its version description. Because the launcher is not Authenticode-signed, Windows must truthfully identify its publisher as unknown/unverified; setup does not create or trust a local signing certificate. Re-entry performs no compilation, lifecycle/service probe, endpoint health check, old-receipt cleanup scan, GitHub discovery, media work, package authority work, construction, or generic PATH mutation before the prompt. A stale or changed frontier is never elevated. Fresh lifecycle/service/endpoint proof and old terminal-receipt cleanup occur after the consent transaction. After protected readiness, setup resumes environment activation and operational publication directly from that exact checkpoint; it does not repeat the completed remote discovery or construction-authority work.
+
+Setup writes neutral live phase evidence to stderr. Each event contains only a bounded phase/state/detail and elapsed duration; it does not expose credentials, provider identities, repository contents, or internal paths. An `elevation-consent: requesting` event proves only that DevBridge handed the identified launcher to Windows; it does not prove the secure-desktop prompt was physically displayed or observed. Physical prompt acceptance therefore requires direct operator observation. While the bounded elevated child is active, setup reports a periodic `protected-transaction` heartbeat. Existing protected reconciliation journals remain the restart authority: cancellation, interruption, or process loss preserves the exact prepared/apply frontier and does not authorize a second prompt in the same invocation.
 
 ## PATH and permanent command
 
@@ -74,7 +78,11 @@ Successful setup must leave a stable `devbridge` command available on the user's
 - Setup owns a stable launcher/shim under the DevBridge installation and adds its bin directory to the appropriate user PATH using platform-appropriate persistent configuration.
 - Do not overwrite an unrelated existing `devbridge` executable. A collision is a focused blocker that identifies the conflicting command and offers a safe resolution.
 - PATH mutation must be installation-owned and reversible by uninstall/reconfiguration.
-- Before reporting success, setup verifies both the launcher target and command resolution. Where the current shell cannot observe a newly persisted PATH value, the completion message must say that a new shell is required and show the temporary exact command needed only until then.
+- Before reporting success, setup verifies the exact stable launcher content and rereads the persistent PATH result. Persistent User PATH and the current process environment are separate observations.
+- When setup added the persistent entry during the current invocation, an already-running process tree is reported as `refresh-required`; an independently refreshed operator shell should discover the command.
+- When persistent PATH was already correct but the current caller omits the directory, setup reports `caller-omitted`. Children normally inherit that omission, so spawning another child shell is not presented as a repair.
+- Whenever bare discovery is unavailable, setup displays the exact verified stable launcher invocation. It never recommends the Node implementation entry as a PATH workaround.
+- An integration that knows the canonical installation home resolves and verifies the exact owned command through the installation contract. It does not guess PATH, require the invoking model process to inherit the operator's full environment, or move privileged behavior into the integration.
 
 After successful installation, normal operator documentation uses commands such as `devbridge setup`, `devbridge status`, and `devbridge doctor`, not internal Node file paths.
 
@@ -91,6 +99,50 @@ For eligible repositories belonging to / available to the authenticated user und
 Eligibility and effective capabilities must still be verified. Archived/read-only/inaccessible repositories or repositories that cannot satisfy the intended operation should be reported truthfully rather than silently treated as writable execution targets.
 
 Repository count does not determine VM count. Repositories sharing a compatible execution profile share the physical profile VM through distinct workspace identities.
+
+## Execution-profile selection
+
+Setup accepts one bounded local profile choice:
+
+```text
+devbridge setup --profiles <linux|windows|both|none|defer>
+```
+
+With no accepted selection, omitting `--profiles` chooses the ordinary Linux profile. Re-entry without the option preserves the accepted selection. `none` accepts an empty selection and keeps repository execution unavailable. `defer` does not replace accepted state or an interrupted profile-selection transaction; it preserves repository setup and stops before platform-specific setup work.
+
+Selection is configuration intent only. It does not install or enable a provider, approve source media, construct an image, create or start a VM, activate an environment, or prove readiness. Windows media/status reconciliation is attached only when Windows is selected. Ubuntu prerequisite/authority/construction work is attached only when Linux is selected. `--construct` requires at least one accepted profile and advances only the first incomplete selected construction target in fixed local policy order; with both current profiles selected, Linux precedes Windows and one invocation advances at most one profile frontier. Windows media options require a selected Windows profile. A blocked earlier target is never skipped, and a selected but unavailable profile remains fail-closed without a host-execution fallback.
+
+The selection transaction is revisioned and restartable through the host-owned setup-authority record. Its application adapter resumes only its own interrupted operation and refuses to absorb an interrupted transaction owned by another setup component.
+
+### Windows image-distribution selection
+
+Windows setup also requires an explicit prepared-image distribution policy after exact image construction and before declaration publication or protected environment activation. The currently implemented source-neutral choice is:
+
+```text
+devbridge setup --windows-distribution local-reconstruction
+```
+
+`local-reconstruction` keeps prepared image bytes local and creates no repository, Release, asset, URL, or upload authority. It preserves the approved source-media/construction owner as the recovery route; the distribution policy does not copy media or recipe identity into its own state. It also does not claim byte-deterministic reconstruction. Only an exact canonical size/SHA-256 reproduction may satisfy the existing image subject. Different qualified bytes are a new immutable generation and require explicit declaration rebind before use.
+
+Omitting the option preserves an accepted policy. Without one, Windows media discovery and image construction remain available, and independent Linux construction remains available, but a completed Windows image stops before resource-conflict mutation, environment declaration, protected activation, or operational enablement. The profile-neutral policy record is immutable and digest-addressed; setup authority retains only its opaque subject. Unknown transfer/storage modes and widened policy state fail closed.
+
+Remote-artifact distribution is not an alias for this choice and is not yet implemented. It requires separate authenticated owner/repository discovery, explicit Windows distribution-rights confirmation, explicit repository/Release approval, durable mutation reconciliation, exact #178 publication, pinned numeric Release/asset/digest identity, reacquisition, provider validation, and boot qualification. No upload may occur merely because a private repository exists.
+
+### Windows activation-policy selection
+
+Windows setup requires a separate explicit local activation policy before a completed Windows image may proceed into protected environment activation. The currently implemented non-secret choice is:
+
+```text
+devbridge setup --windows-activation later
+```
+
+This records `configure-later`; it does not install a product key, infer host entitlement, invoke a guest activation command, or claim that Windows is activated. Setup continues to report **Windows activation required** as a non-blocking deferred capability after the policy is accepted.
+
+Omitting the option preserves an accepted policy on re-entry. If none is accepted, Windows media discovery and image construction remain available, and independent Linux image work remains available, but a completed Windows image stops before declaration publication, protected lifecycle/environment activation, and operational enablement. The policy record is immutable and digest-addressed; setup authority retains only its opaque local subject. A missing, substituted, imported, unavailable, or otherwise mismatched accepted record fails closed.
+
+Retail, MAK, KMS, Active Directory-based activation, and subscription activation are not yet implemented. Setup rejects those undeclared choices instead of treating `configure-later` as a compatibility alias. Product keys and other secret material are not accepted by this policy contract or serialized into its state/status.
+
+After every selected profile has an exact complete accepted image, setup publishes declarations for only those profiles and requires the publication to cover the entire selection. Ubuntu and Windows declaration policy remains in separate profile-owned modules; the common publisher consumes neutral sources and stable repository subjects. Protected activation follows accepted profile order and returns after the first changed environment. Re-entry re-observes completed profiles before advancing the next one, and a blocked earlier profile is never skipped. Operational configuration is published only after every selected environment verifies ready through the protected lifecycle client.
 
 ## Current requirements
 
@@ -125,7 +177,7 @@ Setup must not infer VM readiness merely from Hyper-V being installed, `/dev/kvm
 
 A normal user should need one bootstrap command, not a sequence that first creates an example JSON file and then asks the user to read/edit it.
 
-For #238 qualification, the supported setup path currently ends at the read-only physical production-image status gate. The broader fresh-install target below continues beyond that gate only under the separately authorized image/provider roadmap.
+The supported setup path observes physical production-image state by default and crosses construction only with explicit `--construct` authority. It can continue through selected-profile declaration and protected environment activation only after every selected image is exact and complete. Real provider qualification remains separately required before the broader fresh-install target can be claimed complete.
 
 The setup invocation is responsible for:
 
@@ -159,6 +211,8 @@ It is **not** a required reading assignment or hand-authored prerequisite for no
 
 Fresh configuration keeps model adapters, coordination, dynamic tool onboarding, and automatic task-branch publication conservative/off unless the setup command's explicit local options enable them. Existing operator configuration is never silently rewritten during self-update.
 
+After the selected persistent environment and every selected workspace route verify ready, the explicit local `devbridge setup` transaction publishes the normal multi-repository configuration and enables deterministic controller-plan execution. It keeps coding-model adapters, uncontained host execution, dynamic onboarding, coordination, and automatic publication disabled. Publication is digest-bound and restart-reconcilable: setup records the exact predecessor and target before replacement, verifies the normal configuration schema and exact bytes afterward, and refuses an unmanaged or externally changed config instead of overwriting it. Re-entered setup may update only an unchanged setup-owned generation.
+
 `workspace.externalReadRoots`, proposal profile `sandbox.*`, and `execution.allowUncontainedTools` are host-sandbox-era surface. Stage 1 removes their ability to authorize repository-code host execution. Stage 8 defines deliberate operator-facing migration/deprecation, and Stage 9 removes remaining compatibility where appropriate.
 
 `execution.allowUncontainedTools` or equivalent must never bypass the no-provider state.
@@ -166,6 +220,8 @@ Fresh configuration keeps model adapters, coordination, dynamic tool onboarding,
 ## Execution remains opt-in and provider-bound
 
 Execution authority must be granted locally. A first-run `setup` invocation may carry that explicit local consent as a bounded command option so the installer does not need to stop later merely to ask the same question again.
+
+For the default CPU profile, the explicit local setup invocation itself is the execution opt-in, but activation occurs only after provider, image, environment, bridge, and workspace-route readiness all verify. This opt-in does not enable a coding model: model adapters remain separately disabled until explicitly configured.
 
 Remote task text cannot enable execution.
 
@@ -304,6 +360,8 @@ Windows Evaluation media is an explicit temporary evaluation path only; it is no
 DevBridge setup must distinguish its own VM artifacts from shared operator infrastructure.
 
 Windows uninstall/repair must not casually disable Hyper-V or delete operator-owned virtual switches/VMs/disks.
+
+Windows currently permits only one internal WinNAT network. Setup discovers a blocking translation before elevation and reports an opaque consent subject. It does not remove the translation automatically or accept its name from the caller. When the operator elects to retire that exact inactive subject, re-enter setup with `--retire-conflict <subject>`. The existing one-shot elevated setup child re-enumerates the subject, requires zero static mappings, active sessions, and guest attachments, removes only the unchanged translation, preserves its switch, and then continues normal protected-network reconciliation. Changed, ambiguous, active, attached, or unobservable state fails closed. The consent is deleted after successful environment activation.
 
 Linux uninstall/repair must not casually remove KVM/QEMU/libvirt packages, stop shared libvirt infrastructure, delete operator-owned domains/storage pools/networks/images, or rewrite system virtualization policy when a DevBridge-owned object suffices.
 

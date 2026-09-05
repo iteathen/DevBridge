@@ -6,9 +6,12 @@ import { GitClient } from '../git/git-client.js';
 import {
   createRepositoryExecution,
   gitVisiblePathsFromResult,
-  loadEnvironmentExecutionRoutes,
-  validationEnvironmentExecutionRoute,
 } from '../app/repository-execution.js';
+import {
+  loadEnvironmentActivityPolicy,
+  validationEnvironmentActivityRoute,
+} from '../runtime/environment-activity-policy.js';
+import { createConfiguredEnvironmentActivityClient } from '../runtime/environment-activity-authority-transport.js';
 import {
   REPOSITORY_EXECUTION_REQUEST_PROTOCOL,
   normalizeRepositoryExecutionResult,
@@ -30,11 +33,8 @@ function repositoryFromRemote(value) {
   return `${match[1]}/${match[2]}`;
 }
 
-function protectedValues(config, policy, env) {
+function protectedValues(config, env) {
   const names = new Set(config.github.auth.environmentVariables);
-  for (const route of policy.routes) {
-    if (route.access.passwordEnvironment) names.add(route.access.passwordEnvironment);
-  }
   return [...names]
     .map((name) => env[name])
     .filter((value) => typeof value === 'string' && value.length >= 8);
@@ -63,8 +63,8 @@ async function requiredStage0Protocol(runtimeDir) {
 
 async function createExecutionContext(paths, runtime, env) {
   const config = await loadConfig(paths.config ?? path.join(paths.home, 'config.json'));
-  const policy = await loadEnvironmentExecutionRoutes(config.state.directory);
-  const route = validationEnvironmentExecutionRoute(policy);
+  const policy = await loadEnvironmentActivityPolicy(config.state.directory);
+  const route = validationEnvironmentActivityRoute(policy);
   const git = new GitClient({
     executable: config.git.executable,
     syntheticHome: paths.gitHome ?? path.join(paths.home, 'bootstrap-git-home'),
@@ -78,9 +78,9 @@ async function createExecutionContext(paths, runtime, env) {
   };
   const execution = await createRepositoryExecution({
     stateDirectory: config.state.directory,
-    env,
+    activity: createConfiguredEnvironmentActivityClient({ stateDirectory: config.state.directory }),
     routes: policy,
-    protectedValues: protectedValues(config, policy, env),
+    protectedValues: protectedValues(config, env),
     rootFor: async () => path.resolve(runtime.runtimeDir),
     listPaths: async (root) => gitVisiblePathsFromResult(await git.run(['ls-files', '-co', '--exclude-standard', '-z'], { cwd: root })),
     resolveSubject: async () => route.subject,

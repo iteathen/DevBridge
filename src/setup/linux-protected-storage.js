@@ -207,14 +207,14 @@ function requireTransferredPolicy(info, { ownerId, groupId, mode: expectedMode, 
   }
 }
 
-async function measureTransferredFile({ path: target, ownerId, groupId, mode: expectedMode, size, maximumBytes }, ports, readFlags) {
+async function measureTransferredFile({ path: target, ownerId, groupId, mode: expectedMode, size, maximumBytes }, ports, readFlags, onChunk = null) {
   const info = await optionalStat(target, ports.stat);
   requireTransferredPolicy(info, { ownerId, groupId, mode: expectedMode, size }, 'Linux protected transferred file policy is invalid');
   let handle;
   let observed;
   try {
     handle = await ports.openFile(target, readFlags);
-    observed = await readHandle(handle, { size, maximumBytes, requireSingleLink: true });
+    observed = await readHandle(handle, { size, maximumBytes, requireSingleLink: true, onChunk });
     requireTransferredPolicy(observed.info, { ownerId, groupId, mode: expectedMode, size }, 'Linux protected transferred file descriptor policy is invalid');
   } finally {
     await closeHandle(handle);
@@ -547,6 +547,38 @@ export async function verifyLinuxProtectedFile({
     size: observed.size,
     digest: observed.digest,
     ready: true,
+  });
+}
+
+export async function readLinuxTransferredFile({
+  contract,
+  size,
+  maximumBytes = MAX_TRANSFER_BYTES,
+} = {}, {
+  stat = lstat,
+  openFile = open,
+  openFlags = constants,
+} = {}) {
+  const ports = requirePorts({ stat, openFile }, ['stat', 'openFile']);
+  const selectedMaximum = positive(maximumBytes, 'Linux transferred read maximum', MAX_TRANSFER_BYTES);
+  const selected = normalizeContract(contract, 'Linux transferred read file', { kind: 'file' });
+  const selectedSize = positive(size, 'Linux transferred read size', selectedMaximum);
+  const readFlags = openFlag(openFlags, 'O_RDONLY', { zero: true }) | openFlag(openFlags, 'O_NOFOLLOW');
+  const chunks = [];
+  const observed = await measureTransferredFile({
+    ...selected,
+    size: selectedSize,
+    maximumBytes: selectedMaximum,
+  }, ports, readFlags, (chunk) => chunks.push(Buffer.from(chunk)));
+  const content = Buffer.concat(chunks, observed.size);
+  if (content.length !== observed.size) throw new Error('Linux transferred file content is incomplete');
+  return Object.freeze({
+    protocol: PROTOCOL,
+    path: selected.path,
+    kind: 'file',
+    size: observed.size,
+    digest: observed.digest,
+    content,
   });
 }
 

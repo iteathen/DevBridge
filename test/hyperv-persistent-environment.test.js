@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promise
 import os from 'node:os';
 import path from 'node:path';
 import { HyperVPersistentEnvironment } from '../src/runtime/providers/hyperv-persistent-environment.js';
+import { HyperVEnvironmentContract } from '../src/runtime/providers/hyperv-persistent-environment/environment-contract.js';
 
 function success(value) {
   return { exitCode: 0, signal: null, timedOut: false, aborted: false, outputTruncated: false, stdout: JSON.stringify(value), stderr: '' };
@@ -12,6 +13,23 @@ function success(value) {
 function decode(request) {
   return Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
 }
+
+test('Hyper-V machine configuration uses the compact composition-owned root', () => {
+  const stateRoot = path.resolve('protected-authority-state');
+  const operations = path.join(stateRoot, 'environment-foundation', 'persistent', 'operations');
+  const machineRoot = path.join(stateRoot, 'hv');
+  const contract = new HyperVEnvironmentContract({
+    directory: operations,
+    machineRoot,
+    sourceRoot: path.join(stateRoot, 'environment-foundation', 'images'),
+    identity: '0123456789abcdef0123456789abcdef',
+    normalizeProtection: (value) => value,
+  });
+  const descriptor = contract.descriptor('env-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  assert.equal(path.dirname(descriptor.configPath), machineRoot);
+  assert.equal(path.relative(stateRoot, descriptor.configPath), path.join('hv', descriptor.name));
+  assert.ok(descriptor.configPath.length + 40 < descriptor.legacyConfigPath.length);
+});
 
 test('Hyper-V persistent adapter owns differencing-disk creation and exact lineage checks locally', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-hv-'));
@@ -29,7 +47,7 @@ test('Hyper-V persistent adapter owns differencing-disk creation and exact linea
       if (script.includes('New-VHD') && script.includes('New-VM')) {
         await mkdir(path.dirname(input.diskPath), { recursive: true });
         await writeFile(input.diskPath, 'child-state');
-        return success({ ready: true, providerIdentity: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' });
+        return success({ ready: true, providerIdentity: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', created: true });
       }
       if (script.includes('Get-VMHardDiskDrive')) {
         return success({ exists: true, owned: true, compatible: true, state, storageIdentity: 'disk-child-1', allocatedBytes: 8192 });
@@ -52,6 +70,7 @@ test('Hyper-V persistent adapter owns differencing-disk creation and exact linea
     assert.equal(calls.every((call) => call.executable === 'powershell.exe'), true);
     const provisionScript = decode(calls[0]);
     assert.match(provisionScript, /New-VHD -Path \$data\.diskPath -ParentPath \$data\.parentPath -Differencing/u);
+    assert.match(provisionScript, /New-VM[^\r\n]+-Path \$data\.creationConfigPath/u);
     assert.match(provisionScript, /AutomaticCheckpointsEnabled \$false/u);
     assert.match(provisionScript, /IsNullOrWhiteSpace\(\[string\]\$item\.Notes\)/u);
     assert.match(provisionScript, /\$attachedMatches/u);
@@ -60,11 +79,18 @@ test('Hyper-V persistent adapter owns differencing-disk creation and exact linea
 
     assert.equal((await adapter.start(identity)).state, 'running');
     assert.equal((await adapter.stop(identity)).state, 'off');
+    const stopScript = calls.map(decode).find((script) => script.includes('Stop-VM'));
+    assert.match(stopScript, /else \{ Stop-VM -Name \$data\.name -Confirm:\$false/u);
+    assert.match(stopScript, /\$data\.force -eq \$true.*Stop-VM -Name \$data\.name -TurnOff/su);
+    assert.doesNotMatch(stopScript, /-Shutdown\b/u);
     assert.equal(await readFile(sourcePath, 'utf8'), 'immutable-base');
 
     const stateFile = path.join(root, 'persistent', 'state.json');
     const adapterState = JSON.parse(await readFile(stateFile, 'utf8'));
     const diskPath = adapterState.records[identity].diskPath;
+    assert.equal(path.dirname(adapterState.records[identity].configPath), path.join(root, 'persistent', 'machines'));
+    assert.match(path.basename(adapterState.records[identity].configPath), /^db-env-[a-f0-9]{16}$/u);
+    assert.equal(JSON.parse(calls[0].input).creationConfigPath, adapterState.records[identity].configPath);
     await unlink(diskPath);
     await writeFile(diskPath, 'replacement');
     const tampered = await adapter.observe(identity);
@@ -91,6 +117,62 @@ test('Hyper-V persistent adapter rejects source paths outside its admitted root'
       source: { identity: 'img-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', revision: 'r1', digest: 'b'.repeat(64), handle: { location: outside, format: 'vhdx' } },
       settings: { memoryBytes: 2147483648, processorCount: 2, firmware: 'efi' },
     }), /outside the admitted root/u);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Hyper-V persistent adapter resumes an uncommitted legacy configuration path through the compact machine root', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-hv-compact-'));
+  const directory = path.join(root, 'persistent');
+  const machineRoot = path.join(root, 'hv');
+  const sourceRoot = path.join(root, 'images');
+  const sourcePath = path.join(sourceRoot, 'base.vhdx');
+  const identity = 'env-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const provisionPayloads = [];
+  try {
+    await mkdir(sourceRoot, { recursive: true });
+    await writeFile(sourcePath, 'immutable-base');
+    const invoke = async (request) => {
+      const script = decode(request);
+      const input = JSON.parse(request.input);
+      if (script.includes('New-VHD') && script.includes('New-VM')) {
+        provisionPayloads.push(input);
+        await mkdir(path.dirname(input.diskPath), { recursive: true });
+        await writeFile(input.diskPath, 'child-state');
+        return success({ ready: true, providerIdentity: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', created: true });
+      }
+      if (script.includes('Get-VMHardDiskDrive')) {
+        return success({ exists: true, owned: true, compatible: true, state: 'off', storageIdentity: 'disk-child-1', allocatedBytes: 8192 });
+      }
+      throw new Error('unexpected PowerShell request');
+    };
+    const options = {
+      directory,
+      machineRoot,
+      sourceRoot,
+      identity: '0123456789abcdef0123456789abcdef',
+      invoke,
+    };
+    const request = {
+      identity,
+      source: { identity: 'img-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', revision: 'r1', digest: 'a'.repeat(64), handle: { location: sourcePath, format: 'vhdx' } },
+      settings: { memoryBytes: 2147483648, processorCount: 2, firmware: 'efi' },
+    };
+    await new HyperVPersistentEnvironment(options).provision(request);
+
+    const stateFile = path.join(directory, 'state.json');
+    const legacy = JSON.parse(await readFile(stateFile, 'utf8'));
+    legacy.records[identity].configPath = path.join(directory, 'objects', identity, 'machine');
+    legacy.records[identity].providerIdentity = null;
+    legacy.records[identity].diskFileIdentity = null;
+    await writeFile(stateFile, `${JSON.stringify(legacy)}\n`);
+
+    await new HyperVPersistentEnvironment(options).provision(request);
+    const resumed = JSON.parse(await readFile(stateFile, 'utf8'));
+    assert.equal(provisionPayloads.length, 2);
+    assert.equal(provisionPayloads[1].configPath, legacy.records[identity].configPath);
+    assert.equal(provisionPayloads[1].creationConfigPath, resumed.records[identity].configPath);
+    assert.equal(path.dirname(resumed.records[identity].configPath), machineRoot);
+    assert.notEqual(resumed.records[identity].configPath, legacy.records[identity].configPath);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -130,7 +212,7 @@ test('Hyper-V persistent adapter translates neutral protected boot and observes 
       if (script.includes('New-VHD') && script.includes('New-VM')) {
         await mkdir(path.dirname(input.diskPath), { recursive: true });
         await writeFile(input.diskPath, 'child-state');
-        return success({ ready: true, providerIdentity: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' });
+        return success({ ready: true, providerIdentity: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', created: true });
       }
       if (script.includes('Get-VMHardDiskDrive')) return success({ exists: true, owned: true, compatible: true, state: 'off', storageIdentity: 'disk-child-1', allocatedBytes: 8192 });
       throw new Error('unexpected PowerShell request');
@@ -143,7 +225,7 @@ test('Hyper-V persistent adapter translates neutral protected boot and observes 
       identity: 'env-11111111111111111111111111111111',
       source: { identity: 'img-11111111111111111111111111111111', revision: 'r1', digest: '1'.repeat(64), handle: { location: sourcePath, format: 'vhdx' } },
       settings: {
-        memoryBytes: 4294967296,
+        memoryBytes: 268435456,
         processorCount: 2,
         firmware: 'efi',
         bootProtection: { integrity: 'required', identity: 'required', trust: 'platform-owner' },

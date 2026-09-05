@@ -15,12 +15,13 @@ import {
 } from '../src/setup/linux-lifecycle-authority-records.js';
 
 const IDENTITY = Object.freeze({ serviceUid: 1201, operatorUid: 1200, readGid: 1202, coordinationGid: 1203, managementGid: 1204 });
+const GROUP_IDENTITY = Object.freeze({ name: 'virt-control', id: IDENTITY.managementGid });
 
 function fixture({ identity = null, reconciledIdentity = IDENTITY, reconcileChanged = true, failSave = false } = {}) {
   const plan = createLinuxLifecycleAuthorityPlan({
     stateDirectory: '/state/devbridge',
     operatorName: 'operator',
-    managementGroup: 'virt-control',
+    managementGroup: GROUP_IDENTITY,
   });
   let record = normalizeLinuxLifecycleAuthorityOwnershipRecord({
     ...initialLinuxLifecycleAuthorityOwnershipRecord(plan),
@@ -56,7 +57,7 @@ test('fresh identity binding projects a closed local contract and saves numeric 
     operatorAccount: values.plan.service.operator,
     readGroup: values.plan.service.readGroup,
     coordinationGroup: values.plan.service.coordinationGroup,
-    managementGroup: values.plan.service.managementGroup,
+    requiredGroup: GROUP_IDENTITY,
     home: values.plan.service.account.home,
     shell: values.plan.service.account.shell,
     claimEstablished: true,
@@ -97,6 +98,15 @@ test('missing claims and numeric drift block without persisting a new binding', 
   const changed = fixture({ identity: IDENTITY, reconciledIdentity: { ...IDENTITY, serviceUid: 1301 } });
   await assert.rejects(() => bindLinuxLifecycleAuthorityIdentity(changed.value, changed.ports), /changed its immutable binding/u);
   assert.equal(changed.calls.some(([name]) => name === 'save'), false);
+
+  const rebound = fixture({ identity: IDENTITY });
+  await assert.rejects(() => bindLinuxLifecycleAuthorityIdentity({
+    plan: Object.freeze({
+      ...rebound.plan,
+      service: Object.freeze({ ...rebound.plan.service, managementGroupId: GROUP_IDENTITY.id + 1 }),
+    }),
+  }, rebound.ports), /does not match this installation/u);
+  assert.deepEqual(rebound.calls.map(([name]) => name), ['load']);
 });
 
 test('invalid reconciliation and inexact save evidence fail closed', async () => {
@@ -116,6 +126,10 @@ test('invalid reconciliation and inexact save evidence fail closed', async () =>
   const inexact = fixture();
   inexact.ports.state.save = async (value) => normalizeLinuxLifecycleAuthorityOwnershipRecord({ ...value, localIdentity: null }, inexact.plan);
   await assert.rejects(() => bindLinuxLifecycleAuthorityIdentity(inexact.value, inexact.ports), /record is not exact/u);
+
+  const different = fixture({ reconciledIdentity: { ...IDENTITY, managementGid: GROUP_IDENTITY.id + 1 } });
+  await assert.rejects(() => bindLinuxLifecycleAuthorityIdentity(different.value, different.ports), /different required group/u);
+  assert.equal(different.calls.some(([name]) => name === 'save'), false);
 });
 
 test('identity binding rejects topology-shaped interfaces and remains isolated from neighboring owners', async () => {

@@ -5,10 +5,20 @@ import {
   LifecycleAuthorityClient,
   createLifecycleAuthorityMutationHandler,
   createLifecycleAuthorityReadHandler,
+  environmentLifecycleAuthorityOperationIsReadOnly,
   normalizeLifecycleAuthorityRequest,
 } from '../src/runtime/environment-lifecycle-authority.js';
 
 const ENV = 'environment-test';
+
+test('lifecycle protocol alone classifies replay-safe read capability operations', () => {
+  for (const operation of ['inspect', 'list', 'status', 'plan', 'setup-reentry']) {
+    assert.equal(environmentLifecycleAuthorityOperationIsReadOnly(operation), true, operation);
+  }
+  for (const operation of ['run', 'resume', '', null]) {
+    assert.equal(environmentLifecycleAuthorityOperationIsReadOnly(operation), false, String(operation));
+  }
+});
 
 function operatorFixture(calls) {
   return {
@@ -128,7 +138,12 @@ test('client treats exchange failure and response ownership mismatch as authorit
     readExchange: async () => { throw new Error('socket down'); },
     mutationExchange: async () => { throw new Error('socket down'); },
   });
-  await assert.rejects(unavailable.status(ENV), /authority is unavailable/u);
+  await assert.rejects(unavailable.status(ENV), (error) => {
+    assert.equal(error.code, 'LIFECYCLE_AUTHORITY_UNAVAILABLE');
+    assert.match(error.message, /authority is unavailable/u);
+    assert.equal(error.message.includes('socket down'), false);
+    return true;
+  });
 
   const mismatchedExchange = async (request) => ({
     protocol: 'devbridge/environment-lifecycle-authority-result-v1',

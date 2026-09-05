@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PolicyError } from '../errors.js';
 import { isWithin } from '../security/workspace-policy.js';
@@ -46,6 +46,30 @@ async function assertContainedNoFollow(root, relative, { allowMissing = true } =
   }
   if (!allowMissing && encounteredMissing) throw new PolicyError(`controller path does not exist: ${relative}`);
   return target;
+}
+
+function parentPaths(relative) {
+  const parent = path.posix.dirname(relative);
+  if (parent === '.') return [];
+  const segments = parent.split('/');
+  return segments.map((_segment, index) => segments.slice(0, index + 1).join('/'));
+}
+
+async function missingParentPaths(root, relative) {
+  await assertContainedNoFollow(root, relative);
+  const missing = [];
+  for (const parent of parentPaths(relative)) {
+    const target = path.resolve(root, parent);
+    if (!(await exists(target))) {
+      missing.push(parent);
+      continue;
+    }
+    const info = await lstat(target);
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new PolicyError(`controller parent path is not a real directory: ${parent}`);
+    }
+  }
+  return missing;
 }
 
 async function atomicWrite(target, content, root) {
@@ -143,7 +167,14 @@ export class ControllerPlanExecutor {
 
   async #cleanup(state, workspace, persist) {
     const ledger = state.controllerPlan?.cleanupLedger ?? [];
-    for (const entry of ledger) {
+    const ordered = [...ledger].sort((left, right) => {
+      const leftDirectory = left.kind === 'directory';
+      const rightDirectory = right.kind === 'directory';
+      if (leftDirectory !== rightDirectory) return leftDirectory ? 1 : -1;
+      if (!leftDirectory) return 0;
+      return right.path.split('/').length - left.path.split('/').length;
+    });
+    for (const entry of ordered) {
       if (entry.state === 'verified-absent') continue;
       const target = await assertContainedNoFollow(workspace.worktreeDir, entry.path);
       entry.state = 'cleanup-planned';
@@ -152,10 +183,16 @@ export class ControllerPlanExecutor {
       this.#faults?.throwIfTriggered('cleanup.before-remove', { operation: entry.path });
       if (await exists(target)) {
         const info = await lstat(target);
-        if (info.isDirectory()) throw new PolicyError(`cleanup ledger entry unexpectedly became a directory: ${entry.path}`);
         if (info.isSymbolicLink()) throw new PolicyError(`cleanup ledger entry unexpectedly became a symbolic link: ${entry.path}`);
         await guardActiveTaskLease();
-        await rm(target, { force: true });
+        if (entry.kind === 'directory') {
+          if (!info.isDirectory()) throw new PolicyError(`cleanup directory unexpectedly changed kind: ${entry.path}`);
+          try { await rmdir(target); }
+          catch { throw new PolicyError(`cleanup directory could not be removed exactly: ${entry.path}`); }
+        } else {
+          if (info.isDirectory()) throw new PolicyError(`cleanup file unexpectedly became a directory: ${entry.path}`);
+          await rm(target, { force: true });
+        }
         await guardActiveTaskLease();
       }
       entry.state = 'removed';
@@ -338,6 +375,15 @@ export class ControllerPlanExecutor {
             planState.cleanupLedger.push({ path: file.path, kind: 'file', state: 'planned', updatedAt: new Date().toISOString() });
           }
           await persist();
+        }
+        if (file.scope === 'ephemeral' && file.action === 'create') {
+          let changed = false;
+          for (const parent of await missingParentPaths(workspace.worktreeDir, file.path)) {
+            if (planState.cleanupLedger.some((entry) => entry.kind === 'directory' && entry.path === parent)) continue;
+            planState.cleanupLedger.push({ path: parent, kind: 'directory', state: 'planned', updatedAt: new Date().toISOString() });
+            changed = true;
+          }
+          if (changed) await persist();
         }
         const applied = await this.#applyFile(file, { state, workspace });
         this.#faults?.throwIfTriggered('file.after-effect', { operation: file.path });

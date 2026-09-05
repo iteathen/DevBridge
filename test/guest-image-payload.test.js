@@ -6,11 +6,14 @@ import path from 'node:path';
 import { createGuestImagePayload } from '../src/guest/image-payload.js';
 
 const MEMBERS = [
+  'activity-store.mjs',
   'bridge-agent.mjs',
   'environment-bootstrap-agent.mjs',
   'linux-access-seed-agent.mjs',
+  'local-process.mjs',
   'network-seed-agent.mjs',
   'resource-agent.mjs',
+  'transfer-channel.mjs',
   'workspace-agent.mjs',
 ];
 
@@ -39,6 +42,33 @@ test('guest image payload generation changes when one owned helper changes', asy
     const second = await createGuestImagePayload({ directory });
     assert.notEqual(first.generation, second.generation);
     assert.notEqual(first.files.find((entry) => entry.path.endsWith('/resource-agent.mjs')).sha256, second.files.find((entry) => entry.path.endsWith('/resource-agent.mjs')).sha256);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('guest image payload canonicalizes LF and CRLF source delivery to identical bytes', async () => {
+  const lfDirectory = await root();
+  const crlfDirectory = await root();
+  try {
+    await writeFixture(lfDirectory);
+    for (const name of MEMBERS) {
+      await writeFile(path.join(crlfDirectory, name), `export default ${JSON.stringify(name)};\r\n`, 'utf8');
+    }
+    const lf = await createGuestImagePayload({ directory: lfDirectory });
+    const crlf = await createGuestImagePayload({ directory: crlfDirectory });
+    assert.deepEqual(crlf, lf);
+    assert.equal(crlf.files.every((entry) => !entry.content.includes('\r')), true);
+  } finally {
+    await rm(lfDirectory, { recursive: true, force: true });
+    await rm(crlfDirectory, { recursive: true, force: true });
+  }
+});
+
+test('guest image payload rejects ambiguous bare carriage returns', async () => {
+  const directory = await root();
+  try {
+    await writeFixture(directory);
+    await writeFile(path.join(directory, 'resource-agent.mjs'), 'export default "invalid";\r', 'utf8');
+    await assert.rejects(() => createGuestImagePayload({ directory }), /unsupported line endings/u);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

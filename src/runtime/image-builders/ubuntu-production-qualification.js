@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { resolveUbuntuGuestCapabilities } from './ubuntu-guest-capabilities.js';
 
 const BRIDGE_PROTOCOL = 'devbridge/environment-bridge-v1';
 const PROTOCOL = 'devbridge/ubuntu-production-qualification-v1';
@@ -11,6 +12,7 @@ const PACKAGE_VERSION = /^[A-Za-z0-9][A-Za-z0-9.+:~_-]{0,159}$/u;
 const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
 const MUTABLE_VERSION = /^(?:latest|stable|current|head|main|master)$/iu;
 const COMMAND = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/u;
+const SERVICE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,122}\.service$/u;
 const DEFAULT_POLL_MS = 250;
 
 function onlyKeys(value, allowed, name) {
@@ -25,7 +27,7 @@ function packageVersion(value, name) {
 }
 
 function normalizeExpected(raw) {
-  const value = onlyKeys(raw, new Set(['payloadGeneration', 'files', 'packageGeneration', 'packageSnapshot', 'packages', 'commands']), 'qualification expected state');
+  const value = onlyKeys(raw, new Set(['payloadGeneration', 'files', 'packageGeneration', 'packageSnapshot', 'packages', 'commands', 'services', 'capabilities']), 'qualification expected state');
   if (typeof value.payloadGeneration !== 'string' || !GENERATION.test(value.payloadGeneration)) throw new TypeError('qualification payload generation is invalid');
   if (typeof value.packageGeneration !== 'string' || !GENERATION.test(value.packageGeneration)) throw new TypeError('qualification package generation is invalid');
   if (typeof value.packageSnapshot !== 'string' || !SNAPSHOT.test(value.packageSnapshot)) throw new TypeError('qualification package snapshot is invalid');
@@ -55,7 +57,17 @@ function normalizeExpected(raw) {
     commandNames.add(entry);
     commands.push(entry);
   }
-  return Object.freeze({ payloadGeneration: value.payloadGeneration, files, packageGeneration: value.packageGeneration, packageSnapshot: value.packageSnapshot, packages, commands });
+  const services = [];
+  const serviceNames = new Set();
+  const serviceSource = value.services ?? [];
+  if (!Array.isArray(serviceSource) || serviceSource.length > 16) throw new TypeError('qualification expected service set is invalid');
+  for (const [index, entry] of serviceSource.entries()) {
+    if (typeof entry !== 'string' || !SERVICE.test(entry) || serviceNames.has(entry)) throw new TypeError(`qualification expected service ${index} is invalid`);
+    serviceNames.add(entry);
+    services.push(entry);
+  }
+  const capabilities = resolveUbuntuGuestCapabilities(value.capabilities ?? []);
+  return Object.freeze({ payloadGeneration: value.payloadGeneration, files, packageGeneration: value.packageGeneration, packageSnapshot: value.packageSnapshot, packages, commands, services, capabilities });
 }
 
 function requestId(target, phase, body) {
@@ -70,8 +82,11 @@ function qualificationScript(expected) {
   const fileChecks = expected.files.map((file) => `printf '%s  %s\\n' ${shellQuote(file.sha256)} ${shellQuote(file.path)}`).join('\n');
   const packageChecks = expected.packages.map((item) => `[ "$(dpkg-query -W -f='${'$'}{Version}' ${shellQuote(item.name)})" = ${shellQuote(item.version)} ]`).join('\n');
   const packageSpecifications = expected.packages.map((item) => `${item.name}=${item.version}`);
-  const commands = [...new Set(['node', 'npm', 'git', 'cmake', 'ctest', 'cc', 'c++', 'curl', 'getent', 'sha256sum', 'dpkg-query', 'apt-get', ...expected.commands])];
-  return `set -eu\n. /etc/os-release\n[ "${'$'}ID" = ubuntu ]\nfor command in ${commands.map(shellQuote).join(' ')}; do command -v "${'$'}command" >/dev/null 2>&1; done\n${packageChecks}\napt-get --snapshot ${shellQuote(expected.packageSnapshot)} --simulate install -y --no-install-recommends ${packageSpecifications.map(shellQuote).join(' ')} >/dev/null\ngetent ahostsv4 example.com >/dev/null\ncurl --fail --silent --show-error --max-time 15 https://example.com/ -o /dev/null\n{\n${fileChecks}\n} | sha256sum -c - >/dev/null\nroot=$(mktemp -d)\ntrap 'rm -rf "${'$'}root"' EXIT HUP INT TERM\ncat >"${'$'}root/CMakeLists.txt" <<'CMAKE'\ncmake_minimum_required(VERSION 3.16)\nproject(devbridge_image_probe C)\nenable_testing()\nadd_executable(probe main.c)\nadd_test(NAME probe COMMAND probe)\nCMAKE\ncat >"${'$'}root/main.c" <<'C'\n#include <stdio.h>\nint main(void) { puts("devbridge-image-probe"); return 0; }\nC\ncmake -S "${'$'}root" -B "${'$'}root/build" >/dev/null\ncmake --build "${'$'}root/build" >/dev/null\nctest --test-dir "${'$'}root/build" --output-on-failure >/dev/null\nprintf 'protocol=${PROTOCOL}\\n'\nprintf 'os=%s\\n' "${'$'}VERSION_ID"\nprintf 'node='; node --version\nprintf 'npm='; npm --version\nprintf 'git='; git --version\nprintf 'cmake='; cmake --version | head -n 1\nprintf 'compiler='; cc --version | head -n 1\nprintf 'payload-generation=${expected.payloadGeneration}\\n'\nprintf 'package-generation=${expected.packageGeneration}\\n'\nprintf 'package-snapshot=${expected.packageSnapshot}\\n'\nprintf 'network=ready\\n'\nprintf 'cmake-ctest=passed\\n'\n`;
+  const serviceCommands = expected.services.length === 0 ? [] : ['systemctl'];
+  const commands = [...new Set(['node', 'npm', 'git', 'cmake', 'ctest', 'cc', 'c++', 'curl', 'getent', 'sha256sum', 'dpkg-query', 'apt-get', ...serviceCommands, ...expected.commands, ...expected.capabilities.commands])];
+  const serviceChecks = expected.services.length === 0 ? '' : `\nfor service in ${expected.services.map(shellQuote).join(' ')}; do\n  systemctl is-enabled --quiet "${'$'}service"\n  systemctl is-active --quiet "${'$'}service"\ndone`;
+  const capabilityChecks = expected.capabilities.qualification.length === 0 ? '' : `\n${expected.capabilities.qualification.join('\n')}`;
+  return `set -eu\n. /etc/os-release\n[ "${'$'}ID" = ubuntu ]\nfor command in ${commands.map(shellQuote).join(' ')}; do command -v "${'$'}command" >/dev/null 2>&1; done${serviceChecks}${capabilityChecks}\n${packageChecks}\napt-get --snapshot ${shellQuote(expected.packageSnapshot)} --simulate install -y --no-install-recommends ${packageSpecifications.map(shellQuote).join(' ')} >/dev/null\ngetent ahostsv4 example.com >/dev/null\ncurl --fail --silent --show-error --max-time 15 https://example.com/ -o /dev/null\n{\n${fileChecks}\n} | sha256sum -c - >/dev/null\nroot=$(mktemp -d)\ntrap 'rm -rf "${'$'}root"' EXIT HUP INT TERM\ncat >"${'$'}root/CMakeLists.txt" <<'CMAKE'\ncmake_minimum_required(VERSION 3.16)\nproject(devbridge_image_probe C)\nenable_testing()\nadd_executable(probe main.c)\nadd_test(NAME probe COMMAND probe)\nCMAKE\ncat >"${'$'}root/main.c" <<'C'\n#include <stdio.h>\nint main(void) { puts("devbridge-image-probe"); return 0; }\nC\ncmake -S "${'$'}root" -B "${'$'}root/build" >/dev/null\ncmake --build "${'$'}root/build" >/dev/null\nctest --test-dir "${'$'}root/build" --output-on-failure >/dev/null\nprintf 'protocol=${PROTOCOL}\\n'\nprintf 'os=%s\\n' "${'$'}VERSION_ID"\nprintf 'node='; node --version\nprintf 'npm='; npm --version\nprintf 'git='; git --version\nprintf 'cmake='; cmake --version | head -n 1\nprintf 'compiler='; cc --version | head -n 1\nprintf 'payload-generation=${expected.payloadGeneration}\\n'\nprintf 'package-generation=${expected.packageGeneration}\\n'\nprintf 'package-snapshot=${expected.packageSnapshot}\\n'\nprintf 'network=ready\\n'\nprintf 'cmake-ctest=passed\\n'\n`;
 }
 
 function operationBody(script, timeoutMs) {
@@ -143,6 +158,8 @@ function qualificationEvidence(qualified, selected, sanitized) {
     packageGeneration: selected.packageGeneration,
     packageSnapshot: selected.packageSnapshot,
     commands: Object.freeze([...selected.commands]),
+    services: Object.freeze([...selected.services]),
+    capabilities: Object.freeze([...selected.capabilities.ids]),
     network: true,
     cmakeCtest: true,
     sanitized,

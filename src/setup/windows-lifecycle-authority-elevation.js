@@ -1,9 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { invokeCommand } from '../runtime/command-invocation.js';
+import { createCommandInvoker } from '../runtime/command-invocation.js';
+import {
+  prepareWindowsLifecycleAuthorityElevationLauncher,
+  resolveWindowsLifecycleAuthorityElevationLauncher,
+} from './windows-lifecycle-authority-elevation-launcher.js';
 
 const PROTOCOL = 'devbridge/windows-lifecycle-authority-elevation-v1';
 const POWERSHELL = 'powershell.exe';
@@ -14,93 +18,26 @@ const ALLOWED_LAUNCHERS = new Set(['devbridge-entry.mjs', 'devbridge-stage0.mjs'
 const EXACT_HEAD = /^[0-9a-f]{40}$/u;
 const PACKAGE_ROOT = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
 const BROKER_RESULT_PROTOCOL = 'devbridge/windows-lifecycle-authority-elevation-broker-v1';
-const CHILD_RESULT_DIRECTORY = /^\.lifecycle-authority-elevation-[0-9a-f-]{36}$/u;
+const CHILD_RESULT_DIRECTORY = /^\.lifecycle-authority-elevation-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const MAX_BROKER_RESULT_BYTES = 80 * 1024;
-
-const BROKER_SCRIPT = String.raw`
-$ErrorActionPreference = 'Stop'
-$limit = 32KB
-$inputFile = '__INPUT_FILE__'
-$expectedHead = '__EXPECTED_HEAD__'
-$directory = [IO.Path]::GetDirectoryName($inputFile)
-$resultFile = [IO.Path]::Combine($directory, 'result.json')
-$stdoutFile = [IO.Path]::Combine($directory, 'stdout.txt')
-$stderrFile = [IO.Path]::Combine($directory, 'stderr.txt')
-$record = [ordered]@{
-  protocol = 'devbridge/windows-lifecycle-authority-elevation-broker-v1'
-  requestedHead = $expectedHead
-  started = $false
-  exitCode = $null
-  stdout = ''
-  stderr = ''
-  error = $null
-  outputTruncated = $false
-}
-$brokerExit = 1
-function Read-BoundedText([string]$file) {
-  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return '' }
-  $item = Get-Item -LiteralPath $file -Force
-  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'broker output used filesystem indirection' }
-  if ($item.Length -gt $limit) { $script:record.outputTruncated = $true; return '' }
-  return [IO.File]::ReadAllText($file)
-}
-try {
-  $inputItem = Get-Item -LiteralPath $inputFile -Force
-  if (($inputItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $inputItem.Length -lt 2 -or $inputItem.Length -gt 8KB) { throw 'broker input is not one bounded real file' }
-  $data = [IO.File]::ReadAllText($inputFile) | ConvertFrom-Json
-  $node = [string]$data.node
-  $launcherPath = [string]$data.launcher
-  $head = [string]$data.runnerHead
-  $devBridgeHome = [string]$data.home
-  if ($head -ne $expectedHead) { throw 'broker input runner identity does not match its encoded authority' }
-  if (-not [IO.Path]::IsPathRooted($node) -or -not [IO.Path]::IsPathRooted($launcherPath)) { throw 'broker executable identity is not absolute' }
-  if (-not [IO.Path]::IsPathRooted($devBridgeHome)) { throw 'broker DevBridge home is not absolute' }
-  if ($head -notmatch '^[0-9a-f]{40}$') { throw 'broker runner identity is not exact' }
-  if (-not (Test-Path -LiteralPath $node -PathType Leaf) -or -not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) { throw 'broker executable identity is unavailable' }
-  $env:DEVBRIDGE_HOME = $devBridgeHome
-  $env:DEVBRIDGE_LIFECYCLE_AUTHORITY_ELEVATED_CHILD = '1'
-  $launcher = '"' + $launcherPath.Replace('"', '') + '"'
-  $child = Start-Process -FilePath $node -ArgumentList @(
-    $launcher,
-    '--ref',
-    $head,
-    'setup',
-    '--lifecycle-authority-child',
-    '--no-update'
-  ) -Wait -PassThru -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
-  $record.started = $true
-  $record.exitCode = [int]$child.ExitCode
-  $record.stdout = Read-BoundedText $stdoutFile
-  $record.stderr = Read-BoundedText $stderrFile
-  $brokerExit = [int]$child.ExitCode
-} catch {
-  $record.exitCode = $brokerExit
-  try { $record.stdout = Read-BoundedText $stdoutFile } catch {}
-  try { $record.stderr = Read-BoundedText $stderrFile } catch {}
-  $message = [string]$_.Exception.Message
-  $record.error = ($message -replace '[\r\n]+', ' ').Trim()
-  if ($record.error.Length -gt 2048) { $record.error = $record.error.Substring(0, 2048) }
-} finally {
-  Remove-Item -LiteralPath $stdoutFile -Force -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath $stderrFile -Force -ErrorAction SilentlyContinue
-  $json = $record | ConvertTo-Json -Compress
-  $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json + [Environment]::NewLine)
-  $stream = [IO.File]::Open($resultFile, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-  try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
-}
-exit $brokerExit
-`;
+const ELEVATION_TRANSACTION_TIMEOUT_MS = 45 * 60_000;
+const invokeElevationCommand = createCommandInvoker({ maximumTimeoutMs: ELEVATION_TRANSACTION_TIMEOUT_MS, windowsHide: false });
 
 const ELEVATE_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 try {
-  $brokerCommand = [string]$data.brokerCommand
-  if ($brokerCommand.Length -lt 2 -or $brokerCommand.Length -gt 128KB -or $brokerCommand -notmatch '^[A-Za-z0-9+/]+={0,2}$') { throw 'encoded elevation broker command is invalid' }
-  $broker = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
-    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-EncodedCommand', $brokerCommand
-  ) -Verb RunAs -Wait -PassThru
+  $launcher = [string]$data.launcher
+  $inputFile = [string]$data.inputFile
+  $expectedHead = [string]$data.expectedHead
+  if (-not [IO.Path]::IsPathRooted($launcher) -or -not [IO.Path]::IsPathRooted($inputFile)) { throw 'elevation launcher input is not absolute' }
+  if ($launcher.Length -lt 2 -or $launcher.Length -gt 32KB -or $launcher.Contains('"')) { throw 'elevation launcher identity is invalid' }
+  if ($inputFile.Length -lt 2 -or $inputFile.Length -gt 32KB -or $inputFile.Contains('"')) { throw 'elevation input identity is invalid' }
+  if ($expectedHead -notmatch '^[0-9a-f]{40}$') { throw 'elevation runner identity is invalid' }
+  $quotedInput = '"' + $inputFile + '"'
+  $broker = Start-Process -FilePath $launcher -ArgumentList @(
+    '--apply', $quotedInput, $expectedHead
+  ) -Verb RunAs -WindowStyle Normal -Wait -PassThru
   @{ started = $true; exitCode = [int]$broker.ExitCode } | ConvertTo-Json -Compress
 } catch {
   @{ started = $false; exitCode = $null } | ConvertTo-Json -Compress
@@ -109,13 +46,6 @@ try {
 
 function encodedScript(script) {
   return Buffer.from(script, 'utf16le').toString('base64');
-}
-
-function renderedBrokerScript(inputFile, runnerHead) {
-  const inputLiteral = inputFile.replaceAll("'", "''");
-  return BROKER_SCRIPT
-    .replace('__INPUT_FILE__', inputLiteral)
-    .replace('__EXPECTED_HEAD__', runnerHead);
 }
 
 function invocationSucceeded(result) {
@@ -143,7 +73,7 @@ async function boundedRealFile(file, name) {
   return resolved;
 }
 
-async function childResultTarget(home) {
+async function managedStateRoot(home) {
   const state = path.join(home, 'state');
   const stateInfo = await lstat(state);
   if (!stateInfo.isDirectory() || stateInfo.isSymbolicLink()) {
@@ -154,6 +84,11 @@ async function childResultTarget(home) {
   if (!pathIsWithin(canonicalHome, canonicalState)) {
     throw new Error('Windows lifecycle authority elevation state root escaped the managed DevBridge home');
   }
+  return Object.freeze({ state, canonicalState });
+}
+
+async function childResultTarget(home) {
+  const { state } = await managedStateRoot(home);
   const directory = path.join(state, `.lifecycle-authority-elevation-${randomUUID()}`);
   await mkdir(directory, { mode: 0o700 });
   return Object.freeze({ state, directory, input: path.join(directory, 'input.json'), file: path.join(directory, 'result.json') });
@@ -168,6 +103,37 @@ async function cleanupChildResultTarget(target) {
         || path.dirname(target.file) !== target.directory || path.basename(target.file) !== 'result.json') return;
     await rm(target.directory, { recursive: true, force: true });
   } catch {}
+}
+
+async function cleanupCompletedChildResultTargets(root) {
+  let state;
+  let canonicalState;
+  let entries;
+  try {
+    ({ state, canonicalState } = await managedStateRoot(root));
+    entries = await readdir(state, { withFileTypes: true });
+  }
+  catch { return; }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !CHILD_RESULT_DIRECTORY.test(entry.name)) continue;
+    const directory = path.join(state, entry.name);
+    const target = Object.freeze({
+      state,
+      directory,
+      input: path.join(directory, 'input.json'),
+      file: path.join(directory, 'result.json'),
+    });
+    try {
+      const directoryInfo = await lstat(directory);
+      const canonicalDirectory = await realpath(directory);
+      if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink()
+          || !samePath(path.dirname(canonicalDirectory), canonicalState, 'win32')) continue;
+      const contents = await readdir(directory, { withFileTypes: true });
+      if (contents.length !== 1 || contents[0].name !== 'result.json' || !contents[0].isFile()) continue;
+      await readBrokerResult(target);
+      await cleanupChildResultTarget(target);
+    } catch {}
+  }
 }
 
 function boundedBrokerText(value) {
@@ -242,38 +208,41 @@ function parseChildOutput(output) {
   return Object.freeze({ diagnostics: Object.freeze(diagnostics), result });
 }
 
-export async function resolveWindowsLifecycleAuthorityElevationRunnerHead({ packageRoot = PACKAGE_ROOT } = {}) {
+export async function resolveWindowsLifecycleAuthorityElevationRunner({ packageRoot = PACKAGE_ROOT } = {}) {
   const root = path.resolve(packageRoot);
   const git = path.join(root, '.git');
   const headFile = path.join(git, 'HEAD');
+  const launcher = path.join(root, 'src', 'cli.js');
   let rootInfo;
   let gitInfo;
   let headInfo;
+  let launcherInfo;
   try {
-    [rootInfo, gitInfo, headInfo] = await Promise.all([lstat(root), lstat(git), lstat(headFile)]);
+    [rootInfo, gitInfo, headInfo, launcherInfo] = await Promise.all([lstat(root), lstat(git), lstat(headFile), lstat(launcher)]);
   } catch (error) {
     if (error?.code === 'ENOENT') throw new Error('Windows lifecycle authority elevation requires an exact checkout identity');
     throw error;
   }
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink() || !gitInfo.isDirectory() || gitInfo.isSymbolicLink()
-      || !headInfo.isFile() || headInfo.isSymbolicLink() || headInfo.size < 40 || headInfo.size > 128) {
+      || !headInfo.isFile() || headInfo.isSymbolicLink() || headInfo.size < 40 || headInfo.size > 128
+      || !launcherInfo.isFile() || launcherInfo.isSymbolicLink()) {
     throw new Error('Windows lifecycle authority elevation checkout identity is not a bounded real file');
   }
   const head = String(await readFile(headFile, 'utf8')).trim().toLowerCase();
   if (!EXACT_HEAD.test(head)) throw new Error('Windows lifecycle authority elevation requires one detached exact checkout head');
-  return head;
+  return Object.freeze({ head, root, launcher });
 }
 
-async function boundedManagedFile(root, file, name) {
+async function boundedContainedFile(root, file, name, boundary) {
   const resolvedRoot = path.resolve(root);
   const resolvedFile = path.resolve(file);
   if (!pathIsWithin(resolvedRoot, resolvedFile)) {
-    throw new Error(`${name} escaped the managed DevBridge home`);
+    throw new Error(`${name} escaped its ${boundary}`);
   }
 
   const rootInfo = await lstat(resolvedRoot);
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
-    throw new Error(`${name} managed root must be a real directory`);
+    throw new Error(`${name} ${boundary} must be a real directory`);
   }
   const canonicalRoot = await realpath(resolvedRoot);
   const relative = path.relative(resolvedRoot, resolvedFile);
@@ -292,7 +261,7 @@ async function boundedManagedFile(root, file, name) {
     }
     const canonical = await realpath(current);
     if (!pathIsWithin(canonicalRoot, canonical)) {
-      throw new Error(`${name} escaped the managed DevBridge home`);
+      throw new Error(`${name} escaped its ${boundary}`);
     }
   }
 
@@ -305,32 +274,59 @@ function samePath(left, right, platform) {
   return platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
+export async function prepareWindowsLifecycleAuthorityElevation({
+  home,
+  platform = process.platform,
+  nodeExecutable = process.execPath,
+  invoke,
+} = {}, {
+  resolveRunner = resolveWindowsLifecycleAuthorityElevationRunner,
+  prepareLauncher = prepareWindowsLifecycleAuthorityElevationLauncher,
+} = {}) {
+  if (platform !== 'win32') return Object.freeze({ prepared: false, required: false, launcher: null });
+  if (typeof resolveRunner !== 'function' || typeof prepareLauncher !== 'function') {
+    throw new TypeError('Windows lifecycle authority elevation preparation contract is invalid');
+  }
+  const runner = await resolveRunner();
+  return prepareLauncher({
+    home: absoluteLocalPath(home, 'DevBridge elevation home'),
+    runner,
+    platform,
+    nodeExecutable: absoluteLocalPath(nodeExecutable, 'DevBridge elevation Node executable'),
+    ...(invoke == null ? {} : { invoke }),
+  });
+}
+
 export async function requestWindowsLifecycleAuthorityElevation({
   home,
   launcher,
   platform = process.platform,
   nodeExecutable = process.execPath,
-  invoke = invokeCommand,
+  invoke = invokeElevationCommand,
   environment = process.env,
 } = {}, {
-  resolveRunnerHead = resolveWindowsLifecycleAuthorityElevationRunnerHead,
+  resolveRunner = resolveWindowsLifecycleAuthorityElevationRunner,
+  resolveLauncher = resolveWindowsLifecycleAuthorityElevationLauncher,
 } = {}) {
   if (platform !== 'win32') return Object.freeze({ protocol: PROTOCOL, attempted: false, completed: true, exitCode: 0, blocker: null });
-  if (typeof invoke !== 'function' || typeof resolveRunnerHead !== 'function') throw new TypeError('Windows lifecycle authority elevation invocation contract is invalid');
+  if (typeof invoke !== 'function' || typeof resolveRunner !== 'function' || typeof resolveLauncher !== 'function') throw new TypeError('Windows lifecycle authority elevation invocation contract is invalid');
   const root = absoluteLocalPath(home, 'DevBridge elevation home');
-  const selectedLauncher = absoluteLocalPath(launcher, 'DevBridge elevation launcher');
+  const selectedEntryLauncher = absoluteLocalPath(launcher, 'DevBridge elevation entry launcher');
   const node = absoluteLocalPath(nodeExecutable, 'DevBridge elevation Node executable');
   const expectedBin = path.join(root, 'bin');
-  if (!samePath(path.dirname(selectedLauncher), expectedBin, platform) || !ALLOWED_LAUNCHERS.has(path.basename(selectedLauncher).toLowerCase())) {
+  if (!samePath(path.dirname(selectedEntryLauncher), expectedBin, platform) || !ALLOWED_LAUNCHERS.has(path.basename(selectedEntryLauncher).toLowerCase())) {
     throw new Error('Windows lifecycle authority elevation launcher is outside the managed DevBridge entry boundary');
   }
   await Promise.all([
-    boundedManagedFile(root, selectedLauncher, 'Windows lifecycle authority elevation launcher'),
+    boundedContainedFile(root, selectedEntryLauncher, 'Windows lifecycle authority elevation entry launcher', 'managed installation home'),
     boundedRealFile(node, 'Windows lifecycle authority elevation Node executable'),
   ]);
 
+  let runner;
   let runnerHead;
-  try { runnerHead = String(await resolveRunnerHead()).trim().toLowerCase(); }
+  let runnerRoot;
+  let runnerLauncher;
+  try { runner = await resolveRunner(); }
   catch {
     return Object.freeze({
       protocol: PROTOCOL,
@@ -340,7 +336,32 @@ export async function requestWindowsLifecycleAuthorityElevation({
       blocker: 'Windows lifecycle authority elevation requires the exact current DevBridge runner identity. Re-enter setup through an exact installed selector.',
     });
   }
-  if (!EXACT_HEAD.test(runnerHead)) {
+  if (!runner || typeof runner !== 'object' || Array.isArray(runner)
+      || Object.keys(runner).some((key) => !['head', 'root', 'launcher'].includes(key))
+      || typeof runner.head !== 'string' || typeof runner.root !== 'string' || typeof runner.launcher !== 'string') {
+    return Object.freeze({
+      protocol: PROTOCOL,
+      attempted: false,
+      completed: false,
+      exitCode: null,
+      blocker: 'Windows lifecycle authority elevation requires the exact current DevBridge runner identity. Re-enter setup through an exact installed selector.',
+    });
+  }
+  runnerHead = runner.head.trim().toLowerCase();
+  try {
+    runnerRoot = absoluteLocalPath(runner.root, 'DevBridge elevation runner root');
+    runnerLauncher = absoluteLocalPath(runner.launcher, 'DevBridge elevation runner launcher');
+    if (!samePath(runnerLauncher, path.join(runnerRoot, 'src', 'cli.js'), platform)) throw new Error('runner launcher is not its fixed CLI');
+    const observedRunner = await resolveWindowsLifecycleAuthorityElevationRunner({ packageRoot: runnerRoot });
+    if (observedRunner.head !== runnerHead || !samePath(observedRunner.root, runnerRoot, platform)
+        || !samePath(observedRunner.launcher, runnerLauncher, platform)) {
+      throw new Error('runner descriptor differs from its detached exact checkout');
+    }
+    await boundedContainedFile(runnerRoot, runnerLauncher, 'Windows lifecycle authority elevation runner launcher', 'detached exact checkout');
+  } catch {
+    runnerLauncher = null;
+  }
+  if (!EXACT_HEAD.test(runnerHead) || runnerLauncher == null) {
     return Object.freeze({
       protocol: PROTOCOL,
       attempted: false,
@@ -350,22 +371,55 @@ export async function requestWindowsLifecycleAuthorityElevation({
     });
   }
 
+  let preparedLauncher;
+  try {
+    preparedLauncher = await resolveLauncher({
+      home: root,
+      runner: Object.freeze({ head: runnerHead, root: runnerRoot, launcher: runnerLauncher }),
+      nodeExecutable: node,
+    });
+  } catch {
+    return Object.freeze({
+      protocol: PROTOCOL,
+      attempted: false,
+      completed: false,
+      exitCode: null,
+      blocker: 'Windows lifecycle authority elevation launcher is not prepared for the exact current runner. Re-run ordinary setup preparation before requesting administrator permission.',
+    });
+  }
+  if (!preparedLauncher || typeof preparedLauncher !== 'object' || Array.isArray(preparedLauncher)
+      || typeof preparedLauncher.executable !== 'string' || typeof preparedLauncher.bindingDigest !== 'string'
+      || !preparedLauncher.input || typeof preparedLauncher.input !== 'object'
+      || preparedLauncher.input.runnerHead !== runnerHead || preparedLauncher.input.bindingDigest !== preparedLauncher.bindingDigest) {
+    return Object.freeze({
+      protocol: PROTOCOL,
+      attempted: false,
+      completed: false,
+      exitCode: null,
+      blocker: 'Windows lifecycle authority elevation launcher identity is invalid; ordinary setup preparation must reconcile it before administrator permission is requested.',
+    });
+  }
+
   const childTarget = await childResultTarget(root);
-  await writeFile(childTarget.input, `${JSON.stringify({ home: root, launcher: selectedLauncher, node, runnerHead })}\n`, { flag: 'wx', mode: 0o600 });
-  const brokerCommand = encodedScript(renderedBrokerScript(childTarget.input, runnerHead));
+  await writeFile(childTarget.input, `${JSON.stringify(preparedLauncher.input)}\n`, { flag: 'wx', mode: 0o600 });
 
   let result;
   try {
     result = await invoke({
       executable: POWERSHELL,
       arguments: [...POWERSHELL_ARGS, encodedScript(ELEVATE_SCRIPT)],
-      input: JSON.stringify({ brokerCommand }),
-      timeoutMs: 5 * 60_000,
+      input: JSON.stringify({
+        launcher: preparedLauncher.executable,
+        inputFile: childTarget.input,
+        expectedHead: runnerHead,
+      }),
+      timeoutMs: ELEVATION_TRANSACTION_TIMEOUT_MS,
       maxOutputBytes: 64 * 1024,
       environment,
     });
   } catch {
     await cleanupChildResultTarget(childTarget);
+    await cleanupCompletedChildResultTargets(root);
     return Object.freeze({
       protocol: PROTOCOL,
       attempted: true,
@@ -374,11 +428,6 @@ export async function requestWindowsLifecycleAuthorityElevation({
       blocker: 'Windows lifecycle authority elevation could not be started. Re-run devbridge setup to retry the same protected reconciliation.',
     });
   }
-
-  let brokerResult = null;
-  try { brokerResult = await readBrokerResult(childTarget); }
-  catch {}
-  await cleanupChildResultTarget(childTarget);
 
   if (!invocationSucceeded(result)) {
     return Object.freeze({
@@ -389,6 +438,12 @@ export async function requestWindowsLifecycleAuthorityElevation({
       blocker: 'Windows lifecycle authority elevation did not complete. Re-run devbridge setup to retry the same protected reconciliation.',
     });
   }
+
+  let brokerResult = null;
+  try { brokerResult = await readBrokerResult(childTarget); }
+  catch {}
+  await cleanupChildResultTarget(childTarget);
+  await cleanupCompletedChildResultTargets(root);
 
   let value;
   try { value = JSON.parse(String(result.stdout ?? '').trim()); }

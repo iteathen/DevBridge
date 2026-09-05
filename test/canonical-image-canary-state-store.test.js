@@ -22,8 +22,12 @@ test('canonical image canary journal survives a fresh state-store instance', asy
   };
   try {
     await createCanonicalImageCanaryStateStore(file).save(IDENTITY, record);
-    const restored = await createCanonicalImageCanaryStateStore(file).load(IDENTITY);
+    const resumed = createCanonicalImageCanaryStateStore(file);
+    const restored = await resumed.load(IDENTITY);
     assert.deepEqual(restored, record);
+    assert.deepEqual((await resumed.list()).map((entry) => entry.identity), [IDENTITY]);
+    await resumed.delete(IDENTITY);
+    assert.equal(await resumed.load(IDENTITY), undefined);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

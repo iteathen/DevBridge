@@ -104,6 +104,8 @@ For an exact subject it:
 
 Git acquisition uses a synthetic Git home and credential-free, prompt-free environment. The selected DevBridge control plane is different: it receives the normal host application environment so existing GitHub/configuration credentials continue to work. Git transport authority is therefore not confused with control-plane application authority.
 
+Verification also sets `GIT_OPTIONAL_LOCKS=0`. Read-only HEAD, cleanliness, and committed-artifact checks must not refresh or replace mutable Git control files such as `.git/index` after the exact checkout ownership receipt is recorded.
+
 The checkout provider uses the exact Git commit plus the independently verified `devbridge.mjs` SHA-256 as experimental identity evidence. It is deliberately not the stable production trust policy.
 
 ### Explicit experimental composition
@@ -203,6 +205,8 @@ The entry path fails closed when:
 - the selected permanent entry module is unavailable when explicit recovery was requested;
 - the legacy default entry is unavailable when the default transition route was requested;
 - stable refresh is ambiguous and no policy-authorized stable LKG exists.
+
+A development ref may use its already accepted exact subject when source resolution itself is unavailable. Once source resolution has selected an exact development subject, however, preparation failure cannot substitute the previous subject. Exact-checkout ownership must reconcile that same subject or fail closed; it must never turn a local cache mismatch into a different downstream mutation authority.
 
 Failure of the default transition route must not force the selected recovery route to import or execute the broken default module.
 

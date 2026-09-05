@@ -17,7 +17,7 @@ namespace DevBridge.WindowsLifecycleAuthority
     internal sealed class HostOptions
     {
         private static readonly Regex ServiceNamePattern = new Regex("^DevBridgeLifecycle-[0-9a-f]{32}$", RegexOptions.CultureInvariant);
-        private static readonly Regex PipeNamePattern = new Regex("^devbridge-environment-[0-9a-f]{32}-(read|mutation|acceptance)-v1$", RegexOptions.CultureInvariant);
+        private static readonly Regex PipeNamePattern = new Regex("^devbridge-environment-[0-9a-f]{32}-(read|mutation|acceptance|activity|configuration)-v1$", RegexOptions.CultureInvariant);
 
         internal string ServiceName;
         internal string ProtectedRoot;
@@ -29,6 +29,8 @@ namespace DevBridge.WindowsLifecycleAuthority
         internal string ReadPipe;
         internal string MutationPipe;
         internal string AcceptancePipe;
+        internal string ActivityPipe;
+        internal string ConfigurationPipe;
 
         private static string Required(IDictionary<string, string> values, string name)
         {
@@ -64,7 +66,7 @@ namespace DevBridge.WindowsLifecycleAuthority
             }
             string[] allowed = new string[] {
                 "--service-name", "--protected-root", "--node", "--worker", "--state-directory",
-                "--authority-directory", "--operator-sid", "--read-pipe", "--mutation-pipe", "--acceptance-pipe"
+                "--authority-directory", "--operator-sid", "--read-pipe", "--mutation-pipe", "--acceptance-pipe", "--activity-pipe", "--configuration-pipe"
             };
             if (values.Count != allowed.Length) throw new ArgumentException("host arguments are incomplete");
             foreach (string key in values.Keys)
@@ -83,14 +85,25 @@ namespace DevBridge.WindowsLifecycleAuthority
             options.ReadPipe = Required(values, "--read-pipe");
             options.MutationPipe = Required(values, "--mutation-pipe");
             options.AcceptancePipe = Required(values, "--acceptance-pipe");
+            options.ActivityPipe = Required(values, "--activity-pipe");
+            options.ConfigurationPipe = Required(values, "--configuration-pipe");
 
             if (!ServiceNamePattern.IsMatch(options.ServiceName)) throw new ArgumentException("service name is invalid");
             if (!PipeNamePattern.IsMatch(options.ReadPipe) || !options.ReadPipe.EndsWith("-read-v1", StringComparison.Ordinal)) throw new ArgumentException("read pipe is invalid");
             if (!PipeNamePattern.IsMatch(options.MutationPipe) || !options.MutationPipe.EndsWith("-mutation-v1", StringComparison.Ordinal)) throw new ArgumentException("mutation pipe is invalid");
             if (!PipeNamePattern.IsMatch(options.AcceptancePipe) || !options.AcceptancePipe.EndsWith("-acceptance-v1", StringComparison.Ordinal)) throw new ArgumentException("acceptance pipe is invalid");
+            if (!PipeNamePattern.IsMatch(options.ActivityPipe) || !options.ActivityPipe.EndsWith("-activity-v1", StringComparison.Ordinal)) throw new ArgumentException("activity pipe is invalid");
+            if (!PipeNamePattern.IsMatch(options.ConfigurationPipe) || !options.ConfigurationPipe.EndsWith("-configuration-v1", StringComparison.Ordinal)) throw new ArgumentException("configuration pipe is invalid");
             if (String.Equals(options.ReadPipe, options.MutationPipe, StringComparison.Ordinal) ||
                 String.Equals(options.ReadPipe, options.AcceptancePipe, StringComparison.Ordinal) ||
-                String.Equals(options.MutationPipe, options.AcceptancePipe, StringComparison.Ordinal))
+                String.Equals(options.ReadPipe, options.ActivityPipe, StringComparison.Ordinal) ||
+                String.Equals(options.MutationPipe, options.AcceptancePipe, StringComparison.Ordinal) ||
+                String.Equals(options.MutationPipe, options.ActivityPipe, StringComparison.Ordinal) ||
+                String.Equals(options.AcceptancePipe, options.ActivityPipe, StringComparison.Ordinal) ||
+                String.Equals(options.ReadPipe, options.ConfigurationPipe, StringComparison.Ordinal) ||
+                String.Equals(options.MutationPipe, options.ConfigurationPipe, StringComparison.Ordinal) ||
+                String.Equals(options.AcceptancePipe, options.ConfigurationPipe, StringComparison.Ordinal) ||
+                String.Equals(options.ActivityPipe, options.ConfigurationPipe, StringComparison.Ordinal))
                 throw new ArgumentException("pipe capabilities must be distinct");
             new SecurityIdentifier(options.OperatorSid);
             if (!IsUnder(options.ProtectedRoot, options.NodeExecutable) ||
@@ -192,9 +205,16 @@ namespace DevBridge.WindowsLifecycleAuthority
 
     internal sealed class LifecycleAuthorityService : ServiceBase
     {
-        private const int MaxWireBytes = 17408;
+        private const int LifecycleMaxWireBytes = 17408;
+        private const int ActivityMaxRequestWireBytes = 66560;
+        private const int ActivityMaxResponseWireBytes = 8389632;
         private const int PreRequestTimeoutMs = 5000;
+        private const int ActivityWorkerTimeoutMs = 300000;
         private const int ExclusivePipeServerInstances = 1;
+        private static readonly byte[] ResponseAcknowledgement = Encoding.UTF8.GetBytes("devbridge/local-authority-response-ack-v1\n");
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CancelIoEx(IntPtr handle, IntPtr overlapped);
         private static readonly string[] ScrubbedWorkerEnvironment = new string[] {
             "NODE_OPTIONS",
             "NODE_PATH",
@@ -217,8 +237,24 @@ namespace DevBridge.WindowsLifecycleAuthority
         private Thread readThread;
         private Thread mutationThread;
         private Thread acceptanceThread;
+        private Thread activityThread;
+        private Thread configurationThread;
         private Process activeWorker;
         private WorkerJob activeWorkerJob;
+
+        private sealed class WorkerResponse
+        {
+            internal readonly byte[] Bytes;
+            internal readonly Task<int> ClientMonitor;
+            internal readonly byte[] ClientProbe;
+
+            internal WorkerResponse(byte[] bytes, Task<int> clientMonitor = null, byte[] clientProbe = null)
+            {
+                Bytes = bytes;
+                ClientMonitor = clientMonitor;
+                ClientProbe = clientProbe;
+            }
+        }
 
         internal LifecycleAuthorityService(HostOptions selected)
         {
@@ -235,15 +271,23 @@ namespace DevBridge.WindowsLifecycleAuthority
             readThread = new Thread(delegate() { Serve(options.ReadPipe, "read"); });
             mutationThread = new Thread(delegate() { Serve(options.MutationPipe, "mutation"); });
             acceptanceThread = new Thread(delegate() { Serve(options.AcceptancePipe, "acceptance"); });
+            activityThread = new Thread(delegate() { Serve(options.ActivityPipe, "activity"); });
+            configurationThread = new Thread(delegate() { Serve(options.ConfigurationPipe, "configuration"); });
             readThread.IsBackground = true;
             mutationThread.IsBackground = true;
             acceptanceThread.IsBackground = true;
+            activityThread.IsBackground = true;
+            configurationThread.IsBackground = true;
             readThread.Name = "DevBridge lifecycle read endpoint";
             mutationThread.Name = "DevBridge lifecycle mutation endpoint";
             acceptanceThread.Name = "DevBridge lifecycle acceptance endpoint";
+            activityThread.Name = "DevBridge environment activity endpoint";
+            configurationThread.Name = "DevBridge environment configuration endpoint";
             readThread.Start();
             mutationThread.Start();
             acceptanceThread.Start();
+            activityThread.Start();
+            configurationThread.Start();
         }
 
         protected override void OnStop()
@@ -285,6 +329,8 @@ namespace DevBridge.WindowsLifecycleAuthority
             if (readThread != null && readThread.IsAlive) readThread.Join(5000);
             if (mutationThread != null && mutationThread.IsAlive) mutationThread.Join(5000);
             if (acceptanceThread != null && acceptanceThread.IsAlive) acceptanceThread.Join(5000);
+            if (activityThread != null && activityThread.IsAlive) activityThread.Join(5000);
+            if (configurationThread != null && configurationThread.IsAlive) configurationThread.Join(5000);
         }
 
         private PipeSecurity PipePolicy(string access)
@@ -293,13 +339,15 @@ namespace DevBridge.WindowsLifecycleAuthority
             SecurityIdentifier system = new SecurityIdentifier("S-1-5-18");
             SecurityIdentifier administrators = new SecurityIdentifier("S-1-5-32-544");
             SecurityIdentifier operatorIdentity = new SecurityIdentifier(options.OperatorSid);
+            SecurityIdentifier network = new SecurityIdentifier("S-1-5-2");
             PipeSecurity policy = new PipeSecurity();
             policy.SetAccessRuleProtection(true, false);
             policy.SetOwner(service);
             policy.AddAccessRule(new PipeAccessRule(service, PipeAccessRights.FullControl, AccessControlType.Allow));
             policy.AddAccessRule(new PipeAccessRule(system, PipeAccessRights.FullControl, AccessControlType.Allow));
             policy.AddAccessRule(new PipeAccessRule(administrators, PipeAccessRights.ReadWrite, AccessControlType.Allow));
-            if (String.Equals(access, "read", StringComparison.Ordinal) || String.Equals(access, "acceptance", StringComparison.Ordinal))
+            policy.AddAccessRule(new PipeAccessRule(network, PipeAccessRights.FullControl, AccessControlType.Deny));
+            if (String.Equals(access, "read", StringComparison.Ordinal) || String.Equals(access, "acceptance", StringComparison.Ordinal) || String.Equals(access, "activity", StringComparison.Ordinal) || String.Equals(access, "configuration", StringComparison.Ordinal))
                 policy.AddAccessRule(new PipeAccessRule(operatorIdentity, PipeAccessRights.ReadWrite, AccessControlType.Allow));
             return policy;
         }
@@ -316,7 +364,7 @@ namespace DevBridge.WindowsLifecycleAuthority
                 PipeTransmissionMode.Byte,
                 PipeOptions.Asynchronous,
                 4096,
-                MaxWireBytes,
+                4096,
                 PipePolicy(access));
         }
 
@@ -333,12 +381,26 @@ namespace DevBridge.WindowsLifecycleAuthority
                     if (stopping) return;
                     try
                     {
-                        byte[] request = ReadRequest(pipe);
+                        int requestLimit = String.Equals(access, "activity", StringComparison.Ordinal) ? ActivityMaxRequestWireBytes : LifecycleMaxWireBytes;
+                        int responseLimit = String.Equals(access, "activity", StringComparison.Ordinal) ? ActivityMaxResponseWireBytes : LifecycleMaxWireBytes;
+                        byte[] request = ReadRequest(pipe, requestLimit);
                         if (request == null) continue;
-                        byte[] response = InvokeWorker(access, request);
-                        if (response == null || response.Length == 0 || response.Length > MaxWireBytes) continue;
-                        pipe.Write(response, 0, response.Length);
-                        pipe.Flush();
+                        WorkerResponse response = InvokeWorker(access, request, responseLimit, pipe);
+                        if (response == null || response.Bytes == null || response.Bytes.Length == 0 || response.Bytes.Length > responseLimit) continue;
+                        try
+                        {
+                            pipe.Write(response.Bytes, 0, response.Bytes.Length);
+                            pipe.Flush();
+                            if (!ReadResponseAcknowledgement(pipe, response.ClientMonitor, response.ClientProbe)) continue;
+                        }
+                        catch (IOException)
+                        {
+                            continue;
+                        }
+                        finally
+                        {
+                            CancelPendingPipeRead(pipe, response.ClientMonitor);
+                        }
                     }
                     finally
                     {
@@ -360,14 +422,14 @@ namespace DevBridge.WindowsLifecycleAuthority
             }
         }
 
-        private byte[] ReadRequest(NamedPipeServerStream pipe)
+        private byte[] ReadRequest(NamedPipeServerStream pipe, int maxWireBytes)
         {
             Stopwatch elapsed = Stopwatch.StartNew();
             MemoryStream output = new MemoryStream();
             byte[] buffer = new byte[2048];
             try
             {
-                while (output.Length <= MaxWireBytes)
+                while (output.Length <= maxWireBytes)
                 {
                     int remaining = PreRequestTimeoutMs - (int)elapsed.ElapsedMilliseconds;
                     if (remaining <= 0) throw new System.TimeoutException("lifecycle authority request timed out");
@@ -376,7 +438,7 @@ namespace DevBridge.WindowsLifecycleAuthority
                     int count = read.Result;
                     if (count <= 0) return null;
                     output.Write(buffer, 0, count);
-                    if (output.Length > MaxWireBytes) return null;
+                    if (output.Length > maxWireBytes) return null;
                     byte[] current = output.ToArray();
                     int newline = Array.IndexOf(current, (byte)'\n');
                     if (newline < 0) continue;
@@ -392,6 +454,60 @@ namespace DevBridge.WindowsLifecycleAuthority
                 return null;
             }
             finally { output.Dispose(); }
+        }
+
+        private static void CancelPendingPipeRead(NamedPipeServerStream pipe, Task<int> pending)
+        {
+            if (pending == null || pending.IsCompleted) return;
+            CancelIoEx(pipe.SafePipeHandle.DangerousGetHandle(), IntPtr.Zero);
+            try { pending.Wait(1000); } catch (AggregateException) { }
+        }
+
+        private bool ReadResponseAcknowledgement(NamedPipeServerStream pipe, Task<int> initialRead, byte[] initialBuffer)
+        {
+            if ((initialRead == null) != (initialBuffer == null)) return false;
+            if (initialBuffer != null && initialBuffer.Length != 1) return false;
+            Stopwatch elapsed = Stopwatch.StartNew();
+            MemoryStream output = new MemoryStream();
+            Task<int> pending = initialRead;
+            byte[] buffer = initialBuffer;
+            try
+            {
+                while (output.Length <= ResponseAcknowledgement.Length)
+                {
+                    int remaining = PreRequestTimeoutMs - (int)elapsed.ElapsedMilliseconds;
+                    if (remaining <= 0) return false;
+                    if (pending == null)
+                    {
+                        buffer = new byte[ResponseAcknowledgement.Length + 1];
+                        pending = pipe.ReadAsync(buffer, 0, buffer.Length);
+                    }
+                    int count;
+                    try
+                    {
+                        if (!pending.Wait(remaining)) return false;
+                        count = pending.Result;
+                    }
+                    catch (AggregateException)
+                    {
+                        return false;
+                    }
+                    pending = null;
+                    if (count <= 0) return false;
+                    output.Write(buffer, 0, count);
+                    if (output.Length > ResponseAcknowledgement.Length) return false;
+                    byte[] current = output.ToArray();
+                    for (int index = 0; index < current.Length; index += 1)
+                        if (current[index] != ResponseAcknowledgement[index]) return false;
+                    if (current.Length == ResponseAcknowledgement.Length) return true;
+                }
+                return false;
+            }
+            finally
+            {
+                CancelPendingPipeRead(pipe, pending);
+                output.Dispose();
+            }
         }
 
         private static string QuoteArgument(string value)
@@ -425,7 +541,82 @@ namespace DevBridge.WindowsLifecycleAuthority
             return result.ToString();
         }
 
-        private byte[] InvokeWorker(string access, byte[] request)
+        private static byte[] ExactWorkerResponse(byte[] response)
+        {
+            int newline = Array.IndexOf(response, (byte)'\n');
+            if (newline < 0) return null;
+            for (int index = newline + 1; index < response.Length; index += 1)
+            {
+                byte value = response[index];
+                if (value != (byte)' ' && value != (byte)'\t' && value != (byte)'\r' && value != (byte)'\n') return null;
+            }
+            byte[] exact = new byte[newline + 1];
+            Buffer.BlockCopy(response, 0, exact, 0, exact.Length);
+            return exact;
+        }
+
+        private static byte[] ReadWorkerResponse(Process worker, int maxResponseBytes)
+        {
+            using (MemoryStream stdout = new MemoryStream())
+            {
+                byte[] buffer = new byte[2048];
+                while (true)
+                {
+                    int count = worker.StandardOutput.BaseStream.Read(buffer, 0, buffer.Length);
+                    if (count <= 0) break;
+                    stdout.Write(buffer, 0, count);
+                    if (stdout.Length > maxResponseBytes) return null;
+                }
+                worker.WaitForExit();
+                if (worker.ExitCode != 0) return null;
+                return ExactWorkerResponse(stdout.ToArray());
+            }
+        }
+
+        private static WorkerResponse ReadActivityWorkerResponse(Process worker, NamedPipeServerStream clientPipe, int maxResponseBytes)
+        {
+            Stopwatch elapsed = Stopwatch.StartNew();
+            byte[] clientProbe = new byte[1];
+            Task<int> clientMonitor = clientPipe.ReadAsync(clientProbe, 0, clientProbe.Length);
+            bool monitorTransferred = false;
+            try
+            {
+                using (MemoryStream stdout = new MemoryStream())
+                {
+                    byte[] buffer = new byte[2048];
+                    while (true)
+                    {
+                        int remaining = ActivityWorkerTimeoutMs - (int)elapsed.ElapsedMilliseconds;
+                        if (remaining <= 0) return null;
+                        Task<int> read = worker.StandardOutput.BaseStream.ReadAsync(buffer, 0, buffer.Length);
+                        int completed = Task.WaitAny(new Task[] { read, clientMonitor }, remaining);
+                        if (completed < 0 || completed == 1) return null;
+                        int count = read.Result;
+                        if (count <= 0) break;
+                        stdout.Write(buffer, 0, count);
+                        if (stdout.Length > maxResponseBytes) return null;
+                    }
+                    int exitRemaining = ActivityWorkerTimeoutMs - (int)elapsed.ElapsedMilliseconds;
+                    if (exitRemaining <= 0 || clientMonitor.IsCompleted || !worker.WaitForExit(exitRemaining) || clientMonitor.IsCompleted) return null;
+                    if (worker.ExitCode != 0) return null;
+                    byte[] response = ExactWorkerResponse(stdout.ToArray());
+                    if (response == null) return null;
+                    WorkerResponse result = new WorkerResponse(response, clientMonitor, clientProbe);
+                    monitorTransferred = true;
+                    return result;
+                }
+            }
+            finally
+            {
+                if (!monitorTransferred)
+                {
+                    CancelPendingPipeRead(clientPipe, clientMonitor);
+                    if (!clientMonitor.IsCompleted) throw new InvalidOperationException("activity client monitor did not stop");
+                }
+            }
+        }
+
+        private WorkerResponse InvokeWorker(string access, byte[] request, int maxResponseBytes, NamedPipeServerStream clientPipe)
         {
             workerGate.Wait();
             try
@@ -471,33 +662,10 @@ namespace DevBridge.WindowsLifecycleAuthority
                     worker.StandardInput.BaseStream.Flush();
                     worker.StandardInput.Close();
 
-                    MemoryStream stdout = new MemoryStream();
-                    byte[] buffer = new byte[2048];
-                    while (true)
-                    {
-                        int count = worker.StandardOutput.BaseStream.Read(buffer, 0, buffer.Length);
-                        if (count <= 0) break;
-                        stdout.Write(buffer, 0, count);
-                        if (stdout.Length > MaxWireBytes)
-                        {
-                            job.Dispose();
-                            return null;
-                        }
-                    }
-                    worker.WaitForExit();
-                    if (worker.ExitCode != 0) return null;
-                    byte[] response = stdout.ToArray();
-                    stdout.Dispose();
-                    int newline = Array.IndexOf(response, (byte)'\n');
-                    if (newline < 0) return null;
-                    for (int index = newline + 1; index < response.Length; index += 1)
-                    {
-                        byte value = response[index];
-                        if (value != (byte)' ' && value != (byte)'\t' && value != (byte)'\r' && value != (byte)'\n') return null;
-                    }
-                    byte[] exact = new byte[newline + 1];
-                    Buffer.BlockCopy(response, 0, exact, 0, exact.Length);
-                    return exact;
+                    if (String.Equals(access, "activity", StringComparison.Ordinal))
+                        return ReadActivityWorkerResponse(worker, clientPipe, maxResponseBytes);
+                    byte[] response = ReadWorkerResponse(worker, maxResponseBytes);
+                    return response == null ? null : new WorkerResponse(response);
                 }
                 finally
                 {

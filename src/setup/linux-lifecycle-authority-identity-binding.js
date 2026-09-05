@@ -6,8 +6,9 @@ import {
   normalizeLinuxLifecycleAuthorityOwnershipRecord,
 } from './linux-lifecycle-authority-records.js';
 
-const PROTOCOL = 'devbridge/linux-lifecycle-authority-identity-binding-v1';
+const PROTOCOL = 'devbridge/linux-lifecycle-authority-identity-binding-v2';
 const LOCAL_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,30}$/u;
+const MAX_LOCAL_ID = 0xffff_fffe;
 
 function exactKeys(value, allowed, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} is invalid`);
@@ -17,6 +18,11 @@ function exactKeys(value, allowed, name) {
 
 function localName(value, name) {
   if (typeof value !== 'string' || !LOCAL_NAME.test(value)) throw new TypeError(`${name} is invalid`);
+  return value;
+}
+
+function numeric(value, name) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_LOCAL_ID) throw new TypeError(`${name} is invalid`);
   return value;
 }
 
@@ -37,13 +43,16 @@ function exactPlan(value) {
     operatorAccount: localName(value.service.operator, 'Linux lifecycle authority operator account'),
     readGroup: localName(value.service.readGroup, 'Linux lifecycle authority read group'),
     coordinationGroup: localName(value.service.coordinationGroup, 'Linux lifecycle authority coordination group'),
-    managementGroup: localName(value.service.managementGroup, 'Linux lifecycle authority management group'),
+    requiredGroup: Object.freeze({
+      name: localName(value.service.managementGroup, 'Linux lifecycle authority management group'),
+      id: numeric(value.service.managementGroupId, 'Linux lifecycle authority management group id'),
+    }),
     home: absoluteLinuxPath(value.service.account.home, 'Linux lifecycle authority service home'),
     shell: absoluteLinuxPath(value.service.account.shell, 'Linux lifecycle authority service shell'),
   });
   if (value.service.account.system !== true
       || selected.serviceAccount === selected.operatorAccount
-      || new Set([selected.readGroup, selected.coordinationGroup, selected.managementGroup]).size !== 3) {
+      || new Set([selected.readGroup, selected.coordinationGroup, selected.requiredGroup.name]).size !== 3) {
     throw new TypeError('Linux lifecycle authority identity plan aliases or widens local identity');
   }
   return Object.freeze({ plan: value, selected });
@@ -104,11 +113,23 @@ export async function bindLinuxLifecycleAuthorityIdentity(value = {}, providedPo
   const loaded = await ports.state.load();
   if (loaded == null) throw new Error('Linux lifecycle authority identity binding requires an established ownership claim');
   const current = normalizeLinuxLifecycleAuthorityOwnershipRecord(loaded, plan);
+  if (current.localIdentity != null && current.localIdentity.managementGid !== selected.requiredGroup.id) {
+    throw new Error('Linux lifecycle authority required group changed its immutable binding');
+  }
   const evidence = reconciliationEvidence(await ports.reconcile(Object.freeze({
-    ...selected,
+    serviceAccount: selected.serviceAccount,
+    operatorAccount: selected.operatorAccount,
+    readGroup: selected.readGroup,
+    coordinationGroup: selected.coordinationGroup,
+    requiredGroup: selected.requiredGroup,
+    home: selected.home,
+    shell: selected.shell,
     claimEstablished: true,
     expectedIdentity: current.localIdentity,
   })));
+  if (evidence.identity.managementGid !== selected.requiredGroup.id) {
+    throw new Error('Linux lifecycle authority reconciliation returned a different required group');
+  }
   if (current.localIdentity != null) {
     if (!sameIdentity(current.localIdentity, evidence.identity)) {
       throw new Error('Linux lifecycle authority reconciled identity changed its immutable binding');

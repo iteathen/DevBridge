@@ -12,7 +12,7 @@ const NAMES = Object.freeze({
   operatorAccount: 'alice',
   readGroup: 'db-read-123456789abc',
   coordinationGroup: 'db-coord-123456789abc',
-  managementGroup: 'provider-control',
+  requiredGroup: Object.freeze({ name: 'provider-control', id: 992 }),
   home: '/nonexistent',
   shell: '/usr/sbin/nologin',
 });
@@ -22,12 +22,15 @@ function fixture({ exact = false, extraServiceGroup = false, operatorManagement 
     NAMES.operatorAccount,
     { name: NAMES.operatorAccount, uid: 1000, gid: 1000, home: '/home/alice', shell: '/bin/bash', groupIds: [1000] },
   ]]);
-  const groups = new Map();
+  const groups = new Map([[
+    NAMES.requiredGroup.name,
+    { name: NAMES.requiredGroup.name, gid: NAMES.requiredGroup.id, members: [] },
+  ]]);
   const calls = [];
   const gids = new Map([
     [NAMES.readGroup, 994],
     [NAMES.coordinationGroup, 993],
-    [NAMES.managementGroup, 992],
+    [NAMES.requiredGroup.name, NAMES.requiredGroup.id],
   ]);
   const installExact = () => {
     for (const [name, gid] of gids) groups.set(name, { name, gid, members: [] });
@@ -37,10 +40,10 @@ function fixture({ exact = false, extraServiceGroup = false, operatorManagement 
       gid: gids.get(NAMES.readGroup),
       home: NAMES.home,
       shell: NAMES.shell,
-      groupIds: [gids.get(NAMES.readGroup), gids.get(NAMES.coordinationGroup), gids.get(NAMES.managementGroup), ...(extraServiceGroup ? [991] : [])].sort((left, right) => left - right),
+      groupIds: [gids.get(NAMES.readGroup), gids.get(NAMES.coordinationGroup), gids.get(NAMES.requiredGroup.name), ...(extraServiceGroup ? [991] : [])].sort((left, right) => left - right),
     });
     accounts.get(NAMES.operatorAccount).groupIds.push(gids.get(NAMES.readGroup), gids.get(NAMES.coordinationGroup));
-    if (operatorManagement) accounts.get(NAMES.operatorAccount).groupIds.push(gids.get(NAMES.managementGroup));
+    if (operatorManagement) accounts.get(NAMES.operatorAccount).groupIds.push(gids.get(NAMES.requiredGroup.name));
     accounts.get(NAMES.operatorAccount).groupIds.sort((left, right) => left - right);
   };
   if (exact || extraServiceGroup || operatorManagement) installExact();
@@ -76,10 +79,10 @@ function fixture({ exact = false, extraServiceGroup = false, operatorManagement 
         gid: gids.get(NAMES.readGroup),
         home: NAMES.home,
         shell: NAMES.shell,
-        groupIds: [gids.get(NAMES.readGroup), gids.get(NAMES.coordinationGroup), gids.get(NAMES.managementGroup)].sort((left, right) => left - right),
+        groupIds: [gids.get(NAMES.readGroup), gids.get(NAMES.coordinationGroup), gids.get(NAMES.requiredGroup.name)].sort((left, right) => left - right),
       });
     } else if (request.executable === '/usr/sbin/usermod' && args.at(-1) === NAMES.serviceAccount) {
-      accounts.get(NAMES.serviceAccount).groupIds = [gids.get(NAMES.readGroup), gids.get(NAMES.coordinationGroup), gids.get(NAMES.managementGroup)].sort((left, right) => left - right);
+      accounts.get(NAMES.serviceAccount).groupIds = [gids.get(NAMES.readGroup), gids.get(NAMES.coordinationGroup), gids.get(NAMES.requiredGroup.name)].sort((left, right) => left - right);
     } else if (request.executable === '/usr/sbin/usermod' && args.at(-1) === NAMES.operatorAccount) {
       const operator = accounts.get(NAMES.operatorAccount);
       operator.groupIds = [...new Set([...operator.groupIds, gids.get(NAMES.readGroup), gids.get(NAMES.coordinationGroup)])].sort((left, right) => left - right);
@@ -108,9 +111,8 @@ test('fresh protected claim creates exact local identities and appends only ordi
   assert.deepEqual(values.calls.map((call) => [call.executable, call.arguments]), [
     ['/usr/sbin/groupadd', ['--system', '--', NAMES.readGroup]],
     ['/usr/sbin/groupadd', ['--system', '--', NAMES.coordinationGroup]],
-    ['/usr/sbin/groupadd', ['--system', '--', NAMES.managementGroup]],
-    ['/usr/sbin/useradd', ['--system', '--gid', NAMES.readGroup, '--groups', `${NAMES.coordinationGroup},${NAMES.managementGroup}`, '--home-dir', NAMES.home, '--shell', NAMES.shell, '--no-create-home', '--no-user-group', '--', NAMES.serviceAccount]],
-    ['/usr/sbin/usermod', ['--append', '--groups', `${NAMES.readGroup},${NAMES.coordinationGroup}`, '--', NAMES.operatorAccount]],
+    ['/usr/sbin/useradd', ['--system', '--gid', '994', '--groups', '993,992', '--home-dir', NAMES.home, '--shell', NAMES.shell, '--no-create-home', '--no-user-group', '--', NAMES.serviceAccount]],
+    ['/usr/sbin/usermod', ['--append', '--groups', '994,993', '--', NAMES.operatorAccount]],
   ]);
   assert.equal(values.calls.every((call) => call.input === null && call.environment != null), true);
 });
@@ -140,6 +142,52 @@ test('numeric identity drift and ordinary management membership fail before muta
   const widened = fixture({ operatorManagement: true });
   await assert.rejects(() => reconcile(widened), /operator already has management authority/u);
   assert.deepEqual(widened.calls, []);
+});
+
+test('missing or rebound required group blocks before owned identity mutation', async () => {
+  const missing = fixture();
+  missing.groups.delete(NAMES.requiredGroup.name);
+  await assert.rejects(() => reconcile(missing), /required group is unavailable/u);
+  assert.deepEqual(missing.calls, []);
+
+  const rebound = fixture();
+  rebound.groups.get(NAMES.requiredGroup.name).gid += 1;
+  await assert.rejects(() => reconcile(rebound), /required group binding changed/u);
+  assert.deepEqual(rebound.calls, []);
+
+  const oversized = fixture();
+  await assert.rejects(() => reconcile(oversized, {
+    requiredGroup: Object.freeze({ name: NAMES.requiredGroup.name, id: 0xffff_ffff }),
+  }), /required group id is invalid/u);
+  assert.deepEqual(oversized.calls, []);
+});
+
+test('required group is rechecked after every owned identity effect', async () => {
+  const values = fixture();
+  let observations = 0;
+  const observe = async (request) => {
+    const result = await values.observe(request);
+    observations += 1;
+    if (observations === 2) {
+      return Object.freeze({
+        ...result,
+        groups: Object.freeze(result.groups.map((entry) => entry.name === NAMES.requiredGroup.name
+          ? Object.freeze({ ...entry, record: Object.freeze({ ...entry.record, gid: entry.record.gid + 1 }) })
+          : entry)),
+      });
+    }
+    return result;
+  };
+  await assert.rejects(() => reconcileLinuxLocalIdentityContract({
+    ...NAMES,
+    claimEstablished: true,
+    platform: 'linux',
+    invoke: values.invoke,
+    environment: {},
+  }, { observe }), /required group binding changed/u);
+  assert.deepEqual(values.calls.map((call) => [call.executable, call.arguments]), [
+    ['/usr/sbin/groupadd', ['--system', '--', NAMES.readGroup]],
+  ]);
 });
 
 test('identity mutation requires an established protected claim and stays isolated from neighboring owners', async () => {

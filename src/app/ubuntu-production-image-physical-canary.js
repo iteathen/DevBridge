@@ -1,6 +1,4 @@
-import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { lstat, mkdir, open, readFile, rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { createGuestImagePayload } from '../guest/image-payload.js';
 import { createCanonicalImageCanary } from '../runtime/image-builders/canonical-image-canary.js';
@@ -33,10 +31,16 @@ import { createCanonicalImageCanaryStateStore } from '../state/canonical-image-c
 import { createUbuntuConstructionAuthorityStateStore } from '../state/ubuntu-construction-authority-state-store.js';
 import { createSubjectPreparationAdapter } from './subject-preparation-adapter.js';
 import { createEnvironmentFoundation } from './environment-foundation.js';
+import { createCompletionReconciliation } from './ubuntu-production-image-physical-canary/completion-reconciliation.js';
+import { createConfigurationContract } from './ubuntu-production-image-physical-canary/configuration-contract.js';
+import { createMutationLease } from './ubuntu-production-image-physical-canary/mutation-lease.js';
+import { createPreparationContract } from './ubuntu-production-image-physical-canary/preparation-contract.js';
+import { createProgressCoordinator } from './ubuntu-production-image-physical-canary/progress-coordinator.js';
 
 const CONFIG_PROTOCOL = 'devbridge/ubuntu-production-image-physical-canary-config-v1';
 const STATUS_PROTOCOL = 'devbridge/ubuntu-production-image-physical-canary-status-v1';
 const PREPARATION_PROTOCOL = 'devbridge/ubuntu-production-image-physical-preparation-v2';
+const MUTATION_LEASE_PROTOCOL = 'devbridge/local-mutation-lease-v1';
 const SOURCE_HOSTS = Object.freeze(['releases.ubuntu.com', 'cdimage.ubuntu.com']);
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
@@ -51,162 +55,68 @@ const ACCESS_EXPECTED_MILLISECONDS = 2 * 60 * 1000;
 const ACCESS_DEADLINE_MILLISECONDS = 10 * 60 * 1000;
 const ACCESS_RECHECK_MILLISECONDS = 30 * 1000;
 
-function onlyKeys(value, allowed, name) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
-  for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`${name}.${key} is not allowed`);
-  return value;
-}
+const configurationContract = createConfigurationContract({
+  protocol: CONFIG_PROTOCOL,
+  selectionField: 'authority',
+  normalizeSelection: normalizeUbuntuConstructionAuthority,
+  limits: Object.freeze({
+    minimumMemoryBytes: MIN_MEMORY_BYTES,
+    maximumMemoryBytes: MAX_MEMORY_BYTES,
+    minimumDiskBytes: MIN_DISK_BYTES,
+    maximumDiskBytes: MAX_DISK_BYTES,
+    maximumProcessors: MAX_PROCESSORS,
+  }),
+  layout: Object.freeze({
+    root: 'production-image-canary',
+    lease: 'run.lock',
+    selection: 'authority.json',
+    progress: 'journal.json',
+    preparation: 'preparation.json',
+    sourceRoot: 'source',
+    cache: 'release-cache',
+    source: 'release',
+    prepared: 'prepared',
+    operation: 'construction',
+    output: 'output',
+    access: 'access',
+    foundation: 'environment-foundation',
+  }),
+});
+const preparationContract = createPreparationContract({
+  protocol: PREPARATION_PROTOCOL,
+  seedProtocol: 'devbridge/linux-access-seed-v1',
+  accessFamily: 'linux',
+  sha256Pattern: SHA256,
+  snapshotPattern: SNAPSHOT,
+  maximumSeedBytes: MAX_ACCESS_SEED_BYTES,
+  messages: Object.freeze({
+    identityFile: 'physical preparation SSH identity',
+    identityChanged: 'physical preparation SSH identity changed',
+  }),
+});
+const mutationLease = createMutationLease({
+  protocol: MUTATION_LEASE_PROTOCOL,
+  conflictMessage: 'physical canary mutation is already active; remove run.lock only after confirming no operation is running',
+});
+const completionReconciliation = createCompletionReconciliation();
 
-function absolutePath(value, name) {
-  if (typeof value !== 'string' || value.length === 0 || value.includes('\0') || !path.isAbsolute(value)) throw new TypeError(`${name} must be an absolute local path`);
-  return path.resolve(value);
-}
-
-function boundedInteger(value, minimum, maximum, name) {
-  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new TypeError(`${name} is invalid`);
-  return value;
-}
-
-function normalizeConfig(raw) {
-  const value = onlyKeys(raw, new Set(['protocol', 'stateDirectory', 'keyring', 'authority', 'resources']), 'physical canary config');
-  if (value.protocol !== CONFIG_PROTOCOL) throw new TypeError('physical canary config protocol is unsupported');
-  const resources = onlyKeys(value.resources, new Set(['memoryBytes', 'processorCount', 'diskBytes']), 'physical canary resources');
+function pathsFor(config, identity) {
+  const selected = configurationContract.derivePaths(config, identity);
   return Object.freeze({
-    protocol: CONFIG_PROTOCOL,
-    stateDirectory: absolutePath(value.stateDirectory, 'physical canary stateDirectory'),
-    keyring: absolutePath(value.keyring, 'physical canary keyring'),
-    authority: normalizeUbuntuConstructionAuthority(value.authority),
-    resources: Object.freeze({
-      memoryBytes: boundedInteger(resources.memoryBytes, MIN_MEMORY_BYTES, MAX_MEMORY_BYTES, 'physical canary resources.memoryBytes'),
-      processorCount: boundedInteger(resources.processorCount, 1, MAX_PROCESSORS, 'physical canary resources.processorCount'),
-      diskBytes: boundedInteger(resources.diskBytes, MIN_DISK_BYTES, MAX_DISK_BYTES, 'physical canary resources.diskBytes'),
-    }),
-  });
-}
-
-function pathsFor(config, subject) {
-  const root = path.join(config.stateDirectory, 'production-image-canary');
-  const sourceRoot = path.join(root, 'source');
-  const subjectRoot = path.join(sourceRoot, subject);
-  return Object.freeze({
-    root,
-    runLock: path.join(root, 'run.lock'),
-    authorityFile: path.join(root, 'authority.json'),
-    journalFile: path.join(root, 'journal.json'),
-    preparationFile: path.join(root, 'preparation.json'),
-    sourceRoot,
-    subjectRoot,
-    releaseCacheDirectory: path.join(root, 'release-cache'),
-    releaseDirectory: path.join(subjectRoot, 'release'),
-    preparedDirectory: path.join(subjectRoot, 'prepared'),
-    constructionDirectory: path.join(root, 'construction'),
-    outputRoot: path.join(root, 'output'),
-    accessRoot: path.join(root, 'access'),
-    foundationRoot: path.join(config.stateDirectory, 'environment-foundation'),
-  });
-}
-
-async function sha256File(location) {
-  const hash = createHash('sha256');
-  let bytes = 0;
-  await new Promise((resolve, reject) => {
-    const stream = createReadStream(location);
-    stream.on('data', (chunk) => { bytes += chunk.length; hash.update(chunk); });
-    stream.on('error', reject);
-    stream.on('end', resolve);
-  });
-  return Object.freeze({ bytes, sha256: hash.digest('hex') });
-}
-
-async function exactRegularFile(location, expected, name) {
-  const info = await lstat(location);
-  if (!info.isFile() || info.isSymbolicLink()) throw new Error(`${name} must be a real regular file`);
-  const measured = await sha256File(location);
-  if (expected?.bytes != null && measured.bytes !== expected.bytes) throw new Error(`${name} byte count changed`);
-  if (expected?.sha256 != null && measured.sha256 !== expected.sha256) throw new Error(`${name} digest changed`);
-  return measured;
-}
-
-function safeString(value, name, maxBytes = 4096) {
-  if (typeof value !== 'string' || value.length === 0 || value.includes('\0') || Buffer.byteLength(value, 'utf8') > maxBytes) throw new TypeError(`${name} is invalid`);
-  return value;
-}
-
-function receiptMedia(raw, name) {
-  const value = onlyKeys(raw, new Set(['location', 'bytes', 'sha256']), name);
-  if (!Number.isSafeInteger(value.bytes) || value.bytes < 1) throw new TypeError(`${name}.bytes is invalid`);
-  if (typeof value.sha256 !== 'string' || !SHA256.test(value.sha256)) throw new TypeError(`${name}.sha256 is invalid`);
-  return Object.freeze({ location: absolutePath(value.location, `${name}.location`), bytes: value.bytes, sha256: value.sha256 });
-}
-
-function receiptNetwork(raw) {
-  const value = onlyKeys(raw, new Set(['control', 'reference', 'proof', 'addressing']), 'physical preparation network');
-  if (!['owned', 'system'].includes(value.control)) throw new TypeError('physical preparation network.control is invalid');
-  if (value.addressing !== 'automatic') throw new TypeError('physical preparation network.addressing is invalid');
-  return Object.freeze({
-    control: value.control,
-    reference: safeString(value.reference, 'physical preparation network.reference', 160),
-    proof: safeString(value.proof, 'physical preparation network.proof', 2048),
-    addressing: value.addressing,
-  });
-}
-
-function receiptAccess(raw) {
-  const value = onlyKeys(raw, new Set(['family', 'user', 'identityFile', 'knownHostsFile', 'identitySha256', 'knownHostsSha256']), 'physical preparation access');
-  if (value.family !== 'linux') throw new TypeError('physical preparation access family is invalid');
-  if (typeof value.identitySha256 !== 'string' || !SHA256.test(value.identitySha256) || typeof value.knownHostsSha256 !== 'string' || !SHA256.test(value.knownHostsSha256)) throw new TypeError('physical preparation access digest is invalid');
-  return Object.freeze({
-    family: 'linux',
-    user: safeString(value.user, 'physical preparation access.user', 128),
-    identityFile: absolutePath(value.identityFile, 'physical preparation access.identityFile'),
-    knownHostsFile: absolutePath(value.knownHostsFile, 'physical preparation access.knownHostsFile'),
-    identitySha256: value.identitySha256,
-    knownHostsSha256: value.knownHostsSha256,
-  });
-}
-
-function normalizePreparation(raw, config, subject) {
-  const value = onlyKeys(raw, new Set(['protocol', 'identity', 'payloadGeneration', 'packageGeneration', 'packageSnapshot', 'resources', 'network', 'installer', 'seed', 'access']), 'physical preparation');
-  if (value.protocol !== PREPARATION_PROTOCOL || value.identity !== subject) throw new Error('physical preparation identity changed');
-  if (value.payloadGeneration !== config.authority.payload.generation || value.packageGeneration !== config.authority.packages.generation) throw new Error('physical preparation generation changed');
-  if (typeof value.packageSnapshot !== 'string' || !SNAPSHOT.test(value.packageSnapshot) || value.packageSnapshot !== config.authority.packages.snapshot) throw new Error('physical preparation package snapshot changed');
-  const resources = onlyKeys(value.resources, new Set(['memoryBytes', 'processorCount', 'diskBytes']), 'physical preparation resources');
-  if (resources.memoryBytes !== config.resources.memoryBytes || resources.processorCount !== config.resources.processorCount || resources.diskBytes !== config.resources.diskBytes) throw new Error('physical preparation resource policy changed');
-  return Object.freeze({
-    protocol: PREPARATION_PROTOCOL,
-    identity: subject,
-    payloadGeneration: value.payloadGeneration,
-    packageGeneration: value.packageGeneration,
-    packageSnapshot: value.packageSnapshot,
-    resources: config.resources,
-    network: receiptNetwork(value.network),
-    installer: receiptMedia(value.installer, 'physical preparation installer'),
-    seed: receiptMedia(value.seed, 'physical preparation seed'),
-    access: receiptAccess(value.access),
-  });
-}
-
-async function verifyPreparation(receipt) {
-  await exactRegularFile(receipt.installer.location, receipt.installer, 'physical preparation installer');
-  await exactRegularFile(receipt.seed.location, receipt.seed, 'physical preparation seed');
-  const identity = await exactRegularFile(receipt.access.identityFile, null, 'physical preparation SSH identity');
-  const knownHosts = await exactRegularFile(receipt.access.knownHostsFile, null, 'physical preparation known-hosts');
-  if (identity.sha256 !== receipt.access.identitySha256) throw new Error('physical preparation SSH identity changed');
-  if (knownHosts.sha256 !== receipt.access.knownHostsSha256) throw new Error('physical preparation known-hosts changed');
-  return receipt;
-}
-
-async function accessSeed(location, subject) {
-  const info = await lstat(location);
-  if (!info.isFile() || info.isSymbolicLink() || info.size < 1 || info.size > MAX_ACCESS_SEED_BYTES) throw new Error('physical preparation access seed is invalid');
-  const value = JSON.parse(await readFile(location, 'utf8'));
-  onlyKeys(value, new Set(['protocol', 'target', 'user', 'authorizedKey', 'hostPrivateKey', 'hostPublicKey', 'revision']), 'physical preparation access seed');
-  if (value.protocol !== 'devbridge/linux-access-seed-v1' || value.target !== subject || value.revision !== 1) throw new Error('physical preparation access seed identity changed');
-  return Object.freeze({
-    user: safeString(value.user, 'physical preparation access seed user', 128),
-    authorizedKey: safeString(value.authorizedKey, 'physical preparation authorized key', 1024),
-    hostPrivateKey: safeString(value.hostPrivateKey, 'physical preparation host private key', 64 * 1024),
-    hostPublicKey: safeString(value.hostPublicKey, 'physical preparation host public key', 1024),
+    root: selected.root,
+    runLock: selected.lease,
+    authorityFile: selected.selection,
+    journalFile: selected.progress,
+    preparationFile: selected.preparation,
+    sourceRoot: selected.sourceRoot,
+    subjectRoot: selected.subjectRoot,
+    releaseCacheDirectory: selected.cache,
+    releaseDirectory: selected.source,
+    preparedDirectory: selected.prepared,
+    constructionDirectory: selected.operation,
+    outputRoot: selected.output,
+    accessRoot: selected.access,
+    foundationRoot: selected.foundation,
   });
 }
 
@@ -216,6 +126,8 @@ function neutralPayload(payload) {
 
 function requestFor(config, subject, payload) {
   if (payload.generation !== config.authority.payload.generation) throw new Error('current guest payload generation does not match construction authority');
+  const services = config.authority.qualification.services;
+  const capabilities = config.authority.qualification.capabilities;
   return Object.freeze({
     identity: subject,
     work: Object.freeze({ subject }),
@@ -226,6 +138,8 @@ function requestFor(config, subject, payload) {
       packageSnapshot: config.authority.packages.snapshot,
       packages: Object.freeze(config.authority.packages.packages.map((entry) => Object.freeze({ ...entry }))),
       commands: Object.freeze([...config.authority.qualification.commands]),
+      ...(services === undefined ? {} : { services: Object.freeze([...services]) }),
+      ...(capabilities === undefined ? {} : { capabilities: Object.freeze([...capabilities]) }),
     }),
     output: Object.freeze({
       profile: config.authority.output.profile,
@@ -269,38 +183,18 @@ function publicResult(subject, canary, { state = null, reason = null, preflight 
   });
 }
 
-async function withRunLock(lockPath, work) {
-  await mkdir(path.dirname(lockPath), { recursive: true, mode: 0o700 });
-  let handle;
-  try { handle = await open(lockPath, 'wx', 0o600); }
-  catch (error) {
-    if (error?.code === 'EEXIST') throw new Error('physical canary mutation is already active; remove run.lock only after confirming no operation is running');
-    throw error;
-  }
-  try {
-    await handle.writeFile(`${process.pid}\n`, 'utf8');
-    await handle.sync();
-    return await work();
-  } finally {
-    await handle.close().catch(() => {});
-    await rm(lockPath, { force: true }).catch(() => {});
-  }
-}
-
 async function cleanupCompletedState({ paths, subject, invoke }) {
-  const reasons = [];
   const addressOwner = new HyperVEnvironmentBootstrap({
     directory: path.join(paths.foundationRoot, 'bootstrap', 'attachment'),
     invoke,
     locate: async () => { throw new Error('completed cleanup must not locate a provider subject'); },
     connection: async () => { throw new Error('completed cleanup must not resolve guest access'); },
   });
-  try { await addressOwner.releaseAddress(subject); }
-  catch (error) { reasons.push(`network reservation cleanup failed: ${error.message}`); }
   const accessMaterial = createSshAccessMaterial({ directory: paths.accessRoot, invoke });
-  try { await accessMaterial.discard(subject); }
-  catch (error) { reasons.push(`SSH access cleanup failed: ${error.message}`); }
-  return reasons.length === 0 ? null : reasons.join('; ');
+  return completionReconciliation.run([
+    Object.freeze({ perform: () => addressOwner.releaseAddress(subject), failure: 'network reservation cleanup failed' }),
+    Object.freeze({ perform: () => accessMaterial.discard(subject), failure: 'SSH access cleanup failed' }),
+  ]);
 }
 
 async function createPhysicalRuntime({ config, subject, payload, paths, invoke, fetchImpl, catalog, preparationStore, signatureVerifierExecutable }) {
@@ -329,7 +223,14 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
   const loadReceipt = async () => {
     const raw = await preparationStore.get(subject);
     if (raw == null) return null;
-    return verifyPreparation(normalizePreparation(raw, config, subject));
+    const receipt = preparationContract.normalize(raw, Object.freeze({
+      identity: subject,
+      payloadGeneration: config.authority.payload.generation,
+      packageGeneration: config.authority.packages.generation,
+      packageSnapshot: config.authority.packages.snapshot,
+      resources: config.resources,
+    }));
+    return preparationContract.verify(receipt);
   };
 
   const ensureNetworkReceipt = async (receipt) => {
@@ -368,6 +269,8 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
       const seedFactory = createUbuntuProductionSeedFactory({
         payloadSet: async () => neutralPayload(payload),
         packageSet: async () => authority.packages,
+        services: authority.qualification.services ?? [],
+        capabilities: authority.qualification.capabilities ?? [],
       });
       const media = createUbuntuAutoinstallMediaPreparer({
         recipeLookup: async (reference) => {
@@ -381,7 +284,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
           await foundation.ensureStorage();
           selectedNetwork = await constructionNetwork.require();
           preparedAccess = await accessMaterial.prepare(subject);
-          const keyMaterial = await accessSeed(preparedAccess.seedFile, subject);
+          const keyMaterial = await preparationContract.readSeed(preparedAccess.seedFile, subject);
           return seedFactory.create({
             identity: subject,
             network: selectedNetwork.addressing,
@@ -399,13 +302,15 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
         prepared.evidence?.seed?.payloadGeneration !== payload.generation
         || prepared.evidence?.seed?.packageGeneration !== authority.packages.generation
         || prepared.evidence?.seed?.packageSnapshot !== authority.packages.snapshot
+        || JSON.stringify(prepared.evidence?.seed?.services) !== JSON.stringify(authority.qualification.services ?? [])
+        || JSON.stringify(prepared.evidence?.seed?.capabilities) !== JSON.stringify(authority.qualification.capabilities ?? [])
         || prepared.evidence?.seed?.networkMethod !== selectedNetwork.addressing.method
       ) throw new Error('prepared seed evidence does not match construction authority');
       await rm(paths.releaseDirectory, { recursive: true, force: true });
       const baseAccess = preparedAccess.connection;
       const [identityEvidence, knownHostsEvidence] = await Promise.all([
-        exactRegularFile(baseAccess.identityFile, null, 'physical preparation SSH identity'),
-        exactRegularFile(baseAccess.knownHostsFile, null, 'physical preparation known-hosts'),
+        preparationContract.measureRegularFile(baseAccess.identityFile, null, 'physical preparation SSH identity'),
+        preparationContract.measureRegularFile(baseAccess.knownHostsFile, null, 'physical preparation known-hosts'),
       ]);
       const receipt = Object.freeze({
         protocol: PREPARATION_PROTOCOL,
@@ -487,7 +392,14 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
   signatureVerifierExecutable = null,
   now = () => new Date(),
 } = {}) {
-  const config = normalizeConfig(rawConfig);
+  const selectedConfig = configurationContract.normalize(rawConfig);
+  const config = Object.freeze({
+    protocol: selectedConfig.protocol,
+    stateDirectory: selectedConfig.stateDirectory,
+    keyring: selectedConfig.keyring,
+    authority: selectedConfig.selection,
+    resources: selectedConfig.resources,
+  });
   if (typeof invoke !== 'function') throw new TypeError('physical canary invocation contract is invalid');
   if (typeof payloadFactory !== 'function') throw new TypeError('physical canary payload factory is invalid');
   if (runtimeFactory != null && typeof runtimeFactory !== 'function') throw new TypeError('physical canary runtime factory is invalid');
@@ -501,6 +413,31 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
   const preparationStore = new JsonStateStore(paths.preparationFile);
   const selectedPreflight = preflight ?? createWindowsProductionImageCanaryPreflight({ invoke, platform, signatureVerifierExecutable });
   if (!selectedPreflight || typeof selectedPreflight.inspect !== 'function') throw new TypeError('physical canary preflight contract is incomplete');
+  const progress = createProgressCoordinator({
+    maximumAdvances: MAX_ADVANCES,
+    measureReadiness: (elapsedMilliseconds) => observeBoundedReadiness({
+      elapsedMilliseconds,
+      observedAt: now(),
+      expectedMilliseconds: ACCESS_EXPECTED_MILLISECONDS,
+      deadlineMilliseconds: ACCESS_DEADLINE_MILLISECONDS,
+      recheckMilliseconds: ACCESS_RECHECK_MILLISECONDS,
+    }),
+    messages: Object.freeze({
+      evidenceUnavailable: 'Hyper-V console evidence adapter is unavailable',
+      progressBlocked: (classification) => `installer liveness is ${classification}; no automatic VM repair was attempted`,
+      progressing: 'installer VHDX allocation advanced since the previous bounded observation',
+      slow: 'installer exceeded its expected completion window but remains within its hard deadline',
+      progressPending: 'installer VM is powered on; bounded progress evidence is pending',
+      progressUnavailable: 'installer VM is powered on, but bounded liveness evidence is unavailable',
+      lifecyclePending: (state) => `installer lifecycle is not yet reconcilable: ${state}`,
+      outputNotReady: 'installed image is not yet running from its retained disk',
+      endpointNotReady: (reason) => `installed image access endpoint is not ready: ${reason}`,
+      endpointUnready: (reason) => `installed image access is not ready: ${reason}`,
+      readinessExpired: (reason) => `installed image access readiness deadline expired: ${reason}; no automatic repair was attempted`,
+      shutdownPending: 'sanitized image has not finished powering off',
+      advancementLimit: 'bounded canary advancement limit reached; re-run to continue from durable state',
+    }),
+  });
 
   const status = async () => {
     const payload = await payloadFactory();
@@ -538,7 +475,7 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
   const run = async () => {
     const before = await status();
     if (before.complete) {
-      return withRunLock(paths.runLock, async () => {
+      return mutationLease.run(paths.runLock, async () => {
         const cleanupReason = await cleanupCompletedState({ paths, subject, invoke });
         return publicResult(subject, before, {
           state: 'completed',
@@ -550,7 +487,7 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
     }
     if (before.blocked) return before;
     if (platform !== 'win32') return publicResult(subject, null, { state: 'blocked', reason: 'physical production image canary requires a Windows Hyper-V host', preflight: before.preflight, authorityRegistered: before.authorityRegistered });
-    return withRunLock(paths.runLock, async () => {
+    return mutationLease.run(paths.runLock, async () => {
       const payload = await payloadFactory();
       const request = requestFor(config, subject, payload);
       const registration = await catalog.register(config.authority);
@@ -560,94 +497,26 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
         : await createPhysicalRuntime({ config, subject, payload, paths, invoke, fetchImpl, catalog, preparationStore, signatureVerifierExecutable });
       if (!runtime?.canary || !runtime?.construction || !runtime?.accessProbe || typeof runtime.access !== 'function') throw new TypeError('physical canary runtime contract is incomplete');
 
-      for (let index = 0; index < MAX_ADVANCES; index += 1) {
-        const current = await runtime.canary.inspect(request);
-        if (current.complete) {
-          const cleanupReasons = [];
-          if (runtime.addressOwner?.releaseAddress) {
-            try { await runtime.addressOwner.releaseAddress(subject); }
-            catch (error) { cleanupReasons.push(`network reservation cleanup failed: ${error.message}`); }
-          }
-          if (runtime.accessMaterial?.discard) {
-            try { await runtime.accessMaterial.discard(subject); }
-            catch (error) { cleanupReasons.push(`SSH access cleanup failed: ${error.message}`); }
-          }
-          return publicResult(subject, current, {
-            state: 'completed',
-            reason: cleanupReasons.length === 0 ? null : cleanupReasons.join('; '),
-            authorityRegistered: true,
-            preflight: before.preflight,
-          });
-        }
-        if (current.blocked) return publicResult(subject, current, { state: 'blocked', reason: current.reason, authorityRegistered: true, preflight: before.preflight });
-
-        if (current.phase === 'running') {
-          const observed = typeof runtime.construction.observeInstall === 'function'
-            ? await runtime.construction.observeInstall(subject)
-            : await runtime.construction.status(subject);
-          if (observed.state === 'running' && observed.mediaCount > 0) {
-            const classification = observed.liveness?.classification ?? null;
-            let diagnostics = null;
-            if (['slow', 'stalled', 'overdue'].includes(classification)) {
-              if (typeof runtime.construction.captureInstallConsole !== 'function') {
-                diagnostics = Object.freeze({ available: false, reason: 'Hyper-V console evidence adapter is unavailable' });
-              } else {
-                try { diagnostics = await runtime.construction.captureInstallConsole(subject); }
-                catch (error) { diagnostics = Object.freeze({ available: false, reason: String(error?.message ?? error).slice(0, 512) }); }
-              }
-            }
-            if (classification === 'stalled' || classification === 'overdue') {
-              return publicResult(subject, current, { state: 'blocked', reason: `installer liveness is ${classification}; no automatic VM repair was attempted`, liveness: observed.liveness, diagnostics, authorityRegistered: true, preflight: before.preflight });
-            }
-            const reason = classification === 'progressing'
-              ? 'installer VHDX allocation advanced since the previous bounded observation'
-              : classification === 'slow'
-                ? 'installer exceeded its expected completion window but remains within its hard deadline'
-                : observed.liveness
-                  ? 'installer VM is powered on; bounded progress evidence is pending'
-                  : 'installer VM is powered on, but bounded liveness evidence is unavailable';
-            return publicResult(subject, current, { state: 'waiting', reason, liveness: observed.liveness ?? null, diagnostics, authorityRegistered: true, preflight: before.preflight });
-          }
-          if (observed.state !== 'off' && !(observed.state === 'running' && observed.mediaCount === 0)) {
-            return publicResult(subject, current, { state: 'waiting', reason: `installer lifecycle is not yet reconcilable: ${observed.state}`, authorityRegistered: true, preflight: before.preflight });
-          }
-        }
-
-        if (current.phase === 'active') {
-          const observed = await runtime.construction.status(subject);
-          if (observed.state !== 'running' || observed.mediaCount !== 0) {
-            return publicResult(subject, current, { state: 'waiting', reason: 'installed image is not yet running from its retained disk', authorityRegistered: true, preflight: before.preflight });
-          }
-          const pendingAccess = (reason) => {
-            const readiness = observeBoundedReadiness({
-              elapsedMilliseconds: observed.uptimeMilliseconds,
-              observedAt: now(),
-              expectedMilliseconds: ACCESS_EXPECTED_MILLISECONDS,
-              deadlineMilliseconds: ACCESS_DEADLINE_MILLISECONDS,
-              recheckMilliseconds: ACCESS_RECHECK_MILLISECONDS,
-            });
-            if (readiness.classification === 'expired') {
-              return publicResult(subject, current, { state: 'blocked', reason: `installed image access readiness deadline expired: ${reason}; no automatic repair was attempted`, readiness, authorityRegistered: true, preflight: before.preflight });
-            }
-            return publicResult(subject, current, { state: 'waiting', reason, readiness, authorityRegistered: true, preflight: before.preflight });
-          };
-          let access;
-          try { access = await runtime.access(subject); }
-          catch (error) { return pendingAccess(`installed image access endpoint is not ready: ${error.message}`); }
-          const observedAccess = await runtime.accessProbe.inspect(access);
-          if (observedAccess.ready !== true) return pendingAccess(`installed image access is not ready: ${observedAccess.reason ?? 'unknown failure'}`);
-        }
-
-        if (current.phase === 'finalized') {
-          const observed = await runtime.construction.status(subject);
-          if (observed.state !== 'off') return publicResult(subject, current, { state: 'waiting', reason: 'sanitized image has not finished powering off', authorityRegistered: true, preflight: before.preflight });
-        }
-
-        const advanced = await runtime.canary.advance(request);
-        if (advanced.blocked) return publicResult(subject, advanced, { state: 'blocked', reason: advanced.reason, authorityRegistered: true, preflight: before.preflight });
-      }
-      const current = await runtime.canary.inspect(request);
-      return publicResult(subject, current, { state: 'waiting', reason: 'bounded canary advancement limit reached; re-run to continue from durable state', authorityRegistered: true, preflight: before.preflight });
+      return progress.run({
+        inspect: () => runtime.canary.inspect(request),
+        advance: () => runtime.canary.advance(request),
+        observeProgress: () => typeof runtime.construction.observeInstall === 'function'
+          ? runtime.construction.observeInstall(subject)
+          : runtime.construction.status(subject),
+        observeLifecycle: () => runtime.construction.status(subject),
+        resolveEndpoint: () => runtime.access(subject),
+        inspectEndpoint: (endpoint) => runtime.accessProbe.inspect(endpoint),
+        captureEvidence: typeof runtime.construction.captureInstallConsole === 'function'
+          ? () => runtime.construction.captureInstallConsole(subject)
+          : null,
+        reconcileCompletion: () => {
+          const actions = [];
+          if (runtime.addressOwner?.releaseAddress) actions.push(Object.freeze({ perform: () => runtime.addressOwner.releaseAddress(subject), failure: 'network reservation cleanup failed' }));
+          if (runtime.accessMaterial?.discard) actions.push(Object.freeze({ perform: () => runtime.accessMaterial.discard(subject), failure: 'SSH access cleanup failed' }));
+          return completionReconciliation.run(actions);
+        },
+        present: (current, details) => publicResult(subject, current, { ...details, authorityRegistered: true, preflight: before.preflight }),
+      });
     });
   };
 

@@ -7,6 +7,7 @@ import { runPermanentEntry } from './permanent-entry.mjs';
 import { GitHubRunnerSource } from './github-runner-source.mjs';
 import { ExperimentalSubjectAuthority } from './experimental-subject-authority.mjs';
 import { ExperimentalCheckoutRunnerProvider } from './experimental-checkout-runner-provider.mjs';
+import { createRunnerCacheComposition } from './runner-cache-composition.mjs';
 
 function fail(message) { throw new Error(message); }
 
@@ -45,8 +46,12 @@ export async function runExperimentalEntry(argv, {
       return experimental.resolve(selector);
     },
   };
+  const selectedCacheRoot = cacheRoot ?? experimentalEntryCacheRoot();
   const provider = runnerProvider ?? new ExperimentalCheckoutRunnerProvider({
-    cacheRoot: cacheRoot ?? experimentalEntryCacheRoot(),
+    ...createRunnerCacheComposition({
+      cacheRoot: selectedCacheRoot,
+      stateRoot: path.join(selectedCacheRoot, 'state'),
+    }),
   });
   return runPermanentEntry(argv, { subjectAuthority: authority, runnerProvider: provider });
 }

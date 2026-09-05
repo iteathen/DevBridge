@@ -28,6 +28,14 @@ export function createEnvironmentRecoveryEvidence({ foundation, preparation, wor
   const workspacePort = assertPort(workspaces, ['inspect'], 'workspace evidence');
   return Object.freeze({
     async inspect({ record, observation }) {
+      if (observation?.materialization === 'none') {
+        return Object.freeze({
+          resources: 'unknown',
+          network: 'unknown',
+          workspaces: 'unknown',
+        });
+      }
+
       let foundationStatus = null;
       try { foundationStatus = await state.inspect(); } catch {}
       const managementReady = foundationStatus?.capabilities?.management?.ready === true;

@@ -135,6 +135,14 @@ export function logicalEnvironmentIdentity(profile) {
   return `environment-${digest.slice(0, 32)}`;
 }
 
+export function environmentDeclarationDigest(raw) {
+  const declaration = normalizeEnvironmentDeclaration(raw);
+  return createHash('sha256')
+    .update('devbridge/environment-declaration-digest-v1\0', 'utf8')
+    .update(JSON.stringify(declaration), 'utf8')
+    .digest('hex');
+}
+
 export function classifyEnvironmentReconstructability({ declaration = null, authority = 'verified', completion = 'complete' } = {}) {
   if (!['verified', 'unverified', 'ambiguous'].includes(authority)) throw new TypeError('environment authority classification is invalid');
   if (!['complete', 'discoverable', 'setup-required'].includes(completion)) throw new TypeError('environment declaration completion is invalid');

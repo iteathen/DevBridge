@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGuestImagePayload } from '../src/guest/image-payload.js';
-import { UbuntuProductionSeedFactory } from '../src/runtime/image-builders/ubuntu-production-seed.js';
+import { UBUNTU_PRODUCTION_INSTALL_SOURCE, UbuntuProductionSeedFactory } from '../src/runtime/image-builders/ubuntu-production-seed.js';
 
 const publicKey = `ssh-ed25519 ${'A'.repeat(44)} build-key`;
 const hostPrivateKey = '-----BEGIN OPENSSH PRIVATE KEY-----\ntransient-private-material\n-----END OPENSSH PRIVATE KEY-----\n';
@@ -44,6 +44,8 @@ function factory(overrides = {}) {
         { name: 'openssh-server', version: '1:9.9p1-3ubuntu3' },
       ],
     }),
+    services: ['hv-fcopy-daemon.service'],
+    capabilities: ['hyperv-fcopy-uio-v1'],
     ...overrides,
   });
 }
@@ -56,13 +58,31 @@ function neutralPayload(payload, files = payload.files) {
   return { generation: payload.generation, files };
 }
 
+test('Ubuntu seed preserves actual installer package state before any late APT mutation', async () => {
+  const { userData } = await factory().create(request());
+  const late = userData.split('  late-commands:\n')[1].split('  shutdown:')[0]
+    .trim().split('\n').map((line) => JSON.parse(line.trim().slice(2)));
+  assert.equal(late.length, 4);
+  assert.equal(late[0][0], 'sh');
+  assert.match(late[0][2], /ubuntu-installation-basis\.status/u);
+  assert.equal(late[0].at(-1), '/target');
+  assert.deepEqual(late.slice(1).map((command) => command[0]), ['curtin', 'curtin', 'curtin']);
+  assert.deepEqual(late.slice(1).map((command) => command.includes('apt-get')), [true, true, true]);
+});
+
 test('Ubuntu production seed binds exact package snapshot, versions, and payload generation', async () => {
   const result = await factory().create(request());
   assert.match(result.userData, /^#cloud-config\nautoinstall:/u);
   assert.match(result.userData, /  source:\n    id: ubuntu-server-minimal\n/u);
+  assert.equal(UBUNTU_PRODUCTION_INSTALL_SOURCE, 'ubuntu-server-minimal');
   assert.doesNotMatch(result.userData, /id: ubuntu-server(?:\n|$)/u);
   assert.match(result.userData, /"nodejs=22\.16\.0\+dfsg-1"/u);
   assert.match(result.userData, /"linux-cloud-tools-virtual=6\.14\.0\.29\.29"/u);
+  assert.match(result.userData, /\["systemctl", "enable", "--now", "hv-fcopy-daemon\.service"\]/u);
+  assert.match(result.userData, /path: "\/etc\/systemd\/system\/hv-fcopy-daemon\.service"/u);
+  const capability = embeddedContents(result.userData).find((entry) => entry.includes('modprobe uio_hv_generic'));
+  assert.ok(capability);
+  assert.match(capability, /34d14be3-dee4-41c8-9ae7-6b174977c192/u);
   assert.match(result.userData, /dhcp4: true/u);
   assert.doesNotMatch(result.userData, /192\.168\.77/u);
   assert.match(result.userData, /apt:\n    conf: \|\n      Unattended-Upgrade::Package-Blacklist \{\n        "\.\*";\n      \};/u);
@@ -83,6 +103,8 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.equal(result.evidence.packageGeneration, 'ubuntu-tools-v4');
   assert.equal(result.evidence.packageSnapshot, snapshot);
   assert.equal(result.evidence.networkMethod, 'automatic');
+  assert.deepEqual(result.evidence.services, ['hv-fcopy-daemon.service']);
+  assert.deepEqual(result.evidence.capabilities, ['hyperv-fcopy-uio-v1']);
   assert.equal(result.evidence.packages.find((entry) => entry.name === 'git').version, '1:2.48.1-0ubuntu1');
   assert.equal(result.evidence.files.length, 3);
   assert.match(result.evidence.userDataSha256, /^[a-f0-9]{64}$/u);
@@ -176,6 +198,14 @@ test('Ubuntu production seed embeds transient access only in seed material and e
   assert.match(result.userData, /devbridge-network-seed\.service/u);
   assert.match(result.userData, /devbridge-access-seed\.service/u);
   assert.match(result.userData, /shutdown:\s+poweroff/u);
+});
+
+test('Ubuntu production seed rejects unsafe or duplicate required services before creating media', () => {
+  assert.throws(() => factory({ services: ['../hv-fcopy-daemon.service'] }), /production seed service 0 is invalid/u);
+  assert.throws(
+    () => factory({ services: ['hv-fcopy-daemon.service', 'hv-fcopy-daemon.service'] }),
+    /production seed service 1 is invalid/u,
+  );
 });
 
 test('Ubuntu production seed rejects mutable or ambiguous package authority', async () => {

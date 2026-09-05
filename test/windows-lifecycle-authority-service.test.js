@@ -68,7 +68,7 @@ function deps({
               exists: true,
               state: 'Running',
               startMode: 'Auto',
-              startName: plan.service.account,
+              startName: plan.service.logonAccount,
               pathName: plan.serviceCommand,
               description: plan.service.description,
             }
@@ -76,7 +76,7 @@ function deps({
               exists: true,
               state: 'Running',
               startMode: 'Auto',
-              startName: plan.service.account,
+              startName: plan.service.logonAccount,
               pathName: 'C:\\stale\\authority.exe',
               description: 'stale generation',
             };
@@ -135,6 +135,54 @@ test('existing healthy exact protected authority requires exact SCM generation b
   assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'inspect-service', 'probe']);
 });
 
+test('exact generation health runs before an additive service proof', async () => {
+  const fixture = deps({ elevated: false, exactService: true, probeReady: true });
+  fixture.value.proof = async (plan, inspection) => {
+    fixture.calls.push('proof');
+    assert.deepEqual(plan.runtimeEvidence, { packageDigest: PACKAGE_DIGEST, nodeDigest: NODE_DIGEST });
+    assert.equal(inspection.protocol, 'devbridge/environment-operator-v1');
+  };
+  const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
+  assert.equal(result.ready, true);
+  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'inspect-service', 'probe', 'proof']);
+});
+
+test('refresh composition preserves historical endpoint health before additive proof', async () => {
+  const fixture = deps({ elevated: true, exactService: false });
+  let composedProbe = null;
+  let configurationFactories = 0;
+  let proofCalls = 0;
+  fixture.value.probe = (plan) => probeWindowsLifecycleAuthority(plan, {
+    clientFactory: () => ({ async inspect() { return { protocol: 'devbridge/environment-operator-v1' }; } }),
+    activityClientFactory: () => ({ async inspect() { return { ready: true, identity: 'a'.repeat(32) }; } }),
+    configurationClientFactory: () => { configurationFactories += 1; throw new Error('historical generation has no configuration endpoint'); },
+    waitForRetry: async () => { throw new Error('historical generation should be accepted immediately'); },
+  });
+  fixture.value.proof = async (_plan, inspection) => {
+    proofCalls += 1;
+    assert.equal(inspection.protocol, 'devbridge/environment-operator-v1');
+  };
+  fixture.value.createRefreshMechanics = (input) => {
+    fixture.calls.push('create-refresh-mechanics');
+    composedProbe = input.probe;
+    return Object.freeze({ fixture: 'historical-health' });
+  };
+  fixture.value.refresh = async () => {
+    fixture.calls.push('refresh');
+    await composedProbe({
+      stateDirectory: STATE,
+      hostCommandProtocol: 'read-mutation-acceptance-activity-v1',
+    });
+    return Object.freeze({ ready: true, changed: true, recovered: false, blocker: null });
+  };
+
+  const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
+  assert.equal(result.ready, true);
+  assert.equal(configurationFactories, 0);
+  assert.equal(proofCalls, 1);
+  assert.deepEqual(fixture.calls, ['inspect-host', 'measure-candidate', 'inspect-service', 'create-refresh-mechanics', 'refresh']);
+});
+
 test('ordinary setup never trusts a healthy stale-generation pipe and stops at elevation before refresh', async () => {
   const fixture = deps({ elevated: false, exactService: false, probeReady: true });
   const result = await reconcileWindowsLifecycleAuthorityService({ stateDirectory: STATE, platform: 'win32', invoke: successfulInvoke }, fixture.value);
@@ -187,11 +235,68 @@ test('Windows lifecycle authority health uses one bounded startup-readiness wind
         return { protocol: 'devbridge/environment-operator-v1' };
       },
     }),
+    activityClientFactory: () => ({ async inspect() { return { ready: true, identity: 'a'.repeat(32) }; } }),
+    configurationClientFactory: () => ({ async inspect() { return { ready: true }; } }),
     waitForRetry: async (delay) => { delays.push(delay); },
   });
   assert.equal(result.protocol, 'devbridge/environment-operator-v1');
   assert.equal(attempts, 3);
   assert.deepEqual(delays, [100, 250]);
+});
+
+test('Windows lifecycle authority generation health separates endpoint readiness from workload readiness', async () => {
+  const result = await probeWindowsLifecycleAuthority({ stateDirectory: STATE }, {
+    clientFactory: () => ({ async inspect() { return { protocol: 'devbridge/environment-operator-v1' }; } }),
+    activityClientFactory: () => ({ async inspect() { return { ready: false, identity: 'a'.repeat(32), reason: 'environment activity is unavailable' }; } }),
+    configurationClientFactory: () => ({ async inspect() { return { ready: true }; } }),
+    waitForRetry: async () => { throw new Error('structural endpoint should be accepted immediately'); },
+  });
+  assert.equal(result.protocol, 'devbridge/environment-operator-v1');
+});
+
+test('Windows lifecycle authority health probes only the endpoints declared by an activity generation', async () => {
+  let activityInspections = 0;
+  let configurationFactories = 0;
+  const result = await probeWindowsLifecycleAuthority({
+    stateDirectory: STATE,
+    hostCommandProtocol: 'read-mutation-acceptance-activity-v1',
+  }, {
+    clientFactory: () => ({ async inspect() { return { protocol: 'devbridge/environment-operator-v1' }; } }),
+    activityClientFactory: () => ({ async inspect() { activityInspections += 1; return { ready: true, identity: 'a'.repeat(32) }; } }),
+    configurationClientFactory: () => { configurationFactories += 1; throw new Error('configuration endpoint is not declared'); },
+    waitForRetry: async () => { throw new Error('valid activity generation should be accepted immediately'); },
+  });
+  assert.equal(result.protocol, 'devbridge/environment-operator-v1');
+  assert.equal(activityInspections, 1);
+  assert.equal(configurationFactories, 0);
+});
+
+test('Windows lifecycle authority health accepts legacy and acceptance generations without later endpoints', async () => {
+  for (const hostCommandProtocol of ['legacy-read-mutation-v1', 'read-mutation-acceptance-v1']) {
+    let laterEndpointFactories = 0;
+    const result = await probeWindowsLifecycleAuthority({ stateDirectory: STATE, hostCommandProtocol }, {
+      clientFactory: () => ({ async inspect() { return { protocol: 'devbridge/environment-operator-v1' }; } }),
+      activityClientFactory: () => { laterEndpointFactories += 1; throw new Error('activity endpoint is not declared'); },
+      configurationClientFactory: () => { laterEndpointFactories += 1; throw new Error('configuration endpoint is not declared'); },
+      waitForRetry: async () => { throw new Error('historical generation should be accepted immediately'); },
+    });
+    assert.equal(result.protocol, 'devbridge/environment-operator-v1');
+    assert.equal(laterEndpointFactories, 0);
+  }
+});
+
+test('Windows lifecycle authority health rejects an unknown generation protocol without probing later endpoints', async () => {
+  let laterEndpointFactories = 0;
+  await assert.rejects(probeWindowsLifecycleAuthority({
+    stateDirectory: STATE,
+    hostCommandProtocol: 'unknown-v1',
+  }, {
+    clientFactory: () => ({ async inspect() { return { protocol: 'devbridge/environment-operator-v1' }; } }),
+    activityClientFactory: () => { laterEndpointFactories += 1; throw new Error('unexpected activity probe'); },
+    configurationClientFactory: () => { laterEndpointFactories += 1; throw new Error('unexpected configuration probe'); },
+    waitForRetry: async () => {},
+  }), /host command protocol is invalid/u);
+  assert.equal(laterEndpointFactories, 0);
 });
 
 test('Windows lifecycle authority health stops at its bounded readiness deadline', async () => {
@@ -204,6 +309,8 @@ test('Windows lifecycle authority health stops at its bounded readiness deadline
         throw new Error(`unavailable-${attempts}`);
       },
     }),
+    activityClientFactory: () => ({ async inspect() { return { ready: true, identity: 'a'.repeat(32) }; } }),
+    configurationClientFactory: () => ({ async inspect() { return { ready: true }; } }),
     waitForRetry: async (delay) => { delays.push(delay); },
   }), /unavailable-6/u);
   assert.equal(attempts, 6);
@@ -253,7 +360,39 @@ test('production elevated reconciliation no longer owns a monolithic provision o
   assert.doesNotMatch(source, /stopped-after-failed-health/u);
 });
 
-test('authority migration copies only closed protected state and leaves execution routes ordinary', async () => {
+test('service provider logon and capability retirement reject substituted authority before any service mutation', async () => {
+  const source = await readFile(SERVICE_SOURCE, 'utf8');
+  const validation = source.indexOf('function retiredServiceCapabilityGroupSids(plan)');
+  const configuration = source.indexOf('async function configureService(service, plan, invoke, environment)');
+  const firstMutation = source.indexOf("await invokeSc(invoke, [", configuration);
+  assert.equal(validation > 0, true);
+  assert.equal(configuration > validation, true);
+  assert.equal(source.indexOf('const retiredCapabilityGroupSids = retiredServiceCapabilityGroupSids(plan);', configuration) < firstMutation, true);
+  assert.match(source.slice(validation, configuration), /WINDOWS_HYPERV_ADMINISTRATORS_SID/u);
+  assert.match(source.slice(validation, configuration), /WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID/u);
+  assert.match(source.slice(validation, configuration), /WINDOWS_LOCAL_SYSTEM_ACCOUNT/u);
+  assert.match(source, /groupSids: retiredCapabilityGroupSids/u);
+  assert.match(source, /Remove-LocalGroupMember/u);
+  assert.doesNotMatch(source, /Add-LocalGroupMember/u);
+  assert.match(source, /service capability group membership was not retired/u);
+});
+
+test('retired virtual logon is admitted only inside the exact one-way refresh transition', async () => {
+  const source = await readFile(SERVICE_SOURCE, 'utf8');
+  const retired = source.indexOf('function serviceMatchesRetiredVirtualLogon(service, plan)');
+  const transition = source.indexOf('function serviceMatchesOwnedTransition(service, plan)');
+  const strictProbe = source.indexOf('async function probeServiceGeneration');
+  const strictReady = source.indexOf('if (serviceMatches(service, plan) && serviceRunning(service))');
+  assert.equal(retired > 0, true);
+  assert.equal(transition > retired, true);
+  assert.match(source.slice(retired, transition), /plan\.service\.account/u);
+  assert.match(source.slice(retired, transition), /WINDOWS_LOCAL_SYSTEM_ACCOUNT/u);
+  assert.equal(source.slice(strictProbe, strictReady).includes('serviceMatchesOwnedTransition'), false);
+  assert.equal(source.slice(strictProbe, strictReady).includes('serviceMatches(service, target.plan)'), true);
+  assert.equal(source.slice(strictReady).includes('serviceMatchesOwnedTransition'), false);
+});
+
+test('authority migration copies only portable protected state and leaves image adoption and activity policy separate', async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'devbridge-authority-migration-'));
   const state = path.join(temp, 'ordinary');
   const authority = path.join(temp, 'protected');
@@ -263,18 +402,20 @@ test('authority migration copies only closed protected state and leaves executio
     await mkdir(path.join(state, 'environment-construction'), { recursive: true });
     await writeFile(path.join(state, 'environment-foundation', 'identity.json'), '{"identity":"protected"}\n');
     await writeFile(path.join(state, 'environment-foundation', 'images', 'catalog.json'), 'protected-image\n');
-    await writeFile(path.join(state, 'environment-foundation', 'execution-routes.json'), 'ordinary-route\n');
+    await mkdir(path.join(state, 'environment-activity'), { recursive: true });
+    await writeFile(path.join(state, 'environment-activity', 'policy.json'), 'ordinary-policy\n');
     await writeFile(path.join(state, 'environment-lifecycle', 'state.json'), 'protected-lifecycle\n');
     await writeFile(path.join(state, 'environment-construction', 'state.json'), 'protected-construction\n');
 
     const migrated = await migrateWindowsLifecycleAuthorityState({ stateDirectory: state, authorityDirectory: authority });
     assert.deepEqual(migrated.paths, WINDOWS_LIFECYCLE_AUTHORITY_STATE_PATHS);
     assert.equal(await readFile(path.join(authority, 'environment-foundation', 'identity.json'), 'utf8'), '{"identity":"protected"}\n');
-    assert.equal(await readFile(path.join(authority, 'environment-foundation', 'images', 'catalog.json'), 'utf8'), 'protected-image\n');
+    await assert.rejects(readFile(path.join(authority, 'environment-foundation', 'images', 'catalog.json'), 'utf8'), /ENOENT/u);
+    assert.equal(await readFile(path.join(state, 'environment-foundation', 'images', 'catalog.json'), 'utf8'), 'protected-image\n');
     assert.equal(await readFile(path.join(authority, 'environment-lifecycle', 'state.json'), 'utf8'), 'protected-lifecycle\n');
     assert.equal(await readFile(path.join(authority, 'environment-construction', 'state.json'), 'utf8'), 'protected-construction\n');
-    await assert.rejects(readFile(path.join(authority, 'environment-foundation', 'execution-routes.json'), 'utf8'), /ENOENT/u);
-    assert.equal(await readFile(path.join(state, 'environment-foundation', 'execution-routes.json'), 'utf8'), 'ordinary-route\n');
+    await assert.rejects(readFile(path.join(authority, 'environment-activity', 'policy.json'), 'utf8'), /ENOENT/u);
+    assert.equal(await readFile(path.join(state, 'environment-activity', 'policy.json'), 'utf8'), 'ordinary-policy\n');
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
@@ -289,7 +430,7 @@ test('closed migration refuses filesystem indirection instead of following autho
     await mkdir(path.join(state, 'environment-foundation'), { recursive: true });
     await mkdir(outside, { recursive: true });
     try {
-      await import('node:fs/promises').then(({ symlink }) => symlink(outside, path.join(state, 'environment-foundation', 'images'), process.platform === 'win32' ? 'junction' : 'dir'));
+      await import('node:fs/promises').then(({ symlink }) => symlink(outside, path.join(state, 'environment-foundation', 'control'), process.platform === 'win32' ? 'junction' : 'dir'));
     } catch (error) {
       if (['EPERM', 'EACCES', 'ENOSYS'].includes(error?.code)) return t.skip('filesystem indirection creation is unavailable');
       throw error;

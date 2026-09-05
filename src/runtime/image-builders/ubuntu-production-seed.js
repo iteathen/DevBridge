@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
+import { resolveUbuntuGuestCapabilities } from './ubuntu-guest-capabilities.js';
+import { ubuntuInstallationBasisCaptureCommand } from './ubuntu-installation-basis.js';
 
 const PROTOCOL = 'devbridge/ubuntu-production-seed-v1';
+export const UBUNTU_PRODUCTION_INSTALL_SOURCE = 'ubuntu-server-minimal';
 const SUBJECT = /^subject-[a-f0-9]{32}$/u;
 const IPV4 = /^(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/u;
 const PUBLIC_KEY = /^ssh-ed25519 [A-Za-z0-9+/=]{40,256}(?: [^\r\n]{0,128})?$/u;
@@ -12,6 +15,7 @@ const PACKAGE_VERSION = /^[A-Za-z0-9][A-Za-z0-9.+:~_-]{0,159}$/u;
 const SNAPSHOT = /^\d{8}T\d{6}Z$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const MUTABLE_VERSION = /^(?:latest|stable|current|head|main|master)$/iu;
+const SERVICE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,122}\.service$/u;
 
 function yamlString(value) { return JSON.stringify(String(value)); }
 function digest(value) { return createHash('sha256').update(value).digest('hex'); }
@@ -106,6 +110,16 @@ function writeFileYaml(lines, { path, content, permissions = '0755' }, indent = 
 
 function yamlList(values) { return `[${values.map(yamlString).join(', ')}]`; }
 
+function normalizeServices(raw = []) {
+  if (!Array.isArray(raw) || raw.length > 16) throw new TypeError('production seed service set is invalid');
+  const seen = new Set();
+  return Object.freeze(raw.map((entry, index) => {
+    if (typeof entry !== 'string' || !SERVICE.test(entry) || seen.has(entry)) throw new TypeError(`production seed service ${index} is invalid`);
+    seen.add(entry);
+    return entry;
+  }));
+}
+
 const NETWORK_UNIT = `[Unit]\nDescription=Apply locally supplied network state\nAfter=local-fs.target\n\n[Service]\nType=simple\nExecStart=/usr/bin/node /usr/local/libexec/devbridge/network-seed-agent.mjs --watch\nRestart=always\nRestartSec=1\n\n[Install]\nWantedBy=multi-user.target\n`;
 const ACCESS_UNIT = `[Unit]\nDescription=Apply locally supplied access state\nAfter=local-fs.target ssh.service\nWants=ssh.service\n\n[Service]\nType=simple\nExecStart=/usr/bin/node /usr/local/libexec/devbridge/linux-access-seed-agent.mjs --watch\nRestart=always\nRestartSec=1\n\n[Install]\nWantedBy=multi-user.target\n`;
 const SANITIZER_PATH = '/usr/local/libexec/devbridge/image-sanitize.sh';
@@ -115,12 +129,16 @@ const TEMPORARY_SUDO = `devbridge ALL=(root) NOPASSWD: ${SANITIZER_PATH}\n`;
 export class UbuntuProductionSeedFactory {
   #payloadSet;
   #packageSet;
+  #services;
+  #capabilities;
 
-  constructor({ payloadSet, packageSet } = {}) {
+  constructor({ payloadSet, packageSet, services = [], capabilities = [] } = {}) {
     if (typeof payloadSet !== 'function') throw new TypeError('payloadSet must be a function');
     if (typeof packageSet !== 'function') throw new TypeError('packageSet must be a function');
     this.#payloadSet = payloadSet;
     this.#packageSet = packageSet;
+    this.#services = normalizeServices(services);
+    this.#capabilities = resolveUbuntuGuestCapabilities(capabilities);
   }
 
   async create(rawRequest) {
@@ -128,20 +146,23 @@ export class UbuntuProductionSeedFactory {
     const payload = normalizePayload(await this.#payloadSet());
     const packages = normalizePackages(await this.#packageSet());
     const packageSpecifications = packages.packages.map((entry) => entry.specification);
-    const lines = ['#cloud-config', 'autoinstall:', '  version: 1', '  locale: en_US.UTF-8', '  keyboard:', '    layout: us', '  source:', '    id: ubuntu-server-minimal', '  apt:', '    conf: |', '      Unattended-Upgrade::Package-Blacklist {', '        ".*";', '      };', '  storage:', '    layout:', '      name: direct', '  network:', '    version: 2', '    ethernets:', '      build:', '        match:', '          name: "e*"'];
+    const lines = ['#cloud-config', 'autoinstall:', '  version: 1', '  locale: en_US.UTF-8', '  keyboard:', '    layout: us', '  source:', `    id: ${UBUNTU_PRODUCTION_INSTALL_SOURCE}`, '  apt:', '    conf: |', '      Unattended-Upgrade::Package-Blacklist {', '        ".*";', '      };', '  storage:', '    layout:', '      name: direct', '  network:', '    version: 2', '    ethernets:', '      build:', '        match:', '          name: "e*"'];
     if (request.network.method === 'automatic') {
       lines.push('        dhcp4: true', '        dhcp6: false');
     } else {
       lines.push('        dhcp4: false', '        addresses:', `          - ${yamlString(`${request.network.address}/${request.network.prefixLength}`)}`, '        routes:', '          - to: default', `            via: ${yamlString(request.network.gateway)}`, '        nameservers:', '          addresses:');
       for (const entry of request.network.dns) lines.push(`            - ${yamlString(entry)}`);
     }
-    lines.push('  ssh:', '    install-server: true', '    allow-pw: false', '  late-commands:', `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--error-on=any', '--snapshot', packages.snapshot, 'update'])}`, `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--snapshot', packages.snapshot, 'upgrade', '-y', '--with-new-pkgs', '--no-remove'])}`, `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--snapshot', packages.snapshot, 'install', '-y', '--no-install-recommends', ...packageSpecifications])}`, '  shutdown: poweroff', '  user-data:', '    users:', '      - name: devbridge', '        gecos: DevBridge Image Builder', '        groups: [adm, sudo]', '        shell: /bin/bash', '        lock_passwd: true', '        ssh_authorized_keys:', `          - ${yamlString(request.authorizedKey)}`, '    ssh_deletekeys: true', '    ssh_keys:', `      ed25519_private: ${yamlString(request.hostPrivateKey)}`, `      ed25519_public: ${yamlString(request.hostPublicKey)}`, '    write_files:');
+    lines.push('  ssh:', '    install-server: true', '    allow-pw: false', '  late-commands:', `    - ${yamlList(ubuntuInstallationBasisCaptureCommand('/target'))}`, `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--error-on=any', '--snapshot', packages.snapshot, 'update'])}`, `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--snapshot', packages.snapshot, 'upgrade', '-y', '--with-new-pkgs', '--no-remove'])}`, `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--snapshot', packages.snapshot, 'install', '-y', '--no-install-recommends', ...packageSpecifications])}`, '  shutdown: poweroff', '  user-data:', '    users:', '      - name: devbridge', '        gecos: DevBridge Image Builder', '        groups: [adm, sudo]', '        shell: /bin/bash', '        lock_passwd: true', '        ssh_authorized_keys:', `          - ${yamlString(request.authorizedKey)}`, '    ssh_deletekeys: true', '    ssh_keys:', `      ed25519_private: ${yamlString(request.hostPrivateKey)}`, `      ed25519_public: ${yamlString(request.hostPublicKey)}`, '    write_files:');
     for (const file of payload.files) writeFileYaml(lines, file);
+    for (const file of this.#capabilities.files) writeFileYaml(lines, file);
     writeFileYaml(lines, { path: '/etc/systemd/system/devbridge-network-seed.service', content: NETWORK_UNIT, permissions: '0644' });
     writeFileYaml(lines, { path: '/etc/systemd/system/devbridge-access-seed.service', content: ACCESS_UNIT, permissions: '0644' });
     writeFileYaml(lines, { path: SANITIZER_PATH, content: SANITIZER, permissions: '0755' });
     writeFileYaml(lines, { path: '/etc/sudoers.d/devbridge-image-build', content: TEMPORARY_SUDO, permissions: '0440' });
-    lines.push('    runcmd:', '      - [systemctl, daemon-reload]', '      - [systemctl, enable, --now, devbridge-network-seed.service]', '      - [systemctl, enable, --now, devbridge-access-seed.service]', '      - [systemctl, restart, ssh]');
+    lines.push('    runcmd:', '      - [systemctl, daemon-reload]');
+    for (const service of this.#services) lines.push(`      - ${yamlList(['systemctl', 'enable', '--now', service])}`);
+    lines.push('      - [systemctl, enable, --now, devbridge-network-seed.service]', '      - [systemctl, enable, --now, devbridge-access-seed.service]', '      - [systemctl, restart, ssh]');
 
     const userData = `${lines.join('\n')}\n`;
     const fileEvidence = payload.files.map((entry) => ({ path: entry.path, bytes: entry.bytes, sha256: entry.sha256 }));
@@ -155,6 +176,8 @@ export class UbuntuProductionSeedFactory {
         packageGeneration: packages.generation,
         packageSnapshot: packages.snapshot,
         packages: packages.packages.map(({ name, version }) => ({ name, version })),
+        services: [...this.#services],
+        capabilities: [...this.#capabilities.ids],
         networkMethod: request.network.method,
         userDataSha256: digest(userData),
       }),

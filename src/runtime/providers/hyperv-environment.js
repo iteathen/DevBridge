@@ -1,6 +1,7 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { environmentInstanceDescriptor, environmentNetworkDescriptor } from './hyperv-environment-identity.js';
 
 const STATE_PROTOCOL = 'devbridge/hyperv-environment-state-v1';
 const TOKEN = /^[a-f0-9]{32}$/u;
@@ -18,20 +19,6 @@ function parseJson(result, action) {
     throw new Error(detail.slice(0, 2_048));
   }
   try { return JSON.parse(result.stdout); } catch { throw new Error(`${action} returned invalid structured output`); }
-}
-
-function ownedName(identity, kind, value = '') {
-  return `db-${kind}-${createHash('sha256').update(`${identity}:${kind}:${value}`).digest('hex').slice(0, 16)}`;
-}
-
-function ownership(identity, kind, value = '') {
-  return `devbridge-owned:${identity}:${kind}:${value || 'default'}:v1`;
-}
-
-function selectPrefix(identity) {
-  const digest = createHash('sha256').update(`${identity}:network`).digest();
-  const third = 64 + (digest[0] % 128);
-  return { prefix: `192.168.${third}.0/24`, gateway: `192.168.${third}.1` };
 }
 
 function emptyState() { return { protocol: STATE_PROTOCOL, network: null }; }
@@ -177,7 +164,7 @@ $item = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq $data.name } | Sel
 if ($null -eq $item) { @{ exists = $false; owned = $false; state = 'absent' } | ConvertTo-Json -Compress; exit 0 }
 if ([string]$item.Notes -ne [string]$data.marker) { throw 'instance ownership evidence does not match' }
 if ([string]$item.State -ne 'Off') {
-  try { Stop-VM -Name $data.name -Shutdown -Confirm:$false -ErrorAction Stop }
+  try { Stop-VM -Name $data.name -Confirm:$false -ErrorAction Stop }
   catch { if ($data.force -eq $true) { Stop-VM -Name $data.name -TurnOff -Confirm:$false -ErrorAction Stop } else { throw } }
 }
 $item = Get-VM -Name $data.name -ErrorAction Stop
@@ -320,13 +307,10 @@ export class HyperVEnvironment {
   async ensureNetwork() {
     const state = await this.#loadState();
     if (!state.network) {
-      const selected = selectPrefix(this.#identity);
+      const selected = environmentNetworkDescriptor(this.#identity);
       state.network = {
         phase: 'planned',
-        name: ownedName(this.#identity, 'network'),
-        marker: ownership(this.#identity, 'network'),
-        prefix: selected.prefix,
-        gateway: selected.gateway,
+        ...selected,
       };
       await this.#saveState(state);
     }
@@ -370,7 +354,7 @@ export class HyperVEnvironment {
 
   #instanceDescriptor(identity) {
     if (typeof identity !== 'string' || !INSTANCE.test(identity)) throw new TypeError('instance identity must be an opaque local token');
-    return { name: ownedName(this.#identity, 'instance', identity), marker: ownership(this.#identity, 'instance', identity) };
+    return environmentInstanceDescriptor(this.#identity, identity);
   }
 
   async observeInstance(identity) {

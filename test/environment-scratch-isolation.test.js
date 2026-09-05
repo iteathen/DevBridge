@@ -4,7 +4,8 @@ import { spawn } from 'node:child_process';
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createRepositoryExecution, ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL } from '../src/app/repository-execution.js';
+import { createRepositoryExecution } from '../src/app/repository-execution.js';
+import { ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL } from '../src/runtime/environment-activity-policy.js';
 import { REPOSITORY_EXECUTION_REQUEST_PROTOCOL } from '../src/runtime/repository-execution.js';
 
 async function command(program, args, { cwd, input = null, env = process.env } = {}) {
@@ -143,14 +144,13 @@ test('environment scratch persists across operations, stays out of candidate tra
     const channel = localChannel(guest);
     const execution = await createRepositoryExecution({
       stateDirectory: path.join(temp, 'state'),
-      platform: 'linux',
-      routes: { protocol: ENVIRONMENT_EXECUTION_ROUTES_PROTOCOL, routes: [{ subject: '123', profile: 'shared', preferred: true, access: { family: 'linux' } }] },
+      routes: { protocol: ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL, routes: [{ subject: '123', profile: 'shared', preferred: true }] },
       rootFor: async () => host,
       listPaths: async (root) => visible(root),
       resolveSubject: async () => '123',
       resolveTool: async (tool) => ({ program: tool, arguments: [] }),
       createState: async () => state,
-      createPreparation: async () => ({ ensure: async () => ({ generation: 'b'.repeat(64) }), connection: async () => ({ family: 'linux' }) }),
+      createPreparation: async () => ({ ensure: async () => ({ generation: 'b'.repeat(64) }) }),
       createChannel: async () => channel,
     });
 
