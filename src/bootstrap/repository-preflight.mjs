@@ -614,8 +614,9 @@ function checked(runner, args, { cwd, label, timeoutMs, live = false }) {
 // HO170: one admission budget, with 30 seconds reserved inside existing
 // four-minute candidate parents. Output/progress never renews this deadline.
 const PREFLIGHT_BUDGET_MS = 210_000;
+const CI_PREFLIGHT_BUDGET_MS = 360_000;
 
-function preflightObservation(observation) {
+function preflightObservation(observation, budgetMs) {
   if (observation == null || typeof observation !== 'object' || Array.isArray(observation)
       || Object.keys(observation).some((key) => !['now', 'onProgress'].includes(key))
       || (observation.now !== undefined && typeof observation.now !== 'function')
@@ -637,11 +638,11 @@ function preflightObservation(observation) {
     live: observation.onProgress !== undefined,
     run(operation, maximumMs, action) {
       const before = elapsed();
-      const remainingMs = Math.max(0, PREFLIGHT_BUDGET_MS - before);
+      const remainingMs = Math.max(0, budgetMs - before);
       const timeoutMs = Math.min(maximumMs, remainingMs);
       const report = (status, duration, outcome) => observation.onProgress?.(Object.freeze({
         operation, status, elapsedMs: duration,
-        remainingMs: Math.max(0, PREFLIGHT_BUDGET_MS - duration), timeoutMs,
+        remainingMs: Math.max(0, budgetMs - duration), timeoutMs,
         ...(outcome ? { outcome } : {}),
       }));
       if (timeoutMs <= 0) {
@@ -651,11 +652,11 @@ function preflightObservation(observation) {
       report('started', before);
       try {
         // Recheck after the observer: a stalled sink cannot authorize late work.
-        const available = Math.min(timeoutMs, PREFLIGHT_BUDGET_MS - elapsed());
+        const available = Math.min(timeoutMs, budgetMs - elapsed());
         if (available <= 0) throw timeout(operation);
         action(available);
         const after = elapsed();
-        if (after >= PREFLIGHT_BUDGET_MS || after - before > timeoutMs) throw timeout(operation);
+        if (after >= budgetMs || after - before > timeoutMs) throw timeout(operation);
         report('passed', after);
       } catch (error) {
         report('failed', elapsed(), error.code === 'ETIMEDOUT' ? 'timeout'
@@ -676,11 +677,14 @@ function protocolNumber(value, name) {
 
 export function parseRepositoryPreflightArguments(args = []) {
   if (!Array.isArray(args)) throw new TypeError('repository preflight arguments must be an array');
-  if (args.length === 0) return Object.freeze({ boundTargetedTestConcurrency: false });
-  if (args.length === 1 && args[0] === BOUND_TARGETED_TEST_CONCURRENCY_ARGUMENT) {
-    return Object.freeze({ boundTargetedTestConcurrency: true });
+  const allowed = [BOUND_TARGETED_TEST_CONCURRENCY_ARGUMENT, '--ci-qualification'];
+  if (new Set(args).size !== args.length || args.some((arg) => !allowed.includes(arg))) {
+    throw new Error(`repository preflight accepts only ${allowed.join(' and ')}, each at most once`);
   }
-  throw new Error(`repository preflight accepts only ${BOUND_TARGETED_TEST_CONCURRENCY_ARGUMENT}`);
+  return Object.freeze({
+    boundTargetedTestConcurrency: args.includes(BOUND_TARGETED_TEST_CONCURRENCY_ARGUMENT),
+    ciQualification: args.includes('--ci-qualification'),
+  });
 }
 
 function normalizeRepositoryPreflightOptions(options) {
@@ -688,13 +692,19 @@ function normalizeRepositoryPreflightOptions(options) {
     throw new TypeError('repository preflight options must be an object');
   }
   const keys = Object.keys(options);
-  if (keys.some((key) => key !== 'boundTargetedTestConcurrency')) {
+  if (keys.some((key) => !['boundTargetedTestConcurrency', 'ciQualification'].includes(key))) {
     throw new TypeError('repository preflight options contain an unsupported field');
   }
   if (options.boundTargetedTestConcurrency != null && typeof options.boundTargetedTestConcurrency !== 'boolean') {
     throw new TypeError('boundTargetedTestConcurrency must be boolean');
   }
-  return Object.freeze({ boundTargetedTestConcurrency: options.boundTargetedTestConcurrency === true });
+  if (options.ciQualification != null && typeof options.ciQualification !== 'boolean') {
+    throw new TypeError('ciQualification must be boolean');
+  }
+  return Object.freeze({
+    boundTargetedTestConcurrency: options.boundTargetedTestConcurrency === true,
+    ciQualification: options.ciQualification === true,
+  });
 }
 
 export function assertCandidateStage0Compatibility(root = process.cwd(), environment = process.env) {
@@ -716,7 +726,7 @@ export function assertCandidateStage0Compatibility(root = process.cwd(), environ
 export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync, environment = process.env, options = {}, observation = {}) {
   const cwd = path.resolve(root);
   const scheduling = normalizeRepositoryPreflightOptions(options);
-  const progress = preflightObservation(observation);
+  const progress = preflightObservation(observation, scheduling.ciQualification ? CI_PREFLIGHT_BUDGET_MS : PREFLIGHT_BUDGET_MS);
   const compatibility = assertCandidateStage0Compatibility(cwd, environment);
   const run = (args, label, maximumMs, live = false) => progress.run(label, maximumMs,
     (timeoutMs) => checked(runner, args, { cwd, label, timeoutMs, live }));
@@ -746,7 +756,7 @@ export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync,
       '--test-reporter-destination=stdout', '--test-reporter-destination=stderr'] : []),
     ...targeted,
   ];
-  run(testArguments, 'targeted preflight tests', 180_000, progress.live);
+  run(testArguments, 'targeted preflight tests', scheduling.ciQualification ? 300_000 : 180_000, progress.live);
   return { standaloneArtifacts: 3, syntaxFiles: SYNTAX_FILES.length, jsonFiles: JSON_FILES.length, targetedTests: targeted.length, compatibility };
 }
 
