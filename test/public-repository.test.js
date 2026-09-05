@@ -97,20 +97,20 @@ test("Windows smoke preflight selects a closed concurrency bound while other pla
   const ordinary = workflowStep(workflow, "Cheap preflight (non-Windows default)");
   const windows = workflowStep(workflow, "Cheap preflight (Windows bounded)");
 
-  assert.match(workflow.replaceAll("\r\n", "\n"), /^  smoke:\n    timeout-minutes: 8$/mu);
+  assert.match(workflow.replaceAll("\r\n", "\n"), /^  smoke:\n    timeout-minutes: 11$/mu);
   assert.match(ordinary, /^        if: runner\.os != 'Windows'$/mu);
-  assert.match(ordinary, /^        timeout-minutes: 4$/mu);
-  assert.match(ordinary, /^        run: npm run preflight$/mu);
+  assert.match(ordinary, /^        timeout-minutes: 7$/mu);
+  assert.match(ordinary, /^        run: npm run preflight -- --ci-qualification$/mu);
   assert.doesNotMatch(ordinary, /bound-targeted-test-concurrency/u);
 
   assert.match(windows, /^        if: runner\.os == 'Windows'$/mu);
-  assert.match(windows, /^        timeout-minutes: 4$/mu);
-  assert.match(windows, /^        run: npm\.cmd run preflight -- --bound-targeted-test-concurrency$/mu);
+  assert.match(windows, /^        timeout-minutes: 7$/mu);
+  assert.match(windows, /^        run: npm\.cmd run preflight -- --ci-qualification --bound-targeted-test-concurrency$/mu);
 });
 
 test("CI job deadlines reserve setup and downstream time beyond their largest selected suite", async () => {
   const workflow = (await read(".github/workflows/ci.yml")).replaceAll("\r\n", "\n");
-  assert.match(workflow, /^  smoke:\n    timeout-minutes: 8$/mu);
+  assert.match(workflow, /^  smoke:\n    timeout-minutes: 11$/mu);
   assert.match(workflow, /^  test:\n    timeout-minutes: 14$/mu);
   assert.doesNotMatch(workflow, /continue-on-error|retry/u);
 });

@@ -16,9 +16,9 @@ function successfulRunner(calls) {
   };
 }
 
-test('preflight arguments expose only the closed targeted-test concurrency bound', () => {
-  assert.deepEqual(parseRepositoryPreflightArguments([]), { boundTargetedTestConcurrency: false });
-  assert.deepEqual(parseRepositoryPreflightArguments(['--bound-targeted-test-concurrency']), { boundTargetedTestConcurrency: true });
+test('preflight arguments expose only closed scheduling and qualification selections', () => {
+  assert.deepEqual(parseRepositoryPreflightArguments([]), { boundTargetedTestConcurrency: false, ciQualification: false });
+  assert.deepEqual(parseRepositoryPreflightArguments(['--bound-targeted-test-concurrency']), { boundTargetedTestConcurrency: true, ciQualification: false });
   assert.throws(() => parseRepositoryPreflightArguments('--bound-targeted-test-concurrency'), /must be an array/u);
   assert.throws(() => parseRepositoryPreflightArguments(['--bound-targeted-test-concurrency=1']), /accepts only/u);
   assert.throws(() => parseRepositoryPreflightArguments(['--bound-targeted-test-concurrency', '--bound-targeted-test-concurrency']), /accepts only/u);
@@ -60,6 +60,25 @@ test('programmatic preflight scheduling rejects open or malformed options before
     () => runRepositoryPreflight(root, successfulRunner([]), {}, null),
     /must be an object/u,
   );
+});
+
+test('CI qualification is explicit, finite, independent of scheduling and does not alter inventory', () => {
+  for (const args of [['--ci-qualification'], ['--ci-qualification', '--bound-targeted-test-concurrency'],
+    ['--bound-targeted-test-concurrency', '--ci-qualification']]) {
+    const options = parseRepositoryPreflightArguments(args);
+    const calls = [];
+    const events = [];
+    const result = runRepositoryPreflight(root, successfulRunner(calls), {}, options, {
+      now: () => 0, onProgress: (event) => events.push(event),
+    });
+    assert.equal(result.targetedTests, 234);
+    assert.equal(events[0].remainingMs, 360_000);
+    assert.equal(calls.at(-1).options.timeout, 300_000);
+    assert.equal(calls.at(-1).args.includes('--test-concurrency=2'), args.length === 2);
+  }
+  assert.throws(() => parseRepositoryPreflightArguments(['--ci-qualification', '--ci-qualification']), /at most once/u);
+  assert.throws(() => parseRepositoryPreflightArguments(['--ci-qualification=900000']), /accepts only/u);
+  assert.throws(() => runRepositoryPreflight(root, successfulRunner([]), {}, { ciQualification: 'yes' }), /must be boolean/u);
 });
 
 test('preflight emits operation evidence before work and does not renew its aggregate budget', () => {

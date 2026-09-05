@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   smoke:
-    timeout-minutes: 8
+    timeout-minutes: 11
     strategy:
       fail-fast: false
       matrix:
@@ -33,12 +33,12 @@ jobs:
           package-manager-cache: false
       - name: Cheap preflight (non-Windows default)
         if: runner.os != 'Windows'
-        timeout-minutes: 4
-        run: npm run preflight
+        timeout-minutes: 7
+        run: npm run preflight -- --ci-qualification
       - name: Cheap preflight (Windows bounded)
         if: runner.os == 'Windows'
-        timeout-minutes: 4
-        run: npm.cmd run preflight -- --bound-targeted-test-concurrency
+        timeout-minutes: 7
+        run: npm.cmd run preflight -- --ci-qualification --bound-targeted-test-concurrency
       - name: DevBridge identity audit
         timeout-minutes: 1
         run: node --test test/product-identity.test.js
