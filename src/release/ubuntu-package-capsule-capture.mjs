@@ -3,6 +3,7 @@ import { mkdir, open, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { normalizeUbuntuAptTransactionSolution } from './ubuntu-apt-transaction-solver.mjs';
+import { parseUbuntuSha256Checksum } from './ubuntu-sha256-checksum.mjs';
 
 export const UBUNTU_PACKAGE_CAPSULE_CAPTURE_PROTOCOL = 'devbridge/ubuntu-package-capsule-capture-v1';
 
@@ -111,17 +112,16 @@ function field(stanza, selected, name) {
   return value;
 }
 
-function checksums(value, name, { leaf = false } = {}) {
+function checksums(value, name, { leaf = false, allowEmpty = false } = {}) {
   const result = new Map();
   for (const line of String(value ?? '').split('\n').filter((entry) => entry.trim())) {
-    const match = /^([a-f0-9]{64})[ \t]+([1-9][0-9]*)[ \t]+([^\s]+)$/u.exec(line.trim());
-    const size = match ? Number(match[2]) : Number.NaN;
-    if (!match || !Number.isSafeInteger(size) || size < 1) fail(`${name} checksum is invalid`);
+    const entry = parseUbuntuSha256Checksum(line, { allowEmpty });
+    if (!entry) fail(`${name} checksum is invalid`);
     const filename = leaf
-      ? archiveLeaf(match[3], `${name} filename`)
-      : archivePath(match[3], `${name} path`);
+      ? archiveLeaf(entry.filename, `${name} filename`)
+      : archivePath(entry.filename, `${name} path`);
     if (result.has(filename)) fail(`${name} checksum is invalid`);
-    result.set(filename, Object.freeze({ sha256: match[1], size }));
+    result.set(filename, Object.freeze({ sha256: entry.sha256, size: entry.size }));
   }
   if (result.size < 1) fail(`${name} checksum set is empty`);
   return result;
@@ -283,7 +283,7 @@ export async function captureUbuntuPackageCapsule(raw = {}) {
       if (!architectures.includes(selectedPolicy.architecture) || !COMPONENTS.every((entry) => components.includes(entry))) {
         fail(`Ubuntu snapshot ${pocket} topology does not cover the capture policy`);
       }
-      const signedIndexes = checksums(field(stanza, 'SHA256', pocket), `Ubuntu snapshot ${pocket} InRelease`);
+      const signedIndexes = checksums(field(stanza, 'SHA256', pocket), `Ubuntu snapshot ${pocket} InRelease`, { allowEmpty: true });
       const captureComponents = [];
       await recordArtifact('metadata', `${pocket}-inrelease`, inReleaseBytes);
       for (const component of COMPONENTS) {
