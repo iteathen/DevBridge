@@ -2,6 +2,8 @@
 
 Status: implementation in progress; no installation or physical qualification claimed.
 
+Current checkpoint: HO162 has implemented the exact-file media dependency and proved the complete capsule's native Windows UDF write/readback. See `DB-HO162-exact-file-media.md`. The next incomplete connection is separate data-media attachment and exact offline APT consumption, then setup integration. The original scoped plan below remains the branch's full objective; do not restart completed projection/media work.
+
 ## Assessment and governing boundaries
 
 Baseline `279fda350a39067047dc76c18c1c8f5c64f1766e`, tree `2f411f8f488beb4b3a7f5e660adb75ee17dbe56a`; integrated CI33949874380 all four green. HO160 completed real GitHub/R2 publication of the unchanged b5b912b source and Ubuntu manifest66956be8bec7b04631d9510c99b90f1d45edd6989ea6ff8570d7b9531f54f6ce. That is available input, not installer consumption or VM readiness.

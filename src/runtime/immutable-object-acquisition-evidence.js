@@ -92,6 +92,18 @@ async function observeObject(raw, expected, signal, index) {
   } finally { await handle.close(); }
 }
 
+export async function reobserveExactFile(raw = {}) {
+  const value = exactObject(raw, new Set(['location', 'size', 'sha256', 'signal']), 'exact file observation');
+  if (!Number.isSafeInteger(value.size) || value.size < 1 || typeof value.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(value.sha256)) {
+    throw new TypeError('exact file observation identity is invalid');
+  }
+  const signal = signalShape(value.signal);
+  interrupted(signal);
+  const expected = { name: 'file', size: value.size, sha256: value.sha256 };
+  const observed = await observeObject({ ...expected, location: value.location }, expected, signal, 0);
+  return Object.freeze({ location: observed.location, size: observed.size, sha256: observed.sha256 });
+}
+
 export async function reobserveImmutableObjectAcquisition(raw = {}) {
   const request = exactObject(raw, new Set(['descriptor', 'evidence', 'signal']), 'immutable-object acquisition evidence request');
   const descriptor = normalizeImmutableObjectSet(request.descriptor);

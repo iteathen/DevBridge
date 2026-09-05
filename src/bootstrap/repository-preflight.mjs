@@ -520,6 +520,7 @@ const TARGETED_TESTS = [
   'test/stage3-lego-boundary.test.js',
   'test/hyperv-image-construction.test.js',
   'test/windows-imapi-data-media.test.js',
+  'test/windows-imapi-file-media-native.test.js',
   'test/windows-imapi-nocloud-seed.test.js',
   'test/windows-unattended-seed.test.js',
   'test/windows-unattended-media.test.js',
