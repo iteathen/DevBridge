@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -15,6 +15,7 @@ import {
 import { buildUbuntuPackageCapsuleRelease } from '../src/release/ubuntu-package-capsule-release-builder.mjs';
 import { verifyUbuntuPackageCapsuleReleaseInput } from '../src/setup/ubuntu-package-capsule-release-input.mjs';
 import { createUbuntuPackageCaptureFixture } from './fixtures/ubuntu-package-capsule-capture-fixture.js';
+import { parseUbuntuSha256Checksum } from '../src/release/ubuntu-sha256-checksum.mjs';
 
 function solution(capture) {
   const selectedPackages = capture.binaries.packages.map((entry) => ({
@@ -90,8 +91,15 @@ function sourceSemantics(entry) {
   };
 }
 
-test('capture maps one solved transaction through signed metadata to exact binary and source artifacts', async () => {
+for (const emptyAncillaryIndex of [false, true]) {
+test(`capture maps one solved transaction through signed metadata to exact binary and source artifacts (empty ancillary index: ${emptyAncillaryIndex})`, async () => {
   const { fixtureRoot, fixture, archive } = await input();
+  if (emptyAncillaryIndex) {
+    for (const pocket of fixture.capture.metadata.pockets) {
+      archive.set(pocket.inRelease.path, Buffer.from(archive.get(pocket.inRelease.path).toString('utf8')
+        .replace('SHA256:\n', `SHA256:\n ${sha256(Buffer.alloc(0))} 0 main/debian-installer/binary-amd64/Packages\n`)));
+    }
+  }
   const destination = path.join(fixtureRoot, 'capture');
   try {
     const result = await captureUbuntuPackageCapsule({
@@ -135,6 +143,40 @@ test('capture maps one solved transaction through signed metadata to exact binar
     assert.equal(verified.sources.packages.length, 3);
   } finally { await rm(fixtureRoot, { recursive: true, force: true }); }
 });
+}
+
+test('checksum row grammar distinguishes empty InRelease entries from nonempty artifact authority', () => {
+  const empty = sha256(Buffer.alloc(0));
+  const row = `${empty} 0 main/debian-installer/binary-amd64/Packages`;
+  assert.equal(parseUbuntuSha256Checksum(row), null);
+  assert.equal(parseUbuntuSha256Checksum(row, { allowEmpty: true }).size, 0);
+  for (const size of ['-1', '+0', '00', '01', '1.0', '1e3', '9007199254740992']) {
+    assert.equal(parseUbuntuSha256Checksum(`${empty} ${size} file`, { allowEmpty: true }), null);
+  }
+  assert.equal(parseUbuntuSha256Checksum(`${'a'.repeat(64)} 0 file`, { allowEmpty: true }), null);
+  assert.equal(parseUbuntuSha256Checksum(`${empty} 1 file`).size, 1);
+  assert.equal(parseUbuntuSha256Checksum(`${empty} 9007199254740991 file`).size, Number.MAX_SAFE_INTEGER);
+  assert.equal(parseUbuntuSha256Checksum(`${empty} 1 file extra`), null);
+});
+
+test('independent sealing accepts signed empty ancillary indexes without admitting empty artifact objects', async () => {
+  const { fixtureRoot, fixture } = await input();
+  try {
+    const pocket = fixture.capture.metadata.pockets[0];
+    const file = fixture.artifacts.metadata.find(entry => entry.name === pocket.inRelease.object).location;
+    await writeFile(file, (await readFile(file, 'utf8')).replace('SHA256:\n',
+      `SHA256:\n ${sha256(Buffer.alloc(0))} 0 main/debian-installer/binary-amd64/Packages\n`));
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const sealed = await buildUbuntuPackageCapsuleRelease({
+      capture: fixture.capture, artifacts: fixture.artifacts, destination: path.join(fixtureRoot, 'release'),
+      keyId: 'empty-index-test',
+      privateKeyBytes: Buffer.from(privateKey.export({ type: 'pkcs8', format: 'pem' })),
+      publicKeyBytes: Buffer.from(publicKey.export({ type: 'spki', format: 'pem' })),
+      verifyInRelease: verifier(fixture.capture.upstreamKeyFingerprint),
+    });
+    assert.equal(sealed.keyId, 'empty-index-test');
+  } finally { await rm(fixtureRoot, { recursive: true, force: true }); }
+});
 
 test('capture rejects changed signed index bytes and removes its owned partial destination', async () => {
   const { fixtureRoot, fixture, archive } = await input();
@@ -151,6 +193,49 @@ test('capture rejects changed signed index bytes and removes its owned partial d
     await assert.rejects(readFile(destination), /ENOENT/u);
   } finally { await rm(fixtureRoot, { recursive: true, force: true }); }
 });
+
+for (const invalid of ['wrong-empty-digest', 'duplicate-empty-path', 'selected-empty-index']) {
+  test(`both capture and independent sealing reject ${invalid} and preserve retryability`, async () => {
+    const { fixtureRoot, fixture, archive } = await input();
+    const pocket = fixture.capture.metadata.pockets[0];
+    const original = archive.get(pocket.inRelease.path);
+    const emptyRow = ` ${sha256(Buffer.alloc(0))} 0 main/debian-installer/binary-amd64/Packages\n`;
+    let changed;
+    if (invalid === 'wrong-empty-digest') {
+      changed = original.toString('utf8').replace('SHA256:\n', `SHA256:\n ${'a'.repeat(64)} 0 ancillary\n`);
+    } else if (invalid === 'duplicate-empty-path') {
+      changed = original.toString('utf8').replace('SHA256:\n', `SHA256:\n${emptyRow}${emptyRow}`);
+    } else {
+      const indexPath = pocket.components[0].binaryIndex.path;
+      const index = archive.get(`dists/${pocket.pocket}/${indexPath}`);
+      changed = original.toString('utf8').replace(`${sha256(index)} ${index.length} ${indexPath}`,
+        `${sha256(Buffer.alloc(0))} 0 ${indexPath}`);
+    }
+    archive.set(pocket.inRelease.path, Buffer.from(changed));
+    const destination = path.join(fixtureRoot, 'capture');
+    const releaseDestination = path.join(fixtureRoot, 'release');
+    const inReleaseFile = fixture.artifacts.metadata.find(entry => entry.name === pocket.inRelease.object).location;
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    try {
+      const request = { policy: policy(fixture.capture), solution: solution(fixture.capture), destination,
+        readArchive: reader(archive), verifyInRelease: verifier(fixture.capture.upstreamKeyFingerprint) };
+      await assert.rejects(captureUbuntuPackageCapsule(request), /checksum|signed size and SHA-256/u);
+      await assert.rejects(readFile(destination), /ENOENT/u);
+      await writeFile(inReleaseFile, changed);
+      await assert.rejects(buildUbuntuPackageCapsuleRelease({
+        capture: fixture.capture, artifacts: fixture.artifacts, destination: releaseDestination,
+        keyId: 'invalid-index-test',
+        privateKeyBytes: Buffer.from(privateKey.export({ type: 'pkcs8', format: 'pem' })),
+        publicKeyBytes: Buffer.from(publicKey.export({ type: 'spki', format: 'pem' })),
+        verifyInRelease: verifier(fixture.capture.upstreamKeyFingerprint),
+      }), /checksum|upstream size and SHA-256/u);
+      await assert.rejects(readFile(releaseDestination), /ENOENT/u);
+      archive.set(pocket.inRelease.path, original);
+      const retry = await captureUbuntuPackageCapsule(request);
+      assert.equal(retry.artifactCount, 26);
+    } finally { await rm(fixtureRoot, { recursive: true, force: true }); }
+  });
+}
 
 test('capture rejects signature substitution before binary or source acquisition', async () => {
   const { fixtureRoot, fixture, archive } = await input();

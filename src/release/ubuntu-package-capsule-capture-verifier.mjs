@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { ubuntuPackageCapsuleReleasePayload } from '../setup/ubuntu-package-capsule-release-input.mjs';
+import { parseUbuntuSha256Checksum } from './ubuntu-sha256-checksum.mjs';
 
 const DIGEST = /^[a-f0-9]{64}$/u;
 const FINGERPRINT = /^(?:[A-F0-9]{40}|[A-F0-9]{64})$/u;
@@ -72,15 +73,14 @@ function controlStanzas(text, name) {
   return stanzas;
 }
 
-function checksumEntries(value, name) {
+function checksumEntries(value, name, { allowEmpty = false } = {}) {
   if (typeof value !== 'string' || value.length < 1) fail(`${name} checksum field is absent`);
   const entries = new Map();
   for (const line of value.split('\n').filter((entry) => entry.trim().length > 0)) {
-    const match = /^([a-f0-9]{64})[ \t]+([1-9][0-9]*)[ \t]+([^\s]+)$/u.exec(line.trim());
-    if (!match) fail(`${name} checksum entry is invalid`);
-    const size = Number(match[2]);
-    if (!Number.isSafeInteger(size) || size < 1 || entries.has(match[3])) fail(`${name} checksum entry is invalid or duplicated`);
-    entries.set(match[3], Object.freeze({ sha256: match[1], size }));
+    const entry = parseUbuntuSha256Checksum(line, { allowEmpty });
+    if (!entry) fail(`${name} checksum entry is invalid`);
+    if (entries.has(entry.filename)) fail(`${name} checksum entry is invalid or duplicated`);
+    entries.set(entry.filename, Object.freeze({ sha256: entry.sha256, size: entry.size }));
   }
   return entries;
 }
@@ -247,7 +247,7 @@ export async function verifyUbuntuPackageCapsuleCapture(raw = {}) {
         || !['main', 'universe'].every((component) => components.includes(component))) {
       fail(`${releaseContext} architecture or component set does not cover the capsule subject`);
     }
-    const indexChecksums = checksumEntries(exactField(releaseStanza, 'SHA256', releaseContext), releaseContext);
+    const indexChecksums = checksumEntries(exactField(releaseStanza, 'SHA256', releaseContext), releaseContext, { allowEmpty: true });
     for (const component of pocket.components) {
       for (const [kind, index] of [['binary', component.binaryIndex], ['source', component.sourceIndex]]) {
         const expected = indexChecksums.get(index.path);

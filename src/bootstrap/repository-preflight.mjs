@@ -59,6 +59,7 @@ const SYNTAX_FILES = [
   'src/release/r2-release-destination.mjs',
   'src/release/gpgv-inrelease-verifier.mjs',
   'src/release/ubuntu-apt-transaction-solver.mjs',
+  'src/release/ubuntu-sha256-checksum.mjs',
   'src/release/ubuntu-capsule-solver-input-preparer.mjs',
   'src/release/ubuntu-installer-layer-entry-source.mjs',
   'src/release/ubuntu-package-capsule-capture.mjs',
