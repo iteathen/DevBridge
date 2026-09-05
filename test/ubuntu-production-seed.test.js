@@ -58,6 +58,18 @@ function neutralPayload(payload, files = payload.files) {
   return { generation: payload.generation, files };
 }
 
+test('Ubuntu seed preserves actual installer package state before any late APT mutation', async () => {
+  const { userData } = await factory().create(request());
+  const late = userData.split('  late-commands:\n')[1].split('  shutdown:')[0]
+    .trim().split('\n').map((line) => JSON.parse(line.trim().slice(2)));
+  assert.equal(late.length, 4);
+  assert.equal(late[0][0], 'sh');
+  assert.match(late[0][2], /ubuntu-installation-basis\.status/u);
+  assert.equal(late[0].at(-1), '/target');
+  assert.deepEqual(late.slice(1).map((command) => command[0]), ['curtin', 'curtin', 'curtin']);
+  assert.deepEqual(late.slice(1).map((command) => command.includes('apt-get')), [true, true, true]);
+});
+
 test('Ubuntu production seed binds exact package snapshot, versions, and payload generation', async () => {
   const result = await factory().create(request());
   assert.match(result.userData, /^#cloud-config\nautoinstall:/u);
