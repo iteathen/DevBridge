@@ -171,6 +171,20 @@ export function createExactValueState({
     return complete({ reservation, value: value.value });
   }
 
+  async function replace(raw) {
+    const input = exactObject(raw, new Set(['item', 'value']), 'value-state replacement');
+    const item = stateItem(input.item, 'value-state replacement.item', protocol, controlIdentity);
+    if (item.identity === controlIdentity || item.value.phase !== 'complete') {
+      throw new TypeError('value-state replacement requires a completed non-control item');
+    }
+    const value = exactValue(input.value, 'value-state replacement.value');
+    const nextOperation = operation(identifier());
+    if (nextOperation === item.value.operation) throw new Error('value-state replacement requires a new operation identity');
+    const after = completed({ ...item, value: { ...item.value, operation: nextOperation } }, value);
+    const accepted = await collection.apply({ changes: [{ identity: item.identity, before: item, after }] });
+    return stateItem(byIdentity(accepted, item.identity), 'value-state replacement accepted item', protocol, controlIdentity);
+  }
+
   async function clear(raw) {
     const value = exactObject(raw, new Set(['item']), 'value-state clearing');
     const item = stateItem(value.item, 'value-state clearing.item', protocol, controlIdentity);
@@ -180,5 +194,5 @@ export function createExactValueState({
     return collection.apply({ changes: [{ identity: item.identity, before: item, after: null }] });
   }
 
-  return Object.freeze({ open, read, reserve, complete, record, clear });
+  return Object.freeze({ open, read, reserve, complete, record, replace, clear });
 }

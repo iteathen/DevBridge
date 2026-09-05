@@ -94,6 +94,7 @@ export function createRunnerCacheOwnership({ stateRoot, directories } = {}, {
         reserve: state.reserve,
         complete: state.complete,
         record: state.record,
+        replace: state.replace,
         clear: state.clear,
         directory(raw) { return ensureDirectory(state, raw); },
       });

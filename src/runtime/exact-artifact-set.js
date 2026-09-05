@@ -431,6 +431,42 @@ export class ExactArtifactSet {
     return this.plan({ identity, root, files, directories, exclusive: true, removeRoot: true });
   }
 
+  async revalidateFiles(rawManifest) {
+    const manifest = normalizeManifest(rawManifest);
+    if (!manifest.exclusive || manifest.entries.some((entry) => entry.kind === 'file'
+        && (entry.expectedBytes == null || entry.expectedSha256 == null))) {
+      throw new Error('artifact file revalidation requires exclusive complete content evidence');
+    }
+    const directories = manifest.entries.filter((entry) => entry.kind === 'directory');
+    // Directory identity remains the ownership anchor. Only file objects may
+    // receive fresh identities after their original complete content is proved.
+    await this.#realDirectory(manifest.root, manifest.rootIdentity);
+    for (const entry of directories) {
+      await this.#realDirectory(this.#location(manifest.root, entry.relative), entry.identity);
+    }
+    const request = {
+      identity: manifest.identity,
+      root: manifest.root,
+      files: manifest.entries.filter((entry) => entry.kind === 'file').map((entry) => ({
+        relative: entry.relative, bytes: entry.expectedBytes, sha256: entry.expectedSha256,
+      })),
+      directories: directories.map((entry) => entry.relative),
+      exclusive: manifest.exclusive,
+      removeRoot: manifest.removeRoot,
+    };
+    const fresh = await this.plan(request);
+    if (digest(fresh.rootIdentity) !== digest(manifest.rootIdentity)
+        || directories.some((entry) => digest(entry.identity) !== digest(
+          fresh.entries.find((candidate) => candidate.relative === entry.relative)?.identity,
+        ))) throw new Error('artifact file revalidation directory identity changed');
+    // observe() intentionally permits partial absence for removal recovery.
+    // Revalidation instead requires a second complete, identical observation.
+    if ((await this.plan(request)).digest !== fresh.digest) {
+      throw new Error('artifact file revalidation changed during observation');
+    }
+    return fresh;
+  }
+
   async observe(rawManifest) {
     const manifest = normalizeManifest(rawManifest);
     const locations = [manifest.root, ...manifest.entries.map((entry) => this.#location(manifest.root, entry.relative))];

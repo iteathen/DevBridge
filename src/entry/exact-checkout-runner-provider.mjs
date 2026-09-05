@@ -252,8 +252,21 @@ export class ExactCheckoutRunnerProvider {
     await this.#verify(destination, subject, context);
     if (current.value.phase === 'complete') {
       const observed = await this.#artifacts.observe(structuredClone(current.value.value));
-      if (observed.state !== 'present') fail('exact checkout receipt descriptor does not match local state');
-      return;
+      if (observed.state === 'present') return null;
+      if (typeof this.#artifacts.revalidateFiles !== 'function' || typeof session.replace !== 'function') {
+        fail('exact checkout receipt descriptor does not match local state');
+      }
+      const value = await this.#artifacts.revalidateFiles(structuredClone(current.value.value));
+      await this.#verify(destination, subject, context);
+      if ((await this.#artifacts.observe(value)).state !== 'present') {
+        fail('exact checkout revalidated descriptor changed before acceptance');
+      }
+      const accepted = await session.replace({ item: current, value });
+      return Object.freeze({
+        kind: 'byte-identical-files',
+        previousOperation: current.value.operation,
+        operation: accepted.value.operation,
+      });
     }
     const value = await this.#artifacts.discover({ identity, root: destination });
     await session.complete({ reservation: current, value });
@@ -285,8 +298,8 @@ export class ExactCheckoutRunnerProvider {
     let current = await session.read(identity);
 
     if (current?.value.phase === 'complete') {
-      await this.#completeCheckout(session, current, request, identity, destination, subject, context);
-      return { destination, context };
+      const recovery = await this.#completeCheckout(session, current, request, identity, destination, subject, context);
+      return { destination, context, recovery };
     }
 
     if (!current && await exists(destination)) {
@@ -345,6 +358,7 @@ export class ExactCheckoutRunnerProvider {
     const provider = this;
     return Object.freeze({
       subject,
+      recovery: prepared.recovery ?? null,
       async launch(argv) {
         if (!Array.isArray(argv) || argv.some((entry) => typeof entry !== 'string')) fail('exact checkout launch argv must be an array of strings');
         return provider.#ownership.duringActivity(async () => {

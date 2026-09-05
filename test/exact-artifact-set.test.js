@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { link, lstat, mkdir, mkdtemp, open, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, mkdtemp, open, readFile, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -29,6 +29,78 @@ function request(root) {
     directories: ['nested'],
   };
 }
+
+test('file revalidation returns new evidence without changing old exact observation authority', async () => {
+  const state = await fixture();
+  try {
+    const before = await state.api.plan(request(state.root));
+    const saved = structuredClone(before);
+    const replacement = path.join(state.parent, 'replacement');
+    await writeFile(replacement, 'first');
+    await rename(replacement, path.join(state.root, 'first.bin'));
+    assert.equal((await state.api.observe(before)).state, 'ambiguous');
+    const after = await state.api.revalidateFiles(before);
+    assert.notEqual(after.digest, before.digest);
+    assert.deepEqual(after.rootIdentity, before.rootIdentity);
+    assert.deepEqual(before, saved);
+    assert.equal((await state.api.observe(before)).state, 'ambiguous');
+    assert.equal((await state.api.observe(after)).state, 'present');
+    assert.deepEqual(await state.api.revalidateFiles(after), after);
+  } finally { await rm(state.parent, { recursive: true, force: true }); }
+});
+
+test('file revalidation rejects changed content, missing/extra files, links and directory replacement', async () => {
+  for (const change of ['content', 'missing', 'extra', 'link', 'directory', 'root']) {
+    const state = await fixture();
+    try {
+      const before = await state.api.plan(request(state.root));
+      if (change === 'content') await writeFile(path.join(state.root, 'first.bin'), 'other');
+      if (change === 'missing') await unlink(path.join(state.root, 'first.bin'));
+      if (change === 'extra') await writeFile(path.join(state.root, 'extra'), 'foreign');
+      if (change === 'link') await link(path.join(state.root, 'first.bin'), path.join(state.parent, 'alias'));
+      if (change === 'directory') {
+        await rename(path.join(state.root, 'nested'), path.join(state.parent, 'old-directory'));
+        await mkdir(path.join(state.root, 'nested'));
+        await writeFile(path.join(state.root, 'nested', 'second.bin'), 'second');
+      }
+      if (change === 'root') {
+        await rename(state.root, path.join(state.parent, 'old-root'));
+        await mkdir(path.join(state.root, 'nested'), { recursive: true });
+        await writeFile(path.join(state.root, 'first.bin'), 'first');
+        await writeFile(path.join(state.root, 'nested', 'second.bin'), 'second');
+      }
+      await assert.rejects(() => state.api.revalidateFiles(before), undefined, change);
+      assert.equal(await readFile(path.join(state.root, 'nested', 'second.bin'), 'utf8'), 'second');
+    } finally { await rm(state.parent, { recursive: true, force: true }); }
+  }
+});
+
+test('file revalidation requires complete exclusive digest authority and stable repeated observations', async () => {
+  const state = await fixture();
+  try {
+    for (const change of ['digest', 'bytes', 'exclusive']) {
+      const input = request(state.root);
+      if (change === 'digest') delete input.files[0].sha256;
+      if (change === 'bytes') delete input.files[0].bytes;
+      if (change === 'exclusive') input.exclusive = false;
+      const incomplete = await state.api.plan(input);
+      await assert.rejects(() => state.api.revalidateFiles(incomplete), /complete content evidence/u);
+    }
+    const before = await state.api.plan(request(state.root));
+    const originalPlan = state.api.plan.bind(state.api);
+    let planned = false;
+    state.api.plan = async (input) => {
+      const result = await originalPlan(input);
+      if (!planned) {
+        planned = true;
+        await writeFile(path.join(state.parent, 'replacement'), 'first');
+        await rename(path.join(state.parent, 'replacement'), path.join(state.root, 'first.bin'));
+      }
+      return result;
+    };
+    await assert.rejects(() => state.api.revalidateFiles(before), /changed during observation/u);
+  } finally { await rm(state.parent, { recursive: true, force: true }); }
+});
 
 test('exact artifact set plans and removes only an enumerated real tree', async () => {
   const state = await fixture();
