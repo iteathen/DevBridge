@@ -1,10 +1,11 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import process from 'node:process';
 
 const SYNTAX_FILES = [
+  'src/bootstrap/preflight-progress-reporter.mjs',
   'devbridge.mjs',
   'install-devbridge.mjs',
   'bootstrap-devbridge.mjs',
@@ -600,12 +601,69 @@ export function boundedProcessFailureEvidence(result, maximumChars = MAX_FAILURE
   return clipped(projected, maximumChars);
 }
 
-function checked(runner, args, { cwd, label, timeoutMs }) {
-  const result = runner(process.execPath, args, { cwd, stdio: 'pipe', shell: false, windowsHide: true, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 });
+function checked(runner, args, { cwd, label, timeoutMs, live = false }) {
+  const result = runner(process.execPath, args, { cwd, stdio: live ? ['ignore', 'inherit', 'pipe'] : 'pipe', shell: false, windowsHide: true, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 });
   if (result.error || result.status !== 0) {
     const detail = boundedProcessFailureEvidence(result);
-    throw new Error(`${label} failed (exit ${result.status ?? 'spawn-error'})${detail ? `: ${detail}` : ''}`);
+    const error = new Error(`${label} failed (exit ${result.status ?? 'spawn-error'})${detail ? `: ${detail}` : ''}`, { cause: result.error });
+    error.code = result.error?.code ?? (result.signal ? 'PREFLIGHT_INTERRUPTED' : 'PREFLIGHT_CHILD_FAILED');
+    throw error;
   }
+}
+
+// HO170: one admission budget, with 30 seconds reserved inside existing
+// four-minute candidate parents. Output/progress never renews this deadline.
+const PREFLIGHT_BUDGET_MS = 210_000;
+
+function preflightObservation(observation) {
+  if (observation == null || typeof observation !== 'object' || Array.isArray(observation)
+      || Object.keys(observation).some((key) => !['now', 'onProgress'].includes(key))
+      || (observation.now !== undefined && typeof observation.now !== 'function')
+      || (observation.onProgress !== undefined && typeof observation.onProgress !== 'function')) {
+    throw new TypeError('preflight observation ports are invalid');
+  }
+  const now = observation.now ?? (() => performance.now());
+  let previous = -Infinity;
+  const readClock = () => {
+    const value = now();
+    if (!Number.isFinite(value) || value < previous) throw new TypeError('preflight observation clock is invalid');
+    previous = value;
+    return value;
+  };
+  const start = readClock();
+  const elapsed = () => Math.max(0, Math.floor(readClock() - start));
+  const timeout = (operation) => Object.assign(new Error(`${operation} exceeded preflight deadline`), { code: 'ETIMEDOUT' });
+  return {
+    live: observation.onProgress !== undefined,
+    run(operation, maximumMs, action) {
+      const before = elapsed();
+      const remainingMs = Math.max(0, PREFLIGHT_BUDGET_MS - before);
+      const timeoutMs = Math.min(maximumMs, remainingMs);
+      const report = (status, duration, outcome) => observation.onProgress?.(Object.freeze({
+        operation, status, elapsedMs: duration,
+        remainingMs: Math.max(0, PREFLIGHT_BUDGET_MS - duration), timeoutMs,
+        ...(outcome ? { outcome } : {}),
+      }));
+      if (timeoutMs <= 0) {
+        report('failed', before, 'timeout');
+        throw timeout(operation);
+      }
+      report('started', before);
+      try {
+        // Recheck after the observer: a stalled sink cannot authorize late work.
+        const available = Math.min(timeoutMs, PREFLIGHT_BUDGET_MS - elapsed());
+        if (available <= 0) throw timeout(operation);
+        action(available);
+        const after = elapsed();
+        if (after >= PREFLIGHT_BUDGET_MS || after - before > timeoutMs) throw timeout(operation);
+        report('passed', after);
+      } catch (error) {
+        report('failed', elapsed(), error.code === 'ETIMEDOUT' ? 'timeout'
+          : error.code === 'PREFLIGHT_INTERRUPTED' ? 'interrupted' : 'failure');
+        throw error;
+      }
+    },
+  };
 }
 
 function protocolNumber(value, name) {
@@ -655,25 +713,26 @@ export function assertCandidateStage0Compatibility(root = process.cwd(), environ
   return Object.freeze({ checked: true, activeStage0Protocol: active, requiredStage0Protocol: required });
 }
 
-export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync, environment = process.env, options = {}) {
+export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync, environment = process.env, options = {}, observation = {}) {
   const cwd = path.resolve(root);
   const scheduling = normalizeRepositoryPreflightOptions(options);
+  const progress = preflightObservation(observation);
   const compatibility = assertCandidateStage0Compatibility(cwd, environment);
-  checked(runner, ['scripts/build-standalone-artifacts.mjs', '--check'], {
-    cwd,
-    label: 'standalone artifact regeneration check',
-    timeoutMs: 60_000,
-  });
+  const run = (args, label, maximumMs, live = false) => progress.run(label, maximumMs,
+    (timeoutMs) => checked(runner, args, { cwd, label, timeoutMs, live }));
+  run(['scripts/build-standalone-artifacts.mjs', '--check'], 'standalone artifact regeneration check', 60_000);
   for (const relative of SYNTAX_FILES) {
     const file = path.join(cwd, relative);
     if (!existsSync(file)) throw new Error(`preflight required file is missing: ${relative}`);
-    checked(runner, ['--check', file], { cwd, label: `syntax ${relative}`, timeoutMs: 60_000 });
+    run(['--check', file], `syntax ${relative}`, 60_000);
   }
   for (const relative of JSON_FILES) {
     const file = path.join(cwd, relative);
     if (!existsSync(file)) throw new Error(`preflight required JSON is missing: ${relative}`);
-    try { JSON.parse(readFileSync(file, 'utf8')); }
-    catch (error) { throw new Error(`JSON ${relative} is invalid: ${error.message}`, { cause: error }); }
+    progress.run(`JSON ${relative}`, 60_000, () => {
+      try { JSON.parse(readFileSync(file, 'utf8')); }
+      catch (error) { throw new Error(`JSON ${relative} is invalid: ${error.message}`, { cause: error }); }
+    });
   }
   const targeted = TARGETED_TESTS.filter((relative) => existsSync(path.join(cwd, relative)));
   if (targeted.length !== TARGETED_TESTS.length) {
@@ -683,9 +742,11 @@ export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync,
   const testArguments = [
     '--test',
     ...(scheduling.boundTargetedTestConcurrency ? [`--test-concurrency=${TARGETED_TEST_CONCURRENCY_LIMIT}`] : []),
+    ...(progress.live ? ['--test-reporter=./src/bootstrap/preflight-progress-reporter.mjs', '--test-reporter=tap',
+      '--test-reporter-destination=stdout', '--test-reporter-destination=stderr'] : []),
     ...targeted,
   ];
-  checked(runner, testArguments, { cwd, label: 'targeted preflight tests', timeoutMs: 180_000 });
+  run(testArguments, 'targeted preflight tests', 180_000, progress.live);
   return { standaloneArtifacts: 3, syntaxFiles: SYNTAX_FILES.length, jsonFiles: JSON_FILES.length, targetedTests: targeted.length, compatibility };
 }
 
@@ -694,7 +755,10 @@ const entryFile = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (entryFile === thisFile) {
   try {
     const options = parseRepositoryPreflightArguments(process.argv.slice(2));
-    const result = runRepositoryPreflight(process.cwd(), spawnSync, process.env, options);
+    const result = runRepositoryPreflight(process.cwd(), spawnSync, process.env, options, {
+      // Flush before spawnSync blocks the event loop, including redirected CI output.
+      onProgress: (event) => writeSync(2, `[devbridge-preflight] ${JSON.stringify(event)}\n`),
+    });
     process.stdout.write(`${JSON.stringify({ status: 'passed', ...result })}\n`);
   } catch (error) {
     process.stderr.write(`[devbridge-preflight] ${error.name}: ${error.message}\n`);
