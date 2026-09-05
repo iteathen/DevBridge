@@ -30,7 +30,7 @@ export class HyperVImageConstruction {
     this.#outputRoot = path.resolve(outputRoot);
     this.#now = now;
     this.#request = new HyperVConstructionRequest({ identity, outputRoot, normalizeProtection: normalizeBootProtection });
-    this.#ledger = new HyperVConstructionLedger({ directory, sourceRoot, outputRoot });
+    this.#ledger = new HyperVConstructionLedger({ directory, sourceRoot, outputRoot, validateRecord: (record) => this.#request.validateRecordMedia(record) });
     this.#media = new HyperVConstructionMedia({ sourceRoot });
     this.#channel = new HyperVConstructionChannel({ invoke });
     this.#observation = new HyperVConstructionObservation();
@@ -39,6 +39,10 @@ export class HyperVImageConstruction {
   }
 
   #descriptor(record) { return this.#request.descriptor(record); }
+
+  #mediaPaths(record) {
+    return { installerPath: record.installer.location, seedPath: record.seed.location, dataPath: record.dataMedia?.location ?? null };
+  }
 
   async #prepareQualificationHost(state, record, observed) {
     let preparation = record.qualificationHostPreparation ?? null;
@@ -80,6 +84,8 @@ export class HyperVImageConstruction {
     await this.#ledger.ensure();
     const installerPath = await this.#media.admit(request.installer.location, request.installer);
     const seedPath = await this.#media.admit(request.seed.location, request.seed);
+    const dataPath = request.dataMedia ? await this.#media.admit(request.dataMedia.location, request.dataMedia) : null;
+    if (request.dataMedia) request.dataMedia.location = dataPath;
     const state = await this.#ledger.load();
     let record = state.records[request.identity];
     if (!record) {
@@ -91,6 +97,7 @@ export class HyperVImageConstruction {
         ...identity,
         installer: { bytes: request.installer.bytes, sha256: request.installer.sha256, location: installerPath },
         seed: { bytes: request.seed.bytes, sha256: request.seed.sha256, location: seedPath },
+        ...(request.dataMedia ? { dataMedia: request.dataMedia } : {}),
         memoryBytes: request.memoryBytes,
         processorCount: request.processorCount,
         diskBytes: request.diskBytes,
@@ -110,6 +117,7 @@ export class HyperVImageConstruction {
       ...this.#descriptor(record),
       installerPath,
       seedPath,
+      dataPath,
       memoryBytes: record.memoryBytes,
       processorCount: record.processorCount,
       diskBytes: record.diskBytes,
@@ -201,7 +209,8 @@ export class HyperVImageConstruction {
     if (!record || record.phase !== 'prepared' || !record.providerIdentity) throw new Error('construction is not prepared for installation');
     await this.#media.admit(record.installer.location, record.installer);
     await this.#media.admit(record.seed.location, record.seed);
-    const result = await this.#channel.startInstall(this.#descriptor(record));
+    if (record.dataMedia) await this.#media.admit(record.dataMedia.location, record.dataMedia);
+    const result = await this.#channel.startInstall({ ...this.#descriptor(record), ...this.#mediaPaths(record) });
     if (result.started !== true) throw new Error('construction installer did not start');
     record.phase = 'installing';
     await this.#ledger.save(state);
@@ -221,8 +230,8 @@ export class HyperVImageConstruction {
       return this.status(identity);
     }
     if (observed.state !== 'off') throw new Error('installer has not completed with a retained disk');
-    if (![0, 2].includes(observed.mediaCount)) throw new Error('construction media attachment state is ambiguous');
-    const result = await this.#channel.bootInstalled(this.#descriptor(record));
+    if (observed.mediaCount > (record.dataMedia ? 3 : 2)) throw new Error('construction media attachment state is ambiguous');
+    const result = await this.#channel.bootInstalled({ ...this.#descriptor(record), ...this.#mediaPaths(record) });
     if (result.started !== true) throw new Error('installed construction did not start');
     record.phase = 'qualifying';
     await this.#ledger.save(state);

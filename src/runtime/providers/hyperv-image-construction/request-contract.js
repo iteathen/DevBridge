@@ -61,12 +61,13 @@ export class HyperVConstructionRequest {
   }
 
   normalize(raw) {
-    const value = onlyKeys(raw, new Set(['identity', 'installer', 'seed', 'memoryBytes', 'processorCount', 'diskBytes', 'network', 'bootProtection']), 'construction request');
+    const value = onlyKeys(raw, new Set(['identity', 'installer', 'seed', 'dataMedia', 'memoryBytes', 'processorCount', 'diskBytes', 'network', 'bootProtection']), 'construction request');
     const bootProtection = this.#normalizeProtection(value.bootProtection, { optional: true, name: 'construction request.bootProtection' });
     return {
       identity: this.subject(value.identity),
       installer: mediaIdentity(value.installer, 'construction installer'),
       seed: mediaIdentity(value.seed, 'construction seed'),
+      ...(value.dataMedia === undefined ? {} : { dataMedia: mediaIdentity(value.dataMedia, 'construction data media') }),
       memoryBytes: boundedInteger(value.memoryBytes, MIN_MEMORY_BYTES, MAX_MEMORY_BYTES, 'construction memoryBytes'),
       processorCount: boundedInteger(value.processorCount, 1, MAX_PROCESSORS, 'construction processorCount'),
       diskBytes: boundedInteger(value.diskBytes, MIN_DISK_BYTES, MAX_DISK_BYTES, 'construction diskBytes'),
@@ -81,6 +82,11 @@ export class HyperVConstructionRequest {
       identityRequired: protection?.identity === 'required',
       trustTemplate: protection ? TRUST_TEMPLATES[protection.trust] : null,
     };
+  }
+
+  validateRecordMedia(record) {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) throw new TypeError('construction record is invalid');
+    if (Object.hasOwn(record, 'dataMedia')) mediaIdentity(record.dataMedia, 'construction recorded data media');
   }
 
   create(request) {
@@ -110,6 +116,9 @@ export class HyperVConstructionRequest {
       && record.installer.bytes === request.installer.bytes
       && record.seed.sha256 === request.seed.sha256
       && record.seed.bytes === request.seed.bytes
+      && Boolean(record.dataMedia) === Boolean(request.dataMedia)
+      && (!record.dataMedia || (record.dataMedia.location === request.dataMedia.location
+        && record.dataMedia.bytes === request.dataMedia.bytes && record.dataMedia.sha256 === request.dataMedia.sha256))
       && record.memoryBytes === request.memoryBytes
       && record.processorCount === request.processorCount
       && record.diskBytes === request.diskBytes

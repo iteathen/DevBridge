@@ -2,7 +2,7 @@
 
 Status: implementation in progress; no installation or physical qualification claimed.
 
-Current checkpoint: HO162 has implemented the exact-file media dependency and proved the complete capsule's native Windows UDF write/readback. See `DB-HO162-exact-file-media.md`. The next incomplete connection is separate data-media attachment and exact offline APT consumption, then setup integration. The original scoped plan below remains the branch's full objective; do not restart completed projection/media work.
+Current checkpoint: HO162 proved the complete capsule's native Windows UDF write/readback; HO163 implemented the owned optional construction data-disc lifecycle and qualified its mocked provider boundary. See `DB-HO162-exact-file-media.md` and `DB-HO163-construction-data-media.md`. Exact offline APT consumption and installer/setup composition remain incomplete. The original scoped plan below remains the branch's full objective; do not restart completed projection/media/provider work.
 
 ## Assessment and governing boundaries
 
