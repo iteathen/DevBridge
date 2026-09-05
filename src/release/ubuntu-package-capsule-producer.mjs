@@ -1,5 +1,6 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
+import { normalizeUbuntuInstallationSource } from '../setup/ubuntu-package-capsule-release-input.mjs';
 import { normalizeUbuntuAptTransactionSolution } from './ubuntu-apt-transaction-solver.mjs';
 import { captureUbuntuPackageCapsule } from './ubuntu-package-capsule-capture.mjs';
 import { buildUbuntuPackageCapsuleRelease } from './ubuntu-package-capsule-release-builder.mjs';
@@ -71,13 +72,14 @@ export class UbuntuPackageCapsuleProducer {
       'preparation', 'keyId', 'privateKeyBytes', 'publicKeyBytes', 'chunkBytes', 'signal',
     ]), 'Ubuntu package-capsule production request');
     const policy = exactObject(request.policy, new Set([
-      'distribution', 'release', 'codename', 'architecture', 'snapshot', 'baseMediaSha256',
+      'distribution', 'release', 'codename', 'architecture', 'snapshot', 'baseMediaSha256', 'installSource',
       'releaseId', 'sequence', 'upstreamKeyFingerprint',
     ]), 'Ubuntu package-capsule production policy');
     const solverRequest = exactObject(request.solverRequest, new Set([
       'workspace', 'configurationFile', 'statusFile', 'sourcesListFile', 'sourcePartsDirectory',
       'listsDirectory', 'snapshot', 'architecture', 'requestedPackages',
     ]), 'Ubuntu package-capsule production solver request');
+    normalizeUbuntuInstallationSource(policy.installSource);
     if (policy.snapshot !== solverRequest.snapshot || policy.architecture !== solverRequest.architecture) {
       fail('Ubuntu package-capsule production policy does not match its solver input');
     }
@@ -112,6 +114,7 @@ export class UbuntuPackageCapsuleProducer {
         fail('Ubuntu package-capsule capture returned mismatched ownership evidence');
       }
       ownedCaptureRoot = captureDestination;
+      if (captured.capture?.installSource !== policy.installSource) fail('Ubuntu package-capsule capture installation source changed');
       const sealed = await this.seal(Object.freeze({
         capture: captured.capture,
         artifacts: captured.artifacts,
@@ -125,6 +128,7 @@ export class UbuntuPackageCapsuleProducer {
       }));
       if (path.resolve(sealed?.root ?? '') !== releaseDestination
           || sealed.snapshot !== policy.snapshot || sealed.releaseId !== policy.releaseId
+          || sealed.installSource !== policy.installSource
           || sealed.sequence !== policy.sequence) {
         fail('Ubuntu package-capsule sealer returned mismatched release evidence');
       }

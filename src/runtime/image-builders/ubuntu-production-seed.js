@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { resolveUbuntuGuestCapabilities } from './ubuntu-guest-capabilities.js';
 
 const PROTOCOL = 'devbridge/ubuntu-production-seed-v1';
+export const UBUNTU_PRODUCTION_INSTALL_SOURCE = 'ubuntu-server-minimal';
 const SUBJECT = /^subject-[a-f0-9]{32}$/u;
 const IPV4 = /^(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/u;
 const PUBLIC_KEY = /^ssh-ed25519 [A-Za-z0-9+/=]{40,256}(?: [^\r\n]{0,128})?$/u;
@@ -144,7 +145,7 @@ export class UbuntuProductionSeedFactory {
     const payload = normalizePayload(await this.#payloadSet());
     const packages = normalizePackages(await this.#packageSet());
     const packageSpecifications = packages.packages.map((entry) => entry.specification);
-    const lines = ['#cloud-config', 'autoinstall:', '  version: 1', '  locale: en_US.UTF-8', '  keyboard:', '    layout: us', '  source:', '    id: ubuntu-server-minimal', '  apt:', '    conf: |', '      Unattended-Upgrade::Package-Blacklist {', '        ".*";', '      };', '  storage:', '    layout:', '      name: direct', '  network:', '    version: 2', '    ethernets:', '      build:', '        match:', '          name: "e*"'];
+    const lines = ['#cloud-config', 'autoinstall:', '  version: 1', '  locale: en_US.UTF-8', '  keyboard:', '    layout: us', '  source:', `    id: ${UBUNTU_PRODUCTION_INSTALL_SOURCE}`, '  apt:', '    conf: |', '      Unattended-Upgrade::Package-Blacklist {', '        ".*";', '      };', '  storage:', '    layout:', '      name: direct', '  network:', '    version: 2', '    ethernets:', '      build:', '        match:', '          name: "e*"'];
     if (request.network.method === 'automatic') {
       lines.push('        dhcp4: true', '        dhcp6: false');
     } else {

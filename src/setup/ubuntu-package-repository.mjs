@@ -1,5 +1,5 @@
 import { UbuntuPackageCapsuleAvailability } from './ubuntu-package-capsule-availability.mjs';
-import { verifyUbuntuPackageCapsuleReleaseInput } from './ubuntu-package-capsule-release-input.mjs';
+import { normalizeUbuntuInstallationSource, verifyUbuntuPackageCapsuleReleaseInput } from './ubuntu-package-capsule-release-input.mjs';
 
 function exactObject(value, keys, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
@@ -44,10 +44,14 @@ export class UbuntuPackageRepository {
   #layout;
 
   constructor(raw = {}) {
-    const options = exactObject(raw, ['authority', 'acquisition'], 'Ubuntu repository options');
+    const options = exactObject(raw, ['authority', 'acquisition', 'installSource'], 'Ubuntu repository options');
     // Fail contradictory layout admission before the acquisition owner can mutate cache state.
-    this.#layout = repositoryLayout(verifyUbuntuPackageCapsuleReleaseInput(options.authority));
-    this.#availability = new UbuntuPackageCapsuleAvailability(options);
+    const release = verifyUbuntuPackageCapsuleReleaseInput(options.authority);
+    if (release.installSource !== normalizeUbuntuInstallationSource(options.installSource)) {
+      throw new Error('Ubuntu repository installation source does not match consumer');
+    }
+    this.#layout = repositoryLayout(release);
+    this.#availability = new UbuntuPackageCapsuleAvailability({ authority: options.authority, acquisition: options.acquisition });
   }
 
   async prepare(raw = {}) {

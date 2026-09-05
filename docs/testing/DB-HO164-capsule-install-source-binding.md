@@ -1,8 +1,18 @@
 # HO164 — capsule installation-source mismatch
 
-Status: demonstrated release-input/consumer integration defect; correction not implemented. This supersedes blindly proceeding from HO163 to APT wiring. Existing projection, UDF writer and owned construction data medium remain valid; do not redo them.
+Status: source-binding correction implemented locally; minimal-source solver and actual installer transaction qualification remain pending. This supersedes blindly proceeding from HO163 to APT wiring. Existing projection, UDF writer and owned construction data medium remain valid; do not redo them.
 
 Tracking: #488, dependency of the #197/#417 consumer path. No authorization wait.
+
+## Source-binding correction under qualification
+
+The existing signed release contract accepts an explicit installSource and includes it in its canonical signing payload. Historical manifests without this field remain cryptographically verifiable without inferred source. Older readers already reject the new unknown field; no reader silently ignores a bound source. Generic capture/sealing preserve that signed value. New production policy requires the value, compares it against the product-owned preparation receipt, and checks that capture and sealing did not substitute it. Syntax is owned by the authority contract, not copied into the producer.
+
+The repository consumer requires and compares its explicit expected source before acquisition. Minimal-source selection remains unchanged, exported from its existing seed owner as UBUNTU_PRODUCTION_INSTALL_SOURCE; no new source catalog, parser, layer-expansion implementation, solver, cache or native escape was introduced. Tests first failed on unsupported installSource. Source modification/removal, legacy omission, consumer mismatch, missing production policy and capture/sealer substitution have regression coverage. No old capsule was altered, resealed or republished.
+
+The extractor intentionally consumes explicit operator-owned layer selections. A source label alone is not proof of the ISO catalog mapping. The next public-only hosted qualification must observe casper/install-sources.yaml from the exact digest-verified ISO and assert that the actual production source selects the single minimal fsimage before using the existing preparer/solver. This is exact-profile qualification of release policy, not a second production source resolver or an inferred universal mapping.
+
+Observed Node22.16.0 preflight session85245 passed: 3 standalone artifacts, 294 syntax files, 2 JSON files, 233 dependency-selected tests. The previous session46474 ended without recoverable completion output and is not counted. Focused tests including setup architecture and unchanged production seed passed57/57 before adding the two late-substitution regression cases; the final producer file passed6/6 including those cases. Author review checked the complete source-binding diff and legacy signing-payload preservation; this is not independent review. Complete branch/platform qualification remains pending; no physical installation or construction follows from these portable checks.
 
 ## Assessment and evidence
 

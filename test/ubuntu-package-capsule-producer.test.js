@@ -12,10 +12,10 @@ import {
 import { createUbuntuPackageCaptureFixture } from './fixtures/ubuntu-package-capsule-capture-fixture.js';
 
 function policy(capture) {
-  return Object.fromEntries([
+  return { installSource: 'ubuntu-server-minimal', ...Object.fromEntries([
     'distribution', 'release', 'codename', 'architecture', 'snapshot', 'baseMediaSha256',
     'releaseId', 'sequence', 'upstreamKeyFingerprint',
-  ].map((name) => [name, capture[name]]));
+  ].map((name) => [name, capture[name]])) };
 }
 
 function solution(capture) {
@@ -136,6 +136,7 @@ test('producer composes exact solve, archive capture, Canonical verification, se
       expectedKeyId: result.release.keyId,
     });
     assert.equal(accepted.releaseId, fixture.capture.releaseId);
+    assert.equal(accepted.installSource, 'ubuntu-server-minimal');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -154,7 +155,7 @@ test('producer rejects split authority and overlapping output before solving', a
     policy: {
       distribution: 'ubuntu', release: '26.04', codename: 'resolute', architecture: 'amd64',
       snapshot: '20260821T230000Z', baseMediaSha256: 'a'.repeat(64), releaseId: 'release-1',
-      sequence: 1, upstreamKeyFingerprint: 'A'.repeat(40),
+      sequence: 1, upstreamKeyFingerprint: 'A'.repeat(40), installSource: 'ubuntu-server-minimal',
     },
     solverRequest: {
       workspace: path.join(root, 'workspace'), configurationFile: path.join(root, 'apt.conf'),
@@ -165,6 +166,8 @@ test('producer rejects split authority and overlapping output before solving', a
     captureDestination: path.join(root, 'capture'), releaseDestination: path.join(root, 'release'),
   };
   request.preparation = { solverRequest: request.solverRequest };
+  const { installSource, ...unboundPolicy } = request.policy;
+  await assert.rejects(producer.produce({ ...request, policy: unboundPolicy }), /installation source is invalid/u);
   await assert.rejects(producer.produce(request), /policy does not match its solver input/u);
   request.solverRequest.snapshot = request.policy.snapshot;
   request.preparation.solverRequest = { ...request.solverRequest, requestedPackages: ['git'] };
@@ -175,7 +178,8 @@ test('producer rejects split authority and overlapping output before solving', a
   assert.equal(solves, 0);
 });
 
-test('producer removes only its completed capture when sealing fails', async () => {
+for (const failure of ['sealing failure', 'capture source substitution', 'sealed source substitution']) {
+test(`producer removes only its completed capture after ${failure}`, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-ubuntu-capsule-production-fail-'));
   const captureDestination = path.join(root, 'capture');
   const releaseDestination = path.join(root, 'release');
@@ -202,9 +206,13 @@ test('producer removes only its completed capture when sealing fails', async () 
       inReleaseVerifier: { async verify() { return {}; } },
       capture: async () => {
         await mkdir(captureDestination);
-        return { root: captureDestination, capture: {}, artifacts: {}, artifactCount: 1, bytes: 1 };
+        return { root: captureDestination, capture: { installSource: failure === 'capture source substitution' ? 'ubuntu-server' : 'ubuntu-server-minimal' }, artifacts: {}, artifactCount: 1, bytes: 1 };
       },
-      seal: async () => { throw new Error('bounded sealer failure'); },
+      seal: async () => {
+        assert.notEqual(failure, 'capture source substitution', 'substituted capture must not reach the sealer');
+        if (failure === 'sealing failure') throw new Error('bounded sealer failure');
+        return { root: releaseDestination, snapshot: '20260821T230000Z', releaseId: 'release-1', sequence: 1, installSource: 'ubuntu-server' };
+      },
     });
     const solverRequest = {
       workspace: path.join(root, 'workspace'), configurationFile: path.join(root, 'apt.conf'),
@@ -216,17 +224,19 @@ test('producer removes only its completed capture when sealing fails', async () 
       policy: {
         distribution: 'ubuntu', release: '26.04', codename: 'resolute', architecture: 'amd64',
         snapshot: '20260821T230000Z', baseMediaSha256: 'a'.repeat(64), releaseId: 'release-1',
-        sequence: 1, upstreamKeyFingerprint: 'A'.repeat(40),
+        sequence: 1, upstreamKeyFingerprint: 'A'.repeat(40), installSource: 'ubuntu-server-minimal',
       },
       solverRequest,
       preparation: { solverRequest },
       captureDestination,
       releaseDestination,
-    }), /bounded sealer failure/u);
+    }), failure === 'sealing failure' ? /bounded sealer failure/u
+      : failure === 'capture source substitution' ? /capture installation source changed/u : /sealer returned mismatched release evidence/u);
     await assert.rejects(lstat(captureDestination), /ENOENT/u);
     await assert.rejects(lstat(releaseDestination), /ENOENT/u);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+}
 
 test('producer remains release-owned while the CLI performs only explicit concrete composition', async () => {
   const [producer, script] = await Promise.all([

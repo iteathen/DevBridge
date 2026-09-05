@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, open, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { normalizeUbuntuInstallationSource } from '../setup/ubuntu-package-capsule-release-input.mjs';
 import { gunzipSync } from 'node:zlib';
 import { normalizeUbuntuAptTransactionSolution } from './ubuntu-apt-transaction-solver.mjs';
 import { parseUbuntuSha256Checksum } from './ubuntu-sha256-checksum.mjs';
@@ -182,7 +183,7 @@ function decodeIndex(bytes, selectedPath) {
 
 function policy(raw, solution) {
   const value = exactObject(raw, new Set([
-    'distribution', 'release', 'codename', 'architecture', 'snapshot', 'baseMediaSha256',
+    'distribution', 'release', 'codename', 'architecture', 'snapshot', 'baseMediaSha256', 'installSource',
     'releaseId', 'sequence', 'upstreamKeyFingerprint',
   ]), 'Ubuntu capsule capture policy');
   if (value.distribution !== 'ubuntu') fail('Ubuntu capsule capture distribution is unsupported');
@@ -193,6 +194,7 @@ function policy(raw, solution) {
     architecture: exactText(value.architecture, ARCHITECTURE, 'Ubuntu capsule capture architecture'),
     snapshot: exactText(value.snapshot, /^\d{8}T\d{6}Z$/u, 'Ubuntu capsule capture snapshot'),
     baseMediaSha256: exactText(value.baseMediaSha256, DIGEST, 'Ubuntu capsule capture base-media digest'),
+    ...(Object.hasOwn(value, 'installSource') ? { installSource: normalizeUbuntuInstallationSource(value.installSource) } : {}),
     releaseId: exactText(value.releaseId, SAFE_ID, 'Ubuntu capsule capture release identity'),
     sequence: value.sequence,
     upstreamKeyFingerprint: exactText(value.upstreamKeyFingerprint, FINGERPRINT, 'Ubuntu capsule capture upstream key fingerprint'),

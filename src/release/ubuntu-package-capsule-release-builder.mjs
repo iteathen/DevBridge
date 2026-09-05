@@ -9,6 +9,7 @@ import path from 'node:path';
 import { IMMUTABLE_OBJECT_SET_PROTOCOL } from '../runtime/immutable-object-set.js';
 import {
   UBUNTU_PACKAGE_CAPSULE_MANIFEST_PROTOCOL,
+  normalizeUbuntuInstallationSource,
   ubuntuPackageCapsuleReleasePayload,
   verifyUbuntuPackageCapsuleReleaseInput,
 } from '../setup/ubuntu-package-capsule-release-input.mjs';
@@ -76,9 +77,10 @@ async function writeExactFile(location, bytes) {
 
 function captureShape(raw) {
   const capture = exactObject(raw, new Set([
-    'distribution', 'release', 'codename', 'architecture', 'snapshot', 'baseMediaSha256',
+    'distribution', 'release', 'codename', 'architecture', 'snapshot', 'baseMediaSha256', 'installSource',
     'releaseId', 'sequence', 'upstreamKeyFingerprint', 'transaction', 'metadata', 'binaries', 'sources',
   ]), 'Ubuntu capsule capture');
+  if (Object.hasOwn(capture, 'installSource')) normalizeUbuntuInstallationSource(capture.installSource);
   const metadata = exactObject(capture.metadata, new Set(['pockets']), 'Ubuntu capsule capture metadata');
   const binaries = exactObject(capture.binaries, new Set(['packages']), 'Ubuntu capsule capture binaries');
   const sources = exactObject(capture.sources, new Set(['packages']), 'Ubuntu capsule capture sources');
@@ -122,6 +124,7 @@ function canonicalRelease(verified) {
     architecture: verified.architecture,
     snapshot: verified.snapshot,
     baseMediaSha256: verified.baseMediaSha256,
+    ...(verified.installSource === undefined ? {} : { installSource: verified.installSource }),
     releaseId: verified.releaseId,
     sequence: verified.sequence,
     upstreamKeyFingerprint: verified.upstreamKeyFingerprint,
@@ -225,6 +228,7 @@ export async function buildUbuntuPackageCapsuleRelease(raw = {}) {
       architecture: shaped.capture.architecture,
       snapshot: shaped.capture.snapshot,
       baseMediaSha256: shaped.capture.baseMediaSha256,
+      ...(Object.hasOwn(shaped.capture, 'installSource') ? { installSource: shaped.capture.installSource } : {}),
       releaseId: shaped.capture.releaseId,
       sequence: shaped.capture.sequence,
       upstreamKeyFingerprint: shaped.capture.upstreamKeyFingerprint,
@@ -263,6 +267,7 @@ export async function buildUbuntuPackageCapsuleRelease(raw = {}) {
       releaseId: verified.releaseId,
       sequence: verified.sequence,
       snapshot: verified.snapshot,
+      ...(verified.installSource === undefined ? {} : { installSource: verified.installSource }),
       manifestName: UBUNTU_PACKAGE_CAPSULE_MANIFEST_NAME,
       manifestSha256: authority.expectedManifestSha256,
       publicKeyName: UBUNTU_PACKAGE_CAPSULE_PUBLIC_KEY_NAME,
