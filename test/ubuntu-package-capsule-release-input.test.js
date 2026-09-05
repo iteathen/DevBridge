@@ -17,6 +17,24 @@ import {
 
 function clone(value) { return structuredClone(value); }
 
+test('signed install-source identity cannot be changed, removed, inferred or malformed', () => {
+  const release = { ...ubuntuPackageCapsuleRelease(), installSource: 'ubuntu-server-minimal' };
+  const fixture = ubuntuPackageCapsuleAuthority({ release });
+  assert.equal(verifyUbuntuPackageCapsuleReleaseInput(fixture.authority).installSource, release.installSource);
+  for (const replacement of ['ubuntu-server', undefined]) {
+    const manifest = JSON.parse(fixture.manifestBytes);
+    if (replacement === undefined) delete manifest.release.installSource;
+    else manifest.release.installSource = replacement;
+    const manifestBytes = Buffer.from(JSON.stringify(manifest));
+    assert.throws(() => verifyUbuntuPackageCapsuleReleaseInput({ ...fixture.authority, manifestBytes, expectedManifestSha256: sha256(manifestBytes) }), /signature verification failed/u);
+  }
+  const legacy = ubuntuPackageCapsuleAuthority();
+  assert.equal(Object.hasOwn(verifyUbuntuPackageCapsuleReleaseInput(legacy.authority), 'installSource'), false);
+  for (const installSource of [null, '', '../minimal', 'ubuntu/server', 'Ubuntu-server']) {
+    assert.throws(() => ubuntuPackageCapsuleReleasePayload({ ...release, installSource }), /installation source/iu);
+  }
+});
+
 function sourceComponentRelease(count) {
   const release = ubuntuPackageCapsuleRelease();
   const source = release.sources.packages[0];

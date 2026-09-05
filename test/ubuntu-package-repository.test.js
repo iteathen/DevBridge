@@ -14,10 +14,11 @@ import { createUbuntuPackageCaptureFixture } from './fixtures/ubuntu-package-cap
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 async function fixture(root) {
   const captured = await createUbuntuPackageCaptureFixture(path.join(root, 'capture'));
+  const capture = { ...captured.capture, installSource: 'ubuntu-server-minimal' };
   const keys = generateKeyPairSync('ed25519');
   const destination = path.join(root, 'release');
   const built = await buildUbuntuPackageCapsuleRelease({
-    ...captured, destination, keyId: 'repository-test', chunkBytes: 257,
+    ...captured, capture, destination, keyId: 'repository-test', chunkBytes: 257,
     privateKeyBytes: Buffer.from(keys.privateKey.export({ type: 'pkcs8', format: 'pem' })),
     publicKeyBytes: Buffer.from(keys.publicKey.export({ type: 'spki', format: 'pem' })),
     verifyInRelease: async ({ expectedFingerprint }) => ({ verified: true, fingerprint: expectedFingerprint }),
@@ -38,11 +39,31 @@ function changedAuthority(original, keys, change) {
   return { ...original, manifestBytes, expectedManifestSha256: hash(manifestBytes) };
 }
 
+test('consumer source mismatch and legacy omission fail before acquisition without changing capsule authority', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-ubuntu-repository-'));
+  try {
+    const input = await fixture(root);
+    let acquired = 0;
+    const acquisition = { async ensure() { acquired++; throw new Error('unqualified acquisition'); } };
+    const options = { authority: input.authority, acquisition, installSource: 'ubuntu-server-minimal' };
+    const legacy = changedAuthority(input.authority, input.keys, (release) => { delete release.installSource; });
+    assert.throws(() => new UbuntuPackageRepository({ ...options, authority: legacy }), /installation source does not match/u);
+    const { installSource, ...omittedExpectation } = options;
+    assert.throws(() => new UbuntuPackageRepository(omittedExpectation), /installation source is invalid/u);
+    const full = changedAuthority(input.authority, input.keys, (release) => { release.installSource = 'ubuntu-server'; });
+    assert.throws(() => new UbuntuPackageRepository({ ...options, authority: full }), /installation source does not match/u);
+    const exact = changedAuthority(input.authority, input.keys, (release) => { release.installSource = 'ubuntu-server-minimal'; });
+    assert.doesNotThrow(() => new UbuntuPackageRepository({ ...options, authority: exact }));
+    assert.throws(() => new UbuntuPackageRepository({ ...options, authority: exact, installSource: null }), /installation source is invalid/u);
+    assert.equal(acquired, 0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('repository projects exact signed metadata, binaries and sources from the existing offline acquisition', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-ubuntu-repository-'));
   try {
     const input = await fixture(root);
-    const repository = new UbuntuPackageRepository({ authority: input.authority, acquisition: new ImmutableObjectAcquisition({
+    const repository = new UbuntuPackageRepository({ authority: input.authority, installSource: 'ubuntu-server-minimal', acquisition: new ImmutableObjectAcquisition({
       directory: path.join(root, 'cache'), sources: [new FilesystemImmutableObjectSource({ directory: path.join(input.destination, 'objects') })],
     }) });
     const result = await repository.prepare();
@@ -85,7 +106,7 @@ test('signed conflicting repository paths fail before acquisition; invalid bytes
     for (const change of [
       (release) => { release.binaries.packages[1].filename = release.binaries.packages[0].filename; },
       (release) => { release.sources.packages[0].directory = release.binaries.packages[0].filename; },
-    ]) assert.throws(() => new UbuntuPackageRepository({ authority: changedAuthority(input.authority, input.keys, change), acquisition }), /collision/);
+    ]) assert.throws(() => new UbuntuPackageRepository({ authority: changedAuthority(input.authority, input.keys, change), acquisition, installSource: 'ubuntu-server-minimal' }), /collision/);
     assert.equal(acquired, 0);
     assert.throws(() => new UbuntuPackageRepository({ authority: { ...input.authority, expectedManifestSha256: 'f'.repeat(64) }, acquisition }), /digest/);
     assert.throws(() => new UbuntuPackageRepository({ authority: input.authority, acquisition, destination: 'arbitrary' }), /unsupported/);

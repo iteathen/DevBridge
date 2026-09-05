@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGuestImagePayload } from '../src/guest/image-payload.js';
-import { UbuntuProductionSeedFactory } from '../src/runtime/image-builders/ubuntu-production-seed.js';
+import { UBUNTU_PRODUCTION_INSTALL_SOURCE, UbuntuProductionSeedFactory } from '../src/runtime/image-builders/ubuntu-production-seed.js';
 
 const publicKey = `ssh-ed25519 ${'A'.repeat(44)} build-key`;
 const hostPrivateKey = '-----BEGIN OPENSSH PRIVATE KEY-----\ntransient-private-material\n-----END OPENSSH PRIVATE KEY-----\n';
@@ -62,6 +62,7 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   const result = await factory().create(request());
   assert.match(result.userData, /^#cloud-config\nautoinstall:/u);
   assert.match(result.userData, /  source:\n    id: ubuntu-server-minimal\n/u);
+  assert.equal(UBUNTU_PRODUCTION_INSTALL_SOURCE, 'ubuntu-server-minimal');
   assert.doesNotMatch(result.userData, /id: ubuntu-server(?:\n|$)/u);
   assert.match(result.userData, /"nodejs=22\.16\.0\+dfsg-1"/u);
   assert.match(result.userData, /"linux-cloud-tools-virtual=6\.14\.0\.29\.29"/u);

@@ -359,10 +359,15 @@ function normalizeSources(raw, { releaseId, binaries }) {
   });
 }
 
+export function normalizeUbuntuInstallationSource(value) {
+  if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9.-]{0,99}$/u.test(value)) throw new TypeError('Ubuntu installation source is invalid');
+  return value;
+}
+
 function normalizeRelease(raw) {
   const value = exactObject(
     raw,
-    new Set(['distribution', 'release', 'codename', 'architecture', 'snapshot', 'baseMediaSha256', 'releaseId', 'sequence', 'upstreamKeyFingerprint', 'transaction', 'metadata', 'binaries', 'sources']),
+    new Set(['distribution', 'release', 'codename', 'architecture', 'snapshot', 'baseMediaSha256', 'installSource', 'releaseId', 'sequence', 'upstreamKeyFingerprint', 'transaction', 'metadata', 'binaries', 'sources']),
     'Ubuntu package capsule release',
   );
   if (value.distribution !== UBUNTU_PACKAGE_CAPSULE_DISTRIBUTION) fail('Ubuntu package capsule distribution is unsupported');
@@ -386,6 +391,7 @@ function normalizeRelease(raw) {
     architecture: value.architecture,
     snapshot: value.snapshot,
     baseMediaSha256: exactDigest(value.baseMediaSha256, 'Ubuntu package capsule base-media digest'),
+    ...(Object.hasOwn(value, 'installSource') ? { installSource: normalizeUbuntuInstallationSource(value.installSource) } : {}),
     releaseId,
     sequence: value.sequence,
     upstreamKeyFingerprint: value.upstreamKeyFingerprint,
@@ -406,6 +412,7 @@ function payloadForNormalizedRelease(release) {
     architecture: release.architecture,
     snapshot: release.snapshot,
     baseMediaSha256: release.baseMediaSha256,
+    ...(release.installSource === undefined ? {} : { installSource: release.installSource }),
     releaseId: release.releaseId,
     sequence: release.sequence,
     upstreamKeyFingerprint: release.upstreamKeyFingerprint,

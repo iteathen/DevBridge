@@ -116,7 +116,7 @@ function policy(f) {
   return {
     distribution: 'ubuntu', release: '26.04', codename: CODENAME, architecture: ARCHITECTURE,
     snapshot: SNAPSHOT, baseMediaSha256: hash(f.mediaBytes), releaseId: 'release-1', sequence: 1,
-    upstreamKeyFingerprint: 'A'.repeat(40),
+    upstreamKeyFingerprint: 'A'.repeat(40), installSource: 'ubuntu-server',
   };
 }
 
@@ -139,6 +139,9 @@ test('preparer binds exact installer and snapshot evidence into one solver reque
     assert.equal(result.solverRequest.snapshot, SNAPSHOT);
     assert.deepEqual(JSON.parse(await readFile(result.receiptFile, 'utf8')), result.receipt);
     assert.deepEqual(await verifyUbuntuCapsuleSolverInputPreparation(result, policy(f)), result.solverRequest);
+    await assert.rejects(() => verifyUbuntuCapsuleSolverInputPreparation(result, { ...policy(f), installSource: 'ubuntu-server-minimal' }), /installation source does not match/u);
+    const { installSource, ...unbound } = policy(f);
+    await assert.rejects(() => verifyUbuntuCapsuleSolverInputPreparation(result, unbound), /installation source/iu);
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 

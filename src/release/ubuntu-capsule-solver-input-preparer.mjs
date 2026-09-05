@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, open, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { normalizeUbuntuInstallationSource } from '../setup/ubuntu-package-capsule-release-input.mjs';
 import {
   UBUNTU_APT_ISOLATED_CONFIGURATION,
   parseUbuntuInstalledPackageState,
@@ -250,7 +251,7 @@ export async function verifyUbuntuCapsuleSolverInputPreparation(raw, rawPolicy) 
   const prepared = exactObject(raw, new Set(['protocol', 'root', 'receiptFile', 'receipt', 'solverRequest']), 'Ubuntu solver-input preparation');
   if (prepared.protocol !== UBUNTU_CAPSULE_SOLVER_INPUT_PREPARATION_PROTOCOL) fail('Ubuntu solver-input preparation protocol is unsupported');
   const policy = exactObject(rawPolicy, new Set([
-    'distribution', 'release', 'codename', 'architecture', 'snapshot', 'baseMediaSha256',
+    'distribution', 'release', 'codename', 'architecture', 'snapshot', 'baseMediaSha256', 'installSource',
     'releaseId', 'sequence', 'upstreamKeyFingerprint',
   ]), 'Ubuntu package-capsule production policy');
   const root = absolutePath(prepared.root, 'Ubuntu solver-input preparation root');
@@ -286,7 +287,8 @@ export async function verifyUbuntuCapsuleSolverInputPreparation(raw, rawPolicy) 
     'installSource', 'leafLayer', 'orderedLayers', 'statusLayer', 'statusBytes', 'statusSha256',
     'basePackageStateSha256', 'keyringLayer', 'keyringBytes', 'keyringSha256',
   ]), 'Ubuntu solver-input preparation installer evidence');
-  exactString(installer.installSource, TOKEN, 'Ubuntu solver-input preparation install source');
+  const installSource = normalizeUbuntuInstallationSource(installer.installSource);
+  if (installSource !== normalizeUbuntuInstallationSource(policy.installSource)) fail('Ubuntu solver-input preparation installation source does not match production policy');
   const leafLayer = exactString(installer.leafLayer, TOKEN, 'Ubuntu solver-input preparation leaf layer');
   if (!Array.isArray(installer.orderedLayers) || installer.orderedLayers.length < 1 || installer.orderedLayers.length > 16) {
     throw new TypeError('Ubuntu solver-input preparation ordered layer evidence is invalid');
@@ -408,7 +410,7 @@ export class UbuntuCapsuleSolverInputPreparer {
     const codename = exactString(request.codename, TOKEN, 'Ubuntu codename');
     const architecture = exactString(request.architecture, ARCHITECTURE, 'Ubuntu architecture');
     const snapshot = exactString(request.snapshot, SNAPSHOT, 'Ubuntu snapshot');
-    const installSource = exactString(request.installSource, TOKEN, 'Ubuntu install source');
+    const installSource = normalizeUbuntuInstallationSource(request.installSource);
     const leafLayer = exactString(request.leafLayer, TOKEN, 'Ubuntu installer leaf layer');
     const orderedLayers = normalizeLayers(request.orderedLayers, leafLayer);
     const requestedPackages = normalizeRequested(request.requestedPackages);
