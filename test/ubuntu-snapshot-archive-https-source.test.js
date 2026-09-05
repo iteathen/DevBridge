@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import https from 'node:https';
+import { EventEmitter } from 'node:events';
+import { Readable } from 'node:stream';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import test from 'node:test';
 import {
   UBUNTU_SNAPSHOT_ARCHIVE_HTTPS_SOURCE_PROTOCOL,
@@ -103,5 +107,118 @@ test('snapshot HTTPS source remains a release adapter without setup or provider 
   const source = await readFile(new URL('../src/release/ubuntu-snapshot-archive-https-source.mjs', import.meta.url), 'utf8');
   for (const forbidden of ['setup --construct', 'Hyper-V', 'libvirt', 'Start-VM', 'snapshot.ubuntu.com']) {
     assert.doesNotMatch(source, new RegExp(forbidden, 'u'));
+  }
+});
+
+test('snapshot HTTPS source preserves gzip archive bytes only under exact authority', async () => {
+  const bytes = gzipSync(Buffer.from('signed source patch'));
+  const exact = { path: 'pool/main/l/linux/source.diff.gz', maximum: bytes.length, size: bytes.length, sha256: sha256(bytes) };
+  for (const encoding of ['gzip', ' GZip ']) {
+    const source = new UbuntuSnapshotArchiveHttpsSource({
+      baseUrl: 'https://snapshot.example.invalid/ubuntu/', snapshot: SNAPSHOT, maxDurationMs: 1_000,
+      timeoutSignal: inertTimeout(), fetchImpl: async () => response(200, bytes, {
+        'content-length': String(bytes.length), 'content-encoding': encoding,
+      }),
+    });
+    assert.deepEqual(await source.read(exact), bytes);
+  }
+  for (const [body, encoding, changes, expected] of [
+    [bytes, 'gzip', { size: undefined, sha256: undefined }, /encoding/u],
+    [bytes, 'br', {}, /encoding/u],
+    [bytes, 'gzip, gzip', {}, /encoding/u],
+    [bytes, 'gzip, identity', {}, /encoding/u],
+    [gunzipSync(bytes), 'gzip', {}, /byte count|exact authority/u],
+    [Buffer.alloc(bytes.length), 'gzip', {}, /exact authority/u],
+    [bytes, 'gzip', { sha256: 'a'.repeat(64) }, /exact authority/u],
+  ]) {
+    const source = new UbuntuSnapshotArchiveHttpsSource({
+      baseUrl: 'https://snapshot.example.invalid/ubuntu/', snapshot: SNAPSHOT, maxDurationMs: 1_000,
+      timeoutSignal: inertTimeout(), fetchImpl: async () => response(200, body, {
+        'content-length': String(bytes.length), 'content-encoding': encoding,
+      }),
+    });
+    await assert.rejects(() => source.read({ ...exact, ...changes }), expected);
+  }
+});
+
+test('snapshot default transport uses raw HTTPS and closes rejected responses before retry', async (t) => {
+  const bytes = gzipSync(Buffer.from('signed raw source'));
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async () => { throw new Error('decompressing fetch must not be used'); });
+  t.mock.method(https, 'get', (url, options, callback) => {
+    const body = Readable.from([bytes]);
+    body.statusCode = calls.length === 0 ? 302 : 200;
+    body.headers = { 'content-length': String(bytes.length), 'content-encoding': 'gzip' };
+    calls.push({ url: String(url), options, body });
+    options.signal.addEventListener('abort', () => body.destroy(), { once: true });
+    queueMicrotask(() => callback(body));
+    return new EventEmitter();
+  });
+  const source = new UbuntuSnapshotArchiveHttpsSource({
+    baseUrl: 'https://snapshot.example.invalid/ubuntu/', snapshot: SNAPSHOT, maxDurationMs: 1_000,
+    timeoutSignal: inertTimeout(),
+  });
+  const request = { path: PATH, maximum: bytes.length, size: bytes.length, sha256: sha256(bytes) };
+  await assert.rejects(() => source.read(request), /HTTP 302/u);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.signal.aborted, true);
+  assert.equal(calls[0].body.destroyed, true);
+  assert.deepEqual(await source.read(request), bytes);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].options.signal.aborted, true);
+  assert.equal(calls[1].url, `https://snapshot.example.invalid/ubuntu/${SNAPSHOT}/${PATH}`);
+  assert.deepEqual(calls[1].options.headers, { accept: 'application/octet-stream', 'accept-encoding': 'identity' });
+});
+
+test('snapshot raw transport cancellation closes a stalled body and propagates request errors', async (t) => {
+  const controller = new AbortController();
+  let supplied;
+  let start;
+  const started = new Promise((resolve) => { start = resolve; });
+  t.mock.method(https, 'get', (url, options, callback) => {
+    const request = new EventEmitter();
+    if (supplied) {
+      queueMicrotask(() => request.emit('error', new Error('controlled TLS failure')));
+      return request;
+    }
+    const body = new Readable({ read() { start(); } });
+    body.statusCode = 200;
+    body.headers = { 'content-length': '1' };
+    supplied = { body, options };
+    options.signal.addEventListener('abort', () => body.destroy(), { once: true });
+    queueMicrotask(() => callback(body));
+    return request;
+  });
+  const source = new UbuntuSnapshotArchiveHttpsSource({
+    baseUrl: 'https://snapshot.example.invalid/ubuntu/', snapshot: SNAPSHOT, maxDurationMs: 1_000,
+    timeoutSignal: inertTimeout(),
+  });
+  const pending = source.read({ path: PATH, maximum: 1, signal: controller.signal });
+  await started;
+  controller.abort();
+  await assert.rejects(() => pending, (error) => error.name === 'AbortError');
+  assert.equal(supplied.body.destroyed, true);
+  assert.equal(supplied.options.signal.aborted, true);
+  await assert.rejects(() => source.read({ path: PATH, maximum: 1 }), /controlled TLS failure/u);
+});
+
+test('snapshot response admission finalizes transport on header and body errors', async () => {
+  const cases = [
+    { status: 200, headers: { 'content-length': '1, 1' }, bytes: Buffer.from('a'), error: /content length/u },
+    { status: 200, headers: { 'content-length': '2' }, bytes: Buffer.from('a'), error: /exceeds its bound/u },
+    { status: 200, headers: { 'content-length': '1' }, bytes: Buffer.from('ab'), error: /byte bound/u },
+    { status: 200, headers: { 'content-length': '1' }, bytes: Buffer.alloc(0), error: /byte count/u },
+  ];
+  for (const entry of cases) {
+    let observed;
+    const source = new UbuntuSnapshotArchiveHttpsSource({
+      baseUrl: 'https://snapshot.example.invalid/ubuntu/', snapshot: SNAPSHOT, maxDurationMs: 1_000,
+      timeoutSignal: inertTimeout(), fetchImpl: async (url, { signal }) => {
+        observed = signal;
+        return response(entry.status, entry.bytes, entry.headers);
+      },
+    });
+    await assert.rejects(() => source.read({ path: PATH, maximum: 1 }), entry.error);
+    assert.equal(observed.aborted, true);
   }
 });
