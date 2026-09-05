@@ -8,7 +8,7 @@ import {
   IMMUTABLE_OBJECT_SET_PROTOCOL,
   immutableObjectSetDigest,
 } from '../src/runtime/immutable-object-set.js';
-import { reobserveImmutableObjectAcquisition } from '../src/runtime/immutable-object-acquisition-evidence.js';
+import { reobserveExactFile, reobserveImmutableObjectAcquisition } from '../src/runtime/immutable-object-acquisition-evidence.js';
 
 function sha256(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
 
@@ -36,6 +36,26 @@ function fixture(location, bytes) {
     },
   };
 }
+
+test('standalone exact-file observation reuses held-file evidence without inventing an acquisition receipt', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-exact-file-evidence-'));
+  try {
+    const location = path.join(root, 'file'); const bytes = Buffer.from([0, 128, 255]);
+    await writeFile(location, bytes);
+    const request = { location, size: bytes.length, sha256: sha256(bytes) };
+    assert.deepEqual(await reobserveExactFile(request), request);
+    for (const invalid of [{ ...request, size: 0 }, { ...request, size: Infinity }, { ...request, sha256: 'invalid' }, { ...request, name: 'extra' }, { ...request, signal: {} }]) await assert.rejects(reobserveExactFile(invalid));
+    const controller = new AbortController(); controller.abort();
+    await assert.rejects(reobserveExactFile({ ...request, signal: controller.signal }));
+    const linked = path.join(root, 'linked'); await link(location, linked);
+    await assert.rejects(reobserveExactFile(request), /unlinked regular file/);
+    await rm(linked);
+    await writeFile(location, Buffer.from([1, 128, 255]));
+    await assert.rejects(reobserveExactFile(request), /digest/);
+    await writeFile(location, bytes);
+    assert.deepEqual(await reobserveExactFile(request), request);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test('acquisition evidence is independently re-observed through a held exact cache file', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-immutable-evidence-'));
