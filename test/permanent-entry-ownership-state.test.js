@@ -99,3 +99,44 @@ test('ownership record exact retry does not publish another collection revision'
   assert.deepEqual(await state.record(input), first);
   assert.equal(store.current(), accepted);
 });
+
+test('completed value replacement is one exact CAS with new identity and no reserved crash window', async () => {
+  const store = memory();
+  const state = createOwnershipState({ collection: store.collection });
+  const first = await state.record({ identity: 'item-one', provenance: 'created', request: { kind: 'opaque' }, value: { digest: 'old' } });
+  const oldSnapshot = structuredClone(store.current());
+  const after = await state.replace({ item: first, value: { digest: 'new' } });
+  assert.equal(after.value.phase, 'complete');
+  assert.notEqual(after.value.operation, first.value.operation);
+  assert.deepEqual(after.value.request, first.value.request);
+  assert.equal(after.provenance, first.provenance);
+  assert.equal(Number(store.current().revision.split('-')[1]), Number(oldSnapshot.revision.split('-')[1]) + 1);
+  const accepted = store.current();
+  await assert.rejects(() => state.replace({ item: first, value: { digest: 'stale' } }));
+  assert.deepEqual(store.current(), accepted);
+  assert.equal(first.value.value.digest, 'old');
+});
+
+test('value replacement rejects reserved, control and malformed inputs without mutation', async () => {
+  const store = memory();
+  const state = createOwnershipState({ collection: store.collection });
+  const pending = await state.reserve({ identity: 'pending', provenance: 'created', request: { kind: 'opaque' } });
+  const anchor = await state.read('control');
+  const before = structuredClone(store.current());
+  for (const raw of [{ item: pending, value: {} }, { item: anchor, value: {} }, { item: pending, value: {}, extra: true }]) {
+    await assert.rejects(() => state.replace(raw));
+  }
+  assert.deepEqual(store.current(), before);
+});
+
+test('value replacement rejects reused operation identity and invalid JSON before publication', async () => {
+  const store = memory();
+  const id = '66666666-6666-4666-8666-666666666666';
+  const state = createOwnershipState({ collection: store.collection, identifier: () => id });
+  const first = await state.record({ identity: 'item-one', provenance: 'created', request: {}, value: {} });
+  const before = structuredClone(store.current());
+  await assert.rejects(() => state.replace({ item: first, value: {} }), /new operation identity/u);
+  const fresh = createOwnershipState({ collection: store.collection });
+  await assert.rejects(() => fresh.replace({ item: first, value: { invalid: undefined } }));
+  assert.deepEqual(store.current(), before);
+});

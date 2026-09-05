@@ -153,3 +153,13 @@ Consequences:
 - setup and UAC timing consume this lower-layer improvement but do not own a duplicate cache fast path.
 
 Owners: #159, #180, #432.
+
+## Decision 11: byte-identical cache file replacement is a new receipt generation
+
+A file replacement does not preserve its filesystem identity, even when its bytes are unchanged. Ordinary exact artifact observation and removal must continue rejecting the old descriptor.
+
+For a completed runner checkout only, its owner may reconcile byte-identical file replacement when the lower artifact owner proves all original byte counts and SHA256 values, exclusive membership, unchanged root and directory identities, non-reparse/single-link shape, and stable repeated complete observations. The checkout owner independently re-verifies the exact Git subject with optional index writes disabled. It then atomically compares and replaces the completed receipt with a new operation identity through the existing append-only journal. Old receipt history remains evidence; it is not rewritten to claim the old inode survived.
+
+Changed/missing content, extra entries, directory replacement, unbound content, stale receipt generations and uncertain observations remain blocked. This is not general corrupt-cache recovery, cross-runtime device-identity compatibility, a manual receipt repair command, or permission to delete unknown files. No new copy or cache location is needed for this exact-content case.
+
+Owners: #159, #180, #391. Qualification: DB-HO168.
