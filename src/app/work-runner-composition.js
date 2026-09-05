@@ -58,6 +58,9 @@ export function composeWorkRunner({ mailboxStore, activeExecution }) {
       const status = execution.inspect();
       if (status.ready !== true) throw new PolicyError(`work execution is unavailable: ${status.reason ?? 'execution is not ready'}`);
       const target = repository ?? context?.task?.targetRepository ?? null;
+      const requestedCapabilities = Array.isArray(context?.task?.requestedCapabilities)
+        ? context.task.requestedCapabilities
+        : [];
       if (typeof target !== 'string' || target.length === 0) throw new PolicyError('work execution requires an admitted target identity');
       const turnId = turnIdentity(projectDir, runDir);
       let mailbox = null;
@@ -77,7 +80,12 @@ export function composeWorkRunner({ mailboxStore, activeExecution }) {
         const observed = normalizeRepositoryExecutionResult(await execution.execute({
           protocol: REPOSITORY_EXECUTION_REQUEST_PROTOCOL,
           operation: `work:${request.name}`,
-          scope: { repository: target, repositoryId, runId },
+          scope: {
+            repository: target,
+            repositoryId,
+            runId,
+            ...(requestedCapabilities.length > 0 ? { requestedCapabilities } : {}),
+          },
           invocation: {
             tool: request.name,
             arguments: invocationArguments,

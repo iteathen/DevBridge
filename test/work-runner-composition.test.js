@@ -55,7 +55,7 @@ test('composition temporarily maps mailbox and execution topology without leakin
     });
     const result = await runner.run({
       profile, projectDir, runDir: path.join(projectDir, '.devbridge', 'r1', 'turn-1'), runId: 'r1',
-      repository: 'owner/project', repositoryId: '42', context: { objective: 'hello' },
+      repository: 'owner/project', repositoryId: '42', context: { objective: 'hello', task: { requestedCapabilities: ['project.write', 'profile:linux', 'profile:cuda'] } },
     });
     assert.equal(result.result.status, 'complete');
     assert.match(result.result.summary, /hello/u);
@@ -64,6 +64,7 @@ test('composition temporarily maps mailbox and execution topology without leakin
     assert.equal(observed[0].invocation.arguments[1].kind, 'input');
     assert.equal(observed[0].invocation.arguments[3].kind, 'output');
     assert.deepEqual(observed[0].invocation.arguments[5], { kind: 'literal', value: 'r1' });
+    assert.deepEqual(observed[0].scope.requestedCapabilities, ['project.write', 'profile:linux', 'profile:cuda']);
     assert.doesNotMatch(JSON.stringify(observed[0].invocation), /host\/path/u);
   } finally {
     await rm(root, { recursive: true, force: true });

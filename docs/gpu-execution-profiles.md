@@ -2,7 +2,7 @@
 
 Status: roadmap architecture for post-recovery GPU support. This document does not claim that DevBridge currently exposes a qualified GPU to repository guests.
 
-Implementation tracker: #186 owns the first real-CUDA Level 0–2 path. Issue #162 owns later generalized compute routing.
+Implementation tracker: #395 supersedes #186 and owns the host-retained accelerator execution path for VM-contained workloads. Issue #419 owns the VM-to-host accelerator-broker transport attachment. Issue #162 owns later generalized compute routing.
 
 ## Sequencing rule
 
@@ -12,8 +12,8 @@ The intended order is:
 
 1. finish the application-management/install/re-entry path sufficiently that a configured installation can recover its accepted runtime and services without manual source or hypervisor surgery;
 2. finish the reconstructable execution-profile lifecycle sufficiently that `create`, diagnosis, `rebuild`, supported operator UX, and exact image recovery work on the target host;
-3. under #186, prove one real supported GPU virtualization/device-assignment path with a deliberately small host/guest canary;
-4. under #186, add one real CUDA-capable execution profile and qualify actual kernel execution;
+3. under #395/#419, prove one real supported host-retained GPU execution path with a deliberately small hostile-guest transport and CUDA canary;
+4. under #395, add one real CUDA-capable execution profile and qualify actual kernel execution through the accepted backend without transferring host GPU ownership or falling back to host repository execution;
 5. under #162 and follow-ons, generalize compute-requirement detection, alternate software backends, automatic matching, and additional hardware/provider adapters afterward.
 
 This is deliberately different from building a broad GPU abstraction first. CUDA-dependent repositories need truthful real-device execution more urgently than they need CPU emulation of unrelated GPU APIs.
@@ -32,7 +32,7 @@ A repository may require a CUDA-capable profile. It may not select a host PCI ad
 
 ## First milestone: feasibility before framework
 
-Before significant implementation, #186 runs one bounded feasibility canary on the actual target host/GPU/provider combination.
+Before significant implementation, #395 runs one bounded feasibility canary on the actual target host/GPU/provider combination after #419 has proven the VM-to-host attachment boundary.
 
 The canary must establish all of the following before architecture is committed around a platform mechanism:
 
@@ -44,7 +44,7 @@ The canary must establish all of the following before architecture is committed 
 
 A successful `nvidia-smi` probe alone is insufficient. The milestone requires real CUDA kernel execution.
 
-If the intended Windows/Hyper-V path is unsupported or materially unsuitable for the actual hardware/host version, stop and select another supported execution path rather than hiding the constraint behind a generic `gpu: true` capability.
+If the intended provider path is unsupported or materially unsuitable for the actual hardware/host version, stop and select another supported execution path rather than hiding the constraint behind a generic `gpu: true` capability.
 
 ## Minimal real-CUDA path
 
@@ -122,7 +122,7 @@ Preserve the existing module-isolation rule.
 
 ## Follow-on generalized compute routing
 
-Issue #162 remains useful, but it follows #186 rather than blocking it.
+Issue #162 remains useful, but it follows the first #395 real-device path rather than blocking it.
 
 After one real device path is proven, #162 can generalize:
 
@@ -134,21 +134,21 @@ After one real device path is proven, #162 can generalize:
 - additional real-hardware or remote/cloud adapters;
 - common result-validity vocabulary.
 
-The generalized routing layer must be able to consume the already-qualified #186 real-CUDA profile without changing its provider or lifecycle implementation.
+The generalized routing layer must be able to consume the first #395 real-CUDA profile without changing its provider or lifecycle implementation.
 
 ## Completion levels
 
 ### Level 0 — feasibility proved
 
-#186 proves one actual host/GPU/provider/guest combination runs a real CUDA kernel through a bounded canary and its device lifecycle constraints are understood.
+#395 proves one actual host/GPU/provider/guest combination runs a real CUDA kernel through a bounded canary and its device lifecycle constraints are understood.
 
 ### Level 1 — usable CUDA profile
 
-#186 provides one execution profile that can be created, started, diagnosed, rebuilt, and used by repository workspaces for real CUDA compile + kernel execution with truthful evidence.
+#395 provides one execution profile that can be created, started, diagnosed, rebuilt, and used by repository workspaces for real CUDA compile + kernel execution with truthful evidence.
 
 ### Level 2 — integrated GPU support
 
-#186 integrates setup/reconfiguration discovery/proposal, explicit routing into the profile, `doctor` readiness/failure, and verification evidence bound to exact device/profile/environment identity.
+#395 integrates setup/reconfiguration discovery/proposal, explicit routing into the profile, `doctor` readiness/failure, and verification evidence bound to exact device/profile/environment identity.
 
 ### Level 3 — generalized compute routing
 
@@ -158,7 +158,8 @@ The generalized routing layer must be able to consume the already-qualified #186
 
 Primary owners:
 
-- #186 — first real-CUDA Level 0–2 implementation/qualification;
+- #395 — host-retained accelerator execution for VM-contained workloads and first real-CUDA Level 0–2 implementation/qualification;
+- #419 — Hyper-V/vsock-style VM-to-host accelerator broker attachment for #395;
 - #138 — execution-profile VM/workspace ownership;
 - #169–#178 — reconstructable environment/image/lifecycle and backing-store authority;
 - #116 / #103 — setup, re-entry, provider/profile discovery and operator UX;
@@ -166,4 +167,4 @@ Primary owners:
 - #180 / #182 — whole-stack application/runtime recovery needed before VM-dependent work is dependable;
 - #162 — later generalized compute-capability detection/routing and alternate backends.
 
-#186 remains blocked behind the active recovery/install work rather than competing with it.
+#395/#419 remain blocked behind the active recovery/install work rather than competing with it. #186 is historical and superseded.

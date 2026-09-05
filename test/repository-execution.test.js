@@ -55,6 +55,27 @@ test('request vocabulary is execution-owned and uses logical tool/transfer refer
   }
 });
 
+test('request carries neutral capability requirements without provider authority', () => {
+  const normalized = normalizeRepositoryExecutionRequest(request({
+    scope: {
+      repository: 'owner/project',
+      repositoryId: '12345',
+      runId: 'run-1',
+      requestedCapabilities: ['project.write', 'profile:linux', 'profile:cuda', 'profile:cuda'],
+    },
+  }));
+  assert.deepEqual(normalized.scope.requestedCapabilities, ['project.write', 'profile:linux', 'profile:cuda']);
+  assert.doesNotMatch(JSON.stringify(normalized.scope), /pci|hyper|vsock|devicePath/iu);
+  assert.throws(() => normalizeRepositoryExecutionRequest(request({
+    scope: {
+      repository: 'owner/project',
+      repositoryId: '12345',
+      runId: 'run-1',
+      requestedCapabilities: ['bad capability'],
+    },
+  })), /requestedCapabilities\[0\]/u);
+});
+
 test('request rejects foreign boundary vocabulary rather than retaining a neighbor dependency', () => {
   for (const [key, value] of [['sandbox', { required: true }], ['vm', { name: 'fixture' }], ['workerExchange', {}]]) {
     assert.throws(() => normalizeRepositoryExecutionRequest({ ...request(), [key]: value }), new RegExp(`repository execution request\\.${key} is not allowed`, 'u'));

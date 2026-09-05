@@ -47,12 +47,13 @@ test('fake repository executor attaches to deterministic flow through the same s
     await writeFile(path.join(root, 'CMakeLists.txt'), 'cmake_minimum_required(VERSION 3.20)\n');
     const seen = [];
     const runner = new DeterministicProcessRunner({ repositoryExecution: fakeExecution(seen) });
-    const context = { projectDir: root, processRunner: runner, repository: 'owner/project', repositoryId: '7', runId: 'run-1' };
+    const context = { projectDir: root, processRunner: runner, repository: 'owner/project', repositoryId: '7', runId: 'run-1', requestedCapabilities: ['project.write', 'profile:linux', 'profile:cuda'] };
     const nodeResult = await createCoreOperationRegistry().execute('node.test', { paths: ['fixture.test.mjs'] }, context);
     assert.equal(nodeResult.execution.identity, 'fake');
     assert.equal(seen[0].invocation.tool, 'node');
     assert.deepEqual(seen[0].invocation.arguments.map((a) => a.value), ['--test', 'fixture.test.mjs']);
     assert.equal(seen[0].scope.repository, 'owner/project');
+    assert.deepEqual(seen[0].scope.requestedCapabilities, ['project.write', 'profile:linux', 'profile:cuda']);
 
     await createCoreOperationRegistry().execute('cmake.configure', { sourcePath: 'CMakeLists.txt', buildId: 'b1' }, context);
     assert.equal(seen[1].invocation.tool, 'cmake');
