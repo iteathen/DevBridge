@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import https from 'node:https';
 
 export const UBUNTU_SNAPSHOT_ARCHIVE_HTTPS_SOURCE_PROTOCOL = 'devbridge/ubuntu-snapshot-archive-https-source-v1';
 
@@ -81,6 +82,27 @@ function declaredLength(response) {
   return value;
 }
 
+// Archive identity names the wire object, not a fetch-decoded representation.
+// Node HTTPS supplies those bytes directly and never follows redirects.
+function rawHttpsResponse(url, { signal, headers }) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, { signal, headers }, (response) => {
+      // Header rejection can abort before a body iterator attaches its listener.
+      response.on('error', () => {});
+      resolve({
+        status: response.statusCode,
+        redirected: false,
+        headers: { get(name) {
+          const value = response.headers[name.toLowerCase()];
+          return Array.isArray(value) ? value.join(', ') : value ?? null;
+        } },
+        body: response,
+      });
+    });
+    request.on('error', reject);
+  });
+}
+
 function normalizeRequest(raw) {
   const value = exactObject(raw, new Set(['path', 'maximum', 'size', 'sha256', 'signal']), 'Ubuntu snapshot archive read request');
   const selectedPath = archivePath(value.path, 'Ubuntu snapshot archive read path');
@@ -137,7 +159,7 @@ export class UbuntuSnapshotArchiveHttpsSource {
     if (!Number.isSafeInteger(value.maxDurationMs) || value.maxDurationMs < 1_000 || value.maxDurationMs > MAX_DURATION_MS) {
       throw new TypeError('Ubuntu snapshot archive duration is invalid');
     }
-    const fetchImpl = value.fetchImpl ?? globalThis.fetch;
+    const fetchImpl = value.fetchImpl ?? rawHttpsResponse;
     const timeoutSignal = value.timeoutSignal ?? AbortSignal.timeout;
     if (typeof fetchImpl !== 'function') throw new TypeError('Ubuntu snapshot archive fetch implementation is invalid');
     if (typeof timeoutSignal !== 'function') throw new TypeError('Ubuntu snapshot archive timeout signal factory is invalid');
@@ -153,29 +175,38 @@ export class UbuntuSnapshotArchiveHttpsSource {
     interrupted(request.signal);
     const durationSignal = signalShape(this.#timeoutSignal(this.#maxDurationMs), 'Ubuntu snapshot archive timeout signal');
     if (durationSignal == null) throw new TypeError('Ubuntu snapshot archive timeout signal is invalid');
-    const signal = request.signal == null ? durationSignal : AbortSignal.any([request.signal, durationSignal]);
+    const operation = new AbortController();
+    const signal = AbortSignal.any([operation.signal, durationSignal, ...(request.signal == null ? [] : [request.signal])]);
     interrupted(signal);
     const url = new URL(`${this.#snapshot}/${request.path}`, this.#baseUrl);
-    const response = await abortable(() => this.#fetch(url, {
-      redirect: 'error',
-      signal,
-      headers: { accept: 'application/octet-stream', 'accept-encoding': 'identity' },
-    }), signal);
-    interrupted(signal);
-    if (!response || !Number.isInteger(response.status)) fail('Ubuntu snapshot archive response is invalid');
-    if (response.status !== 200) fail(`Ubuntu snapshot archive read failed with HTTP ${response.status}`);
-    if (response.redirected === true) fail('Ubuntu snapshot archive returned a redirected response');
-    if (header(response, 'content-range') != null) fail('Ubuntu snapshot archive returned an unexpected range');
-    const encoding = header(response, 'content-encoding');
-    if (encoding != null && encoding.trim().toLowerCase() !== 'identity') fail('Ubuntu snapshot archive returned a transformed encoding');
-    const length = declaredLength(response);
-    if (length > request.maximum) fail('Ubuntu snapshot archive declared byte count exceeds its bound');
-    if (request.size != null && length !== request.size) fail('Ubuntu snapshot archive declared byte count does not match authority');
-    const bytes = await readBody(response.body, signal, request.maximum);
-    if (bytes.length !== length) fail('Ubuntu snapshot archive response byte count changed');
-    if (request.size != null && (bytes.length !== request.size || sha256(bytes) !== request.sha256)) {
-      fail('Ubuntu snapshot archive bytes do not match exact authority');
+    try {
+      const response = await abortable(() => this.#fetch(url, {
+        redirect: 'error',
+        signal,
+        headers: { accept: 'application/octet-stream', 'accept-encoding': 'identity' },
+      }), signal);
+      interrupted(signal);
+      if (!response || !Number.isInteger(response.status)) fail('Ubuntu snapshot archive response is invalid');
+      if (response.status !== 200) fail(`Ubuntu snapshot archive read failed with HTTP ${response.status}`);
+      if (response.redirected === true) fail('Ubuntu snapshot archive returned a redirected response');
+      if (header(response, 'content-range') != null) fail('Ubuntu snapshot archive returned an unexpected range');
+      const encoding = header(response, 'content-encoding')?.trim().toLowerCase();
+      // A gzip-coded response is useful only if its unmodified bytes match an
+      // already authenticated archive object. Never decode or infer identity.
+      if (encoding != null && encoding !== 'identity' && !(encoding === 'gzip' && request.size != null)) {
+        fail('Ubuntu snapshot archive returned an unsupported or unpinned encoding');
+      }
+      const length = declaredLength(response);
+      if (length > request.maximum) fail('Ubuntu snapshot archive declared byte count exceeds its bound');
+      if (request.size != null && length !== request.size) fail('Ubuntu snapshot archive declared byte count does not match authority');
+      const bytes = await readBody(response.body, signal, request.maximum);
+      if (bytes.length !== length) fail('Ubuntu snapshot archive response byte count changed');
+      if (request.size != null && (bytes.length !== request.size || sha256(bytes) !== request.sha256)) {
+        fail('Ubuntu snapshot archive bytes do not match exact authority');
+      }
+      return bytes;
+    } finally {
+      operation.abort();
     }
-    return bytes;
   }
 }
