@@ -89,7 +89,7 @@ test("Windows full CI coverage serializes test files while other platforms retai
 
   assert.match(windows, /^        if: runner\.os == 'Windows'$/mu);
   assert.match(windows, /^        timeout-minutes: 6$/mu);
-  assert.match(windows, /^        run: npm test -- --test-concurrency=1$/mu);
+  assert.match(windows, /^        run: npm\.cmd test -- --test-concurrency=1$/mu);
 });
 
 test("Windows smoke preflight selects a closed concurrency bound while other platforms retain default scheduling", async () => {
@@ -105,5 +105,5 @@ test("Windows smoke preflight selects a closed concurrency bound while other pla
 
   assert.match(windows, /^        if: runner\.os == 'Windows'$/mu);
   assert.match(windows, /^        timeout-minutes: 3$/mu);
-  assert.match(windows, /^        run: npm run preflight -- --bound-targeted-test-concurrency$/mu);
+  assert.match(windows, /^        run: npm\.cmd run preflight -- --bound-targeted-test-concurrency$/mu);
 });
