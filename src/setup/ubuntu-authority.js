@@ -22,9 +22,9 @@ const SOURCE = Object.freeze({
   signerFingerprint: '843938DF228D22F7B3742BC0D94AA3F0EFE21092',
 });
 
-const OUTPUT = Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v9', bootstrap: 'guest-image-v1' });
+const OUTPUT = Object.freeze({ profile: 'linux-development', generation: 'ubuntu-2604-production-v10', bootstrap: 'guest-image-v1' });
 const OUTPUT_PAYLOAD_GENERATION = 'guest-image-6c102cff53ad6d9f10f03530';
-const RECIPE_GENERATION = 'ubuntu-2604-autoinstall-v13';
+const RECIPE_GENERATION = 'ubuntu-2604-autoinstall-v14';
 const PACKAGE_GENERATION = 'ubuntu-2604-tools-v4';
 
 const BOOT_PATCH = Object.freeze({

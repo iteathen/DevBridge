@@ -9,6 +9,7 @@ import {
   UBUNTU_SETUP_BOOT_PATCH,
 } from '../src/setup/ubuntu-authority.js';
 import { createGuestImagePayload } from '../src/guest/image-payload.js';
+import { ubuntuConstructionAuthoritySubject } from '../src/runtime/image-builders/ubuntu-construction-authority.js';
 
 const SNAPSHOT = '20260821T200000Z';
 const CURRENT_PAYLOAD_GENERATION = 'guest-image-6c102cff53ad6d9f10f03530';
@@ -65,8 +66,8 @@ test('setup authority binds source policy, exact snapshot and current payload ge
   assert.deepEqual(authority.qualification.services, ['hv-fcopy-daemon.service']);
   assert.deepEqual(authority.qualification.capabilities, ['hyperv-fcopy-uio-v1']);
   assert.equal(authority.payload.generation, CURRENT_PAYLOAD_GENERATION);
-  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v13');
-  assert.equal(authority.output.generation, 'ubuntu-2604-production-v9');
+  assert.equal(authority.recipe.generation, 'ubuntu-2604-autoinstall-v14');
+  assert.equal(authority.output.generation, 'ubuntu-2604-production-v10');
   assert.deepEqual(authority.recipe.patches, [{ id: 'boot-trigger', occurrences: 2, ...UBUNTU_SETUP_BOOT_PATCH }]);
 });
 
@@ -81,6 +82,24 @@ test('setup output generation is bound to the exact current semantic payload', a
     }),
     /payload generation is not bound to the Ubuntu output generation/u,
   );
+});
+
+test('basis capture changes recipe/output identity without adopting the previous construction subject', async () => {
+  const current = await createUbuntuSetupAuthority({
+    snapshot: SNAPSHOT,
+    fetchImpl: async (url) => responseFor(String(url)),
+    payloadFactory: async () => ({ generation: CURRENT_PAYLOAD_GENERATION }),
+  });
+  const previous = structuredClone(current);
+  previous.recipe.generation = 'ubuntu-2604-autoinstall-v13';
+  previous.output.generation = 'ubuntu-2604-production-v9';
+  assert.notEqual(ubuntuConstructionAuthoritySubject(current), ubuntuConstructionAuthoritySubject(previous));
+  const derived = await deriveCurrentUbuntuSetupAuthority({
+    snapshot: SNAPSHOT, authorities: [previous],
+    payloadFactory: async () => ({ generation: CURRENT_PAYLOAD_GENERATION }),
+  });
+  assert.equal(ubuntuConstructionAuthoritySubject(derived), ubuntuConstructionAuthoritySubject(current));
+  assert.deepEqual(derived.packages, previous.packages, 'generation correction does not reselect packages');
 });
 
 test('setup derives the exact current authority from one durable local package set without network resolution', async () => {
