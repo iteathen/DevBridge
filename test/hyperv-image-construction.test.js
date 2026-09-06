@@ -147,7 +147,7 @@ function fakeHost() {
         if (state.consoleResult) body = state.consoleResult;
         else {
           const pixels = state.consoleImageData ?? Buffer.alloc(320 * 240 * 2);
-          pixels.writeUInt16LE(0xf800, 0);
+          if (state.consoleImageData == null) pixels.writeUInt16LE(0xf800, 0);
           body = { available: true, width: 320, height: 240, imageData: pixels.toString('base64') };
         }
       } else if (script.includes('construction machine is not startable')) {
@@ -637,11 +637,14 @@ test('Hyper-V image construction captures bounded provider-owned console evidenc
   } finally { await rm(data.directory, { recursive: true, force: true }); }
 });
 
-test('Hyper-V image construction accepts exact zero terminal padding without shifting RGB565 pixels', async () => {
+test('Hyper-V image construction removes the observed big-endian length prefix without shifting RGB565 pixels', async () => {
   const data = await fixture();
   const host = fakeHost();
   try {
     host.state.consoleImageData = Buffer.alloc(320 * 240 * 2 + 4);
+    host.state.consoleImageData.writeUInt32BE(host.state.consoleImageData.length, 0);
+    host.state.consoleImageData.writeUInt16LE(0xf800, 4);
+    host.state.consoleImageData.writeUInt16LE(0x07e0, host.state.consoleImageData.length - 2);
     const construction = constructor(data, host, '6'.repeat(32));
     await construction.prepare(data.request);
     await construction.startInstall(data.request.identity);
@@ -649,6 +652,7 @@ test('Hyper-V image construction accepts exact zero terminal padding without shi
     assert.equal(evidence.available, true);
     const bmp = await readFile(evidence.location);
     assert.deepEqual([...bmp.subarray(54, 57)], [0, 0, 255]);
+    assert.deepEqual([...bmp.subarray(-3)], [0, 255, 0]);
     assert.equal(host.state.machineState, 'running');
     assert.equal(host.state.mediaCount, 2);
   } finally { await rm(data.directory, { recursive: true, force: true }); }
@@ -662,9 +666,13 @@ test('Hyper-V image construction rejects malformed console transport variants be
     await construction.prepare(data.request);
     await construction.startInstall(data.request.identity);
 
-    host.state.consoleImageData = Buffer.alloc(320 * 240 * 2 + 4);
-    host.state.consoleImageData[host.state.consoleImageData.length - 1] = 1;
-    await assert.rejects(() => construction.captureInstallConsole(data.request.identity), /terminal padding is invalid/u);
+    for (const length of [0, 320 * 240 * 2, 320 * 240 * 2 + 5]) {
+      host.state.consoleImageData = Buffer.alloc(320 * 240 * 2 + 4);
+      host.state.consoleImageData.writeUInt32BE(length);
+      await assert.rejects(() => construction.captureInstallConsole(data.request.identity), /length prefix is invalid/u);
+    }
+    host.state.consoleImageData.writeUInt32LE(host.state.consoleImageData.length);
+    await assert.rejects(() => construction.captureInstallConsole(data.request.identity), /length prefix is invalid/u);
 
     host.state.consoleImageData = Buffer.alloc(320 * 240 * 2 + 1);
     await assert.rejects(() => construction.captureInstallConsole(data.request.identity), /evidence size is invalid/u);

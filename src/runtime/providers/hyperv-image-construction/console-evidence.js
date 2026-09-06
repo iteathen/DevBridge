@@ -9,9 +9,8 @@ const RAW_BYTES = WIDTH * HEIGHT * 2;
 function normalizeBytes(raw) {
   if (raw.length === RAW_BYTES) return raw;
   if (raw.length === RAW_BYTES + 4) {
-    const terminal = raw.subarray(RAW_BYTES);
-    if (terminal.some((value) => value !== 0)) throw new Error('construction console evidence terminal padding is invalid');
-    return raw.subarray(0, RAW_BYTES);
+    if (raw.readUInt32BE(0) !== raw.length) throw new Error('construction console evidence length prefix is invalid');
+    return raw.subarray(4);
   }
   throw new Error('construction console evidence size is invalid');
 }
