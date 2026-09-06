@@ -182,6 +182,9 @@ errors to the originating task. Record exact source, run/attempt, environment,
 toolchain and verification evidence. Hosted tests or a manually run host program
 do not satisfy this milestone.
 
+The acceptance procedure, required evidence and distinction between guest and
+host-provider coverage are defined in [Hello World qualification](hello-world-qualification.md).
+
 Installer/package-basis recovery (#489/#488/#197/#417), usable VM setup and
 execution, and automatic diagnostic delivery (#493/#176) are work inside this
 milestone. They are not separate product milestones ahead of GPU support.

@@ -1,6 +1,15 @@
 # GPU execution profiles
 
-Status: roadmap architecture for post-recovery GPU support. This document does not claim that DevBridge currently exposes a qualified GPU to repository guests.
+Status: historical device-assignment proposal, superseded by the host-retained
+accelerator direction in #395. #186 is closed as superseded. The remaining text
+is retained for design history and is not current implementation authority.
+
+The active sequence is Hello World, real NVIDIA support for CUDA-JS testing,
+then MCP; see [the roadmap](roadmap.md#current-sequencing). #395 owns GPU
+execution, #419 its provider transport attachment, and #162 later generalized
+routing. Reassess exact hardware/project requirements at that milestone. This
+document claims no qualified GPU capability and does not authorize detaching the
+host display GPU.
 
 Implementation tracker: #186 owns the first real-CUDA Level 0–2 path. Issue #162 owns later generalized compute routing.
 
