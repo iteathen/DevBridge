@@ -22,6 +22,20 @@ uses a disposed .NET SHA-256 file stream, retaining byte-length and digest
 rejection. A Windows test executes that exact verification code with the hash
 cmdlet unavailable and checks both matching and changed seed bytes.
 
+Physical exchange at source `593e43fe96201525c773e6a35b2ee3c414b06c68`
+passed on 2026-09-06 with an ordinary Windows token and the service registry key
+absent. The exact reader received a 266-byte status frame and a 10,663-byte
+diagnostic frame containing 7,799 bytes of installer journal; both native calls
+exited zero, with no timeout or truncation. The returned journal includes the
+actual OpenSSH 3.5/3.6 dependency conflict. This was the product listener manually
+attached in `/run` to the retained failed VM; it proves transport, not a fresh
+automatic construction or historical lifecycle observation. Its newly created
+record correctly reports `installer-start`, unknown exit, sequence 2.
+The temporary listener and files were removed after collection. The original
+package capture and construction ledger remained byte-identical. Automatic
+provisioning correlation, successful image construction and Hello World remain
+open under #493/#488.
+
 Current source supersedes the intermediate composition-pending checkpoints below:
 PR501 head ea6e5da passed all four jobs in CI34013618479 with Ubuntu seed
 activation, the exact owned Windows prerequisite and physical adapter composition.
