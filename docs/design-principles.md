@@ -15,7 +15,15 @@ This ordering is contextual, not universal. Hot-path implementation details can 
 
 ## LEGO
 
-Build capabilities as small replaceable pieces with explicit studs:
+LEGO is the outer architecture discipline. It governs ownership, universality, replaceability, scope containment, damage-limiting encapsulation, supported connection surfaces, and context containment.
+
+**DevBridge itself is the outermost LEGO.** Its supported external task/control inputs, status/result outputs, local control surfaces, provider contracts, events, and lifecycle entry/exit points are its public **studs/surfaces**. Large application sections, subsystems, services, components, and large objects should preferably be compositions of smaller child LEGOs when that preserves cohesion and keeps each reasoning unit inside one agent's full attention. The parent owns its externally visible responsibility and hides private child topology; consumers connect through deliberate studs/surfaces rather than drilling through a parent into an internal child.
+
+A LEGO is too large when one agent cannot load and actively reason about its complete authoritative working set—public contract/studs/surfaces, implementation, invariants, lifecycle/resource/failure rules, tests/conformance, and the immediate dependency and consumer interfaces needed to understand consequences—with substantial headroom for reasoning, evidence, diff inspection, and review. Merely fitting in a model's maximum context window is not enough.
+
+Choose LEGO boundaries using both cohesion and full-attention fit. Strong seams include semantic/ontological ownership, lifecycle cohesion, functional cohesion, stable dependency/substitution boundaries, independently owned failure/resource behavior, volatility/change boundaries, execution locality, and context fit itself. When a coherent LEGO exceeds full attention, recursively split it at the strongest real seam or narrow its scope. Do not create arbitrary modules that duplicate truth, create multiple writers/shared mutable ownership, require constant cross-boundary chatter, or force neighbors to understand private internals.
+
+Build capabilities as replaceable pieces with explicit studs:
 
 - task source and exact-provenance gate;
 - status/checkpoint/handoff sink;
@@ -41,6 +49,8 @@ Build capabilities as small replaceable pieces with explicit studs:
 
 A new task transport, local CLI surface, deterministic tool, decision transport, sandbox provider, release transport, coordination projection, verification backend, execution frontend, guest shell adapter, or guest state-query optimization should normally be an adapter behind an existing authority boundary, not a rewrite of orchestration logic.
 
+Inside a valid LEGO, apply the hierarchy in order: **SOLID structures responsibilities and dependency direction; CUPID shapes the implementation; KISS removes only the remaining unjustified complexity.** A lower-level principle may not defeat a higher-level one. See [`lego-module-contract.md`](lego-module-contract.md) for the concrete stud/surface and isolation rules.
+
 ## SOLID
 
 - Single responsibility: polling, provenance, policy, persistence, execution, validation, decision state, leases, runtime supervision, verification planning/evidence, and reporting do not own each other's details.
@@ -59,7 +69,7 @@ A new task transport, local CLI surface, deterministic tool, decision transport,
 
 ## KISS
 
-Simple does not mean permissive. Prefer one serial request queue over a clever rate scheduler; one structured task envelope over ambiguous command formats; one managed workspace root over arbitrary local paths; one owned/coalesced status projection over chatty streams; one authoritative run coordinator over implicit state spread across event listeners.
+KISS is subordinate to LEGO, SOLID, and CUPID. Simple does not mean permissive, and simplicity may not erase a required boundary, owner, stud/surface, lifecycle, failure/resource rule, or full-attention decomposition. Prefer one serial request queue over a clever rate scheduler; one structured task envelope over ambiguous command formats; one managed workspace root over arbitrary local paths; one owned/coalesced status projection over chatty streams; one authoritative run coordinator over implicit state spread across event listeners.
 
 Current multi-agent coordination is deliberately narrow: DB-016 lets multiple authorized installations share a queue through signed exact-task leases and fencing, while each daemon still admits work serially. **Do not infer a parallel scheduler, per-workstation task-routing ACL, or new capability authority merely because distributed lease coordination exists.** Add those only behind explicit contracts when a real workload requires them.
 
