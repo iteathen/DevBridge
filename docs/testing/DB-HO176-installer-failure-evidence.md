@@ -1,5 +1,28 @@
 # HO176 installer failure evidence — work in progress
 
+Fresh construction at integrated source `c57bacd1198d5c71734aebd7222c47a3699d53f6`
+automatically returned a subject/VM/seed-bound status and then complete, untruncated
+failure diagnostics on 2026-09-06. The reported stage was `apt-update`, exit 127:
+`/run/devbridge-installer-evidence/agent: 82: curtin: not found`. The listener came
+from the production seed, with no manual guest attachment. The journal also shows
+installer-owned APT using the selected snapshot alongside the installer media.
+This proves automatic pre-runtime collection during a real construction, while
+successful image construction and originating GitHub-task delivery remain open.
+
+The observer's fixed PATH hid the installer's command wrapper. Canonical's exact
+[Subiquity snap configuration](https://github.com/canonical/subiquity/blob/9b41f1418858e38f88ba2724f540389b3fa41a0a/snapcraft.yaml)
+adds its bin/sbin directories to the server's PATH, and its
+[late-command launcher](https://github.com/canonical/subiquity/blob/9b41f1418858e38f88ba2724f540389b3fa41a0a/subiquity/server/controllers/cmdlist.py)
+passes the inherited environment through without special handling of Curtin.
+The observer now saves the
+caller's PATH and umask before setting its own diagnostic defaults, then restores
+them only inside the wrapped child. Its record updates and socket reader retain
+their controlled PATH and private file mode. The Linux regression uses a command
+available only on the caller's PATH, checks original arguments/environment/file
+mask and exit 73, and shadows bookkeeping commands to prove they remain isolated.
+This follows [POSIX command search and subshell environment rules](https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html).
+Recipe v18/output v14 distinguish the corrected observer from the failed seed.
+
 Current correction: the Windows registry prerequisite and both registration gates
 have been removed. This transport connects from the host to the guest listener;
 it does not expose a host listener. Exact VM ownership, running state, attached

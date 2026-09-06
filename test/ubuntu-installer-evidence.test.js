@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import os from 'node:os';
@@ -79,6 +79,38 @@ test('systemd accepts the exact generated socket and service units without start
     });
     assert.equal(checked.error, undefined, checked.error?.message);
     assert.equal(checked.status, 0, checked.stderr);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('installer observation preserves caller tool lookup and umask without exposing bookkeeping to that path', { skip: process.platform !== 'linux' }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-installer-command-environment-'));
+  try {
+    const agent = path.join(root, 'agent');
+    const tools = path.join(root, 'installer-tools');
+    const created = path.join(root, 'created-by-command');
+    await mkdir(tools);
+    await writeFile(agent, createUbuntuInstallerEvidence(subject).file.content, { mode: 0o600 });
+    await writeFile(path.join(tools, 'installer-tool'), '#!/bin/sh\nprintf "%s\\n" "$PATH" "$1" "$INSTALLER_TEST_VALUE"\numask\n: >"$2"\nexit "$3"\n', { mode: 0o700 });
+    for (const name of ['dirname', 'wc', 'mv']) {
+      await writeFile(path.join(tools, name), '#!/bin/sh\nprintf "unexpected diagnostic lookup\\n" >&2\nexit 99\n', { mode: 0o700 });
+    }
+    const callerPath = `${tools}:/usr/bin:/bin`;
+    const invoke = (args, input = '') => spawnSync('/bin/sh', ['-c', 'umask 027; exec /bin/sh "$@"', 'test-installer', agent, ...args], {
+      input, env: { ...process.env, PATH: callerPath, INSTALLER_TEST_VALUE: 'unchanged' },
+      encoding: 'utf8', timeout: 15000, maxBuffer: 65536,
+    });
+    assert.equal(invoke(['initialize']).status, 0);
+    const success = invoke(['run', 'apt-update', 'installer-tool', 'argument with spaces', created, '0']);
+    assert.ifError(success.error);
+    assert.equal(success.status, 0, success.stderr);
+    assert.equal(success.stdout, `${callerPath}\nargument with spaces\nunchanged\n0027\n`);
+    assert.equal((await lstat(created)).mode & 0o777, 0o640);
+    const failed = invoke(['run', 'apt-install', 'installer-tool', 'failure', created, '73']);
+    assert.equal(failed.status, 73, failed.stderr);
+    const report = invoke(['serve'], 'S');
+    assert.equal(report.status, 0, report.stderr);
+    assert.equal(decodeInstallerEvidence(Buffer.from(report.stdout), binding).exitCode, 73);
+    assert.equal((await lstat(path.join(root, 'record'))).mode & 0o777, 0o600);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
