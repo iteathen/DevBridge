@@ -63,3 +63,16 @@ test('journal rejects observation from stale declaration authority', async () =>
   const record = await journal.begin({ environmentIdentity: observation().environmentIdentity, operation: 'repair', declarationRevision: 2 });
   await assert.rejects(() => journal.advance(record.environmentIdentity, record.operationId, { stage: 'pre-observation', outcome: 'observed', observation: observation(1) }), /stale/u);
 });
+
+test('failure can terminate an interrupted stage without fabricating successful verification', async () => {
+  const port = memoryPort();
+  const journal = new EnvironmentLifecycleJournal({ port, id: () => 'lifecycle-failed' });
+  const before = await journal.begin({ environmentIdentity: observation().environmentIdentity, operation: 'create', declarationRevision: 1 });
+  await assert.rejects(journal.advance(before.environmentIdentity, before.operationId, { stage: 'terminal', outcome: 'complete' }), /next stage/);
+  await assert.rejects(journal.advance(before.environmentIdentity, 'foreign-operation', { stage: 'terminal', outcome: 'failed' }), /identity/);
+  const failed = await journal.advance(before.environmentIdentity, before.operationId, { stage: 'terminal', outcome: 'failed', subjects: ['declaration-superseded'] });
+  assert.deepEqual(failed.entries.map((entry) => entry.stage), ['intent', 'terminal']);
+  assert.deepEqual(await new EnvironmentLifecycleJournal({ port }).current(before.environmentIdentity), failed);
+  assert.equal((await journal.active()).length, 0);
+  await assert.rejects(journal.advance(before.environmentIdentity, before.operationId, { stage: 'terminal', outcome: 'complete' }), /already terminal/);
+});

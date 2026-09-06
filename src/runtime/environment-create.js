@@ -46,7 +46,22 @@ export class EnvironmentCreate {
     let record = await this.#journal.current(identity);
     if (active(record)) {
       if (record.operation !== 'create') throw new Error('another lifecycle operation is active for the environment');
-      if (record.declarationRevision !== declaration.revision) throw new Error('active environment create no longer matches declaration authority');
+      if (record.declarationRevision !== declaration.revision) {
+        if (record.declarationRevision > declaration.revision) throw new Error('active environment create declaration revision moved backwards');
+        const { held } = await this.#acquireFence(record);
+        try {
+          const latestDeclaration = await this.#declarations.get(identity);
+          const latestRecord = await this.#journal.current(identity);
+          if (latestDeclaration?.revision !== declaration.revision || JSON.stringify(latestRecord) !== JSON.stringify(record)) {
+            throw new Error('superseded environment create authority changed during reconciliation');
+          }
+          const failed = await this.#journal.advance(identity, record.operationId, {
+            stage: 'terminal', outcome: 'failed', subjects: ['declaration-superseded', `declaration-revision-${declaration.revision}`],
+          });
+          return Object.freeze({ state: 'failed', reason: 'declaration-superseded', environmentIdentity: identity,
+            operationId: failed.operationId, implementationGeneration: failed.entries.at(-1).implementationGeneration });
+        } finally { await held.release(); }
+      }
     } else {
       const before = await this.#observe(declaration);
       if (environmentObservationCondition(before) !== 'materialization-not-created') throw new Error('environment create refuses to overwrite an existing or ambiguous materialization');
