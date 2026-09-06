@@ -5,6 +5,10 @@ import path from 'node:path';
 import process from 'node:process';
 
 const SYNTAX_FILES = [
+  'src/runtime/construction-install-evidence.js',
+  'src/runtime/image-builders/ubuntu-installer-evidence.js',
+  'src/app/ubuntu-production-image-physical-canary/installation-evidence-projection.js',
+  'src/app/ubuntu-production-image-physical-canary/installation-evidence-recovery.js',
   'src/security/diagnostic-redaction.js',
   'src/bootstrap/preflight-progress-reporter.mjs',
   'devbridge.mjs',
@@ -531,6 +535,10 @@ const TARGETED_TESTS = [
   'test/persistent-environments-rebuild.test.js',
   'test/stage3-lego-boundary.test.js',
   'test/hyperv-image-construction.test.js',
+  'test/construction-install-evidence.test.js',
+  'test/installation-evidence-projection.test.js',
+  'test/ubuntu-production-image-progress-failure.test.js',
+  'test/ubuntu-installer-evidence.test.js',
   'test/windows-imapi-data-media.test.js',
   'test/windows-imapi-file-media-native.test.js',
   'test/windows-imapi-nocloud-seed.test.js',

@@ -8,6 +8,7 @@ import { HyperVConstructionChannel } from './hyperv-image-construction/managemen
 import { HyperVConstructionObservation } from './hyperv-image-construction/observation.js';
 import { HyperVInstallLiveness } from './hyperv-image-construction/install-liveness.js';
 import { HyperVConsoleEvidence } from './hyperv-image-construction/console-evidence.js';
+import { checkpointConstructionInstallEvidence, inspectConstructionInstallEvidence } from '../construction-install-evidence.js';
 
 export class HyperVImageConstruction {
   #directory;
@@ -19,13 +20,16 @@ export class HyperVImageConstruction {
   #observation;
   #liveness;
   #console;
+  #installerEvidence;
   #now;
 
-  constructor({ directory, sourceRoot, outputRoot, identity, invoke, now = () => new Date() } = {}) {
+  constructor({ directory, sourceRoot, outputRoot, identity, invoke, installerEvidence = null, now = () => new Date() } = {}) {
     if (typeof directory !== 'string' || directory.length === 0) throw new TypeError('construction state directory is required');
     if (typeof sourceRoot !== 'string' || sourceRoot.length === 0) throw new TypeError('construction source root is required');
     if (typeof outputRoot !== 'string' || outputRoot.length === 0) throw new TypeError('construction output root is required');
     if (typeof now !== 'function') throw new TypeError('construction clock must be a function');
+    if (installerEvidence != null && typeof installerEvidence.read !== 'function') throw new TypeError('installer evidence reader is invalid');
+    if (installerEvidence?.readDiagnostics != null && typeof installerEvidence.readDiagnostics !== 'function') throw new TypeError('installer diagnostics reader is invalid');
     this.#directory = path.resolve(directory);
     this.#outputRoot = path.resolve(outputRoot);
     this.#now = now;
@@ -36,9 +40,26 @@ export class HyperVImageConstruction {
     this.#observation = new HyperVConstructionObservation();
     this.#liveness = new HyperVInstallLiveness();
     this.#console = new HyperVConsoleEvidence({ directory, now });
+    this.#installerEvidence = installerEvidence;
   }
 
   #descriptor(record) { return this.#request.descriptor(record); }
+
+  #evidenceBinding(record) {
+    return { subject: record.identity, providerInstance: record.providerIdentity, seedSha256: record.seed.sha256, attempt: 1 };
+  }
+
+  #savedEvidence(record) {
+    return inspectConstructionInstallEvidence(record.installationEvidence ?? null, this.#evidenceBinding(record));
+  }
+
+  async #checkpointEvidence(state, record, observation) {
+    record.installationEvidence = checkpointConstructionInstallEvidence({
+      binding: this.#evidenceBinding(record), previous: record.installationEvidence ?? null,
+      observation, now: this.#now(),
+    });
+    await this.#ledger.save(state);
+  }
 
   #mediaPaths(record) {
     return { installerPath: record.installer.location, seedPath: record.seed.location, dataPath: record.dataMedia?.location ?? null };
@@ -142,7 +163,7 @@ export class HyperVImageConstruction {
       ...this.#descriptor(record),
       ...this.#request.bootSettings(record.bootProtection ?? null),
     });
-    return this.#observation.status(identity, record, observed);
+    return { ...this.#observation.status(identity, record, observed), installationEvidence: this.#savedEvidence(record) };
   }
 
   async observeInstall(rawIdentity) {
@@ -150,11 +171,48 @@ export class HyperVImageConstruction {
     const state = await this.#ledger.load();
     const record = state.records[identity];
     if (!record || record.phase !== 'installing' || !record.providerIdentity) throw new Error('construction is not awaiting installation completion');
-    const observed = await this.status(identity);
+    let observed;
+    try { observed = await this.status(identity); }
+    catch (error) {
+      if (!this.#savedEvidence(record)?.failure) throw error;
+      await this.#checkpointEvidence(state, record, { status: 'unavailable', reason: 'installer provider observation failed; saved failure retained' });
+      return { identity, phase: record.phase, state: 'unknown', installationEvidence: this.#savedEvidence(record), liveness: record.installLiveness ?? null };
+    }
     const liveness = this.#liveness.checkpoint(record.installLiveness ?? null, observed, this.#now());
     record.installLiveness = liveness;
     await this.#ledger.save(state);
-    return { ...observed, liveness: Object.freeze({ ...liveness }) };
+    let evidence = { status: 'unavailable', reason: 'pre-runtime installer evidence transport is not configured' };
+    const readable = this.#installerEvidence && observed.exists && observed.owned && observed.state === 'running' && observed.mediaCount > 0;
+    if (readable) {
+      try { evidence = await this.#installerEvidence.read({ binding: this.#evidenceBinding(record), attachment: this.#descriptor(record) }); }
+      catch { evidence = { status: 'unavailable', reason: 'pre-runtime installer evidence transport failed' }; }
+    } else if (this.#installerEvidence) {
+      evidence = { status: 'unavailable', reason: 'installer evidence endpoint is outside its running source-media frontier' };
+    }
+    // Commit the small terminal record before reading larger diagnostic output.
+    // A flood, disconnect or process crash during that read cannot erase failure.
+    await this.#checkpointEvidence(state, record, evidence);
+    const failure = record.installationEvidence.failure;
+    if (readable && failure && failure.collection !== 'complete' && this.#installerEvidence.readDiagnostics) {
+      let diagnostics;
+      try {
+        diagnostics = await this.#installerEvidence.readDiagnostics({
+          binding: this.#evidenceBinding(record), attachment: this.#descriptor(record), sequence: failure.sequence,
+        });
+      } catch { diagnostics = { status: 'unavailable', reason: 'installer diagnostic output collection failed; terminal failure retained' }; }
+      await this.#checkpointEvidence(state, record, diagnostics);
+    }
+    return { ...observed, installationEvidence: this.#savedEvidence(record), liveness: Object.freeze({ ...liveness }) };
+  }
+
+  async inspectInstallEvidence(rawIdentity) {
+    const identity = this.#request.subject(rawIdentity);
+    const state = await this.#ledger.inspect();
+    const record = state.records[identity];
+    if (!record) return null;
+    const expected = this.#request.create({ identity });
+    if (['identity', 'key', 'name', 'marker', 'diskName'].some(key => record[key] !== expected[key])) throw new Error('saved construction evidence owner changed');
+    return this.#savedEvidence(record);
   }
 
   async captureInstallConsole(rawIdentity) {
@@ -222,6 +280,12 @@ export class HyperVImageConstruction {
     const state = await this.#ledger.load();
     const record = state.records[identity];
     if (!record || record.phase !== 'installing' || !record.providerIdentity) throw new Error('construction is not awaiting installed boot');
+    const failure = this.#savedEvidence(record)?.failure;
+    if (failure) {
+      const error = new Error(`installation failed during ${failure.stage}; installed boot is unavailable`);
+      Object.assign(error, { exitCode: failure.exitCode, stdout: failure.stdout, stderr: failure.stderr, outputTruncated: failure.truncated });
+      throw error;
+    }
     const observed = await this.status(identity);
     if (!observed.exists || !observed.diskPresent || !observed.diskAttached) throw new Error('installer has not completed with the exact retained disk');
     if (observed.state === 'running' && observed.mediaCount === 0) {

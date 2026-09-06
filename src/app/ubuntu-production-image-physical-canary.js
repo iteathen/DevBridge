@@ -16,7 +16,7 @@ import { observeBoundedReadiness } from '../runtime/bounded-readiness-window.js'
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { createDetachedSignatureVerifier } from '../runtime/detached-signature-verifier.js';
 import { createHttpsFileDownload } from '../runtime/https-file-download.js';
-import { loadOrCreateLocalIdentity } from '../runtime/local-identity.js';
+import { loadOrCreateLocalIdentity, readLocalIdentity } from '../runtime/local-identity.js';
 import { HyperVEnvironmentBootstrap } from '../runtime/providers/hyperv-environment-bootstrap.js';
 import { HyperVEnvironmentBridge } from '../runtime/providers/hyperv-environment-bridge.js';
 import { createHyperVImageConstruction } from '../runtime/providers/hyperv-image-construction.js';
@@ -36,6 +36,14 @@ import { createConfigurationContract } from './ubuntu-production-image-physical-
 import { createMutationLease } from './ubuntu-production-image-physical-canary/mutation-lease.js';
 import { createPreparationContract } from './ubuntu-production-image-physical-canary/preparation-contract.js';
 import { createProgressCoordinator } from './ubuntu-production-image-physical-canary/progress-coordinator.js';
+import { createInstallationEvidenceProjection } from './ubuntu-production-image-physical-canary/installation-evidence-projection.js';
+import { createInstallationEvidenceRecovery } from './ubuntu-production-image-physical-canary/installation-evidence-recovery.js';
+import { checkpointConstructionInstallEvidence, inspectConstructionInstallEvidence } from '../runtime/construction-install-evidence.js';
+import { captureFailureDiagnostics } from '../run/failure-diagnostics.js';
+import { sanitizeDiagnosticText } from '../security/diagnostic-redaction.js';
+
+const projectInstallationEvidence = createInstallationEvidenceProjection({ captureFailure: captureFailureDiagnostics, sanitize: sanitizeDiagnosticText });
+const recoverInstallationEvidence = createInstallationEvidenceRecovery({ checkpoint: checkpointConstructionInstallEvidence, inspect: inspectConstructionInstallEvidence });
 
 const CONFIG_PROTOCOL = 'devbridge/ubuntu-production-image-physical-canary-config-v1';
 const STATUS_PROTOCOL = 'devbridge/ubuntu-production-image-physical-canary-status-v1';
@@ -164,7 +172,7 @@ function inspectionCanary(journal) {
   });
 }
 
-function publicResult(subject, canary, { state = null, reason = null, preflight = null, authorityRegistered = null, liveness = null, readiness = null, diagnostics = null } = {}) {
+function publicResult(subject, canary, { state = null, reason = null, preflight = null, authorityRegistered = null, liveness = null, readiness = null, diagnostics = null, installationEvidence = null } = {}) {
   const selectedState = state ?? (canary?.complete ? 'completed' : canary?.blocked ? 'blocked' : canary?.phase ?? 'unavailable');
   return Object.freeze({
     protocol: STATUS_PROTOCOL,
@@ -178,6 +186,7 @@ function publicResult(subject, canary, { state = null, reason = null, preflight 
     liveness,
     readiness,
     diagnostics,
+    installationEvidence: projectInstallationEvidence(installationEvidence),
     authorityRegistered,
     preflight,
   });
@@ -439,7 +448,7 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
     }),
   });
 
-  const status = async () => {
+  const inspectState = async () => {
     const payload = await payloadFactory();
     const payloadMatches = payload?.generation === config.authority.payload.generation;
     const preflightResult = await selectedPreflight.inspect({
@@ -462,18 +471,38 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
     if (preflightRequired && !preflightResult.ready) reasons.push(preflightResult.reason);
     if (journalReason) reasons.push(journalReason);
     if (canary?.blocked) reasons.push(canary.reason);
+    let installationEvidence = null;
+    if (canary?.phase === 'running') {
+      const localIdentity = await readLocalIdentity({ directory: paths.foundationRoot });
+      if (localIdentity != null) {
+        const construction = createHyperVImageConstruction({
+          directory: paths.constructionDirectory, sourceRoot: paths.sourceRoot,
+          outputRoot: paths.outputRoot, identity: localIdentity,
+          invoke: async () => { throw new Error('saved installation evidence inspection must not invoke the provider'); },
+        });
+        installationEvidence = await construction.inspectInstallEvidence(subject);
+        const failure = installationEvidence?.failure;
+        if (failure) reasons.push(`installation failed during ${failure.stage} (${failure.exitCode == null ? 'unknown exit status' : `exit ${failure.exitCode}`})`);
+      }
+    }
     const complete = canary?.complete === true;
     const blocked = !complete && reasons.filter(Boolean).length > 0;
-    return publicResult(subject, canary, {
+    const result = publicResult(subject, canary, {
       state: complete ? 'completed' : blocked ? 'blocked' : canary?.phase ?? 'absent',
       reason: blocked ? [...new Set(reasons.filter(Boolean))].join('; ') : null,
       preflight: preflightResult,
       authorityRegistered: registered != null,
+      installationEvidence,
     });
+    const diagnosticRecovery = installationEvidence?.failure != null && reasons.length === 1
+      && (installationEvidence.failure.collection !== 'complete' || installationEvidence.collection.status !== 'available');
+    return { status: result, diagnosticRecovery, installationEvidence };
   };
 
+  const status = async () => (await inspectState()).status;
+
   const run = async () => {
-    const before = await status();
+    const { status: before, diagnosticRecovery, installationEvidence } = await inspectState();
     if (before.complete) {
       return mutationLease.run(paths.runLock, async () => {
         const cleanupReason = await cleanupCompletedState({ paths, subject, invoke });
@@ -485,7 +514,7 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
         });
       });
     }
-    if (before.blocked) return before;
+    if (before.blocked && !diagnosticRecovery) return before;
     if (platform !== 'win32') return publicResult(subject, null, { state: 'blocked', reason: 'physical production image canary requires a Windows Hyper-V host', preflight: before.preflight, authorityRegistered: before.authorityRegistered });
     return mutationLease.run(paths.runLock, async () => {
       const payload = await payloadFactory();
@@ -496,6 +525,17 @@ export function createUbuntuProductionImagePhysicalCanary(rawConfig, {
         ? await runtimeFactory({ config, subject, payload, request, paths, catalog, preparationStore, invoke, fetchImpl, signatureVerifierExecutable })
         : await createPhysicalRuntime({ config, subject, payload, paths, invoke, fetchImpl, catalog, preparationStore, signatureVerifierExecutable });
       if (!runtime?.canary || !runtime?.construction || !runtime?.accessProbe || typeof runtime.access !== 'function') throw new TypeError('physical canary runtime contract is incomplete');
+
+      if (diagnosticRecovery) {
+        const observed = await recoverInstallationEvidence({
+          previous: installationEvidence, observe: () => runtime.construction.observeInstall(subject), now,
+        });
+        return publicResult(subject, before, {
+          state: 'blocked', reason: before.reason, authorityRegistered: true,
+          preflight: before.preflight, liveness: observed.liveness ?? null,
+          installationEvidence: observed.installationEvidence,
+        });
+      }
 
       return progress.run({
         inspect: () => runtime.canary.inspect(request),
