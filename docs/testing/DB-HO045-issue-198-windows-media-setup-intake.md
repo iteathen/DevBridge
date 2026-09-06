@@ -1,5 +1,24 @@
 # DB-HO045 — issue #198 Windows media setup intake
 
+2026-09-06 native correction: the official Windows 11 25H2 x64 ISO passed its
+published SHA-256 check but discovery rejected it. A filtered single hashtable
+lost its array wrapper, so its two fields were counted as two install containers.
+The container collection now retains its array type. The next native failure was
+DISM requiring elevation for metadata inventory. The inspector now uses
+[WIMCreateFile query access](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/wim/dd851934(v=msdn.10)?view=windows-11)
+and [WIMGetImageInformation](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/wim/dd834949(v=msdn.10)?view=windows-11),
+with System32 DLL lookup, bounded UTF-16 metadata, prohibited XML DTD/resolution,
+and native buffer/handle disposal. It grants no image apply, mount or write access.
+The existing ISO attachment owner still detaches only its own attachment.
+
+The corrected product inspector inventoried all 11 editions of build
+10.0.26200.8037 using an ordinary token; the ISO was detached afterward. Local
+evidence is `ho188-windows-media-native-inventory.json`. Native PowerShell tests
+cover WIM/ESD singletons, absent/ambiguous containers, exact index selection,
+malformed/oversized/DTD-bearing XML, duplicate indexes and cleanup. The original
+singleton regression failed before correction. This is actual media inspection
+proof, not media approval, licensing, Windows construction or Hello World proof.
+
 Status: implemented and software-verified from exact predecessor `9ebb469891276873daf01800a6dbe9e00f09f6ca` on `stage8/362-protected-activity-channel`; physical media approval and Windows image construction remain pending.
 
 ## Assessment

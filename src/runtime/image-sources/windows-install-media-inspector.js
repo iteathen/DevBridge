@@ -22,7 +22,50 @@ $shouldDismount = $false
 $result = $null
 try {
   Import-Module Storage -ErrorAction Stop
-  Import-Module Dism -ErrorAction Stop
+  # Query the image metadata directly; DISM servicing requires elevation even
+  # for its inventory command. Query access grants no apply/mount/write access.
+  Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class DevBridgeWimMetadata {
+  [DllImport("wimgapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+  [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+  static extern IntPtr WIMCreateFile(string path, uint access, uint disposition, uint flags, uint compression, IntPtr result);
+  [DllImport("wimgapi.dll", ExactSpelling = true, SetLastError = true)]
+  [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  static extern bool WIMGetImageInformation(IntPtr handle, out IntPtr information, out uint bytes);
+  [DllImport("wimgapi.dll", ExactSpelling = true, SetLastError = true)]
+  [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  static extern bool WIMCloseHandle(IntPtr handle);
+  [DllImport("kernel32.dll", ExactSpelling = true)]
+  [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+  static extern IntPtr LocalFree(IntPtr memory);
+  public static string Read(string path) {
+    const uint QueryAccess = 0, OpenExisting = 3;
+    IntPtr handle = WIMCreateFile(path, QueryAccess, OpenExisting, 0, 0, IntPtr.Zero);
+    if (handle == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
+    IntPtr information = IntPtr.Zero;
+    try {
+      uint count;
+      if (!WIMGetImageInformation(handle, out information, out count)) throw new Win32Exception(Marshal.GetLastWin32Error());
+      if (information == IntPtr.Zero || count < 2 || count > 2097152 || count % 2 != 0) throw new InvalidOperationException("image-metadata-size");
+      byte[] bytes = new byte[(int)count];
+      Marshal.Copy(information, bytes, 0, bytes.Length);
+      return new UnicodeEncoding(false, true, true).GetString(bytes).TrimStart('\uFEFF').TrimEnd('\0');
+    } finally {
+      try {
+        if (information != IntPtr.Zero && LocalFree(information) != IntPtr.Zero) throw new InvalidOperationException("image-metadata-release");
+      } finally {
+        if (!WIMCloseHandle(handle)) throw new Win32Exception(Marshal.GetLastWin32Error());
+      }
+    }
+  }
+}
+'@ -ErrorAction Stop
   $disk = Get-DiskImage -ImagePath ([string]$data.location) -ErrorAction SilentlyContinue
   if ($null -eq $disk -or $disk.Attached -ne $true) {
     $disk = Mount-DiskImage -ImagePath ([string]$data.location) -PassThru -ErrorAction Stop
@@ -34,32 +77,48 @@ try {
   if (-not (Test-Path -LiteralPath (Join-Path $root 'setup.exe') -PathType Leaf)) { throw 'setup-absent' }
   if (-not (Test-Path -LiteralPath (Join-Path $root 'sources\boot.wim') -PathType Leaf)) { throw 'boot-image-absent' }
   if (-not (Test-Path -LiteralPath (Join-Path $root 'efi\boot\bootx64.efi') -PathType Leaf)) { throw 'efi-loader-absent' }
-  $candidates = @(
+  [array]$candidates = @(
     @{ container = 'wim'; location = (Join-Path $root 'sources\install.wim') },
     @{ container = 'esd'; location = (Join-Path $root 'sources\install.esd') }
   ) | Where-Object { Test-Path -LiteralPath ([string]$_.location) -PathType Leaf }
   if ($candidates.Count -ne 1) { throw 'install-container' }
-  $indices = if ($null -ne $data.index) { @([int]$data.index) } else { @((Get-WindowsImage -ImagePath ([string]$candidates[0].location) -ErrorAction Stop) | ForEach-Object { [int]$_.ImageIndex }) }
-  if ($indices.Count -lt 1 -or $indices.Count -gt 512) { throw 'image-count' }
-  $images = @($indices | ForEach-Object {
-    $selected = Get-WindowsImage -ImagePath ([string]$candidates[0].location) -Index ([int]$_) -ErrorAction Stop
-    if ($null -eq $selected) { throw 'image-absent' }
-    $languages = @($selected.Languages | ForEach-Object {
-      if ($null -ne $_.LanguageTag) { [string]$_.LanguageTag } else { [string]$_ }
-    } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    $version = [string]$selected.Version
-    $parts = @($version.Split('.'))
-    if ($parts.Count -ne 4) { throw 'image-version' }
-    $defaultLanguage = [string]$selected.DefaultLanguage
+  $settings = New-Object System.Xml.XmlReaderSettings
+  $settings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
+  $settings.XmlResolver = $null
+  $settings.MaxCharactersInDocument = 1048576
+  $text = New-Object System.IO.StringReader([DevBridgeWimMetadata]::Read([string]$candidates[0].location))
+  $reader = $null
+  try {
+    $reader = [System.Xml.XmlReader]::Create($text, $settings)
+    $document = New-Object System.Xml.XmlDocument
+    $document.XmlResolver = $null
+    $document.Load($reader)
+  } finally {
+    if ($null -ne $reader) { $reader.Dispose() }
+    $text.Dispose()
+  }
+  $selectedImages = @($document.SelectNodes('/WIM/IMAGE'))
+  if ($selectedImages.Count -lt 1 -or $selectedImages.Count -gt 512) { throw 'image-count' }
+  if ($null -ne $data.index) {
+    $selectedImages = @($selectedImages | Where-Object { [int]$_.GetAttribute('INDEX') -eq [int]$data.index })
+    if ($selectedImages.Count -ne 1) { throw 'image-absent' }
+  }
+  $images = @($selectedImages | ForEach-Object {
+    $selected = $_
+    $windows = $selected.WINDOWS
+    $languages = @($windows.LANGUAGES.LANGUAGE | ForEach-Object { [string]$_ })
+    $parts = @($windows.VERSION.MAJOR, $windows.VERSION.MINOR, $windows.VERSION.BUILD, $windows.VERSION.SPBUILD)
+    if (@($parts | Where-Object { [string]$_ -notmatch '^\d{1,6}$' }).Count -ne 0) { throw 'image-version' }
+    $defaultLanguage = [string]$windows.LANGUAGES.DEFAULT
     if ([string]::IsNullOrWhiteSpace($defaultLanguage) -and $languages.Count -eq 1) { $defaultLanguage = [string]$languages[0] }
     @{
-      index = [int]$selected.ImageIndex
-      name = [string]$selected.ImageName
-      edition = [string]$selected.EditionId
-      architecture = [string]$selected.Architecture
-      version = $version
+      index = [int]$selected.GetAttribute('INDEX')
+      name = [string]$selected.NAME
+      edition = [string]$windows.EDITIONID
+      architecture = [string]$windows.ARCH
+      version = $parts -join '.'
       build = [int]$parts[2]
-      installationType = [string]$selected.InstallationType
+      installationType = [string]$windows.INSTALLATIONTYPE
       languages = $languages
       defaultLanguage = $defaultLanguage
     }
