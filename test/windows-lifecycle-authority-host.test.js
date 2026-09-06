@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import { connectBoundedLocalAuthoritySocket } from '../src/runtime/local-authority-socket-connection.js';
 import { createConfiguredEnvironmentActivityClient } from '../src/runtime/environment-activity-authority-transport.js';
 import { createConfiguredEnvironmentConfigurationClient } from '../src/runtime/environment-configuration-authority-transport.js';
 import {
@@ -129,8 +130,9 @@ test('Windows lifecycle endpoints keep one first-instance server alive across re
   assert.doesNotMatch(source, /PipeOptions\.FirstPipeInstance/u);
   assert.match(source, /pipe = CreatePipe\(name, access\);\s*lock \(activeLock\) activePipes\.Add\(pipe\);\s*while \(!stopping\)/su);
   assert.doesNotMatch(source, /while \(!stopping\)[\s\S]{0,300}pipe = CreatePipe/u);
-  assert.match(source, /if \(!read\.Wait\(remaining\)\) throw new System\.TimeoutException/u);
-  assert.doesNotMatch(source, /if \(!read\.Wait\(remaining\)\)[\s\S]{0,160}pipe\.Dispose/u);
+  assert.match(source, /if \(!pending\.Wait\(remaining\)\) return null/u);
+  assert.match(source, /CancelPendingPipeRead\(pipe, pending\)/u);
+  assert.doesNotMatch(source, /if \(!stopping && pipe\.IsConnected\) pipe\.Disconnect/u);
 });
 
 test('Windows protected activity workers are bounded by client lifetime without widening other worker protocols', async () => {
@@ -328,6 +330,25 @@ internal static class IntegrationHarness
       windowsHide: true,
     });
     await waitForHostReady(child);
+    // A disconnected or incomplete caller must release only its own connection.
+    for (const abandoned of [
+      { wire: '', delay: 0 },
+      { wire: '{"protocol":', delay: 0 },
+      { wire: '', delay: 5200 },
+      { wire: JSON.stringify({ protocol: 'devbridge/environment-lifecycle-authority-request-v1', requestId: '11111111-1111-4111-8111-111111111112', operation: 'fixture-large', payload: {} }) + '\n', delay: 0 },
+    ]) {
+      const socket = await connectBoundedLocalAuthoritySocket({ endpoint: plan.endpoints.read.endpoint, timeoutMs: 1000 });
+      socket.on('error', () => {});
+      if (abandoned.wire) await new Promise((resolve, reject) => socket.write(abandoned.wire, (error) => error ? reject(error) : resolve()));
+      if (abandoned.delay) await wait(abandoned.delay);
+      socket.destroy();
+      const recovered = await Promise.race([
+        createConfiguredLifecycleAuthorityClient({ stateDirectory, platform: 'win32', connectTimeoutMs: 3000 }).list(),
+        wait(5000).then(() => { throw new Error('compiled host did not recover after client disconnect'); }),
+      ]);
+      assert.deepEqual(recovered, []);
+      assert.equal(child.exitCode, null, 'client disconnect terminated the service host');
+    }
     const largeResponse = await createLifecycleAuthoritySocketExchange({
       endpoint: plan.endpoints.read.endpoint,
       connectTimeoutMs: 1_000,
