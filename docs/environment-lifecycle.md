@@ -35,6 +35,10 @@ The logical environment identity is derived from the approved profile and does n
 
 The local image location is deliberately absent from the declaration. #178 owns availability of the exact semantic image identity when a local cache is missing or corrupt.
 
+If local setup replaces a declaration while an interrupted `create` remains active, resuming that old creation cannot apply the new declaration to its old checkpoints. The creation owner acquires its existing logical fence, rechecks the journal and declaration, and records the superseded attempt as terminal `failed`. It preserves every existing journal entry, the old revision, construction checkpoint, and provider state. This is failure reconciliation, not successful construction or permission to discard anything. A subsequent status/impact plan selects the appropriate create or replacement operation against the current declaration. Persisted terminal journals are archived by operation identity before a later operation replaces the current journal.
+
+Successful lifecycle stages remain contiguous. An unsuccessful terminal entry may follow any nonterminal stage; unperformed verification and cleanup stages must never be fabricated merely to record failure.
+
 ## Observed state
 
 Observation is evidence, not authority. It separately reports:
