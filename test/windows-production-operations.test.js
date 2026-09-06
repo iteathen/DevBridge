@@ -53,7 +53,11 @@ test('Windows production operations bind exact tool and payload authorities into
   assert.match(finalize, /Sysprep\.exe/u);
   assert.match(finalize, /\/generalize/u);
   assert.match(finalize, /\/oobe/u);
-  assert.match(finalize, /\/shutdown/u);
+  assert.match(finalize, /\/quit/u);
+  assert.doesNotMatch(finalize, /\/shutdown/u);
+  assert.match(finalize, /Start-Process -FilePath \$sysprep[^\n]+-Wait/u);
+  assert.ok(finalize.indexOf('system preparation failed') < finalize.indexOf('Disable-LocalUser'));
+  assert.ok(finalize.indexOf('Disable-LocalUser') < finalize.indexOf("-FilePath 'shutdown.exe'"));
   assert.match(finalize, /\/mode:vm/u);
   assert.match(finalize, /Disable-LocalUser/u);
   assert.match(finalize, /Panther/u);
@@ -105,4 +109,30 @@ test('native build environment import handles spaces and rejects failed initiali
   assert.notEqual(failure.exitCode, 0);
   assert.match(failure.stderr, /native build environment initialization failed/u);
   assert.equal(failure.stdout, '');
+});
+
+test('finalization waits for native success and rejects native failure before account cleanup', { skip: process.platform !== 'win32' }, async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-finalize-process-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, 'fixture.exe');
+  const compileScript = `$ErrorActionPreference='Stop'\n$data=[Console]::In.ReadToEnd() | ConvertFrom-Json\nAdd-Type -TypeDefinition 'public static class Fixture { public static int Main() { System.Threading.Thread.Sleep(200); return int.Parse(System.Environment.GetEnvironmentVariable("DB_FINALIZE_FIXTURE_EXIT")); } }' -OutputAssembly ([string]$data.output) -OutputType ConsoleApplication`;
+  const argumentsFor = script => ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')];
+  const compiled = await invokeCommand({ executable: 'powershell.exe', arguments: argumentsFor(compileScript), input: JSON.stringify({ output: executable }), timeoutMs: 20_000, maxOutputBytes: 16 * 1024 });
+  assert.equal(compiled.exitCode, 0, compiled.stderr);
+  const finalize = createWindowsProductionOperations({ authority: createDefaultWindowsToolchainAuthority(), payload: await createWindowsGuestImagePayload() })['finalize-v1'];
+  const start = finalize.indexOf('$process = Start-Process -FilePath $sysprep');
+  const end = finalize.indexOf('$administrator =', start);
+  assert.ok(start > 0 && end > start && end < finalize.indexOf('Disable-LocalUser'));
+  const script = `$ErrorActionPreference='Stop'\n$data=[Console]::In.ReadToEnd() | ConvertFrom-Json\n$sysprep=[string]$data.executable\n$env:DB_FINALIZE_FIXTURE_EXIT=[string]$data.exitCode\n${finalize.slice(start, end)}\n@{ completed=$true } | ConvertTo-Json -Compress`;
+  for (const exitCode of [0, 23]) {
+    const result = await invokeCommand({ executable: 'powershell.exe', arguments: argumentsFor(script), input: JSON.stringify({ executable, exitCode }), timeoutMs: 20_000, maxOutputBytes: 16 * 1024 });
+    if (exitCode === 0) {
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), { completed: true });
+    } else {
+      assert.notEqual(result.exitCode, 0);
+      assert.equal(result.stdout, '');
+      assert.match(result.stderr, /system preparation failed/u);
+    }
+  }
 });

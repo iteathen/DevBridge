@@ -300,13 +300,18 @@ foreach ($target in @(
   'C:\Windows\Panther\Unattend'
 )) { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue }
 Remove-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name DefaultPassword,AutoAdminLogon,AutoLogonCount,DefaultUserName -ErrorAction SilentlyContinue
+$sysprep = Join-Path $env:WINDIR 'System32\Sysprep\Sysprep.exe'
+if (-not (Test-Path -LiteralPath $sysprep -PathType Leaf)) { throw 'system preparation executable is absent' }
+# Remoting terminates child processes when its session closes. Complete Sysprep
+# in this session, verify its exit, and only then revoke access and shut down.
+$process = Start-Process -FilePath $sysprep -ArgumentList '/generalize', '/oobe', '/quit', '/mode:vm', '/quiet' -Wait -PassThru -WindowStyle Hidden
+if ($process.ExitCode -ne 0) { throw 'system preparation failed before shutdown scheduling' }
 $administrator = Get-LocalUser | Where-Object { ([string]$_.SID).EndsWith('-500') } | Select-Object -First 1
 if ($null -eq $administrator) { throw 'built-in construction account is unavailable' }
 Disable-LocalUser -SID $administrator.SID -ErrorAction Stop
-$sysprep = Join-Path $env:WINDIR 'System32\Sysprep\Sysprep.exe'
-if (-not (Test-Path -LiteralPath $sysprep -PathType Leaf)) { throw 'system preparation executable is absent' }
-$process = Start-Process -FilePath $sysprep -ArgumentList '/generalize', '/oobe', '/shutdown', '/mode:vm', '/quiet' -PassThru -WindowStyle Hidden
-@{ scheduled = $true; processId = [int]$process.Id } | ConvertTo-Json -Compress
+$shutdown = Start-Process -FilePath 'shutdown.exe' -ArgumentList '/s', '/t', '5', '/f' -Wait -PassThru -WindowStyle Hidden
+if ($shutdown.ExitCode -ne 0) { throw 'final image shutdown scheduling failed' }
+@{ scheduled = $true; processId = [int]$shutdown.Id } | ConvertTo-Json -Compress
 `;
 
 export function createWindowsProductionOperations({ authority, payload } = {}) {

@@ -148,6 +148,7 @@ test('Windows production finalization is planned before effect, waits for shutdo
   const result = await parts.qualifier().finalize(TARGET);
   assert.deepEqual(result, { protocol: 'devbridge/windows-production-finalization-v1', finalized: true, sanitized: true });
   assert.equal(parts.calls.filter(({ operation }) => operation === 'finalize-v1').length, 1);
+  assert.equal(parts.calls.find(({ operation }) => operation === 'finalize-v1').timeoutMs, 30 * 60_000, 'the remoting session must cover the bounded Sysprep operation');
   assert.deepEqual(await parts.qualifier().finalize(TARGET), result);
   assert.equal(parts.calls.filter(({ operation }) => operation === 'finalize-v1').length, 1);
 });

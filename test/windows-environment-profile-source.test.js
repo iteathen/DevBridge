@@ -26,7 +26,7 @@ test('Windows profile source binds current output, protected boot, resource floo
   });
   assert.equal(declaration.profile, 'windows-development');
   assert.deepEqual(declaration.guest, { family: 'windows-11', generation: 'windows-11' });
-  assert.deepEqual(declaration.image, { identity: IMAGE, generation: 'windows-production-v5' });
+  assert.deepEqual(declaration.image, { identity: IMAGE, generation: 'windows-production-v6' });
   assert.deepEqual(declaration.resources, { memoryBytes: 4_294_967_296, processorCount: 2 });
   assert.deepEqual(declaration.boot, { requirement: 'efi-protected-v1' });
   assert.deepEqual(declaration.network, { requirement: 'managed-egress-v1' });
