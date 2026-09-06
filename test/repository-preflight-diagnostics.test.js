@@ -56,7 +56,7 @@ test('native reporter composition preserves compact progress and bounded failing
   });
   assert.ifError(result.error);
   assert.equal(result.status, 1, `${result.stdout}\n${result.stderr.slice(-3000)}`);
-  assert.match(result.stdout, /\.X/u);
+  assert.match(result.stdout, /\.X/u, boundedProcessFailureEvidence(result, 4096));
   assert.doesNotMatch(result.stdout, /fixture assertion|not ok/u);
   assert.match(result.stderr, /"operation":"targeted preflight tests","status":"started"/u);
   assert.match(result.stderr, /"operation":"targeted preflight tests","status":"failed"/u);
