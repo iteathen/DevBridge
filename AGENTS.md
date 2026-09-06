@@ -300,6 +300,11 @@ Historical handoffs/audits are evidence of their checkpoint, not live authority.
 
 ## Runtime and testing discipline
 
+Do not write Python code or introduce a Python runtime/tooling dependency in
+DevBridge. This is an explicit project constraint. Use the supported project
+runtimes and provider-native adapters; diagnostic and qualification procedures
+must not depend on Python either.
+
 Keep implementation details out of broad principles unless they are genuine invariants. Keep security-critical invariants in specs/tests, not README prose alone.
 
 Owner-sealed runner/runtime caches are not developer worktrees. Prefer their owner-provided verification/status. For necessary read-only Git diagnostics, disable optional Git writes (`git --no-optional-locks`) and fsmonitor; plain `git status` can replace the index even when it reports a clean tree. Never repair an invalidated cache by rewriting its ownership receipt.
