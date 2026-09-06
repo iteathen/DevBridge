@@ -1,12 +1,23 @@
 # Working DevBridge implementation plan
 
-Status (2026-09-05): active dependency-ordered plan; historical phase and physical checkpoints below are evidence of their recorded dates, not current host authority. The integrated Stage 8 baseline is `7ead184fe841bc5a913273f52c2f883c9666f820` (PR #490; all-four CI33957360077). Native continuation is blocked before runtime by a byte-identical sealed-cache Git-index identity replacement caused by an agent diagnostic. DB-HO168 qualifies owner-mediated recovery under #159/#180/#391; separate #491 tracks cross-Node installer receipt observation. Do not retry construction from unintegrated source or rewrite receipts. GitHub-delivered Linux and Windows Hello World is still unproved.
+Status (2026-09-06): Hello World remains the first delivery target: a GitHub task must compile and test a small C/CMake program in both Linux and Windows repository VMs, with results and useful failure details returned automatically. Real NVIDIA GPU support for CUDA-JS follows, then MCP. Stage 8 includes the registry-gate removal in PR #501 and the physically qualified installer-evidence startup/reader fixes in PR #505, merged at `109b7600735df47356657c30bf19caacb8c6b49e`.
 
-Current slice: `fix/159-exact-cache-revalidation`, rooted at the exact Stage 8 baseline above. The generic artifact owner revalidates complete content below unchanged directories; the generic state owner appends one completed CAS generation; the existing checkout owner composes them under its activity lease. Ordinary identity validation remains strict. Focused tests pass 38/38 on Node 24.15.0 and 22.16.0; preflight and architecture/product/standalone gates pass. Require complete exact-head qualification, full-diff review, exact protected integration authorization and fresh integrated qualification before native install/cache recovery. See `docs/testing/DB-HO168-exact-cache-revalidation.md`. Preserve the stopped superseded construction subject until a fresh owner-produced retirement plan permits removal; do not create a duplicate VM.
+The immediate dependency is Ubuntu image construction (#488). The installer fetched packages from moving mirrors before the frozen late APT commands, producing incompatible OpenSSH versions. The seed owner will pin primary and security sources to the same accepted snapshot, then qualify the actual installed package basis and the existing capsule consumer. The captured 522-package basis and successful frozen-archive solve remain useful diagnostic evidence; they do not stand for a new recipe's installed state. #493 remains open for automatic provisioning/task correlation: an ordinary-token native socket exchange passed without registry registration, but that alone is not a fresh automatic installation or Hello World run.
 
-Qualification dependency: CI33959956279 for initial PR #492 candidate `318d30b` passed Ubuntu smoke/full and Windows full, but Windows smoke reached its deadline twice. DB-HO169 corrected npm10.9.2 PowerShell argument loss through `npm.cmd`. CI33960766066 at `8f85940` proves forwarding but Windows smoke/full hit their 180/360-second enclosing limits. DB-HO170's `8d0c00f` preserves progress and classified terminal evidence; CI33963173160 reveals the remaining180-second targeted-child limit, with last retained TAP result1050. The next correction explicitly selects a finite CI qualification profile (300s targeted/360s aggregate/420s enclosing step), independent of scheduling. Default preflight210s/180s and existing240s installer candidate parents are unchanged. Full coverage, concurrency and UAC timing remain unchanged. Require fresh exact-head qualification; keep broader descendant-cleanup/cancellation proof open and do not treat a timeout as cleanup proof.
+Proceed with the owner's existing approval for engineering, native qualification and reviewed merges. Use focused tests and existing CI for affected behavior, and reuse still-valid evidence. Historical handoffs do not impose extra approvals, blanket retesting, or pauses. Keep VM/seed ownership checks, bounded responses, host-only authority and truthful evidence. Do not write or introduce Python tooling. The dated phase checkpoints below preserve history; they are not additional gates for the current slice.
 
 ## Governing method
+
+Current source correction: recipe v17/output v13 explicitly configure the
+installer's primary/security mirrors and deb822 templates with the accepted
+snapshot on each repository. GeoIP selection is disabled and missing mirrors
+abort. The later APT commands retain the same snapshot. A per-repository setting
+keeps installer media outside the snapshot override that previously broke boot
+package selection. This uses the supported [Curtin source templates](https://curtin.readthedocs.io/en/latest/topics/apt_source.html#using-templates)
+and [Ubuntu per-repository snapshots](https://ubuntu.com/server/docs/how-to/software/snapshot-service/).
+Local focused tests and preflight passed; Linux CI must exercise native APT URI
+selection and the executable-permission regression. Fresh installed-state and
+offline capsule qualification remain required before claiming image readiness.
 
 Each implementation slice follows:
 

@@ -12,8 +12,11 @@ The resumed physical check found `/run` mounted `noexec` in the actual Ubuntu
 installer. The exact generated agent had mode `0700`, but direct initialization
 failed with `Permission denied`. Every lifecycle hook now invokes `/bin/sh`
 explicitly, matching the existing socket service. The mount policy is unchanged.
-Linux CI exercises the generated hooks on a real `noexec` `/dev/shm` mount,
-including initialization, wrapped exit 100, sticky failure and completion denial.
+The first Linux CI run skipped the mount-dependent regression because its
+`/dev/shm` allowed execution. The portable regression now initializes the agent,
+removes its executable permission, proves direct execution fails, and exercises
+the generated hooks for wrapped exit 100, sticky failure and completion denial.
+The physical installer observation supplies the actual `noexec` evidence.
 Recipe v16/output v12 prevent adoption of the earlier direct-execution seed.
 This follows the kernel's documented [noexec/EACCES behavior](https://man7.org/linux/man-pages/man2/execve.2.html).
 

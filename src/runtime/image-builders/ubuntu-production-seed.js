@@ -26,6 +26,28 @@ function publicKey(value, name) { const text = String(value ?? '').trim(); if (!
 function privateKey(value) { const text = String(value ?? ''); if (!text.startsWith(PRIVATE_HEADER) || text.includes('\0') || Buffer.byteLength(text, 'utf8') > 64 * 1024) throw new TypeError('temporary host private key is invalid'); return text; }
 function packageVersion(value, name) { if (typeof value !== 'string' || !PACKAGE_VERSION.test(value) || !/\d/u.test(value) || MUTABLE_VERSION.test(value)) throw new TypeError(`${name} is invalid`); return value; }
 
+function installerAptLines(snapshot) {
+  // Per-repository snapshots cover installer-owned package additions as well
+  // as our later commands, without setting a global APT::Snapshot override.
+  const sources = [
+    'Types: deb', 'URIs: $PRIMARY', 'Suites: $RELEASE $RELEASE-updates',
+    'Components: main universe', 'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg',
+    `Snapshot: ${snapshot}`, '',
+    'Types: deb', 'URIs: $SECURITY', 'Suites: $RELEASE-security',
+    'Components: main universe', 'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg',
+    `Snapshot: ${snapshot}`,
+  ];
+  return [
+    '  apt:', '    preserve_sources_list: false',
+    '    mirror-selection:', '      primary:',
+    '        - uri: http://archive.ubuntu.com/ubuntu', '          arches: [amd64]',
+    '    security:', '      - uri: http://security.ubuntu.com/ubuntu', '        arches: [amd64]',
+    '    geoip: false', '    fallback: abort',
+    '    sources_list: |', ...sources.map(line => `      ${line}`),
+    '    conf: |', '      Unattended-Upgrade::Package-Blacklist {', '        ".*";', '      };',
+  ];
+}
+
 function normalizePayload(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('payload set is invalid');
   for (const key of Object.keys(raw)) if (!['generation', 'files'].includes(key)) throw new TypeError(`payload set.${key} is not allowed`);
@@ -161,7 +183,7 @@ export class UbuntuProductionSeedFactory {
       observe('apt-install', ['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--snapshot', packages.snapshot, 'install', '-y', '--no-install-recommends', ...packageSpecifications]),
     ];
     if (installerEvidence) lateCommands.push(installerEvidence.finish);
-    const lines = ['#cloud-config', 'autoinstall:', '  version: 1', '  locale: en_US.UTF-8', '  keyboard:', '    layout: us', '  source:', `    id: ${UBUNTU_PRODUCTION_INSTALL_SOURCE}`, '  apt:', '    conf: |', '      Unattended-Upgrade::Package-Blacklist {', '        ".*";', '      };', '  storage:', '    layout:', '      name: direct', '  network:', '    version: 2', '    ethernets:', '      build:', '        match:', '          name: "e*"'];
+    const lines = ['#cloud-config', 'autoinstall:', '  version: 1', '  locale: en_US.UTF-8', '  keyboard:', '    layout: us', '  source:', `    id: ${UBUNTU_PRODUCTION_INSTALL_SOURCE}`, ...installerAptLines(packages.snapshot), '  storage:', '    layout:', '      name: direct', '  network:', '    version: 2', '    ethernets:', '      build:', '        match:', '          name: "e*"'];
     if (request.network.method === 'automatic') {
       lines.push('        dhcp4: true', '        dhcp6: false');
     } else {
