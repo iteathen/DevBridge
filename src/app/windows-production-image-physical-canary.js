@@ -63,7 +63,7 @@ function boundedInteger(value, minimum, maximum, name) {
 }
 
 function normalizeConfig(raw) {
-  const value = onlyKeys(raw, new Set(['protocol', 'stateDirectory', 'sourceLocation', 'authority', 'resources']), 'physical canary config');
+  const value = onlyKeys(raw, new Set(['protocol', 'stateDirectory', 'storageDirectory', 'sourceLocation', 'authority', 'resources']), 'physical canary config');
   if (value.protocol !== WINDOWS_PRODUCTION_IMAGE_PHYSICAL_CANARY_CONFIG_PROTOCOL) throw new TypeError('physical canary config protocol is unsupported');
   const resources = onlyKeys(value.resources, new Set(['memoryBytes', 'processorCount', 'diskBytes', 'allocationBytes']), 'physical canary resources');
   const diskBytes = boundedInteger(resources.diskBytes, MIN_DISK_BYTES, MAX_DISK_BYTES, 'physical canary resources.diskBytes');
@@ -71,6 +71,7 @@ function normalizeConfig(raw) {
   return Object.freeze({
     protocol: value.protocol,
     stateDirectory: absolutePath(value.stateDirectory, 'physical canary stateDirectory'),
+    storageDirectory: value.storageDirectory == null ? null : absolutePath(value.storageDirectory, 'physical canary storageDirectory'),
     sourceLocation: absolutePath(value.sourceLocation, 'physical canary sourceLocation'),
     authority: normalizeWindowsProductionImageAuthority(value.authority),
     resources: Object.freeze({
@@ -84,7 +85,8 @@ function normalizeConfig(raw) {
 
 function pathsFor(config, subject) {
   const root = path.join(config.stateDirectory, 'windows-production-image-canary');
-  const subjectRoot = path.join(root, 'subjects', subject);
+  const storage = config.storageDirectory ?? root;
+  const subjectRoot = path.join(storage, 'subjects', subject);
   return Object.freeze({
     root,
     runLock: path.join(root, 'run.lock'),
@@ -93,7 +95,7 @@ function pathsFor(config, subject) {
     preparationFile: path.join(root, 'preparation.json'),
     qualificationFile: path.join(root, 'qualification.json'),
     constructionDirectory: path.join(root, 'construction'),
-    outputRoot: path.join(root, 'output'),
+    outputRoot: path.join(storage, 'output'),
     subjectRoot,
     preparedDirectory: path.join(subjectRoot, 'prepared'),
     accessRoot: path.join(root, 'access'),
@@ -382,6 +384,7 @@ export function createWindowsProductionImagePhysicalCanary(rawConfig, {
     const source = await sourceAvailability(config);
     const preflightResult = await selectedPreflight.inspect({
       stateDirectory: config.stateDirectory,
+      ...(config.storageDirectory == null ? {} : { storageDirectory: config.storageDirectory }),
       memoryBytes: config.resources.memoryBytes,
       diskBytes: config.resources.diskBytes,
       allocationBytes: config.resources.allocationBytes,

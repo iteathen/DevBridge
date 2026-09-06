@@ -88,12 +88,18 @@ test('Windows physical canary blocks missing approved source before authority or
 
 test('Windows physical canary binds the exact request and advances only after operation-channel readiness', async () => {
   const data = await fixture();
+  data.config.storageDirectory = path.join(data.root, 'separate-storage');
   let current = { phase: 'active', complete: false, blocked: false, reason: null, image: null };
   const calls = [];
   try {
     const canary = createWindowsProductionImagePhysicalCanary(data.config, {
       platform: 'win32', payloadFactory: async () => data.payload, preflight: readyPreflight(),
-      runtimeFactory: async ({ request, subject }) => {
+      runtimeFactory: async ({ request, subject, paths }) => {
+        assert.equal(paths.subjectRoot, path.join(data.config.storageDirectory, 'subjects', subject));
+        assert.equal(paths.outputRoot, path.join(data.config.storageDirectory, 'output'));
+        assert.equal(paths.constructionDirectory, path.join(data.config.stateDirectory, 'windows-production-image-canary', 'construction'));
+        assert.equal(paths.accessRoot, path.join(data.config.stateDirectory, 'windows-production-image-canary', 'access'));
+        assert.equal(paths.foundationRoot, path.join(data.config.stateDirectory, 'environment-foundation'));
         calls.push(['request', structuredClone(request)]);
         return {
           canary: {

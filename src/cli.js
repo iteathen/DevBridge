@@ -25,7 +25,7 @@ const installationTag = process.env.DEVBRIDGE_INSTALLATION_TAG;
 if (/^DB-[0-9A-F]{12}$/u.test(installationTag ?? '')) process.title = `DevBridge[${installationTag}]`;
 
 function usage() {
-  console.error('Usage: devbridge setup [--profiles <linux|windows|both|none|defer>] [--construct] [--windows-distribution <local-reconstruction>] [--windows-activation <later>] [--track-ref <branch>] [--retire-conflict <subject>] [--home <path>] [--repository owner/name|all]...');
+  console.error('Usage: devbridge setup [--profiles <linux|windows|both|none|defer>] [--construct] [--windows-storage <directory>] [--windows-distribution <local-reconstruction>] [--windows-activation <later>] [--track-ref <branch>] [--retire-conflict <subject>] [--home <path>] [--repository owner/name|all]...');
   console.error('       devbridge setup [--windows-media <absolute-iso>] [--approve-windows-media <candidate> --windows-image-index <index> --windows-media-class <official-owned|evaluation>]');
   console.error('       devbridge <doctor|poll-once|run-once|daemon|status|pause|resume|stop|restart|handoff-status|handoff-seed|handoff-project|environment> --config <path> [options]');
   console.error('       devbridge environment <list|show|plan|create|repair|rebuild|reset|recreate|resume|setup-reentry> --config <path> [--identity id|--profile name] [--operation op] [--confirm subject]');
@@ -144,6 +144,7 @@ async function main() {
       windowsMediaApproval: selected.windowsMediaApproval,
       windowsDistribution: selected.windowsDistribution,
       windowsActivation: selected.windowsActivation,
+      windowsStorageLocation: selected.windowsStorageLocation,
       onProgress: (event) => process.stderr.write(formatSetupProgress(event)),
     });
     process.stdout.write(formatSetupHandoff(result));

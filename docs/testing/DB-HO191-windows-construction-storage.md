@@ -1,0 +1,9 @@
+# Windows construction storage
+
+Windows image construction previously budgeted all temporary files and the final image on the installation volume. On the qualification host C: could hold the final image with its reserve, but could not hold both image copies and prepared media; E: had ample space.
+
+Before construction starts, `devbridge setup --windows-storage E:\DevBridge\WindowsImages --construct` selects an empty absolute local directory for prepared installer/seed media and construction VHDX files. Setup remembers this choice. Existing installations default to their current paths. It refuses occupied targets, links/junctions, volume roots, network paths and relocation of retained construction. Journals, local identity, access-material control state and the final image catalog stay in the existing installation. The selected path is local configuration, never a task-envelope capability.
+
+The provider preflight observes both directories' filesystem devices. A shared device retains the combined peak allocation and reserve. Separate devices each need their own allocation and reserve: construction disk plus prepared media on the construction volume, final image on the installation volume. Node documents [`stats.dev`](https://nodejs.org/docs/latest-v22.x/api/fs.html#statsdev) as the containing device identifier; [libuv's Windows implementation](https://github.com/libuv/libuv/blob/v1.51.0/src/win/fs.c#L1714) derives it from the volume serial. A serial collision conservatively aggregates the budget. Native observation on the qualification host returned distinct devices for C: and E:.
+
+Focused tests cover restart persistence, no-write defaults, occupied/active construction preservation, junction substitution, setup routing, split-volume and shared-volume budgets, low final-image space, malformed observations, and unchanged control-state placement. Real Windows construction and GitHub Hello World remain separate operational proofs.

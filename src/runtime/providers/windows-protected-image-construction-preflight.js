@@ -70,6 +70,13 @@ function availableBytes(filesystem) {
   return value;
 }
 
+async function inspectStorageDirectory(location) {
+  const probe = await existingDirectory(location);
+  const info = await lstat(probe, { bigint: true });
+  const filesystem = await statfs(probe, { bigint: true });
+  return { volume: String(info.dev), availableBytes: availableBytes(filesystem) };
+}
+
 function parseCapability(raw) {
   if (!raw || raw.exitCode !== 0 || raw.timedOut || raw.aborted || raw.outputTruncated) throw new Error('protected image construction capability probe failed');
   let value;
@@ -81,17 +88,20 @@ export class WindowsProtectedImageConstructionPreflight {
   #invoke;
   #platform;
   #network;
+  #storageProbe;
 
-  constructor({ invoke, platform = process.platform, network = null } = {}) {
+  constructor({ invoke, platform = process.platform, network = null, storageProbe = inspectStorageDirectory } = {}) {
     if (typeof invoke !== 'function') throw new TypeError('protected image construction invocation contract is invalid');
     if (typeof platform !== 'string' || platform.length === 0) throw new TypeError('protected image construction platform is invalid');
     this.#invoke = invoke;
     this.#platform = platform;
     this.#network = network ?? (platform === 'win32' ? createWindowsManagedConstructionNetwork({ invoke }) : null);
+    if (typeof storageProbe !== 'function') throw new TypeError('protected image construction storage probe is invalid');
+    this.#storageProbe = storageProbe;
     if (this.#network != null && typeof this.#network.inspect !== 'function') throw new TypeError('protected image construction network contract is incomplete');
   }
 
-  async inspect({ stateDirectory, memoryBytes, diskBytes, allocationBytes, sourceBytes } = {}) {
+  async inspect({ stateDirectory, storageDirectory = stateDirectory, memoryBytes, diskBytes, allocationBytes, sourceBytes } = {}) {
     const requestedMemory = bytes(memoryBytes, 'protected image construction memoryBytes');
     const requestedDisk = bytes(diskBytes, 'protected image construction diskBytes');
     const requestedAllocation = bytes(allocationBytes, 'protected image construction allocationBytes');
@@ -100,15 +110,27 @@ export class WindowsProtectedImageConstructionPreflight {
     const reasons = [];
     let memory = null;
     let storage = null;
+    let imageStorage = null;
+    let storageReady = false;
     let providerReady = false;
     let connectivity = null;
     try { memory = preflightExecutionProfileMemory({ memoryBytes: requestedMemory }); }
     catch (error) { reasons.push(error.message); }
     try {
-      const probe = await existingDirectory(stateDirectory);
-      const filesystem = await statfs(probe, { bigint: true });
-      const peakBytes = checkedAdd(checkedAdd(requestedAllocation, requestedAllocation), requestedSource);
-      storage = preflightExecutionProfileStorage({ sourceBytes: peakBytes }, { availableBytes: availableBytes(filesystem) });
+      const buildStorage = await this.#storageProbe(storageDirectory);
+      const finalStorage = storageDirectory === stateDirectory ? buildStorage : await this.#storageProbe(stateDirectory);
+      for (const value of [buildStorage, finalStorage]) {
+        if (typeof value?.volume !== 'string' || value.volume.length < 1 || value.volume.length > 128
+            || !Number.isSafeInteger(value.availableBytes) || value.availableBytes < 0) throw new Error('construction storage observation is invalid');
+      }
+      const sameVolume = buildStorage.volume === finalStorage.volume;
+      const peakBytes = sameVolume ? checkedAdd(checkedAdd(requestedAllocation, requestedAllocation), requestedSource)
+        : checkedAdd(requestedAllocation, requestedSource);
+      storage = preflightExecutionProfileStorage({ sourceBytes: peakBytes }, { availableBytes: buildStorage.availableBytes });
+      if (!sameVolume) {
+        imageStorage = preflightExecutionProfileStorage({ sourceBytes: requestedAllocation }, { availableBytes: finalStorage.availableBytes });
+      }
+      storageReady = true;
     } catch (error) { reasons.push(error.message); }
     if (this.#platform !== 'win32') reasons.push('protected image construction requires a Windows virtualization host');
     else {
@@ -131,11 +153,11 @@ export class WindowsProtectedImageConstructionPreflight {
       ready,
       reason: ready ? null : [...new Set(reasons)].join('; '),
       platform: this.#platform,
-      capabilities: Object.freeze({ provider: providerReady, connectivity: connectivity?.ready === true, memory: memory != null, storage: storage != null }),
+      capabilities: Object.freeze({ provider: providerReady, connectivity: connectivity?.ready === true, memory: memory != null, storage: storageReady }),
       connectivity: connectivity?.ready === true
         ? Object.freeze({ control: connectivity.description.binding.control, addressing: connectivity.description.addressing.method })
         : null,
-      resources: Object.freeze({ memory, storage }),
+      resources: Object.freeze({ memory, storage, ...(imageStorage == null ? {} : { imageStorage }) }),
     });
   }
 }
