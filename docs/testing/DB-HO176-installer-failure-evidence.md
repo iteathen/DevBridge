@@ -57,3 +57,36 @@ Platform basis: [Subiquity command and error hooks](https://canonical-subiquity.
 Hyper-V service registration is an owned setup effect requiring independent
 qualification; the presence of systemd in the guest does not prove transport
 readiness. Linux-host and Windows-setup native gates remain independent.
+
+## Native reader follow-up
+
+The provider now defines a read-only PowerShell/C# Hyper-V socket adapter.
+It rejects wildcard VM identifiers and foreign ownership before invoking its
+host process, then re-observes the exact VM ID, name, marker, running state and
+attached seed bytes/digest before connecting. The service ID derives from the
+existing installation identity and maps to a non-reserved Linux VSOCK port.
+Registry absence is explicit unavailability; this adapter never registers a
+service, launches elevation or writes guest state.
+
+The socket uses nonblocking I/O and one cumulative monotonic deadline: at most
+two seconds for connection, five seconds for status or fifteen for diagnostics.
+Status reads accept at most 4096 bytes; diagnostics accept at most 65536 bytes.
+It half-closes after one fixed selector and requires a complete bounded response.
+The outer host command is separately bounded to thirty seconds. The native
+Windows test compiles the exact C# helper and verifies its 36-byte endpoint
+serialization without opening a connection to a VM. Protocol/identity tests also
+cover collector absence, truncation, foreign subjects and wrong outcome sequence.
+
+The first draft checkpoint a1b60798f71cad733d421579c39aceab31e414e2 passed all
+four hosted [CI jobs](https://github.com/iteathen/DevBridge/actions/runs/34010832298),
+including both Ubuntu shell cases. That run predates this native reader and does
+not qualify it. The reader's three focused tests passed locally; qualification
+of this expanded candidate remains pending. Its local Node22 preflight passed
+three standalone artifacts, 306 syntax files, two JSON files and all 243
+targeted test files in 71.7 seconds.
+
+Setup ordering needs further assessment before composition: physical image
+construction currently precedes protected lifecycle-authority apply. Do not add
+an ad-hoc administrative registration, silently request UAC, or treat a WSL-specific
+registration exception as ordinary Hyper-V permission. The retained fixture has
+not been modified and no native socket exchange has been proved.

@@ -7,6 +7,7 @@ import process from 'node:process';
 const SYNTAX_FILES = [
   'src/runtime/construction-install-evidence.js',
   'src/runtime/image-builders/ubuntu-installer-evidence.js',
+  'src/runtime/providers/hyperv-installer-evidence.js',
   'src/app/ubuntu-production-image-physical-canary/installation-evidence-projection.js',
   'src/app/ubuntu-production-image-physical-canary/installation-evidence-recovery.js',
   'src/security/diagnostic-redaction.js',
@@ -539,6 +540,7 @@ const TARGETED_TESTS = [
   'test/installation-evidence-projection.test.js',
   'test/ubuntu-production-image-progress-failure.test.js',
   'test/ubuntu-installer-evidence.test.js',
+  'test/hyperv-installer-evidence.test.js',
   'test/windows-imapi-data-media.test.js',
   'test/windows-imapi-file-media-native.test.js',
   'test/windows-imapi-nocloud-seed.test.js',

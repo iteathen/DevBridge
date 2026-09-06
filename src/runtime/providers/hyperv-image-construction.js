@@ -45,6 +45,8 @@ export class HyperVImageConstruction {
 
   #descriptor(record) { return this.#request.descriptor(record); }
 
+  #evidenceAttachment(record) { return { ...this.#descriptor(record), seed: { ...record.seed } }; }
+
   #evidenceBinding(record) {
     return { subject: record.identity, providerInstance: record.providerIdentity, seedSha256: record.seed.sha256, attempt: 1 };
   }
@@ -184,7 +186,7 @@ export class HyperVImageConstruction {
     let evidence = { status: 'unavailable', reason: 'pre-runtime installer evidence transport is not configured' };
     const readable = this.#installerEvidence && observed.exists && observed.owned && observed.state === 'running' && observed.mediaCount > 0;
     if (readable) {
-      try { evidence = await this.#installerEvidence.read({ binding: this.#evidenceBinding(record), attachment: this.#descriptor(record) }); }
+      try { evidence = await this.#installerEvidence.read({ binding: this.#evidenceBinding(record), attachment: this.#evidenceAttachment(record) }); }
       catch { evidence = { status: 'unavailable', reason: 'pre-runtime installer evidence transport failed' }; }
     } else if (this.#installerEvidence) {
       evidence = { status: 'unavailable', reason: 'installer evidence endpoint is outside its running source-media frontier' };
@@ -197,7 +199,7 @@ export class HyperVImageConstruction {
       let diagnostics;
       try {
         diagnostics = await this.#installerEvidence.readDiagnostics({
-          binding: this.#evidenceBinding(record), attachment: this.#descriptor(record), sequence: failure.sequence,
+          binding: this.#evidenceBinding(record), attachment: this.#evidenceAttachment(record), sequence: failure.sequence,
         });
       } catch { diagnostics = { status: 'unavailable', reason: 'installer diagnostic output collection failed; terminal failure retained' }; }
       await this.#checkpointEvidence(state, record, diagnostics);
