@@ -272,7 +272,7 @@ foreach ($target in @(
   'C:\Windows\Panther\unattend.xml',
   'C:\Windows\Panther\Unattend'
 )) { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue }
-Remove-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name DefaultPassword,AutoAdminLogon,DefaultUserName -ErrorAction SilentlyContinue
+Remove-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name DefaultPassword,AutoAdminLogon,AutoLogonCount,DefaultUserName -ErrorAction SilentlyContinue
 $administrator = Get-LocalUser | Where-Object { ([string]$_.SID).EndsWith('-500') } | Select-Object -First 1
 if ($null -eq $administrator) { throw 'built-in construction account is unavailable' }
 Disable-LocalUser -SID $administrator.SID -ErrorAction Stop

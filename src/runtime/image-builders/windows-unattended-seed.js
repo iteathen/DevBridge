@@ -4,7 +4,7 @@ export const WINDOWS_UNATTENDED_SEED_PROTOCOL = 'devbridge/windows-unattended-se
 
 const SUBJECT = /^subject-[a-f0-9]{32}$/u;
 const LANGUAGE = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}$/u;
-export const WINDOWS_UNATTENDED_RECIPE_GENERATION = 'audit-handoff-v3';
+export const WINDOWS_UNATTENDED_RECIPE_GENERATION = 'audit-handoff-v4';
 const GENERATION = WINDOWS_UNATTENDED_RECIPE_GENERATION;
 
 function onlyKeys(value, allowed, name) {
@@ -44,6 +44,10 @@ function digest(files) {
 function prepareScript() {
   return String.raw`$ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$logon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+Set-ItemProperty -LiteralPath $logon -Name AutoAdminLogon -Value '0' -ErrorAction Stop
+Set-ItemProperty -LiteralPath $logon -Name AutoLogonCount -Value 0 -ErrorAction Stop
+Remove-ItemProperty -LiteralPath $logon -Name DefaultPassword -ErrorAction SilentlyContinue
 $root = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'DevBridge\ImageConstruction'
 $ready = Join-Path $root 'ready-v1'
 if (Test-Path -LiteralPath $ready -PathType Leaf) { exit 0 }
@@ -98,6 +102,12 @@ function answerFile({ image, access }) {
       <OOBE><HideEULAPage>true</HideEULAPage><HideLocalAccountScreen>true</HideLocalAccountScreen><HideOnlineAccountScreens>true</HideOnlineAccountScreens><HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE><NetworkLocation>Work</NetworkLocation><ProtectYourPC>3</ProtectYourPC></OOBE>
     </component>
     <component name="Microsoft-Windows-Deployment" processorArchitecture="${image.architecture}" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><Reseal><Mode>Audit</Mode></Reseal></component>
+  </settings>
+  <settings pass="auditSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="${image.architecture}" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <AutoLogon><Password><Value>${secret}</Value><PlainText>true</PlainText></Password><Username>Administrator</Username><Enabled>true</Enabled><LogonCount>1</LogonCount></AutoLogon>
+      <UserAccounts><AdministratorPassword><Value>${secret}</Value><PlainText>true</PlainText></AdministratorPassword></UserAccounts>
+    </component>
   </settings>
   <settings pass="auditUser">
     <component name="Microsoft-Windows-Deployment" processorArchitecture="${image.architecture}" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><RunSynchronous><RunSynchronousCommand wcm:action="add"><Order>1</Order><Description>Complete bounded image setup handoff</Description><Path>${command}</Path><WillReboot>Never</WillReboot></RunSynchronousCommand></RunSynchronous></component>

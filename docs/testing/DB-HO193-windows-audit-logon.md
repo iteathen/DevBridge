@@ -1,0 +1,9 @@
+# Windows audit handoff
+
+The admitted Windows 11 Pro installation at recipe v3 passed the product-key page, expanded its system disk to 17,754,488,832 bytes, and booted the installed operating system. The native console at 15:24:34 UTC showed Administrator automatic sign-in rejected with an incorrect-password message. The previous recipe supplied the account password in oobeSystem but omitted auditSystem automatic logon. Preserve that subject and its evidence.
+
+Microsoft's [built-in Administrator guidance](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/enable-and-disable-the-built-in-administrator-account?view=windows-11) requires both AutoLogon and UserAccounts/AdministratorPassword in auditSystem. Recipe v4 supplies both from the same temporary construction credential. The credential remains outside public recipe evidence and is not a host account or activation key.
+
+Microsoft documents an [extra-logon count behavior](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-shell-setup-autologon-logoncount). The initial audit handoff therefore disables automatic logon, sets its remaining count to zero, and removes the stored automatic-logon password before the idempotent readiness check. Final image sanitation also removes the count with the existing credential cleanup.
+
+Scope is the unattended recipe and its cleanup; provider and lifecycle authority stay unchanged. Verify the parsed auditSystem settings use the exact same escaped password, preserve source index selection, keep the ready guard idempotent, and exclude credentials from public evidence. Native acceptance requires a fresh subject reaching the powered-off audit handoff and subsequent normal production qualification. Configuration tests alone do not prove that frontier.
