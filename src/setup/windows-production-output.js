@@ -1,4 +1,4 @@
 export const WINDOWS_PRODUCTION_OUTPUT = Object.freeze({
   profile: 'windows-development',
-  generation: 'windows-production-v4',
+  generation: 'windows-production-v5',
 });

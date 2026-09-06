@@ -28,10 +28,10 @@ test('Windows unattended seed binds exact image selection and reaches one-time A
   assert.match(answer, /<WillShowUI>Never<\/WillShowUI>/u);
   assert.match(answer, /<ProductKey><WillShowUI>Never<\/WillShowUI><\/ProductKey>/u);
   assert.doesNotMatch(answer, /<ProductKey>\s*<Key>|[A-Z0-9]{5}(?:-[A-Z0-9]{5}){4}/u);
-  assert.match(answer, /Get-Volume -FileSystemLabel &apos;DB_SETUP&apos;/u);
+  assert.match(answer, /Get-Volume -FileSystemLabel DB_SETUP/u);
   assert.match(answer, /A&lt;&amp;&quot;strong temporary secret 42!/u);
-  assert.match(prepare, /shutdown\.exe' -ArgumentList '\/s', '\/t', '10', '\/f'/u);
-  assert.ok(prepare.indexOf("Start-Process -FilePath 'shutdown.exe'") < prepare.indexOf('Move-Item -LiteralPath $pending -Destination $ready'));
+  assert.doesNotMatch(prepare, /shutdown\.exe|Restart-Computer|Stop-Computer/u);
+  assert.match(answer, /<Mode>Audit<\/Mode><ForceShutdownNow>true<\/ForceShutdownNow>/u);
   assert.match(prepare, /if \(Test-Path -LiteralPath \$ready -PathType Leaf\) \{ exit 0 \}/u);
   assert.ok(prepare.indexOf('-Name AutoLogonCount -Value 0') < prepare.indexOf('if (Test-Path -LiteralPath $ready'));
   assert.ok(prepare.indexOf('-Name DefaultPassword') < prepare.indexOf('if (Test-Path -LiteralPath $ready'));
@@ -60,6 +60,11 @@ $settings = @($document.unattend.settings | Where-Object { $_.pass -eq 'auditSys
 if ($settings.Count -ne 1) { throw 'one auditSystem pass is required' }
 $shell = @($settings[0].component | Where-Object { $_.name -eq 'Microsoft-Windows-Shell-Setup' })
 if ($shell.Count -ne 1) { throw 'one audit shell configuration is required' }
+$paths=@($document.SelectNodes('//*[local-name()="RunSynchronousCommand"]/*[local-name()="Path"]') | ForEach-Object { [string]$_.InnerText })
+if($paths.Count -ne 2 -or @($paths | Where-Object { $_.Length -gt 259 }).Count -ne 0) { throw 'Windows Setup command limit exceeded' }
+$auditUser=@($document.unattend.settings | Where-Object { $_.pass -eq 'auditUser' })
+$auditPath=[string]$auditUser[0].component.RunSynchronous.RunSynchronousCommand.Path
+if($auditPath -notlike '*-File C:\Windows\Temp\DbAudit.ps1' -or $auditPath -like '*DB_SETUP*') { throw 'audit handoff still depends on detached media' }
 @{
   root = [string]$document.DocumentElement.LocalName
   user = [string]$shell[0].AutoLogon.Username

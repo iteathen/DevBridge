@@ -4,7 +4,7 @@ export const WINDOWS_UNATTENDED_SEED_PROTOCOL = 'devbridge/windows-unattended-se
 
 const SUBJECT = /^subject-[a-f0-9]{32}$/u;
 const LANGUAGE = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}$/u;
-export const WINDOWS_UNATTENDED_RECIPE_GENERATION = 'audit-handoff-v4';
+export const WINDOWS_UNATTENDED_RECIPE_GENERATION = 'audit-handoff-v5';
 const GENERATION = WINDOWS_UNATTENDED_RECIPE_GENERATION;
 
 function onlyKeys(value, allowed, name) {
@@ -54,8 +54,6 @@ if (Test-Path -LiteralPath $ready -PathType Leaf) { exit 0 }
 $null = New-Item -ItemType Directory -Path $root -Force
 $pending = Join-Path $root 'ready-v1.pending'
 Set-Content -LiteralPath $pending -Value 'devbridge-windows-audit-ready-v1' -Encoding utf8 -NoNewline
-$process = Start-Process -FilePath 'shutdown.exe' -ArgumentList '/s', '/t', '10', '/f' -Wait -NoNewWindow -PassThru
-if ($process.ExitCode -ne 0) { throw 'bounded shutdown scheduling failed' }
 Move-Item -LiteralPath $pending -Destination $ready -Force
 `;
 }
@@ -63,7 +61,9 @@ Move-Item -LiteralPath $pending -Destination $ready -Force
 function answerFile({ image, access }) {
   const language = xml(image.defaultLanguage);
   const secret = xml(access.secret);
-  const command = xml(`powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$v=@(Get-Volume -FileSystemLabel 'DB_SETUP' | Where-Object { $null -ne $_.DriveLetter }); if($v.Count -ne 1){throw 'setup media is unavailable'}; & (Join-Path (($v[0].DriveLetter)+':\\') 'Setup\\Prepare.ps1')"`);
+  const copyCommand = `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$v=@(Get-Volume -FileSystemLabel DB_SETUP);if($v.Count -ne 1){throw 'media'};Copy-Item ($v[0].DriveLetter+':\\Setup\\Prepare.ps1') C:\\Windows\\Temp\\DbAudit.ps1 -ErrorAction Stop"`;
+  const auditCommand = 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\\Windows\\Temp\\DbAudit.ps1';
+  if ([copyCommand, auditCommand].some(value => value.length > 259)) throw new Error('unattended synchronous command exceeds Windows Setup limit');
   return `<?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
   <settings pass="windowsPE">
@@ -94,6 +94,7 @@ function answerFile({ image, access }) {
   <settings pass="specialize">
     <component name="Microsoft-Windows-International-Core" processorArchitecture="${image.architecture}" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><InputLocale>${language}</InputLocale><SystemLocale>${language}</SystemLocale><UILanguage>${language}</UILanguage><UserLocale>${language}</UserLocale></component>
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="${image.architecture}" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><ComputerName>*</ComputerName><RegisteredOwner>Local Operator</RegisteredOwner><RegisteredOrganization>Local Operator</RegisteredOrganization></component>
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="${image.architecture}" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><RunSynchronous><RunSynchronousCommand wcm:action="add"><Order>1</Order><Description>Stage bounded audit handoff</Description><Path>${xml(copyCommand)}</Path><WillReboot>Never</WillReboot></RunSynchronousCommand></RunSynchronous></component>
   </settings>
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-International-Core" processorArchitecture="${image.architecture}" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><InputLocale>${language}</InputLocale><SystemLocale>${language}</SystemLocale><UILanguage>${language}</UILanguage><UserLocale>${language}</UserLocale></component>
@@ -101,7 +102,7 @@ function answerFile({ image, access }) {
       <UserAccounts><AdministratorPassword><Value>${secret}</Value><PlainText>true</PlainText></AdministratorPassword></UserAccounts>
       <OOBE><HideEULAPage>true</HideEULAPage><HideLocalAccountScreen>true</HideLocalAccountScreen><HideOnlineAccountScreens>true</HideOnlineAccountScreens><HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE><NetworkLocation>Work</NetworkLocation><ProtectYourPC>3</ProtectYourPC></OOBE>
     </component>
-    <component name="Microsoft-Windows-Deployment" processorArchitecture="${image.architecture}" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><Reseal><Mode>Audit</Mode></Reseal></component>
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="${image.architecture}" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><Reseal><Mode>Audit</Mode><ForceShutdownNow>true</ForceShutdownNow></Reseal></component>
   </settings>
   <settings pass="auditSystem">
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="${image.architecture}" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -110,7 +111,7 @@ function answerFile({ image, access }) {
     </component>
   </settings>
   <settings pass="auditUser">
-    <component name="Microsoft-Windows-Deployment" processorArchitecture="${image.architecture}" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><RunSynchronous><RunSynchronousCommand wcm:action="add"><Order>1</Order><Description>Complete bounded image setup handoff</Description><Path>${command}</Path><WillReboot>Never</WillReboot></RunSynchronousCommand></RunSynchronous></component>
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="${image.architecture}" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><RunSynchronous><RunSynchronousCommand wcm:action="add"><Order>1</Order><Description>Complete bounded image setup handoff</Description><Path>${xml(auditCommand)}</Path><WillReboot>Never</WillReboot></RunSynchronousCommand></RunSynchronous></component>
   </settings>
   <cpi:offlineImage cpi:source="wim:c:/sources/install.wim#image" xmlns:cpi="urn:schemas-microsoft-com:cpi" />
 </unattend>

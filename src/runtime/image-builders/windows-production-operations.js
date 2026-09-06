@@ -268,6 +268,7 @@ foreach ($target in @(
   (Join-Path $root 'bootstrap\network-state.json'),
   (Join-Path $root 'bootstrap\state.json'),
   (Join-Path $root 'workspaces'),
+  'C:\Windows\Temp\DbAudit.ps1',
   'C:\Windows\Panther\Unattend.xml',
   'C:\Windows\Panther\unattend.xml',
   'C:\Windows\Panther\Unattend'

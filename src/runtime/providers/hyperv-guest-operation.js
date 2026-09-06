@@ -14,10 +14,13 @@ Import-Module Hyper-V -ErrorAction Stop
 $item = Get-VM -Name ([string]$data.reference) -ErrorAction Stop
 if ([string]$item.Notes -ne [string]$data.proof) { throw 'guest operation ownership proof does not match' }
 if ([string]$item.State -ne 'Running') { throw 'guest operation target is not running' }
-$secure = ConvertTo-SecureString ([string]$data.secret) -AsPlainText -Force
-$credential = [Management.Automation.PSCredential]::new([string]$data.user, $secure)
-$session = New-PSSession -VMName ([string]$data.reference) -Credential $credential -ErrorAction Stop
+$secure = [Security.SecureString]::new()
+$session = $null
 try {
+  foreach ($character in ([string]$data.secret).ToCharArray()) { $secure.AppendChar($character) }
+  $secure.MakeReadOnly()
+  $credential = [Management.Automation.PSCredential]::new([string]$data.user, $secure)
+  $session = New-PSSession -VMName ([string]$data.reference) -Credential $credential -ErrorAction Stop
   $output = @(Invoke-Command -Session $session -ArgumentList ([string]$data.operation), ([string]$data.operationInput) -ScriptBlock {
     param($encodedOperation, $encodedInput)
     $source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encodedOperation))
@@ -29,6 +32,7 @@ try {
   @{ ok = $true; output = [string]$output[0] } | ConvertTo-Json -Compress
 } finally {
   if ($null -ne $session) { Remove-PSSession -Session $session -ErrorAction SilentlyContinue }
+  $secure.Dispose()
 }
 `;
 
