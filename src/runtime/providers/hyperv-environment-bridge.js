@@ -93,10 +93,13 @@ Import-Module Hyper-V -ErrorAction Stop
 $item = Get-VM -Name ([string]$data.reference) -ErrorAction Stop
 if ([string]$item.Notes -ne [string]$data.proof) { throw 'environment ownership proof does not match' }
 if ([string]$item.State -ne 'Running') { throw 'environment is not running' }
-$secure = ConvertTo-SecureString ([string]$data.password) -AsPlainText -Force
-$credential = [Management.Automation.PSCredential]::new([string]$data.username, $secure)
-$session = New-PSSession -VMName ([string]$data.reference) -Credential $credential -ErrorAction Stop
+$secure = [Security.SecureString]::new()
+$session = $null
 try {
+  foreach ($character in ([string]$data.password).ToCharArray()) { $secure.AppendChar($character) }
+  $secure.MakeReadOnly()
+  $credential = [Management.Automation.PSCredential]::new([string]$data.username, $secure)
+  $session = New-PSSession -VMName ([string]$data.reference) -Credential $credential -ErrorAction Stop
   $output = Invoke-Command -Session $session -ArgumentList ([string]$data.frame), ([string]$data.target) -ScriptBlock {
     param($encoded, $target)
     $json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded))
@@ -123,6 +126,7 @@ try {
   [string]$output
 } finally {
   if ($null -ne $session) { Remove-PSSession -Session $session -ErrorAction SilentlyContinue }
+  $secure.Dispose()
 }
 `;
 

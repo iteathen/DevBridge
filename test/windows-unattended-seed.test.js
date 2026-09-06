@@ -26,11 +26,15 @@ test('Windows unattended seed binds exact image selection and reaches one-time A
   assert.match(answer, /<Type>MSR<\/Type>/u);
   assert.match(answer, /<Mode>Audit<\/Mode>/u);
   assert.match(answer, /<WillShowUI>Never<\/WillShowUI>/u);
-  assert.match(answer, /Get-Volume -FileSystemLabel &apos;DB_SETUP&apos;/u);
+  assert.match(answer, /<ProductKey><WillShowUI>Never<\/WillShowUI><\/ProductKey>/u);
+  assert.doesNotMatch(answer, /<ProductKey>\s*<Key>|[A-Z0-9]{5}(?:-[A-Z0-9]{5}){4}/u);
+  assert.match(answer, /Get-Volume -FileSystemLabel DB_SETUP/u);
   assert.match(answer, /A&lt;&amp;&quot;strong temporary secret 42!/u);
-  assert.match(prepare, /shutdown\.exe' -ArgumentList '\/s', '\/t', '10', '\/f'/u);
-  assert.ok(prepare.indexOf("Start-Process -FilePath 'shutdown.exe'") < prepare.indexOf('Move-Item -LiteralPath $pending -Destination $ready'));
+  assert.doesNotMatch(prepare, /shutdown\.exe|Restart-Computer|Stop-Computer/u);
+  assert.match(answer, /<Mode>Audit<\/Mode><ForceShutdownNow>true<\/ForceShutdownNow>/u);
   assert.match(prepare, /if \(Test-Path -LiteralPath \$ready -PathType Leaf\) \{ exit 0 \}/u);
+  assert.ok(prepare.indexOf('-Name AutoLogonCount -Value 0') < prepare.indexOf('if (Test-Path -LiteralPath $ready'));
+  assert.ok(prepare.indexOf('-Name DefaultPassword') < prepare.indexOf('if (Test-Path -LiteralPath $ready'));
   assert.equal(JSON.stringify(result.evidence).includes(request().access.secret), false);
   assert.match(result.evidence.sha256, /^[a-f0-9]{64}$/u);
 });
@@ -50,7 +54,25 @@ test('Windows unattended seed stays isolated from provider and repository topolo
 
 test('Windows unattended answer is accepted by the host XML parser without interactive input', { skip: process.platform !== 'win32' }, async () => {
   const answer = createWindowsUnattendedSeed(request()).files[0].content;
-  const script = "$ErrorActionPreference='Stop'; [xml]$document=[Console]::In.ReadToEnd(); @{ root = [string]$document.DocumentElement.LocalName } | ConvertTo-Json -Compress";
+  const script = String.raw`$ErrorActionPreference='Stop'
+[xml]$document=[Console]::In.ReadToEnd()
+$settings = @($document.unattend.settings | Where-Object { $_.pass -eq 'auditSystem' })
+if ($settings.Count -ne 1) { throw 'one auditSystem pass is required' }
+$shell = @($settings[0].component | Where-Object { $_.name -eq 'Microsoft-Windows-Shell-Setup' })
+if ($shell.Count -ne 1) { throw 'one audit shell configuration is required' }
+$paths=@($document.SelectNodes('//*[local-name()="RunSynchronousCommand"]/*[local-name()="Path"]') | ForEach-Object { [string]$_.InnerText })
+if($paths.Count -ne 2 -or @($paths | Where-Object { $_.Length -gt 259 }).Count -ne 0) { throw 'Windows Setup command limit exceeded' }
+$auditUser=@($document.unattend.settings | Where-Object { $_.pass -eq 'auditUser' })
+$auditPath=[string]$auditUser[0].component.RunSynchronous.RunSynchronousCommand.Path
+if($auditPath -notlike '*-File C:\Windows\Temp\DbAudit.ps1' -or $auditPath -like '*DB_SETUP*') { throw 'audit handoff still depends on detached media' }
+@{
+  root = [string]$document.DocumentElement.LocalName
+  user = [string]$shell[0].AutoLogon.Username
+  enabled = [string]$shell[0].AutoLogon.Enabled
+  logonCount = [string]$shell[0].AutoLogon.LogonCount
+  password = [string]$shell[0].AutoLogon.Password.Value
+  accountPassword = [string]$shell[0].UserAccounts.AdministratorPassword.Value
+} | ConvertTo-Json -Compress`;
   const result = await invokeCommand({
     executable: 'powershell.exe',
     arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
@@ -59,5 +81,8 @@ test('Windows unattended answer is accepted by the host XML parser without inter
     maxOutputBytes: 64 * 1024,
   });
   assert.equal(result.exitCode, 0, result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout), { root: 'unattend' });
+  assert.deepEqual(JSON.parse(result.stdout), {
+    root: 'unattend', user: 'Administrator', enabled: 'true', logonCount: '1',
+    password: request().access.secret, accountPassword: request().access.secret,
+  });
 });

@@ -29,7 +29,7 @@ export function normalizeWindowsProductionImageAuthority(raw) {
   if (value.protocol !== WINDOWS_PRODUCTION_IMAGE_AUTHORITY_PROTOCOL) throw new TypeError('production image authority protocol is unsupported');
   const payload = onlyKeys(value.payload, new Set(['generation']), 'production image payload authority');
   const recipe = onlyKeys(value.recipe, new Set(['generation']), 'production image recipe authority');
-  if (!['audit-handoff-v1', 'audit-handoff-v2'].includes(recipe.generation)) throw new TypeError('production image recipe generation is unsupported');
+  if (!['audit-handoff-v1', 'audit-handoff-v2', 'audit-handoff-v3', 'audit-handoff-v4', 'audit-handoff-v5', 'audit-handoff-v6'].includes(recipe.generation)) throw new TypeError('production image recipe generation is unsupported');
   const output = onlyKeys(value.output, new Set(['profile', 'generation', 'bootstrap']), 'production image output authority');
   return Object.freeze({
     protocol: WINDOWS_PRODUCTION_IMAGE_AUTHORITY_PROTOCOL,

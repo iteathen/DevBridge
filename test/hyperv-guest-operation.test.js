@@ -28,6 +28,10 @@ test('Hyper-V guest operation exposes only locally registered operations through
   assert.match(hostScript, /New-PSSession -VMName/u);
   assert.match(hostScript, /ScriptBlock\]::Create/u);
   assert.match(hostScript, /Remove-PSSession/u);
+  assert.match(hostScript, /\[Security\.SecureString\]::new\(\)/u);
+  assert.match(hostScript, /\$secure\.MakeReadOnly\(\)/u);
+  assert.match(hostScript, /\$secure\.Dispose\(\)/u);
+  assert.doesNotMatch(hostScript, /ConvertTo-SecureString/u);
   assert.doesNotMatch(hostScript, /HyperVGuestOperation|inspect-v1/u);
 });
 

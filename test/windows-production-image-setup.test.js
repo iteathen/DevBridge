@@ -82,10 +82,10 @@ test('Windows production setup binds accepted media to one exact read-only canar
   assert.equal(config.authority.media.media.sha256, 'a'.repeat(64));
   assert.equal(config.authority.tools.generation, 'windows-build-basics-20260828-v2');
   assert.equal(config.authority.payload.generation, payload.generation);
-  assert.deepEqual(config.authority.recipe, { generation: 'audit-handoff-v2' });
+  assert.deepEqual(config.authority.recipe, { generation: 'audit-handoff-v6' });
   assert.deepEqual(config.authority.output, {
     profile: 'windows-development',
-    generation: 'windows-production-v2',
+    generation: 'windows-production-v6',
     bootstrap: payload.generation,
   });
   assert.deepEqual(config.resources, {
