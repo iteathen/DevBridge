@@ -44,7 +44,15 @@ test('native reporter composition preserves compact progress and bounded failing
       : { status: 0 };
     try {
       runRepositoryPreflight(${JSON.stringify(root)}, runner, {}, {}, {
-        onProgress: event => writeSync(2, JSON.stringify(event) + '\\n'),
+        // Mocked prerequisites complete immediately. Printing all their events
+        // floods the POSIX pipe before this fixture reaches its real test child.
+        // This case qualifies the targeted operation's progress and TAP wiring;
+        // prerequisite progress/deadline behavior has separate contract tests.
+        onProgress: event => {
+          if (event.operation === 'targeted preflight tests') {
+            writeSync(2, JSON.stringify(event) + '\\n');
+          }
+        },
       });
     } catch (error) { writeSync(2, error.message); process.exitCode = 1; }
   `;
