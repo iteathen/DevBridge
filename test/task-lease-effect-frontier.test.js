@@ -187,8 +187,9 @@ test('status publication records local reconciliation evidence if ownership is l
   const stateStore = memoryStateStore();
   const reporter = new IssueStatusReporter({
     client: {
-      async request() {
-        manager.fence();
+      async request(method, requestPath) {
+        if (requestPath === '/graphql') return { data: { data: { viewer: { databaseId: 12 } } } };
+        if (method !== 'GET') manager.fence();
         return { data: { id: 77 } };
       },
     },

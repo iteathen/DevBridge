@@ -1,11 +1,14 @@
 import { buildContextCapsule } from '../context/context-capsule.js';
+import { runIdForTask } from '../run/run-coordinator.js';
+import { captureFailureDiagnostics } from '../run/failure-diagnostics.js';
+import { sanitizeDiagnosticText } from '../security/diagnostic-redaction.js';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 
-function messageFor(error) {
+function messageFor(error, secretValues) {
   const name = typeof error?.name === 'string' && error.name ? error.name : 'Error';
   const message = typeof error?.message === 'string' && error.message ? error.message : String(error ?? 'unknown runtime error');
-  return `${name}: ${message}`.slice(0, 4000);
+  return sanitizeDiagnosticText(`${name}: ${message}`, secretValues).slice(0, 4000);
 }
 
 function capsuleFor(state, summary) {
@@ -27,22 +30,19 @@ function capsuleFor(state, summary) {
   });
 }
 
-export async function reportActiveRunRuntimeError(runtime, error) {
+export async function reportTaskRuntimeError(runtime, task, error) {
   if (!runtime?.stateStore || !runtime?.statusReporter || typeof runtime?.queueRepository !== 'string') {
     return { reported: false, reason: 'runtime-reporting-unavailable' };
   }
 
-  const prefix = `run.${runtime.queueRepository}#`;
-  const entries = await runtime.stateStore.entries(prefix);
-  const pending = entries
-    .map(([, value]) => value)
-    .filter((state) => state?.task && !TERMINAL.has(state.stage))
-    .sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')));
-
-  if (pending.length === 0) return { reported: false, reason: 'no-active-run' };
-
-  const state = pending[0];
-  const summary = messageFor(error);
+  if (!task || task.queueRepository !== runtime.queueRepository) return { reported: false, reason: 'task-correlation-unavailable' };
+  const state = await runtime.stateStore.get(`run.${runtime.queueRepository}#${task.issueNumber}.${task.revision}`);
+  if (!state?.task || state.runId !== runIdForTask(task) || state.task.revision !== task.revision
+      || state.task.issueNumber !== task.issueNumber || state.task.queueRepository !== runtime.queueRepository) {
+    return { reported: false, reason: 'task-correlation-unavailable' };
+  }
+  if (TERMINAL.has(state.stage)) return { reported: false, reason: 'run-terminal' };
+  const summary = messageFor(error, runtime.githubContext?.secretValues ?? []);
   const result = await runtime.statusReporter.publish({
     issueNumber: state.task.issueNumber,
     runId: state.runId,
@@ -50,6 +50,7 @@ export async function reportActiveRunRuntimeError(runtime, error) {
     stage: 'RUNTIME_ERROR',
     summary,
     capsule: capsuleFor(state, summary),
+    diagnostics: captureFailureDiagnostics({ stage: state.stage, attempt: state.turn, error, secretValues: runtime.githubContext?.secretValues ?? [] }),
     terminal: false,
     force: true,
   });
@@ -61,4 +62,10 @@ export async function reportActiveRunRuntimeError(runtime, error) {
     commentId: result?.commentId ?? null,
     sequence: result?.sequence ?? null,
   };
+}
+
+// A collection/daemon error has no task subject. In particular, an unrelated
+// polling or inventory error must never be assigned to the oldest pending run.
+export async function reportActiveRunRuntimeError() {
+  return { reported: false, reason: 'task-correlation-unavailable' };
 }

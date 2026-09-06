@@ -19,6 +19,7 @@ import {
 import { RetryWindow, RetryWindowError } from './run-coordinator/retry-window.js';
 import { controllerPlanDigest } from './controller-plan.js';
 import { parseToolResult } from './result-envelope.js';
+import { captureFailureDiagnostics } from './failure-diagnostics.js';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 
@@ -35,12 +36,31 @@ export function runIdForTask(task) {
   return `pp-${task.issueNumber}-${task.revision.slice(0, 16)}`;
 }
 
+// Terminal stage interpretation stays with the run owner. Recovery callers
+// may project this exact state without dispatching its operations again.
+export function terminalStatusForRun(state) {
+  if (!TERMINAL.has(state.stage)) throw new PolicyError('terminal status requires a terminal run');
+  return {
+    issueNumber: state.task.issueNumber,
+    runId: state.runId,
+    revision: state.task.revision,
+    stage: state.stage.toUpperCase(),
+    summary: state.error?.message ?? state.prior?.progress?.at(-1) ?? `Run ${state.stage}.`,
+    capsule: buildContextCapsule({ task: state.task, sequence: Math.max(1, (state.turn ?? 0) + 1), prior: state.prior,
+      runtime: { outputTail: state.prior?.outputTail ?? null } }),
+    diagnostics: state.failureDiagnostics ?? null,
+    terminal: true,
+    force: true,
+  };
+}
+
 export class RunCoordinator {
   #store;
   #workspace;
   #runner;
   #planExecutor;
   #reporter;
+  #secretValues;
   #feedback;
   #queueRepository;
   #tools;
@@ -63,6 +83,7 @@ export class RunCoordinator {
     processRunner,
     controllerPlanExecutor = null,
     statusReporter = null,
+    secretValues = [],
     feedbackSource = null,
     queueRepository,
     tools,
@@ -82,6 +103,7 @@ export class RunCoordinator {
     this.#runner = processRunner;
     this.#planExecutor = controllerPlanExecutor;
     this.#reporter = statusReporter;
+    this.#secretValues = secretValues;
     this.#feedback = feedbackSource;
     this.#queueRepository = queueRepository;
     this.#tools = tools;
@@ -112,6 +134,7 @@ export class RunCoordinator {
   }
 
   async #save(key, state) {
+    if (TERMINAL.has(state.stage) && state.statusDeliveryPending === undefined) state.statusDeliveryPending = true;
     state.updatedAt = nowIso();
     await this.#store.set(key, state);
   }
@@ -151,16 +174,22 @@ export class RunCoordinator {
   async #publish(state, stage, summary, snapshot = null, { terminal = false, force = false } = {}) {
     if (!this.#reporter) return null;
     try {
-      return await this.#reporter.publish({
+      const result = await this.#reporter.publish({
         issueNumber: state.task.issueNumber,
         runId: state.runId,
         revision: state.task.revision,
         stage,
         summary,
         capsule: this.#capsule(state, snapshot),
+        diagnostics: state.failureDiagnostics ?? null,
         terminal,
         force
       });
+      if (terminal && (result?.published || result?.reason === 'already-reported')) {
+        state.statusDeliveryPending = false;
+        await this.#save(this.#key(state.task), state);
+      }
+      return result;
     } catch (error) {
       state.statusError = { name: error.name, message: error.message, at: nowIso() };
       return null;
@@ -769,6 +798,7 @@ export class RunCoordinator {
           };
         }
         if (result.status === 'failed') {
+          state.failureDiagnostics = captureFailureDiagnostics({ stage: 'guest-execution', attempt: state.turn, result: run, secretValues: this.#secretValues });
           state.stage = 'failed';
           state.finalSnapshot = snapshot;
           state.error = {
@@ -824,6 +854,8 @@ export class RunCoordinator {
       }
       if (state.stage === 'verifying' || state.stage === 'publishing') throw error;
 
+      state.failureDiagnostics = state.controllerPlan?.failureDiagnostics
+        ?? captureFailureDiagnostics({ stage: state.stage, attempt: state.turn, error, secretValues: this.#secretValues });
       state.stage = 'failed';
       state.error = { classification: error.name, message: error.message, at: nowIso() };
       state.prior.liveness = null;

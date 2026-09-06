@@ -5,6 +5,7 @@ import { PolicyError } from '../errors.js';
 import { isWithin } from '../security/workspace-policy.js';
 import { ManagedScratchTransaction } from '../runtime/managed-scratch.js';
 import { guardActiveTaskLease } from './lease-execution-context.js';
+import { captureFailureDiagnostics } from './failure-diagnostics.js';
 
 const ASSERTION_MARKER_DIAGNOSTIC_CHARACTERS = 160;
 
@@ -90,6 +91,7 @@ function operationResultEvidence(id, operation, result) {
     operation,
     exitCode: result.exitCode,
     timedOut: result.timedOut === true,
+    aborted: result.aborted === true,
     outputTruncated: result.outputTruncated === true,
     stdout: String(result.stdout ?? ''),
     stderr: String(result.stderr ?? ''),
@@ -120,12 +122,14 @@ export class ControllerPlanExecutor {
   #processRunner;
   #workspace;
   #faults;
+  #secretValues;
 
-  constructor({ operationRegistry, processRunner, workspaceManager, faultInjector = null }) {
+  constructor({ operationRegistry, processRunner, workspaceManager, faultInjector = null, secretValues = [] }) {
     this.#registry = operationRegistry;
     this.#processRunner = processRunner;
     this.#workspace = workspaceManager;
     this.#faults = faultInjector;
+    this.#secretValues = secretValues;
   }
 
   async #applyFile(file, context) {
@@ -353,6 +357,9 @@ export class ControllerPlanExecutor {
     state.controllerPlan.scratchLedger ??= [];
     const planState = state.controllerPlan;
     const results = new Map();
+    let diagnosticOperation = null;
+    let diagnosticResult = null;
+    planState.failureDiagnostics = null;
     const scratch = new ManagedScratchTransaction({
       workspace,
       state,
@@ -402,6 +409,8 @@ export class ControllerPlanExecutor {
       planState.phase = 'running-operations';
       await persist();
       for (const operation of plan.operations) {
+        diagnosticOperation = operation;
+        diagnosticResult = null;
         this.#registry.validate(operation.operation, operation.params);
         const usesEnvironmentScratch = typeof this.#registry.usesEnvironmentScratch === 'function'
           && this.#registry.usesEnvironmentScratch(operation.operation);
@@ -433,6 +442,7 @@ export class ControllerPlanExecutor {
           onActivity: (activity) => onLiveness?.({ operationId: operation.id, operation: operation.operation, ...activity }),
         });
         const evidence = operationResultEvidence(operation.id, operation.operation, result);
+        diagnosticResult = evidence;
         this.#faults?.throwIfTriggered('operation.after-effect', { operation: operation.operation });
         record.result = evidence;
         record.state = 'observed';
@@ -443,13 +453,29 @@ export class ControllerPlanExecutor {
       }
 
       planState.phase = 'asserting';
+      diagnosticOperation = null;
+      diagnosticResult = null;
       planState.assertionsPassed = 0;
       await persist();
       for (let index = 0; index < plan.assertions.length; index += 1) {
+        const assertion = plan.assertions[index];
+        diagnosticOperation = assertion.operation ? { id: assertion.operation } : null;
+        diagnosticResult = assertion.operation ? results.get(assertion.operation) : null;
         await this.#assert(plan.assertions[index], results, workspace);
         planState.assertionsPassed = index + 1;
         await persist();
       }
+    } catch (error) {
+      planState.failureDiagnostics = captureFailureDiagnostics({
+        secretValues: this.#secretValues,
+        stage: planState.phase,
+        operationId: diagnosticOperation?.id,
+        attempt: planState.operations.find(entry => entry.id === diagnosticOperation?.id)?.attempts ?? 1,
+        error,
+        result: diagnosticResult,
+      });
+      await persist();
+      throw error;
     } finally {
       planState.phase = 'cleaning';
       await persist();

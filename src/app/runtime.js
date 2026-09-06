@@ -249,6 +249,7 @@ export async function createRuntime(config, {
       })
     : null;
   const deterministicControllerPlanExecutor = new ControllerPlanExecutor({
+    secretValues,
     operationRegistry,
     processRunner: leaseDeterministicProcessRunner,
     workspaceManager: planWorkspaceManager,
@@ -273,6 +274,7 @@ export async function createRuntime(config, {
   await toolInventory.refresh();
 
   const baseCoordinator = new RunCoordinator({
+    secretValues,
     stateStore,
     workspaceManager: executionWorkspaceManager,
     processRunner: leaseProcessRunner,

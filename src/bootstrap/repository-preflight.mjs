@@ -5,6 +5,7 @@ import path from 'node:path';
 import process from 'node:process';
 
 const SYNTAX_FILES = [
+  'src/security/diagnostic-redaction.js',
   'src/bootstrap/preflight-progress-reporter.mjs',
   'devbridge.mjs',
   'install-devbridge.mjs',
@@ -102,6 +103,10 @@ const SYNTAX_FILES = [
   'src/context/chat-handoff.js',
   'src/context/context-budget.js',
   'src/github/chat-handoff-projector.js',
+  'src/github/issue-status-reporter.js',
+  'src/github/status-comment-observation.js',
+  'src/github/status-diagnostics.js',
+  'src/run/failure-diagnostics.js',
   'src/run/controller-plan.js',
   'src/run/controller-plan-executor.js',
   'src/run/deterministic-c-acceptance.js',
@@ -310,6 +315,10 @@ const TARGETED_TEST_CONCURRENCY_LIMIT = 2;
 
 const TARGETED_TESTS = [
   'test/standalone-artifact.test.js',
+  'test/issue-status-delivery.test.js',
+  'test/status-delivery-runtime.test.js',
+  'test/runtime-error-report.test.js',
+  'test/failure-diagnostics.test.js',
   'test/installer-stage0-nested-lego.test.js',
   'test/self-install-entry.test.js',
   'test/permanent-entry-mutation-lease.test.js',

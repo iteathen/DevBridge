@@ -130,6 +130,7 @@ export class DecisionGatedRunCoordinator {
   }
 
   async #save(key, state) {
+    if (TERMINAL.has(state.stage) && state.statusDeliveryPending === undefined) state.statusDeliveryPending = true;
     state.updatedAt = nowIso();
     await this.#store.set(key, state);
   }
@@ -155,7 +156,7 @@ export class DecisionGatedRunCoordinator {
   async #publish(state, stage, summary, { terminal = false } = {}) {
     if (!this.#reporter) return null;
     try {
-      return await this.#reporter.publish({
+      const result = await this.#reporter.publish({
         issueNumber: state.task.issueNumber,
         runId: state.runId,
         revision: state.task.revision,
@@ -165,6 +166,11 @@ export class DecisionGatedRunCoordinator {
         terminal,
         force: true,
       });
+      if (terminal && (result?.published || result?.reason === 'already-reported')) {
+        state.statusDeliveryPending = false;
+        await this.#save(this.#key(state.task), state);
+      }
+      return result;
     } catch (error) {
       state.statusError = { name: error.name, message: error.message, at: nowIso() };
       return null;

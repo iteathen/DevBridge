@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reportActiveRunRuntimeError } from '../src/app/runtime-error-report.js';
+import { reportActiveRunRuntimeError, reportTaskRuntimeError } from '../src/app/runtime-error-report.js';
 
 function state(stage = 'waiting-feedback') {
   return {
-    runId: 'pp-4-abc',
+    runId: `pp-4-${'a'.repeat(16)}`,
     stage,
     turn: 1,
     createdAt: '2026-08-18T00:00:00.000Z',
@@ -41,6 +41,7 @@ test('reports a nonterminal runtime error against the active run', async () => {
     config: { github: { queueRepositories: ['iteathen/DevBridge'] } },
     queueRepository: 'iteathen/DevBridge',
     stateStore: {
+      get: async () => state('waiting-feedback'),
       entries: async () => [
         ['run.iteathen/DevBridge#3.old', state('failed')],
         ['run.iteathen/DevBridge#4.current', state('waiting-feedback')],
@@ -54,7 +55,7 @@ test('reports a nonterminal runtime error against the active run', async () => {
     },
   };
 
-  const result = await reportActiveRunRuntimeError(runtime, new Error('boom'));
+  const result = await reportTaskRuntimeError(runtime, state().task, new Error('boom'));
   assert.equal(result.reported, true);
   assert.equal(result.issueNumber, 4);
   assert.equal(reports.length, 1);
@@ -65,14 +66,31 @@ test('reports a nonterminal runtime error against the active run', async () => {
   assert.ok(reports[0].capsule.blockers.some((entry) => /runtime error/u.test(entry)));
 });
 
-test('does nothing when there is no active run', async () => {
+test('unattributed collection errors never select an unfinished task', async () => {
   const runtime = {
     config: { github: { queueRepositories: ['iteathen/DevBridge'] } },
     queueRepository: 'iteathen/DevBridge',
-    stateStore: { entries: async () => [['run.x', state('completed')]] },
+    stateStore: { entries: async () => [['run.x', state('waiting-feedback')]] },
     statusReporter: { publish: async () => { throw new Error('must not publish'); } },
   };
   const result = await reportActiveRunRuntimeError(runtime, new Error('boom'));
   assert.equal(result.reported, false);
-  assert.equal(result.reason, 'no-active-run');
+  assert.equal(result.reason, 'task-correlation-unavailable');
+});
+
+test('explicit runtime reporting refuses cross-queue and stale task correlation', async () => {
+  const runtime = { queueRepository: 'iteathen/DevBridge', stateStore: { get: async () => state() }, statusReporter: { publish: async () => { throw new Error('must not publish'); } } };
+  assert.equal((await reportTaskRuntimeError(runtime, { ...state().task, queueRepository: 'another/repo' }, new Error('boom'))).reported, false);
+  assert.equal((await reportTaskRuntimeError(runtime, { ...state().task, revision: 'b'.repeat(64) }, new Error('boom'))).reported, false);
+});
+
+test('runtime error summary redacts before its size boundary can cut a credential', async () => {
+  const secret = 'registered-credential-crossing-the-boundary';
+  let report;
+  const runtime = { queueRepository: 'iteathen/DevBridge', githubContext: { secretValues: [secret] },
+    stateStore: { get: async () => state() }, statusReporter: { publish: async value => { report = value; } },
+  };
+  await reportTaskRuntimeError(runtime, state().task, new Error('x'.repeat(3970) + secret));
+  assert.doesNotMatch(JSON.stringify(report), /registered-credential/);
+  assert.match(report.summary, /REDACTED/);
 });

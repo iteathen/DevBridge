@@ -108,6 +108,29 @@ test('contains-assertion diagnostics identify the expected marker without echoin
   }
 });
 
+test('failure diagnostics select the assertion operation rather than the last successful operation', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-controller-diagnostic-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let call = 0;
+  const executor = new ControllerPlanExecutor({
+    operationRegistry: { validate() {}, async execute() {
+      call += 1;
+      return { exitCode: call === 1 ? 17 : 0, aborted: call === 1, stdout: '', stderr: call === 1 ? 'compiler unavailable' : 'later operation succeeded' };
+    } }, processRunner: {}, workspaceManager: {},
+  });
+  const plan = normalizeControllerPlan(basePlan({
+    operations: [{ id: 'compile', operation: 'fixture.compile', params: {} }, { id: 'later', operation: 'fixture.later', params: {} }],
+    assertions: [{ kind: 'exit-equals', operation: 'compile', value: 0 }],
+  }));
+  const state = {};
+  await assert.rejects(executor.execute({ plan, state, workspace: { worktreeDir: root }, persist: async () => {} }), /compile exit 17/);
+  assert.equal(state.controllerPlan.failureDiagnostics.operationId, 'compile');
+  assert.equal(state.controllerPlan.failureDiagnostics.exitCode, 17);
+  assert.equal(state.controllerPlan.failureDiagnostics.stage, 'asserting');
+  assert.equal(state.controllerPlan.failureDiagnostics.stderr, 'compiler unavailable');
+  assert.equal(state.controllerPlan.failureDiagnostics.aborted, true);
+});
+
 test('generic controller executor materializes a multi-file project, runs static Node inspection, and removes ephemeral files', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-controller-plan-'));
   try {

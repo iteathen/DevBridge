@@ -89,11 +89,11 @@ test('GitHub inventory projection coalesces by digest and never adopts a forged 
 test('ordinary status context references inventory digest without embedding inventory', async () => {
   const calls = []; const stateMap = new Map();
   const reporter = new IssueStatusReporter({
-    client: { request: async (method, requestPath, options) => { calls.push({ method, requestPath, options }); return { data: { id: 99 } }; } },
+    client: { request: async (method, requestPath, options) => { calls.push({ method, requestPath, options }); return requestPath === '/graphql' ? { data: { data: { viewer: { databaseId: 12 } } } } : { data: { id: 99 } }; } },
     stateStore: { get: async (key) => stateMap.get(key), set: async (key, value) => stateMap.set(key, value) }, queueRepository: 'iteathen/DevBridge',
     inventoryRefProvider: () => ({ protocol: 'devbridge/tool-inventory-ref-v1', digest: 'c'.repeat(64), generation: 7 }),
   });
   await reporter.publish({ issueNumber: 31, runId: 'pp-31-abcdef', revision: 'd'.repeat(64), stage: 'RUNNING', summary: 'test', capsule: { protocol: 'devbridge/context-v1', sequence: 1 }, force: true });
-  const body = calls[0].options.body.body;
+  const body = calls.find(entry => entry.method === 'POST' && entry.options.mutation !== false).options.body.body;
   assert.match(body, /devbridge\/tool-inventory-ref-v1/u); assert.doesNotMatch(body, /discoveredTools/u);
 });

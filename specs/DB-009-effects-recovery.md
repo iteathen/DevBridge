@@ -78,9 +78,11 @@ A generic `retry()` loop is not a reconciliation strategy.
 
 ### Remaining generic creation gap
 
-Not every remote creation path has been converted to a universal reconciled-effect primitive. In particular, the ordinary run status reporter persists a newly created comment ID **after** GitHub returns success. A crash after GitHub accepts the initial POST but before local persistence can therefore still require future correlation/reconciliation logic and can risk duplicate status creation on recovery.
+Not every remote creation path has been converted to a universal reconciled-effect primitive. The ordinary run status reporter now preserves the redacted desired projection and exact initial creation attempt before publication. Recovery observes the originating issue using a random host-generated correlation value, exact attempted body and authenticated numeric publisher identity. Copied markers, changed bodies, duplicate matches and incomplete pagination cannot establish ownership. A later terminal projection survives an uncertain earlier progress creation.
 
-This gap must remain explicit. Do not claim generic exactly-once GitHub mutation semantics from the fact that critical publication/lease/update/projection paths have their own stronger reconciliation.
+Terminal run persistence records that status delivery is pending before calling the reporter. The existing runtime cycle recovers that intent, including terminal tasks absent from later queue polls, under the original task lease without executing the failed work. Server pacing survives restart. Known comment updates remain idempotent by their persisted ID. Unknown initial creation uses bounded observation and at most three paced attempts; this does not create an exactly-once guarantee across arbitrary remote visibility delays or deletions.
+
+Pre-runtime provisioning correlation, early installer text collection, expanded diagnostic publication and native Linux/Windows automatic delivery remain separate unqualified responsibilities under #493. Do not claim generic exactly-once GitHub mutation semantics from these effect-specific corrections.
 
 ## Run recovery
 
@@ -202,7 +204,7 @@ Tests must cover at least:
 - task-branch ambiguous publication reconciles by exact remote observation rather than blind retry;
 - runtime activation failure retains/restores exact last-known-good evidence;
 - chat/inventory projection crash windows follow their owned reconciliation rules;
-- ordinary status-comment creation crash window remains covered by a future generic/correlation test once that gap is implemented;
+- ordinary status-comment creation, terminal-run persistence and delivery crash windows preserve intent and reconcile without rerunning failed work or adopting copied user comments;
 - retries stop at policy/rate/attempt/time bounds.
 
 ## Current boundary
