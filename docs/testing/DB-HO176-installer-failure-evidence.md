@@ -17,6 +17,11 @@ including initialization, wrapped exit 100, sticky failure and completion denial
 Recipe v16/output v12 prevent adoption of the earlier direct-execution seed.
 This follows the kernel's documented [noexec/EACCES behavior](https://man7.org/linux/man-pages/man2/execve.2.html).
 
+The host's native invocation also lacked `Get-FileHash`. Seed verification now
+uses a disposed .NET SHA-256 file stream, retaining byte-length and digest
+rejection. A Windows test executes that exact verification code with the hash
+cmdlet unavailable and checks both matching and changed seed bytes.
+
 Current source supersedes the intermediate composition-pending checkpoints below:
 PR501 head ea6e5da passed all four jobs in CI34013618479 with Ubuntu seed
 activation, the exact owned Windows prerequisite and physical adapter composition.
