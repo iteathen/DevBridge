@@ -31,14 +31,19 @@ test('Windows unattended media binds admitted bytes, observed image, exact recip
         events.push(['seed', request]);
         return { protocol: 'devbridge/windows-unattended-seed-v1', files: [{ path: 'Autounattend.xml', content: `<secret>${request.access.secret}</secret>` }], evidence: { protocol: 'devbridge/windows-unattended-seed-v1', sha256: 'b'.repeat(64) } };
       },
-      mediaWriter: { create: async (request) => { events.push(['write', request]); await writeFile(request.destination, 'seed-media'); return { location: request.destination, bytes: 10, sha256: 'c'.repeat(64), volumeLabel: request.volumeLabel, fileCount: request.files.length }; } },
+      mediaWriter: {
+        create: async (request) => { events.push(['write', request]); await writeFile(request.destination, 'seed-media'); return { location: request.destination, bytes: 10, sha256: 'c'.repeat(64), volumeLabel: request.volumeLabel, fileCount: request.files.length }; },
+        createBootableCopy: async (request) => { events.push(['installer', request]); await writeFile(request.destination, 'boot-media'); return { location: request.destination, bytes: 10, sha256: 'd'.repeat(64) }; },
+      },
     });
     const result = await preparer.prepare({ subject: SUBJECT, source, destination, access: { user: 'Administrator', secret: SECRET } });
-    assert.deepEqual(events.map(([name]) => name), ['lookup', 'inspect', 'seed', 'write']);
+    assert.deepEqual(events.map(([name]) => name), ['lookup', 'inspect', 'seed', 'write', 'installer']);
     assert.deepEqual(events[1][1], { location: source, expectedSha256: 'a'.repeat(64), index: 6 });
     assert.equal(events[3][1].volumeLabel, 'DB_SETUP');
     assert.equal(events[3][1].files[0].content.includes(SECRET), true);
-    assert.deepEqual(result.installer, { location: source, bytes: 12, sha256: 'a'.repeat(64) });
+    assert.deepEqual(events[4][1].source, { location: source, size: 12, sha256: 'a'.repeat(64) });
+    assert.deepEqual(result.installer, { location: path.join(destination, 'installer.iso'), bytes: 10, sha256: 'd'.repeat(64) });
+    assert.deepEqual(result.evidence.media, admission().media);
     assert.deepEqual(result.seed, { location: path.join(destination, 'answer.iso'), bytes: 10, sha256: 'c'.repeat(64), volumeLabel: 'DB_SETUP' });
     assert.equal(JSON.stringify(result.evidence).includes(SECRET), false);
     assert.equal(result.evidence.admissionReference, SUBJECT);
@@ -55,12 +60,39 @@ test('Windows unattended media removes only its new output directory on mismatch
       admission: { lookup: async () => admission() },
       observer: { inspect: async () => ({ protocol: 'devbridge/windows-install-media-observation-v1', media: admission().media, image: { ...admission().image, build: 22631, version: '10.0.22631.1' } }) },
       seedFactory: () => { throw new Error('must not create a seed'); },
-      mediaWriter: { create: async () => { writes += 1; } },
+      mediaWriter: { create: async () => { writes += 1; }, createBootableCopy: async () => { writes += 1; } },
     });
     const destination = path.join(root, 'prepared');
     await assert.rejects(() => preparer.prepare({ subject: SUBJECT, source, destination, access: { user: 'Administrator', secret: SECRET } }), /does not match admitted authority/u);
     assert.equal(writes, 0);
     assert.deepEqual(await readdir(root), ['windows.iso']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('failed or invalid bootable media never publishes a preparation and preserves the admitted source', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-win-boot-media-fail-'));
+  const source = path.join(root, 'windows.iso');
+  try {
+    await writeFile(source, 'source-media');
+    for (const mode of ['failure', 'foreign-output', 'oversize', 'invalid-digest']) {
+      const destination = path.join(root, 'prepared');
+      const preparer = new WindowsUnattendedMediaPreparer({
+        admission: { lookup: async () => admission() },
+        observer: { inspect: async () => ({ protocol: 'devbridge/windows-install-media-observation-v1', media: admission().media, image: admission().image }) },
+        seedFactory: () => ({ protocol: 'devbridge/windows-unattended-seed-v1', files: [{ path: 'answer', content: 'seed' }], evidence: {} }),
+        mediaWriter: {
+          create: async (request) => { await writeFile(request.destination, 'seed'); return { location: request.destination, bytes: 4, sha256: 'b'.repeat(64) }; },
+          createBootableCopy: async (request) => {
+            if (mode === 'failure') throw new Error('missing boot image');
+            return { location: mode === 'foreign-output' ? source : request.destination,
+              bytes: mode === 'oversize' ? request.maximumImageBytes + 1 : 1,
+              sha256: mode === 'invalid-digest' ? 'invalid' : 'c'.repeat(64) };
+          },
+        },
+      });
+      await assert.rejects(preparer.prepare({ subject: SUBJECT, source, destination }), /missing boot image|prepared installer identity/);
+      assert.deepEqual(await readdir(root), ['windows.iso']);
+    }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

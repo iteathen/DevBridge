@@ -90,6 +90,8 @@ $image = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
 $inputs = New-Object 'System.Collections.Generic.List[System.IDisposable]'
 $result = $null
 $stream = $null
+$bootOptions = $null
+$mountedHere = $false
 try {
   if ($data.files) { $image.WorkingDirectory = [string]$data.workingDirectory; $image.StageFiles = $false }
   $image.FileSystemsToCreate = $(if ($data.files) { [int]$data.fileSystems } else { 3 })
@@ -98,6 +100,38 @@ try {
   if ($data.files) {
     $image.FreeMediaBlocks = [int][Math]::Floor($maximumBytes / 2048)
     $image.UDFRevision = 0x102
+  }
+  if ($data.installMedia) {
+    $source = $data.files[0].source
+    $sourceGuard = New-Object DevBridge.VerifiedInput([string]$source.location, [long]$source.size, [string]$source.sha256)
+    $inputs.Add($sourceGuard)
+    $disk = Get-DiskImage -ImagePath ([string]$source.location) -ErrorAction Stop
+    if (-not $disk.Attached) {
+      Mount-DiskImage -ImagePath ([string]$source.location) -Access ReadOnly -ErrorAction Stop | Out-Null
+      $mountedHere = $true
+    }
+    $volumes = @(Get-DiskImage -ImagePath ([string]$source.location) -ErrorAction Stop | Get-Volume -ErrorAction Stop)
+    if ($volumes.Count -ne 1) { throw 'install media volume is ambiguous' }
+    if (-not $volumes[0].DriveLetter) { throw 'install media requires a mounted drive letter for IMAPI' }
+    $mediaRoot = ([string]$volumes[0].DriveLetter) + ':\'
+    $bootFile = Join-Path $mediaRoot 'efi\microsoft\boot\efisys_noprompt.bin'
+    $bootInfo = Get-Item -LiteralPath $bootFile -ErrorAction Stop
+    if ($bootInfo.PSIsContainer -or $bootInfo.Length -lt 512 -or $bootInfo.Length -gt 16777216 -or ($bootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'unattended EFI boot image is invalid' }
+    $bootHasher = [Security.Cryptography.SHA256]::Create()
+    try { $bootHash = [BitConverter]::ToString($bootHasher.ComputeHash([IO.File]::ReadAllBytes($bootFile))).Replace('-', '').ToLowerInvariant() }
+    finally { $bootHasher.Dispose() }
+    $bootStream = New-Object DevBridge.VerifiedInput($bootFile, [long]$bootInfo.Length, $bootHash)
+    $inputs.Add($bootStream)
+    $bootOptions = New-Object -ComObject IMAPI2FS.BootOptions
+    $bootOptions.Manufacturer = 'Microsoft'
+    $bootOptions.PlatformId = 0xef
+    $bootOptions.AssignBootImage($bootStream)
+    # AssignBootImage infers floppy emulation from the 1.44 MiB image size.
+    # EFI requires no emulation, so override it after assignment.
+    $bootOptions.Emulation = 0
+    $image.BootImageOptions = $bootOptions
+    $image.Root.AddTree($mediaRoot, $false)
+  } elseif ($data.files) {
     $directories = @{}
     foreach ($entry in $data.files) {
       $segments = ([string]$entry.path).Split('/')
@@ -123,7 +157,14 @@ try {
       if ($null -ne $result -and [Runtime.InteropServices.Marshal]::IsComObject($result)) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($result) }
     } finally {
       try { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($image) }
-      finally { foreach ($inputStream in $inputs) { $inputStream.Dispose() } }
+      finally {
+        try {
+          if ($null -ne $bootOptions) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($bootOptions) }
+        } finally {
+          try { if ($mountedHere) { Dismount-DiskImage -ImagePath ([string]$data.files[0].source.location) -ErrorAction Stop | Out-Null } }
+          finally { foreach ($inputStream in $inputs) { $inputStream.Dispose() } }
+        }
+      }
     }
   }
 }
@@ -252,7 +293,16 @@ export class WindowsImapiDataMediaWriter {
   }
 
   async createFiles(raw = {}) {
-    const request = exactFileRequest(raw);
+    return this.#createFiles(exactFileRequest(raw));
+  }
+
+  async createBootableCopy(raw = {}) {
+    const value = exactFields(raw, ['root', 'destination', 'volumeLabel', 'source', 'maximumImageBytes', 'timeoutMs', 'signal'], 'bootable install media');
+    const { source, ...options } = value;
+    return this.#createFiles(exactFileRequest({ ...options, files: [{ path: 'source.iso', source }] }), true);
+  }
+
+  async #createFiles(request, installMedia = false) {
     const deadline = Date.now() + request.timeoutMs;
     const signal = request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(request.timeoutMs)]) : AbortSignal.timeout(request.timeoutMs);
     signal.throwIfAborted();
@@ -284,7 +334,7 @@ export class WindowsImapiDataMediaWriter {
       parseResult(await this.#invoke({
         executable: POWERSHELL,
         arguments: [...COMMAND_ARGS, encodedScript(CREATE_MEDIA_SCRIPT)],
-        input: JSON.stringify({ files: request.files, destination: pending, workingDirectory, volumeLabel: request.volumeLabel, fileSystems: 4, maximumImageBytes: request.maximumImageBytes }),
+        input: JSON.stringify({ files: request.files, ...(installMedia ? { installMedia: true } : {}), destination: pending, workingDirectory, volumeLabel: request.volumeLabel, fileSystems: 4, maximumImageBytes: request.maximumImageBytes }),
         timeoutMs: Math.max(100, deadline - Date.now()), signal, maxOutputBytes: 256 * 1024,
       }));
       signal.throwIfAborted();
@@ -307,7 +357,7 @@ export class WindowsImapiDataMediaWriter {
       const committed = await lstat(output, { bigint: true });
       if (!committed.isFile() || committed.isSymbolicLink() || committed.nlink !== 1n || !sameObservedFilesystemIdentity(info, committed) || committed.size !== info.size || committed.mtimeNs !== info.mtimeNs) throw new Error('exact-file media publication identity changed');
       await unchangedDirectory(root, rootIdentity);
-      return Object.freeze({ location: output, bytes: Number(info.size), sha256, volumeLabel: request.volumeLabel, fileCount: request.files.length, fileSystem: 'udf' });
+      return Object.freeze({ location: output, bytes: Number(info.size), sha256, volumeLabel: request.volumeLabel, ...(installMedia ? {} : { fileCount: request.files.length }), fileSystem: 'udf' });
     } finally {
       await unchangedDirectory(root, rootIdentity);
       await unchangedDirectory(staging, stagingIdentity);

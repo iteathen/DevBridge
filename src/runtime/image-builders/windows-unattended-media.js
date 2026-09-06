@@ -2,6 +2,7 @@ import { lstat, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 export const WINDOWS_UNATTENDED_MEDIA_PROTOCOL = 'devbridge/windows-unattended-media-v1';
+export const WINDOWS_INSTALLER_MEDIA_OVERHEAD_BYTES = 64 * 1024 * 1024;
 
 const SUBJECT = /^subject-[a-f0-9]{32}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -57,7 +58,7 @@ export class WindowsUnattendedMediaPreparer {
     if (!admission || typeof admission.lookup !== 'function') throw new TypeError('admission must expose lookup');
     if (!observer || typeof observer.inspect !== 'function') throw new TypeError('observer must expose inspect');
     if (typeof seedFactory !== 'function') throw new TypeError('seedFactory must be a function');
-    if (!mediaWriter || typeof mediaWriter.create !== 'function') throw new TypeError('mediaWriter must expose create');
+    if (!mediaWriter || typeof mediaWriter.create !== 'function' || typeof mediaWriter.createBootableCopy !== 'function') throw new TypeError('mediaWriter must expose create and createBootableCopy');
     this.#admission = admission;
     this.#observer = observer;
     this.#seedFactory = seedFactory;
@@ -86,8 +87,19 @@ export class WindowsUnattendedMediaPreparer {
         volumeLabel: 'DB_SETUP',
         files: seed.files,
       });
+      const installerPath = path.join(outputRoot, 'installer.iso');
+      const maximumImageBytes = admission.media.bytes + WINDOWS_INSTALLER_MEDIA_OVERHEAD_BYTES;
+      const installer = await this.#mediaWriter.createBootableCopy({
+        root: outputRoot, destination: installerPath, volumeLabel: 'DB_INSTALL',
+        source: { location: sourcePath, size: admission.media.bytes, sha256: admission.media.sha256 },
+        maximumImageBytes, timeoutMs: 300000,
+      });
+      if (installer?.location !== installerPath || !Number.isSafeInteger(installer.bytes)
+          || installer.bytes < 1 || installer.bytes > maximumImageBytes || !SHA256.test(installer.sha256 ?? '')) {
+        throw new Error('prepared installer identity is invalid');
+      }
       const result = {
-        installer: { location: sourcePath, bytes: admission.media.bytes, sha256: admission.media.sha256 },
+        installer: { location: installer.location, bytes: installer.bytes, sha256: installer.sha256 },
         seed: { location: created.location, bytes: created.bytes, sha256: created.sha256, volumeLabel: created.volumeLabel },
         evidence: {
           protocol: WINDOWS_UNATTENDED_MEDIA_PROTOCOL,

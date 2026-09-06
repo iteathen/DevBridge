@@ -101,12 +101,13 @@ export class WindowsProtectedImageConstructionPreflight {
     if (this.#network != null && typeof this.#network.inspect !== 'function') throw new TypeError('protected image construction network contract is incomplete');
   }
 
-  async inspect({ stateDirectory, storageDirectory = stateDirectory, memoryBytes, diskBytes, allocationBytes, sourceBytes } = {}) {
+  async inspect({ stateDirectory, storageDirectory = stateDirectory, memoryBytes, diskBytes, allocationBytes, sourceBytes, preparedSourceBytes = sourceBytes } = {}) {
     const requestedMemory = bytes(memoryBytes, 'protected image construction memoryBytes');
     const requestedDisk = bytes(diskBytes, 'protected image construction diskBytes');
     const requestedAllocation = bytes(allocationBytes, 'protected image construction allocationBytes');
     if (requestedAllocation > requestedDisk) throw new TypeError('protected image construction allocationBytes exceeds virtual disk capacity');
     const requestedSource = bytes(sourceBytes, 'protected image construction sourceBytes');
+    const preparedSource = bytes(preparedSourceBytes, 'protected image construction preparedSourceBytes');
     const reasons = [];
     let memory = null;
     let storage = null;
@@ -124,8 +125,10 @@ export class WindowsProtectedImageConstructionPreflight {
             || !Number.isSafeInteger(value.availableBytes) || value.availableBytes < 0) throw new Error('construction storage observation is invalid');
       }
       const sameVolume = buildStorage.volume === finalStorage.volume;
-      const peakBytes = sameVolume ? checkedAdd(checkedAdd(requestedAllocation, requestedAllocation), requestedSource)
-        : checkedAdd(requestedAllocation, requestedSource);
+      const preparationPeak = checkedAdd(requestedSource, preparedSource);
+      const constructionPeak = sameVolume ? checkedAdd(checkedAdd(requestedAllocation, requestedAllocation), preparedSource)
+        : checkedAdd(requestedAllocation, preparedSource);
+      const peakBytes = Math.max(preparationPeak, constructionPeak);
       storage = preflightExecutionProfileStorage({ sourceBytes: peakBytes }, { availableBytes: buildStorage.availableBytes });
       if (!sameVolume) {
         imageStorage = preflightExecutionProfileStorage({ sourceBytes: requestedAllocation }, { availableBytes: finalStorage.availableBytes });

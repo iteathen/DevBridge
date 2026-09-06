@@ -9,6 +9,7 @@ import { createDefaultWindowsToolchainAuthority } from '../setup/windows-toolcha
 import { WINDOWS_PRODUCTION_OUTPUT } from '../setup/windows-production-output.js';
 import { resolveWindowsInstallMediaSetup } from './windows-install-media-setup.js';
 import { reconcileWindowsConstructionStorage } from './windows-construction-storage.js';
+import { WINDOWS_UNATTENDED_RECIPE_GENERATION } from '../runtime/image-builders/windows-unattended-seed.js';
 
 export const WINDOWS_PRODUCTION_IMAGE_SETUP_STATUS_PROTOCOL = 'devbridge/windows-production-image-setup-status-v1';
 
@@ -44,7 +45,7 @@ function productionAuthority({ media, tools, payload }) {
     media,
     tools,
     payload: { generation: payload.generation },
-    recipe: { generation: 'audit-handoff-v1' },
+    recipe: { generation: WINDOWS_UNATTENDED_RECIPE_GENERATION },
     output: {
       profile: WINDOWS_PRODUCTION_OUTPUT.profile,
       generation: WINDOWS_PRODUCTION_OUTPUT.generation,

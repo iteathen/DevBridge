@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -34,6 +34,53 @@ try {
   if ($null -ne $disk) { [void](Dismount-DiskImage -ImagePath ([string]$data.location) -ErrorAction Stop) }
 }
 `;
+
+test('native bootable copy emits EFI no-emulation with exact boot bytes and detaches on success and failure', {
+  skip: process.platform !== 'win32' || process.env.DEVBRIDGE_IMAPI_NATIVE_TEST !== '1',
+}, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-imapi-native-boot-'));
+  let safeToRemove = true;
+  const writer = new WindowsImapiDataMediaWriter({ invoke: invokeCommand });
+  const hash = (value) => createHash('sha256').update(value).digest('hex');
+  try {
+    // 1.44 MiB deliberately triggers IMAPI's automatic floppy-emulation default.
+    const boot = Buffer.alloc(1474560, 0x42);
+    const location = path.join(root, 'boot.bin'); await writeFile(location, boot);
+    const bootSource = { location, size: boot.length, sha256: hash(boot) };
+    for (const hasBoot of [true, false]) {
+      const source = await writer.createFiles({ root, destination: path.join(root, `source-${hasBoot}.iso`), volumeLabel: 'DB_SOURCE',
+        files: [{ path: hasBoot ? 'efi/microsoft/boot/efisys_noprompt.bin' : 'unrelated.bin', source: bootSource }],
+        maximumImageBytes: 8 * 1024 ** 2, timeoutMs: 120000 });
+      const destination = path.join(root, `copy-${hasBoot}.iso`);
+      safeToRemove = false;
+      const request = { root, destination, volumeLabel: 'DB_INSTALL', source: { location: source.location, size: source.bytes, sha256: source.sha256 }, maximumImageBytes: 8 * 1024 ** 2, timeoutMs: 120000 };
+      if (hasBoot) {
+        const media = await writer.createBootableCopy(request);
+        const iso = await readFile(media.location);
+        let descriptor;
+        for (let offset = 16 * 2048; offset < 64 * 2048; offset += 2048) {
+          if (iso[offset] === 0 && iso.toString('ascii', offset + 1, offset + 6) === 'CD001') { descriptor = iso.subarray(offset, offset + 2048); break; }
+        }
+        assert.ok(descriptor);
+        const catalog = iso.subarray(descriptor.readUInt32LE(71) * 2048);
+        assert.equal(catalog[1], 0xef);
+        assert.equal(catalog[32], 0x88);
+        assert.equal(catalog[33], 0, 'EFI boot image must not use inferred floppy emulation');
+        assert.equal(hash(iso.subarray(catalog.readUInt32LE(40) * 2048, catalog.readUInt32LE(40) * 2048 + boot.length)), bootSource.sha256);
+      } else {
+        await assert.rejects(writer.createBootableCopy(request), /creation failed/);
+        assert.equal((await readdir(root)).includes(path.basename(destination)), false);
+      }
+      const detached = await invokeCommand({ executable: 'powershell.exe', arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '$data=[Console]::In.ReadToEnd() | ConvertFrom-Json; if ((Get-DiskImage -ImagePath $data.location).Attached) { exit 1 }'], input: JSON.stringify({ location: source.location }), timeoutMs: 30000, maxOutputBytes: 16384 });
+      assert.equal(detached.exitCode, 0, 'writer must detach its source mount');
+      safeToRemove = true;
+      assert.equal(hash(await readFile(source.location)), source.sha256);
+    }
+  } finally {
+    if (safeToRemove) await rm(root, { recursive: true, force: true });
+    else console.error(`Native media retained for mount-state reconciliation: ${root}`);
+  }
+});
 
 test('native IMAPI UDF preserves exact binary files and 99-character names', {
   skip: process.platform !== 'win32' || process.env.DEVBRIDGE_IMAPI_NATIVE_TEST !== '1',
