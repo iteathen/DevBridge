@@ -170,17 +170,69 @@ GUI applications may be installed, launched, and used. DevBridge simply does not
 
 ## Current sequencing
 
-Do not let the new development-environment work displace the current blank-slate recovery gate.
+The user-confirmed product order is **Hello World, then GPU support for CUDA-JS,
+then MCP interoperability**. Complete the prerequisites needed by each milestone;
+do not insert broad framework or protocol expansion ahead of the working path.
 
-Current order is:
+### 1. GitHub to VM Hello World
 
-1. finish the ordinary supported blank-slate/recovery chain: #197/#192 image construction and acquisition, #178/#200 publication/reacquisition, #173 missing-system-disk rebuild proof, and #201 final qualification;
-2. implement and adversarially qualify #214 so a recovered persistent guest is genuinely self-preparable for arbitrary CLI-oriented development work;
-3. build #215 on the same guest-execution/bridge foundation for generic state packaging and external analysis;
-4. then proceed to the first real CUDA profile in #186;
-5. generalize compute capability routing in #162 only after #186 proves the real hardware/profile path.
+An authorized GitHub task must compile and test a simple program in both Linux
+and Windows execution-profile VMs and automatically return useful results or
+errors to the originating task. Record exact source, run/attempt, environment,
+toolchain and verification evidence. Hosted tests or a manually run host program
+do not satisfy this milestone.
 
-#214/#215 are not prerequisites for proving that #197 can construct an immutable base image or that #173 can reconstruct a deleted system disk. They are the high-priority usability/extensibility layer required before DevBridge should claim a broadly self-preparing general-purpose development workstation.
+The acceptance procedure, required evidence and distinction between guest and
+host-provider coverage are defined in [Hello World qualification](hello-world-qualification.md).
+
+Installer/package-basis recovery (#489/#488/#197/#417), usable VM setup and
+execution, and automatic diagnostic delivery (#493/#176) are work inside this
+milestone. They are not separate product milestones ahead of GPU support.
+Use the existing #192 recovery, #214 guest-operation and #215 evidence owners
+where required; broader recovery coverage and generic tooling remain tracked
+without blocking on unrelated feature expansion. Preserve the retained failed
+VM and its original deadlines; the roadmap does not authorize another build,
+retrofitting that guest, or discarding unique evidence.
+
+### 2. Real GPU support for CUDA-JS testing
+
+The active owner is #395, with transport work in #419 and later generalized
+routing in #162. #186 is closed as superseded and is not the active CUDA plan.
+Repository-controlled CPU work stays inside the admitted VM; normal GPU use
+keeps the physical display GPU owned by the host under #395's qualified
+accelerator contract.
+
+Acceptance must exercise the actual [CUDA-JS](https://github.com/iteathen/CUDA-JS)
+native test path with a real NVIDIA driver and GPU accessible through
+DevBridge, beginning with a bounded allocation/copy/kernel/synchronize/
+result test and then the required project tests. Its current Node 26 native-FFI
+Driver/toolchain path must be accounted for when selecting the execution
+mechanism. A generic broker kernel canary, mocked driver, compile-only result
+or GPU-presence probe does not by itself prove that CUDA-JS can be tested.
+Reobserve the project's exact requirements before implementation; the assessed
+source is `30d11a5d38dd7b9987bc8bac4ac67c2fcf8fee60`.
+
+Qualify exact CUDA semantics, guest/host authority separation, malformed input,
+backend loss and recovery on each claimed profile. Report unsupported or
+unavailable hardware/platform coverage explicitly. Do not infer Linux native
+qualification from Windows evidence or detach the display GPU as a fallback.
+
+### 3. MCP interoperability — #498
+
+Expose the existing admitted task/action/result contracts through an MCP
+adapter for compatible AI clients. Follow the supported official
+[MCP specification](https://modelcontextprotocol.io/specification/latest),
+including tool schemas, resource results, applicable transport authorization,
+and the negotiated [Tasks extension](https://modelcontextprotocol.io/extensions/tasks/overview)
+where supported. Select and qualify protocol/SDK/client versions together.
+
+Reuse DevBridge's existing admission, run state, leases, execution and
+publication owners. An MCP adapter may use the GitHub mailbox as its backend,
+preserving outbound-only workstation access. Direct ingress requires an
+explicit authenticated-principal/admission contract. No second scheduler,
+registry or publisher is introduced. See `docs/chat-agent-github-exchange.md`
+for the existing MCP adapter boundary. MCP does not gate Hello World or GPU
+testing and does not replace the installer or VM security boundary.
 
 ## Issue #138 implementation slices
 
@@ -288,9 +340,8 @@ Setup should not ask the operator to approve every ordinary guest package/tool t
 
 ## Deferred/future work
 
-After the current recovery path and #214/#215 general development-environment follow-through:
+Beyond the three milestones above, retain the following follow-through work:
 
-- first real CUDA execution profile (#186);
 - generalized compute-capability routing (#162);
 - richer profile compatibility/capability selection where materially needed;
 - workspace lifecycle/migration tooling;

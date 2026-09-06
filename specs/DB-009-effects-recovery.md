@@ -84,6 +84,41 @@ Terminal run persistence records that status delivery is pending before calling 
 
 Pre-runtime provisioning correlation, early installer text collection, expanded diagnostic publication and native Linux/Windows automatic delivery remain separate unqualified responsibilities under #493. Do not claim generic exactly-once GitHub mutation semantics from these effect-specific corrections.
 
+## Default task diagnostics and delivery
+
+Every authorized GitHub-initiated task must receive useful failure text on its
+originating task without a diagnostic flag or a second request for logs. Before
+the first fallible operation, the existing run or provisioning owner must persist
+the exact originating repository/task revision, run or provisioning operation,
+attempt and reporting destination. Shared profile construction must preserve each
+authorized dependent task's correlation; temporal proximity is not correlation.
+
+Each operation owner supplies bounded diagnostic evidence through the existing
+result and status owners. A report identifies the failing stage/operation, known
+exit status or typed failure, and whether evidence is missing, truncated or still
+being collected. Collection failure, operation failure and delivery failure remain
+distinct. Redaction precedes truncation and publication. Guest text cannot select
+a destination, grant authority or establish successful verification.
+
+Pre-runtime installation is subject to the same contract. Its collection path
+must work before Node, SSH or the ordinary guest bridge is ready and must preserve
+local evidence when guest networking fails. The OS builder selects fixed sources;
+the provider adapter owns the exact attachment; the existing lifecycle owner
+consumes the result. A terminal failure cannot be replaced by apparent progress
+from disk growth or heartbeat. Missing collection is an explicit unavailable
+result and never resets the original operation deadline.
+
+Persist bounded diagnostic evidence and pending delivery before contacting
+GitHub. Preserve terminal classification independently of output floods. Recovery
+uses the existing task lease and status reconciliation owner and must not rerun
+the failed operation to recover a comment. A GitHub outage means delivery is
+pending. Automatically supplied expanded evidence, when needed, must be bounded,
+sanitized, accessible under the task repository's intended access policy and
+have explicit retention/expiry semantics; a local path is not remote delivery.
+
+This is a required target contract. The native collection and expanded-evidence
+gaps identified above remain open until demonstrated through the production path.
+
 ## Run recovery
 
 On startup/daemon continuation the coordinator examines durable non-terminal runs before claiming or advancing work as appropriate.

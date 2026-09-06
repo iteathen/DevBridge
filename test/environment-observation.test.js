@@ -47,3 +47,13 @@ test('observation basis exposes stale declaration evidence without guessing', ()
   assert.equal(environmentObservationMatchesDeclaration(observation(), 2), true);
   assert.equal(environmentObservationMatchesDeclaration(observation(), 3), false);
 });
+
+test('ready fields without an implementation identity cannot establish a healthy environment', () => {
+  for (const implementationGeneration of [null, undefined]) {
+    const partial = observation({ implementationGeneration });
+    assert.equal(environmentObservationCondition(partial), 'incomplete-observation');
+    assert.equal(environmentObservationCondition({ ...partial, systemStorage: 'absent' }), 'system-storage-missing');
+    assert.equal(environmentObservationCondition({ ...partial, materialization: 'unavailable' }), 'materialization-unobservable');
+  }
+  assert.equal(environmentObservationCondition(observation()), 'healthy');
+});
