@@ -2,6 +2,8 @@ import { INSTALLER_EVIDENCE_PROTOCOL } from '../construction-install-evidence.js
 
 const ROOT = '/run/devbridge-installer-evidence';
 const AGENT = `${ROOT}/agent`;
+// The live installer's /run may be mounted noexec. Invoke its shell explicitly.
+const SHELL = '/bin/sh';
 
 // This program runs only in the live installer. Its socket entry accepts one
 // fixed selector, never a command, path, executable or publication destination.
@@ -125,17 +127,17 @@ export function createUbuntuInstallerEvidence(identity) {
   // Escaped template substitutions above are POSIX shell expansions.
   const content = SCRIPT.replaceAll('\\${', '${').replace('@PROTOCOL@', INSTALLER_EVIDENCE_PROTOCOL).replace('@IDENTITY@', identity);
   const encoded = Buffer.from(content).toString('base64');
-  const initialize = ['sh', '-c', `set -eu\numask 077\nmkdir -p ${ROOT}\n[ -d ${ROOT} ] && [ ! -L ${ROOT} ]\n[ ! -e ${AGENT} ] && [ ! -L ${AGENT} ]\nprintf '%s' '${encoded}' | base64 --decode >${AGENT}\nchmod 0700 ${AGENT}\n${AGENT} initialize\n`];
+  const initialize = [SHELL, '-c', `set -eu\numask 077\nmkdir -p ${ROOT}\n[ -d ${ROOT} ] && [ ! -L ${ROOT} ]\n[ ! -e ${AGENT} ] && [ ! -L ${AGENT} ]\nprintf '%s' '${encoded}' | base64 --decode >${AGENT}\nchmod 0700 ${AGENT}\n${SHELL} ${AGENT} initialize\n`];
   return Object.freeze({
     file: Object.freeze({ path: AGENT, content, permissions: '0700' }),
     initialize: Object.freeze(initialize),
-    error: Object.freeze([AGENT, 'error']),
-    finish: Object.freeze([AGENT, 'finish']),
+    error: Object.freeze([SHELL, AGENT, 'error']),
+    finish: Object.freeze([SHELL, AGENT, 'finish']),
     wrap(stage, command) {
       if (!['installation-basis', 'apt-update', 'apt-upgrade', 'apt-install'].includes(stage)
           || !Array.isArray(command) || command.length === 0
           || command.some(value => typeof value !== 'string' || value.length === 0 || value.includes('\0'))) throw new TypeError('Ubuntu installer observation command is invalid');
-      return Object.freeze([AGENT, 'run', stage, ...command]);
+      return Object.freeze([SHELL, AGENT, 'run', stage, ...command]);
     },
   });
 }

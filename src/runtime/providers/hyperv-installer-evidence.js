@@ -26,8 +26,14 @@ $media = @(Get-VMDvdDrive -VM $machine -ErrorAction Stop | Where-Object { [Strin
 if ($media.Count -ne 1) { throw 'installer evidence seed is not attached to the exact machine' }
 $seed = Get-Item -LiteralPath ([string]$data.seedPath) -ErrorAction Stop
 if ($seed.PSIsContainer -or ($seed.Attributes -band [IO.FileAttributes]::ReparsePoint) -or [long]$seed.Length -ne [long]$data.seedBytes) { throw 'installer evidence seed file identity changed' }
-$seedHash = Get-FileHash -LiteralPath ([string]$data.seedPath) -Algorithm SHA256 -ErrorAction Stop
-if ([string]$seedHash.Hash -ine [string]$data.seedSha256) { throw 'installer evidence seed bytes changed' }
+$seedStream = [IO.File]::OpenRead([string]$data.seedPath)
+try {
+  if ($seedStream.Length -ne [long]$data.seedBytes) { throw 'installer evidence seed file identity changed' }
+  $algorithm = [Security.Cryptography.SHA256]::Create()
+  try { $seedHash = [BitConverter]::ToString($algorithm.ComputeHash($seedStream)).Replace('-', '') }
+  finally { $algorithm.Dispose() }
+} finally { $seedStream.Dispose() }
+if ($seedHash -ine [string]$data.seedSha256) { throw 'installer evidence seed bytes changed' }
 Add-Type -TypeDefinition @'
 using System;
 using System.Diagnostics;

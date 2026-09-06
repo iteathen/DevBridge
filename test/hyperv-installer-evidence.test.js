@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -63,9 +64,9 @@ test('installer evidence connects as a host client without registry registration
   assert.doesNotMatch(script, /GuestCommunicationServices|HKLM:|Get-ItemProperty|New-Item|RunAs|socket\.(?:Bind|Listen|Accept)\(/u);
   assert.match(script, /Get-VM -Id/u);
   assert.match(script, /Get-VMDvdDrive/u);
-  assert.match(script, /Get-FileHash/u);
+  assert.match(script, /ComputeHash\(\$seedStream\)/u);
   assert.match(script, /socket\.Connect\(new DevBridgeInstallerEndpoint\(machine, service\)\)/u);
-  assert.ok(script.indexOf('Get-FileHash') < script.indexOf('[DevBridgeInstallerSocket]::Read'));
+  assert.ok(script.indexOf('ComputeHash') < script.indexOf('[DevBridgeInstallerSocket]::Read'));
 });
 
 test('Windows native endpoint compiles and serializes exact Hyper-V GUIDs without contacting a VM', { skip: process.platform !== 'win32' }, async () => {
@@ -91,5 +92,29 @@ test('Windows native endpoint compiles and serializes exact Hyper-V GUIDs withou
     assert.equal(port, reader.guestPort);
     assert.deepEqual(bytes.slice(24), [203, 250, 230, 17, 189, 88, 100, 0, 106, 121, 134, 211]);
     assert.equal((await readFile(source, 'utf8')).includes('DevBridgeInstallerSocket'), true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Windows seed verification hashes the actual file without an optional PowerShell hash command', { skip: process.platform !== 'win32' }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-installer-seed-hash-'));
+  try {
+    let request;
+    const reader = createHyperVInstallerEvidence({ identity, invoke: async value => { request = value; return result(response()); } });
+    await reader.read({ binding, attachment });
+    const script = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
+    const seedCheck = script.slice(script.indexOf('$seed = Get-Item'), script.indexOf('Add-Type'));
+    const seedPath = path.join(root, 'seed.iso');
+    const seedBytes = Buffer.from('owned seed bytes');
+    await writeFile(seedPath, seedBytes);
+    const seedSha256 = createHash('sha256').update(seedBytes).digest('hex');
+    const native = path.join(root, 'check.ps1');
+    await writeFile(native, `$ErrorActionPreference = 'Stop'\n$data = [Console]::In.ReadToEnd() | ConvertFrom-Json\nfunction Get-FileHash { throw 'Get-FileHash is unavailable' }\n${seedCheck}\n'checked'\n`);
+    for (const digest of [seedSha256, '0'.repeat(64)]) {
+      const checked = await invokeCommand({ executable: 'powershell.exe', arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', native],
+        input: JSON.stringify({ seedPath, seedBytes: seedBytes.length, seedSha256: digest }), timeoutMs: 30_000, maxOutputBytes: 16 * 1024 });
+      assert.equal(checked.exitCode, digest === seedSha256 ? 0 : 1, checked.stderr);
+      if (digest === seedSha256) assert.equal(checked.stdout.trim(), 'checked');
+      else assert.match(checked.stderr, /seed bytes changed/u);
+    }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
