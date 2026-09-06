@@ -83,3 +83,14 @@ test('explicit runtime reporting refuses cross-queue and stale task correlation'
   assert.equal((await reportTaskRuntimeError(runtime, { ...state().task, queueRepository: 'another/repo' }, new Error('boom'))).reported, false);
   assert.equal((await reportTaskRuntimeError(runtime, { ...state().task, revision: 'b'.repeat(64) }, new Error('boom'))).reported, false);
 });
+
+test('runtime error summary redacts before its size boundary can cut a credential', async () => {
+  const secret = 'registered-credential-crossing-the-boundary';
+  let report;
+  const runtime = { queueRepository: 'iteathen/DevBridge', githubContext: { secretValues: [secret] },
+    stateStore: { get: async () => state() }, statusReporter: { publish: async value => { report = value; } },
+  };
+  await reportTaskRuntimeError(runtime, state().task, new Error('x'.repeat(3970) + secret));
+  assert.doesNotMatch(JSON.stringify(report), /registered-credential/);
+  assert.match(report.summary, /REDACTED/);
+});

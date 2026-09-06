@@ -168,6 +168,7 @@ export class IssueStatusReporter {
     if (Number.isFinite(record.delivery?.retryAt) && this.#now() < record.delivery.retryAt) return this.#defer(key, record, 'server-pacing');
     try {
       if (!record.commentId) {
+        let observedActorId = null;
         if (!record.creation) {
           const actor = await this.#client.request('POST', '/graphql', {
             body: { query: 'query DevBridgeStatusPublisher { viewer { databaseId } }' },
@@ -175,6 +176,7 @@ export class IssueStatusReporter {
           });
           const actorId = actor.data?.errors?.length ? null : actor.data?.data?.viewer?.databaseId;
           if (!Number.isSafeInteger(actorId) || actorId < 1) throw new ProtocolError('authenticated status publisher identity is unavailable');
+          observedActorId = String(actorId);
           const id = randomBytes(32).toString('hex');
           record.creation = { id, actorId: String(actorId), projection: record.pending,
             body: `${record.pending.body}\n<!-- devbridge-status-effect ${id} -->`, attempts: 0, attemptedAt: null };
@@ -194,7 +196,9 @@ export class IssueStatusReporter {
           }
         }
         if (!record.commentId) {
-          if (creation.attempts > 0) {
+          // A restart can occur after creation identity is persisted but before
+          // the first attempt; even attempts=0 must recheck current identity.
+          if (observedActorId === null) {
             const actor = await this.#client.request('POST', '/graphql', {
               body: { query: 'query DevBridgeStatusPublisher { viewer { databaseId } }' },
               mutation: false, critical: record.pending.terminal,

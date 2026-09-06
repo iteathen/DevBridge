@@ -1,13 +1,14 @@
 import { buildContextCapsule } from '../context/context-capsule.js';
 import { runIdForTask } from '../run/run-coordinator.js';
 import { captureFailureDiagnostics } from '../run/failure-diagnostics.js';
+import { sanitizeDiagnosticText } from '../security/diagnostic-redaction.js';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 
-function messageFor(error) {
+function messageFor(error, secretValues) {
   const name = typeof error?.name === 'string' && error.name ? error.name : 'Error';
   const message = typeof error?.message === 'string' && error.message ? error.message : String(error ?? 'unknown runtime error');
-  return `${name}: ${message}`.slice(0, 4000);
+  return sanitizeDiagnosticText(`${name}: ${message}`, secretValues).slice(0, 4000);
 }
 
 function capsuleFor(state, summary) {
@@ -41,7 +42,7 @@ export async function reportTaskRuntimeError(runtime, task, error) {
     return { reported: false, reason: 'task-correlation-unavailable' };
   }
   if (TERMINAL.has(state.stage)) return { reported: false, reason: 'run-terminal' };
-  const summary = messageFor(error);
+  const summary = messageFor(error, runtime.githubContext?.secretValues ?? []);
   const result = await runtime.statusReporter.publish({
     issueNumber: state.task.issueNumber,
     runId: state.runId,

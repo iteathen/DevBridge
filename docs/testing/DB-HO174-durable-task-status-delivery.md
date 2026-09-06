@@ -159,3 +159,15 @@ The runtime cycle attempts at most30 pending subjects. Native transport,
 expanded evidence, installation-basis capture admission and dual-guest
 Hello World remain unqualified. The successful live fault/restart proof
 preceded the ownership-only relocation; its remote result is retained.
+
+## Final review qualification checkpoint
+
+At commit195252e5e5796ea3ec5fcfc461808df348b19031 the serialized local
+Node22 suite passed2367 with38 platform skips (2405tests,379072ms), doctor
+exited0, and CI34002205781 passed all four Windows/Ubuntu full/smoke jobs.
+
+Final review then preserved the operation cancellation flag, redacted runtime
+summaries before truncation (including API/access-key assignments), and
+rechecked a persisted publisher identity after a restart before attempt0.
+The 52 affected regression/ownership/lease tests pass on Node22. These changes
+require a fresh exact-head matrix; the earlier green tuple is historical.

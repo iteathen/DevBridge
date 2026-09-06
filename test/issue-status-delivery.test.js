@@ -225,3 +225,23 @@ test('unobserved creation has three paced attempts and never retries under anoth
   assert.equal(creates, 3);
   assert.equal((await reporter().pending()).length, 1);
 });
+
+test('publisher identity is rechecked after a restart before the first creation attempt', async () => {
+  const f = fixture();
+  const persist = f.stateStore.set;
+  let interrupt = true;
+  f.stateStore.set = async (key, value) => {
+    await persist(key, value);
+    if (interrupt && value.creation?.attempts === 0) {
+      interrupt = false;
+      throw new Error('interrupted after creation intent');
+    }
+  };
+  await assert.rejects(f.create().publish(request()), /interrupted/);
+  f.client.request = async (method, url) => {
+    assert.equal(url, '/graphql');
+    return { data: { data: { viewer: { databaseId: 99 } } } };
+  };
+  assert.equal((await f.create().reconcile(request())).reason, 'publisher-identity-changed');
+  assert.equal(f.comments.length, 0);
+});

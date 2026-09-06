@@ -91,6 +91,7 @@ function operationResultEvidence(id, operation, result) {
     operation,
     exitCode: result.exitCode,
     timedOut: result.timedOut === true,
+    aborted: result.aborted === true,
     outputTruncated: result.outputTruncated === true,
     stdout: String(result.stdout ?? ''),
     stderr: String(result.stderr ?? ''),

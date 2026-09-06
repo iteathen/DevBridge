@@ -34,4 +34,5 @@ test('capture redacts complete credentials and PEM blocks before a byte boundary
   });
   assert.doesNotMatch(JSON.stringify(evidence), /registered-secret|aaaa|key-data/);
   assert.match(evidence.stderr, /Useful failure/);
+  assert.doesNotMatch(captureFailureDiagnostics({ stage: 'test', error: new Error('API_KEY=sensitive-key AWS_ACCESS_KEY_ID=another-key') }).message, /sensitive-key|another-key/);
 });

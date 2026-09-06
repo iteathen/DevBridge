@@ -115,7 +115,7 @@ test('failure diagnostics select the assertion operation rather than the last su
   const executor = new ControllerPlanExecutor({
     operationRegistry: { validate() {}, async execute() {
       call += 1;
-      return { exitCode: call === 1 ? 17 : 0, stdout: '', stderr: call === 1 ? 'compiler unavailable' : 'later operation succeeded' };
+      return { exitCode: call === 1 ? 17 : 0, aborted: call === 1, stdout: '', stderr: call === 1 ? 'compiler unavailable' : 'later operation succeeded' };
     } }, processRunner: {}, workspaceManager: {},
   });
   const plan = normalizeControllerPlan(basePlan({
@@ -128,6 +128,7 @@ test('failure diagnostics select the assertion operation rather than the last su
   assert.equal(state.controllerPlan.failureDiagnostics.exitCode, 17);
   assert.equal(state.controllerPlan.failureDiagnostics.stage, 'asserting');
   assert.equal(state.controllerPlan.failureDiagnostics.stderr, 'compiler unavailable');
+  assert.equal(state.controllerPlan.failureDiagnostics.aborted, true);
 });
 
 test('generic controller executor materializes a multi-file project, runs static Node inspection, and removes ephemeral files', async () => {
