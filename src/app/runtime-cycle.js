@@ -1,5 +1,6 @@
-import { TaskLeaseLostError } from '../errors.js';
-import { runIdForTask } from '../run/run-coordinator.js';
+import { RateLimitError, TaskLeaseLostError } from '../errors.js';
+import { runIdForTask, terminalStatusForRun } from '../run/run-coordinator.js';
+import { reportTaskRuntimeError } from './runtime-error-report.js';
 
 const TERMINAL_RUN_STAGES = new Set(['completed', 'failed', 'cancelled']);
 const RETAIN_LEASE_STATUSES = new Set(['waiting-feedback', 'waiting-decision']);
@@ -73,14 +74,25 @@ function leaseDeferral(task, claim, status = 'deferred-lease') {
   };
 }
 
-async function executeTask(runtime, task) {
-  if (!runtime.taskLeaseManager) return runtime.coordinator.executeTask(task);
+async function executeTask(runtime, task, action = null) {
+  const perform = action ?? (async () => {
+    try { return await runtime.coordinator.executeTask(task); }
+    catch (error) {
+      if (!(error instanceof TaskLeaseLostError)) {
+        // This is still inside the original task's lease and exact dispatch.
+        // Reporting failure does not replace the original runtime exception.
+        try { await reportTaskRuntimeError(runtime, task, error); } catch { /* Durable status intent remains pending. */ }
+      }
+      throw error;
+    }
+  });
+  if (!runtime.taskLeaseManager) return perform();
   const claim = await runtime.taskLeaseManager.begin(task);
   if (!claim.acquired) return leaseDeferral(task, claim);
   const { handle } = claim;
   let result;
   try {
-    result = await runtime.leaseExecutionContext.run(handle, () => runtime.coordinator.executeTask(task));
+    result = await runtime.leaseExecutionContext.run(handle, perform);
   } catch (error) {
     if (error instanceof TaskLeaseLostError || handle.signal.aborted) {
       return leaseDeferral(task, {
@@ -139,7 +151,58 @@ async function executeTask(runtime, task) {
   }
 }
 
+async function reconcileStatusDelivery(runtime) {
+  if (typeof runtime.statusReporter?.pending !== 'function') return [];
+  const pending = await runtime.statusReporter.pending();
+  const runs = await runtime.stateStore.entries(`run.${runtime.queueRepository}#`);
+  // Terminal state itself records delivery intent before the reporter can run.
+  // This closes the crash window between terminal run persistence and publish.
+  for (const [, state] of runs) {
+    if (state?.statusDeliveryPending !== true || !TERMINAL_RUN_STAGES.has(state.stage) || !state.task) continue;
+    if (!pending.some(subject => subject.runId === state.runId && subject.revision === state.task.revision)) {
+      pending.push({ issueNumber: state.task.issueNumber, runId: state.runId, revision: state.task.revision });
+    }
+  }
+  const results = [];
+  // Match the existing task source's 30-subject admission/read budget. This is
+  // one bounded phase of the existing cycle, never another scheduler.
+  for (const subject of pending.slice(0, 30)) {
+    let state = await runtime.stateStore.get(`run.${runtime.queueRepository}#${subject.issueNumber}.${subject.revision}`);
+    if (!state?.task || state.runId !== subject.runId || state.task.queueRepository !== runtime.queueRepository
+        || state.runId !== runIdForTask(state.task) || state.task.issueNumber !== subject.issueNumber || state.task.revision !== subject.revision) {
+      results.push({ ...subject, published: false, reason: 'task-correlation-unavailable' });
+      continue;
+    }
+    try {
+      const result = await executeTask(runtime, state.task, async () => {
+        // Re-read after acquiring the lease; an earlier owner may have advanced
+        // this run while the claim was in flight.
+        const latest = await runtime.stateStore.get(`run.${runtime.queueRepository}#${subject.issueNumber}.${subject.revision}`);
+        if (!latest?.task || latest.runId !== subject.runId || latest.task.queueRepository !== runtime.queueRepository
+            || latest.task.issueNumber !== subject.issueNumber || latest.task.revision !== subject.revision) {
+          return { published: false, reason: 'task-correlation-unavailable' };
+        }
+        state = latest;
+        const delivery = state.statusDeliveryPending === true && TERMINAL_RUN_STAGES.has(state.stage)
+          ? await runtime.statusReporter.publish(terminalStatusForRun(state))
+          : await runtime.statusReporter.reconcile(subject);
+        if (TERMINAL_RUN_STAGES.has(state.stage) && (delivery?.published || delivery?.reason === 'already-reported')) {
+          state.statusDeliveryPending = false;
+          await runtime.stateStore.set(`run.${runtime.queueRepository}#${subject.issueNumber}.${subject.revision}`, state);
+        }
+        return { ...delivery, status: state.stage, waiting: !TERMINAL_RUN_STAGES.has(state.stage) };
+      });
+      results.push({ ...subject, ...result });
+    } catch (error) {
+      if (error instanceof RateLimitError) throw error;
+      results.push({ ...subject, published: false, reason: 'delivery-unavailable' });
+    }
+  }
+  return results;
+}
+
 export async function runCycle(runtime) {
+  const statusDeliveries = await reconcileStatusDelivery(runtime);
   let inventory = await refreshInventory(runtime);
   const projections = [];
   const projectedIssues = new Set();
@@ -152,6 +215,7 @@ export async function runCycle(runtime) {
       toolInventoryError: inventory.error,
       toolOnboarding: { changed: false, events: [], error: null },
       inventoryProjections: [],
+      statusDeliveries,
       recommendedPollIntervalMs: recommendedPollInterval(runtime),
       rateLimit: runtime.rateBudget.snapshot()
     };
@@ -194,6 +258,7 @@ export async function runCycle(runtime) {
     toolInventoryError: inventory.error,
     toolOnboarding,
     inventoryProjections,
+    statusDeliveries,
     recommendedPollIntervalMs: recommendedPollInterval(runtime, poll.pollIntervalMs ?? 0),
     rateLimit: runtime.rateBudget.snapshot()
   };

@@ -71,7 +71,7 @@ test('CI qualification is explicit, finite, independent of scheduling and does n
     const result = runRepositoryPreflight(root, successfulRunner(calls), {}, options, {
       now: () => 0, onProgress: (event) => events.push(event),
     });
-    assert.equal(result.targetedTests, 234);
+    assert.equal(result.targetedTests, 238);
     assert.equal(events[0].remainingMs, 360_000);
     assert.equal(calls.at(-1).options.timeout, 300_000);
     assert.equal(calls.at(-1).args.includes('--test-concurrency=2'), args.length === 2);
@@ -94,13 +94,13 @@ test('preflight emits operation evidence before work and does not renew its aggr
   const result = runRepositoryPreflight(root, runner, {}, {}, {
     now: () => time, onProgress: (event) => events.push(event),
   });
-  assert.equal(result.targetedTests, 234);
+  assert.equal(result.targetedTests, 238);
   assert.equal(events[0].remainingMs, 210_000);
   assert.equal(events.at(-1).status, 'passed');
   assert.ok(events.at(-1).remainingMs < 20_000);
   assert.ok(events.every((event) => !JSON.stringify(event).includes(root)));
   const targeted = calls.at(-1);
-  assert.equal(targeted.options.timeout, 180_000);
+  assert.equal(targeted.options.timeout, Math.min(180_000, 210_000 - (calls.length - 1) * 100));
   assert.deepEqual(targeted.options.stdio, ['ignore', 'inherit', 'pipe']);
   assert.ok(targeted.args.includes('--test-reporter=./src/bootstrap/preflight-progress-reporter.mjs'));
   assert.ok(targeted.args.includes('--test-reporter=tap'));
@@ -179,5 +179,5 @@ test('invalid clocks fail closed and rejected invocations do not poison later qu
   }), /clock is invalid/u);
   assert.equal(runRepositoryPreflight(root, successfulRunner([]), {}, {}, {
     now: () => 0,
-  }).targetedTests, 234);
+  }).targetedTests, 238);
 });

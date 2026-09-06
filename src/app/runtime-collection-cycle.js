@@ -38,6 +38,7 @@ export async function runRuntimeCollectionCycle(collection, {
   const rejected = [];
   const inventories = [];
   const projections = [];
+  const statusDeliveries = [];
   let recommendedPollIntervalMs = selected.config.github.pollIntervalMs;
 
   for (const runtime of selected.runtimes) {
@@ -48,6 +49,7 @@ export async function runRuntimeCollectionCycle(collection, {
       results.push(...queueBound(observed.results, subject));
       rejected.push(...queueBound(observed.rejected, subject));
       projections.push(...queueBound(observed.inventoryProjections, subject));
+      statusDeliveries.push(...queueBound(observed.statusDeliveries, subject));
       inventories.push(Object.freeze({
         queueRepository: subject,
         reference: observed.toolInventory ?? null,
@@ -99,6 +101,7 @@ export async function runRuntimeCollectionCycle(collection, {
     rejected: Object.freeze(rejected),
     toolInventories: Object.freeze(inventories),
     inventoryProjections: Object.freeze(projections),
+    statusDeliveries: Object.freeze(statusDeliveries),
     recommendedPollIntervalMs,
     rateLimit: selected.githubContext.rateBudget.snapshot(),
   });
