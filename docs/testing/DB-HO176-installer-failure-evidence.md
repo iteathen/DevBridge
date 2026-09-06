@@ -8,6 +8,15 @@ Transport readiness comes from an actual exchange, not a registry entry.
 The registration sections below record earlier implementation history and are
 superseded. See [the socket library's direction-specific documentation](https://github.com/SvenGroot/Ookii.VmSockets#hyper-v-sockets).
 
+The resumed physical check found `/run` mounted `noexec` in the actual Ubuntu
+installer. The exact generated agent had mode `0700`, but direct initialization
+failed with `Permission denied`. Every lifecycle hook now invokes `/bin/sh`
+explicitly, matching the existing socket service. The mount policy is unchanged.
+Linux CI exercises the generated hooks on a real `noexec` `/dev/shm` mount,
+including initialization, wrapped exit 100, sticky failure and completion denial.
+Recipe v16/output v12 prevent adoption of the earlier direct-execution seed.
+This follows the kernel's documented [noexec/EACCES behavior](https://man7.org/linux/man-pages/man2/execve.2.html).
+
 Current source supersedes the intermediate composition-pending checkpoints below:
 PR501 head ea6e5da passed all four jobs in CI34013618479 with Ubuntu seed
 activation, the exact owned Windows prerequisite and physical adapter composition.

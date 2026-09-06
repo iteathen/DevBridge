@@ -16,8 +16,10 @@ test('Ubuntu installer artifact binds the subject and exposes only fixed lifecyc
   assert.equal(artifact.file.permissions, '0700');
   assert.match(artifact.file.content, new RegExp(subject, 'u'));
   assert.doesNotMatch(artifact.file.content, /\\\$\{|@IDENTITY@|@PROTOCOL@|\b(?:python|node|ssh|eval)\b/u);
-  assert.deepEqual(artifact.error, [artifact.file.path, 'error']);
-  assert.deepEqual(artifact.wrap('apt-install', ['curtin', 'in-target']), [artifact.file.path, 'run', 'apt-install', 'curtin', 'in-target']);
+  assert.match(artifact.initialize[2], /\/bin\/sh \/run\/devbridge-installer-evidence\/agent initialize\n/u);
+  assert.deepEqual(artifact.error, ['/bin/sh', artifact.file.path, 'error']);
+  assert.deepEqual(artifact.finish, ['/bin/sh', artifact.file.path, 'finish']);
+  assert.deepEqual(artifact.wrap('apt-install', ['curtin', 'in-target']), ['/bin/sh', artifact.file.path, 'run', 'apt-install', 'curtin', 'in-target']);
   assert.throws(() => artifact.wrap('caller-command', ['true']), /invalid/u);
   assert.throws(() => createUbuntuInstallerEvidence(`${subject};id`), /invalid/u);
 });
@@ -31,6 +33,35 @@ test('installer socket activation accepts only a bounded native port and fixes i
   assert.match(activation.files[1].content, /RuntimeMaxSec=20s\nTimeoutStopSec=1s\nKillMode=control-group/u);
   assert.match(activation.files[1].content, /MemoryMax=64M\nCPUQuota=25%\nTasksMax=16/u);
   assert.doesNotMatch(activation.files.map(file => file.content).join(''), /AF_INET|ssh|node|python|bash -c/u);
+});
+
+test('generated installer hooks run from a noexec filesystem and retain the original command failure', { skip: process.platform !== 'linux' }, async t => {
+  const mounts = await readFile('/proc/mounts', 'utf8');
+  if (!mounts.split('\n').some(line => {
+    const fields = line.split(' ');
+    return fields[1] === '/dev/shm' && fields[3]?.split(',').includes('noexec');
+  })) { t.skip('requires the standard noexec /dev/shm mount'); return; }
+  const root = await mkdtemp('/dev/shm/db-installer-evidence-');
+  try {
+    const artifact = createUbuntuInstallerEvidence(subject);
+    const invoke = (command, input = '') => {
+      const [executable, ...args] = command.map(part => part.replaceAll('/run/devbridge-installer-evidence', root));
+      const result = spawnSync(executable, args, { input, encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024 });
+      assert.equal(result.error, undefined, result.error?.message);
+      return result;
+    };
+    assert.equal(invoke(artifact.initialize).status, 0);
+    const denied = spawnSync(path.join(root, 'agent'), ['initialize']);
+    assert.equal(denied.error?.code, 'EACCES');
+    assert.equal(invoke(artifact.wrap('apt-install', ['/bin/sh', '-c', 'exit 100'])).status, 100);
+    const saved = await readFile(path.join(root, 'record'));
+    assert.equal(invoke(artifact.error).status, 0);
+    assert.equal(invoke(artifact.finish).status, 1);
+    assert.deepEqual(await readFile(path.join(root, 'record')), saved);
+    const response = invoke(['/bin/sh', artifact.file.path, 'serve'], 'S');
+    assert.equal(response.status, 0);
+    assert.equal(decodeInstallerEvidence(Buffer.from(response.stdout), binding).exitCode, 100);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('systemd accepts the exact generated socket and service units without starting them', { skip: process.platform !== 'linux' }, async () => {

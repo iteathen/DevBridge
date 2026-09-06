@@ -76,16 +76,16 @@ test('a provider-owned evidence port composes early collection and exact failure
     .trim().split('\n').map(line => JSON.parse(line.trim().slice(2)));
   const early = commands('early-commands');
   assert.equal(early.length, 3);
-  assert.match(early[0][2], /\/run\/devbridge-installer-evidence\/agent initialize/u);
+  assert.match(early[0][2], /\/bin\/sh \/run\/devbridge-installer-evidence\/agent initialize/u);
   assert.match(early[1][2], /\/run\/systemd\/system\/devbridge-installer-evidence\.socket/u);
   assert.deepEqual(early[2], ['systemctl', 'start', 'devbridge-installer-evidence.socket']);
   assert.ok(userData.indexOf('early-commands:') < userData.indexOf('late-commands:'));
-  assert.deepEqual(commands('error-commands'), [['/run/devbridge-installer-evidence/agent', 'error']]);
+  assert.deepEqual(commands('error-commands'), [['/bin/sh', '/run/devbridge-installer-evidence/agent', 'error']]);
   const late = commands('late-commands');
-  assert.deepEqual(late.slice(0, 4).map(command => command.slice(0, 3)),
-    ['installation-basis', 'apt-update', 'apt-upgrade', 'apt-install'].map(stage => ['/run/devbridge-installer-evidence/agent', 'run', stage]));
-  assert.match(late[0][5], /ubuntu-installation-basis\.status/u);
-  assert.deepEqual(late.at(-1), ['/run/devbridge-installer-evidence/agent', 'finish']);
+  assert.deepEqual(late.slice(0, 4).map(command => command.slice(0, 4)),
+    ['installation-basis', 'apt-update', 'apt-upgrade', 'apt-install'].map(stage => ['/bin/sh', '/run/devbridge-installer-evidence/agent', 'run', stage]));
+  assert.match(late[0][6], /ubuntu-installation-basis\.status/u);
+  assert.deepEqual(late.at(-1), ['/bin/sh', '/run/devbridge-installer-evidence/agent', 'finish']);
   assert.equal(evidence.installerEvidence.protocol, 'devbridge/installer-evidence-v1');
   assert.equal(evidence.installerEvidence.guestPort, 1234567);
   assert.match(evidence.installerEvidence.agentSha256, /^[a-f0-9]{64}$/u);
