@@ -4,6 +4,8 @@ Reviewed 71 open issues from the retained GitHub snapshot against their goals/ac
 
 The first milestone is defined in [Hello World qualification](../hello-world-qualification.md). GPU/NVIDIA CUDA-JS follows it; MCP follows GPU. No incomplete hardware/recovery claim is closed merely because hosted CI is green.
 
+The dispositions below were applied: seven issues closed (#133/#134/#135/#168/#190/#212/#487), leaving 64 open. Eight issue bodies were aligned (#49/#162/#201/#214/#215/#283/#488/#489). Each closure records its specific evidence and preserves historical results. The #170 review found and corrected a readiness classification defect; see [the regression and qualification record](DB-HO175-environment-readiness.md). Its broader native acceptance remains open.
+
 | Issue | Disposition | Reason / remaining owner |
 | --- | --- | --- |
 | [#49](https://github.com/iteathen/DevBridge/issues/49) | keep; align index | VM-only #107/DB-020 supersedes its sandbox direction. Preserve remaining controls/resource scope; current milestone belongs to the roadmap. |
