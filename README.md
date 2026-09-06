@@ -2,7 +2,7 @@
 
 DevBridge connects remote coding controllers to a locally controlled development environment. It is a Node.js control plane for admitting development tasks, managing repository work, verifying results, and recovering interrupted runs.
 
-**Active public alpha. There is no published npm package, signed production release, or production security claim.** Hyper-V and KVM/libvirt execution paths are implemented, but real-provider security, resource, and recovery qualification is incomplete.
+**Active public alpha development. There is no published package or signed production release, and no production security claim.** Hyper-V and KVM/libvirt execution paths are implemented, but real-provider security, resource, and recovery qualification is incomplete.
 
 ## What exists
 
