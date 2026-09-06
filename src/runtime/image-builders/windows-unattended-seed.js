@@ -4,7 +4,8 @@ export const WINDOWS_UNATTENDED_SEED_PROTOCOL = 'devbridge/windows-unattended-se
 
 const SUBJECT = /^subject-[a-f0-9]{32}$/u;
 const LANGUAGE = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}$/u;
-const GENERATION = 'audit-handoff-v1';
+export const WINDOWS_UNATTENDED_RECIPE_GENERATION = 'audit-handoff-v2';
+const GENERATION = WINDOWS_UNATTENDED_RECIPE_GENERATION;
 
 function onlyKeys(value, allowed, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);

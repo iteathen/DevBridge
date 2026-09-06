@@ -10,6 +10,38 @@ function success(value = { created: true }) {
   return { exitCode: 0, signal: null, timedOut: false, aborted: false, outputTruncated: false, stdout: JSON.stringify(value), stderr: '' };
 }
 
+test('bootable copy verifies the admitted ISO, publishes a distinct identity, and preserves inputs on failure', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-imapi-boot-'));
+  try {
+    const location = path.join(root, 'source.iso'); await writeFile(location, 'approved source');
+    const source = { location, size: 15, sha256: createHash('sha256').update('approved source').digest('hex') };
+    let mode = 'failure';
+    let calls = 0;
+    const writer = new WindowsImapiDataMediaWriter({ invoke: async ({ input }) => {
+      calls++;
+      const data = JSON.parse(input);
+      assert.equal(data.installMedia, true);
+      assert.deepEqual(data.files, [{ path: 'source.iso', source }]);
+      await writeFile(data.destination, 'unattended media');
+      return { ...success(), exitCode: mode === 'failure' ? 1 : 0 };
+    } });
+    const request = { root, destination: path.join(root, 'installer.iso'), source, volumeLabel: 'DB_INSTALL', maximumImageBytes: 2 * 1024 ** 2, timeoutMs: 10000 };
+    for (const invalid of [{ ...request, source: { ...source, sha256: 'f'.repeat(64) } }, { ...request, maximumImageBytes: 0 }, { ...request, bootPath: '../other' }]) {
+      await assert.rejects(writer.createBootableCopy(invalid));
+    }
+    assert.equal(calls, 0);
+    await assert.rejects(writer.createBootableCopy(request), /creation failed/);
+    assert.deepEqual(await readdir(root), ['source.iso']);
+    mode = 'success';
+    const result = await writer.createBootableCopy(request);
+    assert.equal(result.sha256, createHash('sha256').update('unattended media').digest('hex'));
+    assert.notEqual(result.sha256, source.sha256);
+    assert.equal(await readFile(location, 'utf8'), 'approved source');
+    await assert.rejects(writer.createBootableCopy(request), /already exists/);
+    assert.equal(calls, 2);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('exact-file media admits binary bytes and long original names without copying input trees', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-imapi-files-'));
   try {

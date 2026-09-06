@@ -99,3 +99,21 @@ test('invalid storage observations cannot declare readiness', async () => {
     assert.match(result.reason, /storage observation is invalid/u);
   }
 });
+
+test('preparation budgets both source and bootable copy before construction removes the source', async () => {
+  const GiB = 1024 ** 3;
+  const preflight = new WindowsProtectedImageConstructionPreflight({
+    platform: 'win32', invoke: async () => success(),
+    storageProbe: async () => ({ volume: 'one', availableBytes: 40 * GiB }),
+    network: { async inspect() { return { ready: true, description: { binding: { control: 'system' }, addressing: { method: 'automatic' } } }; } },
+  });
+  const request = { stateDirectory: os.tmpdir(), memoryBytes: 1, diskBytes: 8 * GiB, allocationBytes: 4 * GiB, sourceBytes: 10 * GiB, preparedSourceBytes: 11 * GiB };
+  const prepared = await preflight.inspect(request);
+  assert.equal(prepared.ready, true);
+  assert.equal(prepared.resources.storage.sourceBytes, 21 * GiB);
+  const construction = await preflight.inspect({ ...request, allocationBytes: 8 * GiB });
+  assert.equal(construction.resources.storage.sourceBytes, 27 * GiB);
+  const overflow = await preflight.inspect({ ...request, preparedSourceBytes: Number.MAX_SAFE_INTEGER });
+  assert.equal(overflow.ready, false);
+  assert.equal(overflow.capabilities.storage, false);
+});

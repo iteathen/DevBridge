@@ -1,5 +1,5 @@
 import { constants as fsConstants } from 'node:fs';
-import { copyFile, lstat, mkdir, open, rm } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, open, rm, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { createWindowsGuestImagePayload } from '../guest/windows-image-payload.js';
 import { createCanonicalImageCanary } from '../runtime/image-builders/canonical-image-canary.js';
@@ -11,7 +11,7 @@ import {
 } from '../runtime/image-builders/windows-production-image-authority.js';
 import { createWindowsProductionOperations } from '../runtime/image-builders/windows-production-operations.js';
 import { createWindowsProductionQualification } from '../runtime/image-builders/windows-production-qualification.js';
-import { createWindowsUnattendedMediaPreparer } from '../runtime/image-builders/windows-unattended-media.js';
+import { createWindowsUnattendedMediaPreparer, WINDOWS_INSTALLER_MEDIA_OVERHEAD_BYTES } from '../runtime/image-builders/windows-unattended-media.js';
 import { createWindowsUnattendedSeed } from '../runtime/image-builders/windows-unattended-seed.js';
 import { createWindowsInstallMediaInspector } from '../runtime/image-sources/windows-install-media-inspector.js';
 import { observeBoundedReadiness } from '../runtime/bounded-readiness-window.js';
@@ -278,6 +278,9 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
       });
       const prepared = await media.prepare({ subject, source: admittedSource, destination: paths.preparedDirectory, access });
       if (prepared.evidence?.seed?.generation !== authority.recipe.generation) throw new Error('prepared recipe generation changed');
+      // The verified bootable copy replaces this owned staging input. The
+      // operator's original accepted ISO remains unchanged.
+      await unlink(admittedSource);
       const receipt = Object.freeze({
         protocol: PREPARATION_PROTOCOL,
         identity: subject,
@@ -389,6 +392,7 @@ export function createWindowsProductionImagePhysicalCanary(rawConfig, {
       diskBytes: config.resources.diskBytes,
       allocationBytes: config.resources.allocationBytes,
       sourceBytes: config.authority.media.media.bytes,
+      preparedSourceBytes: config.authority.media.media.bytes + WINDOWS_INSTALLER_MEDIA_OVERHEAD_BYTES,
     });
     const registered = await catalog.lookup(subject);
     let canary = null;
