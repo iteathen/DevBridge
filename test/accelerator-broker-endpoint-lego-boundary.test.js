@@ -22,9 +22,9 @@ test('shared endpoint attachment owns no provider listener, process, filesystem,
   ]) {
     assert.equal(source.includes(forbidden), false, forbidden);
   }
-  assert.equal(source.includes('decodeAcceleratorBrokerServiceRequestFrame'), true);
-  assert.equal(source.includes('matchAcceleratorBrokerBinding'), true);
-  assert.equal(source.includes('encodeAcceleratorBrokerServiceResponseFrame'), true);
+  assert.equal(source.includes('decodeacceleratorbrokerservicerequestframe'), true);
+  assert.equal(source.includes('matchacceleratorbrokerbinding'), true);
+  assert.equal(source.includes('encodeacceleratorbrokerserviceresponseframe'), true);
 });
 
 test('provider endpoint adapters own peer policy but no native acquisition or general bridge surface', async () => {

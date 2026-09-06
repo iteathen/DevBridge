@@ -62,6 +62,8 @@ A future native driver must bind/accept the actual Hyper-V socket and supply the
 
 The adapter rejects a different VM GUID, different service GUID, or extra connection metadata before the service is called.
 
+Both configured and observed VM identities reject the [Microsoft-defined VMID wildcards and relative addresses](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/make-integration-service#vmid-wildcards): zero/wildcard, broadcast, children, loopback, and parent. These addresses do not identify one exact guest VM, even though their GUID syntax is valid.
+
 The service GUID must be registered by setup/protected host lifecycle authority; this repository slice does not perform that mutation.
 
 ## Linux / libvirt virtio-vsock policy adapter

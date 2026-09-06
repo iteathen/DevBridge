@@ -19,6 +19,27 @@ import { ACCELERATOR_BROKER_EXECUTE_PROTOCOL } from '../src/runtime/accelerator-
 const VM_ID = '01234567-89ab-cdef-0123-456789abcdef';
 const OTHER_VM_ID = '11234567-89ab-cdef-0123-456789abcdef';
 
+test('Hyper-V wildcard, relative and loopback addresses cannot stand for an exact VM', async () => {
+  for (const id of [
+    '00000000-0000-0000-0000-000000000000',
+    'ffffffff-ffff-ffff-ffff-ffffffffffff',
+    '90db8b89-0d35-4f79-8ce9-49ea0ac8b7cd',
+    'e0e16197-dd56-4a10-9195-5ee7a155a838',
+    'a42e7cda-d03f-480c-9cc2-a4de20abb878',
+  ]) {
+    for (const vmId of [id, id.toUpperCase()]) {
+      const calls = [];
+      assert.throws(() => new WindowsHyperVAcceleratorBrokerEndpoint({
+        vmId, binding: binding(), service: { handle: async () => calls.push('handle') },
+      }), /must identify one exact VM/u);
+      await assert.rejects(endpoint(calls).handleConnection({
+        vmId, serviceId: windowsHyperVAcceleratorBrokerServiceId(), frame: observeFrame(),
+      }), /endpoint is unavailable/u);
+      assert.deepEqual(calls, []);
+    }
+  }
+});
+
 function binding() {
   return {
     profile: 'profile-cuda',

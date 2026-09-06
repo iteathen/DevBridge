@@ -8,6 +8,13 @@ export const WINDOWS_HYPERV_VSOCK_TEMPLATE_SUFFIX = '-facb-11e6-bd58-64006a7986d
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const VMADDR_CID_HOST = 2;
+const SPECIAL_VM_IDS = new Set([
+  '00000000-0000-0000-0000-000000000000',
+  'ffffffff-ffff-ffff-ffff-ffffffffffff',
+  '90db8b89-0d35-4f79-8ce9-49ea0ac8b7cd',
+  'e0e16197-dd56-4a10-9195-5ee7a155a838',
+  'a42e7cda-d03f-480c-9cc2-a4de20abb878',
+]);
 
 function exactObject(value, allowed, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} is invalid`);
@@ -18,6 +25,12 @@ function exactObject(value, allowed, name) {
 function canonicalGuid(value, name) {
   if (typeof value !== 'string' || !GUID.test(value)) throw new TypeError(`${name} is invalid`);
   return value.toLowerCase();
+}
+
+function exactVmId(value) {
+  const id = canonicalGuid(value, 'Hyper-V accelerator broker VM id');
+  if (SPECIAL_VM_IDS.has(id)) throw new TypeError('Hyper-V accelerator broker VM id must identify one exact VM');
+  return id;
 }
 
 export function windowsHyperVAcceleratorBrokerServiceId() {
@@ -31,7 +44,7 @@ export class WindowsHyperVAcceleratorBrokerEndpoint {
 
   constructor(options = {}) {
     const value = exactObject(options, new Set(['vmId', 'binding', 'service']), 'Hyper-V accelerator broker endpoint options');
-    this.#vmId = canonicalGuid(value.vmId, 'Hyper-V accelerator broker VM id');
+    this.#vmId = exactVmId(value.vmId);
     this.#serviceId = windowsHyperVAcceleratorBrokerServiceId();
     this.#attachment = new AcceleratorBrokerEndpointAttachment({ binding: value.binding, service: value.service });
   }
@@ -52,7 +65,7 @@ export class WindowsHyperVAcceleratorBrokerEndpoint {
   async handleConnection(rawConnection) {
     try {
       const value = exactObject(rawConnection, new Set(['vmId', 'serviceId', 'frame']), 'Hyper-V accelerator broker connection');
-      const vmId = canonicalGuid(value.vmId, 'Hyper-V accelerator broker peer VM id');
+      const vmId = exactVmId(value.vmId);
       const serviceId = canonicalGuid(value.serviceId, 'Hyper-V accelerator broker peer service id');
       if (vmId !== this.#vmId || serviceId !== this.#serviceId) throw new Error('peer mismatch');
       return await this.#attachment.handleFrame(value.frame);
