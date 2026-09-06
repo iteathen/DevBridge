@@ -1,194 +1,21 @@
-# DevBridge documentation map
+# DevBridge documentation
 
-This directory is the maintained documentation entry point for DevBridge.
+Use this index to find installation, operation, architecture, and development guidance. The [project README](../README.md) describes current availability and security limits.
 
-DevBridge has accumulated implementation plans, migration records, normative specifications, operator guides, and historical handoffs. They are all useful, but they do **not** all have the same authority. Start here instead of treating the newest-looking Markdown file or issue comment as current behavior.
-
-## Start here
-
-| Need | Read |
+| Task | Read |
 | --- | --- |
-| Understand what DevBridge is | [`../README.md`](../README.md) |
-| Understand install/update/runtime ownership | [`application-management.md`](application-management.md), [`application-management-decisions.md`](application-management-decisions.md), and [`application-recovery-matrix.md`](application-recovery-matrix.md) |
-| Install or configure DevBridge | [`setup.md`](setup.md) |
-| Operate an installed DevBridge | [`operations.md`](operations.md) |
-| Diagnose a failure | [`troubleshooting.md`](troubleshooting.md) |
-| Understand security and control flow | [`architecture.md`](architecture.md) |
-| Understand chat-only agent task exchange | [`chat-agent-github-exchange.md`](chat-agent-github-exchange.md) |
-| Understand agent-facing repository execution | [`agent-execution-runtime.md`](agent-execution-runtime.md) |
-| Understand engineering rules | [`design-principles.md`](design-principles.md) and [`../AGENTS.md`](../AGENTS.md) |
-| Understand persistent VM/workspace ownership | [`execution-profile-environments.md`](execution-profile-environments.md) |
-| Understand post-recovery CUDA/GPU direction | [`gpu-execution-profiles.md`](gpu-execution-profiles.md) |
-| Understand CUDA-JS issue #4 through DevBridge | [`cuda-js-issue-4-devbridge.md`](cuda-js-issue-4-devbridge.md) |
-| Understand Stage 0 and self-update | [`bootstrap.md`](bootstrap.md) and [`bootstrap-compatibility.md`](bootstrap-compatibility.md) |
-| Understand current VM-program status | [`roadmap.md`](roadmap.md) |
+| Install or reconfigure | [Setup](setup.md) |
+| Run and manage an installation | [Operations](operations.md) |
+| Diagnose failures | [Troubleshooting](troubleshooting.md) |
+| Understand trust and control flow | [Architecture](architecture.md) |
+| Understand installation and recovery | [Application management](application-management.md), [recovery matrix](application-recovery-matrix.md) |
+| Configure VM/workspace ownership | [Execution profiles](execution-profile-environments.md) |
+| Use GitHub task exchange | [Chat-agent exchange](chat-agent-github-exchange.md) |
+| Understand guest execution | [Agent execution runtime](agent-execution-runtime.md) |
+| Understand bootstrap and updates | [Bootstrap](bootstrap.md), [compatibility](bootstrap-compatibility.md) |
+| Assess readiness and planned work | [Readiness](portfolio-readiness.md), [roadmap](roadmap.md) |
+| Review planned GPU environments | [GPU profiles](gpu-execution-profiles.md) |
+| Contribute | [Contributing](../CONTRIBUTING.md), [developer instructions](../AGENTS.md), [design principles](design-principles.md) |
+| Find test guidance and past evidence | [Testing](testing/README.md), [handoffs](handoffs/README.md) |
 
-## Current product model
-
-The current architecture has two complementary views.
-
-### Application-management hierarchy
-
-```text
-Permanent DevBridge Entry
-        |
-        v
-Runner / Bootstrap Manager
-        |
-        v
-Accepted DevBridge Runtime
-        |
-        v
-DevBridge Services
-        |
-        v
-Declared Execution Environments
-```
-
-Installation identity and operator configuration/authority are durable local control state stored separately from replaceable runner/runtime/service generations.
-
-The governing replaceability rule is:
-
-> Each layer may reconstruct or replace the layer immediately below it. No lower layer may be the only authority required to reconstruct its owner.
-
-See [`application-management.md`](application-management.md) for ownership, [`application-recovery-matrix.md`](application-recovery-matrix.md) for zero-state recovery qualification, and [`application-management-decisions.md`](application-management-decisions.md) for the decisions agents must preserve.
-
-### Repository execution hierarchy
-
-```text
-remote request / controller
-        |
-        v
-trusted DevBridge host control plane
-        |
-        +-- authoritative Git / provenance / policy / leases / verification / publication
-        |
-        v
-execution-profile router
-        |
-        v
-persistent untrusted VM
-        |
-        v
-repository workspace
-        |
-        v
-agent execution runtime
-```
-
-The important current rules are:
-
-- repository-controlled execution is **VM-only**;
-- Windows uses Hyper-V and Linux uses KVM/QEMU through libvirt as the initial provider families;
-- execution profiles own physical persistent VMs;
-- repositories own isolated workspaces inside compatible profile VMs;
-- authoritative Git, credentials, publication state, provider authority, runtime-supervision state, and other machine authority stay on the host;
-- guest output, model output, repository content, and remote task text are data/proposals, not authority;
-- missing or unready VM execution fails closed rather than falling back to direct host execution;
-- GitHub Issues are the universal chat-only agent mailbox: DevBridge admits an exact verified task revision/digest, while comments/labels/state remain bounded non-authoritative projections and exact Git objects carry larger immutable package members when needed;
-- the guest agent execution surface is optimized for familiar POSIX/Bash-shaped first guesses, but supported commands are normalized into explicit process/data topology instead of using Bash as the universal execution mechanism;
-- Nushell is the preferred full shell for agent-authored guest composition; Bash/sh/PowerShell/cmd remain compatibility runtimes when an existing artifact actually requires them;
-- guest buffers, caches, and execution history are queryable working state, not host verification authority; their general agent query surface is read-only SQL;
-- the persistent installed DevBridge and disposable test installations are different installations and should be distinguished by their stable `DB-<12 hex>` installation tags.
-
-GPU-capable profiles remain a future specialization of this same model. They are intentionally sequenced after installer/runtime recovery and reconstructable VM lifecycle work. A GPU profile must use the same create/rebuild/setup/provider ownership surfaces rather than becoming a parallel provisioning stack.
-
-## Identity vocabulary
-
-Several independent identities are intentionally present. Do not collapse them into one "version" concept.
-
-| Identity | Meaning | Example |
-| --- | --- | --- |
-| Installation tag | Which local DevBridge installation is this? | `DB-7A41C0E25F19` |
-| Runner subject | Which exact bootstrap-manager generation did the permanent entry select? | exact immutable subject + digest |
-| Runtime head | Which exact DevBridge code is accepted for that installation? | 40-hex Git commit |
-| Activation state | Is the accepted runtime healthy, rolled back, etc.? | `healthy` |
-| Supervisor/daemon generation | Which live local owner/process generation is authoritative? | local bounded generation record |
-| Execution profile | Which materially distinct execution platform is selected? | `windows`, `linux`, future GPU variants |
-| Repository workspace | Which repository-local workspace inside the profile VM? | deterministic repository+profile identity |
-| Run/task identity | Which bounded work transaction is active? | DevBridge run identity |
-| Guest execution/buffer/cache identity | Which untrusted guest-local execution object is being queried/reused? | runtime-defined stable id/name/digest |
-
-The installation tag is stable across runner/runtime updates. Two different installation homes get different tags even when they run the same runtime head.
-
-Guest execution/buffer/cache identities are useful for replay, bounded output retrieval, and cache reuse, but they do not replace host-owned candidate/test/publication evidence.
-
-See [`operations.md`](operations.md) for operator use of these identities.
-
-## Normative specifications
-
-`specs/DB-001` through `specs/DB-020` are the live normative contracts unless a newer specification explicitly supersedes an older statement.
-
-The most commonly needed specifications are:
-
-- DB-003 — capability/security boundary;
-- DB-007 — human checkpoints;
-- DB-009 — durable effects/reconciliation;
-- DB-011 — runtime supervision/update/rollback;
-- DB-013 — deterministic controller plans;
-- DB-014 — context handoff/recovery;
-- DB-016 — multi-agent identity/leases/fencing;
-- DB-017 — baseline drift/publication reverification;
-- DB-018 — workstation resource governance/pause;
-- DB-019 — verification cost, timing, and evidence;
-- DB-020 — VM-only repository-execution boundary.
-
-Documentation explains those contracts. It does not silently weaken them.
-
-## Architecture and implementation guides
-
-These documents describe current implementation structure and intended operator behavior:
-
-- [`application-management.md`](application-management.md) — permanent entry, runner, accepted runtime, services, execution environments, state separation, and whole-stack management lifecycle.
-- [`application-recovery-matrix.md`](application-recovery-matrix.md) — exact loss/recovery ownership matrix and configured/fresh-host zero-state canaries.
-- [`application-management-decisions.md`](application-management-decisions.md) — compact architectural decisions that prevent application-management layer drift.
-- [`architecture.md`](architecture.md) — authority hierarchy, trust domains, provider-neutral flow, Git/source/candidate model.
-- [`chat-agent-github-exchange.md`](chat-agent-github-exchange.md) — GitHub Issue mailbox, exact revision/digest admission, bounded result comments, immutable Git package members, polling/reconciliation, and chat-only-agent compatibility.
-- [`agent-execution-runtime.md`](agent-execution-runtime.md) — agent-natural POSIX-style execution surface, structured process graph, Nushell role, named buffers/caches/history, read-only SQL, content-addressed storage, causal errors, and implementation ownership.
-- [`execution-profile-environments.md`](execution-profile-environments.md) — physical profile VM ownership and repository workspace routing.
-- [`gpu-execution-profiles.md`](gpu-execution-profiles.md) — recovery-first real-CUDA/GPU sequencing, capability/evidence boundaries, and follow-on generalized compute routing.
-- [`cuda-js-issue-4-devbridge.md`](cuda-js-issue-4-devbridge.md) — exact gaps and GitHub-task recipe for using DevBridge to attempt the CUDA-JS Linux gate without re-opening the separate GPU gate.
-- [`tool-profiles.md`](tool-profiles.md) — tool/profile surface and execution policy.
-- [`bootstrap.md`](bootstrap.md) — standalone launcher and secure-bootstrap flow.
-- [`bootstrap-compatibility.md`](bootstrap-compatibility.md) — Stage-0 protocol compatibility, accepted-runtime selection, installation tags, one-time legacy migration.
-- [`setup.md`](setup.md) — installation and discover-first setup direction.
-- [`roadmap.md`](roadmap.md) — current implementation/qualification stages.
-
-## Migration and stage records
-
-Files named `vm-stage*.md`, [`vm-migration.md`](vm-migration.md), and [`vm-lego-studs.md`](vm-lego-studs.md) are useful implementation evidence.
-
-Read them with these rules:
-
-1. a completed stage document may describe a topology that was later corrected;
-2. current architecture/specification text wins over historical stage assumptions;
-3. repository-owned persistent-VM language is historical where it conflicts with the current execution-profile ownership rule;
-4. old host-sandbox behavior is historical evidence, not an available fallback.
-
-## Handoffs, audits, and testing records
-
-`docs/handoffs/` and point-in-time audit/testing records preserve context and evidence. They are deliberately retained for recovery and provenance.
-
-They are **not** live configuration or product authority. A historical instruction such as a temporary branch restriction, migration workaround, or campaign-specific tool prohibition does not override current specifications, current repository state, or current operator instructions.
-
-## Documentation maintenance rules
-
-When behavior changes:
-
-1. update the owning normative spec when the contract changes;
-2. update the operator-facing guide when commands, status, recovery, or failure semantics change;
-3. update architecture docs when ownership/topology changes;
-4. update [`chat-agent-github-exchange.md`](chat-agent-github-exchange.md) when the universal chat-agent mailbox/package/result transport contract changes;
-5. update [`agent-execution-runtime.md`](agent-execution-runtime.md) when the agent-facing guest execution, process graph, buffer/cache/history, SQL, shell, or tool-resolution contract changes;
-6. mark superseded historical material instead of rewriting history;
-7. keep examples path-free and secret-free unless a local path is essential to the operator action;
-8. distinguish **configured**, **observed**, **ready**, **accepted**, and **healthy** states instead of using a generic "enabled" label;
-9. distinguish installation identity from runner/runtime/version identity;
-10. preserve the application-management hierarchy: Permanent Entry -> Runner -> Accepted Runtime -> Services -> Declared Execution Environments;
-11. do not document a direct-host repository-code fallback—there is none.
-
-The goal is that an operator or a fresh agent can answer three questions without reading issue history:
-
-- What owns this behavior?
-- What evidence proves its current state?
-- What is the next safe action if it fails?
+Current `specs/DB-*` contracts govern behavior. Dated migration, audit, and handoff records preserve evidence from their own revisions and may describe superseded behavior. They do not override current contracts or operator policy.
