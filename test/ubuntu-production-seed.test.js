@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { createGuestImagePayload } from '../src/guest/image-payload.js';
 import { UBUNTU_PRODUCTION_INSTALL_SOURCE, UbuntuProductionSeedFactory } from '../src/runtime/image-builders/ubuntu-production-seed.js';
 
@@ -70,6 +74,76 @@ test('Ubuntu seed preserves actual installer package state before any late APT m
   assert.deepEqual(late.slice(1).map((command) => command.includes('apt-get')), [true, true, true]);
 });
 
+test('Ubuntu installer primary and security sources use the same frozen archive as late package commands', async () => {
+  const { userData } = await factory().create(request());
+  const apt = userData.split('  apt:\n')[1].split('  storage:\n')[0];
+  assert.match(apt, /preserve_sources_list: false\n/u);
+  assert.match(apt, /mirror-selection:\n      primary:\n        - uri: http:\/\/archive\.ubuntu\.com\/ubuntu\n          arches: \[amd64\]/u);
+  assert.match(apt, /security:\n      - uri: http:\/\/security\.ubuntu\.com\/ubuntu\n        arches: \[amd64\]/u);
+  assert.match(apt, /geoip: false\n    fallback: abort\n/u);
+  assert.match(apt, /sources_list: \|\n      Types: deb\n      URIs: \$PRIMARY\n      Suites: \$RELEASE \$RELEASE-updates\n/u);
+  assert.match(apt, /URIs: \$SECURITY\n      Suites: \$RELEASE-security\n/u);
+  assert.equal(apt.split(`Snapshot: ${snapshot}\n`).length - 1, 2);
+  assert.equal(apt.split('Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n').length - 1, 2);
+  assert.doesNotMatch(apt, /country-mirror|APT::Snapshot|trusted=yes|AllowUnauthenticated|Check-Valid-Until/u);
+  assert.equal(userData.split(`"--snapshot", "${snapshot}"`).length - 1, 3);
+});
+
+test('native APT selects frozen package versions without redirecting installer media', { skip: process.platform !== 'linux' }, async t => {
+  const release = await readFile('/etc/os-release', 'utf8');
+  if (!/^ID=ubuntu$/mu.test(release) || !/^VERSION_ID="(?:2[4-9]|[3-9]\d)\./mu.test(release)) {
+    t.skip('requires Ubuntu 24.04 or newer APT snapshot support'); return;
+  }
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-seed-apt-'));
+  try {
+    const { userData } = await factory().create(request());
+    const template = userData.split('    sources_list: |\n')[1].split('    conf: |\n')[0]
+      .replace(/^      /gmu, '')
+      .replaceAll('$PRIMARY', 'http://archive.ubuntu.com/ubuntu')
+      .replaceAll('$SECURITY', 'http://security.ubuntu.com/ubuntu')
+      .replaceAll('$RELEASE', 'resolute');
+    const sources = path.join(root, 'ubuntu.sources');
+    const configuration = path.join(root, 'apt.conf');
+    await mkdir(path.join(root, 'lists', 'partial'), { recursive: true });
+    await mkdir(path.join(root, 'sourceparts'));
+    await writeFile(path.join(root, 'status'), '');
+    await writeFile(configuration, 'Dir::Etc::main "/dev/null";\nDir::Etc::parts "/dev/null";\n');
+    await writeFile(sources, `${template}\nTypes: deb\nURIs: file:/cdrom\nSuites: resolute\nComponents: main\n`);
+    // URI projection performs no fetch, signature bypass, or package install.
+    // All state/configuration belongs to this disposable test directory.
+    const aptOptions = [
+      '-o', `Dir=${root}`, '-o', `Dir::Etc::sourcelist=${sources}`,
+      '-o', `Dir::Etc::sourceparts=${path.join(root, 'sourceparts')}`,
+      '-o', `Dir::State::lists=${path.join(root, 'lists')}`,
+      '-o', `Dir::State::status=${path.join(root, 'status')}`,
+      '-o', 'Dir::Cache::pkgcache=', '-o', 'Dir::Cache::srcpkgcache=',
+      '-o', 'APT::Architecture=amd64', '-o', 'Debug::NoLocking=1',
+    ];
+    const invocation = { env: { PATH: '/usr/bin:/bin', LANG: 'C', APT_CONFIG: configuration }, encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024 };
+    const result = spawnSync('/usr/bin/apt-get', [...aptOptions, '--print-uris', 'update'], invocation);
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    for (const suite of ['resolute', 'resolute-updates', 'resolute-security']) {
+      assert.ok(result.stdout.includes(`snapshot.ubuntu.com/ubuntu/${snapshot}/dists/${suite}/InRelease`), result.stdout);
+    }
+    assert.match(result.stdout, /file:\/cdrom\/dists\/resolute\/InRelease/u);
+    // APT update also refreshes live indexes. Prove its default package
+    // selection uses the fixed snapshot even if a newer live version exists.
+    for (const [prefix, version] of [
+      [`snapshot.ubuntu.com_ubuntu_${snapshot}`, '1.0'],
+      ['archive.ubuntu.com_ubuntu', '2.0'],
+    ]) {
+      await writeFile(path.join(root, 'lists', `${prefix}_dists_resolute_main_binary-amd64_Packages`),
+        `Package: devbridge-snapshot-fixture\nVersion: ${version}\nArchitecture: amd64\nDescription: isolated APT selection fixture\n\n`);
+    }
+    const policy = spawnSync('/usr/bin/apt-cache', [...aptOptions, 'policy', 'devbridge-snapshot-fixture'], invocation);
+    assert.ifError(policy.error);
+    assert.equal(policy.status, 0, policy.stderr);
+    assert.match(policy.stdout, /Candidate: 1\.0\n/u);
+    assert.doesNotMatch(policy.stdout, /2\.0/u);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('a provider-owned evidence port composes early collection and exact failure wrappers before target runtime setup', async () => {
   const { userData, evidence } = await factory({ installerEvidencePort: 1234567 }).create(request());
   const commands = section => userData.split(`  ${section}:\n`)[1].split(/^  [a-z]/mu)[0]
@@ -115,7 +189,7 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.match(capability, /34d14be3-dee4-41c8-9ae7-6b174977c192/u);
   assert.match(result.userData, /dhcp4: true/u);
   assert.doesNotMatch(result.userData, /192\.168\.77/u);
-  assert.match(result.userData, /apt:\n    conf: \|\n      Unattended-Upgrade::Package-Blacklist \{\n        "\.\*";\n      \};/u);
+  assert.match(result.userData, /    conf: \|\n      Unattended-Upgrade::Package-Blacklist \{\n        "\.\*";\n      \};/u);
   assert.doesNotMatch(result.userData.slice(0, result.userData.indexOf('late-commands:')), /APT::Snapshot/u);
   assert.match(result.userData, new RegExp(`apt-get", "--error-on=any", "--snapshot", "${snapshot}", "update"`, 'u'));
   assert.match(result.userData, new RegExp(`apt-get", "--snapshot", "${snapshot}", "upgrade", "-y", "--with-new-pkgs", "--no-remove"`, 'u'));
@@ -143,7 +217,7 @@ test('Ubuntu production seed binds exact package snapshot, versions, and payload
   assert.match(result.metaData, /^instance-id: devbridge-image-/u);
 });
 
-test('Ubuntu production seed projects one accepted snapshot into every explicit late transaction', async () => {
+test('Ubuntu production seed projects one accepted snapshot into installer sources and every explicit late transaction', async () => {
   const first = await factory().create(request());
   const secondSnapshot = '20260824T100000Z';
   const second = await factory({
@@ -154,8 +228,8 @@ test('Ubuntu production seed projects one accepted snapshot into every explicit 
     }),
   }).create(request());
 
-  assert.equal((first.userData.match(new RegExp(snapshot, 'gu')) ?? []).length, 3);
-  assert.equal((second.userData.match(new RegExp(secondSnapshot, 'gu')) ?? []).length, 3);
+  assert.equal((first.userData.match(new RegExp(snapshot, 'gu')) ?? []).length, 5);
+  assert.equal((second.userData.match(new RegExp(secondSnapshot, 'gu')) ?? []).length, 5);
   assert.equal(second.userData.includes(snapshot), false);
   assert.notEqual(first.evidence.userDataSha256, second.evidence.userDataSha256);
 });

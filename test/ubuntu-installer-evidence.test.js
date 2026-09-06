@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import os from 'node:os';
@@ -35,13 +35,8 @@ test('installer socket activation accepts only a bounded native port and fixes i
   assert.doesNotMatch(activation.files.map(file => file.content).join(''), /AF_INET|ssh|node|python|bash -c/u);
 });
 
-test('generated installer hooks run from a noexec filesystem and retain the original command failure', { skip: process.platform !== 'linux' }, async t => {
-  const mounts = await readFile('/proc/mounts', 'utf8');
-  if (!mounts.split('\n').some(line => {
-    const fields = line.split(' ');
-    return fields[1] === '/dev/shm' && fields[3]?.split(',').includes('noexec');
-  })) { t.skip('requires the standard noexec /dev/shm mount'); return; }
-  const root = await mkdtemp('/dev/shm/db-installer-evidence-');
+test('generated installer hooks retain command failure when the agent cannot execute directly', { skip: process.platform !== 'linux' }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-installer-evidence-permissions-'));
   try {
     const artifact = createUbuntuInstallerEvidence(subject);
     const invoke = (command, input = '') => {
@@ -51,6 +46,10 @@ test('generated installer hooks run from a noexec filesystem and retain the orig
       return result;
     };
     assert.equal(invoke(artifact.initialize).status, 0);
+    // Every Linux runner can enforce this execution denial without requiring
+    // a particular mount policy or privileged mount operation. The actual
+    // installer's noexec initialization is covered by physical qualification.
+    await chmod(path.join(root, 'agent'), 0o600);
     const denied = spawnSync(path.join(root, 'agent'), ['initialize']);
     assert.equal(denied.error?.code, 'EACCES');
     assert.equal(invoke(artifact.wrap('apt-install', ['/bin/sh', '-c', 'exit 100'])).status, 100);
