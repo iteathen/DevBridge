@@ -108,6 +108,7 @@ test('Windows production probe durably prepares, proves a reboot, and qualifies 
   assert.equal(evidence.restarted, true);
   assert.equal(evidence.sanitized, false);
   assert.deepEqual(parts.calls.map(({ operation }) => operation), ['prepare-v1', 'restart-v1', 'status-v1', 'status-v1', 'qualify-v1']);
+  assert.equal(parts.calls[0].timeoutMs, 45 * 60_000, 'preparation must fit the configured native invocation budget');
 
   const replayed = await parts.qualifier().probe({ target: TARGET, expected: EXPECTED });
   assert.deepEqual(replayed, evidence);

@@ -15,7 +15,7 @@ import { createWindowsUnattendedMediaPreparer, WINDOWS_INSTALLER_MEDIA_OVERHEAD_
 import { createWindowsUnattendedSeed } from '../runtime/image-builders/windows-unattended-seed.js';
 import { createWindowsInstallMediaInspector } from '../runtime/image-sources/windows-install-media-inspector.js';
 import { observeBoundedReadiness } from '../runtime/bounded-readiness-window.js';
-import { invokeCommand } from '../runtime/command-invocation.js';
+import { createCommandInvoker, invokeCommand } from '../runtime/command-invocation.js';
 import { loadOrCreateLocalIdentity } from '../runtime/local-identity.js';
 import { createHyperVGuestOperation } from '../runtime/providers/hyperv-guest-operation.js';
 import { createHyperVImageConstruction } from '../runtime/providers/hyperv-image-construction.js';
@@ -45,6 +45,7 @@ const MAX_ADVANCES = 16;
 const ACCESS_EXPECTED_MILLISECONDS = 2 * 60 * 1000;
 const ACCESS_DEADLINE_MILLISECONDS = 15 * 60 * 1000;
 const ACCESS_RECHECK_MILLISECONDS = 30 * 1000;
+const invokeProductionGuestOperation = createCommandInvoker({ maximumTimeoutMs: 45 * 60_000 });
 
 function onlyKeys(value, allowed, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
@@ -332,7 +333,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
   });
 
   const operations = createHyperVGuestOperation({
-    invoke,
+    invoke: invoke === invokeCommand ? invokeProductionGuestOperation : invoke,
     locate: (target) => construction.locate(target),
     access: (target) => accessMaterial.resolve(target),
     operations: createWindowsProductionOperations({ authority: config.authority.tools, payload }),

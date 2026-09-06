@@ -266,7 +266,7 @@ export class WindowsProductionQualification {
 
     if (['planned', 'prepare-attempted'].includes(record.phase)) {
       if (record.phase === 'planned') record = await this.#save(record, 'prepare-attempted');
-      const prepared = normalizeOperationResult(await this.#execute(target, 'prepare-v1', 60 * 60_000), new Set([
+      const prepared = normalizeOperationResult(await this.#execute(target, 'prepare-v1', 45 * 60_000), new Set([
         'prepared', 'generation', 'payloadGeneration', 'nativeBuildVersion', 'bootIdentity', 'restartRequired',
       ]), 'production preparation result');
       if (
