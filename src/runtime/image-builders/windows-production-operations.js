@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { normalizeWindowsToolchainAuthority } from '../../setup/windows-toolchain-authority.js';
+import { windowsSeedServiceHostMaterial } from './windows-seed-service-host.js';
 
 const PAYLOAD_PROTOCOL = 'devbridge/windows-guest-image-payload-v1';
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -162,12 +163,34 @@ foreach ($writable in @((Join-Path $root 'bootstrap'), (Join-Path $root 'bridge'
 
 $node = 'C:\Program Files\nodejs\node.exe'
 if (-not (Test-Path -LiteralPath $node -PathType Leaf)) { throw 'runtime executable is absent after installation' }
+$serviceDirectory = Join-Path $root 'services'
+$null = New-Item -ItemType Directory -Path $serviceDirectory -Force
+$hostDigest = [string]$manifest.seedServiceHost.sourceSha256
+$serviceHost = Join-Path $serviceDirectory ('seed-service-' + $hostDigest + '.exe')
+if (-not (Test-Path -LiteralPath $serviceHost -PathType Leaf)) {
+  $sourceBytes = [Convert]::FromBase64String([string]$manifest.seedServiceHost.sourceBase64)
+  $algorithm = [Security.Cryptography.SHA256]::Create()
+  try { $actualDigest = -join @($algorithm.ComputeHash($sourceBytes) | ForEach-Object { $_.ToString('x2') }) }
+  finally { $algorithm.Dispose() }
+  if ($actualDigest -ne $hostDigest) { throw 'seed service source identity changed' }
+  $source = [Text.Encoding]::UTF8.GetString($sourceBytes)
+  $attribute = '[assembly: System.Reflection.AssemblyInformationalVersion("DevBridgeSeed-' + $hostDigest + '")]'
+  $source = $source.Replace('namespace DevBridge.Guest', $attribute + [Environment]::NewLine + 'namespace DevBridge.Guest')
+  $temporary = Join-Path $serviceDirectory ('seed-service-' + [guid]::NewGuid().ToString('N') + '.exe')
+  try {
+    Add-Type -TypeDefinition $source -Language CSharp -ReferencedAssemblies System.dll,System.ServiceProcess.dll -OutputAssembly $temporary -OutputType ConsoleApplication -ErrorAction Stop
+    [IO.File]::Move($temporary, $serviceHost)
+  } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+}
+$serviceAssembly = [Reflection.Assembly]::ReflectionOnlyLoadFrom($serviceHost)
+$serviceVersion = @($serviceAssembly.GetCustomAttributesData() | Where-Object { $_.AttributeType.FullName -eq 'System.Reflection.AssemblyInformationalVersionAttribute' })
+if ($serviceVersion.Count -ne 1 -or [string]$serviceVersion[0].ConstructorArguments[0].Value -ne ('DevBridgeSeed-' + $hostDigest)) { throw 'seed service executable generation changed' }
 $services = @(
   @{ name = 'DevBridgeAccessSeed'; script = (Join-Path $root 'windows-access-seed-agent.mjs') },
   @{ name = 'DevBridgeNetworkSeed'; script = (Join-Path $root 'network-seed-agent.mjs') }
 )
 foreach ($definition in $services) {
-  $command = '"' + $node + '" "' + [string]$definition.script + '" --watch'
+  $command = '"' + $serviceHost + '" ' + [string]$definition.name
   $existing = Get-CimInstance Win32_Service -Filter ("Name='" + [string]$definition.name + "'") -ErrorAction SilentlyContinue
   if ($null -eq $existing) { $null = New-Service -Name ([string]$definition.name) -BinaryPathName $command -StartupType Automatic -ErrorAction Stop }
   elseif ([string]$existing.PathName -ne $command) { throw 'guest service definition changed' }
@@ -204,6 +227,8 @@ foreach ($file in @($manifest.payload.files)) {
 foreach ($name in @('DevBridgeAccessSeed', 'DevBridgeNetworkSeed')) {
   $service = Get-CimInstance Win32_Service -Filter ("Name='" + $name + "'") -ErrorAction Stop
   if ([string]$service.StartMode -ne 'Auto' -or [string]$service.State -ne 'Running' -or [string]$service.StartName -ne 'LocalSystem') { throw 'guest service is not ready' }
+  $serviceHost = Join-Path $root ('services\seed-service-' + [string]$manifest.seedServiceHost.sourceSha256 + '.exe')
+  if ([string]$service.PathName -ne ('"' + $serviceHost + '" ' + $name)) { throw 'guest service executable binding changed' }
 }
 $node = (& node.exe --version).Trim()
 $npm = (& npm.cmd --version).Trim()
@@ -284,7 +309,7 @@ $process = Start-Process -FilePath $sysprep -ArgumentList '/generalize', '/oobe'
 `;
 
 export function createWindowsProductionOperations({ authority, payload } = {}) {
-  const manifest = { authority: normalizeWindowsToolchainAuthority(authority), payload: normalizePayload(payload) };
+  const manifest = { authority: normalizeWindowsToolchainAuthority(authority), payload: normalizePayload(payload), seedServiceHost: windowsSeedServiceHostMaterial() };
   const header = manifestHeader(manifest);
   return Object.freeze({
     'prepare-v1': `${header}${PREPARE_BODY}`,

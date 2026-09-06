@@ -23,6 +23,9 @@ test('Windows production operations bind exact tool and payload authorities into
   assert.match(prepare, /msiexec\.exe/u);
   assert.match(prepare, /DevBridgeAccessSeed/u);
   assert.match(prepare, /DevBridgeNetworkSeed/u);
+  assert.match(prepare, /seed service source identity changed/u);
+  assert.match(prepare, /Add-Type -TypeDefinition/u);
+  assert.match(prepare, /\$command = '"' \+ \$serviceHost/u);
   assert.match(prepare, /S-1-5-32-545/u);
   assert.match(prepare, /S-1-5-32-544/u);
   assert.match(prepare, /bootIdentity/u);
@@ -41,6 +44,7 @@ test('Windows production operations bind exact tool and payload authorities into
   assert.match(qualify, /Get-WindowsEdition/u);
   assert.match(qualify, /authorityGeneration/u);
   assert.match(qualify, /nativeBuild/u);
+  assert.match(qualify, /guest service executable binding changed/u);
   assert.match(operations['status-v1'], /LastBootUpTime/u);
   const finalize = operations['finalize-v1'];
   assert.match(finalize, /Sysprep\.exe/u);
