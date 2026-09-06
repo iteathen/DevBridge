@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { createDefaultWindowsToolchainAuthority } from '../src/setup/windows-toolchain-authority.js';
 import { createWindowsGuestImagePayload } from '../src/guest/windows-image-payload.js';
 import { createWindowsProductionOperations } from '../src/runtime/image-builders/windows-production-operations.js';
@@ -78,4 +81,28 @@ test('Windows production operations reject malformed payload authority before co
   const payload = await createWindowsGuestImagePayload();
   assert.throws(() => createWindowsProductionOperations({ authority, payload: { ...payload, files: [{ ...payload.files[0], sha256: '0'.repeat(64) }] } }), /digest does not match/u);
   assert.throws(() => createWindowsProductionOperations({ authority: { ...authority, command: 'anything' }, payload }), /command is not allowed/u);
+});
+
+test('native build environment import handles spaces and rejects failed initialization', { skip: process.platform !== 'win32' }, async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-build-environment-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const directory = path.join(root, 'Program Files', 'Build Tools');
+  await mkdir(directory, { recursive: true });
+  const dev = path.join(directory, 'VsDevCmd.bat');
+  const operations = createWindowsProductionOperations({ authority: createDefaultWindowsToolchainAuthority(), payload: await createWindowsGuestImagePayload() });
+  const prepare = operations['prepare-v1'];
+  const start = prepare.indexOf('$lines = @(');
+  const end = prepare.indexOf('foreach ($name', start);
+  assert.ok(start > 0 && end > start);
+  const script = `$ErrorActionPreference='Stop'\n$dev=[Console]::In.ReadToEnd()\n${prepare.slice(start, end)}\n@{ value = [string]($lines | Where-Object { $_.StartsWith('DB_BUILD_FIXTURE=') }) } | ConvertTo-Json -Compress`;
+  const request = { executable: 'powershell.exe', arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], input: dev, timeoutMs: 20_000, maxOutputBytes: 16 * 1024 };
+  await writeFile(dev, '@echo off\r\nset "DB_BUILD_FIXTURE=ready"\r\nexit /b 0\r\n');
+  const success = await invokeCommand(request);
+  assert.equal(success.exitCode, 0, success.stderr);
+  assert.deepEqual(JSON.parse(success.stdout), { value: 'DB_BUILD_FIXTURE=ready' });
+  await writeFile(dev, '@echo off\r\nexit /b 7\r\n');
+  const failure = await invokeCommand(request);
+  assert.notEqual(failure.exitCode, 0);
+  assert.match(failure.stderr, /native build environment initialization failed/u);
+  assert.equal(failure.stdout, '');
 });

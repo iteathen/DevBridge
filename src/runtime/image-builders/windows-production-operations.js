@@ -127,7 +127,8 @@ if ([string]::IsNullOrWhiteSpace([string]$buildPath)) { throw 'build tools did n
 $buildVersion = (& $vswhere -latest -products Microsoft.VisualStudio.Product.BuildTools -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion | Select-Object -First 1)
 if ([string]$buildVersion -ne [string]$buildAuthority.installedVersion) { throw 'installed native build suite version does not match construction authority' }
 $dev = Join-Path $buildPath 'Common7\Tools\VsDevCmd.bat'
-$lines = @(& $env:ComSpec /d /s /c ('""' + $dev + '" -no_logo -arch=x64 -host_arch=x64 && set"'))
+$lines = @(& $env:ComSpec /d /s /c ('call "' + $dev + '" -no_logo -arch=x64 -host_arch=x64 && set'))
+if ($LASTEXITCODE -ne 0) { throw 'native build environment initialization failed' }
 foreach ($name in @('Path', 'INCLUDE', 'LIB', 'LIBPATH', 'VCINSTALLDIR', 'VSINSTALLDIR', 'VCToolsInstallDir', 'WindowsSdkDir', 'WindowsSDKVersion', 'UCRTVersion', 'UniversalCRTSdkDir')) {
   $prefix = $name + '='
   $line = $lines | Where-Object { $_.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) } | Select-Object -Last 1
