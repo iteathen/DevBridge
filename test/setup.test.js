@@ -440,6 +440,37 @@ test('Windows-only selection observes only its local setup boundary and remains 
   assert.equal(fixture.calls.operationalConfiguration, 0);
 });
 
+test('Windows storage selection precedes construction and is refused outside the Windows profile', async () => {
+  const directory = path.join(os.tmpdir(), 'db-setup-selected-storage');
+  const linux = dependencies();
+  let selections = 0;
+  linux.deps.windowsStorageReconciler = async () => { selections += 1; };
+  const blocked = await runDevBridgeSetup({ home: path.join(os.tmpdir(), 'db-storage-linux'), windowsStorageLocation: directory }, linux.deps);
+  assert.equal(blocked.blocked, true);
+  assert.equal(selections, 0);
+  const fixture = dependencies({
+    profileSelection: {
+      protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 2, changed: false,
+      profiles: ['windows-development'], pendingProfiles: null, source: 'accepted',
+    },
+    windowsMedia: acceptedWindowsMedia(),
+    windowsConstruction: windowsPhysical('complete', { complete: true }),
+  });
+  const home = path.join(os.tmpdir(), 'db-storage-windows');
+  fixture.deps.windowsStorageReconciler = async (request) => {
+    assert.deepEqual(request, { stateDirectory: path.join(home, 'state'), location: directory });
+    assert.equal(fixture.calls.windowsConstruction, 0);
+    selections += 1;
+  };
+  const ready = await runDevBridgeSetup({ home, windowsStorageLocation: directory }, fixture.deps);
+  assert.equal(ready.blocked, false);
+  assert.equal(selections, 1);
+  fixture.deps.windowsStorageReconciler = async () => { throw new Error('directory is occupied'); };
+  const failed = await runDevBridgeSetup({ home, windowsStorageLocation: directory }, fixture.deps);
+  assert.equal(failed.blocked, true);
+  assert.match(failed.blocker, /storage selection failed: directory is occupied/u);
+});
+
 test('Windows-only selection reaches protected activation after exact image completion without Linux work', async () => {
   const fixture = dependencies({
     profileSelection: {

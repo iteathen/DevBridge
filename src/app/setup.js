@@ -44,6 +44,7 @@ import {
   SETUP_OPERATIONAL_CONFIGURATION_REQUEST_PROTOCOL,
 } from '../setup/operational-configuration.js';
 import { reconcileWindowsInstallMediaSetup } from './windows-install-media-setup.js';
+import { reconcileWindowsConstructionStorage } from './windows-construction-storage.js';
 import { reconcileWindowsProductionImageSetup } from './windows-production-image-setup.js';
 import { readEnvironmentProfileConfigurationRecord } from '../setup/environment-profile-configuration-record.js';
 import { createSetupProgress } from '../setup/setup-progress.js';
@@ -754,6 +755,7 @@ export async function runDevBridgeSetup({
   windowsMediaApproval = null,
   windowsDistribution = null,
   windowsActivation = null,
+  windowsStorageLocation = null,
   env = process.env,
   onProgress = null,
 } = {}, {
@@ -788,6 +790,7 @@ export async function runDevBridgeSetup({
   imageDistributionPolicyReconciler = reconcileSetupImageDistributionPolicy,
   windowsActivationPolicyReconciler = reconcileSetupWindowsActivationPolicy,
   windowsMediaReconciler = reconcileWindowsInstallMediaSetup,
+  windowsStorageReconciler = reconcileWindowsConstructionStorage,
   windowsConstructionReconciler = reconcileWindowsProductionImageSetup,
   profileSourceFactories = Object.freeze({
     [LINUX_PROFILE]: createUbuntuEnvironmentProfileSource,
@@ -849,12 +852,19 @@ export async function runDevBridgeSetup({
   const windowsRequested = hasProfile(profileSelection, WINDOWS_PROFILE);
   const plainProtectedApplyReentry = construct === false && requestedRepositories == null && profileChoice == null
     && retireConflict == null && windowsMediaLocation == null && windowsMediaApproval == null
-    && windowsDistribution == null && windowsActivation == null;
+    && windowsDistribution == null && windowsActivation == null && windowsStorageLocation == null;
   if (construct && (profileSelection.state !== 'accepted' || profileSelection.profiles.length === 0)) {
     return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: 'Physical image construction requires at least one accepted execution profile' });
   }
-  if ((windowsMediaLocation != null || windowsMediaApproval != null || windowsDistribution != null || windowsActivation != null) && !windowsRequested) {
+  if ((windowsMediaLocation != null || windowsMediaApproval != null || windowsDistribution != null || windowsActivation != null || windowsStorageLocation != null) && !windowsRequested) {
     return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: 'Windows setup options require the selected Windows execution profile' });
+  }
+  if (windowsStorageLocation != null) {
+    try {
+      await progress.run('windows-construction-storage', () => windowsStorageReconciler({ stateDirectory, location: windowsStorageLocation }));
+    } catch (error) {
+      return publicResult({ home: root, pathStatus: null, constructionRequested: construct, blocker: `Windows construction storage selection failed: ${error.message}` });
+    }
   }
 
   let pathStatus = null;

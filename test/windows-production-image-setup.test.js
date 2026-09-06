@@ -55,7 +55,9 @@ test('Windows production setup binds accepted media to one exact read-only canar
   const sourceLocation = path.join(os.tmpdir(), 'owned-Windows.iso');
   const payload = { protocol: 'devbridge/windows-guest-image-payload-v1', generation: 'guest-image-0123456789abcdef01234567', files: [] };
   const calls = [];
+  const storageDirectory = path.join(os.tmpdir(), 'owned-image-storage');
   const result = await reconcileWindowsProductionImageSetup(options(), {
+    storageResolver: async (request) => { assert.equal(request.stateDirectory, options().stateDirectory); return storageDirectory; },
     mediaResolver: async () => ({ location: sourceLocation, authority: mediaAuthority() }),
     payloadFactory: async () => payload,
     toolAuthorityFactory: createDefaultWindowsToolchainAuthority,
@@ -76,6 +78,7 @@ test('Windows production setup binds accepted media to one exact read-only canar
   assert.deepEqual(calls.map(([name]) => name), ['config', 'status']);
   const config = calls[0][1];
   assert.equal(config.sourceLocation, sourceLocation);
+  assert.equal(config.storageDirectory, storageDirectory);
   assert.equal(config.authority.media.media.sha256, 'a'.repeat(64));
   assert.equal(config.authority.tools.generation, 'windows-build-basics-20260828-v2');
   assert.equal(config.authority.payload.generation, payload.generation);

@@ -24,6 +24,7 @@ export function parseSetupCommandOptions(argv, {
   let windowsMediaClass = null;
   let windowsDistribution = null;
   let windowsActivation = null;
+  let windowsStorageLocation = null;
   let lifecycleAuthorityChild = false;
   let entryNoUpdate = false;
   const repositories = [];
@@ -46,7 +47,7 @@ export function parseSetupCommandOptions(argv, {
     }
     if (option === '--home' || option === '--repository' || option === '--track-ref' || option === '--retire-conflict' || option === '--profiles'
         || option === '--windows-media' || option === '--approve-windows-media' || option === '--windows-image-index' || option === '--windows-media-class'
-        || option === '--windows-distribution' || option === '--windows-activation') {
+        || option === '--windows-distribution' || option === '--windows-activation' || option === '--windows-storage') {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new PolicyError(`${option} requires a value`);
       if (option === '--home') {
@@ -70,6 +71,11 @@ export function parseSetupCommandOptions(argv, {
         const pathApi = platform === 'win32' ? path.win32 : path.posix;
         if (!pathApi.isAbsolute(value)) throw new PolicyError('--windows-media requires one absolute local ISO path');
         windowsMediaLocation = value;
+      } else if (option === '--windows-storage') {
+        if (windowsStorageLocation != null) throw new PolicyError('--windows-storage may be specified only once');
+        const pathApi = platform === 'win32' ? path.win32 : path.posix;
+        if (!pathApi.isAbsolute(value)) throw new PolicyError('--windows-storage requires an absolute local directory');
+        windowsStorageLocation = value;
       } else if (option === '--approve-windows-media') {
         if (windowsMediaCandidate != null) throw new PolicyError('--approve-windows-media may be specified only once');
         if (!/^candidate-[a-f0-9]{32}$/u.test(value)) throw new PolicyError('--approve-windows-media requires an exact candidate subject');
@@ -108,10 +114,10 @@ export function parseSetupCommandOptions(argv, {
   if (construct && ['none', 'defer'].includes(profileChoice)) {
     throw new PolicyError('--construct requires at least one selected execution profile');
   }
-  if ((windowsMediaLocation != null || approvalParts > 0 || windowsDistribution != null || windowsActivation != null) && ['linux', 'none', 'defer'].includes(profileChoice)) {
+  if ((windowsMediaLocation != null || approvalParts > 0 || windowsDistribution != null || windowsActivation != null || windowsStorageLocation != null) && ['linux', 'none', 'defer'].includes(profileChoice)) {
     throw new PolicyError('Windows setup options require the Windows execution profile');
   }
-  if (lifecycleAuthorityChild && (construct || trackRef != null || retireConflict != null || profileChoice != null || windowsMediaLocation != null || approvalParts > 0 || windowsDistribution != null || windowsActivation != null || repositories.length > 0)) {
+  if (lifecycleAuthorityChild && (construct || trackRef != null || retireConflict != null || profileChoice != null || windowsMediaLocation != null || approvalParts > 0 || windowsDistribution != null || windowsActivation != null || windowsStorageLocation != null || repositories.length > 0)) {
     throw new PolicyError('lifecycle-authority child accepts no setup capability arguments');
   }
   if (lifecycleAuthorityChild && home != null
@@ -135,6 +141,7 @@ export function parseSetupCommandOptions(argv, {
     }),
     windowsDistribution,
     windowsActivation,
+    windowsStorageLocation,
     repositories: Object.freeze(repositories),
     lifecycleAuthorityChild,
     entryNoUpdate,

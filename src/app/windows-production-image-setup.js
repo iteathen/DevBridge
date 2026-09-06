@@ -8,6 +8,7 @@ import {
 import { createDefaultWindowsToolchainAuthority } from '../setup/windows-toolchain-authority.js';
 import { WINDOWS_PRODUCTION_OUTPUT } from '../setup/windows-production-output.js';
 import { resolveWindowsInstallMediaSetup } from './windows-install-media-setup.js';
+import { reconcileWindowsConstructionStorage } from './windows-construction-storage.js';
 
 export const WINDOWS_PRODUCTION_IMAGE_SETUP_STATUS_PROTOCOL = 'devbridge/windows-production-image-setup-status-v1';
 
@@ -64,6 +65,7 @@ export async function reconcileWindowsProductionImageSetup({
   toolAuthorityFactory = createDefaultWindowsToolchainAuthority,
   authorityFactory = productionAuthority,
   canaryFactory = createWindowsProductionImagePhysicalCanary,
+  storageResolver = reconcileWindowsConstructionStorage,
 } = {}) {
   const selectedHome = absolute(home, 'production image setup home');
   const selectedState = absolute(stateDirectory, 'production image setup state directory');
@@ -74,6 +76,7 @@ export async function reconcileWindowsProductionImageSetup({
   requireFunction(toolAuthorityFactory, 'production image setup tool authority factory');
   requireFunction(authorityFactory, 'production image setup authority factory');
   requireFunction(canaryFactory, 'production image setup canary factory');
+  requireFunction(storageResolver, 'production image setup storage resolver');
   if (platform !== 'win32') return publicStatus('platform-unavailable');
 
   try {
@@ -83,10 +86,12 @@ export async function reconcileWindowsProductionImageSetup({
       throw new Error('accepted media resolution is invalid');
     }
     const payload = await payloadFactory();
+    const storageDirectory = await storageResolver({ stateDirectory: selectedState });
     const authority = authorityFactory({ media: resolved.authority, tools: toolAuthorityFactory(), payload });
     const canary = canaryFactory({
       protocol: WINDOWS_PRODUCTION_IMAGE_PHYSICAL_CANARY_CONFIG_PROTOCOL,
       stateDirectory: selectedState,
+      ...(storageDirectory == null ? {} : { storageDirectory }),
       sourceLocation: path.resolve(resolved.location),
       authority,
       resources: RESOURCES,
