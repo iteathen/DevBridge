@@ -20,6 +20,8 @@ import { loadOrCreateLocalIdentity, readLocalIdentity } from '../runtime/local-i
 import { HyperVEnvironmentBootstrap } from '../runtime/providers/hyperv-environment-bootstrap.js';
 import { HyperVEnvironmentBridge } from '../runtime/providers/hyperv-environment-bridge.js';
 import { createHyperVImageConstruction } from '../runtime/providers/hyperv-image-construction.js';
+import { createHyperVInstallerEvidence } from '../runtime/providers/hyperv-installer-evidence.js';
+import { inspectWindowsInstallerEvidenceRegistration } from '../setup/windows-installer-evidence-prerequisite.js';
 import { createWindowsImapiNoCloudSeedWriter } from '../runtime/providers/windows-imapi-nocloud-seed.js';
 import { createWindowsManagedConstructionNetwork } from '../runtime/providers/windows-managed-construction-network.js';
 import { createWindowsProductionImageCanaryPreflight } from '../runtime/providers/windows-production-image-canary-preflight.js';
@@ -38,7 +40,7 @@ import { createPreparationContract } from './ubuntu-production-image-physical-ca
 import { createProgressCoordinator } from './ubuntu-production-image-physical-canary/progress-coordinator.js';
 import { createInstallationEvidenceProjection } from './ubuntu-production-image-physical-canary/installation-evidence-projection.js';
 import { createInstallationEvidenceRecovery } from './ubuntu-production-image-physical-canary/installation-evidence-recovery.js';
-import { checkpointConstructionInstallEvidence, inspectConstructionInstallEvidence } from '../runtime/construction-install-evidence.js';
+import { checkpointConstructionInstallEvidence, inspectConstructionInstallEvidence, INSTALLER_EVIDENCE_PROTOCOL } from '../runtime/construction-install-evidence.js';
 import { captureFailureDiagnostics } from '../run/failure-diagnostics.js';
 import { sanitizeDiagnosticText } from '../security/diagnostic-redaction.js';
 
@@ -210,12 +212,14 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
   const localIdentity = await loadOrCreateLocalIdentity({ directory: paths.foundationRoot });
   const foundation = await createEnvironmentFoundation({ stateDirectory: config.stateDirectory, platform: 'win32', invoke });
   const constructionNetwork = createWindowsManagedConstructionNetwork({ invoke });
+  const installerEvidence = createHyperVInstallerEvidence({ identity: localIdentity, invoke });
   const construction = createHyperVImageConstruction({
     directory: paths.constructionDirectory,
     sourceRoot: paths.sourceRoot,
     outputRoot: paths.outputRoot,
     identity: localIdentity,
     invoke,
+    installerEvidence,
   });
   const accessMaterial = createSshAccessMaterial({ directory: paths.accessRoot, invoke });
 
@@ -280,6 +284,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
         packageSet: async () => authority.packages,
         services: authority.qualification.services ?? [],
         capabilities: authority.qualification.capabilities ?? [],
+        installerEvidencePort: installerEvidence.guestPort,
       });
       const media = createUbuntuAutoinstallMediaPreparer({
         recipeLookup: async (reference) => {
@@ -290,6 +295,8 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
         },
         seedFactory: async ({ recipeGeneration, sourceIdentity }) => {
           if (recipeGeneration !== authority.recipe.generation || sourceIdentity.sha256 !== authority.source.media.sha256) throw new Error('autoinstall seed basis changed');
+          const registration = await inspectWindowsInstallerEvidenceRegistration({ identity: localIdentity, invoke });
+          if (registration.state !== 'ready') throw new Error('installer diagnostic transport prerequisite is unavailable; setup must establish its exact registration before construction');
           await foundation.ensureStorage();
           selectedNetwork = await constructionNetwork.require();
           preparedAccess = await accessMaterial.prepare(subject);
@@ -314,6 +321,8 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
         || JSON.stringify(prepared.evidence?.seed?.services) !== JSON.stringify(authority.qualification.services ?? [])
         || JSON.stringify(prepared.evidence?.seed?.capabilities) !== JSON.stringify(authority.qualification.capabilities ?? [])
         || prepared.evidence?.seed?.networkMethod !== selectedNetwork.addressing.method
+        || prepared.evidence?.seed?.installerEvidence?.protocol !== INSTALLER_EVIDENCE_PROTOCOL
+        || prepared.evidence?.seed?.installerEvidence?.guestPort !== installerEvidence.guestPort
       ) throw new Error('prepared seed evidence does not match construction authority');
       await rm(paths.releaseDirectory, { recursive: true, force: true });
       const baseAccess = preparedAccess.connection;

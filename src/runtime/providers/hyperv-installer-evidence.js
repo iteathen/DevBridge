@@ -108,13 +108,19 @@ $bytes = [DevBridgeInstallerSocket]::Read([guid]$data.vmId, [guid]$data.serviceI
 @{ available = $true; bytesBase64 = [Convert]::ToBase64String($bytes) } | ConvertTo-Json -Compress
 `;
 
-export function createHyperVInstallerEvidence({ identity, invoke }) {
-  if (typeof identity !== 'string' || !TOKEN.test(identity) || typeof invoke !== 'function') throw new TypeError('installer evidence provider ports are invalid');
+export function hyperVInstallerEvidenceService(identity) {
+  if (typeof identity !== 'string' || !TOKEN.test(identity)) throw new TypeError('installer evidence installation identity is invalid');
   // A service belongs to this installation. Conflicting registry ownership is
   // rejected, not silently shared. The port excludes reserved/wildcard values.
   const suffix = createHash('sha256').update(`devbridge:installer-evidence-v1:${identity}`).digest('hex').slice(0, 7);
   const guestPort = 0x40000000 + Number.parseInt(suffix, 16);
   const serviceId = `${guestPort.toString(16).padStart(8, '0')}-facb-11e6-bd58-64006a7986d3`;
+  return Object.freeze({ owner: identity, guestPort, serviceId, elementName: 'DevBridge installer evidence v1' });
+}
+
+export function createHyperVInstallerEvidence({ identity, invoke }) {
+  if (typeof invoke !== 'function') throw new TypeError('installer evidence provider ports are invalid');
+  const { guestPort, serviceId } = hyperVInstallerEvidenceService(identity);
   const read = async ({ binding, attachment, sequence = null }, diagnostics) => {
     if (!binding || !attachment || !GUID.test(binding.providerInstance) || SPECIAL_VM_IDS.has(binding.providerInstance)
         || attachment.providerIdentity !== binding.providerInstance

@@ -1073,7 +1073,7 @@ export async function runDevBridgeSetup({
   }
   if (linuxRequested) {
   try {
-    prerequisites = await progress.run('prerequisites', () => prerequisiteReconciler({ platform, invoke, fetchImpl, environment: env }));
+    prerequisites = await progress.run('prerequisites', () => prerequisiteReconciler({ platform, invoke, fetchImpl, environment: env, stateDirectory, installerEvidenceRequired: linuxRequested }));
   } catch (error) {
     return publicResult({
       home: root,

@@ -302,6 +302,44 @@ test('invalid installer patch fails before provider network or access allocation
   }
 });
 
+test('missing installer transport stops the production composition before network, access or VM allocation', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-registration-'));
+  try {
+    const data = await fixture(root);
+    const media = Buffer.from('install ---\ninstall ---\n');
+    const sha256 = createHash('sha256').update(media).digest('hex');
+    data.config.authority.source.media.bytes = media.length;
+    data.config.authority.source.media.sha256 = sha256;
+    data.config.authority.recipe.sourceSha256 = sha256;
+    await mkdir(path.dirname(data.config.keyring), { recursive: true });
+    await writeFile(data.config.keyring, 'test-keyring');
+    const fingerprint = data.config.authority.source.checksums.signerFingerprint;
+    const calls = [];
+    const canary = createUbuntuProductionImagePhysicalCanary(data.config, {
+      platform: 'win32', preflight: readyPreflight, payloadFactory: async () => data.payload,
+      fetchImpl: async url => {
+        const body = String(url).endsWith('/SHA256SUMS') ? Buffer.from(`${sha256}  ${data.config.authority.source.media.name}\n`)
+          : String(url).endsWith('/SHA256SUMS.gpg') ? Buffer.from('test-signature') : media;
+        return new Response(body, { status: 200, headers: { 'content-length': String(body.length) } });
+      },
+      invoke: async request => {
+        if (String(request.executable).toLowerCase().includes('gpgv')) {
+          calls.push('signature');
+          return { exitCode: 0, stdout: `[GNUPG:] VALIDSIG ${fingerprint} a b c d e f g h ${fingerprint}\n` };
+        }
+        assert.equal(request.executable, 'powershell.exe');
+        assert.equal(JSON.parse(request.input).action, 'inspect');
+        calls.push('registration-inspection');
+        return { exitCode: 0, stdout: JSON.stringify({ state: 'absent', elevated: false, changed: false }) };
+      },
+    });
+    await assert.rejects(canary.run(), /installer diagnostic transport prerequisite is unavailable/u);
+    assert.deepEqual(calls, ['signature', 'registration-inspection']);
+    assert.equal(await absent(path.join(data.config.stateDirectory, 'environment-foundation', 'bootstrap', 'attachment')), true);
+    assert.equal(await absent(path.join(data.config.stateDirectory, 'production-image-canary', 'access')), true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('physical canary run returns a bounded next observation while installation owns the frontier', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-install-'));
   try {

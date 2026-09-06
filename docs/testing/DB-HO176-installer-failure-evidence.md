@@ -116,8 +116,38 @@ The exact raw and normalized files remain unsigned operator evidence. This
 UI/network export advances #489; it does not satisfy automatic offline #493
 collection, release admission, solving, signing or Hello World acceptance.
 
-Setup ordering needs further assessment before composition: physical image
-construction currently precedes protected lifecycle-authority apply. Do not add
-an ad-hoc administrative registration, silently request UAC, or treat a WSL-specific
-registration exception as ordinary Hyper-V permission. The retained fixture has
-not been modified and no native socket exchange has been proved.
+## Owned prerequisite and production composition
+
+The socket/seed candidate3c6f91de193282c350d6ec4ed6d7d383602e519f passed all
+four [CI jobs](https://github.com/iteathen/DevBridge/actions/runs/34013109851),
+including actual Linux systemd unit verification and both shell tests. Its local
+preflight passed3 artifacts,306 syntax files,2 JSON files and243 targeted files.
+
+Further ownership assessment found the existing Windows prerequisite reconciler
+already runs before construction and establishes fixed OS prerequisites only
+when invoked with an administrator token. The new Windows-specific child uses
+that same boundary for the exact per-installation Hyper-V service registration.
+Ordinary setup only observes and reports the missing prerequisite. It never
+requests elevation. Conflicting or incomplete registry ownership is not adopted
+or replaced; establishment uses no Force, and independent readback is mandatory.
+An ambiguous effect stays unavailable until re-entry re-observes the native key.
+No generic protected-service command or second state registry was added.
+
+The selected Linux profile now requires this prerequisite. The physical canary
+composes the read-only collector and its exact port into the seed, and checks
+registration after media/patch validation but before network/access/VM allocation.
+Prepared seed evidence must carry the expected protocol and port. Recipe v15 and
+output v11 distinguish the new behavior from retained v14/v10 subjects. Existing
+retained VMs and seeds are never retrofitted by this source change.
+
+Eight prerequisite/reader tests passed, including Windows parsing of the actual
+PowerShell source without executing registry operations. Composition tests passed
+44/44. The existing invalid-media test first caught an unnecessary earlier host
+inspection; the check now follows patch validation, preserving that original
+allocation boundary. The added production-composition regression proves absent
+registration prevents network/access/VM allocation, and its suite plus preflight
+contracts passed24/24. Local Node22 preflight passed3 artifacts,307 syntax files,
+2 JSON files and244 targeted files in72.2seconds. Hosted qualification of this
+expanded prerequisite composition remains pending. No host registration,
+elevation, native socket exchange, new construction or automatic GitHub
+installer-failure delivery is claimed.

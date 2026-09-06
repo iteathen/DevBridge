@@ -1,4 +1,5 @@
 import { reconcileWindowsSignatureVerifier } from './windows-signature-verifier-prerequisite.js';
+import { reconcileWindowsInstallerEvidencePrerequisite } from './windows-installer-evidence-prerequisite.js';
 
 const PROTOCOL = 'devbridge/setup-prerequisites-v1';
 const OPENSSH_CLIENT_CAPABILITY = 'OpenSSH.Client~~~~0.0.1.0';
@@ -162,8 +163,11 @@ export async function reconcileSetupPrerequisites({
   invoke,
   fetchImpl = globalThis.fetch,
   environment = process.env,
+  stateDirectory = null,
+  installerEvidenceRequired = false,
 } = {}, {
   windowsSignatureVerifier = reconcileWindowsSignatureVerifier,
+  windowsInstallerEvidence = reconcileWindowsInstallerEvidencePrerequisite,
 } = {}) {
   if (typeof platform !== 'string' || platform.length === 0) {
     throw new TypeError('setup prerequisite platform is invalid');
@@ -171,6 +175,7 @@ export async function reconcileSetupPrerequisites({
   if (typeof invoke !== 'function') {
     throw new TypeError('setup prerequisite invocation contract is invalid');
   }
+  if (typeof installerEvidenceRequired !== 'boolean' || typeof windowsInstallerEvidence !== 'function') throw new TypeError('setup installer evidence prerequisite is invalid');
 
   let signatureChanged = false;
   let signatureVerifierExecutable;
@@ -221,6 +226,17 @@ export async function reconcileSetupPrerequisites({
   }
 
   const local = { signatureVerifierExecutable };
+  const windowsReady = async changed => {
+    if (!installerEvidenceRequired) return result({ platform, ready: true, changed, capabilities: { gpgv: true, opensshClient: true }, local });
+    let evidence;
+    try { evidence = await windowsInstallerEvidence({ stateDirectory, invoke, environment }); }
+    catch { evidence = { ready: false, blocker: 'Installer diagnostic transport prerequisite could not be observed.' }; }
+    return result({
+      platform, ready: evidence?.ready === true, changed: changed || evidence?.changed === true,
+      blocker: evidence?.ready === true ? null : evidence?.blocker ?? 'Installer diagnostic transport prerequisite is unavailable.',
+      capabilities: { gpgv: true, opensshClient: true, installerEvidence: evidence?.ready === true }, local,
+    });
+  };
 
   if (platform !== 'win32') {
     return result({
@@ -246,13 +262,7 @@ export async function reconcileSetupPrerequisites({
   }
 
   if (inspected.ssh && inspected.sshKeygen) {
-    return result({
-      platform,
-      ready: true,
-      changed: signatureChanged,
-      capabilities: { gpgv: true, opensshClient: true },
-      local,
-    });
+    return windowsReady(signatureChanged);
   }
 
   if (!inspected.elevated) {
@@ -333,13 +343,7 @@ export async function reconcileSetupPrerequisites({
     });
   }
 
-  return result({
-    platform,
-    ready: true,
-    changed: true,
-    capabilities: { gpgv: true, opensshClient: true },
-    local,
-  });
+  return windowsReady(true);
 }
 
 export { PROTOCOL as SETUP_PREREQUISITES_PROTOCOL };
