@@ -89,7 +89,7 @@ test('Ubuntu installer primary and security sources use the same frozen archive 
   assert.equal(userData.split(`"--snapshot", "${snapshot}"`).length - 1, 3);
 });
 
-test('native APT resolves generated sources to the frozen archive without redirecting installer media', { skip: process.platform !== 'linux' }, async t => {
+test('native APT selects frozen package versions without redirecting installer media', { skip: process.platform !== 'linux' }, async t => {
   const release = await readFile('/etc/os-release', 'utf8');
   if (!/^ID=ubuntu$/mu.test(release) || !/^VERSION_ID="(?:2[4-9]|[3-9]\d)\./mu.test(release)) {
     t.skip('requires Ubuntu 24.04 or newer APT snapshot support'); return;
@@ -106,24 +106,41 @@ test('native APT resolves generated sources to the frozen archive without redire
     const configuration = path.join(root, 'apt.conf');
     await mkdir(path.join(root, 'lists', 'partial'), { recursive: true });
     await mkdir(path.join(root, 'sourceparts'));
+    await writeFile(path.join(root, 'status'), '');
     await writeFile(configuration, 'Dir::Etc::main "/dev/null";\nDir::Etc::parts "/dev/null";\n');
     await writeFile(sources, `${template}\nTypes: deb\nURIs: file:/cdrom\nSuites: resolute\nComponents: main\n`);
     // URI projection performs no fetch, signature bypass, or package install.
     // All state/configuration belongs to this disposable test directory.
-    const result = spawnSync('/usr/bin/apt-get', [
+    const aptOptions = [
       '-o', `Dir=${root}`, '-o', `Dir::Etc::sourcelist=${sources}`,
       '-o', `Dir::Etc::sourceparts=${path.join(root, 'sourceparts')}`,
       '-o', `Dir::State::lists=${path.join(root, 'lists')}`,
+      '-o', `Dir::State::status=${path.join(root, 'status')}`,
+      '-o', 'Dir::Cache::pkgcache=', '-o', 'Dir::Cache::srcpkgcache=',
       '-o', 'APT::Architecture=amd64', '-o', 'Debug::NoLocking=1',
-      '--print-uris', 'update',
-    ], { env: { PATH: '/usr/bin:/bin', LANG: 'C', APT_CONFIG: configuration }, encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024 });
+    ];
+    const invocation = { env: { PATH: '/usr/bin:/bin', LANG: 'C', APT_CONFIG: configuration }, encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024 };
+    const result = spawnSync('/usr/bin/apt-get', [...aptOptions, '--print-uris', 'update'], invocation);
     assert.ifError(result.error);
     assert.equal(result.status, 0, result.stderr);
     for (const suite of ['resolute', 'resolute-updates', 'resolute-security']) {
       assert.ok(result.stdout.includes(`snapshot.ubuntu.com/ubuntu/${snapshot}/dists/${suite}/InRelease`), result.stdout);
     }
     assert.match(result.stdout, /file:\/cdrom\/dists\/resolute\/InRelease/u);
-    assert.doesNotMatch(result.stdout, /(?:archive|security)\.ubuntu\.com\/ubuntu\/dists\//u);
+    // APT update also refreshes live indexes. Prove its default package
+    // selection uses the fixed snapshot even if a newer live version exists.
+    for (const [prefix, version] of [
+      [`snapshot.ubuntu.com_ubuntu_${snapshot}`, '1.0'],
+      ['archive.ubuntu.com_ubuntu', '2.0'],
+    ]) {
+      await writeFile(path.join(root, 'lists', `${prefix}_dists_resolute_main_binary-amd64_Packages`),
+        `Package: devbridge-snapshot-fixture\nVersion: ${version}\nArchitecture: amd64\nDescription: isolated APT selection fixture\n\n`);
+    }
+    const policy = spawnSync('/usr/bin/apt-cache', [...aptOptions, 'policy', 'devbridge-snapshot-fixture'], invocation);
+    assert.ifError(policy.error);
+    assert.equal(policy.status, 0, policy.stderr);
+    assert.match(policy.stdout, /Candidate: 1\.0\n/u);
+    assert.doesNotMatch(policy.stdout, /2\.0/u);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

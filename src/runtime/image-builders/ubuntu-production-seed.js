@@ -27,7 +27,7 @@ function privateKey(value) { const text = String(value ?? ''); if (!text.startsW
 function packageVersion(value, name) { if (typeof value !== 'string' || !PACKAGE_VERSION.test(value) || !/\d/u.test(value) || MUTABLE_VERSION.test(value)) throw new TypeError(`${name} is invalid`); return value; }
 
 function installerAptLines(snapshot) {
-  // Per-repository snapshots cover installer-owned package additions as well
+  // Per-source snapshots cover installer-owned package additions as well
   // as our later commands, without setting a global APT::Snapshot override.
   const sources = [
     'Types: deb', 'URIs: $PRIMARY', 'Suites: $RELEASE $RELEASE-updates',
