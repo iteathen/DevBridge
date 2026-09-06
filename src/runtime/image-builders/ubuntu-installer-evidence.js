@@ -9,6 +9,9 @@ const SHELL = '/bin/sh';
 // fixed selector, never a command, path, executable or publication destination.
 const SCRIPT = String.raw`#!/bin/sh
 set -eu
+command_path_set=\${PATH+x}
+command_path=\${PATH-}
+command_umask=$(umask)
 umask 077
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -88,7 +91,13 @@ case "\${1-}" in
     load_record
     [ "$phase" != failed ] || exit 1
     record installing "$selected_stage" null
-    if "$@"; then
+    # Only the wrapped child inherits the caller's tool lookup and file mask.
+    # Bookkeeping and socket reads keep the fixed diagnostic environment.
+    if (
+      if [ "$command_path_set" = x ]; then PATH=$command_path; export PATH; else unset PATH; fi
+      umask "$command_umask"
+      "$@"
+    ); then
       exit 0
     else
       command_exit=$?
