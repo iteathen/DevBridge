@@ -1,5 +1,12 @@
 # HO176 installer failure evidence — work in progress
 
+Current source supersedes the intermediate composition-pending checkpoints below:
+PR501 head ea6e5da passed all four jobs in CI34013618479 with Ubuntu seed
+activation, the exact owned Windows prerequisite and physical adapter composition.
+Its native probe observed missing registration; no successful native socket
+exchange or originating provisioning-task delivery is claimed. HO182 now extends
+the same run/status owners with bounded expanded evidence, described below.
+
 The retained Ubuntu installation failed with APT exit 100 while Hyper-V still
 reported Running and its disk continued to grow. This change supplies a bounded
 failure-evidence connection to the existing construction ledger and consumers.
@@ -151,3 +158,33 @@ contracts passed24/24. Local Node22 preflight passed3 artifacts,307 syntax files
 expanded prerequisite composition remains pending. No host registration,
 elevation, native socket exchange, new construction or automatic GitHub
 installer-failure delivery is claimed.
+
+## HO182: bounded expanded status evidence
+
+The collector's16KiB stream could contain an earlier useful failure that the
+run's8KB compact tail discarded. Four new regressions first reproduced that
+loss. captureFailureDiagnostics now preserves the compact fields and a redacted
+16KiB-per-stream expansion when additional collected text is available. The
+existing run record and status intent persist it before GitHub delivery.
+
+The same status comment supplies the expansion automatically in a fixed details
+section, under the task repository's access policy. Its explicit retention lasts
+until the comment is updated/removed or the repository is removed. There is no
+second publisher, gist, attachment store or delivery registry. The existing
+comment budget reserves space for exact identity/context and distributes its
+remaining diagnostic budget across streams. If rendering must omit text, each
+stream retains its beginning and end with an explicit intermediate omission.
+Collected-output truncation remains distinct from this publication bound.
+
+All guest text remains in indented code. Review found an existing carriage-return
+line-break escape in both diagnostic and summary rendering; two additional
+regressions first failed, then passed after all three standard line endings were
+handled. New tests also cover Unicode/newline floods at4096/48000-byte comment
+budgets, redaction before both retention bounds, and ambiguous POST/outage/restart
+without duplicate comments. Focused reporting/recovery tests passed32/32. An
+initial preflight passed3artifacts307syntax2JSON244targeted before the carriage
+correction; final preflight and exact hosted qualification follow this checkpoint.
+These are source/reporting tests, not native installation or task-provisioning
+correlation proof. No Python or canonical/native mutation was used.
+
+Final HO182 Node22 preflight passed3 standalone artifacts,307 syntax files,2 JSON files and244 targeted test files after the carriage correction (71.2 seconds for targeted tests). Hosted and live expanded-comment qualification remain pending at this source checkpoint.

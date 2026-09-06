@@ -56,6 +56,57 @@ test('ambiguous initial POST is reconciled after reporter restart without duplic
   assert.deepEqual(await f.create().pending(), []);
 });
 
+test('expanded early failure evidence survives ambiguous delivery and restart in the same task comment', async () => {
+  const f = fixture();
+  const diagnostics = captureFailureDiagnostics({ stage: 'apt-install', attempt: 4, secretValues: ['fixture-secret-value'], result: {
+    exitCode: 100,
+    stderr: `EARLY_DEPENDENCY_CAUSE fixture-secret-value\n${'bounded compiler dependency detail\n'.repeat(420)}FINAL_FAILURE`,
+  } });
+  f.loseNextPost();
+  await assert.rejects(f.create().publish(request({ diagnostics })), /response lost/);
+  assert.equal(f.comments.length, 1);
+  assert.match(f.comments[0].body, /EARLY_DEPENDENCY_CAUSE/);
+  assert.match(f.comments[0].body, /FINAL_FAILURE/);
+  assert.match(f.comments[0].body, /Expanded diagnostic evidence/);
+  assert.ok(Buffer.byteLength(f.comments[0].body) <= 48_000);
+  assert.doesNotMatch(JSON.stringify([...f.stateStore.records]), /fixture-secret-value/);
+  f.outage(true);
+  await assert.rejects(f.create().reconcile(request()), /unavailable/);
+  f.outage(false);
+  assert.equal((await f.create().reconcile(request())).published, true);
+  assert.equal(f.comments.length, 1);
+  assert.equal(f.calls.filter(entry => entry.method === 'POST' && entry.options.mutation !== false).length, 1);
+  assert.deepEqual(await f.create().pending(), []);
+});
+
+test('expanded output floods cannot exceed a configured comment budget or suppress terminal identity and either stream', async () => {
+  for (const maxCommentBytes of [4096, 48_000]) {
+    const f = fixture();
+    const diagnostics = captureFailureDiagnostics({ stage: 'é'.repeat(120), attempt: 3, operationId: 'é'.repeat(120), result: {
+      exitCode: 100, stdout: `STDOUT_FIRST\n${'\n'.repeat(12_000)}STDOUT_LAST`,
+      stderr: `STDERR_FIRST\n${'\n'.repeat(12_000)}STDERR_LAST`,
+    } });
+    const capsule = { protocol: 'devbridge/context-v1', unknownContext: 'é'.repeat(60_000) };
+    await f.create({ maxCommentBytes }).publish(request({ capsule, diagnostics }));
+    const body = f.comments[0].body;
+    assert.ok(Buffer.byteLength(body) <= maxCommentBytes);
+    assert.match(body, /run=pp-7-test revision=aaaa/);
+    assert.match(body, /Exit status: 100/);
+    assert.match(body, /STDOUT_FIRST/);
+    assert.match(body, /STDOUT_LAST/);
+    assert.match(body, /STDERR_FIRST/);
+    assert.match(body, /STDERR_LAST/);
+    assert.doesNotMatch(body, /\uFFFD/u);
+  }
+});
+
+test('carriage-return-only error summaries cannot escape their code indentation', async () => {
+  const f = fixture();
+  await f.create().publish(request({ summary: 'failure\r\r@someone\r<script>markup' }));
+  assert.doesNotMatch(f.comments[0].body, /\r/u);
+  assert.match(f.comments[0].body, /\n    @someone\n    <script>/);
+});
+
 test('terminal intent survives outage and supersedes an ambiguous progress creation', async () => {
   const f = fixture();
   f.loseNextPost();
