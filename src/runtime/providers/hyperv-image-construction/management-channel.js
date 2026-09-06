@@ -32,14 +32,16 @@ function Get-DevBridgeExpectedMedia {
   if ($null -ne $data.dataPath) { [pscustomobject]@{ Location = 3; Path = [string]$data.dataPath } }
 }
 function Assert-DevBridgeMediaAttachments {
-  param([object[]]$Drives, [switch]$Complete)
+  param([object[]]$Drives, [switch]$Complete, [switch]$AllowEmpty)
   $expected = @(Get-DevBridgeExpectedMedia)
   $seen = @{}
   foreach ($drive in $Drives) {
     $slot = [int]$drive.ControllerLocation
     $matches = @($expected | Where-Object { $_.Location -eq $slot })
     if ([int]$drive.ControllerNumber -ne 0 -or $matches.Count -ne 1 -or $seen.ContainsKey($slot)) { throw 'construction media attachment identity is incompatible' }
-    if (-not [StringComparer]::OrdinalIgnoreCase.Equals([IO.Path]::GetFullPath([string]$drive.Path), [IO.Path]::GetFullPath([string]$matches[0].Path))) { throw 'construction media attachment path changed' }
+    if ([string]::IsNullOrEmpty([string]$drive.Path)) {
+      if (-not $AllowEmpty) { throw 'construction media attachment is empty' }
+    } elseif (-not [StringComparer]::OrdinalIgnoreCase.Equals([IO.Path]::GetFullPath([string]$drive.Path), [IO.Path]::GetFullPath([string]$matches[0].Path))) { throw 'construction media attachment path changed' }
     $seen[$slot] = $true
   }
   if ($Complete -and $Drives.Count -ne $expected.Count) { throw 'construction media attachment set is incomplete' }
@@ -289,7 +291,9 @@ if ([string]$item.State -ne 'Off') { throw 'installer must finish and power off 
 $hard = @(Get-VMHardDiskDrive -VMName ([string]$data.name) -ErrorAction Stop)
 if ($hard.Count -ne 1 -or [IO.Path]::GetFullPath([string]$hard[0].Path) -ne [IO.Path]::GetFullPath([string]$data.diskPath)) { throw 'construction disk attachment does not match' }
 $dvd = @(Get-VMDvdDrive -VMName ([string]$data.name) -ErrorAction Stop)
-Assert-DevBridgeMediaAttachments -Drives $dvd
+# The installer may eject its disc before powering off. Empty owned slots are
+# safe to detach here; preparation and installation still require exact media.
+Assert-DevBridgeMediaAttachments -Drives $dvd -AllowEmpty
 $dvd | Remove-VMDvdDrive -ErrorAction Stop
 if (@(Get-VMDvdDrive -VMName ([string]$data.name) -ErrorAction Stop).Count -ne 0) { throw 'construction media remains attached after detachment' }
 Set-VMFirmware -VMName ([string]$data.name) -FirstBootDevice $hard[0] -ErrorAction Stop
