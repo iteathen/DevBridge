@@ -26,6 +26,8 @@ test('Windows unattended seed binds exact image selection and reaches one-time A
   assert.match(answer, /<Type>MSR<\/Type>/u);
   assert.match(answer, /<Mode>Audit<\/Mode>/u);
   assert.match(answer, /<WillShowUI>Never<\/WillShowUI>/u);
+  assert.match(answer, /<ProductKey><WillShowUI>Never<\/WillShowUI><\/ProductKey>/u);
+  assert.doesNotMatch(answer, /<ProductKey>\s*<Key>|[A-Z0-9]{5}(?:-[A-Z0-9]{5}){4}/u);
   assert.match(answer, /Get-Volume -FileSystemLabel &apos;DB_SETUP&apos;/u);
   assert.match(answer, /A&lt;&amp;&quot;strong temporary secret 42!/u);
   assert.match(prepare, /shutdown\.exe' -ArgumentList '\/s', '\/t', '10', '\/f'/u);

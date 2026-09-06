@@ -4,7 +4,7 @@ export const WINDOWS_UNATTENDED_SEED_PROTOCOL = 'devbridge/windows-unattended-se
 
 const SUBJECT = /^subject-[a-f0-9]{32}$/u;
 const LANGUAGE = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}$/u;
-export const WINDOWS_UNATTENDED_RECIPE_GENERATION = 'audit-handoff-v2';
+export const WINDOWS_UNATTENDED_RECIPE_GENERATION = 'audit-handoff-v3';
 const GENERATION = WINDOWS_UNATTENDED_RECIPE_GENERATION;
 
 function onlyKeys(value, allowed, name) {
@@ -83,7 +83,7 @@ function answerFile({ image, access }) {
         <WillShowUI>Never</WillShowUI>
       </DiskConfiguration>
       <ImageInstall><OSImage><InstallFrom><MetaData wcm:action="add"><Key>/IMAGE/INDEX</Key><Value>${image.index}</Value></MetaData></InstallFrom><InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo><InstallToAvailablePartition>false</InstallToAvailablePartition><WillShowUI>Never</WillShowUI></OSImage></ImageInstall>
-      <UserData><AcceptEula>true</AcceptEula><FullName>Local Operator</FullName><Organization>Local Operator</Organization></UserData>
+      <UserData><AcceptEula>true</AcceptEula><FullName>Local Operator</FullName><Organization>Local Operator</Organization><ProductKey><WillShowUI>Never</WillShowUI></ProductKey></UserData>
       <DynamicUpdate><Enable>false</Enable><WillShowUI>Never</WillShowUI></DynamicUpdate>
     </component>
   </settings>
