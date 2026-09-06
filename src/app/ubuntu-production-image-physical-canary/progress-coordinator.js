@@ -33,6 +33,14 @@ export function createProgressCoordinator({ maximumAdvances, measureReadiness, m
 
       if (current.phase === 'running') {
         const observed = await observeProgress();
+        const failure = observed.installationEvidence?.failure;
+        if (failure != null) {
+          const status = failure.exitCode == null ? 'unknown exit status' : `exit ${failure.exitCode}`;
+          return present(current, {
+            state: 'blocked', reason: `installation failed during ${failure.stage} (${status})`,
+            liveness: observed.liveness ?? null, installationEvidence: observed.installationEvidence,
+          });
+        }
         if (observed.state === 'running' && observed.mediaCount > 0) {
           const classification = observed.liveness?.classification ?? null;
           let diagnostics = null;
@@ -44,7 +52,7 @@ export function createProgressCoordinator({ maximumAdvances, measureReadiness, m
             }
           }
           if (classification === 'stalled' || classification === 'overdue') {
-            return present(current, { state: 'blocked', reason: messages.progressBlocked(classification), liveness: observed.liveness, diagnostics });
+            return present(current, { state: 'blocked', reason: messages.progressBlocked(classification), liveness: observed.liveness, diagnostics, installationEvidence: observed.installationEvidence ?? null });
           }
           const reason = classification === 'progressing'
             ? messages.progressing
@@ -53,7 +61,7 @@ export function createProgressCoordinator({ maximumAdvances, measureReadiness, m
               : observed.liveness
                 ? messages.progressPending
                 : messages.progressUnavailable;
-          return present(current, { state: 'waiting', reason, liveness: observed.liveness ?? null, diagnostics });
+          return present(current, { state: 'waiting', reason, liveness: observed.liveness ?? null, diagnostics, installationEvidence: observed.installationEvidence ?? null });
         }
         if (observed.state !== 'off' && !(observed.state === 'running' && observed.mediaCount === 0)) return present(current, { state: 'waiting', reason: messages.lifecyclePending(observed.state) });
       }

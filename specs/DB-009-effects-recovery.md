@@ -82,7 +82,9 @@ Not every remote creation path has been converted to a universal reconciled-effe
 
 Terminal run persistence records that status delivery is pending before calling the reporter. The existing runtime cycle recovers that intent, including terminal tasks absent from later queue polls, under the original task lease without executing the failed work. Server pacing survives restart. Known comment updates remain idempotent by their persisted ID. Unknown initial creation uses bounded observation and at most three paced attempts; this does not create an exactly-once guarantee across arbitrary remote visibility delays or deletions.
 
-Pre-runtime provisioning correlation, early installer text collection, expanded diagnostic publication and native Linux/Windows automatic delivery remain separate unqualified responsibilities under #493. Do not claim generic exactly-once GitHub mutation semantics from these effect-specific corrections.
+The same status comment can automatically carry a bounded redacted expansion of collected failure text that exceeds the compact tail. It shares the originating task's access policy and lasts until that comment is updated or removed, or the repository is removed. Rendered output preserves each stream's beginning and end when its intermediate text must be omitted; retained and published truncation remain explicit. Expanded desired bytes use the existing status intent and creation-reconciliation owner.
+
+Pre-runtime provisioning correlation, native early installer text collection and native Linux/Windows automatic delivery remain separate unqualified responsibilities under #493. Bounded comment expansion does not supply text that the operation never collected. Do not claim generic exactly-once GitHub mutation semantics from these effect-specific corrections.
 
 ## Default task diagnostics and delivery
 

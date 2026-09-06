@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { resolveUbuntuGuestCapabilities } from './ubuntu-guest-capabilities.js';
 import { ubuntuInstallationBasisCaptureCommand } from './ubuntu-installation-basis.js';
+import { createUbuntuInstallerEvidence, createUbuntuInstallerEvidenceActivation } from './ubuntu-installer-evidence.js';
+import { INSTALLER_EVIDENCE_PROTOCOL } from '../construction-install-evidence.js';
 
 const PROTOCOL = 'devbridge/ubuntu-production-seed-v1';
 export const UBUNTU_PRODUCTION_INSTALL_SOURCE = 'ubuntu-server-minimal';
@@ -131,14 +133,18 @@ export class UbuntuProductionSeedFactory {
   #packageSet;
   #services;
   #capabilities;
+  #installerActivation;
+  #installerEvidencePort;
 
-  constructor({ payloadSet, packageSet, services = [], capabilities = [] } = {}) {
+  constructor({ payloadSet, packageSet, services = [], capabilities = [], installerEvidencePort = null } = {}) {
     if (typeof payloadSet !== 'function') throw new TypeError('payloadSet must be a function');
     if (typeof packageSet !== 'function') throw new TypeError('packageSet must be a function');
     this.#payloadSet = payloadSet;
     this.#packageSet = packageSet;
     this.#services = normalizeServices(services);
     this.#capabilities = resolveUbuntuGuestCapabilities(capabilities);
+    this.#installerEvidencePort = installerEvidencePort;
+    this.#installerActivation = installerEvidencePort === null ? null : createUbuntuInstallerEvidenceActivation({ port: installerEvidencePort });
   }
 
   async create(rawRequest) {
@@ -146,6 +152,15 @@ export class UbuntuProductionSeedFactory {
     const payload = normalizePayload(await this.#payloadSet());
     const packages = normalizePackages(await this.#packageSet());
     const packageSpecifications = packages.packages.map((entry) => entry.specification);
+    const installerEvidence = this.#installerActivation ? createUbuntuInstallerEvidence(request.identity) : null;
+    const observe = (stage, command) => installerEvidence ? installerEvidence.wrap(stage, command) : command;
+    const lateCommands = [
+      observe('installation-basis', ubuntuInstallationBasisCaptureCommand('/target')),
+      observe('apt-update', ['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--error-on=any', '--snapshot', packages.snapshot, 'update']),
+      observe('apt-upgrade', ['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--snapshot', packages.snapshot, 'upgrade', '-y', '--with-new-pkgs', '--no-remove']),
+      observe('apt-install', ['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--snapshot', packages.snapshot, 'install', '-y', '--no-install-recommends', ...packageSpecifications]),
+    ];
+    if (installerEvidence) lateCommands.push(installerEvidence.finish);
     const lines = ['#cloud-config', 'autoinstall:', '  version: 1', '  locale: en_US.UTF-8', '  keyboard:', '    layout: us', '  source:', `    id: ${UBUNTU_PRODUCTION_INSTALL_SOURCE}`, '  apt:', '    conf: |', '      Unattended-Upgrade::Package-Blacklist {', '        ".*";', '      };', '  storage:', '    layout:', '      name: direct', '  network:', '    version: 2', '    ethernets:', '      build:', '        match:', '          name: "e*"'];
     if (request.network.method === 'automatic') {
       lines.push('        dhcp4: true', '        dhcp6: false');
@@ -153,7 +168,15 @@ export class UbuntuProductionSeedFactory {
       lines.push('        dhcp4: false', '        addresses:', `          - ${yamlString(`${request.network.address}/${request.network.prefixLength}`)}`, '        routes:', '          - to: default', `            via: ${yamlString(request.network.gateway)}`, '        nameservers:', '          addresses:');
       for (const entry of request.network.dns) lines.push(`            - ${yamlString(entry)}`);
     }
-    lines.push('  ssh:', '    install-server: true', '    allow-pw: false', '  late-commands:', `    - ${yamlList(ubuntuInstallationBasisCaptureCommand('/target'))}`, `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--error-on=any', '--snapshot', packages.snapshot, 'update'])}`, `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--snapshot', packages.snapshot, 'upgrade', '-y', '--with-new-pkgs', '--no-remove'])}`, `    - ${yamlList(['curtin', 'in-target', '--target=/target', '--', 'apt-get', '--snapshot', packages.snapshot, 'install', '-y', '--no-install-recommends', ...packageSpecifications])}`, '  shutdown: poweroff', '  user-data:', '    users:', '      - name: devbridge', '        gecos: DevBridge Image Builder', '        groups: [adm, sudo]', '        shell: /bin/bash', '        lock_passwd: true', '        ssh_authorized_keys:', `          - ${yamlString(request.authorizedKey)}`, '    ssh_deletekeys: true', '    ssh_keys:', `      ed25519_private: ${yamlString(request.hostPrivateKey)}`, `      ed25519_public: ${yamlString(request.hostPublicKey)}`, '    write_files:');
+    lines.push('  ssh:', '    install-server: true', '    allow-pw: false');
+    if (installerEvidence) {
+      lines.push('  early-commands:');
+      for (const command of [installerEvidence.initialize, this.#installerActivation.install, this.#installerActivation.start]) lines.push(`    - ${yamlList(command)}`);
+      lines.push('  error-commands:', `    - ${yamlList(installerEvidence.error)}`);
+    }
+    lines.push('  late-commands:');
+    for (const command of lateCommands) lines.push(`    - ${yamlList(command)}`);
+    lines.push('  shutdown: poweroff', '  user-data:', '    users:', '      - name: devbridge', '        gecos: DevBridge Image Builder', '        groups: [adm, sudo]', '        shell: /bin/bash', '        lock_passwd: true', '        ssh_authorized_keys:', `          - ${yamlString(request.authorizedKey)}`, '    ssh_deletekeys: true', '    ssh_keys:', `      ed25519_private: ${yamlString(request.hostPrivateKey)}`, `      ed25519_public: ${yamlString(request.hostPublicKey)}`, '    write_files:');
     for (const file of payload.files) writeFileYaml(lines, file);
     for (const file of this.#capabilities.files) writeFileYaml(lines, file);
     writeFileYaml(lines, { path: '/etc/systemd/system/devbridge-network-seed.service', content: NETWORK_UNIT, permissions: '0644' });
@@ -179,6 +202,11 @@ export class UbuntuProductionSeedFactory {
         services: [...this.#services],
         capabilities: [...this.#capabilities.ids],
         networkMethod: request.network.method,
+        ...(installerEvidence ? { installerEvidence: Object.freeze({
+          protocol: INSTALLER_EVIDENCE_PROTOCOL,
+          guestPort: this.#installerEvidencePort,
+          agentSha256: digest(installerEvidence.file.content),
+        }) } : {}),
         userDataSha256: digest(userData),
       }),
     });

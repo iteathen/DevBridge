@@ -38,7 +38,7 @@ function assertSubject(record, subject) {
 function renderBody({ runId, revision, stage, summary, capsule, sequence }) {
   return [
     `<!-- devbridge-status run=${runId} revision=${revision} sequence=${sequence} -->`,
-    `## DevBridge — ${stage}`, '', String(summary).split(/\r?\n/u).map(line => `    ${line}`).join('\n'), '',
+    `## DevBridge — ${stage}`, '', String(summary).split(/\r\n|\r|\n/u).map(line => `    ${line}`).join('\n'), '',
     '```devbridge-context', JSON.stringify(capsule, null, 2), '```',
   ].join('\n');
 }
@@ -77,7 +77,8 @@ export class IssueStatusReporter {
     input = { ...input, summary: sanitizeStatusText(input.summary, this.#secrets) };
     const reference = this.#inventoryRefProvider?.() ?? null;
     const capsule = reference ? { ...input.capsule, toolInventory: reference } : input.capsule;
-    const diagnostics = renderStatusDiagnostics(input.diagnostics, this.#secrets, Math.min(20_000, Math.floor(this.#maxCommentBytes / 2)));
+    const diagnostics = renderStatusDiagnostics(input.diagnostics, this.#secrets,
+      Math.min(40_000, Math.max(1024, this.#maxCommentBytes - 8192)));
     const limit = this.#maxCommentBytes - CREATION_MARKER_RESERVE - Buffer.byteLength(diagnostics, 'utf8') - 2;
     let fitted = fitContextCapsule(capsule, Math.max(2048, limit - 4096));
     let body = sanitizeStatusText(renderBody({ ...input, capsule: fitted, sequence }), this.#secrets);

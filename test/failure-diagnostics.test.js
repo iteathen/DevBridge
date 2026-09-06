@@ -36,3 +36,58 @@ test('capture redacts complete credentials and PEM blocks before a byte boundary
   assert.match(evidence.stderr, /Useful failure/);
   assert.doesNotMatch(captureFailureDiagnostics({ stage: 'test', error: new Error('API_KEY=sensitive-key AWS_ACCESS_KEY_ID=another-key') }).message, /sensitive-key|another-key/);
 });
+
+test('collected early failure text beyond the compact tail is automatically supplied as bounded expanded evidence', () => {
+  const stderr = `FIRST_CAUSE matching dependency rejected\n${'follow-up detail\n'.repeat(750)}LAST_FAILURE`;
+  const evidence = captureFailureDiagnostics({ stage: 'apt-install', attempt: 2, result: { exitCode: 100, stderr } });
+  assert.doesNotMatch(evidence.stderr, /FIRST_CAUSE/);
+  const rendered = renderStatusDiagnostics(evidence, [], 40_000);
+  assert.match(rendered, /FIRST_CAUSE/);
+  assert.match(rendered, /LAST_FAILURE/);
+  assert.match(rendered, /Expanded diagnostic evidence/);
+  assert.match(rendered, /retained until.*comment.*removed/i);
+  assert.equal(evidence.expanded.truncated, false);
+  assert.equal(evidence.expanded.stderr, stderr);
+});
+
+test('expanded capture redacts complete secrets before its larger bound and discloses owner and retention truncation', () => {
+  const secret = 'expanded-private-token ' + 'x'.repeat(20_000);
+  const evidence = captureFailureDiagnostics({ stage: 'install', secretValues: [secret], result: {
+    exitCode: 100, stdout: secret + '\n' + 'é'.repeat(12_000) + 'FINAL_STDOUT',
+    stderr: 'z'.repeat(17_000) + 'FINAL_STDERR', outputTruncated: true,
+  } });
+  assert.doesNotMatch(JSON.stringify(evidence), /expanded-private|xxxx|\uFFFD/u);
+  assert.ok(Buffer.byteLength(evidence.expanded.stdout) <= 16_384);
+  assert.ok(Buffer.byteLength(evidence.expanded.stderr) <= 16_384);
+  assert.equal(evidence.expanded.truncated, true);
+});
+
+test('bounded expanded rendering preserves both stream endpoints despite hostile newline and Unicode floods', () => {
+  const evidence = captureFailureDiagnostics({ stage: 'install', result: {
+    exitCode: 100,
+    stdout: `STDOUT_BEGIN\n${'\n'.repeat(9000)}STDOUT_END`,
+    stderr: `STDERR_BEGIN\n${'é\n'.repeat(4000)}\n</details>\n@someone\nSTDERR_END`,
+  } });
+  const rendered = renderStatusDiagnostics(evidence, [], 3000);
+  assert.ok(Buffer.byteLength(rendered) <= 3000);
+  assert.match(rendered, /STDOUT_BEGIN/);
+  assert.match(rendered, /STDOUT_END/);
+  assert.match(rendered, /STDERR_BEGIN/);
+  assert.match(rendered, /STDERR_END/);
+  assert.match(rendered, /intermediate text omitted/);
+  assert.match(rendered, /\n    @someone/);
+  assert.equal(rendered.match(/^<\/details>$/gm)?.length, 1);
+  assert.doesNotMatch(rendered, /\uFFFD/u);
+});
+
+test('carriage-return-only guest lines remain inert in compact and expanded diagnostic code blocks', () => {
+  for (const padding of ['', 'detail\r'.repeat(1400)]) {
+    const evidence = captureFailureDiagnostics({ stage: 'install', result: { exitCode: 100,
+      stderr: `${padding}failed\r\r@someone\r<script>alert(1)</script>\rFINAL_FAILURE`,
+    } });
+    const rendered = renderStatusDiagnostics(evidence, [], 40_000);
+    assert.doesNotMatch(rendered, /\r/u);
+    assert.match(rendered, /\n    @someone\n    <script>/);
+    assert.match(rendered, /\n    FINAL_FAILURE/);
+  }
+});

@@ -34,6 +34,23 @@ function signatureDependency(overrides = {}) {
   };
 }
 
+test('non-elevated Windows prerequisites require no installer diagnostic registration', async () => {
+  const order = [];
+  const result = await reconcileSetupPrerequisites({
+    platform: 'win32', environment: {},
+    async invoke(request) {
+      assert.doesNotMatch(decodedPowerShell(request), /GuestCommunicationServices|DevBridgeOwner|RunAs/u);
+      order.push('openssh');
+      return success({ elevated: false, ssh: true, sshKeygen: true, capabilityState: null });
+    },
+  }, signatureDependency());
+  assert.deepEqual(order, ['openssh']);
+  assert.equal(result.ready, true);
+  assert.equal(result.changed, false);
+  assert.deepEqual(result.capabilities, { gpgv: true, opensshClient: true });
+  assert.equal(result.blocker, null);
+});
+
 test('Windows signature-verification blocker stops before any later prerequisite mutation', async () => {
   const calls = [];
   const result = await reconcileSetupPrerequisites({

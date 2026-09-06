@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { invokeCommand } from '../src/runtime/command-invocation.js';
 import { HyperVImageConstruction } from '../src/runtime/providers/hyperv-image-construction.js';
+import { INSTALLER_EVIDENCE_PROTOCOL } from '../src/runtime/construction-install-evidence.js';
 
 function sha256(value) { return createHash('sha256').update(value).digest('hex'); }
 async function root() { return mkdtemp(path.join(os.tmpdir(), 'db-hyperv-image-build-')); }
@@ -175,6 +176,117 @@ async function fixture() {
 function constructor(data, host, identity = 'a'.repeat(32), options = {}) {
   return new HyperVImageConstruction({ directory: data.stateRoot, sourceRoot: data.sourceRoot, outputRoot: data.outputRoot, identity, invoke: host.invoke, ...options });
 }
+
+test('construction retains failure across owner restart, collector loss and disk growth and fences boot', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const construction = constructor(data, host, 'a'.repeat(32), {
+      installerEvidence: {
+        async read({ binding, attachment }) {
+          assert.equal(binding.providerInstance, host.state.providerIdentity);
+          assert.equal(binding.seedSha256, data.request.seed.sha256);
+          assert.equal(attachment.providerIdentity, host.state.providerIdentity);
+          return { status: 'available', bytes: Buffer.from(JSON.stringify({
+            protocol: INSTALLER_EVIDENCE_PROTOCOL, identity: binding.subject, attempt: binding.attempt,
+            sequence: 3, phase: 'failed', stage: 'apt-install', exitCode: 100,
+            collection: 'complete', truncated: false, stdoutBase64: '',
+            stderrBase64: Buffer.from('unmet dependencies').toString('base64'),
+          })) };
+        },
+      },
+    });
+    await construction.prepare(data.request);
+    const failed = await construction.startInstall(data.request.identity);
+    assert.equal(failed.installationEvidence.failure.exitCode, 100);
+    const deadline = failed.liveness.hardDeadlineAt;
+    const resumed = constructor(data, host, 'a'.repeat(32), { installerEvidence: { async read() { throw new Error('connection lost'); } } });
+    host.state.diskAllocatedBytes += 1024 * 1024;
+    const observed = await resumed.observeInstall(data.request.identity);
+    assert.equal(observed.liveness.classification, 'progressing');
+    assert.equal(observed.liveness.hardDeadlineAt, deadline);
+    assert.equal(observed.installationEvidence.failure.stderr, 'unmet dependencies');
+    assert.equal(observed.installationEvidence.collection.status, 'unavailable');
+    const stateFile = path.join(data.stateRoot, 'state.json');
+    const before = await readFile(stateFile);
+    const calls = host.state.calls.length;
+    host.state.machineState = 'off';
+    await assert.rejects(() => resumed.bootInstalled(data.request.identity), error => error.exitCode === 100 && /unmet dependencies/u.test(error.stderr));
+    assert.equal(host.state.calls.length, calls);
+    const saved = await resumed.inspectInstallEvidence(data.request.identity);
+    assert.equal(saved.failure.exitCode, 100);
+    assert.equal(host.state.calls.length, calls);
+    assert.deepEqual(await readFile(stateFile), before);
+    await assert.rejects(() => constructor(data, host, 'b'.repeat(32)).inspectInstallEvidence(data.request.identity), /owner changed/u);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('terminal failure is durable before diagnostic reads and survives floods and provider loss', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  let diagnosticReads = 0;
+  const terminal = binding => ({
+    protocol: INSTALLER_EVIDENCE_PROTOCOL, identity: binding.subject, attempt: binding.attempt,
+    sequence: 2, phase: 'failed', stage: 'apt-install', exitCode: 100,
+    collection: 'unavailable', truncated: false, stdoutBase64: '', stderrBase64: '',
+  });
+  try {
+    const construction = constructor(data, host, 'a'.repeat(32), {
+      installerEvidence: {
+        async read({ binding }) { return { status: 'available', bytes: Buffer.from(JSON.stringify(terminal(binding))) }; },
+        async readDiagnostics({ binding, sequence }) {
+          diagnosticReads += 1;
+          assert.equal(sequence, 2);
+          const restarted = constructor(data, host);
+          assert.equal((await restarted.inspectInstallEvidence(binding.subject)).failure.exitCode, 100);
+          return { status: 'available', bytes: Buffer.alloc(65 * 1024, 65) };
+        },
+      },
+    });
+    await construction.prepare(data.request);
+    const failed = await construction.startInstall(data.request.identity);
+    assert.equal(diagnosticReads, 1);
+    assert.equal(failed.installationEvidence.failure.exitCode, 100);
+    assert.equal(failed.installationEvidence.collection.status, 'invalid');
+    const deadline = failed.liveness.hardDeadlineAt;
+    const disconnected = constructor(data, { async invoke() { throw new Error('provider unavailable'); } });
+    const offline = await disconnected.observeInstall(data.request.identity);
+    assert.equal(offline.state, 'unknown');
+    assert.equal(offline.installationEvidence.failure.exitCode, 100);
+    assert.equal(offline.installationEvidence.collection.status, 'unavailable');
+    assert.equal(offline.liveness.hardDeadlineAt, deadline);
+    const recovered = constructor(data, host, 'a'.repeat(32), {
+      installerEvidence: {
+        async read({ binding }) { return { status: 'available', bytes: Buffer.from(JSON.stringify(terminal(binding))) }; },
+        async readDiagnostics({ binding }) {
+          return { status: 'available', bytes: Buffer.from(JSON.stringify({
+            ...terminal(binding), collection: 'complete',
+            stderrBase64: Buffer.from('APT dependency resolution failed').toString('base64'),
+          })) };
+        },
+      },
+    });
+    const enriched = await recovered.observeInstall(data.request.identity);
+    assert.equal(enriched.installationEvidence.failure.stderr, 'APT dependency resolution failed');
+    assert.equal(enriched.installationEvidence.collection.status, 'available');
+    assert.equal(enriched.liveness.hardDeadlineAt, deadline);
+    const replayed = await recovered.observeInstall(data.request.identity);
+    assert.equal(replayed.installationEvidence.collection.status, 'available');
+    assert.equal(replayed.installationEvidence.failure.stderr, enriched.installationEvidence.failure.stderr);
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
+
+test('saved installation evidence inspection creates no absent control roots and performs no provider call', async () => {
+  const data = await fixture();
+  const host = fakeHost();
+  try {
+    const missingRoot = path.join(data.directory, 'absent-control-root');
+    const construction = constructor({ ...data, stateRoot: missingRoot }, host);
+    assert.equal(await construction.inspectInstallEvidence(data.request.identity), null);
+    assert.equal(host.state.calls.length, 0);
+    await assert.rejects(() => lstat(missingRoot), { code: 'ENOENT' });
+  } finally { await rm(data.directory, { recursive: true, force: true }); }
+});
 
 test('construction owns an exact optional data medium across replay, start and detached boot', async () => {
   const data = await fixture();

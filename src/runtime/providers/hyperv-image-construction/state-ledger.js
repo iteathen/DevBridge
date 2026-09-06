@@ -29,6 +29,21 @@ export class HyperVConstructionLedger {
 
   async load() {
     await this.ensure();
+    return this.#read();
+  }
+
+  async inspect() {
+    try {
+      const info = await lstat(this.#directory);
+      if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('construction control root must be a real directory');
+    } catch (error) {
+      if (error?.code === 'ENOENT') return { protocol: PROTOCOL, records: {} };
+      throw error;
+    }
+    return this.#read();
+  }
+
+  async #read() {
     try {
       const info = await lstat(this.#stateFile);
       if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024) throw new Error('construction state is invalid');

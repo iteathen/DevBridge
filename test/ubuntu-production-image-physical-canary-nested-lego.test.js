@@ -18,6 +18,8 @@ const directory = 'src/app/ubuntu-production-image-physical-canary';
 const children = Object.freeze({
   'completion-reconciliation.js': 'createCompletionReconciliation',
   'configuration-contract.js': 'createConfigurationContract',
+  'installation-evidence-projection.js': 'createInstallationEvidenceProjection',
+  'installation-evidence-recovery.js': 'createInstallationEvidenceRecovery',
   'mutation-lease.js': 'createMutationLease',
   'preparation-contract.js': 'createPreparationContract',
   'progress-coordinator.js': 'createProgressCoordinator',
