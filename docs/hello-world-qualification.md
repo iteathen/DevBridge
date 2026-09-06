@@ -53,7 +53,7 @@ below to pass; partial success remains useful evidence rather than completion.
 
 | Guest | Required operational evidence | Current status |
 | --- | --- | --- |
-| Linux | GitHub admission -> VM CMake compile -> CTest output -> automatic GitHub result | Unproved; Ubuntu construction/package-basis and early collection remain blocked |
+| Linux | GitHub admission -> VM CMake compile -> CTest output -> automatic GitHub result | Unproved; Ubuntu image `img-c91420f1765ac0c9f23f0267f1fcb825` / `ubuntu-2604-production-v14` is qualified; protected environment activation/recovery remains pending |
 | Windows | GitHub admission -> VM CMake compile -> CTest output -> automatic GitHub result | Unproved; production image/setup/route readiness still requires qualification |
 
 Guest OS and host provider are separate axes. Proving both guests on the current
@@ -78,6 +78,14 @@ and delivery; #176 consumes the same result for lifecycle visibility. Do not mak
 desktop access, SSH, a debug flag or a later log request a production prerequisite.
 
 ## Work order and ownership
+
+September 6 checkpoint: the supported Ubuntu construction and qualification path
+has completed. Reuse that accepted image. The next Linux step is installing the
+merged interrupted-create recovery fix (#515), reconciling the old operation,
+and activating the current declaration. Windows construction is testing its
+unattended audit handoff (#516). Neither guest has completed the GitHub Hello
+World task. The responsibilities below remain acceptance scope, not instructions
+to repeat completed image or package-basis qualification.
 
 1. Establish bounded, exact pre-runtime evidence collection/export through the
    existing OS builder/provider/lifecycle/result owners (#493/#176). Preserve the
