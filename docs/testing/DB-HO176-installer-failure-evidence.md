@@ -85,6 +85,37 @@ of this expanded candidate remains pending. Its local Node22 preflight passed
 three standalone artifacts, 306 syntax files, two JSON files and all 243
 targeted test files in 71.7 seconds.
 
+The expanded reader candidate 1e0cffa5a513cc5c01526ce48cc8b22bec9a25b9
+subsequently passed all four [CI jobs](https://github.com/iteathen/DevBridge/actions/runs/34011670835).
+Its read-only native probe found the required service registration absent and
+returned explicit unavailability. Canonical state bytes were unchanged; no VM,
+guest, registry or elevation effect occurred. This is an observed prerequisite
+failure, not successful socket collection.
+
+The next composition unit adds bounded systemd socket/service artifacts and a
+local constructor port on UbuntuProductionSeedFactory. A composed seed installs
+the live agent and activation before late transactions, wraps the existing basis
+capture and three APT commands without changing them, records errors and reports
+completion. Task/guest seed requests cannot provide this port. Production has not
+enabled it or changed recipe/output generations; that must accompany the owned
+setup prerequisite and physical composition. Two new seed tests first failed,
+then the focused suite passed 15 cases with three Linux-only skips. Linux CI must
+verify the exact generated systemd units without starting them, in addition to
+executing the existing shell protocol tests. This unit's wider qualification is
+pending.
+
+Separately, HO177 exported the retained immutable installation basis using
+existing guest curl and a bounded, one-transfer operator receiver. Host readback
+and post-transfer guest checks both match raw SHA256
+e5d910bdfa9556c7f4ede59c396231081c14484a3d1783b7dcf324dfc9275cc0:
+526998 bytes, mode444, linkcount1. The existing release normalizer found 522
+installed packages, semantic SHA256
+50f71358fc39927703b48cb06d833aed032744a37e81556414cb0bfe1ba9b583.
+OpenSSH client/server/SFTP are all3.6 before the explicit late APT commands.
+The exact raw and normalized files remain unsigned operator evidence. This
+UI/network export advances #489; it does not satisfy automatic offline #493
+collection, release admission, solving, signing or Hello World acceptance.
+
 Setup ordering needs further assessment before composition: physical image
 construction currently precedes protected lifecycle-authority apply. Do not add
 an ad-hoc administrative registration, silently request UAC, or treat a WSL-specific

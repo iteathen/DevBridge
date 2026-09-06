@@ -139,3 +139,31 @@ export function createUbuntuInstallerEvidence(identity) {
     },
   });
 }
+
+export function createUbuntuInstallerEvidenceActivation({ port }) {
+  if (!Number.isSafeInteger(port) || port <= 1024 || port >= 0xffffffff) throw new TypeError('installer evidence socket port is invalid');
+  const socket = 'devbridge-installer-evidence.socket';
+  const service = 'devbridge-installer-evidence@.service';
+  const files = Object.freeze([
+    Object.freeze({
+      path: `/run/systemd/system/${socket}`, permissions: '0644',
+      content: `[Unit]\nDescription=DevBridge live installer evidence\n\n[Socket]\nListenStream=vsock::${port}\nAccept=yes\nBacklog=4\nMaxConnections=4\nTriggerLimitIntervalSec=30s\nTriggerLimitBurst=60\n`,
+    }),
+    Object.freeze({
+      path: `/run/systemd/system/${service}`, permissions: '0644',
+      content: `[Unit]\nDescription=DevBridge bounded installer evidence reader\n\n[Service]\nType=exec\nExecStart=/bin/sh ${AGENT} serve\nStandardInput=socket\nStandardOutput=socket\nStandardError=null\nRuntimeMaxSec=20s\nTimeoutStopSec=1s\nKillMode=control-group\nMemoryMax=64M\nCPUQuota=25%\nTasksMax=16\nNoNewPrivileges=yes\nCapabilityBoundingSet=\nProtectSystem=strict\nReadWritePaths=${ROOT}\nProtectHome=yes\nPrivateTmp=yes\nRestrictAddressFamilies=AF_UNIX AF_VSOCK\n`,
+    }),
+  ]);
+  const commands = ['set -eu', 'umask 077', 'mkdir -p /run/systemd/system', '[ -d /run/systemd/system ] && [ ! -L /run/systemd/system ]'];
+  for (const file of files) {
+    commands.push(`[ ! -e ${file.path} ] && [ ! -L ${file.path} ]`,
+      `printf '%s' '${Buffer.from(file.content).toString('base64')}' | base64 --decode >${file.path}`,
+      `chmod ${file.permissions} ${file.path}`);
+  }
+  commands.push('systemctl daemon-reload');
+  return Object.freeze({
+    files,
+    install: Object.freeze(['sh', '-c', `${commands.join('\n')}\n`]),
+    start: Object.freeze(['systemctl', 'start', socket]),
+  });
+}

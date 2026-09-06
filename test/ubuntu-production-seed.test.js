@@ -70,6 +70,36 @@ test('Ubuntu seed preserves actual installer package state before any late APT m
   assert.deepEqual(late.slice(1).map((command) => command.includes('apt-get')), [true, true, true]);
 });
 
+test('a provider-owned evidence port composes early collection and exact failure wrappers before target runtime setup', async () => {
+  const { userData, evidence } = await factory({ installerEvidencePort: 1234567 }).create(request());
+  const commands = section => userData.split(`  ${section}:\n`)[1].split(/^  [a-z]/mu)[0]
+    .trim().split('\n').map(line => JSON.parse(line.trim().slice(2)));
+  const early = commands('early-commands');
+  assert.equal(early.length, 3);
+  assert.match(early[0][2], /\/run\/devbridge-installer-evidence\/agent initialize/u);
+  assert.match(early[1][2], /\/run\/systemd\/system\/devbridge-installer-evidence\.socket/u);
+  assert.deepEqual(early[2], ['systemctl', 'start', 'devbridge-installer-evidence.socket']);
+  assert.ok(userData.indexOf('early-commands:') < userData.indexOf('late-commands:'));
+  assert.deepEqual(commands('error-commands'), [['/run/devbridge-installer-evidence/agent', 'error']]);
+  const late = commands('late-commands');
+  assert.deepEqual(late.slice(0, 4).map(command => command.slice(0, 3)),
+    ['installation-basis', 'apt-update', 'apt-upgrade', 'apt-install'].map(stage => ['/run/devbridge-installer-evidence/agent', 'run', stage]));
+  assert.match(late[0][5], /ubuntu-installation-basis\.status/u);
+  assert.deepEqual(late.at(-1), ['/run/devbridge-installer-evidence/agent', 'finish']);
+  assert.equal(evidence.installerEvidence.protocol, 'devbridge/installer-evidence-v1');
+  assert.equal(evidence.installerEvidence.guestPort, 1234567);
+  assert.match(evidence.installerEvidence.agentSha256, /^[a-f0-9]{64}$/u);
+  assert.equal(JSON.stringify(evidence).includes(hostPrivateKey), false);
+});
+
+test('installer transport configuration is local composition and rejects invalid ports', async () => {
+  for (const port of [0, '1234567', 1024, 0xffffffff]) assert.throws(() => factory({ installerEvidencePort: port }), /invalid/u);
+  await assert.rejects(factory().create(request({ installerEvidencePort: 1234567 })), /not allowed/u);
+  const without = await factory().create(request());
+  assert.equal(without.evidence.installerEvidence, undefined);
+  assert.doesNotMatch(without.userData, /early-commands:|error-commands:/u);
+});
+
 test('Ubuntu production seed binds exact package snapshot, versions, and payload generation', async () => {
   const result = await factory().create(request());
   assert.match(result.userData, /^#cloud-config\nautoinstall:/u);
