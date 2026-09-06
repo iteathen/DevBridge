@@ -64,7 +64,8 @@ export function environmentObservationCondition(raw) {
   if (value.bootstrap === 'degraded') return 'bootstrap-degraded';
   if (value.guest === 'unreachable') return 'guest-unreachable';
   if (value.guest === 'degraded') return 'guest-degraded';
-  if ([value.systemStorage, value.attachment, value.enrollment, value.bootstrap, value.guest].includes('unknown')) return 'incomplete-observation';
+  if (value.implementationGeneration == null
+      || [value.systemStorage, value.attachment, value.enrollment, value.bootstrap, value.guest].includes('unknown')) return 'incomplete-observation';
   return 'healthy';
 }
 

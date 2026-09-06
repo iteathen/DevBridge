@@ -70,3 +70,22 @@ test('workspace readiness loss degrades the final execution observation', async 
   assert.equal(observation.guest, 'degraded');
   await assert.rejects(() => composed.readiness.verify(request()), /not healthy/u);
 });
+
+test('construction readiness refuses an unidentified implementation even when every health field says ready', async () => {
+  const observed = {
+    ...materialization(),
+    implementationGeneration: null,
+    enrollment: 'ready',
+    bootstrap: 'ready',
+    guest: 'healthy',
+  };
+  let inspections = 0;
+  const composed = createEnvironmentConstructionObservation({
+    materialization: { observe: async () => observed },
+    preparation: { inspect: async () => { inspections += 1; return { ready: true }; } },
+    workspaces: { inspect: async () => { inspections += 1; return { ready: true }; } },
+  });
+  await assert.rejects(() => composed.readiness.verify(request()), /incomplete-observation/u);
+  assert.equal(inspections, 0);
+  assert.deepEqual(await composed.observe(request()), observed);
+});
