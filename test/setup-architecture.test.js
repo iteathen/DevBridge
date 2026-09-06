@@ -20,7 +20,10 @@ test('generic setup composes observations and one explicit construction action t
 
 test('public construction and runner tracking stay on the setup surface without exposing physical config paths', async () => {
   const source = await readFile(CLI, 'utf8');
-  assert.match(source, /devbridge setup \[--profiles <linux\|windows\|both\|none\|defer>\] \[--construct\] \[--windows-distribution <local-reconstruction>\] \[--windows-activation <later>\] \[--track-ref <branch>\]/u);
+  const usage = source.split('\n').find((line) => line.includes('Usage: devbridge setup'));
+  for (const option of ['--profiles <linux|windows|both|none|defer>', '--construct', '--windows-storage <directory>', '--windows-distribution <local-reconstruction>', '--windows-activation <later>', '--track-ref <branch>']) {
+    assert.ok(usage?.includes(`[${option}]`), `setup usage must describe ${option}`);
+  }
   assert.match(source, /trackInstalledRunnerRef/u);
   assert.match(source, /construct: selected\.construct/u);
   assert.doesNotMatch(source, /ubuntu-production-image-canary-entry/u);
