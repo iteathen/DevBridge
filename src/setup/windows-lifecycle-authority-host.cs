@@ -404,13 +404,15 @@ namespace DevBridge.WindowsLifecycleAuthority
                     }
                     finally
                     {
-                        if (!stopping && pipe.IsConnected) pipe.Disconnect();
+                        // A broken client sets IsConnected=false but still needs Disconnect
+                        // before this same exclusive server instance can accept another caller.
+                        if (!stopping) pipe.Disconnect();
                     }
                 }
             }
-            catch
+            catch (Exception error)
             {
-                if (!stopping) Environment.FailFast("DevBridge lifecycle authority endpoint failed closed");
+                if (!stopping) Environment.FailFast("DevBridge lifecycle authority endpoint failed closed", error);
             }
             finally
             {
@@ -427,15 +429,17 @@ namespace DevBridge.WindowsLifecycleAuthority
             Stopwatch elapsed = Stopwatch.StartNew();
             MemoryStream output = new MemoryStream();
             byte[] buffer = new byte[2048];
+            Task<int> pending = null;
             try
             {
                 while (output.Length <= maxWireBytes)
                 {
                     int remaining = PreRequestTimeoutMs - (int)elapsed.ElapsedMilliseconds;
-                    if (remaining <= 0) throw new System.TimeoutException("lifecycle authority request timed out");
-                    Task<int> read = pipe.ReadAsync(buffer, 0, buffer.Length);
-                    if (!read.Wait(remaining)) throw new System.TimeoutException("lifecycle authority request timed out");
-                    int count = read.Result;
+                    if (remaining <= 0) return null;
+                    pending = pipe.ReadAsync(buffer, 0, buffer.Length);
+                    if (!pending.Wait(remaining)) return null;
+                    int count = pending.Result;
+                    pending = null;
                     if (count <= 0) return null;
                     output.Write(buffer, 0, count);
                     if (output.Length > maxWireBytes) return null;
@@ -453,7 +457,18 @@ namespace DevBridge.WindowsLifecycleAuthority
                 }
                 return null;
             }
-            finally { output.Dispose(); }
+            catch (IOException) { return null; }
+            catch (AggregateException error)
+            {
+                foreach (Exception inner in error.Flatten().InnerExceptions)
+                    if (!(inner is IOException) && !(inner is OperationCanceledException)) throw;
+                return null;
+            }
+            finally
+            {
+                CancelPendingPipeRead(pipe, pending);
+                output.Dispose();
+            }
         }
 
         private static void CancelPendingPipeRead(NamedPipeServerStream pipe, Task<int> pending)
