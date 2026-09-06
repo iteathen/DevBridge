@@ -1,5 +1,16 @@
 # HO176 installer failure evidence — work in progress
 
+The next v18 construction passed APT update/upgrade and reached package install,
+then powered off with its installer disc ejected. On 2026-09-06 the installed-boot
+adapter failed by passing that empty DVD path to GetFullPath. Empty media is a
+normal [Hyper-V DVD state](https://learn.microsoft.com/en-us/powershell/module/hyper-v/set-vmdvddrive?view=windowsserver2025-ps).
+The adapter now permits empty paths only while detaching media before installed
+boot. Exact provider/marker/disk, stopped state, expected controller/slot,
+duplicate-slot rejection and matching paths for nonempty media remain required.
+Preparation and installation still reject empty media. Native PowerShell tests
+reproduced the original failure and verify those boundaries without provider
+effects. The same retained VM can continue; no recipe change or rebuild is needed.
+
 Fresh construction at integrated source `c57bacd1198d5c71734aebd7222c47a3699d53f6`
 automatically returned a subject/VM/seed-bound status and then complete, untruncated
 failure diagnostics on 2026-09-06. The reported stage was `apt-update`, exit 127:

@@ -6,10 +6,67 @@ import os from 'node:os';
 import path from 'node:path';
 import { invokeCommand } from '../src/runtime/command-invocation.js';
 import { HyperVImageConstruction } from '../src/runtime/providers/hyperv-image-construction.js';
+import { HyperVConstructionChannel } from '../src/runtime/providers/hyperv-image-construction/management-channel.js';
 import { INSTALLER_EVIDENCE_PROTOCOL } from '../src/runtime/construction-install-evidence.js';
 
 function sha256(value) { return createHash('sha256').update(value).digest('hex'); }
 async function root() { return mkdtemp(path.join(os.tmpdir(), 'db-hyperv-image-build-')); }
+
+test('native installed boot accepts ejected media only at owned slots and keeps installation strict', { skip: process.platform !== 'win32' }, async () => {
+  const payload = { name: 'fixture', marker: 'owned', providerIdentity: '11111111-1111-1111-1111-111111111111',
+    diskPath: 'C:\\exact.vhdx', installerPath: 'C:\\installer.iso', seedPath: 'C:\\seed.iso', dataPath: null };
+  const drive = (slot, mediaPath) => ({ ControllerNumber: 0, ControllerLocation: slot, Path: mediaPath });
+  const platform = String.raw`
+function Import-Module {}
+function Get-VM {
+  [pscustomobject]@{ Notes = $data.fixture.marker; Id = $data.fixture.provider; State = $data.fixture.state }
+}
+function Get-VMHardDiskDrive { [pscustomobject]@{ Path = $data.fixture.disk } }
+function Get-VMDvdDrive { if (-not $script:removed) { $data.fixture.drives } }
+function Remove-VMDvdDrive {
+  [CmdletBinding()] param([Parameter(ValueFromPipeline)]$InputObject)
+  process { $script:removed = $true; [Console]::Error.WriteLine('fixture-mutation:remove') }
+}
+function Set-VMFirmware { [Console]::Error.WriteLine('fixture-mutation:firmware') }
+function Start-VM { [Console]::Error.WriteLine('fixture-mutation:start') }
+`;
+  for (const selected of [
+    { drives: [drive(1, null), drive(2, payload.seedPath)] },
+    { drives: [drive(1, ''), drive(2, '')] },
+    { drives: [] },
+    { drives: [drive(1, payload.installerPath), drive(2, payload.seedPath)] },
+    { drives: [drive(7, null)], error: /media attachment identity/u },
+    { drives: [{ ...drive(1, null), ControllerNumber: 1 }], error: /media attachment identity/u },
+    { drives: [drive(1, null), drive(1, null)], error: /media attachment identity/u },
+    { drives: [drive(1, 'C:\\foreign.iso')], error: /media attachment path/u },
+    { marker: 'foreign', error: /ownership proof/u },
+    { provider: '22222222-2222-2222-2222-222222222222', error: /provider identity/u },
+    { state: 'Running', error: /finish and power off/u },
+    { disk: 'C:\\foreign.vhdx', error: /disk attachment/u },
+    { action: 'startInstall', error: /media attachment is empty/u },
+  ]) {
+    let nativeResult;
+    const fixture = { drives: [drive(1, null), drive(2, payload.seedPath)], marker: payload.marker,
+      provider: payload.providerIdentity, state: 'Off', disk: payload.diskPath, ...selected };
+    const channel = new HyperVConstructionChannel({ invoke: async request => {
+      const args = [...request.arguments];
+      const script = Buffer.from(args.at(-1), 'base64').toString('utf16le');
+      args[args.length - 1] = Buffer.from(platform + script, 'utf16le').toString('base64');
+      nativeResult = await invokeCommand({ ...request, arguments: args,
+        input: JSON.stringify({ ...JSON.parse(request.input), fixture }) });
+      return nativeResult;
+    } });
+    const run = () => channel[selected.action ?? 'bootInstalled'](payload);
+    if (selected.error) {
+      await assert.rejects(run, selected.error);
+      assert.doesNotMatch(nativeResult.stderr, /fixture-mutation/u);
+    } else {
+      assert.equal((await run()).started, true);
+      assert.match(nativeResult.stderr, /fixture-mutation:firmware/u);
+      assert.match(nativeResult.stderr, /fixture-mutation:start/u);
+    }
+  }
+});
 
 function fakeHost() {
   const state = {
