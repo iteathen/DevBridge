@@ -10,21 +10,13 @@ const SPECIAL_VM_IDS = new Set([
   'a42e7cda-d03f-480c-9cc2-a4de20abb878',
 ]);
 
-// This adapter only reads. Registration belongs to the existing installation
-// setup owner and must be qualified before this transport can become available.
+// The host is the client; the live installer listens on its VSOCK port.
+// Registry registration for guest connections to a host listener does not
+// belong to this direction. Availability comes from the exact socket exchange.
 const READ = String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
-$registrationPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Virtualization\GuestCommunicationServices\' + [string]$data.serviceId
-if (-not (Test-Path -LiteralPath $registrationPath)) {
-  @{ available = $false; reason = 'installer evidence service registration is absent' } | ConvertTo-Json -Compress
-  exit 0
-}
-$registration = Get-ItemProperty -LiteralPath $registrationPath -ErrorAction Stop
-if ([string]$registration.ElementName -cne 'DevBridge installer evidence v1' -or [string]$registration.DevBridgeOwner -cne [string]$data.owner) {
-  throw 'installer evidence service registration is not owned'
-}
 Import-Module Hyper-V -ErrorAction Stop
 $machine = Get-VM -Id ([guid]$data.vmId) -ErrorAction Stop
 if ([guid]$machine.Id -ne [guid]$data.vmId -or [string]$machine.Name -cne [string]$data.name -or [string]$machine.Notes -cne [string]$data.marker -or [int]$machine.Generation -ne 2 -or [string]$machine.State -ne 'Running') {
@@ -110,12 +102,12 @@ $bytes = [DevBridgeInstallerSocket]::Read([guid]$data.vmId, [guid]$data.serviceI
 
 export function hyperVInstallerEvidenceService(identity) {
   if (typeof identity !== 'string' || !TOKEN.test(identity)) throw new TypeError('installer evidence installation identity is invalid');
-  // A service belongs to this installation. Conflicting registry ownership is
-  // rejected, not silently shared. The port excludes reserved/wildcard values.
+  // Derive a stable installation-specific service/guest port. Exact VM and
+  // seed attachment checks below isolate the endpoint; exclude reserved ports.
   const suffix = createHash('sha256').update(`devbridge:installer-evidence-v1:${identity}`).digest('hex').slice(0, 7);
   const guestPort = 0x40000000 + Number.parseInt(suffix, 16);
   const serviceId = `${guestPort.toString(16).padStart(8, '0')}-facb-11e6-bd58-64006a7986d3`;
-  return Object.freeze({ owner: identity, guestPort, serviceId, elementName: 'DevBridge installer evidence v1' });
+  return Object.freeze({ guestPort, serviceId });
 }
 
 export function createHyperVInstallerEvidence({ identity, invoke }) {
@@ -134,13 +126,12 @@ export function createHyperVInstallerEvidence({ identity, invoke }) {
     const result = await invoke({
       executable: 'powershell.exe',
       arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(READ, 'utf16le').toString('base64')],
-      input: JSON.stringify({ owner: identity, serviceId, vmId: binding.providerInstance, name: attachment.name, marker: attachment.marker, diagnostics, seedPath: attachment.seed.location, seedBytes: attachment.seed.bytes, seedSha256: binding.seedSha256 }),
+      input: JSON.stringify({ serviceId, vmId: binding.providerInstance, name: attachment.name, marker: attachment.marker, diagnostics, seedPath: attachment.seed.location, seedBytes: attachment.seed.bytes, seedSha256: binding.seedSha256 }),
       timeoutMs: 30_000, maxOutputBytes: 128 * 1024,
     });
     if (!result || result.exitCode !== 0 || result.timedOut || result.aborted || result.outputTruncated) return { status: 'unavailable', reason: 'installer evidence native attachment or collection failed' };
     let value;
     try { value = JSON.parse(result.stdout); } catch { throw new Error('installer evidence transport response is invalid'); }
-    if (value?.available === false && value.reason === 'installer evidence service registration is absent' && Object.keys(value).length === 2) return { status: 'unavailable', reason: value.reason };
     const maximum = diagnostics ? INSTALLER_EVIDENCE_MAX_BYTES : 4096;
     if (value?.available !== true || Object.keys(value).length !== 2 || typeof value.bytesBase64 !== 'string'
         || value.bytesBase64.length > Math.ceil(maximum / 3) * 4) throw new Error('installer evidence transport response is invalid');

@@ -34,35 +34,21 @@ function signatureDependency(overrides = {}) {
   };
 }
 
-test('selected installer diagnostics must pass their owned prerequisite before setup is ready', async () => {
+test('non-elevated Windows prerequisites require no installer diagnostic registration', async () => {
   const order = [];
   const result = await reconcileSetupPrerequisites({
-    platform: 'win32', stateDirectory: 'C:\\owned\\state', installerEvidenceRequired: true, environment: {},
-    async invoke() { order.push('openssh'); return success({ elevated: false, ssh: true, sshKeygen: true, capabilityState: null }); },
-  }, {
-    ...signatureDependency(),
-    async windowsInstallerEvidence(request) {
-      order.push('installer-evidence');
-      assert.equal(request.stateDirectory, 'C:\\owned\\state');
-      return { ready: false, changed: false, blocker: 'exact transport registration missing' };
+    platform: 'win32', environment: {},
+    async invoke(request) {
+      assert.doesNotMatch(decodedPowerShell(request), /GuestCommunicationServices|DevBridgeOwner|RunAs/u);
+      order.push('openssh');
+      return success({ elevated: false, ssh: true, sshKeygen: true, capabilityState: null });
     },
-  });
-  assert.deepEqual(order, ['openssh', 'installer-evidence']);
-  assert.equal(result.ready, false);
-  assert.equal(result.capabilities.installerEvidence, false);
-  assert.equal(result.blocker, 'exact transport registration missing');
-});
-
-test('successful and uncertain installer prerequisite results retain overall change evidence', async () => {
-  for (const evidence of [{ ready: true, changed: true }, { ready: false, changed: true, uncertain: true }]) {
-    const result = await reconcileSetupPrerequisites({
-      platform: 'win32', stateDirectory: 'C:\\owned\\state', installerEvidenceRequired: true, environment: {},
-      async invoke() { return success({ elevated: false, ssh: true, sshKeygen: true, capabilityState: null }); },
-    }, { ...signatureDependency(), windowsInstallerEvidence: async () => evidence });
-    assert.equal(result.ready, evidence.ready);
-    assert.equal(result.changed, true);
-    assert.equal(result.capabilities.installerEvidence, evidence.ready);
-  }
+  }, signatureDependency());
+  assert.deepEqual(order, ['openssh']);
+  assert.equal(result.ready, true);
+  assert.equal(result.changed, false);
+  assert.deepEqual(result.capabilities, { gpgv: true, opensshClient: true });
+  assert.equal(result.blocker, null);
 });
 
 test('Windows signature-verification blocker stops before any later prerequisite mutation', async () => {

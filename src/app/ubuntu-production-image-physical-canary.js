@@ -21,7 +21,6 @@ import { HyperVEnvironmentBootstrap } from '../runtime/providers/hyperv-environm
 import { HyperVEnvironmentBridge } from '../runtime/providers/hyperv-environment-bridge.js';
 import { createHyperVImageConstruction } from '../runtime/providers/hyperv-image-construction.js';
 import { createHyperVInstallerEvidence } from '../runtime/providers/hyperv-installer-evidence.js';
-import { inspectWindowsInstallerEvidenceRegistration } from '../setup/windows-installer-evidence-prerequisite.js';
 import { createWindowsImapiNoCloudSeedWriter } from '../runtime/providers/windows-imapi-nocloud-seed.js';
 import { createWindowsManagedConstructionNetwork } from '../runtime/providers/windows-managed-construction-network.js';
 import { createWindowsProductionImageCanaryPreflight } from '../runtime/providers/windows-production-image-canary-preflight.js';
@@ -295,8 +294,6 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
         },
         seedFactory: async ({ recipeGeneration, sourceIdentity }) => {
           if (recipeGeneration !== authority.recipe.generation || sourceIdentity.sha256 !== authority.source.media.sha256) throw new Error('autoinstall seed basis changed');
-          const registration = await inspectWindowsInstallerEvidenceRegistration({ identity: localIdentity, invoke });
-          if (registration.state !== 'ready') throw new Error('installer diagnostic transport prerequisite is unavailable; setup must establish its exact registration before construction');
           await foundation.ensureStorage();
           selectedNetwork = await constructionNetwork.require();
           preparedAccess = await accessMaterial.prepare(subject);

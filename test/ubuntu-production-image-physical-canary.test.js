@@ -302,8 +302,8 @@ test('invalid installer patch fails before provider network or access allocation
   }
 });
 
-test('missing installer transport stops the production composition before network, access or VM allocation', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-registration-'));
+test('production composition reaches native preparation without diagnostic registry registration', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-no-registration-'));
   try {
     const data = await fixture(root);
     const media = Buffer.from('install ---\ninstall ---\n');
@@ -328,13 +328,14 @@ test('missing installer transport stops the production composition before networ
           return { exitCode: 0, stdout: `[GNUPG:] VALIDSIG ${fingerprint} a b c d e f g h ${fingerprint}\n` };
         }
         assert.equal(request.executable, 'powershell.exe');
-        assert.equal(JSON.parse(request.input).action, 'inspect');
-        calls.push('registration-inspection');
-        return { exitCode: 0, stdout: JSON.stringify({ state: 'absent', elevated: false, changed: false }) };
+        const script = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
+        assert.doesNotMatch(script, /GuestCommunicationServices|DevBridgeOwner/u);
+        calls.push('native-observation');
+        throw new Error('stop at the native owner');
       },
     });
-    await assert.rejects(canary.run(), /installer diagnostic transport prerequisite is unavailable/u);
-    assert.deepEqual(calls, ['signature', 'registration-inspection']);
+    await assert.rejects(canary.run(), /stop at the native owner/u);
+    assert.deepEqual(calls, ['signature', 'native-observation', 'native-observation']);
     assert.equal(await absent(path.join(data.config.stateDirectory, 'environment-foundation', 'bootstrap', 'attachment')), true);
     assert.equal(await absent(path.join(data.config.stateDirectory, 'production-image-canary', 'access')), true);
   } finally { await rm(root, { recursive: true, force: true }); }

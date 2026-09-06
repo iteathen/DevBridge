@@ -1,5 +1,13 @@
 # HO176 installer failure evidence — work in progress
 
+Current correction: the Windows registry prerequisite and both registration gates
+have been removed. This transport connects from the host to the guest listener;
+it does not expose a host listener. Exact VM ownership, running state, attached
+seed identity/hash, response identity, bounds and deadlines remain enforced.
+Transport readiness comes from an actual exchange, not a registry entry.
+The registration sections below record earlier implementation history and are
+superseded. See [the socket library's direction-specific documentation](https://github.com/SvenGroot/Ookii.VmSockets#hyper-v-sockets).
+
 Current source supersedes the intermediate composition-pending checkpoints below:
 PR501 head ea6e5da passed all four jobs in CI34013618479 with Ubuntu seed
 activation, the exact owned Windows prerequisite and physical adapter composition.

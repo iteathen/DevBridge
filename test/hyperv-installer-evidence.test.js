@@ -43,7 +43,7 @@ test('native installer reads bind one installation and VM and reject wildcard or
 });
 
 test('native collector absence, incomplete frames and wrong diagnostic sequences cannot fabricate useful evidence', async () => {
-  let selected = { exitCode: 0, stdout: JSON.stringify({ available: false, reason: 'installer evidence service registration is absent' }) };
+  let selected = { exitCode: 1, stdout: '', stderr: 'socket connection failed' };
   const reader = createHyperVInstallerEvidence({ identity, invoke: async () => selected });
   assert.equal((await reader.read({ binding, attachment })).status, 'unavailable');
   for (selected of [result(response({ identity: 'another-subject' })), result(Buffer.alloc(4097)), { ...result(response()), stdout: 'invalid' }]) {
@@ -53,6 +53,19 @@ test('native collector absence, incomplete frames and wrong diagnostic sequences
   await assert.rejects(() => reader.readDiagnostics({ binding, attachment, sequence: 2 }), /sequence/u);
   selected = { ...result(response()), outputTruncated: true };
   assert.equal((await reader.read({ binding, attachment })).status, 'unavailable');
+});
+
+test('installer evidence connects as a host client without registry registration or a host listener', async () => {
+  let request;
+  const reader = createHyperVInstallerEvidence({ identity, invoke: async value => { request = value; return result(response()); } });
+  await reader.read({ binding, attachment });
+  const script = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
+  assert.doesNotMatch(script, /GuestCommunicationServices|HKLM:|Get-ItemProperty|New-Item|RunAs|socket\.(?:Bind|Listen|Accept)\(/u);
+  assert.match(script, /Get-VM -Id/u);
+  assert.match(script, /Get-VMDvdDrive/u);
+  assert.match(script, /Get-FileHash/u);
+  assert.match(script, /socket\.Connect\(new DevBridgeInstallerEndpoint\(machine, service\)\)/u);
+  assert.ok(script.indexOf('Get-FileHash') < script.indexOf('[DevBridgeInstallerSocket]::Read'));
 });
 
 test('Windows native endpoint compiles and serializes exact Hyper-V GUIDs without contacting a VM', { skip: process.platform !== 'win32' }, async () => {
