@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PersistentEnvironments } from '../src/runtime/persistent-environments.js';
@@ -62,6 +62,33 @@ test('stable identity excludes display topology and rejects foreign request prop
     await assert.rejects(() => registry.ensure({ ...request(), repository: 'owner/renamed-display' }), /repository is not allowed/u);
     await assert.rejects(() => registry.ensure({ ...request(), displayName: 'renamed-display' }), /displayName is not allowed/u);
     assert.equal(fake.instances.size, 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('nested composition preserves the exact durable v1 catalog shape', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-catalog-shape-'));
+  const fake = fixture();
+  try {
+    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const created = await registry.ensure(request());
+    const catalog = JSON.parse(await readFile(path.join(root, 'catalog.json'), 'utf8'));
+    assert.deepEqual(Object.keys(catalog).sort(), ['entries', 'operations', 'protocol', 'revision']);
+    assert.equal(catalog.protocol, 'devbridge/persistent-environments-v1');
+    assert.equal(catalog.revision, 3);
+
+    const [entry] = Object.values(catalog.entries);
+    assert.deepEqual(Object.keys(entry).sort(), ['binding', 'current', 'history', 'profile', 'slot', 'subject']);
+    assert.deepEqual(Object.keys(entry.current).sort(), ['createdAt', 'generation', 'identity', 'settings', 'source']);
+    assert.equal(entry.current.identity, created.record.identity);
+    assert.deepEqual(entry.history, []);
+
+    const [operation] = Object.values(catalog.operations);
+    assert.deepEqual(Object.keys(operation).sort(), [
+      'attemptedAt', 'binding', 'generation', 'id', 'identity', 'kind', 'plannedAt', 'profile',
+      'reconciledAt', 'settings', 'slot', 'source', 'state', 'subject',
+    ]);
+    assert.equal(operation.kind, 'provision');
+    assert.equal(operation.state, 'reconciled');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -155,6 +182,31 @@ test('restart reconciles an interrupted reseed without deleting the current gene
     assert.equal(fake.instances.has(created.record.identity), false);
     assert.equal(fake.instances.size, 1);
     assert.equal(fake.provisionCalls(), 2);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('restart reconciles an ambiguous removal effect without retaining catalog authority', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-remove-reconcile-'));
+  const fake = fixture();
+  const drop = fake.operations.drop.bind(fake.operations);
+  let interrupt = true;
+  fake.operations.drop = async (identity) => {
+    const result = await drop(identity);
+    if (interrupt) {
+      interrupt = false;
+      throw new Error('simulated interruption after removal effect');
+    }
+    return result;
+  };
+  try {
+    let registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const created = await registry.ensure(request());
+    await assert.rejects(() => registry.remove(created.record.identity), /simulated interruption/u);
+    assert.equal(fake.instances.has(created.record.identity), false);
+
+    registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    assert.deepEqual(await registry.reconcile(), []);
+    await assert.rejects(() => registry.observe(created.record.identity), /not registered/u);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

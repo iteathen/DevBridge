@@ -3,8 +3,9 @@ import { access, appendFile, chmod, lstat, mkdir, readFile, writeFile } from 'no
 import os from 'node:os';
 import path from 'node:path';
 import { invokeCommand } from '../runtime/command-invocation.js';
+import { classifyPathVisibility } from './path-visibility.js';
 
-const PROTOCOL = 'devbridge/setup-path-v1';
+const PROTOCOL = 'devbridge/setup-path-v2';
 const OWNED_MARKER = 'DevBridge managed launcher';
 const STAGE0_OWNER = 'DevBridge managed Stage 0 source';
 const PROFILE_MARKER = '# DevBridge managed PATH';
@@ -65,6 +66,55 @@ async function assertOwnedOrAbsent(location) {
   }
 }
 
+function commandName(platform) {
+  return platform === 'win32' ? 'devbridge.cmd' : 'devbridge';
+}
+
+function directInvocation(location, platform) {
+  if (platform === 'win32') return `& '${location.replaceAll("'", "''")}'`;
+  return shellSingleQuote(location);
+}
+
+async function installedLauncher(binDirectory) {
+  const permanentEntry = path.join(binDirectory, 'devbridge-entry.mjs');
+  if (await regularFile(permanentEntry)) return permanentEntry;
+  const stage0 = path.join(binDirectory, 'devbridge-stage0.mjs');
+  const ownerFile = `${stage0}.owner`;
+  if (!await regularFile(stage0) || !await regularFile(ownerFile)) {
+    throw new Error('installed DevBridge entry launcher is unavailable');
+  }
+  if ((await readFile(ownerFile, 'utf8')).trim() !== STAGE0_OWNER) {
+    throw new Error('installed Stage 0 source ownership is invalid');
+  }
+  return stage0;
+}
+
+export async function resolveInstalledCommand({
+  home,
+  platform = process.platform,
+} = {}) {
+  if (typeof home !== 'string' || home.length === 0 || home.includes('\0') || !path.isAbsolute(home)) {
+    throw new TypeError('DevBridge home must be an absolute local path');
+  }
+  if (!['win32', 'linux', 'darwin'].includes(platform)) {
+    throw new Error(`PATH command resolution is unsupported on platform: ${platform}`);
+  }
+  const binDirectory = path.join(path.resolve(home), 'bin');
+  const launcher = await installedLauncher(binDirectory);
+  const command = path.join(binDirectory, commandName(platform));
+  const expected = platform === 'win32' ? windowsLauncher(launcher) : posixLauncher(launcher);
+  const info = await lstat(command);
+  if (!info.isFile() || info.isSymbolicLink()) throw new Error(`installed command is not an owned regular file: ${command}`);
+  if (await readFile(command, 'utf8') !== expected) throw new Error(`installed command content is not owned: ${command}`);
+  await access(command, constants.R_OK);
+  return Object.freeze({
+    command,
+    binDirectory,
+    launcher,
+    invocation: directInvocation(command, platform),
+  });
+}
+
 async function installStage0Source(source, destination) {
   if (typeof source !== 'string' || source.length === 0 || source.includes('\0') || !path.isAbsolute(source)) {
     throw new Error('installed DevBridge entry launcher is unavailable and Stage 0 source authority was not provided');
@@ -100,15 +150,22 @@ $target = $env:DEVBRIDGE_PATH_TARGET
 $current = [Environment]::GetEnvironmentVariable('Path', 'User')
 $parts = @()
 if ($current) { $parts = @($current -split ';' | Where-Object { $_ -and $_.Trim().Length -gt 0 }) }
-$exists = $false
+$existed = $false
 foreach ($part in $parts) {
-  if ([String]::Equals([IO.Path]::GetFullPath($part.Trim('"')), [IO.Path]::GetFullPath($target), [StringComparison]::OrdinalIgnoreCase)) { $exists = $true; break }
+  if ([String]::Equals([IO.Path]::GetFullPath($part.Trim('"')), [IO.Path]::GetFullPath($target), [StringComparison]::OrdinalIgnoreCase)) { $existed = $true; break }
 }
-if (-not $exists) {
+if (-not $existed) {
   $next = if ($current -and $current.Trim().Length -gt 0) { $current.TrimEnd(';') + ';' + $target } else { $target }
   [Environment]::SetEnvironmentVariable('Path', $next, 'User')
 }
-@{ changed = (-not $exists) } | ConvertTo-Json -Compress
+$observed = [Environment]::GetEnvironmentVariable('Path', 'User')
+$observedParts = @()
+if ($observed) { $observedParts = @($observed -split ';' | Where-Object { $_ -and $_.Trim().Length -gt 0 }) }
+$persisted = $false
+foreach ($part in $observedParts) {
+  if ([String]::Equals([IO.Path]::GetFullPath($part.Trim('"')), [IO.Path]::GetFullPath($target), [StringComparison]::OrdinalIgnoreCase)) { $persisted = $true; break }
+}
+@{ changed = (-not $existed); persisted = $persisted } | ConvertTo-Json -Compress
 `;
   const result = await invoke({
     executable: 'powershell.exe',
@@ -123,11 +180,19 @@ if (-not $exists) {
   }
   let parsed;
   try { parsed = JSON.parse(String(result.stdout ?? '').trim()); } catch { throw new Error('Windows PATH persistence returned invalid structured output'); }
-  return parsed?.changed === true;
+  const keys = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? Object.keys(parsed).sort((left, right) => left.localeCompare(right))
+    : [];
+  if (keys.length !== 2 || keys[0] !== 'changed' || keys[1] !== 'persisted'
+      || typeof parsed.changed !== 'boolean' || typeof parsed.persisted !== 'boolean') {
+    throw new Error('Windows PATH persistence returned invalid structured output');
+  }
+  return Object.freeze({ changed: parsed.changed, persisted: parsed.persisted });
 }
 
 async function persistPosixPath(binDirectory, homeDirectory) {
   const profile = path.join(homeDirectory, '.profile');
+  const record = `${PROFILE_MARKER}\nexport PATH=${shellSingleQuote(binDirectory)}:"$PATH"`;
   let text = '';
   try {
     const info = await lstat(profile);
@@ -136,10 +201,13 @@ async function persistPosixPath(binDirectory, homeDirectory) {
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
   }
-  if (text.includes(PROFILE_MARKER)) return false;
+  if (text.includes(PROFILE_MARKER)) {
+    return Object.freeze({ changed: false, persisted: text.includes(record) });
+  }
   const prefix = text.length > 0 && !text.endsWith('\n') ? '\n' : '';
-  await appendFile(profile, `${prefix}${PROFILE_MARKER}\nexport PATH=${shellSingleQuote(binDirectory)}:"$PATH"\n`, { encoding: 'utf8', mode: 0o600 });
-  return true;
+  await appendFile(profile, `${prefix}${record}\n`, { encoding: 'utf8', mode: 0o600 });
+  const observed = await readFile(profile, 'utf8');
+  return Object.freeze({ changed: true, persisted: observed.includes(record) });
 }
 
 function pathContains(binDirectory, env, platform) {
@@ -172,25 +240,27 @@ export async function installStableDevBridgeCommand({
   const collision = await commandCollision(binDirectory, env, platform);
   if (collision) throw new Error(`existing unrelated devbridge command blocks PATH installation: ${collision}`);
 
-  const command = platform === 'win32' ? path.join(binDirectory, 'devbridge.cmd') : path.join(binDirectory, 'devbridge');
+  const command = path.join(binDirectory, commandName(platform));
   await assertOwnedOrAbsent(command);
   await writeFile(command, platform === 'win32' ? windowsLauncher(launcher) : posixLauncher(launcher), { encoding: 'utf8', mode: 0o755 });
   if (platform !== 'win32') await chmod(command, 0o755);
-  await access(command, constants.R_OK);
 
   const alreadyVisible = pathContains(binDirectory, env, platform);
-  const changed = platform === 'win32'
+  const persistence = platform === 'win32'
     ? await persistWindowsPath(binDirectory, env, invoke)
     : await persistPosixPath(binDirectory, homeDirectory);
+  const visibility = classifyPathVisibility({ ...persistence, visible: alreadyVisible });
+  if (visibility === 'not-persisted') throw new Error('the installed command directory was not persisted to the user PATH');
+  const installed = await resolveInstalledCommand({ home, platform });
 
   return Object.freeze({
     protocol: PROTOCOL,
-    command,
-    binDirectory,
-    launcher,
-    persisted: true,
-    changed,
-    requiresNewShell: !alreadyVisible,
-    temporaryCommand: !alreadyVisible ? `${process.execPath} ${JSON.stringify(launcher)}` : null,
+    command: installed.command,
+    binDirectory: installed.binDirectory,
+    launcher: installed.launcher,
+    invocation: installed.invocation,
+    persisted: persistence.persisted,
+    changed: persistence.changed,
+    visibility,
   });
 }

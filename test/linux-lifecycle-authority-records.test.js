@@ -24,7 +24,7 @@ function plan() {
   return createLinuxLifecycleAuthorityPlan({
     stateDirectory: '/home/alice/.devbridge/state',
     operatorName: 'alice',
-    managementGroup: 'provider-control',
+    managementGroup: Object.freeze({ name: 'provider-control', id: 992 }),
   });
 }
 
@@ -221,10 +221,15 @@ test('ownership schema rejects root identities, generation aliasing, and foreign
     normalizeTransaction: null,
   }), /ports are invalid/u);
   assert.throws(() => normalizeLinuxLifecycleAuthorityOwnershipRecord({ ...initial, authorityIdentity: B }, selected), /does not match this installation/u);
+  assert.throws(() => normalizeLinuxLifecycleAuthorityOwnershipRecord({ ...initial, managementGid: 991 }, selected), /does not match this installation/u);
   assert.throws(() => normalizeLinuxLifecycleAuthorityOwnershipRecord({
     ...initial,
     localIdentity: { serviceUid: 0, operatorUid: 1000, readGid: 994, coordinationGid: 993, managementGid: 992 },
   }, selected), /service uid is invalid/u);
+  assert.throws(() => normalizeLinuxLifecycleAuthorityOwnershipRecord({
+    ...initial,
+    localIdentity: { serviceUid: 995, operatorUid: 1000, readGid: 994, coordinationGid: 993, managementGid: 991 },
+  }, selected), /required group changed/u);
   assert.throws(() => normalizeLinuxLifecycleAuthorityOwnershipRecord({
     ...initial,
     activeGeneration: A,

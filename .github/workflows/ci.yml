@@ -15,23 +15,30 @@ concurrency:
 
 jobs:
   smoke:
-    timeout-minutes: 3
+    timeout-minutes: 11
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (node24)
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 (node24)
         with:
           node-version: 22.16.0
-      - name: Cheap preflight
-        timeout-minutes: 1
-        run: npm run preflight
+          package-manager-cache: false
+      - name: Cheap preflight (non-Windows default)
+        if: runner.os != 'Windows'
+        timeout-minutes: 7
+        run: npm run preflight -- --ci-qualification
+      - name: Cheap preflight (Windows bounded)
+        if: runner.os == 'Windows'
+        timeout-minutes: 7
+        run: npm.cmd run preflight -- --ci-qualification --bound-targeted-test-concurrency
       - name: DevBridge identity audit
         timeout-minutes: 1
         run: node --test test/product-identity.test.js
@@ -40,26 +47,33 @@ jobs:
         run: node --test test/standalone-launcher.test.js
 
   test:
-    timeout-minutes: 10
+    timeout-minutes: 14
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (node24)
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 (node24)
         with:
           node-version: 22.16.0
+          package-manager-cache: false
       - name: Repository-execution architecture gates
         timeout-minutes: 1
         run: node --test test/repository-execution.test.js test/repository-execution-boundary-absence.test.js test/deterministic-execution-boundary.test.js test/process-runner.test.js test/worker-exchange.test.js test/local-operation-manifest.test.js test/tool-onboarding.test.js
-      - name: Tests
+      - name: Tests (non-Windows default)
+        if: runner.os != 'Windows'
         timeout-minutes: 6
         run: npm test
+      - name: Tests (Windows serialized)
+        if: runner.os == 'Windows'
+        timeout-minutes: 10
+        run: npm.cmd test -- --test-concurrency=1
       - name: Doctor smoke test
         timeout-minutes: 1
         run: node src/cli.js doctor --config config/devbridge.example.json

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { runExperimentalEntry, experimentalEntryCacheRoot } from '../src/entry/experimental-entry.mjs';
 import { RUNNER_SUBJECT_PROTOCOL } from '../src/entry/permanent-entry.mjs';
 
@@ -64,6 +65,19 @@ test('development-only composition refuses implicit or stable runner authority',
   };
   await assert.rejects(() => runExperimentalEntry(['doctor', '--config', 'local.json'], { subjectAuthority: never, runnerProvider: provider }), /requires one explicit --ref or --branch/u);
   await assert.rejects(() => runExperimentalEntry(['--channel', 'stable', 'doctor', '--config', 'local.json'], { subjectAuthority: never, runnerProvider: provider }), /requires one explicit --ref or --branch/u);
+});
+
+test('default experimental entry composes the exact-checkout ownership boundary', async () => {
+  const exact = subject();
+  await assert.rejects(
+    () => runExperimentalEntry(['--ref', 'candidate', 'doctor'], {
+      subjectAuthority: {
+        async resolve() { return { ...exact, channel: 'stable' }; },
+      },
+      cacheRoot: path.resolve('test', 'fixtures', 'experimental-entry-cache-not-created'),
+    }),
+    /refuses non-experimental authority/u,
+  );
 });
 
 test('experimental cache location is local and platform-specific', () => {

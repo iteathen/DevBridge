@@ -101,6 +101,19 @@ test('path-bound persistent Hyper-V records block generic protected-state copyin
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('path-bound storage remains the blocker when image adoption is also required', async () => {
+  const root = await fixture();
+  try {
+    await imageCatalog(root, { 'img-a': { fileName: 'img-a.vhdx' } });
+    await persistentState(root, {
+      'env-a': { diskPath: 'C:\\Users\\Operator\\.devbridge\\state\\environment-foundation\\persistent\\operations\\objects\\env-a\\state.vhdx' },
+    });
+    const result = await inspectWindowsLifecycleAuthorityMigrationSafety({ stateDirectory: root, platform: 'win32' });
+    assert.equal(result.ready, false);
+    assert.equal(result.classification, 'provider-aware-storage-migration-required');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('unregistered persistent backing objects block generic protected-state copying', async () => {
   const root = await fixture();
   try {

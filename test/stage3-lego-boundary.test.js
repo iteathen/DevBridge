@@ -4,8 +4,16 @@ import { readFile } from 'node:fs/promises';
 
 const genericFiles = [
   new URL('../src/runtime/persistent-environments.js', import.meta.url),
+  new URL('../src/runtime/persistent-environments/effect-channel.js', import.meta.url),
+  new URL('../src/runtime/persistent-environments/generation-change.js', import.meta.url),
+  new URL('../src/runtime/persistent-environments/ledger.js', import.meta.url),
+  new URL('../src/runtime/persistent-environments/ordinary-lifecycle.js', import.meta.url),
+  new URL('../src/runtime/persistent-environments/provisioning.js', import.meta.url),
+  new URL('../src/runtime/persistent-environments/retirement.js', import.meta.url),
   new URL('../src/runtime/environment-foundation.js', import.meta.url),
 ];
+
+const nestedFiles = genericFiles.slice(1, 7);
 
 const edgeFiles = [
   new URL('../src/runtime/providers/hyperv-persistent-environment.js', import.meta.url),
@@ -33,6 +41,15 @@ test('provider-local Stage 3 adapters do not import one another or the persisten
   const libvirt = await readFile(edgeFiles[1], 'utf8');
   assert.doesNotMatch(hyperv, /libvirt/iu);
   assert.doesNotMatch(libvirt, /hyper-?v/iu);
+});
+
+test('nested persistent-environment LEGOs import no sibling implementation or external topology', async () => {
+  const foreign = [/github/iu, /codex/iu, /repository/iu, /windows/iu, /linux/iu];
+  for (const file of nestedFiles) {
+    const source = await readFile(file, 'utf8');
+    assert.doesNotMatch(source, /from ['"]\.\.?\//u, `${file.pathname} imported another local implementation`);
+    for (const pattern of foreign) assert.doesNotMatch(source, pattern, `${file.pathname} leaked ${pattern}`);
+  }
 });
 
 test('Stage 3 code does not restore host sandbox or repository execution paths', async () => {

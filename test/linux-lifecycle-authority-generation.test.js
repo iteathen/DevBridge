@@ -61,7 +61,7 @@ function fixture({
   const base = createLinuxLifecycleAuthorityPlan({
     stateDirectory: '/state/devbridge',
     operatorName: 'operator',
-    managementGroup: 'virt-control',
+    managementGroup: Object.freeze({ name: 'virt-control', id: 1104 }),
   });
   const plan = bindLinuxLifecycleAuthorityRuntime(base, candidate.evidence);
   const initial = initialLinuxLifecycleAuthorityOwnershipRecord(plan);

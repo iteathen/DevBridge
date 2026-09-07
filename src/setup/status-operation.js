@@ -1,10 +1,12 @@
 const PROTOCOL = 'devbridge/setup-status-operation-v1';
+const OBSERVATION_PROTOCOL = 'devbridge/status-observation-v1';
+const STATES = new Set(['ready', 'disabled', 'unavailable']);
+const CAPABILITY_STATES = new Set(['ready', 'unavailable', 'degraded']);
+const MAX_REASON_BYTES = 1_024;
 const WINDOWS_PATH = /\b[A-Za-z]:[\\/][^;\r\n]*/gu;
 const UNC_PATH = /\\\\[^\\\s;]+\\[^;\r\n]*/gu;
 const POSIX_HOME_PATH = /\/(?:home|Users|tmp|var\/tmp)\/[^;\r\n]*/gu;
-const GITHUB_REPOSITORY_URL = /(?:https?:\/\/github\.com\/|git@github\.com:)[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?/gu;
-const REPOSITORY_IDENTITY = /\b[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\b/gu;
-const IDENTITY_CHANGE = /GitHub setup identity changed from \S+ to \S+/gu;
+const SLASHED_TOKEN = /\b[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\b/gu;
 
 function observedResult(stdout, stderr = '', exitCode = 0) {
   const now = new Date().toISOString();
@@ -33,111 +35,55 @@ function remoteReason(value) {
     .replace(WINDOWS_PATH, '<local-path>')
     .replace(UNC_PATH, '<local-path>')
     .replace(POSIX_HOME_PATH, '<local-path>')
-    .replace(GITHUB_REPOSITORY_URL, '<repository>')
-    .replace(REPOSITORY_IDENTITY, '<repository>')
-    .replace(IDENTITY_CHANGE, 'GitHub setup identity changed')
+    .replace(SLASHED_TOKEN, '<identifier>')
     .slice(0, 4096);
 }
 
-function repositoryProjection(value) {
-  if (!value || typeof value !== 'object') return null;
-  const reasons = {};
-  for (const entry of value.excluded ?? []) {
-    const reason = typeof entry?.reason === 'string' ? entry.reason : 'other';
-    reasons[reason] = (reasons[reason] ?? 0) + 1;
+function boundedReason(value) {
+  if (typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value, 'utf8') > MAX_REASON_BYTES
+      || /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw new TypeError('setup status capability reason is invalid');
   }
-  return Object.freeze({
-    discoveredCount: Number.isSafeInteger(value.discoveredCount) ? value.discoveredCount : null,
-    eligibleCount: Number.isSafeInteger(value.eligibleCount) ? value.eligibleCount : null,
-    selectedCount: Number.isSafeInteger(value.selectedCount) ? value.selectedCount : null,
-    needsSelection: value.needsSelection === true,
-    excludedCounts: Object.freeze(reasons),
-  });
+  return remoteReason(value);
 }
 
-function physicalProjection(value) {
-  if (!value || typeof value !== 'object') return null;
-  const preflight = value.preflight && typeof value.preflight === 'object'
-    ? Object.freeze({
-        ready: value.preflight.ready === true,
-        reason: remoteReason(value.preflight.reason),
-        platform: typeof value.preflight.platform === 'string' ? value.preflight.platform : null,
-        capabilities: value.preflight.capabilities && typeof value.preflight.capabilities === 'object'
-          ? Object.freeze({
-              provider: value.preflight.capabilities.provider === true,
-              connectivity: value.preflight.capabilities.connectivity === true,
-              keyring: value.preflight.capabilities.keyring === true,
-              memory: value.preflight.capabilities.memory === true,
-              storage: value.preflight.capabilities.storage === true,
-            })
-          : null,
-        connectivity: value.preflight.connectivity && typeof value.preflight.connectivity === 'object'
-          ? Object.freeze({
-              control: value.preflight.connectivity.control === 'system' ? 'system' : null,
-              addressing: value.preflight.connectivity.addressing === 'automatic' ? 'automatic' : null,
-            })
-          : null,
-      })
-    : null;
-  return Object.freeze({
-    state: typeof value.state === 'string' ? value.state : null,
-    phase: typeof value.phase === 'string' ? value.phase : null,
-    complete: value.complete === true,
-    blocked: value.blocked === true,
-    reason: remoteReason(value.reason),
-    authorityRegistered: value.authorityRegistered === true,
-    preflight,
-  });
+function exactObject(raw, allowed, name) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError(`${name} is invalid`);
+  for (const key of Object.keys(raw)) if (!allowed.has(key)) throw new TypeError(`${name}.${key} is not allowed`);
+  return raw;
 }
 
-function prerequisiteProjection(value) {
-  if (!value || typeof value !== 'object') return null;
-  const capabilities = value.capabilities && typeof value.capabilities === 'object'
-    ? Object.freeze(Object.fromEntries(
-        Object.entries(value.capabilities)
-          .filter(([name, ready]) => typeof name === 'string' && typeof ready === 'boolean')
-          .map(([name, ready]) => [name, ready]),
-      ))
-    : null;
-  return Object.freeze({
-    platform: typeof value.platform === 'string' ? value.platform : null,
-    ready: value.ready === true,
-    blocker: remoteReason(value.blocker),
-    changed: value.changed === true,
-    restartRequired: value.restartRequired === true,
-    capabilities,
-  });
-}
-
-export function projectSetupStatus(result) {
-  if (!result || typeof result !== 'object' || result.protocol !== 'devbridge/setup-status-v1') {
-    throw new TypeError('setup.status received an invalid setup result');
+function capabilityProjection(raw) {
+  const value = exactObject(raw, new Set(['state', 'ready', 'reason']), 'setup status capability');
+  if (!CAPABILITY_STATES.has(value.state) || typeof value.ready !== 'boolean' || (value.state === 'ready') !== value.ready) {
+    throw new TypeError('setup status capability is inconsistent');
   }
+  if (value.ready && value.reason != null) throw new TypeError('setup status ready capability cannot include a reason');
+  const reason = value.ready ? null : boundedReason(value.reason);
+  return Object.freeze({ state: value.state, ready: value.ready, reason });
+}
+
+export function projectSetupObservation(raw) {
+  const value = exactObject(raw, new Set(['protocol', 'state', 'enabled', 'configuredCount', 'capability']), 'setup status observation');
+  if (value.protocol !== OBSERVATION_PROTOCOL) throw new TypeError('setup status observation protocol is unsupported');
+  if (!STATES.has(value.state) || typeof value.enabled !== 'boolean') throw new TypeError('setup status observation state is invalid');
+  if (!Number.isSafeInteger(value.configuredCount) || value.configuredCount < 0) throw new TypeError('setup status configured count is invalid');
+  const capability = capabilityProjection(value.capability);
+  const expected = !value.enabled ? 'disabled' : capability.ready ? 'ready' : 'unavailable';
+  if (value.state !== expected) throw new TypeError('setup status observation state is inconsistent');
   return Object.freeze({
     protocol: PROTOCOL,
-    phase: typeof result.phase === 'string' ? result.phase : null,
-    blocked: result.blocked === true,
-    blocker: remoteReason(result.blocker),
-    readyForConstruction: result.readyForConstruction === true,
-    path: result.path && typeof result.path === 'object'
-      ? Object.freeze({
-          persisted: result.path.persisted === true,
-          changed: result.path.changed === true,
-          requiresNewShell: result.path.requiresNewShell === true,
-        })
-      : null,
-    repositories: repositoryProjection(result.repositories),
-    prerequisites: prerequisiteProjection(result.prerequisites),
-    linuxProfile: Object.freeze({
-      profile: result.linuxProfile?.profile === 'linux-development' ? 'linux-development' : null,
-      snapshot: typeof result.linuxProfile?.snapshot === 'string' ? result.linuxProfile.snapshot : null,
-      physicalStatus: physicalProjection(result.linuxProfile?.physicalStatus),
-    }),
+    state: value.state,
+    ready: value.state === 'ready',
+    blocked: value.state === 'unavailable',
+    enabled: value.enabled,
+    configuredCount: value.configuredCount,
+    capability,
   });
 }
 
-export function createSetupStatusOperation({ runSetup } = {}) {
-  if (typeof runSetup !== 'function') throw new TypeError('setup.status requires a setup runner');
+export function createSetupStatusOperation({ observeSetup } = {}) {
+  if (typeof observeSetup !== 'function') throw new TypeError('setup.status requires a setup observer');
   return Object.freeze({
     layer: 'setup',
     publicSchema: Object.freeze({
@@ -148,7 +94,7 @@ export function createSetupStatusOperation({ runSetup } = {}) {
     validate: paramsOnly,
     async execute() {
       try {
-        const projected = projectSetupStatus(await runSetup());
+        const projected = projectSetupObservation(await observeSetup());
         return observedResult(`${JSON.stringify(projected)}\n`);
       } catch (error) {
         return observedResult('', `setup.status failed: ${remoteReason(error?.message) ?? 'unknown failure'}\n`, 1);

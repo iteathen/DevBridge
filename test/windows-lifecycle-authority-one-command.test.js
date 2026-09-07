@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import { lstat, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { invokeCommand } from '../src/runtime/command-invocation.js';
-import { requestWindowsLifecycleAuthorityElevation } from '../src/setup/windows-lifecycle-authority-elevation.js';
+import {
+  requestWindowsLifecycleAuthorityElevation,
+  resolveWindowsLifecycleAuthorityElevationRunner,
+} from '../src/setup/windows-lifecycle-authority-elevation.js';
 import { parseSetupCommandOptions } from '../src/setup/command-options.js';
 import {
   classifyWindowsLifecycleAuthorityLegacyService,
@@ -24,9 +26,14 @@ const LEGACY_COMMAND_CONTRACT = Object.freeze({
   compatible: true,
 });
 const PLAN = Object.freeze({
+  protocol: 'devbridge/windows-lifecycle-authority-plan-v1',
   stateDirectory: STATE,
   ownershipManifest: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\owner\\ownership.json',
-  endpoints: Object.freeze({ mutation: Object.freeze({ endpoint: '\\\\.\\pipe\\devbridge-environment-owner-mutation-v1' }) }),
+  authorityDirectory: 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\owner\\state',
+  endpoints: Object.freeze({
+    mutation: Object.freeze({ endpoint: '\\\\.\\pipe\\devbridge-environment-owner-mutation-v1' }),
+    acceptance: Object.freeze({ endpoint: '\\\\.\\pipe\\devbridge-environment-owner-acceptance-v1' }),
+  }),
 });
 
 function serviceResult({ ready, service = 'ready', protectedState = 'ready', authorityIdentity = 'a'.repeat(32), blocker = null, changed = false } = {}) {
@@ -65,17 +72,56 @@ async function elevationChannel(root) {
   });
 }
 
+async function elevationRunner(root, head, source = 'export {};\n') {
+  const runnerRoot = path.join(root, 'entry', 'cache', 'checkouts', 'a'.repeat(64));
+  const launcher = path.join(runnerRoot, 'src', 'cli.js');
+  await mkdir(path.join(runnerRoot, '.git'), { recursive: true });
+  await mkdir(path.dirname(launcher), { recursive: true });
+  await writeFile(path.join(runnerRoot, '.git', 'HEAD'), `${head}\n`);
+  await writeFile(launcher, source);
+  return Object.freeze({ head, root: runnerRoot, launcher });
+}
+
+function elevationLauncher(root, runner, node) {
+  const bindingDigest = 'd'.repeat(64);
+  return Object.freeze({
+    executable: path.join(root, 'state', 'windows-elevation-launchers', 'test', 'DevBridge-Protected-Setup-Lifecycle-Environment.exe'),
+    bindingDigest,
+    input: Object.freeze({
+      protocol: 'devbridge/windows-lifecycle-authority-elevation-input-v2',
+      home: path.resolve(root),
+      node: path.resolve(node),
+      nodeSha256: '1'.repeat(64),
+      launcher: runner.launcher,
+      launcherSha256: '2'.repeat(64),
+      runnerHead: runner.head,
+      bindingDigest,
+    }),
+  });
+}
+
+function elevationDependencies(root, runner, node) {
+  return Object.freeze({
+    resolveRunner: async () => runner,
+    resolveLauncher: async () => elevationLauncher(root, runner, node),
+  });
+}
+
 function readinessDeps({ elevated = false, serviceReconciler, legacyRuntimeMigration = async () => ({ ready: true }) } = {}) {
   return {
     migrationSafety: async () => ({ ready: true }),
     legacyRuntimeMigration,
     inspectHost: async () => host(elevated),
     clientFactory: () => Object.freeze({ inspect: async () => ({ protocol: 'devbridge/environment-operator-v1' }) }),
+    configurationClientFactory: () => Object.freeze({ inspect: async () => ({ ready: true }) }),
     verifyService: async () => ({ ready: true }),
     verifyProtection: async () => ({ ready: true }),
+    verifyAcceptance: async () => ({ ready: true }),
     serviceReconciler,
   };
 }
+
+const INSPECTION = Object.freeze({ protocol: 'devbridge/environment-operator-v1' });
 
 test('exact-current ordinary readiness performs zero elevation', async () => {
   let elevations = 0;
@@ -86,7 +132,7 @@ test('exact-current ordinary readiness performs zero elevation', async () => {
   }, readinessDeps({
     serviceReconciler: async (_options, dependencies) => {
       await dependencies.inspectHost({});
-      await dependencies.probe(PLAN);
+      await dependencies.proof(PLAN, INSPECTION);
       return serviceResult({ ready: true });
     },
   }));
@@ -107,7 +153,7 @@ test('ordinary stale authority uses one elevation and resumes ordinary proof in 
       services += 1;
       await dependencies.inspectHost({});
       if (services === 1) return unavailable();
-      await dependencies.probe(PLAN);
+      await dependencies.proof(PLAN, INSPECTION);
       probes += 1;
       return serviceResult({ ready: true, changed: true });
     },
@@ -117,6 +163,95 @@ test('ordinary stale authority uses one elevation and resumes ordinary proof in 
   assert.equal(services, 2);
   assert.equal(elevations, 1);
   assert.equal(probes, 1);
+});
+
+test('ordinary exact service reconciles accepted profile configuration through its bounded capability without elevation', async () => {
+  let services = 0;
+  let elevations = 0;
+  let reconciliations = 0;
+  let configured = false;
+  const result = await reconcileWindowsLifecycleAuthorityReadiness({
+    stateDirectory: STATE,
+    platform: 'win32',
+    configuration: {
+      async inspect() { return { ready: configured, blocker: configured ? null : 'configuration pending' }; },
+      async reconcile() { reconciliations += 1; configured = true; return { ready: true, changed: true }; },
+    },
+    requestElevation: async () => { elevations += 1; return { completed: true, exitCode: 0 }; },
+  }, readinessDeps({
+    serviceReconciler: async (_options, dependencies) => {
+      services += 1;
+      await dependencies.inspectHost({});
+      await dependencies.proof(PLAN, INSPECTION);
+      return serviceResult({ ready: true });
+    },
+  }));
+  assert.equal(result.ready, true);
+  assert.equal(result.changed, true);
+  assert.equal(services, 1);
+  assert.equal(reconciliations, 1);
+  assert.equal(elevations, 0);
+});
+
+test('stale configuration capability receives one structural refresh before ordinary reconciliation resumes', async () => {
+  let services = 0;
+  let elevations = 0;
+  let reconciliations = 0;
+  let capabilityCurrent = false;
+  let configured = false;
+  const result = await reconcileWindowsLifecycleAuthorityReadiness({
+    stateDirectory: STATE,
+    platform: 'win32',
+    configuration: {
+      async inspect() { return { ready: configured, blocker: configured ? null : 'configuration pending' }; },
+      async reconcile() {
+        reconciliations += 1;
+        if (!capabilityCurrent) {
+          const error = new Error('stale capability');
+          error.code = 'ENVIRONMENT_CONFIGURATION_AUTHORITY_UNAVAILABLE';
+          throw error;
+        }
+        configured = true;
+        return { ready: true, changed: true };
+      },
+    },
+    requestElevation: async () => { elevations += 1; capabilityCurrent = true; return { completed: true, exitCode: 0 }; },
+  }, readinessDeps({
+    serviceReconciler: async (_options, dependencies) => {
+      services += 1;
+      await dependencies.inspectHost({});
+      await dependencies.proof(PLAN, INSPECTION);
+      return serviceResult({ ready: true, changed: services > 1 });
+    },
+  }));
+  assert.equal(result.ready, true);
+  assert.equal(result.changed, true);
+  assert.equal(services, 2);
+  assert.equal(reconciliations, 2);
+  assert.equal(elevations, 1);
+});
+
+test('elevated child refreshes service structure but never reconciles accepted profile configuration', async () => {
+  let reconciliations = 0;
+  const result = await reconcileWindowsLifecycleAuthorityReadiness({
+    stateDirectory: STATE,
+    platform: 'win32',
+    mode: 'elevated-child',
+    configuration: {
+      async inspect() { throw new Error('elevated child must not use ordinary inspection'); },
+      async reconcile() { reconciliations += 1; throw new Error('elevated child must not reconcile desired state'); },
+    },
+  }, readinessDeps({
+    elevated: true,
+    serviceReconciler: async (_options, dependencies) => {
+      await dependencies.inspectHost({});
+      await dependencies.proof(PLAN, INSPECTION);
+      return serviceResult({ ready: true, changed: true });
+    },
+  }));
+  assert.equal(result.ready, true);
+  assert.equal(result.changed, true);
+  assert.equal(reconciliations, 0);
 });
 
 test('UAC refusal stops after one attempt and does not repeat service reconciliation', async () => {
@@ -179,7 +314,7 @@ test('elevated child migrates qualifying legacy runtime before service reconcili
     serviceReconciler: async (_options, dependencies) => {
       calls.push('service');
       await dependencies.inspectHost({});
-      await dependencies.probe(PLAN);
+      await dependencies.proof(PLAN, INSPECTION);
       return serviceResult({ ready: true, changed: true });
     },
   }));
@@ -230,11 +365,19 @@ test('only an exact verified generation-addressed service suppresses legacy migr
 test('fixed legacy service may omit its historically absent description without weakening generation identity', () => {
   const fixed = Object.freeze({
     serviceCommand: 'fixed-command',
-    service: Object.freeze({ account: 'NT SERVICE\\DevBridgeLifecycle-test', description: 'fixed-description' }),
+    service: Object.freeze({
+      account: 'NT SERVICE\\DevBridgeLifecycle-test',
+      logonAccount: 'LocalSystem',
+      description: 'fixed-description',
+    }),
   });
   const generation = Object.freeze({
     serviceCommand: 'generation-command',
-    service: Object.freeze({ account: fixed.service.account, description: 'generation-description' }),
+    service: Object.freeze({
+      account: fixed.service.account,
+      logonAccount: fixed.service.logonAccount,
+      description: 'generation-description',
+    }),
   });
   const observed = Object.freeze({
     exists: true,
@@ -250,6 +393,12 @@ test('fixed legacy service may omit its historically absent description without 
   }), fixed, generation), 'foreign');
   assert.equal(classifyWindowsLifecycleAuthorityLegacyService(Object.freeze({
     ...observed,
+    pathName: generation.serviceCommand,
+    description: generation.service.description,
+  }), fixed, generation), 'generation-running');
+  assert.equal(classifyWindowsLifecycleAuthorityLegacyService(Object.freeze({
+    ...observed,
+    startName: generation.service.logonAccount,
     pathName: generation.serviceCommand,
     description: generation.service.description,
   }), fixed, generation), 'generation-running');
@@ -346,6 +495,7 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
     await writeFile(node, 'node');
     let invoked = 0;
     const runnerHead = 'a'.repeat(40);
+    const runner = await elevationRunner(root, runnerHead);
     const result = await requestWindowsLifecycleAuthorityElevation({
       home: root,
       launcher,
@@ -354,15 +504,16 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
       invoke: async (request) => {
         invoked += 1;
         assert.equal(request.executable, 'powershell.exe');
-        assert.equal(request.timeoutMs, 5 * 60_000);
+        assert.equal(request.timeoutMs, 45 * 60_000);
         const outer = JSON.parse(request.input);
-        assert.equal(typeof outer.brokerCommand, 'string');
-        assert.ok(outer.brokerCommand.length > 0);
+        assert.equal(outer.launcher, elevationLauncher(root, runner, node).executable);
+        assert.equal(outer.expectedHead, runnerHead);
         const channel = await elevationChannel(root);
+        assert.equal(outer.inputFile, channel.inputFile);
         const input = JSON.parse(await readFile(channel.inputFile, 'utf8'));
         const { resultFile } = channel;
         assert.equal(input.home, path.resolve(root));
-        assert.equal(input.launcher, path.resolve(launcher));
+        assert.equal(input.launcher, runner.launcher);
         assert.equal(input.node, path.resolve(node));
         assert.equal(input.runnerHead, runnerHead);
         await writeFile(resultFile, `${JSON.stringify({
@@ -384,12 +535,151 @@ test('elevation adapter accepts only a managed entry launcher and returns bounde
         })}\n`);
         return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":0}' };
       },
-    }, {
-      resolveRunnerHead: async () => runnerHead,
-    });
+    }, elevationDependencies(root, runner, node));
     assert.equal(invoked, 1);
     assert.equal(result.completed, true);
     assert.equal(result.exitCode, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('elevation runner descriptor binds one detached checkout to its fixed direct CLI', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-runner-'));
+  try {
+    const head = 'e'.repeat(40);
+    await mkdir(path.join(root, '.git'));
+    await mkdir(path.join(root, 'src'));
+    await writeFile(path.join(root, '.git', 'HEAD'), `${head}\n`);
+    await writeFile(path.join(root, 'src', 'cli.js'), 'export {};\n');
+    assert.deepEqual(await resolveWindowsLifecycleAuthorityElevationRunner({ packageRoot: root }), {
+      head,
+      root: path.resolve(root),
+      launcher: path.join(path.resolve(root), 'src', 'cli.js'),
+    });
+    await writeFile(path.join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    await assert.rejects(
+      resolveWindowsLifecycleAuthorityElevationRunner({ packageRoot: root }),
+      /checkout identity|detached exact checkout head/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('elevation adapter default composes the explicit long-transaction invocation policy', async () => {
+  const source = await readFile(new URL('../src/setup/windows-lifecycle-authority-elevation.js', import.meta.url), 'utf8');
+  assert.match(source, /createCommandInvoker\(\{ maximumTimeoutMs: ELEVATION_TRANSACTION_TIMEOUT_MS, windowsHide: false \}\)/u);
+  assert.match(source, /invoke = invokeElevationCommand/u);
+  assert.match(source, /-Verb RunAs -WindowStyle Normal/u);
+  assert.doesNotMatch(source, /import \{ invokeCommand \}/u);
+});
+
+test('elevation adapter defers old terminal receipt cleanup until after the UAC transaction', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
+  try {
+    const bin = path.join(root, 'bin');
+    const state = path.join(root, 'state');
+    await mkdir(bin);
+    await mkdir(state);
+    const launcher = path.join(bin, 'devbridge-entry.mjs');
+    const node = path.join(root, 'node.exe');
+    await writeFile(launcher, 'export {};\n');
+    await writeFile(node, 'node');
+    const runner = await elevationRunner(root, 'b'.repeat(40));
+
+    const completedDirectory = path.join(state, '.lifecycle-authority-elevation-11111111-1111-4111-8111-111111111111');
+    const ambiguousDirectory = path.join(state, '.lifecycle-authority-elevation-22222222-2222-4222-8222-222222222222');
+    await mkdir(completedDirectory);
+    await mkdir(ambiguousDirectory);
+    await writeFile(path.join(completedDirectory, 'result.json'), `${JSON.stringify({
+      protocol: 'devbridge/windows-lifecycle-authority-elevation-broker-v1',
+      requestedHead: 'a'.repeat(40),
+      started: true,
+      exitCode: 3,
+      stdout: '',
+      stderr: '',
+      error: null,
+      outputTruncated: false,
+    })}\n`);
+    await writeFile(path.join(ambiguousDirectory, 'input.json'), '{}\n');
+
+    const result = await requestWindowsLifecycleAuthorityElevation({
+      home: root,
+      launcher,
+      nodeExecutable: node,
+      platform: 'win32',
+      invoke: async () => {
+        assert.equal((await lstat(completedDirectory)).isDirectory(), true);
+        assert.equal((await lstat(ambiguousDirectory)).isDirectory(), true);
+        const entries = await readdir(state, { withFileTypes: true });
+        const current = entries.find((entry) => entry.isDirectory()
+          && entry.name !== path.basename(ambiguousDirectory)
+          && entry.name !== path.basename(completedDirectory));
+        assert.ok(current);
+        const resultFile = path.join(state, current.name, 'result.json');
+        await writeFile(resultFile, `${JSON.stringify({
+          protocol: 'devbridge/windows-lifecycle-authority-elevation-broker-v1',
+          requestedHead: 'b'.repeat(40),
+          started: true,
+          exitCode: 0,
+          stdout: JSON.stringify({
+            protocol: 'devbridge/windows-lifecycle-authority-elevated-child-v1',
+            ready: true,
+            changed: false,
+            service: 'ready',
+            protectedState: 'ready',
+            blocker: null,
+          }),
+          stderr: '',
+          error: null,
+          outputTruncated: false,
+        })}\n`);
+        return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":0}' };
+      },
+    }, elevationDependencies(root, runner, node));
+
+    assert.equal(result.completed, true);
+    assert.equal((await lstat(ambiguousDirectory)).isDirectory(), true);
+    assert.deepEqual(await readdir(state), [path.basename(ambiguousDirectory)]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('elevation adapter preserves its exact channel when the outer wait expires', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
+  try {
+    const bin = path.join(root, 'bin');
+    const state = path.join(root, 'state');
+    await mkdir(bin);
+    await mkdir(state);
+    const launcher = path.join(bin, 'devbridge-entry.mjs');
+    const node = path.join(root, 'node.exe');
+    await writeFile(launcher, 'export {};\n');
+    await writeFile(node, 'node');
+    const runner = await elevationRunner(root, 'c'.repeat(40));
+
+    const result = await requestWindowsLifecycleAuthorityElevation({
+      home: root,
+      launcher,
+      nodeExecutable: node,
+      platform: 'win32',
+      invoke: async () => ({
+        exitCode: null,
+        timedOut: true,
+        aborted: false,
+        outputTruncated: false,
+        stdout: '',
+        stderr: '',
+      }),
+    }, elevationDependencies(root, runner, node));
+
+    assert.equal(result.completed, false);
+    assert.match(result.blocker, /did not complete/u);
+    const entries = await readdir(state);
+    assert.equal(entries.length, 1);
+    assert.equal((await lstat(path.join(state, entries[0], 'input.json'))).isFile(), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -531,9 +821,7 @@ test('legacy generation health proof stops at its exact deadline', async () => {
   assert.equal(attempts, 3);
 });
 
-test('rendered elevation broker reads its bounded input and returns exact child evidence', {
-  skip: os.platform() !== 'win32',
-}, async () => {
+test('elevation adapter gives the identified launcher one bounded exact input and returns child evidence', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
   try {
     const bin = path.join(root, 'bin');
@@ -541,14 +829,8 @@ test('rendered elevation broker reads its bounded input and returns exact child 
     await mkdir(path.join(root, 'state'));
     const launcher = path.join(bin, 'devbridge-entry.mjs');
     const runnerHead = 'd'.repeat(40);
-    await writeFile(launcher, `process.stdout.write(JSON.stringify({
-      protocol: 'devbridge/windows-lifecycle-authority-elevated-child-v1',
-      ready: true,
-      changed: false,
-      service: 'ready',
-      protectedState: 'ready',
-      blocker: null,
-    }));\n`);
+    await writeFile(launcher, 'export {};\n');
+    const runner = await elevationRunner(root, runnerHead);
     const result = await requestWindowsLifecycleAuthorityElevation({
       home: root,
       launcher,
@@ -556,22 +838,31 @@ test('rendered elevation broker reads its bounded input and returns exact child 
       platform: 'win32',
       invoke: async (request) => {
         const outer = JSON.parse(request.input);
-        const broker = await invokeCommand({
-          executable: 'powershell.exe',
-          arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', outer.brokerCommand],
-          timeoutMs: 30_000,
-          maxOutputBytes: 64 * 1024,
-          environment: process.env,
-        });
-        return {
-          ...broker,
+        assert.equal(outer.launcher, elevationLauncher(root, runner, process.execPath).executable);
+        assert.equal(outer.expectedHead, runnerHead);
+        const channel = await elevationChannel(root);
+        assert.equal(outer.inputFile, channel.inputFile);
+        assert.deepEqual(JSON.parse(await readFile(channel.inputFile, 'utf8')), elevationLauncher(root, runner, process.execPath).input);
+        await writeFile(channel.resultFile, `${JSON.stringify({
+          protocol: 'devbridge/windows-lifecycle-authority-elevation-broker-v1',
+          requestedHead: runnerHead,
+          started: true,
           exitCode: 0,
-          stdout: JSON.stringify({ started: true, exitCode: broker.exitCode }),
-        };
+          stdout: JSON.stringify({
+            protocol: 'devbridge/windows-lifecycle-authority-elevated-child-v1',
+            ready: true,
+            changed: false,
+            service: 'ready',
+            protectedState: 'ready',
+            blocker: null,
+          }),
+          stderr: '',
+          error: null,
+          outputTruncated: false,
+        })}\n`);
+        return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":0}' };
       },
-    }, {
-      resolveRunnerHead: async () => runnerHead,
-    });
+    }, elevationDependencies(root, runner, process.execPath));
     assert.equal(result.completed, true, JSON.stringify(result));
     assert.equal(result.exitCode, 0);
     assert.deepEqual(await readdir(path.join(root, 'state')), []);
@@ -590,6 +881,7 @@ test('elevation adapter returns the bounded child blocker and cleans its result 
     const node = path.join(root, 'node.exe');
     await writeFile(launcher, 'export {};\n');
     await writeFile(node, 'node');
+    const runner = await elevationRunner(root, 'b'.repeat(40));
     let resultDirectory = null;
     const result = await requestWindowsLifecycleAuthorityElevation({
       home: root,
@@ -598,8 +890,7 @@ test('elevation adapter returns the bounded child blocker and cleans its result 
       platform: 'win32',
       invoke: async (request) => {
         const outer = JSON.parse(request.input);
-        assert.equal(typeof outer.brokerCommand, 'string');
-        assert.ok(outer.brokerCommand.length > 0);
+        assert.equal(outer.launcher, elevationLauncher(root, runner, node).executable);
         const channel = await elevationChannel(root);
         const input = JSON.parse(await readFile(channel.inputFile, 'utf8'));
         const { resultFile } = channel;
@@ -648,9 +939,7 @@ test('elevation adapter returns the bounded child blocker and cleans its result 
         })}\n`);
         return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":3}' };
       },
-    }, {
-      resolveRunnerHead: async () => 'b'.repeat(40),
-    });
+    }, elevationDependencies(root, runner, node));
     assert.equal(result.completed, false);
     assert.equal(result.exitCode, 3);
     assert.match(result.blocker, /exact protected blocker/u);
@@ -673,6 +962,7 @@ test('elevation adapter returns a bounded broker error when the lifecycle child 
     await writeFile(launcher, 'export {};\n');
     await writeFile(node, 'node');
     const runnerHead = 'c'.repeat(40);
+    const runner = await elevationRunner(root, runnerHead);
     const result = await requestWindowsLifecycleAuthorityElevation({
       home: root,
       launcher,
@@ -680,8 +970,7 @@ test('elevation adapter returns a bounded broker error when the lifecycle child 
       platform: 'win32',
       invoke: async (request) => {
         const outer = JSON.parse(request.input);
-        assert.equal(typeof outer.brokerCommand, 'string');
-        assert.ok(outer.brokerCommand.length > 0);
+        assert.equal(outer.launcher, elevationLauncher(root, runner, node).executable);
         const channel = await elevationChannel(root);
         const input = JSON.parse(await readFile(channel.inputFile, 'utf8'));
         const { resultFile } = channel;
@@ -698,9 +987,7 @@ test('elevation adapter returns a bounded broker error when the lifecycle child 
         })}\n`);
         return { exitCode: 0, timedOut: false, aborted: false, outputTruncated: false, stdout: '{"started":true,"exitCode":1}' };
       },
-    }, {
-      resolveRunnerHead: async () => runnerHead,
-    });
+    }, elevationDependencies(root, runner, node));
     assert.equal(result.completed, false);
     assert.equal(result.exitCode, 1);
     assert.match(result.blocker, /exact launcher startup failure/u);
@@ -725,7 +1012,7 @@ test('elevation adapter fails before UAC when the current runner identity is not
       platform: 'win32',
       invoke: async () => { invoked = true; return null; },
     }, {
-      resolveRunnerHead: async () => 'cuda-target',
+      resolveRunner: async () => ({ head: 'cuda-target', root, launcher }),
     });
     assert.equal(invoked, false);
     assert.equal(result.attempted, false);
@@ -733,6 +1020,69 @@ test('elevation adapter fails before UAC when the current runner identity is not
     assert.match(result.blocker, /exact current DevBridge runner identity/u);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('elevation adapter admits a proved detached runner outside the installation home', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
+  const outside = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-runner-cache-'));
+  try {
+    const bin = path.join(root, 'bin');
+    await mkdir(bin);
+    await mkdir(path.join(root, 'state'));
+    const entryLauncher = path.join(bin, 'devbridge-entry.mjs');
+    const node = path.join(root, 'node.exe');
+    await writeFile(entryLauncher, 'export {};\n');
+    await writeFile(node, 'node');
+    const runner = await elevationRunner(outside, 'f'.repeat(40));
+    let invoked = false;
+    const result = await requestWindowsLifecycleAuthorityElevation({
+      home: root,
+      launcher: entryLauncher,
+      nodeExecutable: node,
+      platform: 'win32',
+      invoke: async () => { invoked = true; throw new Error('stop before UAC'); },
+    }, elevationDependencies(root, runner, node));
+    assert.equal(invoked, true);
+    assert.equal(result.attempted, true);
+    assert.equal(result.completed, false);
+    assert.match(result.blocker, /could not be started/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('elevation adapter refuses an unproved runner launcher outside the managed home before UAC', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-'));
+  const outside = await mkdtemp(path.join(os.tmpdir(), 'devbridge-elevation-outside-'));
+  try {
+    const bin = path.join(root, 'bin');
+    await mkdir(bin);
+    const entryLauncher = path.join(bin, 'devbridge-entry.mjs');
+    const node = path.join(root, 'node.exe');
+    const runnerRoot = path.join(outside, 'runner');
+    const runnerLauncher = path.join(runnerRoot, 'src', 'cli.js');
+    await mkdir(path.dirname(runnerLauncher), { recursive: true });
+    await writeFile(entryLauncher, 'export {};\n');
+    await writeFile(runnerLauncher, 'export {};\n');
+    await writeFile(node, 'node');
+    let invoked = false;
+    const result = await requestWindowsLifecycleAuthorityElevation({
+      home: root,
+      launcher: entryLauncher,
+      nodeExecutable: node,
+      platform: 'win32',
+      invoke: async () => { invoked = true; return null; },
+    }, {
+      resolveRunner: async () => ({ head: 'f'.repeat(40), root: runnerRoot, launcher: runnerLauncher }),
+    });
+    assert.equal(invoked, false);
+    assert.equal(result.attempted, false);
+    assert.match(result.blocker, /exact current DevBridge runner identity/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });
 
@@ -766,6 +1116,7 @@ test('elevated child entry requires the parent marker and accepts no constructio
     /bounded UAC parent contract/u,
   );
   let request = null;
+  let activationRequest = null;
   const result = await runWindowsLifecycleAuthoritySetupChild({
     env: {
       DEVBRIDGE_HOME: 'C:\\Users\\Operator\\.devbridge',
@@ -779,11 +1130,43 @@ test('elevated child entry requires the parent marker and accepts no constructio
       request = value;
       return { ready: true, changed: true, service: 'ready', protectedState: 'ready' };
     },
+    activationReconciler: async (value) => {
+      activationRequest = value;
+      return { ready: true, changed: true };
+    },
   });
   assert.equal(result.ready, true);
+  assert.equal(result.changed, true);
   assert.equal(request.mode, 'elevated-child');
   assert.equal(request.requestElevation, null);
+  assert.equal(Object.hasOwn(request, 'configuration'), false);
   assert.equal(Object.hasOwn(request, 'construct'), false);
+  assert.deepEqual(activationRequest, {
+    stateDirectory: path.join(path.resolve('C:\\Users\\Operator\\.devbridge'), 'state'),
+    platform: 'win32',
+    invoke: request.invoke,
+    environment: {
+      DEVBRIDGE_HOME: 'C:\\Users\\Operator\\.devbridge',
+      DEVBRIDGE_LIFECYCLE_AUTHORITY_ELEVATED_CHILD: '1',
+    },
+  });
+});
+
+test('elevated child does not activate environments before protected readiness', async () => {
+  let activated = false;
+  const result = await runWindowsLifecycleAuthoritySetupChild({
+    env: {
+      DEVBRIDGE_HOME: 'C:\\Users\\Operator\\.devbridge',
+      DEVBRIDGE_LIFECYCLE_AUTHORITY_ELEVATED_CHILD: '1',
+    },
+  }, {
+    platform: 'win32',
+    reconciler: async () => ({ ready: false, changed: false, blocker: 'service unavailable' }),
+    activationReconciler: async () => { activated = true; },
+  });
+  assert.equal(result.ready, false);
+  assert.equal(activated, false);
+  assert.match(result.blocker, /service unavailable/u);
 });
 
 test('lifecycle child admits only an exact entry-injected broker home', () => {
@@ -803,11 +1186,76 @@ test('lifecycle child admits only an exact entry-injected broker home', () => {
   ], { authorityHome, platform: 'win32' }), /exact broker-bound setup home/u);
   for (const capability of [
     ['--construct'],
+    ['--profiles', 'linux'],
     ['--track-ref', 'main'],
     ['--repository', 'owner/repository'],
+    ['--retire-conflict', 'a'.repeat(64)],
+    ['--windows-media', 'C:\\media\\Windows.iso'],
+    ['--windows-distribution', 'local-reconstruction'],
+    ['--windows-activation', 'later'],
+    ['--approve-windows-media', `candidate-${'a'.repeat(32)}`, '--windows-image-index', '6', '--windows-media-class', 'official-owned'],
   ]) {
     assert.throws(() => parseSetupCommandOptions([
       '--lifecycle-authority-child', '--no-update', ...capability,
     ], { authorityHome, platform: 'win32' }), /accepts no setup capability arguments/u);
   }
+});
+
+test('ordinary setup keeps Windows media discovery separate from exact approval', () => {
+  const candidate = `candidate-${'a'.repeat(32)}`;
+  const discovery = parseSetupCommandOptions(['--windows-media', 'C:\\media\\Windows.iso'], { platform: 'win32' });
+  assert.equal(discovery.windowsMediaLocation, 'C:\\media\\Windows.iso');
+  assert.equal(discovery.windowsMediaApproval, null);
+
+  const approval = parseSetupCommandOptions([
+    '--approve-windows-media', candidate,
+    '--windows-image-index', '6',
+    '--windows-media-class', 'official-owned',
+  ]);
+  assert.deepEqual(approval.windowsMediaApproval, { candidate, imageIndex: 6, sourceClass: 'official-owned' });
+  assert.throws(() => parseSetupCommandOptions(['--windows-media', 'relative.iso'], { platform: 'win32' }), /absolute local ISO path/u);
+  assert.throws(() => parseSetupCommandOptions(['--approve-windows-media', candidate]), /requires --approve-windows-media/u);
+  assert.throws(() => parseSetupCommandOptions([
+    '--windows-media', 'C:\\media\\Windows.iso',
+    '--approve-windows-media', candidate,
+    '--windows-image-index', '6',
+    '--windows-media-class', 'official-owned',
+  ], { platform: 'win32' }), /discover Windows media before approving/u);
+  assert.throws(() => parseSetupCommandOptions([
+    '--approve-windows-media', candidate,
+    '--windows-image-index', '6',
+    '--windows-media-class', 'temporary',
+  ]), /official-owned or evaluation/u);
+});
+
+test('ordinary setup accepts one bounded execution-profile choice and rejects contradictory effects', () => {
+  for (const choice of ['linux', 'windows', 'both', 'none', 'defer']) {
+    assert.equal(parseSetupCommandOptions(['--profiles', choice]).profileChoice, choice);
+  }
+  assert.throws(() => parseSetupCommandOptions(['--profiles', 'other']), /must be linux, windows, both, none, or defer/u);
+  assert.throws(() => parseSetupCommandOptions(['--profiles', 'linux', '--profiles', 'both']), /only once/u);
+  for (const choice of ['none', 'defer']) {
+    assert.throws(() => parseSetupCommandOptions(['--profiles', choice, '--construct']), /requires at least one selected execution profile/u);
+  }
+  assert.equal(parseSetupCommandOptions(['--profiles', 'windows', '--construct']).construct, true);
+  assert.equal(parseSetupCommandOptions(['--profiles', 'both', '--construct']).construct, true);
+  assert.throws(() => parseSetupCommandOptions([
+    '--profiles', 'linux', '--windows-media', 'C:\\media\\Windows.iso',
+  ], { platform: 'win32' }), /require the Windows execution profile/u);
+  assert.equal(parseSetupCommandOptions(['--profiles', 'windows', '--windows-activation', 'later']).windowsActivation, 'later');
+  assert.throws(() => parseSetupCommandOptions(['--windows-activation', 'automatic']), /must be later/u);
+  assert.throws(() => parseSetupCommandOptions(['--windows-activation', 'later', '--windows-activation', 'later']), /only once/u);
+  assert.throws(() => parseSetupCommandOptions(['--profiles', 'linux', '--windows-activation', 'later']), /require the Windows execution profile/u);
+  assert.equal(parseSetupCommandOptions(['--profiles', 'windows', '--windows-distribution', 'local-reconstruction']).windowsDistribution, 'local-reconstruction');
+  assert.throws(() => parseSetupCommandOptions(['--windows-distribution', 'remote']), /must be local-reconstruction/u);
+  assert.throws(() => parseSetupCommandOptions(['--windows-distribution', 'local-reconstruction', '--windows-distribution', 'local-reconstruction']), /only once/u);
+  assert.throws(() => parseSetupCommandOptions(['--profiles', 'linux', '--windows-distribution', 'local-reconstruction']), /require the Windows execution profile/u);
+});
+
+test('ordinary setup accepts only one exact opaque resource-conflict subject', () => {
+  const subject = 'b'.repeat(64);
+  const selected = parseSetupCommandOptions(['--retire-conflict', subject]);
+  assert.equal(selected.retireConflict, subject);
+  assert.throws(() => parseSetupCommandOptions(['--retire-conflict', 'not-a-subject']), /exact conflict consent subject/u);
+  assert.throws(() => parseSetupCommandOptions(['--retire-conflict', subject, '--retire-conflict', subject]), /only once/u);
 });

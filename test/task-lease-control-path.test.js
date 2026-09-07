@@ -10,11 +10,10 @@ import { daemonStatus } from '../src/runtime/daemon-lock.js';
 test('runOnce cannot self-assert daemon coordination exclusivity', async () => {
   let observed = null;
   await assert.rejects(
-    runOnce({}, {
-      coordinationExclusive: true,
+    runOnce({ github: { queueRepositories: ['owner/queue'] } }, {
       env: {},
       fetchImpl: async () => { throw new Error('fetch should not run'); },
-      runtimeFactory: async (_config, options) => {
+      collectionFactory: async (_config, options) => {
         observed = options;
         throw new Error('fixture runtime stop');
       },
@@ -31,7 +30,7 @@ test('daemon grants same-identity takeover authority only after its singleton lo
 
   await assert.rejects(
     runDaemon({ state: { directory } }, {
-      runtimeFactory: async (_config, options) => {
+      collectionFactory: async (_config, options) => {
         observed = {
           options,
           lock: await daemonStatus(lockPath),

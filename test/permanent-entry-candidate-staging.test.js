@@ -10,6 +10,7 @@ import {
   ENTRY_CANDIDATE_BUNDLE_PROTOCOL,
   stageEntryCandidate,
 } from '../scripts/stage-entry-candidate.mjs';
+import { PERMANENT_ENTRY_COMPONENT_FILES } from '../src/install/permanent-entry-components.mjs';
 
 function digest(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -37,20 +38,7 @@ test('qualification staging preserves rollback launcher bytes and creates a clos
   assert.deepEqual(await readFile(stable), stableBytes);
   assert.deepEqual(await readFile(path.join(output, 'devbridge.mjs')), stableBytes);
 
-  const required = new Set([
-    'devbridge-entry.mjs',
-    'src/entry/content-addressed-runner-provider.mjs',
-    'src/entry/development-checkout-runner-provider.mjs',
-    'src/entry/development-stable-subject-authority.mjs',
-    'src/entry/exact-checkout-runner-provider.mjs',
-    'src/entry/experimental-entry.mjs',
-    'src/entry/github-runner-source.mjs',
-    'src/entry/installation-identity.mjs',
-    'src/entry/permanent-entry.mjs',
-    'src/entry/production-stable-subject-authority.mjs',
-    'src/entry/stable-entry.mjs',
-    'src/entry/stable-runner-state.mjs',
-  ]);
+  const required = new Set(PERMANENT_ENTRY_COMPONENT_FILES);
   for (const entry of staged.manifest.files) {
     const stagedBytes = await readFile(path.join(output, ...entry.path.split('/')));
     assert.equal(digest(stagedBytes), entry.sha256, entry.path);

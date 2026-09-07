@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { createEnvironmentBootstrap } from './environment-bootstrap.js';
 import { createLinuxAccessPreparation } from './linux-access-preparation.js';
-import { executionProfileSubject } from './execution-profile-routing.js';
+import { createWindowsEnvironmentAccess } from './windows-environment-access.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { loadOrCreateLocalIdentity } from '../runtime/local-identity.js';
 import { SshAccessMaterial } from '../runtime/ssh-access-material.js';
@@ -34,13 +34,19 @@ function safeReason(error) {
   return String(error?.message ?? error ?? 'environment preparation is unavailable').slice(0, 2048);
 }
 
+function persistentEnvironmentIdentity(value) {
+  if (typeof value !== 'string' || !/^env-[a-f0-9]{32}$/u.test(value)) {
+    throw new TypeError('environment preparation implementationGeneration must be an exact persistent environment identity');
+  }
+  return value;
+}
+
 export async function createLocalEnvironmentAccess({
   stateDirectory,
   authorityDirectory = null,
   platform = process.platform,
   invoke = invokeCommand,
   guest,
-  windowsAccess = null,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('environment access stateDirectory is required');
   if (authorityDirectory != null && (typeof authorityDirectory !== 'string' || authorityDirectory.length === 0)) {
@@ -67,8 +73,8 @@ export async function createLocalEnvironmentAccess({
       prepare: (request) => preparation.ensure(request),
     });
   }
-  if (family === 'windows' && platform === 'win32' && typeof windowsAccess === 'function') {
-    return Object.freeze({ connection: (target) => windowsAccess(target), prepare: null });
+  if (family === 'windows' && platform === 'win32') {
+    return createWindowsEnvironmentAccess({ authorityDirectory: authorityStateDirectory, platform, invoke });
   }
   throw new Error(`environment guest access requires setup re-entry for ${platform}/${family}`);
 }
@@ -80,7 +86,6 @@ export function createEnvironmentConstructionPreparation({
   invoke = invokeCommand,
   createBootstrap = createEnvironmentBootstrap,
   createAccess = createLocalEnvironmentAccess,
-  windowsAccess = null,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('environment preparation stateDirectory is required');
   if (authorityDirectory != null && (typeof authorityDirectory !== 'string' || authorityDirectory.length === 0)) {
@@ -97,10 +102,10 @@ export function createEnvironmentConstructionPreparation({
     if (!sameRequirement(request.enrollment ?? declaration.enrollment, declaration.enrollment)) throw new Error('environment preparation enrollment no longer matches declaration authority');
     if (!sameBootstrap(request.bootstrap ?? declaration.bootstrap, declaration.bootstrap)) throw new Error('environment preparation bootstrap no longer matches declaration authority');
     if (declaration.enrollment?.requirement !== 'unique-guest-trust-v1') throw new Error(`unsupported environment enrollment requirement: ${String(declaration.enrollment?.requirement ?? 'missing')}`);
-    const target = executionProfileSubject(declaration.profile);
-    const key = JSON.stringify([declaration.profile, declaration.guest, declaration.bootstrap, declaration.enrollment]);
+    const target = persistentEnvironmentIdentity(request.implementationGeneration);
+    const key = JSON.stringify([target, declaration.profile, declaration.guest, declaration.bootstrap, declaration.enrollment]);
     if (!values.has(key)) {
-      const access = await createAccess({ stateDirectory, authorityDirectory: authorityStateDirectory, platform, invoke, guest: declaration.guest, windowsAccess });
+      const access = await createAccess({ stateDirectory, authorityDirectory: authorityStateDirectory, platform, invoke, guest: declaration.guest });
       if (!access || typeof access.connection !== 'function' || (access.prepare != null && typeof access.prepare !== 'function')) throw new TypeError('environment access composition contract is incomplete');
       const bootstrap = await createBootstrap({
         stateDirectory,

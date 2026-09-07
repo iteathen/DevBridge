@@ -67,7 +67,8 @@ export function normalizeEnvironmentLifecycleJournal(raw) {
   for (let index = 1; index < entries.length; index += 1) {
     const prior = ENVIRONMENT_LIFECYCLE_STAGES.indexOf(entries[index - 1].stage);
     const current = ENVIRONMENT_LIFECYCLE_STAGES.indexOf(entries[index].stage);
-    if (current !== prior + 1) throw new TypeError('environment lifecycle journal stages must be contiguous');
+    const failedTerminal = entries[index].stage === 'terminal' && entries[index].outcome !== 'complete';
+    if (entries[index - 1].stage === 'terminal' || (current !== prior + 1 && !failedTerminal)) throw new TypeError('environment lifecycle journal stages must be contiguous');
   }
   return Object.freeze({
     protocol: ENVIRONMENT_LIFECYCLE_JOURNAL_PROTOCOL,
@@ -136,7 +137,8 @@ export class EnvironmentLifecycleJournal {
     const nextStage = ENVIRONMENT_LIFECYCLE_STAGES[current.entries.length];
     const value = requireObject(input, 'environment lifecycle advance');
     onlyKeys(value, new Set(['stage', 'outcome', 'fence', 'implementationGeneration', 'subjects', 'observation']), 'environment lifecycle advance');
-    if (value.stage !== nextStage) throw new Error(`environment lifecycle next stage must be ${nextStage}`);
+    const failedTerminal = value.stage === 'terminal' && ['failed', 'ambiguous'].includes(value.outcome);
+    if (value.stage !== nextStage && !failedTerminal) throw new Error(`environment lifecycle next stage must be ${nextStage}`);
     const next = normalizeEnvironmentLifecycleJournal({
       ...current,
       entries: [...current.entries, {

@@ -83,6 +83,7 @@ export async function prepareRuntimeCandidate(args, paths, {
   ensureRuntimeFn = transactional.ensureRuntime,
   validateCandidateFn = validateCandidateExecution,
   releaseManifest = null,
+  source = null,
   env = process.env,
 } = {}) {
   if (!desiredRef || !/^[0-9a-f]{40}$/iu.test(String(desiredHead))) {
@@ -90,7 +91,20 @@ export async function prepareRuntimeCandidate(args, paths, {
   }
   const runtimeDir = transactional.candidateRuntimePath(paths, desiredHead);
   const candidatePaths = { ...paths, runtime: runtimeDir };
-  const candidate = ensureRuntimeFn({ ...args, update: true }, candidatePaths, runner);
+  if (source != null && typeof source.prepare !== 'function') fail('candidate source port is invalid');
+  let candidate;
+  if (source == null) {
+    candidate = ensureRuntimeFn({ ...args, update: true }, candidatePaths, runner);
+  } else {
+    const prepared = await source.prepare({ head: String(desiredHead).toLowerCase(), destination: runtimeDir });
+    if (prepared?.head !== String(desiredHead).toLowerCase() || path.resolve(prepared.root ?? '') !== path.resolve(runtimeDir)) {
+      fail('candidate source preparation does not match the exact requested runtime');
+    }
+    candidate = transactional.inspectExactRuntime(candidatePaths, {
+      ref: desiredRef,
+      head: desiredHead,
+    }, runner);
+  }
   if (candidate.ref !== desiredRef || candidate.head.toLowerCase() !== String(desiredHead).toLowerCase()) {
     fail(`candidate changed during preparation; expected ${desiredRef}@${desiredHead}, observed ${candidate.ref}@${candidate.head}`);
   }

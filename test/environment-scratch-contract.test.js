@@ -34,7 +34,7 @@ test('CMake and CTest adapters pass only logical scratch references', async () =
 
   await registry.execute('cmake.configure', { sourcePath: 'CMakeLists.txt', buildId: 'native' }, context);
   await registry.execute('cmake.build', { buildId: 'native' }, context);
-  await registry.execute('ctest.run', { buildId: 'native' }, context);
+  await registry.execute('ctest.run', { buildId: 'native', verbose: true }, context);
 
   assert.equal(calls.length, 3);
   for (const call of calls) {
@@ -48,6 +48,12 @@ test('CMake and CTest adapters pass only logical scratch references', async () =
   assert.equal(registry.usesEnvironmentScratch('cmake.build'), true);
   assert.equal(registry.usesEnvironmentScratch('ctest.run'), true);
   assert.equal(registry.usesEnvironmentScratch('node.test'), false);
+  assert.deepEqual(calls[2].args, [
+    '--test-dir',
+    { kind: 'scratch', name: 'cmake-native' },
+    '--output-on-failure',
+    '--verbose',
+  ]);
 });
 
 test('repository execution admits bounded scratch identities without transfer authority', () => {

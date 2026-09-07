@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PolicyError } from '../errors.js';
 import { isWithin } from '../security/workspace-policy.js';
 import { ManagedScratchTransaction } from '../runtime/managed-scratch.js';
 import { guardActiveTaskLease } from './lease-execution-context.js';
+import { captureFailureDiagnostics } from './failure-diagnostics.js';
 
 const ASSERTION_MARKER_DIAGNOSTIC_CHARACTERS = 160;
 
@@ -48,6 +49,30 @@ async function assertContainedNoFollow(root, relative, { allowMissing = true } =
   return target;
 }
 
+function parentPaths(relative) {
+  const parent = path.posix.dirname(relative);
+  if (parent === '.') return [];
+  const segments = parent.split('/');
+  return segments.map((_segment, index) => segments.slice(0, index + 1).join('/'));
+}
+
+async function missingParentPaths(root, relative) {
+  await assertContainedNoFollow(root, relative);
+  const missing = [];
+  for (const parent of parentPaths(relative)) {
+    const target = path.resolve(root, parent);
+    if (!(await exists(target))) {
+      missing.push(parent);
+      continue;
+    }
+    const info = await lstat(target);
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new PolicyError(`controller parent path is not a real directory: ${parent}`);
+    }
+  }
+  return missing;
+}
+
 async function atomicWrite(target, content, root) {
   const parentRelative = path.relative(root, path.dirname(target));
   await assertContainedNoFollow(root, parentRelative || '.');
@@ -66,6 +91,7 @@ function operationResultEvidence(id, operation, result) {
     operation,
     exitCode: result.exitCode,
     timedOut: result.timedOut === true,
+    aborted: result.aborted === true,
     outputTruncated: result.outputTruncated === true,
     stdout: String(result.stdout ?? ''),
     stderr: String(result.stderr ?? ''),
@@ -96,12 +122,14 @@ export class ControllerPlanExecutor {
   #processRunner;
   #workspace;
   #faults;
+  #secretValues;
 
-  constructor({ operationRegistry, processRunner, workspaceManager, faultInjector = null }) {
+  constructor({ operationRegistry, processRunner, workspaceManager, faultInjector = null, secretValues = [] }) {
     this.#registry = operationRegistry;
     this.#processRunner = processRunner;
     this.#workspace = workspaceManager;
     this.#faults = faultInjector;
+    this.#secretValues = secretValues;
   }
 
   async #applyFile(file, context) {
@@ -143,7 +171,14 @@ export class ControllerPlanExecutor {
 
   async #cleanup(state, workspace, persist) {
     const ledger = state.controllerPlan?.cleanupLedger ?? [];
-    for (const entry of ledger) {
+    const ordered = [...ledger].sort((left, right) => {
+      const leftDirectory = left.kind === 'directory';
+      const rightDirectory = right.kind === 'directory';
+      if (leftDirectory !== rightDirectory) return leftDirectory ? 1 : -1;
+      if (!leftDirectory) return 0;
+      return right.path.split('/').length - left.path.split('/').length;
+    });
+    for (const entry of ordered) {
       if (entry.state === 'verified-absent') continue;
       const target = await assertContainedNoFollow(workspace.worktreeDir, entry.path);
       entry.state = 'cleanup-planned';
@@ -152,10 +187,16 @@ export class ControllerPlanExecutor {
       this.#faults?.throwIfTriggered('cleanup.before-remove', { operation: entry.path });
       if (await exists(target)) {
         const info = await lstat(target);
-        if (info.isDirectory()) throw new PolicyError(`cleanup ledger entry unexpectedly became a directory: ${entry.path}`);
         if (info.isSymbolicLink()) throw new PolicyError(`cleanup ledger entry unexpectedly became a symbolic link: ${entry.path}`);
         await guardActiveTaskLease();
-        await rm(target, { force: true });
+        if (entry.kind === 'directory') {
+          if (!info.isDirectory()) throw new PolicyError(`cleanup directory unexpectedly changed kind: ${entry.path}`);
+          try { await rmdir(target); }
+          catch { throw new PolicyError(`cleanup directory could not be removed exactly: ${entry.path}`); }
+        } else {
+          if (info.isDirectory()) throw new PolicyError(`cleanup file unexpectedly became a directory: ${entry.path}`);
+          await rm(target, { force: true });
+        }
         await guardActiveTaskLease();
       }
       entry.state = 'removed';
@@ -316,6 +357,9 @@ export class ControllerPlanExecutor {
     state.controllerPlan.scratchLedger ??= [];
     const planState = state.controllerPlan;
     const results = new Map();
+    let diagnosticOperation = null;
+    let diagnosticResult = null;
+    planState.failureDiagnostics = null;
     const scratch = new ManagedScratchTransaction({
       workspace,
       state,
@@ -339,6 +383,15 @@ export class ControllerPlanExecutor {
           }
           await persist();
         }
+        if (file.scope === 'ephemeral' && file.action === 'create') {
+          let changed = false;
+          for (const parent of await missingParentPaths(workspace.worktreeDir, file.path)) {
+            if (planState.cleanupLedger.some((entry) => entry.kind === 'directory' && entry.path === parent)) continue;
+            planState.cleanupLedger.push({ path: parent, kind: 'directory', state: 'planned', updatedAt: new Date().toISOString() });
+            changed = true;
+          }
+          if (changed) await persist();
+        }
         const applied = await this.#applyFile(file, { state, workspace });
         this.#faults?.throwIfTriggered('file.after-effect', { operation: file.path });
         fileState.state = 'applied';
@@ -356,6 +409,8 @@ export class ControllerPlanExecutor {
       planState.phase = 'running-operations';
       await persist();
       for (const operation of plan.operations) {
+        diagnosticOperation = operation;
+        diagnosticResult = null;
         this.#registry.validate(operation.operation, operation.params);
         const usesEnvironmentScratch = typeof this.#registry.usesEnvironmentScratch === 'function'
           && this.#registry.usesEnvironmentScratch(operation.operation);
@@ -387,6 +442,7 @@ export class ControllerPlanExecutor {
           onActivity: (activity) => onLiveness?.({ operationId: operation.id, operation: operation.operation, ...activity }),
         });
         const evidence = operationResultEvidence(operation.id, operation.operation, result);
+        diagnosticResult = evidence;
         this.#faults?.throwIfTriggered('operation.after-effect', { operation: operation.operation });
         record.result = evidence;
         record.state = 'observed';
@@ -397,13 +453,29 @@ export class ControllerPlanExecutor {
       }
 
       planState.phase = 'asserting';
+      diagnosticOperation = null;
+      diagnosticResult = null;
       planState.assertionsPassed = 0;
       await persist();
       for (let index = 0; index < plan.assertions.length; index += 1) {
+        const assertion = plan.assertions[index];
+        diagnosticOperation = assertion.operation ? { id: assertion.operation } : null;
+        diagnosticResult = assertion.operation ? results.get(assertion.operation) : null;
         await this.#assert(plan.assertions[index], results, workspace);
         planState.assertionsPassed = index + 1;
         await persist();
       }
+    } catch (error) {
+      planState.failureDiagnostics = captureFailureDiagnostics({
+        secretValues: this.#secretValues,
+        stage: planState.phase,
+        operationId: diagnosticOperation?.id,
+        attempt: planState.operations.find(entry => entry.id === diagnosticOperation?.id)?.attempts ?? 1,
+        error,
+        result: diagnosticResult,
+      });
+      await persist();
+      throw error;
     } finally {
       planState.phase = 'cleaning';
       await persist();

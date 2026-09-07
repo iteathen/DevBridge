@@ -148,7 +148,6 @@ export function createEnvironmentRebuildMaterialization({ state, subject, journa
       const matches = (await localState.listEnvironments()).filter((entry) => entry?.record?.subject === localSubject && entry?.record?.profile === request.declaration.profile);
       if (matches.length !== 1) throw new Error('environment rebuild materialization is missing or ambiguous');
       const selected = matches[0];
-      if (selected.record?.source?.identity !== request.declaration.image.identity) throw new Error('environment rebuild source no longer matches declaration authority');
       const active = await journal.current(request.environmentIdentity);
       if (!active || active.operation !== 'rebuild' || active.operationId !== request.operationId || active.declarationRevision !== request.declarationRevision) {
         throw new Error('environment rebuild materialization is not bound to the active rebuild lifecycle');
@@ -158,9 +157,11 @@ export function createEnvironmentRebuildMaterialization({ state, subject, journa
       const result = await localState.rebuildEnvironment(implementation(selected.record), {
         requestId: request.operationId,
         expectedPreviousIdentity: previous,
+        sourceIdentity: request.declaration.image.identity,
       });
       const generation = implementation(result?.record);
       if (generation === previous) throw new Error('environment rebuild did not create a new implementation generation');
+      if (result.record?.source?.identity !== request.declaration.image.identity) throw new Error('environment rebuilt source does not match declaration authority');
       return Object.freeze({
         ready: result?.observation?.exists === true && result?.observation?.owned === true && result?.observation?.compatible === true,
         implementationGeneration: generation,

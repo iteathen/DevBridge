@@ -6,6 +6,8 @@ const PROTOCOL = 'devbridge/linux-service-observation-v1';
 const SYSTEMCTL = '/usr/bin/systemctl';
 const UNIT = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,126}\.service$/u;
 const LOCAL_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,30}$/u;
+const NUMERIC_GROUP_SELECTOR = /^[1-9][0-9]{0,9}$/u;
+const MAX_LOCAL_ID = 0xffff_fffe;
 const TOKEN = /^[a-z][a-z0-9-]{0,63}$/u;
 const ENVIRONMENT = Object.freeze({ LANG: 'C', LC_ALL: 'C' });
 const PROPERTIES = Object.freeze([
@@ -61,6 +63,15 @@ function safeToken(value, name, { empty = false } = {}) {
 function localName(value, name, { empty = false } = {}) {
   if (empty && value === '') return '';
   if (typeof value !== 'string' || !LOCAL_NAME.test(value)) throw new Error(`Linux service observation ${name} is invalid`);
+  return value;
+}
+
+function groupSelector(value, name) {
+  if (typeof value !== 'string') throw new Error(`Linux service observation ${name} is invalid`);
+  if (LOCAL_NAME.test(value)) return value;
+  if (!NUMERIC_GROUP_SELECTOR.test(value) || Number(value) > MAX_LOCAL_ID) {
+    throw new Error(`Linux service observation ${name} is invalid`);
+  }
   return value;
 }
 
@@ -159,7 +170,7 @@ export async function observeLinuxService(value = {}, providedPorts = {}) {
   try {
     const loadState = safeToken(values.get('LoadState'), 'load state');
     const exists = loadState !== 'not-found';
-    const supplementaryGroups = values.get('SupplementaryGroups').split(/\s+/u).filter(Boolean).map((entry) => localName(entry, 'supplementary group'));
+    const supplementaryGroups = values.get('SupplementaryGroups').split(/\s+/u).filter(Boolean).map((entry) => groupSelector(entry, 'supplementary group'));
     if (new Set(supplementaryGroups).size !== supplementaryGroups.length) throw new Error('Linux service observation supplementary groups are ambiguous');
     const reload = values.get('NeedDaemonReload');
     if (!['yes', 'no'].includes(reload)) throw new Error('Linux service observation reload state is invalid');

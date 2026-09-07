@@ -17,6 +17,7 @@ const HOSTNAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 const GITHUB_AUTH_MODES = new Set(['auto', 'environment', 'github-cli']);
 const CONTEXT_BUDGET_UNITS = new Set(['tokens', 'bytes', 'proxy']);
 const DECISION_CLASS_SET = new Set(DECISION_CLASSES);
+const MAX_QUEUE_REPOSITORIES = 4096;
 
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -49,6 +50,25 @@ function requireNumber(value, name, { min = 0, max = Number.POSITIVE_INFINITY } 
 function requireBoolean(value, name) {
   if (typeof value !== 'boolean') throw new ConfigurationError(`${name} must be a boolean`);
   return value;
+}
+
+function normalizeQueueRepositories(github) {
+  if (Object.hasOwn(github, 'queueRepository')) {
+    throw new ConfigurationError('github.queueRepository is unsupported; configure github.queueRepositories');
+  }
+  const raw = github.queueRepositories;
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > MAX_QUEUE_REPOSITORIES) {
+    throw new ConfigurationError(`github.queueRepositories must contain 1-${MAX_QUEUE_REPOSITORIES} repositories`);
+  }
+  const repositories = raw.map((value, index) => {
+    const repository = requireString(value, `github.queueRepositories[${index}]`);
+    if (!REPOSITORY_RE.test(repository)) throw new ConfigurationError(`github.queueRepositories[${index}] must be owner/name`);
+    return repository;
+  });
+  if (new Set(repositories.map((value) => value.toLowerCase())).size !== repositories.length) {
+    throw new ConfigurationError('github.queueRepositories must not contain duplicate repositories');
+  }
+  return repositories;
 }
 
 function expandHome(value) {
@@ -218,8 +238,7 @@ export function validateConfig(raw) {
   if (config.version !== 1) throw new ConfigurationError('config.version must be 1');
 
   const github = requireObject(config.github, 'github');
-  const queueRepository = requireString(github.queueRepository, 'github.queueRepository');
-  if (!REPOSITORY_RE.test(queueRepository)) throw new ConfigurationError('github.queueRepository must be owner/name');
+  const queueRepositories = normalizeQueueRepositories(github);
 
   const trustedActorIds = github.trustedActorIds;
   if (!Array.isArray(trustedActorIds) || trustedActorIds.length === 0 || trustedActorIds.some((id) => !/^\d+$/.test(String(id)))) {
@@ -258,7 +277,7 @@ export function validateConfig(raw) {
   return {
     version: 1,
     github: {
-      queueRepository,
+      queueRepositories,
       taskLabel: requireString(github.taskLabel ?? 'devbridge:ready', 'github.taskLabel'),
       trustedActorIds: trustedActorIds.map(String),
       tokenEnv: githubAuth.environmentVariables[0],

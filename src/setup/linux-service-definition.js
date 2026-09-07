@@ -23,6 +23,8 @@ import {
 const PROTOCOL = 'devbridge/linux-service-definition-v1';
 const UNIT = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,126}\.service$/u;
 const LOCAL_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,30}$/u;
+const NUMERIC_GROUP_SELECTOR = /^[1-9][0-9]{0,9}$/u;
+const MAX_LOCAL_ID = 0xffff_fffe;
 const TYPE = /^[a-z][a-z0-9-]{0,30}$/u;
 const MAX_DEFINITION_BYTES = 64 * 1024;
 
@@ -41,6 +43,16 @@ function boundedText(value, name) {
 
 function localName(value, name) {
   if (typeof value !== 'string' || !LOCAL_NAME.test(value)) throw new TypeError(`${name} is invalid`);
+  return value;
+}
+
+function validGroupSelector(value) {
+  return typeof value === 'string'
+    && (LOCAL_NAME.test(value) || (NUMERIC_GROUP_SELECTOR.test(value) && Number(value) <= MAX_LOCAL_ID));
+}
+
+function groupSelector(value, name) {
+  if (!validGroupSelector(value)) throw new TypeError(`${name} is invalid`);
   return value;
 }
 
@@ -69,7 +81,7 @@ function normalizedRequest(value) {
   if (!Array.isArray(value.expected.supplementaryGroups) || value.expected.supplementaryGroups.length > 8) {
     throw new TypeError('Linux service expected supplementary groups are invalid');
   }
-  const supplementaryGroups = value.expected.supplementaryGroups.map((entry) => localName(entry, 'Linux service expected supplementary group'));
+  const supplementaryGroups = value.expected.supplementaryGroups.map((entry) => groupSelector(entry, 'Linux service expected supplementary group'));
   if (new Set(supplementaryGroups).size !== supplementaryGroups.length) throw new TypeError('Linux service expected supplementary groups are ambiguous');
   if (typeof value.expected.type !== 'string' || !TYPE.test(value.expected.type)) throw new TypeError('Linux service expected type is invalid');
   const signal = value.signal ?? null;
@@ -146,7 +158,7 @@ function normalizedService(value) {
   }
   if (!Number.isSafeInteger(value.mainPid) || value.mainPid < 0
       || value.supplementaryGroups.length > 8
-      || value.supplementaryGroups.some((entry) => typeof entry !== 'string' || !LOCAL_NAME.test(entry))
+      || value.supplementaryGroups.some((entry) => !validGroupSelector(entry))
       || new Set(value.supplementaryGroups).size !== value.supplementaryGroups.length
       || value.exists !== (value.loadState !== 'not-found')) {
     throw new Error('Linux service definition observation is invalid');

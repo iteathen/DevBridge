@@ -221,6 +221,7 @@ export async function reconcileSetupPrerequisites({
   }
 
   const local = { signatureVerifierExecutable };
+  const windowsReady = changed => result({ platform, ready: true, changed, capabilities: { gpgv: true, opensshClient: true }, local });
 
   if (platform !== 'win32') {
     return result({
@@ -246,13 +247,7 @@ export async function reconcileSetupPrerequisites({
   }
 
   if (inspected.ssh && inspected.sshKeygen) {
-    return result({
-      platform,
-      ready: true,
-      changed: signatureChanged,
-      capabilities: { gpgv: true, opensshClient: true },
-      local,
-    });
+    return windowsReady(signatureChanged);
   }
 
   if (!inspected.elevated) {
@@ -333,13 +328,7 @@ export async function reconcileSetupPrerequisites({
     });
   }
 
-  return result({
-    platform,
-    ready: true,
-    changed: true,
-    capabilities: { gpgv: true, opensshClient: true },
-    local,
-  });
+  return windowsReady(true);
 }
 
 export { PROTOCOL as SETUP_PREREQUISITES_PROTOCOL };

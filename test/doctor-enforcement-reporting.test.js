@@ -9,7 +9,7 @@ import { doctor } from '../src/app/doctor.js';
 function configFor(root) {
   return validateConfig({
     version: 1,
-    github: { queueRepository: 'owner/queue', trustedActorIds: ['1'] },
+    github: { queueRepositories: ['owner/queue'], trustedActorIds: ['1'] },
     workspace: { root: path.join(root, 'workspace'), allowCreate: true, allowedOwners: ['owner'], externalReadRoots: [] },
     state: { directory: path.join(root, 'state') },
     execution: { enabled: false, controllerPlansEnabled: true, modelAdaptersEnabled: false, allowUncontainedTools: false },

@@ -15,6 +15,10 @@ const FORBIDDEN_RESULT_KEYS = new Set([
   'xml', 'rawXml', 'socket', 'endpoint', 'credential', 'token',
 ]);
 
+export function environmentLifecycleAuthorityOperationIsReadOnly(value) {
+  return typeof value === 'string' && READ_AUTHORITY_OPERATIONS.has(value);
+}
+
 function requireObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
   return value;
@@ -238,7 +242,11 @@ export class LifecycleAuthorityClient {
     const exchange = MUTATION_AUTHORITY_OPERATIONS.has(operation) ? this.#mutationExchange : this.#readExchange;
     let raw;
     try { raw = await exchange(request); }
-    catch { throw new Error('environment lifecycle authority is unavailable'); }
+    catch {
+      const error = new Error('environment lifecycle authority is unavailable');
+      error.code = 'LIFECYCLE_AUTHORITY_UNAVAILABLE';
+      throw error;
+    }
     const result = normalizeLifecycleAuthorityResult(raw, request.requestId);
     if (!result.ok) {
       const error = new Error(result.error.message);

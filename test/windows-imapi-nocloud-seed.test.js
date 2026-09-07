@@ -79,7 +79,8 @@ test('Windows IMAPI seed writer stages only NoCloud files and removes secret-bea
     const script = Buffer.from(calls[0].arguments.at(-1), 'base64').toString('utf16le');
     assert.match(script, /System\.Runtime\.InteropServices\.ComTypes/u);
     assert.match(script, /IStream stream = \(IStream\)source/u);
-    assert.match(script, /FileSystemsToCreate = 3/u);
+    assert.equal(JSON.parse(calls[0].input).files, undefined, 'NoCloud stays on the text/ISO9660+Joliet branch');
+    assert.match(script, /FileSystemsToCreate = \$\(if \(\$data\.files\) \{ \[int\]\$data\.fileSystems \} else \{ 3 \}\)/u);
     assert.match(script, /FileMode\.CreateNew/u);
     assert.match(script, /if \(created && File\.Exists\(destination\)\) File\.Delete\(destination\)/u);
     assert.doesNotMatch(script, /\$stream\.Read/u);

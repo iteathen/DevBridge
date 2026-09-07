@@ -266,7 +266,7 @@ export class WindowsProductionQualification {
 
     if (['planned', 'prepare-attempted'].includes(record.phase)) {
       if (record.phase === 'planned') record = await this.#save(record, 'prepare-attempted');
-      const prepared = normalizeOperationResult(await this.#execute(target, 'prepare-v1', 60 * 60_000), new Set([
+      const prepared = normalizeOperationResult(await this.#execute(target, 'prepare-v1', 45 * 60_000), new Set([
         'prepared', 'generation', 'payloadGeneration', 'nativeBuildVersion', 'bootIdentity', 'restartRequired',
       ]), 'production preparation result');
       if (
@@ -312,7 +312,7 @@ export class WindowsProductionQualification {
     if (!['qualified', 'finalization-requested'].includes(record.phase)) throw new Error('production image is not qualified for finalization');
     if (record.phase === 'qualified') {
       record = await this.#save(record, 'finalization-attempted');
-      const result = normalizeOperationResult(await this.#execute(rawTarget, 'finalize-v1', 60_000), new Set(['scheduled', 'processId']), 'production finalization result');
+      const result = normalizeOperationResult(await this.#execute(rawTarget, 'finalize-v1', 30 * 60_000), new Set(['scheduled', 'processId']), 'production finalization result');
       if (result.scheduled !== true || !Number.isSafeInteger(result.processId) || result.processId < 1) throw new Error('production finalization was not scheduled');
       record = await this.#save(record, 'finalization-requested');
     }

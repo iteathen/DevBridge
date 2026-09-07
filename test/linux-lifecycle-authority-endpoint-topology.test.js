@@ -20,7 +20,7 @@ function plan() {
   return createLinuxLifecycleAuthorityPlan({
     stateDirectory: '/home/alice/.devbridge/state',
     operatorName: 'alice',
-    managementGroup: 'provider-control',
+    managementGroup: Object.freeze({ name: 'provider-control', id: 108 }),
   });
 }
 
@@ -31,6 +31,7 @@ function claim(selected, localIdentity = Object.freeze({ serviceUid: 995, operat
     serviceName: selected.service.name,
     operatorName: selected.service.operator,
     managementGroup: selected.service.managementGroup,
+    managementGid: selected.service.managementGroupId,
     localIdentity,
     activeGeneration: null,
     stagedGeneration: null,
@@ -57,6 +58,12 @@ function fixture({
       selected.coordination.lock.path,
       selected.endpoints.read.directory,
       selected.endpoints.mutation.directory,
+      selected.configuration.root,
+      selected.configuration.endpoint.directory,
+      selected.configuration.handoff.directory,
+      selected.activity.root,
+      selected.activity.endpoint.directory,
+      selected.activity.handoff.directory,
     ] : []),
   };
   const calls = [];
@@ -112,6 +119,12 @@ function fixture({
         selected.coordination.lock.path,
         selected.endpoints.read.directory,
         selected.endpoints.mutation.directory,
+        selected.configuration.root,
+        selected.configuration.endpoint.directory,
+        selected.configuration.handoff.directory,
+        selected.activity.root,
+        selected.activity.endpoint.directory,
+        selected.activity.handoff.directory,
       ]) state.readyPaths.add(target);
       return true;
     },
@@ -148,7 +161,7 @@ test('fresh endpoint topology publishes exact bytes and applies exact local defi
     changed: true,
   });
   assert.equal(values.state.content, values.plan.endpoints.definition.content);
-  assert.equal(values.state.readyPaths.size, 6);
+  assert.equal(values.state.readyPaths.size, 12);
   assert.deepEqual(effects(values).map(([name]) => name), ['save', 'apply']);
   const save = effects(values)[0];
   assert.deepEqual(save.slice(1), [values.plan.endpoints.definition.path, '/etc/tmpfiles.d', 64 * 1024]);

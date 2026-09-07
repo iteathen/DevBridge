@@ -28,6 +28,10 @@ test('Windows attachment uses only fixed PowerShell Direct mechanics for the exa
     assert.equal(input.target, target);
     assert.equal(Buffer.from(input.frame, 'base64').toString('utf8'), JSON.stringify(frame));
     assert.match(script, /New-PSSession -VMName/u);
+    assert.match(script, /\[Security\.SecureString\]::new\(\)/u);
+    assert.match(script, /\$secure\.MakeReadOnly\(\)/u);
+    assert.match(script, /\$secure\.Dispose\(\)/u);
+    assert.doesNotMatch(script, /ConvertTo-SecureString/u);
     assert.match(script, /node\.exe/u);
     assert.match(script, /bridge-agent\.mjs/u);
     assert.doesNotMatch(script, /guest-user|guest-password|env-aaaaaaaa/u);

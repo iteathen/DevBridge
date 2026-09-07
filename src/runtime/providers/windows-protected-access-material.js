@@ -6,7 +6,8 @@ export const WINDOWS_PROTECTED_ACCESS_MATERIAL_PROTOCOL = 'devbridge/windows-pro
 
 const POWERSHELL = 'powershell.exe';
 const POWERSHELL_ARGS = ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand'];
-const SUBJECT = /^subject-[a-f0-9]{32}$/u;
+const IDENTITY = /^(?:env|subject)-[a-f0-9]{32}$/u;
+const USER = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const PROTECTED = /^[A-Za-z0-9+/]+={0,2}$/u;
 const MAX_PROTECTED_BYTES = 64 * 1024;
@@ -49,8 +50,13 @@ try {
 
 function encodedScript(source) { return Buffer.from(source, 'utf16le').toString('base64'); }
 
-function subject(value) {
-  if (typeof value !== 'string' || !SUBJECT.test(value)) throw new TypeError('protected access identity is invalid');
+function identity(value) {
+  if (typeof value !== 'string' || !IDENTITY.test(value)) throw new TypeError('protected access identity is invalid');
+  return value;
+}
+
+function localUser(value) {
+  if (typeof value !== 'string' || !USER.test(value)) throw new TypeError('protected access user is invalid');
   return value;
 }
 
@@ -58,11 +64,11 @@ function digest(value) { return createHash('sha256').update(value, 'utf8').diges
 
 function fileName(identity) { return `${digest(identity).slice(0, 32)}.json`; }
 
-function normalizeRecord(raw, identity) {
+function normalizeRecord(raw, selectedIdentity, user) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('protected access record is invalid');
   const allowed = new Set(['protocol', 'identity', 'user', 'revision', 'protectedSecret', 'secretDigest']);
   for (const key of Object.keys(raw)) if (!allowed.has(key)) throw new Error(`protected access record.${key} is not allowed`);
-  if (raw.protocol !== WINDOWS_PROTECTED_ACCESS_MATERIAL_PROTOCOL || raw.identity !== identity || raw.user !== 'Administrator' || raw.revision !== 1) throw new Error('protected access record identity changed');
+  if (raw.protocol !== WINDOWS_PROTECTED_ACCESS_MATERIAL_PROTOCOL || raw.identity !== selectedIdentity || raw.user !== user || raw.revision !== 1) throw new Error('protected access record identity changed');
   if (typeof raw.protectedSecret !== 'string' || !PROTECTED.test(raw.protectedSecret) || Buffer.byteLength(raw.protectedSecret, 'utf8') > MAX_PROTECTED_BYTES) throw new Error('protected access record is invalid');
   if (typeof raw.secretDigest !== 'string' || !SHA256.test(raw.secretDigest)) throw new Error('protected access record is invalid');
   return { ...raw };
@@ -94,8 +100,9 @@ export class WindowsProtectedAccessMaterial {
   #invoke;
   #platform;
   #entropy;
+  #user;
 
-  constructor({ directory, invoke, platform = process.platform, entropy = () => randomBytes(32) } = {}) {
+  constructor({ directory, invoke, user, platform = process.platform, entropy = () => randomBytes(32) } = {}) {
     if (typeof directory !== 'string' || directory.length === 0 || directory.includes('\0') || !path.isAbsolute(directory)) throw new TypeError('protected access directory is invalid');
     if (typeof invoke !== 'function') throw new TypeError('protected access invocation contract is invalid');
     if (typeof entropy !== 'function') throw new TypeError('protected access entropy contract is invalid');
@@ -103,6 +110,7 @@ export class WindowsProtectedAccessMaterial {
     this.#invoke = invoke;
     this.#platform = platform;
     this.#entropy = entropy;
+    this.#user = localUser(user);
   }
 
   async #ensureRoot() {
@@ -130,27 +138,27 @@ export class WindowsProtectedAccessMaterial {
     catch (error) { if (error?.code === 'ENOENT') return null; throw error; }
     let value;
     try { value = JSON.parse(text); } catch { throw new Error('protected access record is invalid'); }
-    return normalizeRecord(value, identity);
+    return normalizeRecord(value, identity, this.#user);
   }
 
   async ensure(rawIdentity) {
-    const identity = subject(rawIdentity);
+    const selectedIdentity = identity(rawIdentity);
     await this.#ensureRoot();
-    const existing = await this.#load(identity);
-    if (existing) return Object.freeze({ identity, user: existing.user, created: false });
+    const existing = await this.#load(selectedIdentity);
+    if (existing) return Object.freeze({ identity: selectedIdentity, user: existing.user, created: false });
     const secret = generatedSecret(this.#entropy());
     const encoded = Buffer.from(secret, 'utf8').toString('base64');
-    const protectedSecret = await this.#invokeProtection(PROTECT_SCRIPT, { identity, value: encoded }, 'protected');
+    const protectedSecret = await this.#invokeProtection(PROTECT_SCRIPT, { identity: selectedIdentity, value: encoded }, 'protected');
     if (!PROTECTED.test(protectedSecret) || Buffer.byteLength(protectedSecret, 'utf8') > MAX_PROTECTED_BYTES) throw new Error('protected access operation returned invalid output');
     const record = {
       protocol: WINDOWS_PROTECTED_ACCESS_MATERIAL_PROTOCOL,
-      identity,
-      user: 'Administrator',
+      identity: selectedIdentity,
+      user: this.#user,
       revision: 1,
       protectedSecret,
       secretDigest: digest(secret),
     };
-    const location = this.#location(identity);
+    const location = this.#location(selectedIdentity);
     const temporary = `${location}.${process.pid}.pending`;
     let handle;
     try {
@@ -167,17 +175,17 @@ export class WindowsProtectedAccessMaterial {
       if (handle) await handle.close().catch(() => {});
       await rm(temporary, { force: true }).catch(() => {});
     }
-    const admitted = await this.#load(identity);
+    const admitted = await this.#load(selectedIdentity);
     if (!admitted) throw new Error('protected access record was not admitted');
-    return Object.freeze({ identity, user: admitted.user, created: true });
+    return Object.freeze({ identity: selectedIdentity, user: admitted.user, created: true });
   }
 
   async resolve(rawIdentity) {
-    const identity = subject(rawIdentity);
+    const selectedIdentity = identity(rawIdentity);
     await this.#ensureRoot();
-    const record = await this.#load(identity);
+    const record = await this.#load(selectedIdentity);
     if (!record) throw new Error('protected access material is unavailable');
-    const encoded = await this.#invokeProtection(UNPROTECT_SCRIPT, { identity, protected: record.protectedSecret }, 'value');
+    const encoded = await this.#invokeProtection(UNPROTECT_SCRIPT, { identity: selectedIdentity, protected: record.protectedSecret }, 'value');
     let secret;
     try { secret = Buffer.from(encoded, 'base64').toString('utf8'); } catch { throw new Error('protected access operation returned invalid output'); }
     normalizeSecret(secret);
@@ -186,15 +194,15 @@ export class WindowsProtectedAccessMaterial {
   }
 
   async discard(rawIdentity) {
-    const identity = subject(rawIdentity);
+    const selectedIdentity = identity(rawIdentity);
     await this.#ensureRoot();
-    const location = this.#location(identity);
+    const location = this.#location(selectedIdentity);
     let info;
     try { info = await lstat(location); }
-    catch (error) { if (error?.code === 'ENOENT') return Object.freeze({ identity, discarded: false }); throw error; }
+    catch (error) { if (error?.code === 'ENOENT') return Object.freeze({ identity: selectedIdentity, discarded: false }); throw error; }
     if (!info.isFile() || info.isSymbolicLink()) throw new Error('protected access record is not an owned regular file');
     await rm(location, { force: false });
-    return Object.freeze({ identity, discarded: true });
+    return Object.freeze({ identity: selectedIdentity, discarded: true });
   }
 }
 

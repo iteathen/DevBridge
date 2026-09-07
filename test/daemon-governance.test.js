@@ -58,19 +58,15 @@ function daemonConfig(stateDirectory) {
   };
 }
 
-function idleRuntime(config, counter) {
+function idleCollection(config, counter) {
   return {
-    config: { ...config, execution: { enabled: false } },
-    toolInventory: null,
-    toolOnboarding: null,
-    rateBudget: {
-      recommendedPollIntervalMs(value) {
-        counter.cycles += 1;
-        return value;
-      },
-      snapshot() { return {}; },
-    },
+    config: { ...config, execution: { enabled: false } }, counter,
   };
+}
+
+async function idleCollectionCycle(collection) {
+  collection.counter.cycles += 1;
+  return { recommendedPollIntervalMs: collection.config.github.pollIntervalMs };
 }
 
 test('pause and resume records bind to the current daemon lock token', async (t) => {
@@ -115,7 +111,8 @@ test('daemon acknowledges pause only at a cycle boundary and performs no new cyc
   const counter = { cycles: 0 };
   const events = [];
   const { running } = startTestDaemon(t, config, {
-    runtimeFactory: async () => idleRuntime(config, counter),
+    collectionFactory: async () => idleCollection(config, counter),
+    collectionCycle: idleCollectionCycle,
     onEvent: (event) => events.push(event.type),
   });
 
@@ -145,7 +142,8 @@ test('stop wins while paused and the daemon releases its lock without requiring 
   const lockPath = path.join(root, 'daemon.lock');
   const counter = { cycles: 0 };
   const { running } = startTestDaemon(t, config, {
-    runtimeFactory: async () => idleRuntime(config, counter),
+    collectionFactory: async () => idleCollection(config, counter),
+    collectionCycle: idleCollectionCycle,
   });
 
   await waitUntil(() => counter.cycles >= 1);
@@ -162,7 +160,8 @@ test('registered cleanup preserves a primary failure before normal stop and rele
   const lockPath = path.join(root, 'daemon.lock');
   const counter = { cycles: 0 };
   const handle = startTestDaemon(t, config, {
-    runtimeFactory: async () => idleRuntime(config, counter),
+    collectionFactory: async () => idleCollection(config, counter),
+    collectionCycle: idleCollectionCycle,
   });
 
   await waitUntil(() => counter.cycles >= 1);
@@ -203,14 +202,10 @@ test('daemon reconciles only after singleton ownership and holds one shared admi
   await runDaemon(config, {
     signal: controller.signal,
     activityAdmission,
-    runtimeFactory: async () => {
-      const runtime = idleRuntime(config, counter);
-      const recommended = runtime.rateBudget.recommendedPollIntervalMs.bind(runtime.rateBudget);
-      runtime.rateBudget.recommendedPollIntervalMs = (value) => {
-        assert.equal(held, true);
-        return recommended(value);
-      };
-      return runtime;
+    collectionFactory: async () => idleCollection(config, counter),
+    collectionCycle: async (collection) => {
+      assert.equal(held, true);
+      return idleCollectionCycle(collection);
     },
     onEvent(event) {
       if (event.type === 'cycle') {
@@ -239,7 +234,8 @@ test('refused shared admission defers without running a cycle', async () => {
       async reconcile() { return false; },
       async acquire() { return null; },
     },
-    runtimeFactory: async () => idleRuntime(config, counter),
+    collectionFactory: async () => idleCollection(config, counter),
+    collectionCycle: idleCollectionCycle,
     onEvent(event) {
       observed.push(event.type);
       if (event.type === 'cycle-deferred') controller.abort();

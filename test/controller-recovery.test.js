@@ -112,7 +112,9 @@ test('interrupted ephemeral cleanup persists cleanup intent and finishes on retr
     persist: async () => {},
   });
   assert.equal(await exists(ephemeral), false);
-  assert.equal(state.controllerPlan.cleanupLedger[0].state, 'verified-absent');
+  assert.equal(await exists(path.join(worktreeDir, 'test')), false);
+  assert.equal(state.controllerPlan.cleanupLedger.length, 2);
+  assert.equal(state.controllerPlan.cleanupLedger.every((entry) => entry.state === 'verified-absent'), true);
 });
 
 test('no-follow containment rejects an intermediate symlink or junction before a controller write', async () => {

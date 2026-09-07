@@ -65,6 +65,12 @@ function expectedDefinition(value) {
     `d ${value.coordination.directory} 3770 root ${value.coordination.group} -`,
     `d ${value.endpoints.read.directory} 0750 ${value.endpoints.read.directoryOwner} ${value.endpoints.read.directoryGroup} -`,
     `d ${value.endpoints.mutation.directory} 0700 ${value.endpoints.mutation.directoryOwner} ${value.endpoints.mutation.directoryGroup} -`,
+    `d ${value.configuration.root} 0755 root root -`,
+    `d ${value.configuration.endpoint.directory} 2750 ${value.configuration.endpoint.directoryOwner} ${value.configuration.endpoint.directoryGroup} -`,
+    `d ${value.configuration.handoff.directory} 3770 ${value.configuration.handoff.directoryOwner} ${value.configuration.handoff.directoryGroup} -`,
+    `d ${value.activity.root} 0755 root root -`,
+    `d ${value.activity.endpoint.directory} 2750 ${value.activity.endpoint.directoryOwner} ${value.activity.endpoint.directoryGroup} -`,
+    `d ${value.activity.handoff.directory} 3770 ${value.activity.handoff.directoryOwner} ${value.activity.handoff.directoryGroup} -`,
     `f ${value.coordination.lock.path} 0660 root ${value.coordination.group} -`,
     '',
   ].join('\n');
@@ -78,12 +84,22 @@ function exactPlan(value) {
   const read = value.endpoints?.read;
   const mutation = value.endpoints?.mutation;
   const coordination = value.coordination;
+  const configuration = value.configuration;
+  const activity = value.activity;
   if (!definition || !read || !mutation || !coordination || !coordination.lock || !coordination.shared || !coordination.exclusive
+      || !configuration || !configuration.endpoint || !configuration.handoff
+      || !activity || !activity.endpoint || !activity.handoff
       || !endpointPath(value.endpoints.parentDirectory)
       || !value.endpoints.parentDirectory.startsWith('/run/')
       || !endpointPath(value.endpoints.runRoot)
       || !endpointPath(read.directory) || !endpointPath(mutation.directory)
       || !endpointPath(read.endpoint) || !endpointPath(mutation.endpoint)
+      || !endpointPath(configuration.root)
+      || !endpointPath(configuration.endpoint.directory) || !endpointPath(configuration.endpoint.endpoint)
+      || !endpointPath(configuration.handoff.directory) || !endpointPath(configuration.handoff.record)
+      || !endpointPath(activity.root)
+      || !endpointPath(activity.endpoint.directory) || !endpointPath(activity.endpoint.endpoint)
+      || !endpointPath(activity.handoff.directory) || !endpointPath(activity.handoff.record) || !endpointPath(activity.handoff.source)
       || !endpointPath(coordination.directory) || !endpointPath(coordination.lock.path)
       || !endpointPath(coordination.shared.path) || !endpointPath(coordination.exclusive.path)
       || typeof value.authorityIdentity !== 'string'
@@ -101,6 +117,30 @@ function exactPlan(value) {
       || path.posix.dirname(coordination.exclusive.path ?? '') !== coordination.directory
       || path.posix.dirname(read.endpoint ?? '') !== read.directory
       || path.posix.dirname(mutation.endpoint ?? '') !== mutation.directory
+      || typeof configuration.authorityIdentity !== 'string'
+      || !/^[0-9a-f]{32}$/u.test(configuration.authorityIdentity)
+      || path.posix.dirname(configuration.root) !== value.endpoints.parentDirectory
+      || configuration.root === value.endpoints.runRoot
+      || path.posix.dirname(configuration.endpoint.directory) !== configuration.root
+      || path.posix.dirname(configuration.endpoint.endpoint) !== configuration.endpoint.directory
+      || path.posix.dirname(configuration.handoff.directory) !== configuration.root
+      || path.posix.dirname(configuration.handoff.record) !== configuration.handoff.directory
+      || typeof activity.authorityIdentity !== 'string'
+      || !/^[0-9a-f]{32}$/u.test(activity.authorityIdentity)
+      || path.posix.dirname(activity.root) !== value.endpoints.parentDirectory
+      || activity.root === value.endpoints.runRoot || activity.root === configuration.root
+      || path.posix.dirname(activity.endpoint.directory) !== activity.root
+      || path.posix.dirname(activity.endpoint.endpoint) !== activity.endpoint.directory
+      || path.posix.dirname(activity.handoff.directory) !== activity.root
+      || path.posix.dirname(activity.handoff.record) !== activity.handoff.directory
+      || activity.endpoint.directoryOwner !== value.service?.user
+      || activity.endpoint.directoryGroup !== value.service?.readGroup
+      || activity.endpoint.socketOwner !== value.service?.user
+      || activity.endpoint.socketGroup !== value.service?.readGroup
+      || activity.handoff.directoryOwner !== 'root'
+      || activity.handoff.directoryGroup !== value.service?.readGroup
+      || activity.handoff.recordOwner !== value.service?.user
+      || activity.handoff.recordGroup !== value.service?.readGroup
       || read.directoryOwner !== value.service?.user
       || read.directoryGroup !== value.service?.readGroup
       || mutation.directoryOwner !== value.service?.user
@@ -109,6 +149,14 @@ function exactPlan(value) {
       || mutation.socketOwner !== value.service?.user
       || read.socketGroup !== value.service?.readGroup
       || mutation.socketGroup !== value.service?.readGroup
+      || configuration.endpoint.directoryOwner !== value.service?.user
+      || configuration.endpoint.directoryGroup !== value.service?.coordinationGroup
+      || configuration.endpoint.socketOwner !== value.service?.user
+      || configuration.endpoint.socketGroup !== value.service?.coordinationGroup
+      || configuration.handoff.directoryOwner !== 'root'
+      || configuration.handoff.directoryGroup !== value.service?.coordinationGroup
+      || configuration.handoff.recordOwner !== value.service?.operator
+      || configuration.handoff.recordGroup !== value.service?.coordinationGroup
       || coordination.group !== value.service?.coordinationGroup
       || coordination.directoryOwner !== 'root' || coordination.directoryMode !== 0o3770
       || coordination.lock.owner !== 'root' || coordination.lock.group !== coordination.group || coordination.lock.mode !== 0o660
@@ -118,6 +166,10 @@ function exactPlan(value) {
       || !localName(value.service?.readGroup) || !localName(value.service?.coordinationGroup)
       || read.directoryMode !== 0o750 || mutation.directoryMode !== 0o700
       || read.socketMode !== 0o770 || mutation.socketMode !== 0o770
+      || configuration.endpoint.directoryMode !== 0o2750 || configuration.endpoint.socketMode !== 0o770
+      || configuration.handoff.directoryMode !== 0o3770 || configuration.handoff.recordMode !== 0o640
+      || activity.endpoint.directoryMode !== 0o2750 || activity.endpoint.socketMode !== 0o770
+      || activity.handoff.directoryMode !== 0o3770 || activity.handoff.recordMode !== 0o640
       || value.access?.volatileDefinition?.mode !== 0o644) {
     throw new TypeError('Linux lifecycle authority endpoint topology plan is invalid');
   }
@@ -197,6 +249,12 @@ function contracts(plan, identity) {
       Object.freeze({ name: 'Linux lifecycle authority governance lock', kind: 'file', contract: Object.freeze({ path: plan.coordination.lock.path, ownerId: 0, groupId: identity.coordinationGid, mode: plan.coordination.lock.mode }) }),
       Object.freeze({ name: 'Linux lifecycle authority read endpoint directory', kind: 'directory', contract: Object.freeze({ path: plan.endpoints.read.directory, ownerId: identity.serviceUid, groupId: identity.readGid, mode: plan.endpoints.read.directoryMode }) }),
       Object.freeze({ name: 'Linux lifecycle authority mutation endpoint directory', kind: 'directory', contract: Object.freeze({ path: plan.endpoints.mutation.directory, ownerId: identity.serviceUid, groupId: 0, mode: plan.endpoints.mutation.directoryMode }) }),
+      Object.freeze({ name: 'Linux configuration authority root', kind: 'directory', contract: Object.freeze({ path: plan.configuration.root, ownerId: 0, groupId: 0, mode: 0o755 }) }),
+      Object.freeze({ name: 'Linux configuration authority endpoint directory', kind: 'directory', contract: Object.freeze({ path: plan.configuration.endpoint.directory, ownerId: identity.serviceUid, groupId: identity.coordinationGid, mode: plan.configuration.endpoint.directoryMode }) }),
+      Object.freeze({ name: 'Linux configuration authority handoff directory', kind: 'directory', contract: Object.freeze({ path: plan.configuration.handoff.directory, ownerId: 0, groupId: identity.coordinationGid, mode: plan.configuration.handoff.directoryMode }) }),
+      Object.freeze({ name: 'Linux activity authority root', kind: 'directory', contract: Object.freeze({ path: plan.activity.root, ownerId: 0, groupId: 0, mode: 0o755 }) }),
+      Object.freeze({ name: 'Linux activity authority endpoint directory', kind: 'directory', contract: Object.freeze({ path: plan.activity.endpoint.directory, ownerId: identity.serviceUid, groupId: identity.readGid, mode: plan.activity.endpoint.directoryMode }) }),
+      Object.freeze({ name: 'Linux activity authority handoff directory', kind: 'directory', contract: Object.freeze({ path: plan.activity.handoff.directory, ownerId: 0, groupId: identity.readGid, mode: plan.activity.handoff.directoryMode }) }),
     ]),
   });
 }

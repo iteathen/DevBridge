@@ -5,6 +5,7 @@ import { reconcileWindowsLifecycleAuthorityReadiness } from '../src/setup/window
 const STATE = 'C:\\Users\\Operator\\.devbridge\\state';
 const AUTHORITY_DIRECTORY = 'C:\\ProgramData\\DevBridge\\lifecycle-authority\\owner\\state';
 const ACCEPTANCE_ENDPOINT = '\\\\.\\pipe\\devbridge-environment-owner-acceptance-v1';
+const INSPECTION = Object.freeze({ protocol: 'devbridge/environment-operator-v1' });
 const PLAN = Object.freeze({
   protocol: 'devbridge/windows-lifecycle-authority-plan-v1',
   stateDirectory: STATE,
@@ -50,6 +51,7 @@ function dependencies({ elevated = false, serviceReconciler, verifyService = asy
     clientFactory: () => Object.freeze({
       inspect: async () => ({ protocol: 'devbridge/environment-operator-v1' }),
     }),
+    configurationClientFactory: () => Object.freeze({ inspect: async () => ({ ready: true }) }),
     verifyService,
     verifyProtection,
     verifyAcceptance,
@@ -66,7 +68,7 @@ test('ordinary readiness runs bounded operational acceptance only after service 
     serviceReconciler: async (_options, deps) => {
       await deps.inspectHost({});
       calls.push('service');
-      await deps.probe(PLAN);
+      await deps.proof(PLAN, INSPECTION);
       calls.push('service-ready');
       return serviceResult({ ready: true });
     },
@@ -94,7 +96,7 @@ test('ordinary acceptance failure closes the construction gate without requestin
   }, dependencies({
     serviceReconciler: async (_options, deps) => {
       await deps.inspectHost({});
-      await deps.probe(PLAN);
+      await deps.proof(PLAN, INSPECTION);
       return serviceResult({ ready: true });
     },
     verifyAcceptance: async () => {
@@ -120,7 +122,7 @@ test('ordinary acceptance failure reports only bounded cleanup stages', async ()
   }, dependencies({
     serviceReconciler: async (_options, deps) => {
       await deps.inspectHost({});
-      await deps.probe(PLAN);
+      await deps.proof(PLAN, INSPECTION);
       return serviceResult({ ready: true });
     },
     verifyAcceptance: async () => { throw error; },
@@ -142,7 +144,7 @@ test('stale ordinary authority accepts only after the one elevated child returns
       services += 1;
       await deps.inspectHost({});
       if (services === 1) return unavailable();
-      await deps.probe(PLAN);
+      await deps.proof(PLAN, INSPECTION);
       return serviceResult({ ready: true, changed: true });
     },
     verifyAcceptance: async () => {
@@ -168,7 +170,7 @@ test('elevated child never runs the ordinary acceptance fixture', async () => {
     elevated: true,
     serviceReconciler: async (_options, deps) => {
       await deps.inspectHost({});
-      await deps.probe(PLAN);
+      await deps.proof(PLAN, INSPECTION);
       return serviceResult({ ready: true, changed: true });
     },
     verifyAcceptance: async () => {

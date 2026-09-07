@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { normalizeControllerPlan, controllerPlanDigest } from '../src/run/controller-plan.js';
@@ -108,6 +108,29 @@ test('contains-assertion diagnostics identify the expected marker without echoin
   }
 });
 
+test('failure diagnostics select the assertion operation rather than the last successful operation', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-controller-diagnostic-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let call = 0;
+  const executor = new ControllerPlanExecutor({
+    operationRegistry: { validate() {}, async execute() {
+      call += 1;
+      return { exitCode: call === 1 ? 17 : 0, aborted: call === 1, stdout: '', stderr: call === 1 ? 'compiler unavailable' : 'later operation succeeded' };
+    } }, processRunner: {}, workspaceManager: {},
+  });
+  const plan = normalizeControllerPlan(basePlan({
+    operations: [{ id: 'compile', operation: 'fixture.compile', params: {} }, { id: 'later', operation: 'fixture.later', params: {} }],
+    assertions: [{ kind: 'exit-equals', operation: 'compile', value: 0 }],
+  }));
+  const state = {};
+  await assert.rejects(executor.execute({ plan, state, workspace: { worktreeDir: root }, persist: async () => {} }), /compile exit 17/);
+  assert.equal(state.controllerPlan.failureDiagnostics.operationId, 'compile');
+  assert.equal(state.controllerPlan.failureDiagnostics.exitCode, 17);
+  assert.equal(state.controllerPlan.failureDiagnostics.stage, 'asserting');
+  assert.equal(state.controllerPlan.failureDiagnostics.stderr, 'compiler unavailable');
+  assert.equal(state.controllerPlan.failureDiagnostics.aborted, true);
+});
+
 test('generic controller executor materializes a multi-file project, runs static Node inspection, and removes ephemeral files', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-controller-plan-'));
   try {
@@ -138,11 +161,69 @@ test('generic controller executor materializes a multi-file project, runs static
     const result = await executor.execute({ plan, state, workspace, persist: async () => { persists += 1; } });
     assert.match(await readFile(path.join(root, 'src', 'math.mjs'), 'utf8'), /function add/u);
     await assert.rejects(stat(path.join(root, 'test', 'generated.test.mjs')), { code: 'ENOENT' });
+    await assert.rejects(stat(path.join(root, 'test')), { code: 'ENOENT' });
     assert.equal(result.tests.length, 1);
     assert.equal(result.tests.every((entry) => entry.exitCode === 0), true);
     assert.equal(state.controllerPlan.cleanup.leftovers.length, 0);
-    assert.equal(state.controllerPlan.cleanup.verifiedAbsent, 1);
+    assert.equal(state.controllerPlan.cleanup.verifiedAbsent, 2);
     assert.ok(persists >= 8);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('ephemeral cleanup preserves a parent directory that existed before materialization', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-controller-parent-'));
+  try {
+    await mkdir(path.join(root, 'existing'));
+    const plan = normalizeControllerPlan(basePlan({
+      files: [{ scope: 'ephemeral', action: 'create', path: 'existing/value.txt', content: 'temporary\n' }],
+      expectedChangedPaths: [],
+    }));
+    const workspace = { worktreeDir: root, branch: 'fixture', baseSha: '1'.repeat(40) };
+    const workspaceManager = { snapshot: async () => ({ dirty: false }), validate: async () => ({ changedFiles: [] }) };
+    const state = {};
+    await new ControllerPlanExecutor({
+      operationRegistry: createCoreOperationRegistry(),
+      processRunner: new DeterministicProcessRunner(),
+      workspaceManager,
+    }).execute({ plan, state, workspace, persist: async () => {} });
+
+    assert.equal((await stat(path.join(root, 'existing'))).isDirectory(), true);
+    await assert.rejects(stat(path.join(root, 'existing', 'value.txt')), { code: 'ENOENT' });
+    assert.deepEqual(state.controllerPlan.cleanupLedger.map((entry) => entry.kind), ['file']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('ephemeral cleanup refuses unexpected directory content without recursive deletion', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-controller-nonempty-'));
+  try {
+    const plan = normalizeControllerPlan(basePlan({
+      files: [{ scope: 'ephemeral', action: 'create', path: 'isolated/value.txt', content: 'temporary\n' }],
+      operations: [{ id: 'mutate', operation: 'fixture.mutate', params: {} }],
+      expectedChangedPaths: [],
+    }));
+    const operationRegistry = {
+      validate() {},
+      async execute(_name, _params, context) {
+        await writeFile(path.join(context.projectDir, 'isolated', 'unplanned.txt'), 'preserve\n', 'utf8');
+        return { exitCode: 0, timedOut: false, outputTruncated: false, stdout: '', stderr: '' };
+      },
+    };
+    const workspace = { worktreeDir: root, branch: 'fixture', baseSha: '1'.repeat(40) };
+    const workspaceManager = { snapshot: async () => ({ dirty: true }), validate: async () => ({ changedFiles: [] }) };
+    const state = {};
+    await assert.rejects(
+      () => new ControllerPlanExecutor({ operationRegistry, processRunner: {}, workspaceManager })
+        .execute({ plan, state, workspace, persist: async () => {} }),
+      /cleanup directory could not be removed exactly: isolated/u,
+    );
+
+    assert.equal(await readFile(path.join(root, 'isolated', 'unplanned.txt'), 'utf8'), 'preserve\n');
+    await assert.rejects(stat(path.join(root, 'isolated', 'value.txt')), { code: 'ENOENT' });
+    assert.equal(state.controllerPlan.cleanupLedger.find((entry) => entry.kind === 'directory').state, 'cleanup-planned');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

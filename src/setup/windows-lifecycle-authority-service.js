@@ -13,6 +13,8 @@ import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment-lifecycle-authority-transport.js';
+import { createConfiguredEnvironmentActivityClient } from '../runtime/environment-activity-authority-transport.js';
+import { createConfiguredEnvironmentConfigurationClient } from '../runtime/environment-configuration-authority-transport.js';
 import {
   PROTECTED_AUTHORITY_RECONCILIATION_JOURNAL_PROTOCOL,
 } from './protected-authority-reconciliation.js';
@@ -28,9 +30,15 @@ import {
 import {
   bindWindowsLifecycleAuthorityRuntime,
   createWindowsLifecycleAuthorityPlan,
+  WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACCEPTANCE_V1,
+  WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACTIVITY_V1,
   WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1,
   WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1,
+  WINDOWS_HYPERV_ADMINISTRATORS_SID,
+  WINDOWS_LOCAL_SYSTEM_ACCOUNT,
+  WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID,
 } from './windows-lifecycle-authority.js';
+import { reconcileWindowsLifecycleAuthorityImages } from './windows-lifecycle-authority-image-adoption.js';
 
 const PROTOCOL = 'devbridge/windows-lifecycle-authority-service-v1';
 const OWNERSHIP_PROTOCOL = 'devbridge/windows-lifecycle-authority-ownership-v1';
@@ -51,7 +59,6 @@ const JOURNAL_EFFECTS = new Set(['stage', 'quiesce', 'promote', 'start', 'restor
 
 export const WINDOWS_LIFECYCLE_AUTHORITY_STATE_PATHS = Object.freeze([
   'environment-foundation/identity.json',
-  'environment-foundation/images',
   'environment-foundation/control',
   'environment-foundation/persistent',
   'environment-foundation/image-recovery',
@@ -156,14 +163,24 @@ if (-not (Test-Path -LiteralPath ([string]$data.output) -PathType Leaf)) { throw
 @{ compiled = $true } | ConvertTo-Json -Compress
 `;
 
-const ADD_HYPERV_GROUP_SCRIPT = String.raw`
+const RETIRE_CAPABILITY_GROUPS_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $data = [Console]::In.ReadToEnd() | ConvertFrom-Json
 $serviceSid = (New-Object Security.Principal.NTAccount([string]$data.serviceAccount)).Translate([Security.Principal.SecurityIdentifier])
-$members = @(Get-LocalGroupMember -SID ([string]$data.groupSid) -ErrorAction Stop)
-$present = @($members | Where-Object { $_.SID -and $_.SID.Value -eq $serviceSid.Value }).Count -gt 0
-if (-not $present) { Add-LocalGroupMember -SID ([string]$data.groupSid) -Member ([string]$data.serviceAccount) -ErrorAction Stop }
-@{ changed = (-not $present); serviceSid = [string]$serviceSid.Value } | ConvertTo-Json -Compress
+$changed = $false
+foreach ($groupSid in @($data.groupSids)) {
+  $members = @(Get-LocalGroupMember -SID ([string]$groupSid) -ErrorAction Stop)
+  $matching = @($members | Where-Object { $_.SID -and $_.SID.Value -eq $serviceSid.Value })
+  if ($matching.Count -gt 1) { throw 'service capability group membership is duplicated' }
+  if ($matching.Count -eq 1) {
+    Remove-LocalGroupMember -SID ([string]$groupSid) -Member ([string]$data.serviceAccount) -Confirm:$false -ErrorAction Stop
+    $changed = $true
+  }
+  $verified = @(Get-LocalGroupMember -SID ([string]$groupSid) -ErrorAction Stop |
+    Where-Object { $_.SID -and $_.SID.Value -eq $serviceSid.Value })
+  if ($verified.Count -ne 0) { throw 'service capability group membership was not retired' }
+}
+@{ changed = $changed; serviceSid = [string]$serviceSid.Value } | ConvertTo-Json -Compress
 `;
 
 const SEAL_ACL_SCRIPT = String.raw`
@@ -309,7 +326,7 @@ function normalizeOwnership(raw, plan) {
       if (typeof raw.runtime[key] !== 'string' || !GENERATION.test(raw.runtime[key])) throw new Error('protected lifecycle authority runtime digest is invalid');
     }
     if (raw.runtime.hostCommandProtocol != null
-        && ![WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1].includes(raw.runtime.hostCommandProtocol)) {
+        && ![WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACCEPTANCE_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACTIVITY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1].includes(raw.runtime.hostCommandProtocol)) {
       throw new Error('protected lifecycle authority runtime host command protocol is invalid');
     }
   }
@@ -501,9 +518,21 @@ function sameWindowsText(left, right) {
 
 function serviceMatches(service, plan) {
   return service.exists === true
+    && sameWindowsText(service.startName, plan.service.logonAccount)
+    && sameWindowsText(service.pathName, plan.serviceCommand)
+    && service.description === plan.service.description;
+}
+
+function serviceMatchesRetiredVirtualLogon(service, plan) {
+  return plan?.service?.logonAccount === WINDOWS_LOCAL_SYSTEM_ACCOUNT
+    && service.exists === true
     && sameWindowsText(service.startName, plan.service.account)
     && sameWindowsText(service.pathName, plan.serviceCommand)
     && service.description === plan.service.description;
+}
+
+function serviceMatchesOwnedTransition(service, plan) {
+  return serviceMatches(service, plan) || serviceMatchesRetiredVirtualLogon(service, plan);
 }
 
 function serviceRunning(service) {
@@ -533,7 +562,22 @@ async function quiesceOwnedService(service, plan, invoke, environment) {
   await invokePowerShell(invoke, STOP_SERVICE_SCRIPT, { name: plan.service.name }, 'Windows lifecycle authority service stop', environment);
 }
 
+function retiredServiceCapabilityGroupSids(plan) {
+  const selected = plan?.service?.retiredCapabilityGroupSids;
+  if (!Array.isArray(selected)
+    || selected.length !== 2
+    || selected[0] !== WINDOWS_HYPERV_ADMINISTRATORS_SID
+    || selected[1] !== WINDOWS_NETWORK_CONFIGURATION_OPERATORS_SID) {
+    throw new Error('Windows lifecycle authority retired capability group plan is invalid');
+  }
+  if (plan?.service?.logonAccount !== WINDOWS_LOCAL_SYSTEM_ACCOUNT) {
+    throw new Error('Windows lifecycle authority provider logon plan is invalid');
+  }
+  return selected;
+}
+
 async function configureService(service, plan, invoke, environment) {
+  const retiredCapabilityGroupSids = retiredServiceCapabilityGroupSids(plan);
   const command = plan.serviceCommand;
   let changed = false;
   if (!service.exists) {
@@ -541,19 +585,19 @@ async function configureService(service, plan, invoke, environment) {
       'create', plan.service.name,
       'binPath=', command,
       'start=', 'demand',
-      'obj=', plan.service.account,
+      'obj=', plan.service.logonAccount,
       'DisplayName=', plan.service.displayName,
     ], 'Windows lifecycle authority service creation', environment);
     changed = true;
   }
-  await invokeSc(invoke, ['config', plan.service.name, 'binPath=', command, 'start=', 'auto', 'obj=', plan.service.account], 'Windows lifecycle authority service configuration', environment);
+  await invokeSc(invoke, ['config', plan.service.name, 'binPath=', command, 'start=', 'auto', 'obj=', plan.service.logonAccount], 'Windows lifecycle authority service configuration', environment);
   await invokeSc(invoke, ['sidtype', plan.service.name, plan.service.sidType], 'Windows lifecycle authority service SID configuration', environment);
   await invokeSc(invoke, ['failure', plan.service.name, 'reset=', '86400', 'actions=', 'restart/5000'], 'Windows lifecycle authority service failure policy', environment);
   await invokeSc(invoke, ['description', plan.service.name, plan.service.description], 'Windows lifecycle authority runtime evidence configuration', environment);
-  const group = await invokePowerShell(invoke, ADD_HYPERV_GROUP_SCRIPT, {
+  const group = await invokePowerShell(invoke, RETIRE_CAPABILITY_GROUPS_SCRIPT, {
     serviceAccount: plan.service.account,
-    groupSid: plan.service.hyperVGroupSid,
-  }, 'Windows lifecycle authority Hyper-V group admission', environment);
+    groupSids: retiredCapabilityGroupSids,
+  }, 'Windows lifecycle authority capability group retirement', environment);
   changed ||= group.changed === true;
   return Object.freeze({ changed });
 }
@@ -570,7 +614,7 @@ function normalizeGenerationManifest(raw, basePlan, generation) {
   for (const key of ['packageDigest', 'nodeDigest', 'hostSourceDigest', 'hostExecutableDigest']) {
     if (typeof raw[key] !== 'string' || !GENERATION.test(raw[key])) throw new Error('Windows lifecycle authority generation manifest digest is invalid');
   }
-  if (![WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1].includes(raw.hostCommandProtocol)) {
+  if (![WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACCEPTANCE_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACTIVITY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1].includes(raw.hostCommandProtocol)) {
     throw new Error('Windows lifecycle authority generation manifest host command protocol is invalid');
   }
   const plan = bindWindowsLifecycleAuthorityRuntime(basePlan, {
@@ -717,13 +761,19 @@ function assertCandidateGeneration(value, candidatePlan, name) {
 }
 
 async function materializeGeneration({ generation }, context) {
-  const { basePlan, candidatePlan, candidate, packageRoot, nodeExecutable, operatorSid, invoke, environment } = context;
+  const { basePlan, candidatePlan, candidate, packageRoot, nodeExecutable, operatorSid, invoke, environment, adoptImages } = context;
   const identity = assertCandidateGeneration(generation, candidatePlan, 'Windows lifecycle authority materialization generation');
   let ownership = await initializeProtectedRoot(candidatePlan, operatorSid, invoke, environment);
   if (!ownership.stateMigrationComplete) {
     await migrateWindowsLifecycleAuthorityState({ stateDirectory: candidatePlan.stateDirectory, authorityDirectory: candidatePlan.authorityDirectory });
     ownership = await writeOwnership(candidatePlan, Object.freeze({ ...ownership, stateMigrationComplete: true, serviceReady: false }), invoke, environment);
   }
+  await adoptImages({
+    stateDirectory: candidatePlan.stateDirectory,
+    authorityDirectory: candidatePlan.authorityDirectory,
+    platform: 'win32',
+    invoke,
+  });
 
   const existing = await loadGenerationManifest(basePlan, identity);
   if (existing
@@ -817,13 +867,13 @@ async function readRefreshInstallation(context) {
   let previousServiceMatches = false;
   if (journal?.previousGeneration != null) {
     try {
-      previousServiceMatches = serviceMatches(service, (await manifestPlan(basePlan, journal.previousGeneration)).plan);
+      previousServiceMatches = serviceMatchesOwnedTransition(service, (await manifestPlan(basePlan, journal.previousGeneration)).plan);
     } catch {
       previousServiceMatches = false;
     }
   }
 
-  const activeServiceMatches = activePlan == null ? !service.exists : serviceMatches(service, activePlan);
+  const activeServiceMatches = activePlan == null ? !service.exists : serviceMatchesOwnedTransition(service, activePlan);
   if (!activeServiceMatches && !transitionAllowsServiceMismatch({
     service,
     journal,
@@ -863,7 +913,7 @@ async function readRefreshInstallation(context) {
     owner: 'devbridge',
     serviceGeneration: activeGeneration,
     preparedGeneration,
-    serviceRunning: activePlan != null && serviceMatches(service, activePlan) && serviceRunning(service),
+    serviceRunning: activePlan != null && serviceMatchesOwnedTransition(service, activePlan) && serviceRunning(service),
     retainedGenerations: Object.freeze([...new Set(retained)]),
   });
 }
@@ -878,7 +928,9 @@ async function stopServiceGeneration({ generation }, context) {
   const identity = exactGeneration(generation, 'Windows lifecycle authority stop generation');
   const target = await manifestPlan(context.basePlan, identity);
   const service = await inspectService(target.plan, context.invoke, context.environment);
-  validateOwnedService(service, target.plan);
+  if (service.exists && !serviceMatchesOwnedTransition(service, target.plan)) {
+    throw new Error('existing Windows lifecycle authority service does not match protected DevBridge ownership');
+  }
   await quiesceOwnedService(service, target.plan, context.invoke, context.environment);
 }
 
@@ -897,7 +949,7 @@ async function configureServiceGeneration({ generation, previousGeneration }, co
   if (service.exists) {
     const alreadyTarget = serviceMatches(service, target.plan);
     let previousMatch = false;
-    if (previous != null) previousMatch = serviceMatches(service, (await manifestPlan(context.basePlan, previous)).plan);
+    if (previous != null) previousMatch = serviceMatchesOwnedTransition(service, (await manifestPlan(context.basePlan, previous)).plan);
     if (!alreadyTarget && !previousMatch) throw new Error('Windows lifecycle authority promotion service identity changed');
     if (serviceRunning(service)) throw new Error('Windows lifecycle authority promotion requires a quiesced service');
   } else if (previous != null) {
@@ -988,14 +1040,15 @@ export function createWindowsLifecycleAuthorityRefreshMechanics({
   nodeExecutable,
   candidate,
   probe = probeWindowsLifecycleAuthority,
+  adoptImages = reconcileWindowsLifecycleAuthorityImages,
 } = {}) {
   if (!basePlan || typeof basePlan !== 'object' || basePlan.runtimeEvidence != null) throw new TypeError('Windows lifecycle authority refresh base plan is invalid');
   if (!candidatePlan || typeof candidatePlan !== 'object' || candidatePlan.runtimeEvidence == null) throw new TypeError('Windows lifecycle authority refresh candidate plan is invalid');
-  if (typeof operatorSid !== 'string' || typeof invoke !== 'function' || typeof probe !== 'function') throw new TypeError('Windows lifecycle authority refresh local mechanics are invalid');
+  if (typeof operatorSid !== 'string' || typeof invoke !== 'function' || typeof probe !== 'function' || typeof adoptImages !== 'function') throw new TypeError('Windows lifecycle authority refresh local mechanics are invalid');
   if (!candidate || candidate.evidence?.packageDigest !== candidatePlan.runtimeEvidence.packageDigest || candidate.evidence?.nodeDigest !== candidatePlan.runtimeEvidence.nodeDigest) {
     throw new TypeError('Windows lifecycle authority refresh candidate evidence is invalid');
   }
-  const context = Object.freeze({ basePlan, candidatePlan, operatorSid, invoke, environment, packageRoot, nodeExecutable, candidate, probe });
+  const context = Object.freeze({ basePlan, candidatePlan, operatorSid, invoke, environment, packageRoot, nodeExecutable, candidate, probe, adoptImages });
   return Object.freeze({
     journal: Object.freeze({
       load: () => loadRefreshJournal(candidatePlan),
@@ -1014,15 +1067,31 @@ export function createWindowsLifecycleAuthorityRefreshMechanics({
 
 export async function probeWindowsLifecycleAuthority(plan, {
   clientFactory = createConfiguredLifecycleAuthorityClient,
+  activityClientFactory = createConfiguredEnvironmentActivityClient,
+  configurationClientFactory = createConfiguredEnvironmentConfigurationClient,
   waitForRetry = wait,
 } = {}) {
-  if (typeof clientFactory !== 'function' || typeof waitForRetry !== 'function') throw new TypeError('Windows lifecycle authority health probe composition is invalid');
+  if (typeof clientFactory !== 'function' || typeof activityClientFactory !== 'function' || typeof configurationClientFactory !== 'function' || typeof waitForRetry !== 'function') throw new TypeError('Windows lifecycle authority health probe composition is invalid');
   let lastError = null;
   for (let attempt = 0; ; attempt += 1) {
     try {
       const client = clientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
       const result = await client.inspect();
       if (!result || result.protocol !== 'devbridge/environment-operator-v1') throw new Error('protected lifecycle authority returned invalid inspection evidence');
+      const commandProtocol = plan.hostCommandProtocol ?? WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1;
+      if (![WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACCEPTANCE_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACTIVITY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1].includes(commandProtocol)) {
+        throw new Error('protected lifecycle authority host command protocol is invalid');
+      }
+      if ([WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_ACTIVITY_V1, WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1].includes(commandProtocol)) {
+        const activityClient = activityClientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
+        const activity = await activityClient.inspect();
+        if (!activity || typeof activity.ready !== 'boolean' || typeof activity.identity !== 'string') throw new Error('protected environment activity authority returned invalid inspection evidence');
+      }
+      if (commandProtocol === WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_CURRENT_V1) {
+        const configurationClient = configurationClientFactory({ stateDirectory: plan.stateDirectory, platform: 'win32', connectTimeoutMs: 3_000 });
+        const configuration = await configurationClient.inspect();
+        if (configuration?.ready !== true || Object.keys(configuration).length !== 1) throw new Error('protected environment configuration authority returned invalid inspection evidence');
+      }
       return result;
     } catch (error) {
       lastError = error;
@@ -1049,6 +1118,7 @@ export async function reconcileWindowsLifecycleAuthorityService({
   inspectServiceState = inspectService,
   measureCandidate = measureWindowsLifecycleAuthorityCandidate,
   probe = probeWindowsLifecycleAuthority,
+  proof = null,
   createRefreshMechanics = createWindowsLifecycleAuthorityRefreshMechanics,
   refresh = reconcileWindowsLifecycleAuthorityRefresh,
 } = {}) {
@@ -1056,6 +1126,7 @@ export async function reconcileWindowsLifecycleAuthorityService({
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('Windows lifecycle authority setup stateDirectory is required');
   if (typeof invoke !== 'function') throw new TypeError('Windows lifecycle authority setup invocation contract is invalid');
   if (typeof measureCandidate !== 'function') throw new TypeError('Windows lifecycle authority runtime measurement contract is invalid');
+  if (proof != null && typeof proof !== 'function') throw new TypeError('Windows lifecycle authority service proof contract is invalid');
   if (platform !== 'win32') return serviceResult({ platform, ready: true, service: 'not-applicable', protectedState: 'not-applicable' });
 
   let host;
@@ -1086,10 +1157,16 @@ export async function reconcileWindowsLifecycleAuthorityService({
     return serviceResult({ platform, ready: false, blocker: `Windows lifecycle authority plan is invalid: ${boundedReason(error?.message, 'unknown failure')}`, service: 'unavailable', protectedState: 'unknown' });
   }
 
+  const probeExactGeneration = async (targetPlan) => {
+    const inspection = await probe(targetPlan);
+    if (proof != null) await proof(targetPlan, inspection);
+    return inspection;
+  };
+
   try {
     const service = await inspectServiceState(plan, invoke, environment);
     if (serviceMatches(service, plan) && serviceRunning(service)) {
-      await probe(plan);
+      await probeExactGeneration(plan);
       return serviceResult({ platform, ready: true, authorityIdentity: plan.authorityIdentity, service: 'ready', protectedState: 'ready' });
     }
   } catch {
@@ -1130,7 +1207,7 @@ export async function reconcileWindowsLifecycleAuthorityService({
       packageRoot,
       nodeExecutable,
       candidate,
-      probe,
+      probe: probeExactGeneration,
     });
     refreshed = await refresh({ candidateGeneration: plan.runtime.generation, mechanics, onDiagnostic: captureRefreshDiagnostic });
   } catch {

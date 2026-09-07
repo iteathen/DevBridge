@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { environmentDeclarationDigest } from '../runtime/environment-declaration.js';
 
 export const ENVIRONMENT_OPERATOR_PROTOCOL = 'devbridge/environment-operator-v1';
 export const ENVIRONMENT_OPERATOR_STATUS_PROTOCOL = 'devbridge/environment-operator-status-v1';
@@ -158,6 +159,7 @@ export function createEnvironmentOperator({ runtime } = {}) {
       environmentIdentity: record.identity,
       profile: record.declaration.profile,
       declarationRevision: record.revision,
+      declarationDigest: environmentDeclarationDigest(record.declaration),
       reconstructability: 'fully-reconstructable',
       desiredGeneration: Object.freeze({
         schema: record.declaration.schemaGeneration,

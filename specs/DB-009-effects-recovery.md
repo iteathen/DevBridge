@@ -78,9 +78,48 @@ A generic `retry()` loop is not a reconciliation strategy.
 
 ### Remaining generic creation gap
 
-Not every remote creation path has been converted to a universal reconciled-effect primitive. In particular, the ordinary run status reporter persists a newly created comment ID **after** GitHub returns success. A crash after GitHub accepts the initial POST but before local persistence can therefore still require future correlation/reconciliation logic and can risk duplicate status creation on recovery.
+Not every remote creation path has been converted to a universal reconciled-effect primitive. The ordinary run status reporter now preserves the redacted desired projection and exact initial creation attempt before publication. Recovery observes the originating issue using a random host-generated correlation value, exact attempted body and authenticated numeric publisher identity. Copied markers, changed bodies, duplicate matches and incomplete pagination cannot establish ownership. A later terminal projection survives an uncertain earlier progress creation.
 
-This gap must remain explicit. Do not claim generic exactly-once GitHub mutation semantics from the fact that critical publication/lease/update/projection paths have their own stronger reconciliation.
+Terminal run persistence records that status delivery is pending before calling the reporter. The existing runtime cycle recovers that intent, including terminal tasks absent from later queue polls, under the original task lease without executing the failed work. Server pacing survives restart. Known comment updates remain idempotent by their persisted ID. Unknown initial creation uses bounded observation and at most three paced attempts; this does not create an exactly-once guarantee across arbitrary remote visibility delays or deletions.
+
+The same status comment can automatically carry a bounded redacted expansion of collected failure text that exceeds the compact tail. It shares the originating task's access policy and lasts until that comment is updated or removed, or the repository is removed. Rendered output preserves each stream's beginning and end when its intermediate text must be omitted; retained and published truncation remain explicit. Expanded desired bytes use the existing status intent and creation-reconciliation owner.
+
+Pre-runtime provisioning correlation, native early installer text collection and native Linux/Windows automatic delivery remain separate unqualified responsibilities under #493. Bounded comment expansion does not supply text that the operation never collected. Do not claim generic exactly-once GitHub mutation semantics from these effect-specific corrections.
+
+## Default task diagnostics and delivery
+
+Every authorized GitHub-initiated task must receive useful failure text on its
+originating task without a diagnostic flag or a second request for logs. Before
+the first fallible operation, the existing run or provisioning owner must persist
+the exact originating repository/task revision, run or provisioning operation,
+attempt and reporting destination. Shared profile construction must preserve each
+authorized dependent task's correlation; temporal proximity is not correlation.
+
+Each operation owner supplies bounded diagnostic evidence through the existing
+result and status owners. A report identifies the failing stage/operation, known
+exit status or typed failure, and whether evidence is missing, truncated or still
+being collected. Collection failure, operation failure and delivery failure remain
+distinct. Redaction precedes truncation and publication. Guest text cannot select
+a destination, grant authority or establish successful verification.
+
+Pre-runtime installation is subject to the same contract. Its collection path
+must work before Node, SSH or the ordinary guest bridge is ready and must preserve
+local evidence when guest networking fails. The OS builder selects fixed sources;
+the provider adapter owns the exact attachment; the existing lifecycle owner
+consumes the result. A terminal failure cannot be replaced by apparent progress
+from disk growth or heartbeat. Missing collection is an explicit unavailable
+result and never resets the original operation deadline.
+
+Persist bounded diagnostic evidence and pending delivery before contacting
+GitHub. Preserve terminal classification independently of output floods. Recovery
+uses the existing task lease and status reconciliation owner and must not rerun
+the failed operation to recover a comment. A GitHub outage means delivery is
+pending. Automatically supplied expanded evidence, when needed, must be bounded,
+sanitized, accessible under the task repository's intended access policy and
+have explicit retention/expiry semantics; a local path is not remote delivery.
+
+This is a required target contract. The native collection and expanded-evidence
+gaps identified above remain open until demonstrated through the production path.
 
 ## Run recovery
 
@@ -202,7 +241,7 @@ Tests must cover at least:
 - task-branch ambiguous publication reconciles by exact remote observation rather than blind retry;
 - runtime activation failure retains/restores exact last-known-good evidence;
 - chat/inventory projection crash windows follow their owned reconciliation rules;
-- ordinary status-comment creation crash window remains covered by a future generic/correlation test once that gap is implemented;
+- ordinary status-comment creation, terminal-run persistence and delivery crash windows preserve intent and reconcile without rerunning failed work or adopting copied user comments;
 - retries stop at policy/rate/attempt/time bounds.
 
 ## Current boundary

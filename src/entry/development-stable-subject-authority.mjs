@@ -14,7 +14,7 @@ function requireSource(source) {
 }
 
 function requireState(state) {
-  for (const method of ['read', 'accept', 'fallback', 'preferred']) {
+  for (const method of ['read', 'accept', 'preferred']) {
     if (!state || typeof state[method] !== 'function') throw new TypeError(`development stable authority state.${method} must be a function`);
   }
   return state;
@@ -109,14 +109,7 @@ export class DevelopmentStableSubjectAuthority {
     }
   }
 
-  async recover(failedSubject) {
-    const fallback = await this.#state.fallback(failedSubject, 'development');
-    if (!fallback) return null;
-    const state = await this.#state.read();
-    const record = currentRecord(state, fallback);
-    if (!record || record.mode !== 'development') fail('development stable fallback state changed during recovery');
-    return this.#remember(record, false);
-  }
+  async recover() { return null; }
 
   async accept(subject) {
     const pending = this.#pending.get(key(subject));

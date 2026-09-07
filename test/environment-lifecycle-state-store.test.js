@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { EnvironmentDeclarationRegistry, ENVIRONMENT_DECLARATION_PROTOCOL } from '../src/runtime/environment-declaration.js';
@@ -40,4 +40,23 @@ test('declarations and journal survive a fresh state-store instance', async () =
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('starting a replacement archives the complete failed journal before replacing current state', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devbridge-lifecycle-history-'));
+  const file = path.join(root, 'state.json');
+  try {
+    const store = createEnvironmentLifecycleStateStore(file);
+    const declarations = new EnvironmentDeclarationRegistry({ port: store.declarations });
+    const { record } = await declarations.register(declaration());
+    const journal = new EnvironmentLifecycleJournal({ port: store.journal, id: () => 'lifecycle-old' });
+    await journal.begin({ environmentIdentity: record.identity, operation: 'create', declarationRevision: 1 });
+    const failed = await journal.advance(record.identity, 'lifecycle-old', { stage: 'terminal', outcome: 'failed', subjects: ['declaration-superseded'] });
+    const next = new EnvironmentLifecycleJournal({ port: createEnvironmentLifecycleStateStore(file).journal, id: () => 'lifecycle-new' });
+    await next.begin({ environmentIdentity: record.identity, operation: 'rebuild', declarationRevision: 2 });
+    const raw = JSON.parse(await readFile(file, 'utf8'));
+    assert.deepEqual(raw['journal-history:lifecycle-old'], failed);
+    assert.equal((await next.active()).length, 1);
+    assert.equal((await next.current(record.identity)).operationId, 'lifecycle-new');
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

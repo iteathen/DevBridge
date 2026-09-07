@@ -50,9 +50,13 @@ Consequences:
 - permanent entry does not grow provider/repository/setup business logic;
 - runner does not become a second configuration system;
 - setup progress is durable/versioned independently of executable runtime generation;
+- protected setup preparation and protected apply are separate exact states; a prepared Windows subject is bound to the accepted configuration digest, profile-selection revision, and accepted identity/repository/package checkpoint;
+- Windows consent is requested only on an explicit setup re-entry, immediately after bounded local subject and installed-command validation and before remote discovery or construction;
+- that UAC child executes the already-held detached exact runner CLI directly; it does not recursively re-enter Permanent Entry or reacquire the parent runner-cache lease;
+- phase timing/progress is a bounded observation port and cannot become mutation, retry, provider, or elevation authority;
 - ordinary runtime commands do not silently re-enter authority-changing setup.
 
-Owners: #103, #116.
+Owners: #103, #116, #429, #430.
 
 ## Decision 5: accepted runtime owns execution-environment reconstruction through lifecycle contracts
 
@@ -134,3 +138,28 @@ Consequences:
 - DevBridge security, DB-009/DB-011 recovery, and LEGO contracts override any external product behavior that conflicts with them.
 
 These products are design references only. DevBridge must not depend on their software, file layouts, update services, APIs, or trust models, and no external product is normative authority for DevBridge behavior.
+
+## Decision 10: exact cache observation crosses platform process boundaries in bounded batches
+
+Exact artifact ownership remains a neutral runtime contract. Platform-specific evidence such as the Windows reparse-point attribute remains behind an injected adapter, but a bounded artifact set must not require one operating-system process per path.
+
+Consequences:
+
+- the neutral artifact owner sequences fixed-size batches and retains before/after observation policy;
+- the Windows adapter returns one strict count- and order-bound result for each bounded local-path batch;
+- malformed, missing, extra, reordered, timed-out, truncated, or reparse-positive evidence fails closed;
+- file handles, filesystem identity, exact directory membership, byte counts, and content digests remain independently verified;
+- destructive removal retains per-entry exact checks and receives no batch-derived widening of authority; and
+- setup and UAC timing consume this lower-layer improvement but do not own a duplicate cache fast path.
+
+Owners: #159, #180, #432.
+
+## Decision 11: byte-identical cache file replacement is a new receipt generation
+
+A file replacement does not preserve its filesystem identity, even when its bytes are unchanged. Ordinary exact artifact observation and removal must continue rejecting the old descriptor.
+
+For a completed runner checkout only, its owner may reconcile byte-identical file replacement when the lower artifact owner proves all original byte counts and SHA256 values, exclusive membership, unchanged root and directory identities, non-reparse/single-link shape, and stable repeated complete observations. The checkout owner independently re-verifies the exact Git subject with optional index writes disabled. It then atomically compares and replaces the completed receipt with a new operation identity through the existing append-only journal. Old receipt history remains evidence; it is not rewritten to claim the old inode survived.
+
+Changed/missing content, extra entries, directory replacement, unbound content, stale receipt generations and uncertain observations remain blocked. This is not general corrupt-cache recovery, cross-runtime device-identity compatibility, a manual receipt repair command, or permission to delete unknown files. No new copy or cache location is needed for this exact-content case.
+
+Owners: #159, #180, #391. Qualification: DB-HO168.

@@ -6,10 +6,13 @@ import { fileURLToPath } from 'node:url';
 export const WINDOWS_GUEST_IMAGE_PAYLOAD_PROTOCOL = 'devbridge/windows-guest-image-payload-v1';
 
 const MEMBERS = Object.freeze([
+  'activity-store.mjs',
   'bridge-agent.mjs',
   'environment-bootstrap-agent.mjs',
+  'local-process.mjs',
   'network-seed-agent.mjs',
   'resource-agent.mjs',
+  'transfer-channel.mjs',
   'windows-access-seed-agent.mjs',
   'workspace-agent.mjs',
 ]);
@@ -25,16 +28,25 @@ function generationFor(files) {
   return `guest-image-${hash.digest('hex').slice(0, 24)}`;
 }
 
+function canonicalText(value) {
+  const content = value.replaceAll('\r\n', '\n');
+  if (content.includes('\r')) throw new Error('Windows guest image payload member has unsupported line endings');
+  // Target bytes use CRLF regardless of the source checkout's line-ending policy.
+  return content.replaceAll('\n', '\r\n');
+}
+
 async function loadMember(root, canonicalRoot, name) {
   const location = path.join(root, name);
   const lexicalInfo = await lstat(location);
   if (!lexicalInfo.isFile() || lexicalInfo.isSymbolicLink() || lexicalInfo.size < 1 || lexicalInfo.size > MAX_FILE_BYTES) throw new Error('Windows guest image payload member is invalid');
   const canonicalFile = await realpath(location);
   if (path.dirname(canonicalFile) !== canonicalRoot || canonicalFile !== path.join(canonicalRoot, name)) throw new Error('Windows guest image payload member escaped its owning directory');
-  const content = await readFile(canonicalFile, 'utf8');
-  if (content.includes('\0')) throw new Error('Windows guest image payload member contains invalid bytes');
+  const observed = await readFile(canonicalFile, 'utf8');
+  if (observed.includes('\0')) throw new Error('Windows guest image payload member contains invalid bytes');
+  if (Buffer.byteLength(observed, 'utf8') !== lexicalInfo.size) throw new Error('Windows guest image payload member changed during read');
+  const content = canonicalText(observed);
   const bytes = Buffer.byteLength(content, 'utf8');
-  if (bytes !== lexicalInfo.size) throw new Error('Windows guest image payload member changed during read');
+  if (bytes > MAX_FILE_BYTES) throw new Error('Windows guest image payload member exceeds its canonical size bound');
   return Object.freeze({ path: path.win32.join(TARGET_ROOT, name), content, bytes, sha256: createHash('sha256').update(content, 'utf8').digest('hex') });
 }
 

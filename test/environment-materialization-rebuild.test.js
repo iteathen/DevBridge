@@ -44,7 +44,7 @@ test('rebuild materialization binds replacement to active outer lifecycle and pr
     rebuildEnvironment: async (identity, options) => {
       supplied = { identity, options };
       return {
-        record: { identity: NEXT },
+        record: { identity: NEXT, source: { identity: declaration.image.identity } },
         observation: { exists: true, owned: true, compatible: true },
         superseded: { identity: CURRENT, cleanup: 'retained' },
       };
@@ -63,11 +63,11 @@ test('rebuild materialization binds replacement to active outer lifecycle and pr
   assert.deepEqual(result.superseded, { identity: CURRENT, cleanup: 'retained' });
   assert.deepEqual(supplied, {
     identity: CURRENT,
-    options: { requestId: 'lifecycle-rebuild-1', expectedPreviousIdentity: CURRENT },
+    options: { requestId: 'lifecycle-rebuild-1', expectedPreviousIdentity: CURRENT, sourceIdentity: declaration.image.identity },
   });
 });
 
-test('rebuild materialization refuses source or lifecycle authority drift', async () => {
+test('rebuild materialization refuses lifecycle authority drift even when the declared image has changed', async () => {
   const state = {
     listEnvironments: async () => [{ record: { identity: CURRENT, subject: 'profile-subject-1', profile: declaration.profile, source: { identity: 'img-other' } }, observation: {} }],
     rebuildEnvironment: async () => { throw new Error('unused'); },
@@ -75,5 +75,19 @@ test('rebuild materialization refuses source or lifecycle authority drift', asyn
   const materialization = createEnvironmentRebuildMaterialization({
     state, subject: subject(), journal: { current: async () => null },
   });
-  await assert.rejects(() => materialization.ensure(request()), /source no longer matches/u);
+  await assert.rejects(() => materialization.ensure(request()), /not bound to the active rebuild lifecycle/u);
+});
+
+test('rebuild materialization refuses a replacement from an undeclared source', async () => {
+  const materialization = createEnvironmentRebuildMaterialization({
+    state: {
+      listEnvironments: async () => [{ record: { identity: CURRENT, subject: 'profile-subject-1', profile: declaration.profile } }],
+      rebuildEnvironment: async () => ({ record: { identity: NEXT, source: { identity: 'img-other' } }, observation: { exists: true, owned: true, compatible: true } }),
+    },
+    subject: subject(), journal: { current: async () => ({
+      operation: 'rebuild', operationId: request().operationId, declarationRevision: 1,
+      entries: [{ stage: 'pre-observation', implementationGeneration: CURRENT }],
+    }) },
+  });
+  await assert.rejects(() => materialization.ensure(request()), /rebuilt source does not match declaration/u);
 });

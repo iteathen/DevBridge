@@ -10,8 +10,9 @@ import { DevelopmentCheckoutRunnerProvider } from './development-checkout-runner
 import { DevelopmentStableSubjectAuthority } from './development-stable-subject-authority.mjs';
 import { GitHubRunnerSource } from './github-runner-source.mjs';
 import { entryInstallationTag } from './installation-identity.mjs';
-import { PERMANENT_ENTRY_PROTOCOL, runPermanentEntry, sameRunnerSubject } from './permanent-entry.mjs';
+import { PERMANENT_ENTRY_PROTOCOL, normalizeRunnerSubject, runPermanentEntry, sameRunnerSubject } from './permanent-entry.mjs';
 import { ProductionStableSubjectAuthority } from './production-stable-subject-authority.mjs';
+import { createRunnerCacheComposition } from './runner-cache-composition.mjs';
 import { StableRunnerState } from './stable-runner-state.mjs';
 
 export const ENTRY_STATUS_PROTOCOL = 'devbridge/entry-status-v1';
@@ -255,17 +256,18 @@ export async function runStableEntry(argv, {
     if (provider == null) fail(`stable entry ${args.releaseMode} runner provider is unavailable`);
   }
   if (provider == null) {
+    const cache = createRunnerCacheComposition({ cacheRoot: paths.cacheRoot, stateRoot: paths.stateRoot });
     if (args.releaseMode === 'development') {
       // A moving development selector authorizes the exact control-plane tree
       // selected for this invocation. Its standalone artifact is Stage 0 and
       // must not redirect ordinary CLI argv through unrelated activation state.
       provider = new DevelopmentCheckoutRunnerProvider({
-        cacheRoot: paths.cacheRoot,
+        ...cache,
         allowFetch: !args.noUpdate,
       });
     } else {
       const providerSource = args.noUpdate ? offlineSource() : fixedSource;
-      provider = new ContentAddressedRunnerProvider({ source: providerSource, cacheRoot: paths.cacheRoot });
+      provider = new ContentAddressedRunnerProvider({ source: providerSource, normalizeSubject: normalizeRunnerSubject, ...cache });
     }
   }
   return runPermanentEntry(args.argv, { subjectAuthority: authority, runnerProvider: provider });

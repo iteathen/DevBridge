@@ -6,7 +6,7 @@ import { validateConfig } from '../src/config.js';
 function base() {
   return {
     version: 1,
-    github: { queueRepository: 'iteathen/DevBridge', trustedActorIds: ['1775584'], rateLimit: {} },
+    github: { queueRepositories: ['iteathen/DevBridge'], trustedActorIds: ['1775584'], rateLimit: {} },
     workspace: { root: path.resolve('/tmp/devbridge-workspace'), allowedOwners: ['iteathen'] },
     state: { directory: path.resolve('/tmp/devbridge-state') },
     execution: {},
@@ -17,6 +17,7 @@ function base() {
 
 test('uses conservative API, auth, execution, Git, publication, context-rollover, and tool-onboarding defaults', () => {
   const config = validateConfig(base());
+  assert.deepEqual(config.github.queueRepositories, ['iteathen/DevBridge']);
   assert.equal(config.github.apiVersion, '2026-03-10');
   assert.equal(config.github.rateLimit.reserveRatio, 0.2);
   assert.equal(config.github.auth.mode, 'auto');
@@ -53,6 +54,27 @@ test('uses conservative API, auth, execution, Git, publication, context-rollover
     maxHandoffBytes: 32_768,
     maxRetained: 8,
   });
+});
+
+test('queue configuration is plural, bounded, unique, and has no singular compatibility alias', () => {
+  const raw = base();
+  raw.github.queueRepositories = ['owner/one', 'owner/two'];
+  assert.deepEqual(validateConfig(raw).github.queueRepositories, ['owner/one', 'owner/two']);
+
+  const singular = base();
+  delete singular.github.queueRepositories;
+  singular.github.queueRepository = 'owner/one';
+  assert.throws(() => validateConfig(singular), /queueRepository is unsupported/u);
+
+  const duplicate = base();
+  duplicate.github.queueRepositories = ['Owner/Repo', 'owner/repo'];
+  assert.throws(() => validateConfig(duplicate), /duplicate repositories/u);
+
+  for (const value of [[], ['not-a-repository'], Array.from({ length: 4097 }, (_, index) => `owner/repo-${index}`)]) {
+    const invalid = base();
+    invalid.github.queueRepositories = value;
+    assert.throws(() => validateConfig(invalid), /queueRepositories/u);
+  }
 });
 
 test('context rollover policy is local, explicit, and bounded', () => {

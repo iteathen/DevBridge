@@ -2,6 +2,13 @@
 
 Status: active roadmap architecture for post-recovery GPU support. DevBridge does not yet claim a qualified CUDA backend for repository guests.
 
+The active sequence is Hello World, real NVIDIA support for CUDA-JS testing,
+then MCP; see [the roadmap](roadmap.md#current-sequencing). #395 owns GPU
+execution, #419 its provider transport attachment, and #162 later generalized
+routing. Reassess exact hardware/project requirements at that milestone. This
+document claims no qualified GPU capability and does not authorize detaching the
+host display GPU.
+
 Architecture owner for ordinary CUDA execution: #395 and `docs/host-retained-accelerator-execution.md`.
 General compute requirement/evidence owner: #162.
 

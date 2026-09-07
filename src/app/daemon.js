@@ -9,9 +9,9 @@ import {
   waitForDaemonControlRequest,
   waitForDaemonResumeOrStop,
 } from '../runtime/daemon-lock.js';
-import { createRuntime } from './runtime.js';
+import { createRuntimeCollection } from './runtime-collection.js';
+import { runRuntimeCollectionCycle } from './runtime-collection-cycle.js';
 import { reportActiveRunRuntimeError } from './runtime-error-report.js';
-import { runCycle } from './run-once.js';
 
 function activityPort(value) {
   if (value == null) return null;
@@ -31,15 +31,15 @@ function exactHeld(value, subject, operationId) {
   return value;
 }
 
-async function admittedCycle(runtime, admission, operationId, signal) {
-  if (admission == null) return Object.freeze({ admitted: true, result: await runCycle(runtime) });
+async function admittedCycle(collection, admission, operationId, signal, cycle) {
+  if (admission == null) return Object.freeze({ admitted: true, result: await cycle(collection) });
   const subject = 'cycle';
   const held = await admission.acquire(Object.freeze({ subject, operationId, signal }));
   if (held == null) return Object.freeze({ admitted: false, result: null });
   const selected = exactHeld(held, subject, operationId);
   let result;
   let failure = null;
-  try { result = await runCycle(runtime); }
+  try { result = await cycle(collection); }
   catch (error) { failure = error; }
   try { await selected.release(); }
   catch (error) {
@@ -70,7 +70,8 @@ export async function runDaemon(config, {
   fetchImpl = globalThis.fetch,
   signal = null,
   onEvent = () => {},
-  runtimeFactory = createRuntime,
+  collectionFactory = createRuntimeCollection,
+  collectionCycle = runRuntimeCollectionCycle,
   activityAdmission = null,
 } = {}) {
   const admission = activityPort(activityAdmission);
@@ -83,7 +84,10 @@ export async function runDaemon(config, {
       if (typeof reconciled !== 'boolean') throw new Error('daemon activity reconciliation evidence is invalid');
       if (reconciled) onEvent({ type: 'activity-reconciled', at: new Date().toISOString() });
     }
-    const runtime = await runtimeFactory(config, { env, fetchImpl, coordinationExclusive: true });
+    const collection = await collectionFactory(config, { env, fetchImpl, coordinationExclusive: true });
+    const cycleCollection = (value) => collectionCycle(value, {
+      onRuntimeError: (runtime, error) => reportActiveRunRuntimeError(runtime, error),
+    });
     onEvent({ type: 'daemon-started', at: new Date().toISOString(), pid: lockRecord.pid });
     let cycleSequence = 0;
     while (!signal?.aborted) {
@@ -99,7 +103,7 @@ export async function runDaemon(config, {
       let delay = config.github.pollIntervalMs;
       try {
         cycleSequence += 1;
-        const cycle = await admittedCycle(runtime, admission, `cycle-${lockRecord.token}-${cycleSequence}`, signal);
+        const cycle = await admittedCycle(collection, admission, `cycle-${lockRecord.token}-${cycleSequence}`, signal, cycleCollection);
         if (!cycle.admitted) {
           onEvent({ type: 'cycle-deferred', at: new Date().toISOString(), reason: 'activity-unavailable' });
         } else {
@@ -111,28 +115,12 @@ export async function runDaemon(config, {
         if (error instanceof RateLimitError && error.retryAt) delay = Math.max(delay, error.retryAt - Date.now());
         else delay = Math.max(delay, config.daemon.errorBackoffMs);
 
-        let remoteReport = null;
-        if (!(error instanceof RateLimitError)) {
-          try {
-            remoteReport = await reportActiveRunRuntimeError(runtime, error);
-          } catch (reportError) {
-            remoteReport = {
-              reported: false,
-              reason: 'runtime-error-report-failed',
-              error: {
-                name: reportError?.name ?? 'Error',
-                message: reportError?.message ?? String(reportError),
-              },
-            };
-          }
-        }
-
         onEvent({
           type: 'cycle-error',
           at: new Date().toISOString(),
           error: { name: error.name, message: error.message },
           retryInMs: delay,
-          remoteReport,
+          remoteReport: null,
         });
       }
 

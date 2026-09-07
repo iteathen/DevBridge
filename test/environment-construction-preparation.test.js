@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createEnvironmentConstructionPreparation } from '../src/app/environment-construction-preparation.js';
-import { executionProfileSubject } from '../src/app/execution-profile-routing.js';
 
 function request() {
   const declaration = {
@@ -35,7 +34,7 @@ test('construction preparation keeps stable route access separate from resolved 
     },
   });
   const selected = request();
-  const target = executionProfileSubject(selected.declaration.profile);
+  const target = selected.implementationGeneration;
   assert.deepEqual(await port.ensure(selected), { ready: true, implementationGeneration: selected.implementationGeneration });
   assert.deepEqual(await port.inspect(selected), { ready: true, enrollment: 'ready', bootstrap: 'ready', network: 'ready', reason: null });
   assert.deepEqual(await port.access(selected), { ...routeAccess, target });
@@ -73,4 +72,5 @@ test('construction preparation refuses enrollment drift and unsupported enrollme
   changed.declaration.enrollment = { requirement: 'other-v1' };
   changed.enrollment = changed.declaration.enrollment;
   await assert.rejects(() => port.ensure(changed), /unsupported/u);
+  await assert.rejects(() => port.ensure({ ...request(), implementationGeneration: 'profile-derived' }), /exact persistent environment identity/u);
 });

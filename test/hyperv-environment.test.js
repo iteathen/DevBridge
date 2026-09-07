@@ -44,6 +44,26 @@ test('adapter keeps command authority local and rejects external image paths and
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('Hyper-V instance stop uses the documented default guest shutdown and reserves turn-off for force', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage2-hv-stop-'));
+  let request;
+  try {
+    const adapter = new HyperVEnvironment({
+      directory: path.join(root, 'control'), assetRoot: path.join(root, 'images'),
+      identity: '0123456789abcdef0123456789abcdef',
+      invoke: async (received) => {
+        request = received;
+        return success({ exists: true, owned: true, state: 'off' });
+      },
+    });
+    await adapter.stopInstance('a'.repeat(32));
+    const script = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
+    assert.match(script, /try \{ Stop-VM -Name \$data\.name -Confirm:\$false/u);
+    assert.match(script, /\$data\.force -eq \$true.*Stop-VM -Name \$data\.name -TurnOff/su);
+    assert.doesNotMatch(script, /-Shutdown\b/u);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('interrupted network setup retains one local plan and reconciles the same owned identity', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage2-hv-reconcile-'));
   const calls = [];

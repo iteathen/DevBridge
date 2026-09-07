@@ -26,6 +26,7 @@ test('long deterministic process emits bounded liveness while GitHub status muta
     client: {
       async request(method, requestPath, options) {
         requests.push({ method, requestPath, options });
+        if (requestPath === '/graphql') return { data: { data: { viewer: { databaseId: 12 } } } };
         return { data: { id: 77 } };
       },
     },
@@ -73,6 +74,7 @@ test('long deterministic process emits bounded liveness while GitHub status muta
   assert.equal(events.at(-1).processAlive, false);
   assert.ok(events.every((event) => Number.isInteger(event.elapsedMs) && event.elapsedMs >= 0));
   assert.ok(events.every((event) => typeof event.deadlineAt === 'string' && event.timeoutMs === 5_000));
-  assert.equal(requests.length, 1, 'repeated liveness events must edit/coalesce by status interval instead of spamming comments');
-  assert.equal(requests[0].method, 'POST');
+  assert.equal(requests.filter(entry => entry.options.mutation !== false).length, 1, 'repeated liveness events must edit/coalesce by status interval instead of spamming comments');
+  assert.equal(requests[0].requestPath, '/graphql');
+  assert.equal(requests[1].method, 'POST');
 });

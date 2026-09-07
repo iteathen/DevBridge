@@ -33,11 +33,13 @@ test('workspace inspection performs health checks only', async () => {
       async execute() { events.push(['execute']); throw new Error('inspect must not execute guest code'); },
     };
     const port = createEnvironmentConstructionWorkspaces({
-      stateDirectory: directory,
       state: stateFor(profile),
+      routeState: {
+        async load() { return null; },
+        async publish() { throw new Error('inspect must not publish route state'); },
+      },
       channel,
       resolveAuthority: async () => subject,
-      resolveAccess: async () => ({ family: 'linux', user: 'devbridge', identityFile: '/host/identity', knownHostsFile: '/host/known-hosts' }),
     });
     const result = await port.inspect({ declaration, workspaces: declaration.workspaces, implementationGeneration: 'env-0123456789abcdef0123456789abcdef' });
     assert.equal(result.ready, true);

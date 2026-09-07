@@ -4,27 +4,12 @@ import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { PERMANENT_ENTRY_COMPONENT_FILES } from '../src/install/permanent-entry-components.mjs';
 
 export const ENTRY_CANDIDATE_BUNDLE_PROTOCOL = 'devbridge/entry-candidate-bundle-v1';
 
 const SOURCE_ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const MAX_COMPONENT_BYTES = 1024 * 1024;
-const COMPONENTS = Object.freeze([
-  'devbridge-entry.mjs',
-  'src/entry/content-addressed-runner-provider.mjs',
-  'src/entry/development-checkout-runner-provider.mjs',
-  'src/entry/development-stable-subject-authority.mjs',
-  'src/entry/exact-checkout-runner-provider.mjs',
-  'src/entry/experimental-checkout-runner-provider.mjs',
-  'src/entry/experimental-entry.mjs',
-  'src/entry/experimental-subject-authority.mjs',
-  'src/entry/github-runner-source.mjs',
-  'src/entry/installation-identity.mjs',
-  'src/entry/permanent-entry.mjs',
-  'src/entry/production-stable-subject-authority.mjs',
-  'src/entry/stable-entry.mjs',
-  'src/entry/stable-runner-state.mjs',
-]);
 
 function fail(message) { throw new Error(message); }
 
@@ -74,7 +59,7 @@ export async function stageEntryCandidate({ stableLauncher, output, sourceRoot =
 
   const stableBytes = await readRegularFile(stablePath, 'stable launcher');
   const sources = [];
-  for (const relative of COMPONENTS) {
+  for (const relative of PERMANENT_ENTRY_COMPONENT_FILES) {
     const bytes = await readRegularFile(componentTarget(sourcePath, relative), `candidate component ${relative}`, { root: sourcePath });
     sources.push({ relative, bytes });
   }

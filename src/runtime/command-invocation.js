@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 
 const MAX_ARGUMENTS = 256;
 const MAX_TIMEOUT_MS = 300_000;
+const MAX_CONFIGURED_TIMEOUT_MS = 45 * 60_000;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 function boundedText(value, name, { allowEmpty = false, maxBytes = 65_536 } = {}) {
@@ -38,7 +39,7 @@ function appendBounded(chunks, chunk, state, limit) {
   state.bytes += buffer.length;
 }
 
-export async function invokeCommand(raw) {
+async function invokeCommandWithin(raw, { maximumTimeoutMs, windowsHide }) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('command request must be an object');
   const executable = boundedText(raw.executable, 'command executable', { maxBytes: 4_096 });
   const argumentsList = raw.arguments ?? [];
@@ -47,7 +48,7 @@ export async function invokeCommand(raw) {
   }
   const args = argumentsList.map((value, index) => boundedText(value, `command arguments[${index}]`, { allowEmpty: true, maxBytes: 65_536 }));
   const input = raw.input == null ? null : boundedText(raw.input, 'command input', { allowEmpty: true, maxBytes: 4 * 1024 * 1024 });
-  const timeoutMs = integer(raw.timeoutMs ?? 15_000, 'command timeoutMs', 100, MAX_TIMEOUT_MS);
+  const timeoutMs = integer(raw.timeoutMs ?? 15_000, 'command timeoutMs', 100, maximumTimeoutMs);
   const maxOutputBytes = integer(raw.maxOutputBytes ?? 1024 * 1024, 'command maxOutputBytes', 1024, MAX_OUTPUT_BYTES);
   const signal = raw.signal ?? null;
   if (signal != null && typeof signal !== 'object') throw new TypeError('command signal is invalid');
@@ -69,7 +70,7 @@ export async function invokeCommand(raw) {
       child = spawn(executable, args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         shell: false,
-        windowsHide: true,
+        windowsHide,
         env: raw.environment ?? process.env,
       });
     } catch (error) {
@@ -137,4 +138,20 @@ export async function invokeCommand(raw) {
     if (input == null) child.stdin.end();
     else child.stdin.end(input);
   });
+}
+
+export function createCommandInvoker(raw = {}) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('command invoker policy must be an object');
+  for (const key of Object.keys(raw)) {
+    if (!['maximumTimeoutMs', 'windowsHide'].includes(key)) throw new TypeError(`command invoker policy.${key} is not allowed`);
+  }
+  const maximumTimeoutMs = integer(raw.maximumTimeoutMs, 'command invoker policy.maximumTimeoutMs', MAX_TIMEOUT_MS, MAX_CONFIGURED_TIMEOUT_MS);
+  const windowsHide = raw.windowsHide ?? true;
+  if (typeof windowsHide !== 'boolean') throw new TypeError('command invoker policy.windowsHide must be a boolean');
+  const policy = Object.freeze({ maximumTimeoutMs, windowsHide });
+  return (request) => invokeCommandWithin(request, policy);
+}
+
+export function invokeCommand(raw) {
+  return invokeCommandWithin(raw, Object.freeze({ maximumTimeoutMs: MAX_TIMEOUT_MS, windowsHide: true }));
 }

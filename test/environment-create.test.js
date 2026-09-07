@@ -61,3 +61,55 @@ test('create routes a missing declaration to setup re-entry before provider work
   });
   await assert.rejects(() => create.create('environment-missing'), /setup re-entry is required/u);
 });
+
+test('superseded creation records failure under its original fence without replay or cleanup', async () => {
+  const f = await fixture();
+  let runs = 0;
+  let observations = 0;
+  let acquired = 0;
+  let released = 0;
+  const create = new EnvironmentCreate({
+    declarations: f.declarations, journal: f.journal,
+    observer: { observe: async () => { observations++; return observation(f.registered, 'none'); } },
+    fence: { acquire: async () => { acquired++; return { subject: 'fence-stable', release: async () => { released++; } }; } },
+    construction: { run: async () => { runs++; throw new Error('interrupted'); }, clear: async () => { throw new Error('must retain old construction checkpoint'); } },
+  });
+  await assert.rejects(create.create(f.registered.identity), /interrupted/);
+  const old = await f.journal.current(f.registered.identity);
+  const beforeObservations = observations;
+  await f.declarations.register({ ...declaration(), image: { identity: 'image-ubuntu-v2', generation: 'ubuntu-v2' } }, { expectedRevision: 1 });
+  const result = await create.create(f.registered.identity);
+  assert.equal(result.state, 'failed');
+  assert.equal(result.reason, 'declaration-superseded');
+  assert.equal(result.operationId, old.operationId);
+  const failed = await f.journal.current(f.registered.identity);
+  assert.equal(failed.declarationRevision, 1);
+  assert.deepEqual(failed.entries.slice(0, -1), old.entries);
+  assert.deepEqual(failed.entries.at(-1).subjects, ['declaration-superseded', 'declaration-revision-2']);
+  assert.equal((await f.journal.active()).length, 0);
+  assert.equal(runs, 1);
+  assert.equal(observations, beforeObservations);
+  assert.equal(acquired, 2); assert.equal(released, 2);
+});
+
+test('superseded creation preserves its journal when fence or local authority changes', async () => {
+  for (const change of ['fence', 'declaration', 'journal']) {
+    const f = await fixture();
+    let mutation = false;
+    const create = new EnvironmentCreate({
+      declarations: f.declarations, journal: f.journal,
+      observer: { observe: async () => observation(f.registered, 'none') },
+      fence: { acquire: async () => {
+        if (mutation && change === 'declaration') await f.declarations.register({ ...declaration(), schemaGeneration: 'profile-v3' }, { expectedRevision: 2 });
+        if (mutation && change === 'journal') await f.journal.advance(f.registered.identity, 'lifecycle-create-1', { stage: 'post-observation', outcome: 'observed' });
+        return { subject: mutation && change === 'fence' ? 'foreign-fence' : 'fence-stable', release: async () => {} };
+      } },
+      construction: { run: async () => { throw new Error('interrupted'); }, clear: async () => { throw new Error('no cleanup'); } },
+    });
+    await assert.rejects(create.create(f.registered.identity), /interrupted/);
+    await f.declarations.register({ ...declaration(), schemaGeneration: 'profile-v2' }, { expectedRevision: 1 });
+    mutation = true;
+    await assert.rejects(create.create(f.registered.identity), /fence subject changed|authority changed/);
+    assert.notEqual((await f.journal.current(f.registered.identity)).entries.at(-1).stage, 'terminal');
+  }
+});

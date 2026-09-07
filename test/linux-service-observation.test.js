@@ -19,7 +19,7 @@ function output({ reload = 'no', dropIns = '', loadState = 'loaded', unitFileSta
     `FragmentPath=${exists ? `/etc/systemd/system/${UNIT}` : ''}`,
     `User=${exists ? 'service_user' : ''}`,
     `Group=${exists ? 'service_read' : ''}`,
-    `SupplementaryGroups=${exists ? 'service_coord service_manage' : ''}`,
+    `SupplementaryGroups=${exists ? 'service_coord 108' : ''}`,
     `Type=${exists ? 'exec' : ''}`,
     `UnitFileState=${unitFileState}`,
     `NeedDaemonReload=${reload}`,
@@ -44,7 +44,7 @@ test('read-only observer invokes one fixed bounded system-manager query', async 
   assert.equal(observed.definitionCurrent, true);
   assert.equal(observed.needsReload, false);
   assert.equal(observed.dropIns, false);
-  assert.deepEqual(observed.supplementaryGroups, ['service_coord', 'service_manage']);
+  assert.deepEqual(observed.supplementaryGroups, ['service_coord', '108']);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].executable, '/usr/bin/systemctl');
   assert.deepEqual(calls[0].arguments.slice(0, 5), ['--system', '--no-pager', '--no-ask-password', 'show', UNIT]);
@@ -94,6 +94,11 @@ test('failed, malformed, and widened observations remain bounded', async () => {
     () => observeLinuxService({ unit: UNIT, platform: 'linux' }, { invoke: async () => success(), provider: () => {} }),
     /unknown field/u,
   );
+  const oversizedGroup = await observeLinuxService({ unit: UNIT, platform: 'linux' }, {
+    invoke: async () => success(output().replace('SupplementaryGroups=service_coord 108', 'SupplementaryGroups=service_coord 4294967295')),
+  });
+  assert.equal(oversizedGroup.observable, false);
+  assert.equal(oversizedGroup.reason, 'service manager observation invalid');
 });
 
 test('invalid names fail and non-Linux observation invokes nothing', async () => {

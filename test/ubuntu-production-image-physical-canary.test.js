@@ -5,6 +5,11 @@ import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import os from 'node:os';
 import path from 'node:path';
 import { createGuestImagePayload } from '../src/guest/image-payload.js';
+import { loadOrCreateLocalIdentity } from '../src/runtime/local-identity.js';
+import { HyperVConstructionRequest } from '../src/runtime/providers/hyperv-image-construction/request-contract.js';
+import { HyperVConstructionLedger } from '../src/runtime/providers/hyperv-image-construction/state-ledger.js';
+import { normalizeBootProtection } from '../src/values/boot-protection.js';
+import { checkpointConstructionInstallEvidence, INSTALLER_EVIDENCE_PROTOCOL } from '../src/runtime/construction-install-evidence.js';
 import {
   createUbuntuProductionImagePhysicalCanary,
   UBUNTU_PRODUCTION_IMAGE_PHYSICAL_CANARY_CONFIG_PROTOCOL,
@@ -57,7 +62,7 @@ async function fixture(root) {
           ],
         },
         payload: { generation: payload.generation },
-        qualification: { commands: ['make'] },
+        qualification: { commands: ['make'], services: ['hv-fcopy-daemon.service'], capabilities: ['hyperv-fcopy-uio-v1'] },
         output: { profile: 'linux-development', generation: 'ubuntu-2604-production-v1', bootstrap: 'guest-image-v1' },
       },
       resources: { memoryBytes: 2 * 1024 * 1024 * 1024, processorCount: 2, diskBytes: 32 * 1024 * 1024 * 1024 },
@@ -92,6 +97,8 @@ function canonicalRequest(data, subject) {
       packageSnapshot: data.config.authority.packages.snapshot,
       packages: data.config.authority.packages.packages.map((entry) => ({ ...entry })),
       commands: [...data.config.authority.qualification.commands],
+      services: [...data.config.authority.qualification.services],
+      capabilities: [...data.config.authority.qualification.capabilities],
     }),
     output: {
       profile: data.config.authority.output.profile,
@@ -149,6 +156,75 @@ test('physical canary status is genuinely non-mutating before host admission', a
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('saved installer failure is visible without runtime and diagnostic recovery cannot advance installation', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-failed-'));
+  try {
+    const data = await fixture(root);
+    let reads = 0;
+    let runtimeCalls = 0;
+    let mode = 'throw';
+    let evidence;
+    const forbidden = async () => { throw new Error('failed installation was advanced'); };
+    const canary = createUbuntuProductionImagePhysicalCanary(data.config, {
+      platform: 'win32', preflight: readyPreflight, payloadFactory: async () => data.payload,
+      runtimeFactory: async () => {
+        runtimeCalls += 1;
+        return {
+          canary: { inspect: forbidden, advance: forbidden }, access: forbidden,
+          accessProbe: { inspect: forbidden },
+          construction: {
+            async observeInstall() {
+              reads += 1;
+              if (mode === 'throw') throw new Error('diagnostic channel disconnected');
+              if (mode === 'missing') return {};
+              return { installationEvidence: evidence };
+            },
+          },
+        };
+      },
+    });
+    await writeCanaryRecord(data, canary.subject, 'running');
+    const identity = await loadOrCreateLocalIdentity({ directory: path.join(data.config.stateDirectory, 'environment-foundation') });
+    const ownerRoot = path.join(data.config.stateDirectory, 'production-image-canary');
+    const outputRoot = path.join(ownerRoot, 'output');
+    const contract = new HyperVConstructionRequest({ identity, outputRoot, normalizeProtection: normalizeBootProtection });
+    const binding = { subject: canary.subject, providerInstance: '11111111-2222-3333-4444-555555555555', seedSha256: 'b'.repeat(64), attempt: 1 };
+    const frame = {
+      protocol: INSTALLER_EVIDENCE_PROTOCOL, identity: canary.subject, attempt: 1,
+      sequence: 2, phase: 'failed', stage: 'apt-install', exitCode: 100,
+      collection: 'partial', truncated: true, stdoutBase64: '',
+      stderrBase64: Buffer.from('unmet dependencies API_TOKEN=private-value').toString('base64'),
+    };
+    evidence = checkpointConstructionInstallEvidence({ binding, observation: { status: 'available', bytes: Buffer.from(JSON.stringify(frame)) }, now: new Date('2026-09-05T14:02:44Z') });
+    const ledger = new HyperVConstructionLedger({
+      directory: path.join(ownerRoot, 'construction'), sourceRoot: path.join(ownerRoot, 'source'), outputRoot,
+      validateRecord: record => contract.validateRecordMedia(record),
+    });
+    await ledger.save({ protocol: 'devbridge/hyperv-image-construction-v2', records: {
+      [canary.subject]: { ...contract.create({ identity: canary.subject }), phase: 'installing', providerIdentity: binding.providerInstance, seed: { sha256: binding.seedSha256 }, installationEvidence: evidence },
+    } });
+    const stateFile = path.join(ownerRoot, 'construction', 'state.json');
+    const before = await readFile(stateFile);
+    const initial = await canary.status();
+    assert.equal(runtimeCalls, 0);
+    assert.equal(initial.blocked, true);
+    assert.match(initial.reason, /apt-install \(exit 100\)/u);
+    assert.match(initial.installationEvidence.failure.stderr, /unmet dependencies/u);
+    assert.doesNotMatch(JSON.stringify(initial), /private-value|11111111-2222|bbbbbbbb/u);
+    assert.deepEqual(await readFile(stateFile), before);
+    for (mode of ['throw', 'missing', 'available']) {
+      const result = await canary.run();
+      assert.equal(result.blocked, true);
+      assert.equal(result.installationEvidence.failure.exitCode, 100);
+      assert.match(result.installationEvidence.failure.stderr, /unmet dependencies/u);
+      assert.equal(result.phase, 'running');
+    }
+    assert.equal(reads, 3);
+    assert.equal(runtimeCalls, 3);
+    assert.deepEqual(await readFile(stateFile), before);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('resource preflight does not strand a canary after physical allocation has started', async () => {
@@ -224,6 +300,45 @@ test('invalid installer patch fails before provider network or access allocation
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('production composition reaches native preparation without diagnostic registry registration', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-physical-canary-no-registration-'));
+  try {
+    const data = await fixture(root);
+    const media = Buffer.from('install ---\ninstall ---\n');
+    const sha256 = createHash('sha256').update(media).digest('hex');
+    data.config.authority.source.media.bytes = media.length;
+    data.config.authority.source.media.sha256 = sha256;
+    data.config.authority.recipe.sourceSha256 = sha256;
+    await mkdir(path.dirname(data.config.keyring), { recursive: true });
+    await writeFile(data.config.keyring, 'test-keyring');
+    const fingerprint = data.config.authority.source.checksums.signerFingerprint;
+    const calls = [];
+    const canary = createUbuntuProductionImagePhysicalCanary(data.config, {
+      platform: 'win32', preflight: readyPreflight, payloadFactory: async () => data.payload,
+      fetchImpl: async url => {
+        const body = String(url).endsWith('/SHA256SUMS') ? Buffer.from(`${sha256}  ${data.config.authority.source.media.name}\n`)
+          : String(url).endsWith('/SHA256SUMS.gpg') ? Buffer.from('test-signature') : media;
+        return new Response(body, { status: 200, headers: { 'content-length': String(body.length) } });
+      },
+      invoke: async request => {
+        if (String(request.executable).toLowerCase().includes('gpgv')) {
+          calls.push('signature');
+          return { exitCode: 0, stdout: `[GNUPG:] VALIDSIG ${fingerprint} a b c d e f g h ${fingerprint}\n` };
+        }
+        assert.equal(request.executable, 'powershell.exe');
+        const script = Buffer.from(request.arguments.at(-1), 'base64').toString('utf16le');
+        assert.doesNotMatch(script, /GuestCommunicationServices|DevBridgeOwner/u);
+        calls.push('native-observation');
+        throw new Error('stop at the native owner');
+      },
+    });
+    await assert.rejects(canary.run(), /stop at the native owner/u);
+    assert.deepEqual(calls, ['signature', 'native-observation', 'native-observation']);
+    assert.equal(await absent(path.join(data.config.stateDirectory, 'environment-foundation', 'bootstrap', 'attachment')), true);
+    assert.equal(await absent(path.join(data.config.stateDirectory, 'production-image-canary', 'access')), true);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('physical canary run returns a bounded next observation while installation owns the frontier', async () => {

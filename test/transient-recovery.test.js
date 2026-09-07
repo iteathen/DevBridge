@@ -204,6 +204,41 @@ test('restart honors the persisted remaining transient backoff before invoking a
   assert.deepEqual(sleeps, [3000]);
 });
 
+test('malformed persisted retry deadline fails before workspace or process effects', async () => {
+  const store = new MemoryStore();
+  const t = task();
+  const key = `run.owner/queue#${t.issueNumber}.${t.revision}`;
+  await store.set(key, {
+    version: 1,
+    runId: `pp-${t.issueNumber}-${t.revision.slice(0, 16)}`,
+    task: t,
+    stage: 'running',
+    turn: 1,
+    turnLimit: 4,
+    createdAt: new Date().toISOString(),
+    prior: prior(),
+    workspace: { worktreeDir: '/managed/run', branch: snapshot().branch, baseRef: 'origin/main', baseSha: snapshot().baseSha },
+    lastFeedbackCommentId: 0,
+    publication: { published: false },
+    transientRetry: { attempts: 1, notBefore: 'not-a-time' },
+  });
+  let effects = 0;
+  const coordinator = new RunCoordinator({
+    stateStore: store,
+    workspaceManager: { prepareRun: async () => { effects += 1; } },
+    processRunner: { run: async () => { effects += 1; } },
+    queueRepository: 'owner/queue',
+    tools: { fixture: profile },
+    defaultTool: 'fixture',
+  });
+
+  const result = await coordinator.executeTask(t);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.error.classification, 'PolicyError');
+  assert.match(result.error.message, /retry deadline is malformed/u);
+  assert.equal(effects, 0);
+});
+
 test('persistent transient failure exhausts only the bounded window and does not sleep after the final attempt', async () => {
   const store = new MemoryStore();
   let now = Date.parse('2026-08-18T00:00:00.000Z');

@@ -45,7 +45,7 @@ function authority(overrides = {}) {
       ],
     },
     payload: { generation: 'guest-image-0123456789abcdef01234567' },
-    qualification: { commands: ['make'] },
+    qualification: { commands: ['make'], services: ['hv-fcopy-daemon.service'], capabilities: ['hyperv-fcopy-uio-v1'] },
     output: { profile: 'linux-development', generation: 'ubuntu-2604-production-v1', bootstrap: 'guest-image-v1' },
     ...overrides,
   };
@@ -67,6 +67,8 @@ test('Ubuntu construction authority is content-addressed and normalizes stable o
   assert.equal(normalized.packages.snapshot, SNAPSHOT);
   assert.equal(normalized.output.profile, 'linux-development');
   assert.deepEqual(normalized.qualification.commands, ['make']);
+  assert.deepEqual(normalized.qualification.services, ['hv-fcopy-daemon.service']);
+  assert.deepEqual(normalized.qualification.capabilities, ['hyperv-fcopy-uio-v1']);
   assert.match(ubuntuConstructionAuthoritySubject(first), /^subject-[a-f0-9]{32}$/u);
   assert.equal(ubuntuConstructionAuthoritySubject(first), ubuntuConstructionAuthoritySubject(reordered));
 });
@@ -88,6 +90,42 @@ test('Ubuntu construction authority binds media-preparation generation into the 
   };
   assert.deepEqual(changed.recipe.patches, first.recipe.patches);
   assert.notEqual(ubuntuConstructionAuthoritySubject(first), ubuntuConstructionAuthoritySubject(changed));
+});
+
+test('Ubuntu construction authority binds required services and rejects unsafe or duplicate units', () => {
+  const first = authority();
+  const changed = { ...first, qualification: { ...first.qualification, services: ['ssh.service'] } };
+  assert.notEqual(ubuntuConstructionAuthoritySubject(first), ubuntuConstructionAuthoritySubject(changed));
+  assert.throws(() => normalizeUbuntuConstructionAuthority({
+    ...first,
+    qualification: { ...first.qualification, services: ['../hv-fcopy-daemon.service'] },
+  }), /qualification service 0 is invalid/u);
+  assert.throws(() => normalizeUbuntuConstructionAuthority({
+    ...first,
+    qualification: { ...first.qualification, services: ['hv-fcopy-daemon.service', 'hv-fcopy-daemon.service'] },
+  }), /qualification service 1 is invalid/u);
+});
+
+test('Ubuntu construction authority binds bounded guest capabilities', () => {
+  const first = authority();
+  const changed = { ...first, qualification: { ...first.qualification, capabilities: ['future-capability-v1'] } };
+  assert.notEqual(ubuntuConstructionAuthoritySubject(first), ubuntuConstructionAuthoritySubject(changed));
+  assert.throws(() => normalizeUbuntuConstructionAuthority({
+    ...first,
+    qualification: { ...first.qualification, capabilities: ['../hyperv-fcopy-uio-v1'] },
+  }), /qualification capability 0 is invalid/u);
+  assert.throws(() => normalizeUbuntuConstructionAuthority({
+    ...first,
+    qualification: { ...first.qualification, capabilities: ['hyperv-fcopy-uio-v1', 'hyperv-fcopy-uio-v1'] },
+  }), /qualification capability 1 is invalid/u);
+});
+
+test('Ubuntu construction authority preserves historical command-only subject bytes', () => {
+  const current = authority();
+  const historical = { ...current, qualification: { commands: ['make'] } };
+  const normalized = normalizeUbuntuConstructionAuthority(historical);
+  assert.equal(Object.hasOwn(normalized.qualification, 'services'), false);
+  assert.equal(ubuntuConstructionAuthoritySubject(historical), ubuntuConstructionAuthoritySubject(normalized));
 });
 
 test('Ubuntu construction authority binds recipe to exact admitted source bytes', () => {

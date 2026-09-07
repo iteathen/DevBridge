@@ -11,8 +11,10 @@ import {
 } from './linux-protected-storage.js';
 
 const PROTOCOL = 'devbridge/linux-lifecycle-authority-records-v1';
-const OWNERSHIP_PROTOCOL = 'devbridge/linux-lifecycle-authority-ownership-v1';
+const OWNERSHIP_PROTOCOL = 'devbridge/linux-lifecycle-authority-ownership-v2';
 const GENERATION = /^[0-9a-f]{64}$/u;
+const LOCAL_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,30}$/u;
+const MAX_LOCAL_ID = 0xffff_fffe;
 const MAX_RECORD_BYTES = 32 * 1024;
 
 function exactKeys(value, allowed, name) {
@@ -34,6 +36,11 @@ function generation(value, name, { nullable = false } = {}) {
 
 function exactPlan(plan) {
   if (!plan || plan.protocol !== LINUX_LIFECYCLE_AUTHORITY_PLAN_PROTOCOL) throw new TypeError('Linux lifecycle authority record plan is invalid');
+  if (typeof plan.service?.managementGroup !== 'string' || !LOCAL_NAME.test(plan.service.managementGroup)
+      || !Number.isSafeInteger(plan.service?.managementGroupId) || plan.service.managementGroupId < 1
+      || plan.service.managementGroupId > MAX_LOCAL_ID) {
+    throw new TypeError('Linux lifecycle authority record required group identity is invalid');
+  }
   if (path.posix.dirname(plan.storage?.rootDirectory ?? '') !== plan.storage?.parentDirectory
       || path.posix.dirname(plan.protectedRoot ?? '') !== plan.storage.rootDirectory
       || path.posix.dirname(plan.ownershipManifest ?? '') !== plan.protectedRoot
@@ -68,6 +75,7 @@ export function normalizeLinuxLifecycleAuthorityOwnershipRecord(value, plan) {
     'serviceName',
     'operatorName',
     'managementGroup',
+    'managementGid',
     'localIdentity',
     'activeGeneration',
     'stagedGeneration',
@@ -77,7 +85,8 @@ export function normalizeLinuxLifecycleAuthorityOwnershipRecord(value, plan) {
       || value.authorityIdentity !== selected.authorityIdentity
       || value.serviceName !== selected.service.name
       || value.operatorName !== selected.service.operator
-      || value.managementGroup !== selected.service.managementGroup) {
+      || value.managementGroup !== selected.service.managementGroup
+      || value.managementGid !== selected.service.managementGroupId) {
     throw new Error('Linux lifecycle authority ownership record does not match this installation');
   }
   if (!Array.isArray(value.retainedGenerations) || value.retainedGenerations.length > 8) {
@@ -93,13 +102,18 @@ export function normalizeLinuxLifecycleAuthorityOwnershipRecord(value, plan) {
   if (stagedGeneration != null && retainedGenerations.includes(stagedGeneration)) {
     throw new TypeError('Linux lifecycle authority staged generation evidence aliases retained state');
   }
+  const identity = localIdentity(value.localIdentity);
+  if (identity != null && identity.managementGid !== selected.service.managementGroupId) {
+    throw new Error('Linux lifecycle authority ownership record required group changed');
+  }
   return Object.freeze({
     protocol: OWNERSHIP_PROTOCOL,
     authorityIdentity: selected.authorityIdentity,
     serviceName: selected.service.name,
     operatorName: selected.service.operator,
     managementGroup: selected.service.managementGroup,
-    localIdentity: localIdentity(value.localIdentity),
+    managementGid: selected.service.managementGroupId,
+    localIdentity: identity,
     activeGeneration,
     stagedGeneration,
     retainedGenerations: Object.freeze(retainedGenerations),
@@ -114,6 +128,7 @@ export function initialLinuxLifecycleAuthorityOwnershipRecord(plan) {
     serviceName: selected.service.name,
     operatorName: selected.service.operator,
     managementGroup: selected.service.managementGroup,
+    managementGid: selected.service.managementGroupId,
     localIdentity: null,
     activeGeneration: null,
     stagedGeneration: null,

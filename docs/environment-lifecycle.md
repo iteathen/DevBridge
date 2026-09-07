@@ -35,6 +35,10 @@ The logical environment identity is derived from the approved profile and does n
 
 The local image location is deliberately absent from the declaration. #178 owns availability of the exact semantic image identity when a local cache is missing or corrupt.
 
+If local setup replaces a declaration while an interrupted `create` remains active, resuming that old creation cannot apply the new declaration to its old checkpoints. The creation owner acquires its existing logical fence, rechecks the journal and declaration, and records the superseded attempt as terminal `failed`. It preserves every existing journal entry, the old revision, construction checkpoint, and provider state. This is failure reconciliation, not successful construction or permission to discard anything. A subsequent status/impact plan selects the appropriate create or replacement operation against the current declaration. Persisted terminal journals are archived by operation identity before a later operation replaces the current journal.
+
+Successful lifecycle stages remain contiguous. An unsuccessful terminal entry may follow any nonterminal stage; unperformed verification and cleanup stages must never be fabricated merely to record failure.
+
 ## Observed state
 
 Observation is evidence, not authority. It separately reports:
@@ -87,6 +91,18 @@ If a correction effect succeeds but its response is lost, restart does not blind
 ## Rebuild
 
 `rebuild` preserves the logical environment and declaration while replacing the implementation generation whose system storage is missing or invalid. It consumes the same #171 construction stages rather than owning a second provisioning stack.
+
+Storage validity is relative to the current approved declaration. An intact,
+owned disk from a previously accepted image can therefore require rebuild when
+the declaration names a newer image. Materialization passes the declared image
+identity to the persistent-environment owner, which pins the resolved target
+identity, profile, revision and digest alongside the previous source in the
+existing request-bound replacement record. Resume cannot retarget that record.
+The old base need not remain available: construction requires the exact target
+base, retains the old implementation and disk, and never reparents them. Intact
+old storage must still match its recorded lineage; unexplained or unowned state
+does not gain replacement authority from a declaration mismatch. A healthy
+same-image environment still requires the separate explicit reset contract.
 
 Rebuild authorization has an explicit evidence order:
 

@@ -18,6 +18,7 @@ import {
   bindWindowsLifecycleAuthorityRuntime,
   createWindowsLifecycleAuthorityPlan,
   WINDOWS_LIFECYCLE_AUTHORITY_HOST_COMMAND_LEGACY_V1,
+  WINDOWS_LOCAL_SYSTEM_ACCOUNT,
   windowsLifecycleAuthorityRuntimeGeneration,
 } from './windows-lifecycle-authority.js';
 import {
@@ -263,10 +264,17 @@ function running(service) {
   return service.exists === true && sameWindowsText(service.state, 'Running');
 }
 
-function serviceMatches(service, command, servicePlan, { allowMissingDescription = false } = {}) {
+function serviceMatches(service, command, servicePlan, {
+  allowMissingDescription = false,
+  allowRetiredVirtualLogon = false,
+} = {}) {
   const description = String(service.description ?? '');
+  const logonMatches = sameWindowsText(service.startName, servicePlan.logonAccount)
+    || (allowRetiredVirtualLogon
+      && servicePlan.logonAccount === WINDOWS_LOCAL_SYSTEM_ACCOUNT
+      && sameWindowsText(service.startName, servicePlan.account));
   return service.exists === true
-    && sameWindowsText(service.startName, servicePlan.account)
+    && logonMatches
     && sameWindowsText(service.pathName, command)
     && (description === servicePlan.description || (allowMissingDescription && description === ''));
 }
@@ -495,7 +503,7 @@ async function stageLegacyGeneration(context) {
 }
 
 async function configureServiceCommand(plan, command, invoke, environment) {
-  await invokeSc(invoke, ['config', plan.service.name, 'binPath=', command, 'start=', 'auto', 'obj=', plan.service.account], 'Windows lifecycle authority legacy service configuration', environment);
+  await invokeSc(invoke, ['config', plan.service.name, 'binPath=', command, 'start=', 'auto', 'obj=', plan.service.logonAccount], 'Windows lifecycle authority legacy service configuration', environment);
   await invokeSc(invoke, ['description', plan.service.name, plan.service.description], 'Windows lifecycle authority legacy service evidence configuration', environment);
 }
 
@@ -567,8 +575,13 @@ function observationDetail(observation) {
 
 export function classifyWindowsLifecycleAuthorityLegacyService(service, fixed, targetPlan) {
   if (!service.exists) return 'missing';
-  if (serviceMatches(service, fixed.serviceCommand, fixed.service, { allowMissingDescription: true })) return running(service) ? 'fixed-running' : 'fixed-stopped';
-  if (serviceMatches(service, targetPlan.serviceCommand, targetPlan.service)) return running(service) ? 'generation-running' : 'generation-stopped';
+  if (serviceMatches(service, fixed.serviceCommand, fixed.service, {
+    allowMissingDescription: true,
+    allowRetiredVirtualLogon: true,
+  })) return running(service) ? 'fixed-running' : 'fixed-stopped';
+  if (serviceMatches(service, targetPlan.serviceCommand, targetPlan.service, {
+    allowRetiredVirtualLogon: true,
+  })) return running(service) ? 'generation-running' : 'generation-stopped';
   return 'foreign';
 }
 

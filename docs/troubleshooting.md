@@ -233,6 +233,8 @@ The security boundary is therefore primarily:
 
 Do not "fix" network access by assuming network denial makes it safe to inject host GitHub tokens, SSH agents, release keys, coordination private keys, or provider credentials into the VM.
 
+If Windows setup reports that one inactive local resource occupies the protected-network slot, use only the opaque subject printed by `devbridge setup`. Re-run setup with `--retire-conflict <subject>` if that exact retirement is intended. Do not edit setup state, copy a resource name into a script, or assume an earlier observation still authorizes removal. DevBridge re-observes dependency and identity evidence inside its existing protected setup transaction and refuses changed or active state.
+
 ## 10. Guest result/test looks valid but host rejects it
 
 This is often correct behavior.

@@ -44,3 +44,18 @@ test('recovery evidence reports neutral resource, network, and workspace readine
   const result = await evidence.inspect({ record, observation: { materialization: 'present', implementationGeneration: 'implementation-1' } });
   assert.deepEqual(result, { resources: 'ready', network: 'degraded', workspaces: 'degraded' });
 });
+
+test('recovery evidence does not inspect provider or guest state for an absent materialization', async () => {
+  const events = [];
+  const evidence = createEnvironmentRecoveryEvidence({
+    foundation: { inspect: async () => { events.push('foundation'); return {}; } },
+    preparation: { inspect: async () => { events.push('preparation'); return {}; } },
+    workspaces: { inspect: async () => { events.push('workspaces'); return {}; } },
+  });
+  const result = await evidence.inspect({
+    record: { identity: 'environment-1', revision: 1, declaration: { enrollment: {}, bootstrap: {}, workspaces: [] } },
+    observation: { materialization: 'none', implementationGeneration: null },
+  });
+  assert.deepEqual(result, { resources: 'unknown', network: 'unknown', workspaces: 'unknown' });
+  assert.deepEqual(events, []);
+});

@@ -108,6 +108,7 @@ test('Windows production probe durably prepares, proves a reboot, and qualifies 
   assert.equal(evidence.restarted, true);
   assert.equal(evidence.sanitized, false);
   assert.deepEqual(parts.calls.map(({ operation }) => operation), ['prepare-v1', 'restart-v1', 'status-v1', 'status-v1', 'qualify-v1']);
+  assert.equal(parts.calls[0].timeoutMs, 45 * 60_000, 'preparation must fit the configured native invocation budget');
 
   const replayed = await parts.qualifier().probe({ target: TARGET, expected: EXPECTED });
   assert.deepEqual(replayed, evidence);
@@ -147,6 +148,7 @@ test('Windows production finalization is planned before effect, waits for shutdo
   const result = await parts.qualifier().finalize(TARGET);
   assert.deepEqual(result, { protocol: 'devbridge/windows-production-finalization-v1', finalized: true, sanitized: true });
   assert.equal(parts.calls.filter(({ operation }) => operation === 'finalize-v1').length, 1);
+  assert.equal(parts.calls.find(({ operation }) => operation === 'finalize-v1').timeoutMs, 30 * 60_000, 'the remoting session must cover the bounded Sysprep operation');
   assert.deepEqual(await parts.qualifier().finalize(TARGET), result);
   assert.equal(parts.calls.filter(({ operation }) => operation === 'finalize-v1').length, 1);
 });

@@ -5,8 +5,9 @@ import {
   observeLinuxLocalIdentities,
 } from './linux-local-identities.js';
 
-const PROTOCOL = 'devbridge/linux-local-identity-reconciliation-v1';
+const PROTOCOL = 'devbridge/linux-local-identity-reconciliation-v2';
 const LOCAL_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,30}$/u;
+const MAX_LOCAL_ID = 0xffff_fffe;
 const ABSOLUTE_PATH = /^\/(?:[^\0\r\n/]+(?:\/|$))*$/u;
 const GROUPADD = '/usr/sbin/groupadd';
 const USERADD = '/usr/sbin/useradd';
@@ -25,6 +26,18 @@ function absolutePath(value, name) {
 function numeric(value, name) {
   if (!Number.isSafeInteger(value) || value < 1) throw new TypeError(`${name} is invalid`);
   return value;
+}
+
+function requiredGroupIdentity(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Linux local required group is invalid');
+  const allowed = new Set(['name', 'id']);
+  for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError('Linux local required group contains an unknown field');
+  const id = numeric(value.id, 'Linux local required group id');
+  if (id > MAX_LOCAL_ID) throw new TypeError('Linux local required group id is invalid');
+  return Object.freeze({
+    name: localName(value.name, 'Linux local required group name'),
+    id,
+  });
 }
 
 function normalizeExpected(value) {
@@ -89,7 +102,7 @@ function exactBoundIdentity(observed, selected, expected) {
   const operator = account(observed, selected.operatorAccount)?.record;
   const read = group(observed, selected.readGroup)?.record;
   const coordination = group(observed, selected.coordinationGroup)?.record;
-  const management = group(observed, selected.managementGroup)?.record;
+  const management = group(observed, selected.requiredGroup.name)?.record;
   if (service?.uid !== expected.serviceUid
       || operator?.uid !== expected.operatorUid
       || read?.gid !== expected.readGid
@@ -104,7 +117,7 @@ function projectIdentity(observed, selected) {
   const operator = account(observed, selected.operatorAccount);
   const read = group(observed, selected.readGroup);
   const coordination = group(observed, selected.coordinationGroup);
-  const management = group(observed, selected.managementGroup);
+  const management = group(observed, selected.requiredGroup.name);
   if ([service?.record, operator?.record, read?.record, coordination?.record, management?.record].some((entry) => entry == null)) {
     throw new Error('Linux local identity reconciliation is incomplete');
   }
@@ -135,12 +148,18 @@ function projectIdentity(observed, selected) {
   });
 }
 
+function exactRequiredGroup(observed, required) {
+  const selected = group(observed, required.name)?.record;
+  if (selected == null) throw new Error('Linux local required group is unavailable');
+  if (selected.gid !== required.id) throw new Error('Linux local required group binding changed');
+}
+
 export async function reconcileLinuxLocalIdentityContract({
   serviceAccount,
   operatorAccount,
   readGroup,
   coordinationGroup,
-  managementGroup,
+  requiredGroup,
   home,
   shell,
   claimEstablished = false,
@@ -159,22 +178,29 @@ export async function reconcileLinuxLocalIdentityContract({
     operatorAccount: localName(operatorAccount, 'Linux local operator account'),
     readGroup: localName(readGroup, 'Linux local read group'),
     coordinationGroup: localName(coordinationGroup, 'Linux local coordination group'),
-    managementGroup: localName(managementGroup, 'Linux local management group'),
+    requiredGroup: requiredGroupIdentity(requiredGroup),
     home: absolutePath(home, 'Linux local service home'),
     shell: absolutePath(shell, 'Linux local service shell'),
   });
   if (new Set([selected.serviceAccount, selected.operatorAccount]).size !== 2
-      || new Set([selected.readGroup, selected.coordinationGroup, selected.managementGroup]).size !== 3) {
+      || new Set([selected.readGroup, selected.coordinationGroup, selected.requiredGroup.name]).size !== 3) {
     throw new TypeError('Linux local identity names alias');
   }
   const expected = normalizeExpected(expectedIdentity);
-  const observeCurrent = async () => validateObservation(await observe({
-    accountNames: [selected.operatorAccount, selected.serviceAccount],
-    groupNames: [selected.readGroup, selected.coordinationGroup, selected.managementGroup],
-    platform,
-    invoke,
-    environment,
-  }));
+  if (expected != null && expected.managementGid !== selected.requiredGroup.id) {
+    throw new Error('Linux local required group changed its immutable binding');
+  }
+  const observeCurrent = async () => {
+    const observed = validateObservation(await observe({
+      accountNames: [selected.operatorAccount, selected.serviceAccount],
+      groupNames: [selected.readGroup, selected.coordinationGroup, selected.requiredGroup.name],
+      platform,
+      invoke,
+      environment,
+    }));
+    exactRequiredGroup(observed, selected.requiredGroup);
+    return observed;
+  };
 
   let current = await observeCurrent();
   let changed = false;
@@ -182,7 +208,7 @@ export async function reconcileLinuxLocalIdentityContract({
   if (operator?.record == null || operator.record.uid === 0) throw new Error('Linux local operator account is unavailable');
   exactBoundIdentity(current, selected, expected);
 
-  for (const name of [selected.readGroup, selected.coordinationGroup, selected.managementGroup]) {
+  for (const name of [selected.readGroup, selected.coordinationGroup]) {
     if (group(current, name)?.record == null) {
       if (expected != null) throw new Error('Linux local bound group disappeared');
       await mutate(invoke, environment, GROUPADD, ['--system', '--', name], 'group creation');
@@ -194,7 +220,7 @@ export async function reconcileLinuxLocalIdentityContract({
 
   const read = group(current, selected.readGroup).record;
   const coordination = group(current, selected.coordinationGroup).record;
-  const management = group(current, selected.managementGroup).record;
+  const management = group(current, selected.requiredGroup.name).record;
   if (new Set([read.gid, coordination.gid, management.gid]).size !== 3 || [read.gid, coordination.gid, management.gid].includes(0)) {
     throw new Error('Linux local group identities alias');
   }
@@ -207,8 +233,8 @@ export async function reconcileLinuxLocalIdentityContract({
     if (expected != null) throw new Error('Linux local bound service account disappeared');
     await mutate(invoke, environment, USERADD, [
       '--system',
-      '--gid', selected.readGroup,
-      '--groups', `${selected.coordinationGroup},${selected.managementGroup}`,
+      '--gid', String(read.gid),
+      '--groups', `${coordination.gid},${management.gid}`,
       '--home-dir', selected.home,
       '--shell', selected.shell,
       '--no-create-home',
@@ -231,8 +257,8 @@ export async function reconcileLinuxLocalIdentityContract({
   const expectedServiceGroups = [read.gid, coordination.gid, management.gid].sort((left, right) => left - right);
   if (!sameSet(service.groupIds, expectedServiceGroups)) {
     await mutate(invoke, environment, USERMOD, [
-      '--gid', selected.readGroup,
-      '--groups', `${selected.coordinationGroup},${selected.managementGroup}`,
+      '--gid', String(read.gid),
+      '--groups', `${coordination.gid},${management.gid}`,
       '--home', selected.home,
       '--shell', selected.shell,
       '--', selected.serviceAccount,
@@ -246,7 +272,7 @@ export async function reconcileLinuxLocalIdentityContract({
   if (!currentOperator.groupIds.includes(read.gid) || !currentOperator.groupIds.includes(coordination.gid)) {
     await mutate(invoke, environment, USERMOD, [
       '--append',
-      '--groups', `${selected.readGroup},${selected.coordinationGroup}`,
+      '--groups', `${read.gid},${coordination.gid}`,
       '--', selected.operatorAccount,
     ], 'operator capability append');
     changed = true;

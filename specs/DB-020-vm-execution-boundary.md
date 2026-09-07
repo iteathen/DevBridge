@@ -211,6 +211,21 @@ The bridge must not allow guest-controlled input to name arbitrary host paths, h
 
 Provider transports are adapter details. Guest agents are untrusted under the threat model; host-side validation remains authoritative.
 
+### Pre-runtime construction evidence
+
+The host/guest authority partition applies during OS installation as well as
+normal repository execution. A provider-owned diagnostic attachment must bind
+the exact construction subject, provider instance, recipe/generation and attempt
+before the operation it covers. Its wire/device/path details remain inside the
+adapter; guest bytes cannot create or change host correlation or readiness.
+
+DB-009 governs bounded collection, durable failure evidence and automatic
+delivery. A validated guest failure may stop automatic construction advancement;
+guest success, heartbeat and disk allocation are not image acceptance authority.
+The existing qualification owner must independently establish readiness. A
+missing early collector must be reported explicitly rather than bypassed through
+an arbitrary host mount, credential-bearing guest connection or host execution.
+
 ## Source, candidate, and Git model
 
 Authoritative Git remains host-owned.

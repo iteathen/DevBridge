@@ -171,6 +171,18 @@ function validateRuntimeShape(runtime) {
   return { cliPath, version: manifest.version };
 }
 
+export function inspectExactRuntime(paths, { ref, head }, runner = defaultRunner) {
+  const expected = String(head ?? '').toLowerCase();
+  if (!/^[0-9a-f]{40}$/u.test(expected) || typeof ref !== 'string' || ref.length < 1) {
+    fail('Exact runtime inspection requires a ref and exact head.');
+  }
+  verifyRuntimeRepository(paths, runner);
+  const shape = validateRuntimeShape(paths.runtime);
+  const observed = runGit(['rev-parse', 'HEAD'], { paths, cwd: paths.runtime, runner }).stdout.trim().toLowerCase();
+  if (observed !== expected) fail('Managed runtime HEAD does not match the exact source subject.');
+  return { ...shape, ref, head: observed };
+}
+
 export function ensureRuntime(args, paths, runner = defaultRunner) {
   mkdirSync(paths.home, { recursive: true });
   mkdirSync(paths.gitHome, { recursive: true });
@@ -178,9 +190,8 @@ export function ensureRuntime(args, paths, runner = defaultRunner) {
   if (!args.update) {
     if (!existsSync(paths.runtime)) fail('--no-update requires an existing managed runtime.');
     verifyRuntimeRepository(paths, runner);
-    const shape = validateRuntimeShape(paths.runtime);
     const head = runGit(['rev-parse', 'HEAD'], { paths, cwd: paths.runtime, runner }).stdout.trim();
-    return { ...shape, ref: 'existing', head };
+    return inspectExactRuntime(paths, { ref: 'existing', head }, runner);
   }
   const ref = resolveChannelRef(args.channel, { paths, runner });
   if (!existsSync(paths.runtime)) {
@@ -191,9 +202,8 @@ export function ensureRuntime(args, paths, runner = defaultRunner) {
     runGit(['checkout', '--detach', '--force', 'FETCH_HEAD'], { paths, cwd: paths.runtime, runner });
   }
   verifyRuntimeRepository(paths, runner);
-  const shape = validateRuntimeShape(paths.runtime);
   const head = runGit(['rev-parse', 'HEAD'], { paths, cwd: paths.runtime, runner }).stdout.trim();
-  return { ...shape, ref, head };
+  return inspectExactRuntime(paths, { ref, head }, runner);
 }
 
 export function prepareLocalConfig(paths) {

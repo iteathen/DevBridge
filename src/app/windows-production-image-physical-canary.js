@@ -1,5 +1,5 @@
 import { constants as fsConstants } from 'node:fs';
-import { copyFile, lstat, mkdir, open, rm } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, open, rm, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { createWindowsGuestImagePayload } from '../guest/windows-image-payload.js';
 import { createCanonicalImageCanary } from '../runtime/image-builders/canonical-image-canary.js';
@@ -11,11 +11,11 @@ import {
 } from '../runtime/image-builders/windows-production-image-authority.js';
 import { createWindowsProductionOperations } from '../runtime/image-builders/windows-production-operations.js';
 import { createWindowsProductionQualification } from '../runtime/image-builders/windows-production-qualification.js';
-import { createWindowsUnattendedMediaPreparer } from '../runtime/image-builders/windows-unattended-media.js';
+import { createWindowsUnattendedMediaPreparer, WINDOWS_INSTALLER_MEDIA_OVERHEAD_BYTES } from '../runtime/image-builders/windows-unattended-media.js';
 import { createWindowsUnattendedSeed } from '../runtime/image-builders/windows-unattended-seed.js';
 import { createWindowsInstallMediaInspector } from '../runtime/image-sources/windows-install-media-inspector.js';
 import { observeBoundedReadiness } from '../runtime/bounded-readiness-window.js';
-import { invokeCommand } from '../runtime/command-invocation.js';
+import { createCommandInvoker, invokeCommand } from '../runtime/command-invocation.js';
 import { loadOrCreateLocalIdentity } from '../runtime/local-identity.js';
 import { createHyperVGuestOperation } from '../runtime/providers/hyperv-guest-operation.js';
 import { createHyperVImageConstruction } from '../runtime/providers/hyperv-image-construction.js';
@@ -45,6 +45,7 @@ const MAX_ADVANCES = 16;
 const ACCESS_EXPECTED_MILLISECONDS = 2 * 60 * 1000;
 const ACCESS_DEADLINE_MILLISECONDS = 15 * 60 * 1000;
 const ACCESS_RECHECK_MILLISECONDS = 30 * 1000;
+const invokeProductionGuestOperation = createCommandInvoker({ maximumTimeoutMs: 45 * 60_000 });
 
 function onlyKeys(value, allowed, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
@@ -63,7 +64,7 @@ function boundedInteger(value, minimum, maximum, name) {
 }
 
 function normalizeConfig(raw) {
-  const value = onlyKeys(raw, new Set(['protocol', 'stateDirectory', 'sourceLocation', 'authority', 'resources']), 'physical canary config');
+  const value = onlyKeys(raw, new Set(['protocol', 'stateDirectory', 'storageDirectory', 'sourceLocation', 'authority', 'resources']), 'physical canary config');
   if (value.protocol !== WINDOWS_PRODUCTION_IMAGE_PHYSICAL_CANARY_CONFIG_PROTOCOL) throw new TypeError('physical canary config protocol is unsupported');
   const resources = onlyKeys(value.resources, new Set(['memoryBytes', 'processorCount', 'diskBytes', 'allocationBytes']), 'physical canary resources');
   const diskBytes = boundedInteger(resources.diskBytes, MIN_DISK_BYTES, MAX_DISK_BYTES, 'physical canary resources.diskBytes');
@@ -71,6 +72,7 @@ function normalizeConfig(raw) {
   return Object.freeze({
     protocol: value.protocol,
     stateDirectory: absolutePath(value.stateDirectory, 'physical canary stateDirectory'),
+    storageDirectory: value.storageDirectory == null ? null : absolutePath(value.storageDirectory, 'physical canary storageDirectory'),
     sourceLocation: absolutePath(value.sourceLocation, 'physical canary sourceLocation'),
     authority: normalizeWindowsProductionImageAuthority(value.authority),
     resources: Object.freeze({
@@ -84,7 +86,8 @@ function normalizeConfig(raw) {
 
 function pathsFor(config, subject) {
   const root = path.join(config.stateDirectory, 'windows-production-image-canary');
-  const subjectRoot = path.join(root, 'subjects', subject);
+  const storage = config.storageDirectory ?? root;
+  const subjectRoot = path.join(storage, 'subjects', subject);
   return Object.freeze({
     root,
     runLock: path.join(root, 'run.lock'),
@@ -93,7 +96,7 @@ function pathsFor(config, subject) {
     preparationFile: path.join(root, 'preparation.json'),
     qualificationFile: path.join(root, 'qualification.json'),
     constructionDirectory: path.join(root, 'construction'),
-    outputRoot: path.join(root, 'output'),
+    outputRoot: path.join(storage, 'output'),
     subjectRoot,
     preparedDirectory: path.join(subjectRoot, 'prepared'),
     accessRoot: path.join(root, 'access'),
@@ -236,7 +239,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
     identity: localIdentity,
     invoke,
   });
-  const accessMaterial = createWindowsProtectedAccessMaterial({ directory: paths.accessRoot, invoke });
+  const accessMaterial = createWindowsProtectedAccessMaterial({ directory: paths.accessRoot, invoke, user: 'Administrator' });
 
   const loadReceipt = async () => {
     const raw = await preparationStore.get(subject);
@@ -276,6 +279,9 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
       });
       const prepared = await media.prepare({ subject, source: admittedSource, destination: paths.preparedDirectory, access });
       if (prepared.evidence?.seed?.generation !== authority.recipe.generation) throw new Error('prepared recipe generation changed');
+      // The verified bootable copy replaces this owned staging input. The
+      // operator's original accepted ISO remains unchanged.
+      await unlink(admittedSource);
       const receipt = Object.freeze({
         protocol: PREPARATION_PROTOCOL,
         identity: subject,
@@ -327,7 +333,7 @@ async function createPhysicalRuntime({ config, subject, payload, paths, invoke, 
   });
 
   const operations = createHyperVGuestOperation({
-    invoke,
+    invoke: invoke === invokeCommand ? invokeProductionGuestOperation : invoke,
     locate: (target) => construction.locate(target),
     access: (target) => accessMaterial.resolve(target),
     operations: createWindowsProductionOperations({ authority: config.authority.tools, payload }),
@@ -382,10 +388,12 @@ export function createWindowsProductionImagePhysicalCanary(rawConfig, {
     const source = await sourceAvailability(config);
     const preflightResult = await selectedPreflight.inspect({
       stateDirectory: config.stateDirectory,
+      ...(config.storageDirectory == null ? {} : { storageDirectory: config.storageDirectory }),
       memoryBytes: config.resources.memoryBytes,
       diskBytes: config.resources.diskBytes,
       allocationBytes: config.resources.allocationBytes,
       sourceBytes: config.authority.media.media.bytes,
+      preparedSourceBytes: config.authority.media.media.bytes + WINDOWS_INSTALLER_MEDIA_OVERHEAD_BYTES,
     });
     const registered = await catalog.lookup(subject);
     let canary = null;
@@ -416,7 +424,7 @@ export function createWindowsProductionImagePhysicalCanary(rawConfig, {
     if (before.complete) {
       return withRunLock(paths.runLock, async () => {
         const reasons = [];
-        try { await createWindowsProtectedAccessMaterial({ directory: paths.accessRoot, invoke }).discard(subject); }
+        try { await createWindowsProtectedAccessMaterial({ directory: paths.accessRoot, invoke, user: 'Administrator' }).discard(subject); }
         catch (error) { reasons.push(`temporary access cleanup failed: ${error.message}`); }
         await rm(paths.subjectRoot, { recursive: true, force: true }).catch(() => {});
         return publicResult(subject, before, { state: 'completed', reason: reasons.length === 0 ? null : reasons.join('; '), preflight: before.preflight, authorityRegistered: true });
