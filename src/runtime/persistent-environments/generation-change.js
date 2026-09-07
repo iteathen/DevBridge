@@ -309,6 +309,17 @@ export class EnvironmentGenerationChange {
     return this.#completeRecreate(state, state.operations[operationId]);
   }
 
+  #requireRebuildStorage(observed, oldSource, targetSource) {
+    if (!observed.compatible && ['absent', 'invalid'].includes(observed.storageState)) return;
+    // Intact storage can still be invalid against a newer approved declaration.
+    // Its observed lineage must match the recorded old source, never an unexplained third image.
+    if (observed.compatible && observed.storageState === 'present' && targetSource !== oldSource.identity) {
+      this.#effects.requireSource(observed, oldSource.identity);
+      return;
+    }
+    throw new Error('environment rebuild requires missing or invalid system storage');
+  }
+
   async #completeRebuild(state, operation) {
     const found = Object.values(state.entries).find((entry) => entry.slot === operation.slot);
     if (!found) throw new Error('environment rebuild subject disappeared');
@@ -318,19 +329,19 @@ export class EnvironmentGenerationChange {
       let oldObserved = await this.#effects.observe(operation.oldIdentity);
       if (!oldObserved.exists) throw new Error('environment provider implementation is missing; recreate is required');
       if (!oldObserved.owned) throw new Error('environment ownership evidence does not match');
-      if (oldObserved.compatible || !['absent', 'invalid'].includes(oldObserved.storageState)) {
-        throw new Error('environment rebuild requires missing or invalid system storage');
-      }
+      this.#requireRebuildStorage(oldObserved, operation.oldSource, operation.source.identity);
+      const request = { subject: found.subject, profile: found.profile, sourceIdentity: operation.source.identity, settings: operation.settings };
+      let resolved = await this.#effects.resolve(request, operation.source);
       if (!this.#effects.stopped(oldObserved.state)) {
         if (!this.#effects.canQuiesce()) throw new Error('degraded environment is still running and cannot be safely quiesced for rebuild');
         oldObserved = await this.#effects.quiesce(operation.oldIdentity);
         if (!oldObserved.exists) throw new Error('environment provider implementation disappeared while quiescing');
         if (!oldObserved.owned) throw new Error('environment ownership evidence changed while quiescing');
         if (!this.#effects.stopped(oldObserved.state)) throw new Error('degraded environment did not quiesce before rebuild');
+        this.#requireRebuildStorage(oldObserved, operation.oldSource, operation.source.identity);
+        resolved = await this.#effects.resolve(request, operation.source);
       }
 
-      const request = { subject: found.subject, profile: found.profile, sourceIdentity: operation.source.identity, settings: operation.settings };
-      const resolved = await this.#effects.resolve(request, operation.source);
       let nextObserved = await this.#effects.observe(operation.newIdentity);
       if (nextObserved.exists) {
         if (!nextObserved.owned || !nextObserved.compatible) throw new Error(nextObserved.reason ?? 'existing rebuild generation conflicts with the intended replacement');
@@ -375,12 +386,13 @@ export class EnvironmentGenerationChange {
     return { ...current, superseded: { identity: operation.oldIdentity, cleanup } };
   }
 
-  async rebuild(state, binding, identity, requestIdentity, expectedPrevious) {
+  async rebuild(state, binding, identity, requestIdentity, expectedPrevious, targetSource = null) {
     const prior = Object.values(state.operations).find((operation) => operation.kind === 'rebuild' && operation.requestId === requestIdentity);
     if (prior) {
       if (prior.binding !== binding) throw new Error('environment attachment identity changed; pending rebuild will not be replayed');
       if (prior.oldIdentity !== expectedPrevious) throw new Error('environment rebuild request no longer matches its previous implementation generation');
       if (![prior.oldIdentity, prior.newIdentity].includes(identity)) throw new Error('environment rebuild request identity is stale');
+      if (targetSource != null && prior.source.identity !== targetSource) throw new Error('environment rebuild target source changed; pending rebuild will not be retargeted');
       return this.#completeRebuild(state, prior);
     }
     const { slot, entry } = this.#find(state, identity);
@@ -389,14 +401,13 @@ export class EnvironmentGenerationChange {
     const preflight = await this.#effects.observe(entry.current.identity);
     if (!preflight.exists) throw new Error('environment provider implementation is missing; recreate is required');
     if (!preflight.owned) throw new Error('environment ownership evidence does not match');
-    if (preflight.compatible || !['absent', 'invalid'].includes(preflight.storageState)) {
-      throw new Error('environment rebuild requires missing or invalid system storage');
-    }
+    const sourceIdentity = targetSource ?? entry.current.source.identity;
+    this.#requireRebuildStorage(preflight, entry.current.source, sourceIdentity);
     if (!this.#effects.stopped(preflight.state) && !this.#effects.canQuiesce()) {
       throw new Error('degraded environment is still running and cannot be safely quiesced for rebuild');
     }
-    const request = { subject: entry.subject, profile: entry.profile, sourceIdentity: entry.current.source.identity, settings: entry.current.settings };
-    const resolved = await this.#effects.resolve(request, entry.current.source);
+    const request = { subject: entry.subject, profile: entry.profile, sourceIdentity, settings: entry.current.settings };
+    const resolved = await this.#effects.resolve(request, sourceIdentity === entry.current.source.identity ? entry.current.source : null);
     const generation = Number(entry.current.generation) + 1;
     const newIdentity = this.#environmentIdentity(slot, generation, resolved.identity);
     const operationId = this.#operationIdentity();
