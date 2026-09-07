@@ -92,6 +92,18 @@ If a correction effect succeeds but its response is lost, restart does not blind
 
 `rebuild` preserves the logical environment and declaration while replacing the implementation generation whose system storage is missing or invalid. It consumes the same #171 construction stages rather than owning a second provisioning stack.
 
+Storage validity is relative to the current approved declaration. An intact,
+owned disk from a previously accepted image can therefore require rebuild when
+the declaration names a newer image. Materialization passes the declared image
+identity to the persistent-environment owner, which pins the resolved target
+identity, profile, revision and digest alongside the previous source in the
+existing request-bound replacement record. Resume cannot retarget that record.
+The old base need not remain available: construction requires the exact target
+base, retains the old implementation and disk, and never reparents them. Intact
+old storage must still match its recorded lineage; unexplained or unowned state
+does not gain replacement authority from a declaration mismatch. A healthy
+same-image environment still requires the separate explicit reset contract.
+
 Rebuild authorization has an explicit evidence order:
 
 1. the exact current provider implementation must still be identifiable;

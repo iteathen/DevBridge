@@ -204,13 +204,14 @@ export class PersistentEnvironments {
     });
   }
 
-  async rebuild(identity, { requestId, expectedPreviousIdentity } = {}) {
+  async rebuild(identity, { requestId, expectedPreviousIdentity, sourceIdentity = null } = {}) {
     return this.#ledger.run(async () => {
       const requested = requireEnvironmentId(identity);
       const requestIdentity = requireId(requestId, 'environment rebuild request identity');
       const expectedPrevious = requireEnvironmentId(expectedPreviousIdentity);
+      const targetSource = sourceIdentity == null ? null : requireId(sourceIdentity, 'environment source identity');
       const binding = await this.#effects.binding();
-      return this.#generation.rebuild(await this.#ledger.read(), binding, requested, requestIdentity, expectedPrevious);
+      return this.#generation.rebuild(await this.#ledger.read(), binding, requested, requestIdentity, expectedPrevious, targetSource);
     });
   }
 
