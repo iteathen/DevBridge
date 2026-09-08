@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PersistentEnvironments } from '../src/runtime/persistent-environments.js';
+import { requiredBootProtection } from '../src/values/boot-protection.js';
 
 const SOURCE_A = 'img-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const SOURCE_B = 'img-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -50,6 +51,27 @@ function fixture() {
 function request(sourceIdentity = SOURCE_A) {
   return { subject: 'immutable-subject-42', profile: 'guest-a', sourceIdentity, settings: { memoryBytes: 2147483648, processorCount: 2, firmware: 'efi' } };
 }
+
+test('protected boot intent reaches the provider, survives restart, and cannot be silently downgraded', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-protected-boot-intent-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fake = fixture();
+  const provision = fake.operations.provision;
+  fake.operations.provision = async (input) => {
+    assert.deepEqual(input.settings.bootProtection, requiredBootProtection());
+    return provision(input);
+  };
+  const options = { directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations };
+  const protectedRequest = { ...request(), settings: { ...request().settings, bootProtection: requiredBootProtection() } };
+  const created = await new PersistentEnvironments(options).ensure(protectedRequest);
+  assert.deepEqual(created.record.settings.bootProtection, requiredBootProtection());
+  const resumed = new PersistentEnvironments(options);
+  assert.equal((await resumed.ensure(protectedRequest)).record.identity, created.record.identity);
+  await assert.rejects(resumed.ensure(request()), /settings changed/u);
+  await assert.rejects(resumed.ensure({ ...protectedRequest, settings: { ...protectedRequest.settings, firmware: 'bios' } }), /requires EFI/u);
+  await assert.rejects(resumed.ensure({ ...protectedRequest, settings: { ...protectedRequest.settings, bootProtection: { ...requiredBootProtection(), integrity: 'optional' } } }), /integrity is invalid/u);
+  assert.equal(fake.provisionCalls(), 1);
+});
 
 test('stable identity excludes display topology and rejects foreign request properties', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-registry-'));

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { normalizeBootProtection } from '../values/boot-protection.js';
 import { EnvironmentEffectChannel } from './persistent-environments/effect-channel.js';
 import { EnvironmentGenerationChange } from './persistent-environments/generation-change.js';
 import { EnvironmentLedger } from './persistent-environments/ledger.js';
@@ -45,7 +46,7 @@ function normalizeSubject(value) {
 
 function normalizeSettings(raw = {}) {
   const value = requireObject(raw, 'environment settings');
-  onlyKeys(value, new Set(['memoryBytes', 'processorCount', 'firmware']), 'environment settings');
+  onlyKeys(value, new Set(['memoryBytes', 'processorCount', 'firmware', 'bootProtection']), 'environment settings');
   const memoryBytes = value.memoryBytes ?? DEFAULT_MEMORY_BYTES;
   const processorCount = value.processorCount ?? 2;
   const firmware = value.firmware ?? 'efi';
@@ -56,7 +57,9 @@ function normalizeSettings(raw = {}) {
     throw new TypeError('environment settings.processorCount is outside the supported safety range');
   }
   if (!FIRMWARE.has(firmware)) throw new TypeError('environment settings.firmware is invalid');
-  return { memoryBytes, processorCount, firmware };
+  const bootProtection = normalizeBootProtection(value.bootProtection, { optional: true, name: 'environment settings.bootProtection' });
+  if (bootProtection && firmware !== 'efi') throw new TypeError('environment protected boot requires EFI firmware');
+  return { memoryBytes, processorCount, firmware, ...(bootProtection ? { bootProtection } : {}) };
 }
 
 function normalizeRequest(raw) {
@@ -71,7 +74,8 @@ function normalizeRequest(raw) {
 }
 
 function sameSettings(left, right) {
-  return left?.memoryBytes === right?.memoryBytes && left?.processorCount === right?.processorCount && left?.firmware === right?.firmware;
+  return left?.memoryBytes === right?.memoryBytes && left?.processorCount === right?.processorCount && left?.firmware === right?.firmware
+    && JSON.stringify(left?.bootProtection ?? null) === JSON.stringify(right?.bootProtection ?? null);
 }
 
 function slotIdentity(binding, subject, profile) {

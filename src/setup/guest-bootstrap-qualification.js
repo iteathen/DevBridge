@@ -87,8 +87,10 @@ export async function qualifyGuestBootstrap({
   if (record.cleanup === 'complete') return Object.freeze(record);
   try {
     const image = await foundation.verifyImage(declaration.image.identity);
-    if (image?.verified !== true || image?.usable !== true || image.entry?.generation !== declaration.image.generation) throw new Error('qualification requires the exact verified accepted image');
-    record.imageDigest = image.entry.digest;
+    const accepted = await foundation.observeImage(declaration.image.identity);
+    if (image?.identity !== declaration.image.identity || image.verified !== true || image.usable !== true
+      || accepted?.identity !== declaration.image.identity || accepted.usable !== true || accepted.entry?.generation !== declaration.image.generation) throw new Error('qualification requires the exact verified accepted image');
+    record.imageDigest = accepted.entry.digest;
     const access = await accessFactory({ stateDirectory, authorityDirectory, platform, invoke: observedInvoke, guest: declaration.guest });
     const bootstrap = await bootstrapFactory({ stateDirectory, authorityDirectory, platform, invoke: observedInvoke,
       access: (target) => access.connection(target), prepareAccess: access.prepare,

@@ -29,7 +29,8 @@ async function fixture(t, family, incorrect = false) {
   const ports = {
     foundationFactory: async () => ({
       listEnvironments: async () => entry ? [entry] : [],
-      verifyImage: async () => ({ verified: true, usable: true, entry: { generation: 'final-v1', digest: 'c'.repeat(64) } }),
+      verifyImage: async () => ({ identity: 'image-v1', verified: true, usable: true }),
+      observeImage: async () => ({ identity: 'image-v1', usable: true, entry: { generation: 'final-v1', digest: 'c'.repeat(64) } }),
       ensureEnvironment: async (request) => entry ??= { record: { identity: TARGET, subject: request.subject, profile: request.profile, source: { identity: request.sourceIdentity } }, observation: { exists: true } },
       stopEnvironment: async (target) => assert.equal(target, TARGET),
       removeEnvironment: async (target) => { assert.equal(target, TARGET); removals++; entry = null; },
