@@ -701,7 +701,11 @@ namespace DevBridge.WindowsLifecycleAuthority
     {
         private static int HoldFileLease(string target)
         {
-            if (String.IsNullOrWhiteSpace(target) || target.IndexOf('\0') >= 0 || !Regex.IsMatch(target, @"^[A-Za-z]:\\") || !String.Equals(Path.GetFullPath(target), target, StringComparison.OrdinalIgnoreCase)) return 1;
+            if (String.IsNullOrWhiteSpace(target) || target.IndexOf('\0') >= 0 || !Regex.IsMatch(target, @"^[A-Za-z]:\\")) return 1;
+            foreach (string part in target.Split('\\')) if (part == "." || part == "..") return 1;
+            // .NET expands existing 8.3 components. They name the same local
+            // subject and must not be mistaken for an unnormalized request.
+            target = Path.GetFullPath(target);
             if (File.Exists(target) && (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0) return 1;
             FileStream held = null;
             Stopwatch clock = Stopwatch.StartNew();

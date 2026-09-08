@@ -65,14 +65,22 @@ profiles; the elevated workflow uses the installed lifecycle authority.
 
 Focused contract tests and the broad local Windows suite pass on Node 24.15.0:
 2,638 passed, 46 skipped. The Windows executable lease has actual process-death
-qualification. Linux `flock` process qualification and the Node 22.16.0 CI matrix
-remain separately outstanding. These results do not establish native VM readiness.
+qualification, including Windows 8.3 path spelling and requester/holder death.
+Ubuntu smoke and full regression pass on Node 22.16.0, including Linux `flock`
+process qualification. Windows CI exposed short-path handling defects; their
+focused reproduction passes and the full matrix must pass before merge. These
+results do not establish native VM readiness.
 
 A repeatable disposable-guest fixture now consumes the accepted finalized image,
 uses production first access, and checks exact network-seed bytes through the
 resulting bridge. Its contract tests reject successful delivery to the wrong path.
-Native Linux and Windows guest qualification is running against a fixed candidate;
-neither route nor Hello World has been declared complete.
+The first native Linux consumer received successful native copy results but failed
+SSH first access. Its owned disposable guest is retained, and the previous service
+is restored after each bounded inspection. The existing provider console now
+supports bounded 640×480 and 1024×768 captures as well as 320×240; native capture
+shows the guest waiting for network readiness during boot. This is diagnostic
+evidence, not a successful bootstrap qualification. Windows first access and both
+Hello World routes remain outstanding.
 
 Remaining recovery and separation work includes bootstrap allocation's legacy
 token, lifecycle-owned retirement authorization, consolidated capability status,

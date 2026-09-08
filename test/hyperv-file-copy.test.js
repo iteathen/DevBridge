@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { copyHyperVGuestFile, HyperVFileCopyError } from '../src/runtime/providers/hyperv-file-copy.js';
@@ -30,7 +30,7 @@ for (const family of ['linux', 'windows']) {
         assert.equal(native.proof, location.proof);
         const resolved = family === 'linux' ? path.posix.join(native.destination, path.basename(native.source)) : native.destination;
         guest.set(resolved, await readFile(native.source));
-        if (family === 'windows') assert.equal(native.source.toLowerCase(), source.toLowerCase());
+        if (family === 'windows') assert.equal(native.source.toLowerCase(), (await realpath(source)).toLowerCase());
         return success({ delivered: true });
       },
     });

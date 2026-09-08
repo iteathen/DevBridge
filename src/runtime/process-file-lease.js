@@ -174,7 +174,7 @@ function acquireProcess({ mode, command, readyLine, cancellation, start, policy 
       finishClose(closeResult);
       if (!ready) {
         if (code === CONFLICT_EXIT_CODE || cancellation?.aborted) settle(null);
-        else settle(null, fault ?? new Error('file lease process ended before readiness'));
+        else settle(null, fault ?? new Error(`file lease process ended before readiness (exit ${code}, signal ${exitSignal ?? 'none'})`));
       } else if (!releaseRequested && fault == null) {
         fault = new Error('file lease holder ended unexpectedly');
         loss.abort(fault);

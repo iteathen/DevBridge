@@ -1,3 +1,5 @@
+import { consoleDimensions } from './console-format.js';
+
 const POWERSHELL = 'powershell.exe';
 const POWERSHELL_ARGS = ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand'];
 
@@ -235,15 +237,15 @@ $service = Get-CimInstance -Namespace 'root/virtualization/v2' -ClassName Msvm_V
 if ($null -eq $service) { throw 'construction console management service is absent' }
 $result = Invoke-CimMethod -InputObject $service -MethodName GetVirtualSystemThumbnailImage -Arguments @{
   TargetSystem = $settings
-  WidthPixels = [uint16]320
-  HeightPixels = [uint16]240
+  WidthPixels = [uint16]$data.width
+  HeightPixels = [uint16]$data.height
 } -ErrorAction Stop
 if ([uint32]$result.ReturnValue -ne 0) {
   @{ available = $false; reason = "Hyper-V thumbnail returned $([uint32]$result.ReturnValue)" } | ConvertTo-Json -Compress
   exit 0
 }
 $bytes = [byte[]]$result.ImageData
-@{ available = $true; width = 320; height = 240; imageData = [Convert]::ToBase64String($bytes) } | ConvertTo-Json -Compress
+@{ available = $true; width = [int]$data.width; height = [int]$data.height; imageData = [Convert]::ToBase64String($bytes) } | ConvertTo-Json -Compress
 `;
 
 const START_INSTALL_SCRIPT = String.raw`
@@ -391,20 +393,23 @@ export class HyperVConstructionChannel {
     this.#invoke = invoke;
   }
 
-  async #run(script, payload, timeoutMs = 90_000) {
+  async #run(script, payload, timeoutMs = 90_000, maxOutputBytes = 1024 * 1024) {
     return parseJson(await this.#invoke({
       executable: POWERSHELL,
       arguments: [...POWERSHELL_ARGS, encodeScript(script)],
       input: JSON.stringify(payload),
       timeoutMs,
-      maxOutputBytes: 1024 * 1024,
+      maxOutputBytes,
     }));
   }
 
   prepare(payload) { return this.#run(PREPARE_SCRIPT, payload, 120_000); }
   prepareQualification(payload) { return this.#run(PREPARE_QUALIFICATION_SCRIPT, payload, 120_000); }
   observe(payload) { return this.#run(OBSERVE_SCRIPT, payload, 30_000); }
-  console(payload) { return this.#run(INSTALL_CONSOLE_SCRIPT, payload, 30_000); }
+  console(payload) {
+    const { width, height, rawBytes } = consoleDimensions(payload.width, payload.height);
+    return this.#run(INSTALL_CONSOLE_SCRIPT, { ...payload, width, height }, 30_000, Math.ceil((rawBytes + 4) / 3) * 4 + 4096);
+  }
   startInstall(payload) { return this.#run(START_INSTALL_SCRIPT, payload, 60_000); }
   address(payload) { return this.#run(GUEST_ADDRESS_SCRIPT, payload, 30_000); }
   bootInstalled(payload) { return this.#run(BOOT_INSTALLED_SCRIPT, payload, 60_000); }

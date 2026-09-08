@@ -18,13 +18,18 @@ test('Windows lease uses the compiled host and releases on holder and requester 
   });
   const holderExecutable = path.join(root, 'host.exe');
   const source = fileURLToPath(new URL('../src/setup/windows-lifecycle-authority-host.cs', import.meta.url));
-  const script = "Add-Type -LiteralPath $env:DB_LEASE_SOURCE -OutputAssembly $env:DB_LEASE_OUTPUT -OutputType ConsoleApplication -ReferencedAssemblies 'System.ServiceProcess.dll'";
+  const script = `Add-Type -LiteralPath $env:DB_LEASE_SOURCE -OutputAssembly $env:DB_LEASE_OUTPUT -OutputType ConsoleApplication -ReferencedAssemblies 'System.ServiceProcess.dll'
+Add-Type -TypeDefinition 'using System.Text; using System.Runtime.InteropServices; public static class LeaseShortPath { [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern uint GetShortPathName(string path, StringBuilder output, uint length); }'
+$buffer = New-Object Text.StringBuilder 4096
+if ([LeaseShortPath]::GetShortPathName([IO.Path]::GetDirectoryName($env:DB_LEASE_OUTPUT), $buffer, 4096) -eq 0) { throw 'short path lookup failed' }
+[Console]::Write($buffer.ToString())`;
   const compiled = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
     windowsHide: true, encoding: 'utf8', timeout: 30_000,
     env: { ...process.env, DB_LEASE_SOURCE: source, DB_LEASE_OUTPUT: holderExecutable },
   });
   assert.equal(compiled.status, 0, compiled.stderr);
-  const subjectPath = path.join(root, 'mutation.lease');
+  // CI commonly supplies an 8.3 TEMP path. Exercise that spelling locally too.
+  const subjectPath = path.join(compiled.stdout.trim(), 'mutation.lease');
   let holder;
   const tracked = (executable, args, options) => {
     assert.equal(options.shell, false);
