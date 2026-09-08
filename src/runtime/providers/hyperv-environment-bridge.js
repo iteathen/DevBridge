@@ -193,7 +193,7 @@ export class HyperVEnvironmentBridge {
           initialization = { target: frame.target };
         }
         this.#channel = this.#openChannel({ executable, arguments: args, inputLimit: 64 * 1024,
-          outputLimit: MAX_RESPONSE_BYTES, timeoutMs: 120_000, idleMs: 60_000 });
+          outputLimit: MAX_RESPONSE_BYTES, timeoutMs: 120_000, idleMs: 0 });
         const ready = await this.#channel.exchange(initialization, { signal });
         if (ready?.ready !== true || Object.keys(ready).length !== 1) throw new Error('bridge connection did not prove readiness');
         this.#channelKey = key;

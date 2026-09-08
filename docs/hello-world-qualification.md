@@ -157,8 +157,8 @@ guest journals. The protected Windows service reuses one bounded activity worker
 Hyper-V retains an authenticated connection bound to current authority and physical
 generation. Committed identity reads replace repeated native attachment scans.
 Focused provider, stream, state, routing and consumer tests pass, including a
-compiled Windows host serving 100 sequential requests from one worker and replacing
-it after cancellation/configuration access. Preflight's three fixed inventory-count
+compiled Windows host serving 100 sequential requests from one worker, replacing
+it after cancellation and retaining it across read-only configuration access. Preflight's three fixed inventory-count
 assertions were replaced with actual invocation/inventory checks; their focused
 tests pass. Native connection timings and both installed workflow timings remain
 outstanding. This does not qualify native KVM or claim the latency milestone done.
@@ -191,6 +191,14 @@ on every lookup. Changed/deleted records and process restart invalidate reuse.
 Focused tests include actual Windows DPAPI and record substitution/recovery; the
 accepted guest credentials and encryption scope remain unchanged. This removes
 repeated PowerShell decryption from warm frames without exporting credentials.
+
+The operator explicitly requested retaining reusable work contexts. Healthy
+activity workers and provider connections therefore remain owned by the running
+service instead of expiring on an idle timer or request count. Message/response
+bounds, serialized effects, bounded caches, cancellation and shutdown cleanup
+remain enforced. The current qualification controller likewise retains its
+elevated task context; that tooling is outside the product and does not alter
+DevBridge's service authorization model.
 
 September 8 checkpoint: the supported Ubuntu and Windows construction and image
 qualification paths have completed. Reuse both accepted images. Linux recovery

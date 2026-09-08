@@ -6,7 +6,7 @@ const echo = `const readline = require('node:readline'); let count = 0; readline
 const channel = (code = echo, options = {}) => openJsonCommandChannel({ executable: process.execPath, arguments: ['-e', code], ...options });
 
 test('one bounded process serves sequential requests without replay or reconnect', async t => {
-  const current = channel(); t.after(() => current.close());
+  const current = channel(echo, { idleMs: 0 }); t.after(() => current.close());
   const first = await current.exchange({ subject: 'a', bytes: '☃' });
   const second = await current.exchange({ subject: 'b' });
   assert.deepEqual(first.value, { subject: 'a', bytes: '☃' });

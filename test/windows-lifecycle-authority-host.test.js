@@ -417,7 +417,7 @@ internal static class IntegrationHarness
     assert.equal((await workerPids()).length, 2, 'cancelled worker must be replaced before another request');
     assert.deepEqual(await createConfiguredEnvironmentConfigurationClient({ stateDirectory, platform: 'win32' }).inspect(), { ready: true });
     assert.deepEqual(await activityClient.list(), []);
-    assert.equal((await workerPids()).length, 3, 'configuration authority must invalidate retained activity resources');
+    assert.equal((await workerPids()).length, 2, 'read-only configuration inspection must preserve healthy activity resources');
     child.stdin.end('\n');
     assert.equal(await waitForExit(child), 0);
     child = null;

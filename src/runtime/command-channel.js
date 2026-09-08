@@ -15,7 +15,7 @@ export function openJsonCommandChannel({ executable, arguments: args = [], input
   limit(inputLimit, 'command channel input bound', 32 * 1024 * 1024);
   limit(outputLimit, 'command channel output bound', 32 * 1024 * 1024);
   limit(timeoutMs, 'command channel timeout', 300_000);
-  limit(idleMs, 'command channel idle timeout', 300_000);
+  if (idleMs !== 0) limit(idleMs, 'command channel idle timeout', 300_000);
   if (signal?.aborted) throw signal.reason ?? new Error('command channel was cancelled');
   const child = spawnProcess(executable, args, { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   let pending = null, closed = null, idle = null, stderr = Buffer.alloc(0);
@@ -37,6 +37,7 @@ export function openJsonCommandChannel({ executable, arguments: args = [], input
   const onOwnerAbort = () => { evidence.aborted = true; close('ABORTED', 'command channel was cancelled'); };
   const armIdle = () => {
     clearTimeout(idle);
+    if (idleMs === 0) return;
     idle = setTimeout(() => close('IDLE', 'command channel idle lifetime ended'), idleMs);
     idle.unref?.();
   };

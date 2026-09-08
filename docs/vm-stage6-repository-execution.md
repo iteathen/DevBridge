@@ -34,15 +34,19 @@ reads a consistent committed identity snapshot. The snapshot is an identity view
 it does not infer current admission from historical operation rows. Lifecycle
 mutations change its revision, invalidating reused observations. Opening a Hyper-V connection reobserves native
 ownership and storage compatibility; the adapter authenticates and binds that
-connection to its exact physical guest. Connection loss, changed binding, idle
-expiry, cancellation and protected authority changes discard reusable resources.
+connection to its exact physical guest. Connection loss, changed binding,
+cancellation and protected authority changes discard reusable resources.
 No cached observation substitutes for current task, lease/fence or result checks.
 
-The Windows service retains one serialized activity worker for at most 4096
-requests, with a 60-second idle timeout. It releases the service gate between
+The Windows service retains one serialized activity worker for its own lifetime;
+it does not recycle a healthy worker or connection because a request count or idle
+timer elapsed. Message sizes, in-flight work and cached identities remain bounded.
+It releases the service gate between
 requests. Its existing v1 pipe, response acknowledgement, byte bounds and client
 cancellation remain unchanged. Read-only lifecycle inspection can proceed between
-frames; privileged mutation/configuration invalidates retained activity resources.
+frames; privileged lifecycle mutation invalidates retained activity resources.
+Read-only configuration inspection preserves them; configuration changes are
+detected through the current route/declaration/record bindings before dispatch.
 The service job closes worker descendants on cancellation and shutdown. Hyper-V
 uses a reusable authenticated SSH or PowerShell Direct connection; the existing
 installed guest agent still journals each detached operation independently.

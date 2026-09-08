@@ -128,9 +128,9 @@ async function readSingleRequest(input, maxWireBytes) {
 }
 
 export async function runWindowsActivityAuthorityStream({ input, output, activityFactory,
-  idleMs = 60_000, maxRequests = 4096 } = {}) {
+  idleMs = 0, maxRequests = 0 } = {}) {
   let buffer = Buffer.alloc(0), timer = null, activity = null, count = 0;
-  const arm = () => { clearTimeout(timer); timer = setTimeout(() => input.destroy(new Error('activity worker idle lifetime ended')), idleMs); };
+  const arm = () => { clearTimeout(timer); if (idleMs > 0) timer = setTimeout(() => input.destroy(new Error('activity worker idle lifetime ended')), idleMs); };
   arm();
   try {
     for await (const chunk of input) {
@@ -151,7 +151,7 @@ export async function runWindowsActivityAuthorityStream({ input, output, activit
       if (Buffer.byteLength(wire) > ACTIVITY_MAX_RESULT_WIRE_BYTES) throw new Error('activity worker response exceeded its bound');
       output.write(wire);
       count += 1;
-      if (count >= maxRequests) return;
+      if (maxRequests > 0 && count >= maxRequests) return;
       arm();
     }
     if (buffer.length) throw new Error('activity worker request was interrupted');

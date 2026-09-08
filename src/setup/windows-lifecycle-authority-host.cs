@@ -659,7 +659,7 @@ namespace DevBridge.WindowsLifecycleAuthority
             {
                 if (stopping) return null;
                 bool reusable = String.Equals(access, "activity", StringComparison.Ordinal);
-                if (!reusable && !String.Equals(access, "read", StringComparison.Ordinal)) StopActivityWorker();
+                if (String.Equals(access, "mutation", StringComparison.Ordinal)) StopActivityWorker();
                 if (reusable && activityWorker != null)
                 {
                     if (activityWorker.HasExited) StopActivityWorker();

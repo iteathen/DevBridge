@@ -120,6 +120,7 @@ export function createEnvironmentConstructionPreparation({
         revision: declaration.bootstrap.generation,
       });
       if (!bootstrap || typeof bootstrap.ensure !== 'function' || typeof bootstrap.inspect !== 'function' || typeof bootstrap.connection !== 'function') throw new TypeError('environment bootstrap composition contract is incomplete');
+      if (values.size >= 64) values.delete(values.keys().next().value);
       values.set(key, Object.freeze({ target, access, bootstrap }));
     }
     return { request, declaration, selected: values.get(key) };
