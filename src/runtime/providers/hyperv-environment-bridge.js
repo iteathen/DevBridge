@@ -1,4 +1,5 @@
 import { lstat, realpath } from 'node:fs/promises';
+import { DIRECT_GUEST_SCRIPT, DIRECT_SESSION_SCRIPT, LINUX_BRIDGE_SESSION_COMMAND } from './guest-bridge-command-session.js';
 
 const TARGET = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
 const USER = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/u;
@@ -101,27 +102,7 @@ try {
   $credential = [Management.Automation.PSCredential]::new([string]$data.username, $secure)
   $session = New-PSSession -VMName ([string]$data.reference) -Credential $credential -ErrorAction Stop
   $output = Invoke-Command -Session $session -ArgumentList ([string]$data.frame), ([string]$data.target) -ScriptBlock {
-    param($encoded, $target)
-    $json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded))
-    $start = [Diagnostics.ProcessStartInfo]::new()
-    $start.FileName = 'node.exe'
-    $start.Arguments = 'C:\ProgramData\DevBridge\bridge-agent.mjs --exchange-stdin'
-    $start.UseShellExecute = $false
-    $start.RedirectStandardInput = $true
-    $start.RedirectStandardOutput = $true
-    $start.RedirectStandardError = $true
-    $start.CreateNoWindow = $true
-    $start.EnvironmentVariables['DEVBRIDGE_GUEST_TARGET'] = $target
-    $process = [Diagnostics.Process]::new()
-    $process.StartInfo = $start
-    if (-not $process.Start()) { throw 'bridge helper did not start' }
-    $process.StandardInput.Write($json)
-    $process.StandardInput.Close()
-    $stdout = $process.StandardOutput.ReadToEnd()
-    $stderr = $process.StandardError.ReadToEnd()
-    $process.WaitForExit()
-    if ($process.ExitCode -ne 0) { throw ('bridge helper failed: ' + $stderr) }
-    $stdout
+    ${DIRECT_GUEST_SCRIPT}
   } -ErrorAction Stop
   [string]$output
 } finally {
@@ -134,14 +115,22 @@ export class HyperVEnvironmentBridge {
   #invoke;
   #access;
   #locate;
+  #openChannel;
+  #channel = null;
+  #channelKey = null;
+  #beforeConnect;
 
-  constructor({ invoke, access, locate }) {
+  constructor({ invoke, access, locate, openChannel = null, beforeConnect = async () => {} }) {
     if (typeof invoke !== 'function') throw new TypeError('bridge invoke must be a function');
     if (typeof access !== 'function') throw new TypeError('bridge access must be a function');
     if (typeof locate !== 'function') throw new TypeError('bridge locate must be a function');
     this.#invoke = invoke;
     this.#access = access;
     this.#locate = locate;
+    if (openChannel != null && typeof openChannel !== 'function') throw new TypeError('bridge command channel factory is invalid');
+    this.#openChannel = openChannel;
+    if (typeof beforeConnect !== 'function') throw new TypeError('bridge connection observation contract is invalid');
+    this.#beforeConnect = beforeConnect;
   }
 
   async #powerShell(script, payload, { signal = null, timeoutMs = 90_000 } = {}) {
@@ -168,11 +157,60 @@ export class HyperVEnvironmentBridge {
     return location;
   }
 
-  async exchange(frame, { signal = null } = {}) {
+  close() {
+    this.#channel?.close();
+    this.#channel = null;
+    this.#channelKey = null;
+  }
+
+  async #connectedExchange(frame, selected, { signal, binding }) {
+    const location = await this.#location(frame.target);
+    const key = JSON.stringify([frame.target, location, selected, binding]);
+    if (this.#channel?.closed || this.#channelKey !== key) this.close();
+    try {
+      if (this.#channel == null) {
+        await this.#beforeConnect(frame.target, { signal });
+        let executable, args, initialization;
+        if (selected.family === 'windows') {
+          executable = POWERSHELL;
+          args = [...POWERSHELL_ARGS, encodeScript(DIRECT_SESSION_SCRIPT)];
+          initialization = { ...location, username: selected.username, password: selected.password, target: frame.target };
+        } else {
+          await this.#verify(frame.target, { signal });
+          const [identityFile, knownHostsFile] = await Promise.all([
+            regularFile(selected.identityFile, 'bridge access.identityFile'),
+            regularFile(selected.knownHostsFile, 'bridge access.knownHostsFile'),
+          ]);
+          executable = 'ssh.exe';
+          args = [
+            '-F', 'NUL', '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
+            '-o', `UserKnownHostsFile=${knownHostsFile}`, '-o', 'GlobalKnownHostsFile=NUL',
+            '-o', 'UpdateHostKeys=no', '-o', 'IdentitiesOnly=yes', '-o', 'ForwardAgent=no',
+            '-o', 'ForwardX11=no', '-o', 'ClearAllForwardings=yes', '-o', 'PermitLocalCommand=no',
+            '-o', 'PasswordAuthentication=no', '-o', 'KbdInteractiveAuthentication=no',
+            '-i', identityFile, `${selected.user}@${selected.address}`, LINUX_BRIDGE_SESSION_COMMAND,
+          ];
+          initialization = { target: frame.target };
+        }
+        this.#channel = this.#openChannel({ executable, arguments: args, inputLimit: 64 * 1024,
+          outputLimit: MAX_RESPONSE_BYTES, timeoutMs: 120_000, idleMs: 60_000 });
+        const ready = await this.#channel.exchange(initialization, { signal });
+        if (ready?.ready !== true || Object.keys(ready).length !== 1) throw new Error('bridge connection did not prove readiness');
+        this.#channelKey = key;
+      }
+      return await this.#channel.exchange(frame, { signal });
+    } catch (error) {
+      this.close();
+      throw error;
+    }
+  }
+
+  async exchange(frame, { signal = null, binding = null } = {}) {
     const target = normalizeTarget(frame?.target);
     const serialized = JSON.stringify(frame);
     if (Buffer.byteLength(serialized, 'utf8') > MAX_FRAME_BYTES) throw new Error('bridge frame exceeds this attachment limit');
     const selected = normalizeAccess(await this.#access(target));
+    if (this.#openChannel != null) return this.#connectedExchange(frame, selected, { signal, binding });
 
     if (selected.family === 'windows') {
       const location = await this.#location(target);

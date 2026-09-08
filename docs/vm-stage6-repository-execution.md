@@ -28,19 +28,31 @@ Composing a protected activity request reads the foundation identity independent
 of aggregate installation/image health. Explicit status still reports that health.
 Selecting a physical route queries the committed subject/profile selection before
 native observation; unrelated profiles are not part of a selected data transfer.
-The current implementation reobserves the selected generation for each request and
-rejects an unavailable, unowned, or incompatible attachment. It does not yet reuse
-native observations across requests. This describes the current implementation,
-not a requirement to repeat native inspection for every transfer frame. DB-020's
-running-lifetime contract requires owner-bound readiness reuse while preserving
-current route, generation, policy, lease/fence, and request identity checks.
+The activity owner reuses an observed attachment while committed generation and
+declaration records remain unchanged. Each request reloads its admitted route and
+reads a consistent committed identity snapshot. Unreconciled selected lifecycle
+operations block dispatch. Opening a Hyper-V connection reobserves native
+ownership and storage compatibility; the adapter authenticates and binds that
+connection to its exact physical guest. Connection loss, changed binding, idle
+expiry, cancellation and protected authority changes discard reusable resources.
+No cached observation substitutes for current task, lease/fence or result checks.
+
+The Windows service retains one serialized activity worker for at most 4096
+requests, with a 60-second idle timeout. It releases the service gate between
+requests. Its existing v1 pipe, response acknowledgement, byte bounds and client
+cancellation remain unchanged. Read-only lifecycle inspection can proceed between
+frames; privileged mutation/configuration invalidates retained activity resources.
+The service job closes worker descendants on cancellation and shutdown. Hyper-V
+uses a reusable authenticated SSH or PowerShell Direct connection; the existing
+installed guest agent still journals each detached operation independently.
+Libvirt retains its QGA transport. Hyper-V tests do not qualify native KVM behavior.
 
 Current preparation gap: each registered operation and scratch-cleanup session
 calls activity preparation and health again. Bootstrap `ensure` now skips provider
-preparation for a ready exact generation, but repeated observation and per-frame
-connection setup still remain. Normal session close does not stop the VM. Removing
-unnecessary observation and connection setup remains part of the ownership
-refactor; persistent disks alone do not establish an efficient warm-guest path.
+preparation for a ready exact generation. Repeated readiness probes remain to be
+measured after transport reuse is natively qualified. Normal session close does
+not stop the VM. A passing transport contract alone does not establish an
+efficient warm workflow; both installed guest routes must demonstrate it.
 
 ## Local route policy
 

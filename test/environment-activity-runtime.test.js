@@ -47,6 +47,30 @@ function response(frame, body) {
   return { protocol: ENVIRONMENT_BRIDGE_PROTOCOL, request: frame.request, target: frame.target, kind: frame.kind, ok: true, body };
 }
 
+test('activity reuses a proved attachment only while committed generation and declaration stay current', async () => {
+  const selected = state();
+  let revision = 1, declaration = 1, nativeReads = 0, exchanges = 0, fail = false;
+  const originalList = selected.listEnvironments;
+  selected.listEnvironments = async () => { nativeReads++; return originalList(); };
+  selected.readEnvironmentRecords = async () => ({ revision, records: [(await originalList())[0].record] });
+  let currentPolicy = policy();
+  const runtime = createEnvironmentActivityRuntime({ state: selected,
+    loadPolicy: async () => currentPolicy, authorityBinding: async () => declaration,
+    preparation: { ensure: async () => ({ generation: PHYSICAL }) },
+    exchange: async frame => { exchanges++; if (fail) throw new Error('connection lost'); return response(frame, { version: '1.0.0', features: [] }); },
+  });
+  const frame = { protocol: ENVIRONMENT_BRIDGE_PROTOCOL, request: '1'.repeat(32), target: LOGICAL, kind: 'health', body: {} };
+  await runtime.exchange(frame); await runtime.exchange(frame);
+  assert.equal(nativeReads, 1);
+  revision++; await runtime.exchange(frame); assert.equal(nativeReads, 2);
+  declaration++; await runtime.exchange(frame); assert.equal(nativeReads, 3);
+  fail = true; await assert.rejects(runtime.exchange(frame), /connection lost/);
+  fail = false; await runtime.exchange(frame); assert.equal(nativeReads, 4);
+  currentPolicy = policy('43');
+  await assert.rejects(runtime.exchange(frame), /not admitted/);
+  assert.equal(exchanges, 6);
+});
+
 test('protected activity maps an accepted logical target and scopes every exchange location', async () => {
   const prepared = [];
   const exchanged = [];

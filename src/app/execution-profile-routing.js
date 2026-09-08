@@ -142,6 +142,14 @@ export function createExecutionProfileRouting({ state, policy }) {
       return syntheticEntry(route, target, observed);
     },
     physicalTarget,
+    async attachmentBinding(target) {
+      const route = routeForTarget(target);
+      if (typeof state.readEnvironmentRecords !== 'function') return null;
+      const snapshot = await state.readEnvironmentRecords({ subject: executionProfileSubject(route.profile), profile: route.profile });
+      if (snapshot.records.length !== 1) throw new Error('execution profile has no unique committed environment');
+      return { record: snapshot.records[0], revision: snapshot.revision,
+        workspace: executionWorkspaceIdentity(route.subject, route.profile) };
+    },
     representativeTarget,
     targetForSubject(subject) {
       return preferredSubjectRoute(index, subject).target;

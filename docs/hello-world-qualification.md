@@ -152,6 +152,27 @@ desktop access, SSH, a debug flag or a later log request a production prerequisi
 
 ## Work order and ownership
 
+The warm-transport repair preserves public v1 activity requests and existing
+guest journals. The protected Windows service reuses one bounded activity worker;
+Hyper-V retains an authenticated connection bound to current authority and physical
+generation. Committed identity reads replace repeated native attachment scans.
+Focused provider, stream, state, routing and consumer tests pass, including a
+compiled Windows host serving 100 sequential requests from one worker and replacing
+it after cancellation/configuration access. Preflight's three fixed inventory-count
+assertions were replaced with actual invocation/inventory checks; their focused
+tests pass. Native connection timings and both installed workflow timings remain
+outstanding. This does not qualify native KVM or claim the latency milestone done.
+
+The next native qualification uses the current accepted, running Linux and Windows
+guests to measure repeated exact bridge health exchanges, verify separate target
+binding and connection-loss recovery, and inspect current Windows readiness through
+its owner. This transport change neither modifies the accepted image nor changes
+first-access enrollment; no image reconstruction is part of this qualification.
+Activate the exact qualified component once, then measure the ordinary installed
+source/compile/test/result path. Compare actual guest compute with necessary
+source validation, transfer, authority and delivery cost, identifying remaining
+disproportionate phases rather than accepting the earlier nine-minute runs.
+
 September 8 checkpoint: the supported Ubuntu and Windows construction and image
 qualification paths have completed. Reuse both accepted images. Linux recovery
 and all three workflow cases have completed, including terminal-delivery restart

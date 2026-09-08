@@ -26,19 +26,30 @@ function assertExchange(value) {
   return value;
 }
 
-export function createEnvironmentActivityRuntime({ state, loadPolicy, preparation, exchange } = {}) {
+export function createEnvironmentActivityRuntime({ state, loadPolicy, preparation, exchange, authorityBinding = async () => null } = {}) {
   const selectedState = assertState(state);
   const selectedPolicy = assertPolicyLoader(loadPolicy);
   const selectedPreparation = assertPreparation(preparation);
   const selectedExchange = assertExchange(exchange);
+  if (typeof authorityBinding !== 'function') throw new TypeError('environment activity authority binding is invalid');
+  const attachments = new Map();
 
   const routing = async () => createExecutionProfileRouting({ state: selectedState, policy: await selectedPolicy() });
   const attachment = async (logicalTarget) => {
     const current = await routing();
-    return Object.freeze({
-      target: await current.physicalTarget(logicalTarget),
-      prefix: `workspaces/${current.workspaceIdentity(logicalTarget)}`,
-    });
+    const committed = await current.attachmentBinding(logicalTarget);
+    const authority = committed == null ? null : await authorityBinding(committed.record.identity);
+    const key = committed == null ? null : JSON.stringify([committed, authority]);
+    const previous = attachments.get(logicalTarget);
+    if (key != null && previous?.key === key) return previous.value;
+    const target = await current.physicalTarget(logicalTarget);
+    if (committed != null && target !== committed.record.identity) throw new Error('environment activity attachment changed during observation');
+    const value = Object.freeze({ target, prefix: `workspaces/${current.workspaceIdentity(logicalTarget)}`, binding: key });
+    if (key != null) {
+      if (attachments.size >= 32) attachments.delete(attachments.keys().next().value);
+      attachments.set(logicalTarget, { key, value });
+    }
+    return value;
   };
 
   return Object.freeze({
@@ -62,8 +73,14 @@ export function createEnvironmentActivityRuntime({ state, loadPolicy, preparatio
       const logical = normalizeEnvironmentBridgeRequest(rawFrame);
       const selected = await attachment(logical.target);
       const attached = rebindEnvironmentBridgeRequest(logical, selected);
-      const result = await selectedExchange(attached, options);
-      return rebindEnvironmentBridgeResponse(result, { from: attached, to: logical });
+      try {
+        const result = await selectedExchange(attached, { ...options, binding: selected.binding });
+        return rebindEnvironmentBridgeResponse(result, { from: attached, to: logical });
+      } catch (error) {
+        attachments.delete(logical.target);
+        throw error;
+      }
     },
+    close() { attachments.clear(); selectedExchange.close?.(); },
   });
 }

@@ -76,6 +76,22 @@ test('selected environment observation does not inspect an unrelated unavailable
   await assert.rejects(registry.list(), /unrelated provider unavailable/);
 });
 
+test('committed record queries expose identity without native inspection and reject unfinished mutations', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-environment-records-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fake = fixture();
+  const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
+  const current = await registry.ensure(request());
+  fake.operations.observe = async () => { throw new Error('native observation unavailable'); };
+  const snapshot = await registry.records({ subject: request().subject });
+  assert.deepEqual(snapshot.records, [current.record]);
+  snapshot.records[0].profile = 'tampered';
+  assert.equal((await registry.records()).records[0].profile, 'guest-a');
+  await assert.rejects(registry.stop(current.record.identity), /native observation unavailable/);
+  await assert.rejects(registry.records(), /unreconciled lifecycle/);
+  assert.deepEqual((await registry.records({ subject: 'unrelated' })).records, []);
+});
+
 test('protected boot intent reaches the provider, survives restart, and cannot be silently downgraded', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-protected-boot-intent-'));
   t.after(() => rm(root, { recursive: true, force: true }));

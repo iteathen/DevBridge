@@ -166,6 +166,31 @@ export class PersistentEnvironments {
     });
   }
 
+  // Committed identity is not native readiness. Consumers may use this bounded
+  // view to invalidate an already observed attachment, never to invent one.
+  async records(rawSelection = {}) {
+    const value = requireObject(rawSelection, 'environment selection');
+    onlyKeys(value, new Set(['subject', 'profile', 'identity']), 'environment selection');
+    const subject = value.subject == null ? null : normalizeSubject(value.subject);
+    const profile = value.profile == null ? null : requireId(value.profile, 'environment selection profile');
+    const identity = value.identity == null ? null : requireEnvironmentId(value.identity);
+    return this.#ledger.snapshot(async (state) => {
+      const binding = await this.#effects.binding();
+      const entries = Object.values(state.entries).filter(entry =>
+        (subject == null || entry.subject === subject) && (profile == null || entry.profile === profile)
+        && (identity == null || entry.current.identity === identity));
+      for (const entry of entries) {
+        if (entry.binding !== binding) throw new Error('environment attachment identity changed');
+        if (Object.values(state.operations).some(operation => operation.state !== 'reconciled'
+            && (operation.slot === entry.slot || operation.identity === entry.current.identity
+              || operation.oldIdentity === entry.current.identity || operation.newIdentity === entry.current.identity))) {
+          throw new Error('environment has an unreconciled lifecycle operation');
+        }
+      }
+      return Object.freeze({ revision: state.revision, records: entries.map(publicRecord) });
+    });
+  }
+
   async #transition(kind, identity, options = {}) {
     return this.#ledger.run(async () => {
       const binding = await this.#effects.binding();
