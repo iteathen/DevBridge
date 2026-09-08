@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { parseRepositoryPreflightArguments } from "../src/bootstrap/repository-preflight.mjs";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -92,25 +93,31 @@ test("Windows full CI coverage serializes test files while other platforms retai
   assert.match(windows, /^        run: npm\.cmd test -- --test-concurrency=1$/mu);
 });
 
-test("Windows smoke preflight selects a closed concurrency bound while other platforms retain default scheduling", async () => {
+test("CI static prerequisites do not repeat the full job's behavioral suites", async () => {
   const workflow = await read(".github/workflows/ci.yml");
   const ordinary = workflowStep(workflow, "Cheap preflight (non-Windows default)");
   const windows = workflowStep(workflow, "Cheap preflight (Windows bounded)");
 
-  assert.match(workflow.replaceAll("\r\n", "\n"), /^  smoke:\n    timeout-minutes: 11$/mu);
-  assert.match(ordinary, /^        if: runner\.os != 'Windows'$/mu);
-  assert.match(ordinary, /^        timeout-minutes: 7$/mu);
-  assert.match(ordinary, /^        run: npm run preflight -- --ci-qualification$/mu);
-  assert.doesNotMatch(ordinary, /bound-targeted-test-concurrency/u);
-
-  assert.match(windows, /^        if: runner\.os == 'Windows'$/mu);
-  assert.match(windows, /^        timeout-minutes: 7$/mu);
-  assert.match(windows, /^        run: npm\.cmd run preflight -- --ci-qualification --bound-targeted-test-concurrency$/mu);
+  for (const step of [ordinary, windows]) {
+    const command = /^\s+run: npm(?:\.cmd)? run preflight -- (.+)$/mu.exec(step);
+    assert.ok(command, 'static prerequisite must invoke the real preflight entry');
+    const options = parseRepositoryPreflightArguments(command[1].trim().split(/\s+/u));
+    assert.equal(options.staticOnly, true);
+    assert.equal(options.ciQualification, true);
+  }
+  assert.equal([...workflow.matchAll(/^\s+run: npm(?:\.cmd)? test(?: .*)?$/gmu)].length, 2);
+  assert.doesNotMatch(workflow, /^\s+run: node --test /mu, 'full-suite subsets must not be invoked again');
+  const fullJob = workflow.split(/^  test:\s*$/mu)[1];
+  assert.match(fullJob, /^    needs: smoke$/mu, 'expensive tests depend on successful static prerequisites');
 });
 
 test("CI job deadlines reserve setup and downstream time beyond their largest selected suite", async () => {
   const workflow = (await read(".github/workflows/ci.yml")).replaceAll("\r\n", "\n");
-  assert.match(workflow, /^  smoke:\n    timeout-minutes: 11$/mu);
-  assert.match(workflow, /^  test:\n    timeout-minutes: 14$/mu);
+  for (const name of ['smoke', 'test']) {
+    const section = workflow.split(new RegExp(`^  ${name}:\\s*$`, 'mu'))[1].split(/^  [a-z]+:\s*$/mu)[0];
+    const jobLimit = Number(/^    timeout-minutes: (\d+)$/mu.exec(section)?.[1]);
+    const stepLimits = [...section.matchAll(/^        timeout-minutes: (\d+)$/gmu)].map(match => Number(match[1]));
+    assert.ok(stepLimits.length > 0 && jobLimit > Math.max(...stepLimits), `${name} reserves time beyond its largest step`);
+  }
   assert.doesNotMatch(workflow, /continue-on-error|retry/u);
 });
