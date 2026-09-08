@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { IssueStatusReporter } from '../src/github/issue-status-reporter.js';
 import { RateLimitError } from '../src/errors.js';
 import { captureFailureDiagnostics } from '../src/run/failure-diagnostics.js';
+import { DeterministicFaultInjector } from '../src/runtime/fault-injector.js';
 
 function store() {
   const records = new Map();
@@ -52,6 +53,19 @@ test('ambiguous initial POST is reconciled after reporter restart without duplic
   const result = await f.create().reconcile(request());
   assert.equal(result.published, true);
   assert.equal(result.commentId, 101);
+  assert.equal(f.calls.filter(entry => entry.method === 'POST' && entry.options.mutation !== false).length, 1);
+  assert.deepEqual(await f.create().pending(), []);
+});
+
+for (const point of ['status.before-delivery', 'status.after-effect']) test(`local ${point} qualification fault preserves delivery intent across restart`, async () => {
+  const f = fixture();
+  const faultInjector = new DeterministicFaultInjector({ enabled: true, rules: [{ id: 'delivery-recovery', point, action: 'error', operation: 'terminal' }] });
+  await assert.rejects(f.create({ faultInjector }).publish(request()), /delivery-recovery/u);
+  assert.equal(f.comments.length, point === 'status.after-effect' ? 1 : 0);
+  assert.equal((await f.create().pending()).length, 1);
+  const recovered = await f.create().reconcile(request());
+  assert.equal(recovered.published, true);
+  assert.equal(f.comments.length, 1);
   assert.equal(f.calls.filter(entry => entry.method === 'POST' && entry.options.mutation !== false).length, 1);
   assert.deepEqual(await f.create().pending(), []);
 });

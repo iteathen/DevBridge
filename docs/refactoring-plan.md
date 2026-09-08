@@ -55,6 +55,27 @@ parallel accounting system. No Python.
 
 ## Current evidence
 
+Fresh Hyper-V consumer qualification now passes for both Linux and Windows using
+the existing accepted images and the exact installed-source candidate at
+`4aa0da1152d9a9f9350bb821bd2638b960254dab`. Each disposable guest received its
+network seed through production delivery, established bridge access, completed
+bootstrap, and returned the exact seed bytes from the requested path. Both owned
+fixtures were removed successfully. Qualification identities are
+`883c3d67-a7d4-4e60-87a2-be59da68ca68` (Linux) and
+`597b4a1b-12e6-4f50-b042-96f31f3adb29` (Windows). The measured package digest is
+`5ffc8961a67ec68d19e6bdc18ee0a380f1c3def9ca577154e8b132eb0987a4b1`.
+This qualifies first access on Hyper-V; the six Hello World workflows and native
+KVM/libvirt qualification remain outstanding.
+
+Windows and Ubuntu smoke/full CI passed at `2775572`. The subsequent `4aa0da1`
+matrix exposed a Windows integration-fixture cleanup race after child-process
+termination; bounded cleanup now waits for executable handles to close. Focused
+compiled-host and delivery-recovery checks pass. The existing local fault
+injection facility now also supports interruption before status delivery and
+after its external effect, retaining durable intent for restart qualification.
+
+### Earlier implementation and diagnostic evidence
+
 The first implementation block consolidates native Hyper-V delivery, passes
 explicit lifecycle operation subjects into construction, replaces the persistent
 environment mutation token with process-held leases, and leaves committed status

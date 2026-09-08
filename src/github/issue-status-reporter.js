@@ -53,13 +53,15 @@ export class IssueStatusReporter {
   #secrets;
   #inventoryRefProvider;
   #now;
+  #faults;
 
   constructor({ client, stateStore, queueRepository, progressIntervalMs = 300_000,
-    maxCommentBytes = 48_000, secretValues = [], inventoryRefProvider = null, now = () => Date.now() }) {
+    maxCommentBytes = 48_000, secretValues = [], inventoryRefProvider = null, now = () => Date.now(), faultInjector = null }) {
     if (!client || typeof client.request !== 'function' || !stateStore || typeof stateStore.get !== 'function' || typeof stateStore.set !== 'function') throw new TypeError('status reporter requires its client and state store');
     if (typeof queueRepository !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(queueRepository)) throw new ProtocolError('status queue repository is invalid');
     if (!Number.isSafeInteger(maxCommentBytes) || maxCommentBytes < 4096) throw new ProtocolError('status comment budget is invalid');
     if (!Number.isSafeInteger(progressIntervalMs) || progressIntervalMs < 1) throw new ProtocolError('status interval is invalid');
+    if (faultInjector != null && typeof faultInjector.throwIfTriggered !== 'function') throw new TypeError('status fault injection capability is invalid');
     this.#client = client;
     this.#stateStore = stateStore;
     this.#queueRepository = queueRepository;
@@ -69,6 +71,7 @@ export class IssueStatusReporter {
     this.#secrets = secretValues;
     this.#inventoryRefProvider = typeof inventoryRefProvider === 'function' ? inventoryRefProvider : null;
     this.#now = now;
+    this.#faults = faultInjector;
   }
 
   #key(subject) { return `status.${this.#queueRepository}#${subject.issueNumber}.${subject.runId}`; }
@@ -168,6 +171,7 @@ export class IssueStatusReporter {
     if (!await taskLeaseAllowsEffect()) return { published: false, commentId: record.commentId ?? null, reason: 'lease-lost' };
     if (Number.isFinite(record.delivery?.retryAt) && this.#now() < record.delivery.retryAt) return this.#defer(key, record, 'server-pacing');
     try {
+      this.#faults?.throwIfTriggered('status.before-delivery', { operation: record.pending.terminal ? 'terminal' : 'progress' });
       if (!record.commentId) {
         let observedActorId = null;
         if (!record.creation) {
@@ -213,6 +217,7 @@ export class IssueStatusReporter {
           creation.attemptedAt = this.#now();
           await this.#stateStore.set(key, record);
           const response = await this.#client.request('POST', `${this.#repositoryPath}/issues/${record.subject.issueNumber}/comments`, { body: { body: creation.body }, critical: record.pending.terminal });
+          this.#faults?.throwIfTriggered('status.after-effect', { operation: creation.projection.terminal ? 'terminal' : 'progress' });
           const confirmed = await this.#confirm(key, record, creation.projection, response.data?.id);
           if (!record.pending || confirmed.leaseLost) return confirmed;
         }
@@ -220,6 +225,7 @@ export class IssueStatusReporter {
       if (!await taskLeaseAllowsEffect()) return this.#defer(key, record, 'lease-lost');
       const projection = record.pending;
       const response = await this.#client.request('PATCH', `${this.#repositoryPath}/issues/comments/${record.commentId}`, { body: { body: projection.body }, critical: projection.terminal });
+      this.#faults?.throwIfTriggered('status.after-effect', { operation: projection.terminal ? 'terminal' : 'progress' });
       if (response.data?.id !== record.commentId) throw new ProtocolError('GitHub status update returned a different comment ID');
       return await this.#confirm(key, record, projection, record.commentId);
     } catch (error) {

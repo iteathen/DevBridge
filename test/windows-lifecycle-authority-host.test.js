@@ -404,8 +404,16 @@ internal static class IntegrationHarness
   } finally {
     if (child && child.exitCode == null) {
       child.stdin.end('\n');
-      try { await waitForExit(child, 10_000); } catch { child.kill(); }
+      try { await waitForExit(child, 10_000); } catch {
+        if (child.exitCode == null && child.signalCode == null) {
+          const exited = new Promise((resolve) => child.once('exit', resolve));
+          child.kill();
+          await exited;
+        }
+      }
     }
-    await rm(temp, { recursive: true, force: true });
+    // Closing the host's Windows job terminates its children asynchronously.
+    // Wait for those owned executable handles to close before removing the fixture.
+    await rm(temp, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });
