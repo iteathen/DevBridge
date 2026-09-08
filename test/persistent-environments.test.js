@@ -52,6 +52,30 @@ function request(sourceIdentity = SOURCE_A) {
   return { subject: 'immutable-subject-42', profile: 'guest-a', sourceIdentity, settings: { memoryBytes: 2147483648, processorCount: 2, firmware: 'efi' } };
 }
 
+test('selected environment observation does not inspect an unrelated unavailable profile', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-selected-environment-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fake = fixture();
+  const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
+  const selected = await registry.ensure(request());
+  fake.sources.get(SOURCE_B).profile = 'guest-b';
+  const sibling = await registry.ensure({ ...request(SOURCE_B), subject: 'opaque/sibling', profile: 'guest-b' });
+  const observe = fake.operations.observe;
+  const calls = [];
+  fake.operations.observe = async identity => {
+    calls.push(identity);
+    if (identity === sibling.record.identity) throw new Error('unrelated provider unavailable');
+    return observe(identity);
+  };
+  const found = await registry.list({ subject: request().subject, profile: request().profile });
+  assert.deepEqual(found.map(x => x.record.identity), [selected.record.identity]);
+  assert.deepEqual(calls, [selected.record.identity]);
+  assert.deepEqual(await registry.list({ subject: 'absent' }), []);
+  await assert.rejects(registry.list({ nativePath: '/forbidden' }), /not allowed/);
+  await assert.rejects(registry.list({ profile: '../foreign' }), /invalid/);
+  await assert.rejects(registry.list(), /unrelated provider unavailable/);
+});
+
 test('protected boot intent reaches the provider, survives restart, and cannot be silently downgraded', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-protected-boot-intent-'));
   t.after(() => rm(root, { recursive: true, force: true }));

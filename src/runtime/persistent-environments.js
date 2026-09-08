@@ -146,10 +146,16 @@ export class PersistentEnvironments {
     return this.#ledger.run(async () => this.#provisioning.ensure(await this.#ledger.read(), normalizeRequest(raw)));
   }
 
-  async list() {
+  async list(rawSelection = {}) {
+    const value = requireObject(rawSelection, 'environment selection');
+    onlyKeys(value, new Set(['subject', 'profile']), 'environment selection');
+    const selection = {
+      subject: value.subject == null ? null : normalizeSubject(value.subject),
+      profile: value.profile == null ? null : requireId(value.profile, 'environment selection profile'),
+    };
     return this.#ledger.snapshot(async (state) => {
       const binding = await this.#effects.binding();
-      return this.#lifecycle.list(state, binding);
+      return this.#lifecycle.list(state, binding, selection);
     });
   }
 

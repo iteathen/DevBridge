@@ -194,6 +194,7 @@ function sessionMessages() {
 
 test('workspace session sequences only its local ports and closes exact ownership', async () => {
   const calls = [];
+  const progress = [];
   const snapshot = {
     manifest: { digest: 'source-digest', entries: [] },
     manifestBytes: () => Buffer.from('{}'),
@@ -207,7 +208,12 @@ test('workspace session sequences only its local ports and closes exact ownershi
     source: {
       snapshot: async () => { calls.push('snapshot'); return snapshot; },
       install: async () => calls.push('install'),
-      observe: async () => { calls.push('observe'); return { appliedDigest: 'source-digest' }; },
+      observe: async (_digest, { onActivity }) => {
+        calls.push('observe');
+        await onActivity({ kind: 'started', processAlive: true });
+        await onActivity({ kind: 'finished', processAlive: false });
+        return { appliedDigest: 'source-digest' };
+      },
       transfer: async () => calls.push('part'),
       writeManifest: async () => calls.push('manifest'),
       apply: async () => { calls.push('apply-source'); return { digest: 'source-digest' }; },
@@ -236,7 +242,8 @@ test('workspace session sequences only its local ports and closes exact ownershi
     messages: sessionMessages(),
   });
 
-  assert.deepEqual(await session.prepare(), { identity: 'run-evidence' });
+  assert.deepEqual(await session.prepare({ onActivity: async event => progress.push(event.kind) }), { identity: 'run-evidence' });
+  assert.deepEqual(progress, ['workspace-prepare', 'workspace-health', 'source-snapshot', 'source-agent', 'source-check', 'source-check', 'source-check', 'source-verify']);
   await session.input('input', { read: async () => Buffer.alloc(0) });
   await session.run({ invocation: { workingDirectory: '.' }, environment: {}, transfers: [], limits: {}, stdin: null });
   await session.output('output', { write: async () => {} });

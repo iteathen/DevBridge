@@ -30,6 +30,9 @@ function capsule(state) {
 
 function summary(liveness) {
   const label = `${liveness.operationId} (${liveness.operation})`;
+  if (/^(workspace-|source-)/u.test(liveness.activity ?? '')) {
+    return `Preparing the workspace for ${label}: ${liveness.activity}. The registered operation has not started.`;
+  }
   if (liveness.processAlive === false) return `Deterministic operation ${label} finished; assertions and verification are pending.`;
   const elapsed = liveness.elapsedMs == null ? 'unknown' : `${Math.ceil(liveness.elapsedMs / 1000)}s`;
   return `Deterministic operation ${label} is active; elapsed ${elapsed}.`;

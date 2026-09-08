@@ -2,7 +2,7 @@ function sourceFrom(value, { signal = null, onProgress = null } = {}) {
   const bytes = Buffer.from(value);
   return {
     async read({ offset, limit }) {
-      onProgress?.({ offset, total: bytes.length });
+      await onProgress?.({ offset, total: bytes.length });
       if (signal?.aborted) throw signal.reason ?? new Error('byte transfer was cancelled');
       const end = Math.min(bytes.length, offset + limit);
       return { data: bytes.subarray(offset, end), eof: end === bytes.length };

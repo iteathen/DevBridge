@@ -93,6 +93,25 @@ test('cancellation after pack delivery prevents unpack and subsequent effects', 
   }), /lease lost/);
 });
 
+test('source progress uses the run liveness contract and awaits checkpointing before effects', async t => {
+  const f = await fixture(t);
+  await writeFile(path.join(f.source, 'a'), 'a');
+  const snapshot = await snapshotFileTree({ root: f.source, listPaths: async () => ['a'] });
+  const events = [];
+  let checkpointed = false;
+  await transferRepositorySource({ snapshot,
+    onActivity: async event => { await Promise.resolve(); events.push(event.kind); checkpointed = true; },
+    writePack: async (_bytes, controls) => { assert.equal(checkpointed, true); await controls.onProgress({ offset: 0, total: 123 }); },
+    unpack: async digest => ({ ready: true, digest, parts: 1 }),
+    writePart: () => assert.fail('unexpected raw transfer'),
+  });
+  assert.deepEqual(events, ['source-transfer 0/1 parts', 'source-transfer 0/1 parts; pack 0/123 bytes', 'source-transfer 1/1 parts']);
+  await assert.rejects(transferRepositorySource({ snapshot,
+    onActivity: async () => { throw new Error('checkpoint failed'); },
+    writePack: () => assert.fail('effect cannot precede accepted progress'),
+  }), /checkpoint failed/);
+});
+
 test('guest rejects forged digest, traversal, duplicates, invalid bytes and decompression overflow before writing parts', async t => {
   const f = await fixture(t);
   const member = { name: 'part-0-0', size: 1, digest: hash('a'), data: Buffer.from('a').toString('base64') };
@@ -110,4 +129,27 @@ test('guest rejects forged digest, traversal, duplicates, invalid bytes and deco
     assert.notEqual(result.code, 0);
     assert.deepEqual(await readdir(f.input), ['parts.gz']);
   }
+});
+
+test('partial guest staging can resume the same pack without changing repository state', async t => {
+  const f = await fixture(t);
+  const parts = ['alpha', 'beta'].map((value, index) => ({ name: `part-${index}-0`, size: value.length, digest: hash(value), data: Buffer.from(value).toString('base64') }));
+  const bytes = gzipSync(Buffer.from(JSON.stringify({ protocol: 'devbridge/source-part-pack-v1', parts })));
+  const identity = hash(bytes);
+  await writeFile(f.pack, bytes);
+  await writeFile(path.join(f.work, 'retained.txt'), 'unchanged repository');
+  // An incompatible second destination interrupts staging after the first
+  // atomic part write. The original pack remains available for reconciliation.
+  await mkdir(path.join(f.input, 'part-1-0'));
+  const interrupted = await run(f.work, [f.pack, identity], packAgent);
+  assert.notEqual(interrupted.code, 0);
+  assert.equal(await readFile(path.join(f.input, 'part-0-0'), 'utf8'), 'alpha');
+  assert.deepEqual(await readFile(f.pack), bytes);
+  assert.equal(await readFile(path.join(f.work, 'retained.txt'), 'utf8'), 'unchanged repository');
+  await rm(path.join(f.input, 'part-1-0'), { recursive: true });
+  const resumed = await run(f.work, [f.pack, identity], packAgent);
+  assert.equal(resumed.code, 0, resumed.err);
+  assert.deepEqual(JSON.parse(resumed.out), { ready: true, digest: identity, parts: 2 });
+  assert.equal(await readFile(path.join(f.input, 'part-1-0'), 'utf8'), 'beta');
+  assert.deepEqual(await readdir(f.work), ['retained.txt']);
 });

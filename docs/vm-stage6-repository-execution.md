@@ -24,6 +24,13 @@ There is no direct-host or legacy sandbox fallback. Missing routes, an unavailab
 
 Connections are transient. A session is opened for one exact source/operation/candidate exchange and owns the selected workspace target for that session. It does not imply ownership of the entire shared physical profile VM. No consumer retains a provider, transport, guest path, or physical environment object.
 
+Composing a protected activity request reads the foundation identity independently
+of aggregate installation/image health. Explicit status still reports that health.
+Selecting a physical route queries the committed subject/profile selection before
+native observation; unrelated profiles are not part of a selected data transfer.
+Each request still reobserves the selected generation and rejects an unavailable,
+unowned, or incompatible attachment. No observations are cached across requests.
+
 ## Local route policy
 
 Routes are stored under the control-owned state directory at:
@@ -70,6 +77,10 @@ large parts retain the existing streaming path. This changes neither the public
 bridge frames nor image identity. Source transfer reports bounded progress and
 checks cancellation before subsequent effects. Native qualification status is
 tracked separately from this transport contract.
+
+Workspace preparation and source transfer project their phases through the existing
+run liveness channel. They must not imply that the registered compiler or test has
+started. Progress checkpoint failures are awaited before subsequent transfer effects.
 
 ## Candidate return and host authority
 

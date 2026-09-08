@@ -78,11 +78,8 @@ export async function createProtectedEnvironmentActivity({
     });
   };
 
-  const identity = await selectedState.inspect();
-  if (typeof identity?.identity !== 'string') throw new Error('protected activity foundation identity is unavailable');
   const selectedExchange = bridgeExchange ?? await createEnvironmentBridgeExchange({
     stateDirectory: authority,
-    foundationIdentity: identity.identity,
     platform,
     invoke,
     access: async (target) => selectedPreparation.connection(await requestFor(target), target),

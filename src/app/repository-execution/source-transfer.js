@@ -17,7 +17,8 @@ export async function transferRepositorySource({ snapshot, writePack, unpack, wr
   const parts = snapshot.manifest.entries.filter(entry => entry.type === 'file').flatMap(entry => entry.parts);
   let batch = [], size = 0, completed = 0;
   const started = Date.now();
-  const progress = () => onActivity?.({ activity: `source-transfer ${completed}/${parts.length} parts`, elapsedMs: Date.now() - started, at: new Date().toISOString() });
+  const progress = () => onActivity?.({ kind: `source-transfer ${completed}/${parts.length} parts`, elapsedMs: Date.now() - started, at: new Date().toISOString() });
+  await progress();
   const flush = async () => {
     if (batch.length === 0) return;
     active(signal);
@@ -26,7 +27,7 @@ export async function transferRepositorySource({ snapshot, writePack, unpack, wr
     const bytes = gzipSync(serialized);
     const identity = digest(bytes);
     await writePack(bytes, { signal, onProgress: ({ offset, total }) => onActivity?.({
-      activity: `source-transfer ${completed}/${parts.length} parts; pack ${offset}/${total} bytes`,
+      kind: `source-transfer ${completed}/${parts.length} parts; pack ${offset}/${total} bytes`,
       elapsedMs: Date.now() - started, at: new Date().toISOString(),
     }) });
     active(signal);
@@ -34,14 +35,14 @@ export async function transferRepositorySource({ snapshot, writePack, unpack, wr
     if (result?.ready !== true || result.digest !== identity || result.parts !== batch.length) throw new Error('source part pack receipt does not match its subject');
     completed += batch.length;
     batch = []; size = 0;
-    progress();
+    await progress();
   };
   for (const part of parts) {
     active(signal);
     if (part.size > RAW_BYTES) {
       await flush();
       await writePart(part, request => { active(signal); return snapshot.readPart(part.name, request); });
-      completed += 1; progress();
+      completed += 1; await progress();
       continue;
     }
     if (size + part.size > RAW_BYTES || batch.length === MAX_PARTS) await flush();

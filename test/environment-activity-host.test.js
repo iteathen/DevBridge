@@ -32,7 +32,7 @@ test('protected activity composition binds exact environment declarations withou
     platform: 'win32',
     invoke: async () => { throw new Error('unexpected invocation'); },
     state: {
-      inspect: async () => ({ ready: true, identity: 'b'.repeat(32) }),
+      inspect: async () => { throw new Error('unrelated image inspection must not run during selected guest activity'); },
       listEnvironments: async () => [structuredClone(record)],
       observeEnvironment: async (target) => { assert.equal(target, PHYSICAL); return structuredClone(record); },
     },
