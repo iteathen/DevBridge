@@ -11,10 +11,11 @@ import { snapshotFileTree } from '../src/runtime/file-tree-transfer.js';
 import { transferRepositorySource } from '../src/app/repository-execution/source-transfer.js';
 
 const agent = fileURLToPath(new URL('../src/guest/workspace-agent.mjs', import.meta.url));
+const packAgent = fileURLToPath(new URL('../src/guest/source-pack-agent.mjs', import.meta.url));
 const hash = value => createHash('sha256').update(value).digest('hex');
-function run(cwd, args) {
+function run(cwd, args, executable = agent) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [agent, ...args], { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [executable, ...args], { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     child.stdout.on('data', bytes => { out += bytes; });
     child.stderr.on('data', bytes => { err += bytes; });
@@ -42,7 +43,7 @@ test('consumer packs many files and actual guest provider applies the exact orig
     snapshot,
     writePack: async bytes => { packs += 1; compressedBytes += bytes.length; await writeFile(f.pack, bytes); },
     unpack: async identity => {
-      const result = await run(f.work, ['unpack-source', f.pack, identity]);
+      const result = await run(f.work, [f.pack, identity], packAgent);
       assert.equal(result.code, 0, result.err);
       return JSON.parse(result.out);
     },
@@ -105,7 +106,7 @@ test('guest rejects forged digest, traversal, duplicates, invalid bytes and deco
   ];
   for (const item of cases) {
     await writeFile(f.pack, item.bytes);
-    const result = await run(f.work, ['unpack-source', f.pack, item.expected ?? hash(item.bytes)]);
+    const result = await run(f.work, [f.pack, item.expected ?? hash(item.bytes)], packAgent);
     assert.notEqual(result.code, 0);
     assert.deepEqual(await readdir(f.input), ['parts.gz']);
   }

@@ -32,6 +32,7 @@ const TRANSFER_LIMIT = 16 * 1024 * 1024;
 const MANIFEST_LIMIT = 24 * 1024 * 1024;
 const AGENT_FILE = fileURLToPath(new URL('../guest/workspace-agent.mjs', import.meta.url));
 const RESOURCE_AGENT_FILE = fileURLToPath(new URL('../guest/resource-agent.mjs', import.meta.url));
+const SOURCE_PACK_AGENT_FILE = fileURLToPath(new URL('../guest/source-pack-agent.mjs', import.meta.url));
 
 function hashIdentity(value) { return `execution-${createHash('sha256').update(JSON.stringify(value), 'utf8').digest('hex')}`; }
 function repositoryPathAllowed(relative) { const first = String(relative).replace(/\\/gu, '/').split('/')[0]; return first !== '.git' && first !== '.devbridge'; }
@@ -125,6 +126,7 @@ export async function createRepositoryExecution({
   };
   const agentBytes = await readFile(AGENT_FILE);
   const resourceAgentBytes = await readFile(RESOURCE_AGENT_FILE);
+  const sourcePackAgentBytes = await readFile(SOURCE_PACK_AGENT_FILE);
   const stagingRoot = path.join(path.resolve(stateDirectory), 'repository-execution', 'staging');
   await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
   const access = new RouteAccess({
@@ -156,6 +158,9 @@ export async function createRepositoryExecution({
       });
       const agentLocation = { class: 'input', path: 'control/workspace-agent.mjs' };
       const resourceAgentLocation = { class: 'input', path: 'control/resource-agent.mjs' };
+      const sourcePackAgentLocation = { class: 'input', path: 'control/source-pack-agent.mjs' };
+      const sourcePackLocation = { class: 'input', path: 'source/parts.gz' };
+      let sourcePackAgentInstalled = false;
       const stateLocation = { class: 'cache', path: 'source-state.json' };
       const sourceManifestLocation = { class: 'input', path: 'source/manifest.json' };
       const candidateDirectory = { class: 'output', path: 'candidate' };
@@ -220,8 +225,18 @@ export async function createRepositoryExecution({
           observe: (digest, options) => runAgent('prepare', [stateLocation, digest], { timeoutMs: 60_000, ...options }),
           transfer: (snapshot, options) => transferRepositorySource({
             snapshot, ...options,
-            writePack: (value, controls) => bytes.write(value, { class: 'input', path: 'source/parts.gz' }, controls),
-            unpack: (identity, controls) => runAgent('unpack-source', [{ class: 'input', path: 'source/parts.gz' }, identity], { timeoutMs: 60_000, ...controls }),
+            writePack: async (value, controls) => {
+              if (!sourcePackAgentInstalled) {
+                await bytes.write(sourcePackAgentBytes, sourcePackAgentLocation, { signal: controls.signal });
+                sourcePackAgentInstalled = true;
+              }
+              return bytes.write(value, sourcePackLocation, controls);
+            },
+            unpack: async (identity, controls) => parseAgentResult(await channel.execute(target, {
+              program: 'node', arguments: [sourcePackAgentLocation, sourcePackLocation, identity],
+              directory: { class: 'work', path: '.' }, environment: {}, input: null,
+              timeoutMs: 60_000, maxOutputBytes: 16 * 1024,
+            }, controls), 'source pack unpacking'),
             writePart: (part, read) => bytes.stream({ read }, { class: 'input', path: `source/${part.name}` }, { maxBytes: Math.max(1, part.size) }),
           }),
           writeManifest: (value) => bytes.write(value, sourceManifestLocation),

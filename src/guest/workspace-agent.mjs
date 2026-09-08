@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { lstat, mkdir, open, readFile, readlink, realpath, rename, rm, symlink, writeFile, chmod } from 'node:fs/promises';
 import path from 'node:path';
-import { gunzipSync } from 'node:zlib';
 
 const TREE_PROTOCOL = 'devbridge/file-tree-v1';
 const DELTA_PROTOCOL = 'devbridge/file-tree-delta-v1';
@@ -17,46 +16,6 @@ const MAX_ENTRIES = 100_000;
 const MAX_TREE_BYTES = 8 * 1024 * 1024 * 1024;
 const PART_BYTES = 32 * 1024 * 1024;
 const MAX_DESCRIPTOR_BYTES = 8 * 1024 * 1024;
-
-async function unpackSource(file, expectedDigest) {
-  const expected = exactDigest(expectedDigest, 'source pack digest');
-  const info = await lstat(file);
-  if (!info.isFile() || info.isSymbolicLink() || info.size > 4 * 1024 * 1024) throw new Error('source pack is not a bounded regular file');
-  const compressed = await readFile(file);
-  if (sha256(compressed) !== expected) throw new Error('source pack digest mismatch');
-  const value = requireObject(JSON.parse(gunzipSync(compressed, { maxOutputLength: 4 * 1024 * 1024 }).toString('utf8')), 'source pack');
-  onlyKeys(value, new Set(['protocol', 'parts']), 'source pack');
-  if (value.protocol !== 'devbridge/source-part-pack-v1' || !Array.isArray(value.parts) || value.parts.length < 1 || value.parts.length > 2048) throw new Error('source pack protocol or cardinality is invalid');
-  const seen = new Set();
-  let total = 0;
-  const parts = value.parts.map(raw => {
-    const part = requireObject(raw, 'packed source part');
-    onlyKeys(part, new Set(['name', 'size', 'digest', 'data']), 'packed source part');
-    if (typeof part.name !== 'string' || !PART_NAME.test(part.name) || seen.has(part.name)) throw new Error('packed source part name is invalid or duplicated');
-    seen.add(part.name);
-    if (!Number.isSafeInteger(part.size) || part.size < 0 || part.size > 2 * 1024 * 1024 || typeof part.data !== 'string') throw new Error('packed source part bounds are invalid');
-    const bytes = Buffer.from(part.data, 'base64');
-    total += bytes.length;
-    if (bytes.toString('base64') !== part.data || bytes.length !== part.size || total > 2 * 1024 * 1024 || sha256(bytes) !== exactDigest(part.digest, 'packed source part digest')) throw new Error('packed source part content is invalid');
-    return { name: part.name, bytes };
-  });
-  const parent = path.dirname(file);
-  const parentInfo = await lstat(parent);
-  if (!parentInfo.isDirectory() || parentInfo.isSymbolicLink()) throw new Error('source pack directory is invalid');
-  const root = await realpath(parent);
-  for (const part of parts) {
-    const destination = path.join(root, part.name);
-    try { const current = await lstat(destination); if (!current.isFile() || current.isSymbolicLink()) throw new Error('packed source destination is unsafe'); }
-    catch (error) { if (error?.code !== 'ENOENT') throw error; }
-    const temporary = path.join(root, `.${part.name}-${randomUUID()}.tmp`);
-    try {
-      await writeFile(temporary, part.bytes, { mode: 0o600, flag: 'wx' });
-      await rename(temporary, destination);
-    } finally { await rm(temporary, { force: true }); }
-  }
-  await rm(file);
-  process.stdout.write(`${JSON.stringify({ ready: true, digest: expected, parts: parts.length })}\n`);
-}
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
@@ -103,5 +62,5 @@ function splitNul(text){return Buffer.from(text,'utf8').toString('utf8').split('
 async function collect(outputDir,stateFile){const root=await workRoot();const state=await readState(stateFile);if(!state)throw new Error('candidate collection requires an applied source baseline');const verify=(await git(['cat-file','-e',`${state.baselineCommit}^{commit}`],{allowFailure:true}));if(verify.exitCode!==0)throw new Error('guest baseline commit is unavailable');const changed=splitNul((await git(['diff','--name-only','-z',state.baselineCommit,'--'])).stdout);const untracked=splitNul((await git(['ls-files','--others','--exclude-standard','-z'])).stdout);const paths=[...new Set([...changed,...untracked].map((entry)=>normalizePath(entry,'candidate path')))].sort();if(paths.length>MAX_ENTRIES)throw new Error('candidate exceeds entry ceiling');await rm(outputDir,{recursive:true,force:true});await mkdir(outputDir,{recursive:true,mode:0o700});const entries=[];let totalBytes=0;for(const relative of paths){if(relative==='.git'||relative.startsWith('.git/')||relative==='.devbridge'||relative.startsWith('.devbridge/'))throw new Error(`candidate path is reserved: ${relative}`);const candidate=path.join(root,...relative.split('/'));let info;try{info=await lstat(candidate);}catch(error){if(error?.code==='ENOENT'){entries.push({path:relative,action:'delete'});continue;}throw error;}if(info.isDirectory())continue;if(info.isSymbolicLink()){entries.push({path:relative,action:'symlink',target:normalizeTarget(await readlink(candidate),relative,root)});continue;}if(!info.isFile())throw new Error(`candidate contains unsupported file type: ${relative}`);totalBytes+=info.size;if(totalBytes>MAX_TREE_BYTES)throw new Error('candidate exceeds byte ceiling');const handle=await open(candidate,'r');const whole=createHash('sha256');const parts=[];try{for(let offset=0,index=0;offset<info.size||(info.size===0&&index===0);index+=1){const length=info.size===0?0:Math.min(PART_BYTES,info.size-offset);const bytes=Buffer.allocUnsafe(length);let read=0;while(read<length){const result=await handle.read(bytes,read,length-read,offset+read);if(result.bytesRead===0)throw new Error('candidate file changed while collecting');read+=result.bytesRead;}const data=bytes.subarray(0,read);const name=`part-${entries.length}-${index}`;await writeFile(path.join(outputDir,name),data,{mode:0o600,flag:'wx'});parts.push({name,offset,size:data.length,digest:sha256(data)});whole.update(data);if(info.size===0)break;offset+=data.length;}}finally{await handle.close();}entries.push({path:relative,action:'write',size:info.size,digest:whole.digest('hex'),executable:(info.mode&0o111)!==0,parts});}
  const body={protocol:DELTA_PROTOCOL,version:TREE_VERSION,basisDigest:state.digest,entries,totalBytes};const manifest={...body,digest:digestObject(body)};await writeFile(path.join(outputDir,'manifest.json'),`${JSON.stringify(manifest)}\n`,{encoding:'utf8',mode:0o600,flag:'wx'});process.stdout.write(`${JSON.stringify({ready:true,digest:manifest.digest,entries:entries.length,totalBytes})}\n`);}
 
-async function main(){const [action,...args]=process.argv.slice(2);if(action==='unpack-source'){if(args.length!==2)throw new Error('unpack-source requires pack path and digest');return unpackSource(args[0],args[1]);}if(action==='prepare'){if(args.length!==2)throw new Error('prepare requires state path and expected digest');return prepare(args[0],args[1]);}if(action==='apply'){if(args.length!==2)throw new Error('apply requires manifest path and state path');return applySource(args[0],args[1]);}if(action==='run'){if(args.length<1)throw new Error('run requires descriptor path');return runOperation(args[0],args.slice(1));}if(action==='collect'){if(args.length!==2)throw new Error('collect requires output path and state path');return collect(args[0],args[1]);}throw new Error('workspace action is unsupported');}
+async function main(){const [action,...args]=process.argv.slice(2);if(action==='prepare'){if(args.length!==2)throw new Error('prepare requires state path and expected digest');return prepare(args[0],args[1]);}if(action==='apply'){if(args.length!==2)throw new Error('apply requires manifest path and state path');return applySource(args[0],args[1]);}if(action==='run'){if(args.length<1)throw new Error('run requires descriptor path');return runOperation(args[0],args.slice(1));}if(action==='collect'){if(args.length!==2)throw new Error('collect requires output path and state path');return collect(args[0],args[1]);}throw new Error('workspace action is unsupported');}
 main().catch((error)=>{process.stderr.write(`${error.name}: ${error.message}\n`);process.exitCode=1;});
