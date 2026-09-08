@@ -16,9 +16,9 @@ export class HyperVGuestFileDelivery {
     this.#family = family;
   }
 
-  async put(rawTarget, source, destination) {
+  async put(rawTarget, source, destination, { timeoutMs, signal } = {}) {
     const target = bounded(rawTarget, 'guest file delivery target', 512);
     if (!TARGET.test(target)) throw new TypeError('guest file delivery target is invalid');
-    return copyHyperVGuestFile({ invoke: this.#invoke, location: this.#location.environment(target), family: this.#family, source, destination });
+    return copyHyperVGuestFile({ invoke: this.#invoke, location: this.#location.environment(target), family: this.#family, source, destination, timeoutMs, signal });
   }
 }

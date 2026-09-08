@@ -78,9 +78,13 @@ The first native Linux consumer received successful native copy results but fail
 SSH first access. Its owned disposable guest is retained, and the previous service
 is restored after each bounded inspection. The existing provider console now
 supports bounded 640×480 and 1024×768 captures as well as 320×240; native capture
-shows the guest waiting for network readiness during boot. This is diagnostic
-evidence, not a successful bootstrap qualification. Windows first access and both
-Hello World routes remain outstanding.
+shows the guest waiting for network readiness during boot. The same retained
+guest passed strict SSH at 129 seconds with its existing delivered seed and keys;
+the earlier 90-second first-access allowance was insufficient. Access preparation
+now allows at most three minutes, clips native probes and delivery to its remaining
+deadline, and accepts enclosing cancellation/deadline constraints. This is
+diagnostic evidence, not a successful bootstrap qualification. Windows first
+access and both Hello World routes remain outstanding.
 
 Remaining recovery and separation work includes bootstrap allocation's legacy
 token, lifecycle-owned retirement authorization, consolidated capability status,

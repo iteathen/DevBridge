@@ -24,6 +24,11 @@ test('SSH access probe enforces strict pinned noninteractive options', async () 
     assert.ok(supplied.arguments.includes('BatchMode=yes'));
     assert.ok(supplied.arguments.includes('PasswordAuthentication=no'));
     assert.ok(supplied.arguments.includes('KbdInteractiveAuthentication=no'));
+    const controller = new AbortController();
+    await probe.inspect(await access(root), { timeoutMs: 1200, signal: controller.signal });
+    assert.equal(supplied.timeoutMs, 1200);
+    assert.equal(supplied.signal, controller.signal);
+    assert.ok(supplied.arguments.includes('ConnectTimeout=1'));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

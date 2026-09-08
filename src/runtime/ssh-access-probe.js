@@ -12,7 +12,8 @@ export class SshAccessProbe {
     if (typeof selected !== 'string' || selected.length === 0) throw new TypeError('SSH access probe executable is invalid');
     this.#invoke = invoke; this.#executable = selected;
   }
-  async inspect(access) {
+  async inspect(access, { timeoutMs = 15_000, signal } = {}) {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 15_000) throw new TypeError('SSH access probe timeout is invalid');
     if (!access || access.family !== 'linux' || typeof access.user !== 'string' || !USER.test(access.user) || typeof access.address !== 'string' || !ADDRESS.test(access.address)) return Object.freeze({ ready: false, reason: 'SSH access endpoint is invalid' });
     let identityFile; let knownHostsFile;
     try { [identityFile, knownHostsFile] = await Promise.all([regular(access.identityFile, 'SSH access identityFile'), regular(access.knownHostsFile, 'SSH access knownHostsFile')]); }
@@ -26,10 +27,11 @@ export class SshAccessProbe {
         '-o', 'UpdateHostKeys=no', '-o', 'IdentitiesOnly=yes', '-o', 'ForwardAgent=no',
         '-o', 'ForwardX11=no', '-o', 'ClearAllForwardings=yes', '-o', 'PermitLocalCommand=no',
         '-o', 'PasswordAuthentication=no', '-o', 'KbdInteractiveAuthentication=no',
-        '-o', 'ConnectTimeout=5', '-i', identityFile, `${access.user}@${access.address}`, 'true',
+        '-o', `ConnectTimeout=${Math.min(5, Math.max(1, Math.floor(timeoutMs / 1000)))}`, '-i', identityFile, `${access.user}@${access.address}`, 'true',
       ],
       input: null,
-      timeoutMs: 15_000,
+      timeoutMs,
+      ...(signal == null ? {} : { signal }),
       maxOutputBytes: 64 * 1024,
     });
     if (!result || result.exitCode !== 0 || result.timedOut || result.aborted || result.outputTruncated) return Object.freeze({ ready: false, reason: String(result?.stderr || result?.stdout || 'SSH access probe failed').trim().slice(-1024) });
