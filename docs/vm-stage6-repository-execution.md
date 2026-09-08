@@ -36,12 +36,11 @@ running-lifetime contract requires owner-bound readiness reuse while preserving
 current route, generation, policy, lease/fence, and request identity checks.
 
 Current preparation gap: each registered operation and scratch-cleanup session
-calls activity preparation and health again. Bootstrap `ensure` invokes provider
-preparation before inspecting the existing bootstrap generation, so an already
-running guest can receive repeated attachment/network/access preparation. Normal
-session close does not stop the VM. Removing this repeated startup work remains
-part of the lifecycle/execution ownership refactor; persistent disks alone do not
-establish an efficient warm-guest path.
+calls activity preparation and health again. Bootstrap `ensure` now skips provider
+preparation for a ready exact generation, but repeated observation and per-frame
+connection setup still remain. Normal session close does not stop the VM. Removing
+unnecessary observation and connection setup remains part of the ownership
+refactor; persistent disks alone do not establish an efficient warm-guest path.
 
 ## Local route policy
 
@@ -89,6 +88,13 @@ large parts retain the existing streaming path. This changes neither the public
 bridge frames nor image identity. Source transfer reports bounded progress and
 checks cancellation before subsequent effects. Native qualification status is
 tracked separately from this transport contract.
+
+For a changed manifest, the delivered source helper observes which staged parts
+still match their expected size and digest. The host accepts only a bounded part
+selection bound to its exact manifest bytes and sends missing/corrupt parts.
+Guest source application still validates every part and complete file; a stale or
+forged omission cannot turn altered bytes into an accepted source tree. Unchanged
+staged data therefore avoids retransmission without becoming trusted authority.
 
 Workspace preparation and source transfer project their phases through the existing
 run liveness channel. They must not imply that the registered compiler or test has

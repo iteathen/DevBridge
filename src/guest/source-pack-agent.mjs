@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, open, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { gunzipSync } from 'node:zlib';
 
@@ -52,10 +52,57 @@ async function unpackSource(file, expectedDigest) {
   process.stdout.write(`${JSON.stringify({ ready: true, digest: expected, parts: parts.length })}\n`);
 }
 
+async function neededParts(file, expectedDigest) {
+  const expected = exactDigest(expectedDigest);
+  const info = await lstat(file);
+  if (!info.isFile() || info.isSymbolicLink() || info.size > 24 * 1024 * 1024) throw new Error('source manifest is not a bounded regular file');
+  const bytes = await readFile(file);
+  if (bytes.length > 24 * 1024 * 1024 || sha256(bytes) !== expected) throw new Error('source manifest bytes changed');
+  const manifest = JSON.parse(bytes.toString('utf8'));
+  if (manifest.protocol !== 'devbridge/file-tree-v1' || !Array.isArray(manifest.entries) || manifest.entries.length > 100_000) throw new Error('source manifest is invalid');
+  const parent = path.dirname(file);
+  const parentInfo = await lstat(parent);
+  if (!parentInfo.isDirectory() || parentInfo.isSymbolicLink()) throw new Error('source part directory is invalid');
+  const root = await realpath(parent);
+  const seen = new Set(), needed = [];
+  for (const entry of manifest.entries) {
+    if (entry.type !== 'file') continue;
+    if (!Array.isArray(entry.parts)) throw new Error('source manifest parts are invalid');
+    for (const part of entry.parts) {
+      if (!PART_NAME.test(part.name) || seen.has(part.name) || !Number.isSafeInteger(part.size) || part.size < 0 || part.size > 32 * 1024 * 1024) throw new Error('source manifest part is invalid');
+      exactDigest(part.digest);
+      seen.add(part.name);
+      let matches = false;
+      try {
+        const selected = path.join(root, part.name);
+        const current = await lstat(selected);
+        if (current.isFile() && !current.isSymbolicLink() && current.size === part.size) {
+          const handle = await open(selected, 'r');
+          try {
+            const content = Buffer.alloc(part.size);
+            let offset = 0;
+            while (offset < content.length) {
+              const result = await handle.read(content, offset, content.length - offset, offset);
+              if (result.bytesRead === 0) break;
+              offset += result.bytesRead;
+            }
+            matches = offset === part.size && (await handle.stat()).size === part.size && sha256(content) === part.digest;
+          } finally { await handle.close(); }
+        }
+      } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (!matches) needed.push(part.name);
+    }
+  }
+  process.stdout.write(`${JSON.stringify({ protocol: 'devbridge/source-parts-needed-v1', manifestDigest: expected, needed })}\n`);
+}
+
 try {
   const args = process.argv.slice(2);
-  if (args.length !== 2) throw new Error('source unpacking requires pack path and digest');
-  await unpackSource(...args);
+  if (args.length === 3 && args[0] === 'needed') await neededParts(args[1], args[2]);
+  else {
+    if (args.length !== 2) throw new Error('source unpacking requires pack path and digest');
+    await unpackSource(...args);
+  }
 } catch (error) {
   process.stderr.write(`${error.name}: ${error.message}\n`);
   process.exitCode = 1;

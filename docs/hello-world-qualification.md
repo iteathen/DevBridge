@@ -79,6 +79,37 @@ Hyper-V evidence. Common code and changed contracts must retain both adapters.
 
 ## Failure behavior on the exercised path
 
+### September 8 latency repair cycle
+
+Assess every task against the fact it establishes and the consumer needing that
+fact. Existing valid evidence should remove work, not merely add another check.
+The measured defects are full retransmission after small source changes, repeated
+preparation, and one native inspection/connection setup per transfer frame.
+
+Repair source synchronization first: ask the guest which staged parts still match
+the exact manifest, send only missing/corrupt parts, and retain full application
+digest validation. Then move connection lifetime and readiness reuse into the
+activity/provider owner, with current declaration/generation/policy checks and
+disconnect/cancellation recovery. Keep the existing public v1 formats readable.
+Microsoft documents persistent PowerShell Direct sessions; Node's child-process
+pipes provide the bounded transport mechanism. These support connection reuse,
+not cross-subject authority caching. Research: [PowerShell Direct](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/powershell-direct),
+[Node child processes](https://nodejs.org/docs/latest-v22.x/api/child_process.html).
+
+Qualify each repair with focused normal/failure/recovery tests, then measure the
+normal installed workflow on both running guests. Compare guest compute time,
+transferred bytes, required exchanges and external API time separately from
+startup. A reduced duration alone is insufficient: every remaining substantial
+cost needs a necessary task or a concrete next repair. The previous nine-minute
+Linux workflow is not an acceptable warm Hello World result.
+
+CI now runs static/artifact prerequisites first, followed by one full behavioral
+suite per host platform. The static-only preflight explicitly reports zero tests;
+the normal/candidate preflight default still runs its behavioral checks. Separate
+identity, installer and architecture invocations were duplicate subsets of the
+full suite and are removed from CI. This changes engineering verification cost,
+not guest admission or runtime authority.
+
 September 8 transfer investigation: task #523's first `cmake.configure` attempt
 spent over an hour preparing its workspace, before compiler execution. Read-only
 guest observations at 21:02:36 and 21:03:00 UTC found 316 then 318 of 355 source

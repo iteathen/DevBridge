@@ -35,12 +35,14 @@ Reset/reseed already replaces the Stage-3 writable layer and changes the exact e
 
 DB-020 now explicitly requires a running guest to be reused between jobs and
 expensive preparation to follow startup, material change, or failure recovery.
-The current `ensure` implementation still invokes provider preparation before it
-inspects this generation record. Its unchanged-generation fast path therefore
-skips guest `apply`, but does not yet skip host attachment/network/access
-preparation. This is an implementation gap, not a requirement to repeat startup
-work for every operation. A durable generation record alone does not prove that a
-guest has not rebooted or that a capability observation is still usable.
+`ensure` first makes a bounded observation of the exact generation. A ready
+observation skips provider preparation and guest `apply`. An unavailable or
+degraded observation enters preparation once and rechecks basis/policy before
+application. A malformed or incorrectly bound response fails validation instead
+of authorizing preparation. This fast path has focused contract coverage; native
+performance qualification remains outstanding. A durable generation record alone
+does not prove that a guest has not rebooted or that a capability observation is
+still usable.
 
 ## Baseline development capability contract
 

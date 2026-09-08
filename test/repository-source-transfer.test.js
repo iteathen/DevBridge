@@ -153,3 +153,81 @@ test('partial guest staging can resume the same pack without changing repository
   assert.equal(await readFile(path.join(f.input, 'part-1-0'), 'utf8'), 'beta');
   assert.deepEqual(await readdir(f.work), ['retained.txt']);
 });
+
+test('changed snapshots transfer only missing or corrupt parts and still apply the full exact manifest', async t => {
+  const f = await fixture(t);
+  await writeFile(path.join(f.source, 'a.txt'), 'retained source');
+  await writeFile(path.join(f.source, 'b.txt'), 'original source');
+  const snapshot = () => snapshotFileTree({ root: f.source, listPaths: async () => ['a.txt', 'b.txt'] });
+  const manifest = path.join(f.input, 'manifest.json');
+  const state = path.join(f.root, 'state.json');
+  let transferred = [];
+  const synchronize = async tree => {
+    const bytes = tree.manifestBytes();
+    await writeFile(manifest, bytes);
+    const observed = await run(f.work, ['needed', manifest, hash(bytes)], packAgent);
+    assert.equal(observed.code, 0, observed.err);
+    const needed = JSON.parse(observed.out);
+    transferred = [];
+    await transferRepositorySource({ snapshot: tree, needed,
+      writePack: async bytes => {
+        transferred.push(...JSON.parse(gunzipSync(bytes).toString()).parts.map(part => part.name));
+        await writeFile(f.pack, bytes);
+      },
+      unpack: async digest => {
+        const result = await run(f.work, [f.pack, digest], packAgent);
+        assert.equal(result.code, 0, result.err);
+        return JSON.parse(result.out);
+      },
+      writePart: () => assert.fail('unexpected large part'),
+    });
+    const applied = await run(f.work, ['apply', manifest, state]);
+    assert.equal(applied.code, 0, applied.err);
+    assert.equal(JSON.parse(applied.out).digest, tree.manifest.digest);
+    return needed;
+  };
+  await synchronize(await snapshot());
+  assert.equal(transferred.length, 2);
+  await writeFile(path.join(f.source, 'b.txt'), 'changed source');
+  const changed = await snapshot();
+  await synchronize(changed);
+  assert.deepEqual(transferred, [changed.manifest.entries[1].parts[0].name]);
+  assert.equal(await readFile(path.join(f.work, 'a.txt'), 'utf8'), 'retained source');
+  assert.equal(await readFile(path.join(f.work, 'b.txt'), 'utf8'), 'changed source');
+  await synchronize(changed);
+  assert.deepEqual(transferred, []);
+
+  const first = changed.manifest.entries[0].parts[0];
+  await writeFile(path.join(f.input, first.name), 'corrupt source!');
+  await synchronize(changed);
+  assert.deepEqual(transferred, [first.name]);
+  await rm(path.join(f.input, first.name));
+  await synchronize(changed);
+  assert.deepEqual(transferred, [first.name]);
+
+  // The observation cannot authorize stale/corrupt bytes at application time.
+  await writeFile(path.join(f.input, first.name), 'corrupt source!');
+  const tampered = await run(f.work, ['apply', manifest, state]);
+  assert.notEqual(tampered.code, 0);
+  assert.match(tampered.err, /digest|size|length/);
+});
+
+test('part selection is exact-manifest-bound and cannot introduce or duplicate host reads', async t => {
+  const f = await fixture(t);
+  await writeFile(path.join(f.source, 'a'), 'a');
+  const snapshot = await snapshotFileTree({ root: f.source, listPaths: async () => ['a'] });
+  const good = { protocol: 'devbridge/source-parts-needed-v1', manifestDigest: hash(snapshot.manifestBytes()), needed: [] };
+  const ports = { snapshot, writePack: () => assert.fail('invalid selection cannot transfer'), writePart: () => assert.fail('invalid selection cannot read') };
+  for (const needed of [
+    { ...good, manifestDigest: '0'.repeat(64) },
+    { ...good, needed: ['../escaped'] },
+    { ...good, needed: ['part-0-0', 'part-0-0'] },
+    { ...good, protocol: 'unknown' },
+  ]) await assert.rejects(transferRepositorySource({ ...ports, needed }), /selection does not match/);
+  await transferRepositorySource({ ...ports, needed: good });
+  const manifest = path.join(f.input, 'manifest.json');
+  await writeFile(manifest, snapshot.manifestBytes());
+  const wrong = await run(f.work, ['needed', manifest, '0'.repeat(64)], packAgent);
+  assert.notEqual(wrong.code, 0);
+  assert.match(wrong.err, /manifest bytes changed/);
+});

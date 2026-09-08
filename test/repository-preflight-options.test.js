@@ -17,8 +17,8 @@ function successfulRunner(calls) {
 }
 
 test('preflight arguments expose only closed scheduling and qualification selections', () => {
-  assert.deepEqual(parseRepositoryPreflightArguments([]), { boundTargetedTestConcurrency: false, ciQualification: false });
-  assert.deepEqual(parseRepositoryPreflightArguments(['--bound-targeted-test-concurrency']), { boundTargetedTestConcurrency: true, ciQualification: false });
+  assert.deepEqual(parseRepositoryPreflightArguments([]), { boundTargetedTestConcurrency: false, ciQualification: false, staticOnly: false });
+  assert.deepEqual(parseRepositoryPreflightArguments(['--bound-targeted-test-concurrency']), { boundTargetedTestConcurrency: true, ciQualification: false, staticOnly: false });
   assert.throws(() => parseRepositoryPreflightArguments('--bound-targeted-test-concurrency'), /must be an array/u);
   assert.throws(() => parseRepositoryPreflightArguments(['--bound-targeted-test-concurrency=1']), /accepts only/u);
   assert.throws(() => parseRepositoryPreflightArguments(['--bound-targeted-test-concurrency', '--bound-targeted-test-concurrency']), /accepts only/u);
@@ -60,6 +60,19 @@ test('programmatic preflight scheduling rejects open or malformed options before
     () => runRepositoryPreflight(root, successfulRunner([]), {}, null),
     /must be an object/u,
   );
+});
+
+test('static preflight retains artifact, syntax and inventory checks without repeating behavioral suites', () => {
+  const fullCalls = [], staticCalls = [];
+  const full = runRepositoryPreflight(root, successfulRunner(fullCalls), {}, {});
+  const selected = parseRepositoryPreflightArguments(['--static-only']);
+  const observed = runRepositoryPreflight(root, successfulRunner(staticCalls), {}, selected);
+  assert.deepEqual(staticCalls.map(call => call.args), fullCalls.filter(call => call.args[0] !== '--test').map(call => call.args));
+  assert.equal(observed.staticOnly, true);
+  assert.equal(observed.targetedTests, 0);
+  assert.equal(observed.syntaxFiles, full.syntaxFiles);
+  assert.ok(full.targetedTests > 0);
+  assert.throws(() => runRepositoryPreflight(root, successfulRunner([]), {}, { staticOnly: 'yes' }), /must be boolean/);
 });
 
 test('CI qualification is explicit, finite, independent of scheduling and does not alter inventory', () => {

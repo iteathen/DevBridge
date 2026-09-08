@@ -68,7 +68,28 @@ test('workspace readiness loss degrades the final execution observation', async 
   });
   const observation = await composed.observe(request());
   assert.equal(observation.guest, 'degraded');
-  await assert.rejects(() => composed.readiness.verify(request()), /not healthy/u);
+  await assert.rejects(() => composed.readiness.verify(request()), /route unavailable/u);
+});
+
+test('readiness preserves the responsible preparation failure without changing v1 observation', async () => {
+  let preparations = 0;
+  const composed = createEnvironmentConstructionObservation({
+    materialization: { observe: async () => materialization() },
+    preparation: { inspect: async () => {
+      preparations += 1;
+      return { ready: false, enrollment: 'ready', bootstrap: 'degraded', reason: 'required capability compiler-c is unavailable\n' + 'x'.repeat(2000) };
+    } },
+    workspaces: { inspect: async () => ({ ready: false, reason: 'dependent route unavailable' }) },
+  });
+  await assert.rejects(composed.readiness.verify(request()), error => {
+    assert.match(error.message, /bootstrap-degraded; required capability compiler-c is unavailable/);
+    assert.ok(error.message.length < 1200);
+    assert.ok(!error.message.includes('\n'));
+    assert.ok(!error.message.includes('dependent route'));
+    return true;
+  });
+  assert.equal(preparations, 1);
+  assert.equal(Object.hasOwn(await composed.observe(request()), 'reason'), false);
 });
 
 test('construction readiness refuses an unidentified implementation even when every health field says ready', async () => {

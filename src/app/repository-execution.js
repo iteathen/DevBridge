@@ -223,22 +223,27 @@ export async function createRepositoryExecution({
           snapshot,
           install: () => bytes.write(agentBytes, agentLocation),
           observe: (digest, options) => runAgent('prepare', [stateLocation, digest], { timeoutMs: 60_000, ...options }),
-          transfer: (snapshot, options) => transferRepositorySource({
-            snapshot, ...options,
-            writePack: async (value, controls) => {
-              if (!sourcePackAgentInstalled) {
-                await bytes.write(sourcePackAgentBytes, sourcePackAgentLocation, { signal: controls.signal });
-                sourcePackAgentInstalled = true;
-              }
-              return bytes.write(value, sourcePackLocation, controls);
-            },
-            unpack: async (identity, controls) => parseAgentResult(await channel.execute(target, {
-              program: 'node', arguments: [sourcePackAgentLocation, sourcePackLocation, identity],
+          transfer: async (snapshot, options) => {
+            if (!sourcePackAgentInstalled) {
+              await bytes.write(sourcePackAgentBytes, sourcePackAgentLocation, { signal: options.signal });
+              sourcePackAgentInstalled = true;
+            }
+            const needed = parseAgentResult(await channel.execute(target, {
+              program: 'node', arguments: [sourcePackAgentLocation, 'needed', sourceManifestLocation, createHash('sha256').update(snapshot.manifestBytes()).digest('hex')],
               directory: { class: 'work', path: '.' }, environment: {}, input: null,
-              timeoutMs: 60_000, maxOutputBytes: 16 * 1024,
-            }, controls), 'source pack unpacking'),
-            writePart: (part, read) => bytes.stream({ read }, { class: 'input', path: `source/${part.name}` }, { maxBytes: Math.max(1, part.size) }),
-          }),
+              timeoutMs: 60_000, maxOutputBytes: BRIDGE_OUTPUT_LIMIT,
+            }, options), 'source part observation');
+            return transferRepositorySource({
+              snapshot, needed, ...options,
+              writePack: (value, controls) => bytes.write(value, sourcePackLocation, controls),
+              unpack: async (identity, controls) => parseAgentResult(await channel.execute(target, {
+                program: 'node', arguments: [sourcePackAgentLocation, sourcePackLocation, identity],
+                directory: { class: 'work', path: '.' }, environment: {}, input: null,
+                timeoutMs: 60_000, maxOutputBytes: 16 * 1024,
+              }, controls), 'source pack unpacking'),
+              writePart: (part, read) => bytes.stream({ read }, { class: 'input', path: `source/${part.name}` }, { maxBytes: Math.max(1, part.size) }),
+            });
+          },
           writeManifest: (value) => bytes.write(value, sourceManifestLocation),
           apply: (options) => runAgent('apply', [sourceManifestLocation, stateLocation], { timeoutMs: 10 * 60_000, ...options }),
         },

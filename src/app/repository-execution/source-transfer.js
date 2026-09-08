@@ -13,8 +13,21 @@ function active(signal) {
 
 // Packing is a workspace transport decision. The original tree manifest remains
 // the authority for every file and part, including parts too large for a pack.
-export async function transferRepositorySource({ snapshot, writePack, unpack, writePart, signal = null, onActivity = null }) {
-  const parts = snapshot.manifest.entries.filter(entry => entry.type === 'file').flatMap(entry => entry.parts);
+export async function transferRepositorySource({ snapshot, needed = null, writePack, unpack, writePart, signal = null, onActivity = null }) {
+  const allParts = snapshot.manifest.entries.filter(entry => entry.type === 'file').flatMap(entry => entry.parts);
+  let parts = allParts;
+  if (needed != null) {
+    const known = new Set(allParts.map(part => part.name));
+    if (needed.protocol !== 'devbridge/source-parts-needed-v1'
+        || needed.manifestDigest !== digest(snapshot.manifestBytes())
+        || !Array.isArray(needed.needed) || needed.needed.length > allParts.length
+        || new Set(needed.needed).size !== needed.needed.length
+        || needed.needed.some(name => !known.has(name))) {
+      throw new Error('source part selection does not match its manifest');
+    }
+    const selected = new Set(needed.needed);
+    parts = allParts.filter(part => selected.has(part.name));
+  }
   let batch = [], size = 0, completed = 0;
   const started = Date.now();
   const progress = () => onActivity?.({ kind: `source-transfer ${completed}/${parts.length} parts`, elapsedMs: Date.now() - started, at: new Date().toISOString() });

@@ -698,13 +698,14 @@ function protocolNumber(value, name) {
 
 export function parseRepositoryPreflightArguments(args = []) {
   if (!Array.isArray(args)) throw new TypeError('repository preflight arguments must be an array');
-  const allowed = [BOUND_TARGETED_TEST_CONCURRENCY_ARGUMENT, '--ci-qualification'];
+  const allowed = [BOUND_TARGETED_TEST_CONCURRENCY_ARGUMENT, '--ci-qualification', '--static-only'];
   if (new Set(args).size !== args.length || args.some((arg) => !allowed.includes(arg))) {
     throw new Error(`repository preflight accepts only ${allowed.join(' and ')}, each at most once`);
   }
   return Object.freeze({
     boundTargetedTestConcurrency: args.includes(BOUND_TARGETED_TEST_CONCURRENCY_ARGUMENT),
     ciQualification: args.includes('--ci-qualification'),
+    staticOnly: args.includes('--static-only'),
   });
 }
 
@@ -713,7 +714,7 @@ function normalizeRepositoryPreflightOptions(options) {
     throw new TypeError('repository preflight options must be an object');
   }
   const keys = Object.keys(options);
-  if (keys.some((key) => !['boundTargetedTestConcurrency', 'ciQualification'].includes(key))) {
+  if (keys.some((key) => !['boundTargetedTestConcurrency', 'ciQualification', 'staticOnly'].includes(key))) {
     throw new TypeError('repository preflight options contain an unsupported field');
   }
   if (options.boundTargetedTestConcurrency != null && typeof options.boundTargetedTestConcurrency !== 'boolean') {
@@ -722,9 +723,11 @@ function normalizeRepositoryPreflightOptions(options) {
   if (options.ciQualification != null && typeof options.ciQualification !== 'boolean') {
     throw new TypeError('ciQualification must be boolean');
   }
+  if (options.staticOnly != null && typeof options.staticOnly !== 'boolean') throw new TypeError('staticOnly must be boolean');
   return Object.freeze({
     boundTargetedTestConcurrency: options.boundTargetedTestConcurrency === true,
     ciQualification: options.ciQualification === true,
+    staticOnly: options.staticOnly === true,
   });
 }
 
@@ -770,6 +773,7 @@ export function runRepositoryPreflight(root = process.cwd(), runner = spawnSync,
     const missing = TARGETED_TESTS.filter((relative) => !targeted.includes(relative));
     throw new Error(`preflight targeted tests are missing: ${missing.join(', ')}`);
   }
+  if (scheduling.staticOnly) return { standaloneArtifacts: 3, syntaxFiles: SYNTAX_FILES.length, jsonFiles: JSON_FILES.length, targetedTests: 0, staticOnly: true, compatibility };
   const testArguments = [
     '--test',
     ...(scheduling.boundTargetedTestConcurrency ? [`--test-concurrency=${TARGETED_TEST_CONCURRENCY_LIMIT}`] : []),

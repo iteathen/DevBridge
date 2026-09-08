@@ -57,10 +57,10 @@ export class WorkspaceSession {
     await report('source-check');
     const observed = await this.#sourcePort.observe(this.#source.manifest.digest, { signal, onActivity: preparationActivity });
     if (observed.appliedDigest !== this.#source.manifest.digest) {
-      await report('source-transfer');
-      await this.#sourcePort.transfer(this.#source, { signal, onActivity: preparationActivity });
       await report('source-manifest');
       await this.#sourcePort.writeManifest(this.#source.manifestBytes());
+      await report('source-transfer');
+      await this.#sourcePort.transfer(this.#source, { signal, onActivity: preparationActivity });
       await report('source-apply');
       const applied = await this.#sourcePort.apply({ signal, onActivity: preparationActivity });
       if (applied.digest !== this.#source.manifest.digest) throw new Error(this.#messages.sourceApplyMismatch);
