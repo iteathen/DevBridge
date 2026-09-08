@@ -58,6 +58,29 @@ test('Windows protected access material fails closed off Windows and on substitu
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('unchanged protected records decrypt once; replacement, deletion and restart invalidate reuse', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-win-access-reuse-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const calls = [];
+  const options = { directory: root, invoke: fakeInvoke(calls), user: 'devbridge', platform: 'win32', entropy: () => FIXED_BYTES };
+  const material = new WindowsProtectedAccessMaterial(options);
+  await material.ensure(IDENTITY);
+  const first = await material.resolve(IDENTITY);
+  assert.deepEqual(await material.resolve(IDENTITY), first);
+  assert.equal(calls.filter(call => Object.hasOwn(JSON.parse(call.input), 'protected')).length, 1);
+  const [file] = await readdir(root), location = path.join(root, file);
+  const record = JSON.parse(await readFile(location, 'utf8'));
+  await writeFile(location, JSON.stringify({ ...record, secretDigest: '0'.repeat(64) }));
+  await assert.rejects(material.resolve(IDENTITY), /integrity changed/);
+  await writeFile(location, JSON.stringify(record));
+  assert.deepEqual(await material.resolve(IDENTITY), first);
+  assert.equal(calls.filter(call => Object.hasOwn(JSON.parse(call.input), 'protected')).length, 3);
+  await new WindowsProtectedAccessMaterial(options).resolve(IDENTITY);
+  assert.equal(calls.filter(call => Object.hasOwn(JSON.parse(call.input), 'protected')).length, 4);
+  await material.discard(IDENTITY);
+  await assert.rejects(material.resolve(IDENTITY), /unavailable/);
+});
+
 test('Windows protected access material binds a persistent environment to its fixed non-admin user', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-win-access-environment-'));
   const target = `env-${'9'.repeat(32)}`;

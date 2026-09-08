@@ -173,6 +173,25 @@ source/compile/test/result path. Compare actual guest compute with necessary
 source validation, transfer, authority and delivery cost, identifying remaining
 disproportionate phases rather than accepting the earlier nine-minute runs.
 
+Native continuation: Linux exchanges passed at 116–131 ms after a 4562 ms initial
+connection; closing and reopening the same target passed in 4216 ms. The direct
+administrator helper could not resolve Windows credentials because those records
+use the service account's DPAPI `CurrentUser` scope. That is a qualification-context
+error, not evidence that the installed Windows access is broken. Microsoft defines
+this scope as readable only under the protecting account's context:
+[DataProtectionScope](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.dataprotectionscope).
+Run Windows consumer qualification through the service's ordinary activity port
+inside the existing exact-generation activation/health/rollback transaction.
+Keep the previous service generation available if candidate health fails.
+An isolated compiled-host fixture does not prove access to production credentials.
+
+Windows access material now reuses an already verified decrypted value within its
+own bounded process cache, reading and validating the current protected record
+on every lookup. Changed/deleted records and process restart invalidate reuse.
+Focused tests include actual Windows DPAPI and record substitution/recovery; the
+accepted guest credentials and encryption scope remain unchanged. This removes
+repeated PowerShell decryption from warm frames without exporting credentials.
+
 September 8 checkpoint: the supported Ubuntu and Windows construction and image
 qualification paths have completed. Reuse both accepted images. Linux recovery
 and all three workflow cases have completed, including terminal-delivery restart
