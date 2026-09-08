@@ -139,12 +139,17 @@ Profiles that are merely possible but not needed are not created.
 
 Resource policy belongs primarily to execution profiles, not repositories.
 
+Ready profile VMs remain running between jobs by default, as required by DB-020.
+Workspace/session cleanup releases task resources without stopping the shared VM.
+Startup preparation and readiness reuse follow DB-020's running-lifetime contract;
+a new job does not imply a new boot or another full profile qualification.
+
 DevBridge accounts for:
 
 - maximum concurrently running profile VMs;
 - profile memory and vCPU policy;
 - host available memory/storage;
-- idle shutdown/suspend policy without discarding persistent profile/workspace state;
+- opt-in idle shutdown/suspend policy without discarding persistent profile/workspace state;
 - GPU/device exclusivity where relevant;
 - per-task/process resource limits inside a running profile where supported.
 

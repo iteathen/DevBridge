@@ -28,8 +28,20 @@ Composing a protected activity request reads the foundation identity independent
 of aggregate installation/image health. Explicit status still reports that health.
 Selecting a physical route queries the committed subject/profile selection before
 native observation; unrelated profiles are not part of a selected data transfer.
-Each request still reobserves the selected generation and rejects an unavailable,
-unowned, or incompatible attachment. No observations are cached across requests.
+The current implementation reobserves the selected generation for each request and
+rejects an unavailable, unowned, or incompatible attachment. It does not yet reuse
+native observations across requests. This describes the current implementation,
+not a requirement to repeat native inspection for every transfer frame. DB-020's
+running-lifetime contract requires owner-bound readiness reuse while preserving
+current route, generation, policy, lease/fence, and request identity checks.
+
+Current preparation gap: each registered operation and scratch-cleanup session
+calls activity preparation and health again. Bootstrap `ensure` invokes provider
+preparation before inspecting the existing bootstrap generation, so an already
+running guest can receive repeated attachment/network/access preparation. Normal
+session close does not stop the VM. Removing this repeated startup work remains
+part of the lifecycle/execution ownership refactor; persistent disks alone do not
+establish an efficient warm-guest path.
 
 ## Local route policy
 

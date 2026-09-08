@@ -53,8 +53,8 @@ below to pass; partial success remains useful evidence rather than completion.
 
 | Guest | Required operational evidence | Current status |
 | --- | --- | --- |
-| Linux | GitHub admission -> VM CMake compile -> CTest output -> automatic GitHub result | Unproved; the accepted v14 image remains unchanged; the existing rebuild resumed to ready on September 8. GitHub task #523 has entered the normal installed workflow; its compile/test result is still pending. |
-| Windows | GitHub admission -> VM CMake compile -> CTest output -> automatic GitHub result | Unproved; the accepted v6 image remains unchanged. Fresh bootstrap qualification passed, but the production create operation last reported insufficient host storage and still requires owner continuation. |
+| Linux | GitHub admission -> VM CMake compile -> CTest output -> automatic GitHub result | Passed September 8 on the unchanged accepted v14 image: #523 success, #524 compiler failure, #525 test failure. All registered operations were observed once, host source identity/cleanup validated, and normal GitHub results confirmed. Terminal-delivery restart recovery preserved #523's completed operations exactly. |
+| Windows | GitHub admission -> VM CMake compile -> CTest output -> automatic GitHub result | Unproved; the accepted v6 image remains unchanged. Fresh bootstrap qualification passed. The same production create operation resumed September 8 after sufficient host storage became available; operational cases remain outstanding. |
 
 September 8 native bootstrap qualification created disposable guests from both
 accepted finalized images and verified the actual first-access seed path, contents,
@@ -66,8 +66,10 @@ host. They do not establish compilation, task result delivery or KVM support.
 The operational milestone requires six workflow cases: success, compiler failure
 and test failure on each guest route. A terminal-delivery interruption followed by
 a fresh installed process must demonstrate that completed repository work is not
-repeated. Source transfer batching has consumer/provider tests; its native workflow
-qualification remains outstanding until exercised by the installed runner.
+repeated. The Linux terminal-delivery interruption/restart preserved all completed
+operation records and reconciled the same GitHub comment. Source transfer batching
+has consumer/provider tests and was exercised by the installed runner for #524 and
+#525; Windows workflow qualification remains outstanding.
 
 Guest OS and host provider are separate axes. Proving both guests on the current
 Windows/Hyper-V host satisfies these operational rows only. Linux-host
@@ -90,8 +92,19 @@ The correction packs source parts without changing accepted images, separates
 activity composition from aggregate image health, and scopes physical lookup
 before native observation. Transfer/preparation phases use the existing durable
 liveness contract and are identified separately from registered tool execution.
-Focused contract and consumer tests pass. Native before/after workflow timing and
-the six-case milestone remain outstanding; this diagnosis is not compile proof.
+Focused contract and consumer tests pass. The installed corrected runner completed
+#524 and #525 in about nine minutes each, compared with about 74 minutes for the
+earlier #523 workflow. These are different cases, not a controlled benchmark.
+For #525, actual configure/build/test durations were 405/370/142 ms. The surrounding
+preparation, transfer and control-plane work remains disproportionately expensive.
+
+At 21:48 UTC on September 8, Hyper-V reported the Linux guest
+`9c0d8a6b-2aba-4c9d-be35-bc0b755293b0` running with about 44 hours of continuous
+uptime. The three Linux jobs therefore did not pay for a guest boot. Repeated
+startup preparation is a separate implementation gap, documented in Stage 5/6;
+DB-020 now explicitly requires keeping ready guests running and reusing valid
+owner-produced readiness between jobs. These Linux observations do not establish
+Windows or KVM behavior.
 
 Before calling the milestone complete, exercise a compile error and a failed
 test on each claimed guest route. The originating GitHub task must receive useful
@@ -108,12 +121,12 @@ desktop access, SSH, a debug flag or a later log request a production prerequisi
 
 ## Work order and ownership
 
-September 7 checkpoint: the supported Ubuntu and Windows construction and image
-qualification paths have completed. Reuse both accepted images. The interrupted
-Linux create has been reconciled and the service disconnect fix is installed.
-The next Linux step is resuming its existing rebuild from the image in the
-current declaration (HO196), followed by accepted profile activation and ordinary
-setup verification. Neither guest has completed the GitHub Hello World task.
+September 8 checkpoint: the supported Ubuntu and Windows construction and image
+qualification paths have completed. Reuse both accepted images. Linux recovery
+and all three workflow cases have completed, including terminal-delivery restart
+recovery. Continue the accepted Windows operation and then exercise its three
+normal workflow cases. Warm-guest preparation overhead remains an identified
+ownership repair; it does not justify another image build or Linux replacement.
 The responsibilities below remain acceptance scope, not instructions to repeat
 completed image or package-basis qualification.
 

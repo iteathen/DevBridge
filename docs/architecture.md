@@ -352,7 +352,7 @@ Future/qualified resource governance may include:
 - memory/vCPU limits;
 - storage growth/retention;
 - active profile/warm-pool policy;
-- idle shutdown/suspend;
+- opt-in idle shutdown/suspend (ready profiles stay running between jobs by default);
 - GPU/device exclusivity;
 - task/process quotas;
 - guest buffer/cache/history retention budgets.

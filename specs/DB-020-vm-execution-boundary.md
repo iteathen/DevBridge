@@ -161,6 +161,33 @@ A provider/image/profile compatibility change cannot silently reuse incompatible
 
 Adding/removing a repository must not recreate a compatible profile VM. Stopping/restarting the profile VM preserves its persistent disk and intended repository workspace state. Reset/reseed of the entire profile is an explicit profile-level action; repository-workspace reset is a separate narrower operation when supported.
 
+### Running lifetime and preparation
+
+A ready profile VM stays running between jobs by default. Completing, failing, or
+cancelling a repository operation, closing a workspace session, or restarting the
+ordinary application does not request a VM stop, suspend, reset, or fresh boot.
+An explicit operator lifecycle action or an explicitly enabled profile resource
+policy may change that lifetime. Idle shutdown/suspend is opt-in, not job cleanup.
+
+Installation verification, image admission, provider attachment preparation, and
+guest bootstrap belong to their respective owners. Perform expensive preparation
+at the relevant component or guest startup, after a material identity/configuration
+change, or when an observed failure requires reconciliation. A job or transfer
+request is not itself a reason to repeat that work. Reuse valid owner-produced
+readiness for the same declaration, environment generation, boot, and capability
+requirements; invalidate it when its owning facts change. Guest observations
+remain untrusted and never grant host authority.
+
+Job admission still checks current task/repository/revision authority, the exact
+selected route, required capabilities, and exclusive workspace ownership. Effects
+still check cancellation, lease/fence validity, relevant generation/policy changes,
+and request/result identity. Source changes and returned results still require
+their own validation; host Git and publication retain their existing checks.
+These bounded checks must not reenter installation, scan unrelated profiles,
+reacquire accepted images, or rerun bootstrap preparation for an unchanged ready
+guest. A stale or unavailable assessment is reconciled by its owner, not by
+duplicating its health algorithm in each consumer.
+
 DB-009 observe/reconcile-before-repeat semantics apply to ambiguous VM lifecycle and bridge effects.
 
 ## Base images and writable layers
@@ -279,7 +306,7 @@ Resource governance includes, where supported:
 - profile memory/vCPU policy;
 - host available memory/storage reserve;
 - active profile/warm-pool limits;
-- idle shutdown/suspend without losing persistent profile/workspace state;
+- explicitly enabled idle shutdown/suspend without losing persistent profile/workspace state (default: keep running);
 - disk growth/retention;
 - operation timeout/cancel;
 - GPU/device exclusivity;
