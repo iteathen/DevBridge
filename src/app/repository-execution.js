@@ -25,6 +25,7 @@ import { OperationMaterializer } from './repository-execution/operation-material
 import { RouteAccess } from './repository-execution/route-access.js';
 import { acquireSessionGuard } from './repository-execution/session-guard.js';
 import { WorkspaceSession } from './repository-execution/workspace-session.js';
+import { transferRepositorySource } from './repository-execution/source-transfer.js';
 
 const BRIDGE_OUTPUT_LIMIT = 3 * 1024 * 1024;
 const TRANSFER_LIMIT = 16 * 1024 * 1024;
@@ -217,7 +218,12 @@ export async function createRepositoryExecution({
           snapshot,
           install: () => bytes.write(agentBytes, agentLocation),
           observe: (digest, options) => runAgent('prepare', [stateLocation, digest], { timeoutMs: 60_000, ...options }),
-          writePart: (part, read) => bytes.stream({ read }, { class: 'input', path: `source/${part.name}` }, { maxBytes: Math.max(1, part.size) }),
+          transfer: (snapshot, options) => transferRepositorySource({
+            snapshot, ...options,
+            writePack: (value, controls) => bytes.write(value, { class: 'input', path: 'source/parts.gz' }, controls),
+            unpack: (identity, controls) => runAgent('unpack-source', [{ class: 'input', path: 'source/parts.gz' }, identity], { timeoutMs: 60_000, ...controls }),
+            writePart: (part, read) => bytes.stream({ read }, { class: 'input', path: `source/${part.name}` }, { maxBytes: Math.max(1, part.size) }),
+          }),
           writeManifest: (value) => bytes.write(value, sourceManifestLocation),
           apply: (options) => runAgent('apply', [sourceManifestLocation, stateLocation], { timeoutMs: 10 * 60_000, ...options }),
         },

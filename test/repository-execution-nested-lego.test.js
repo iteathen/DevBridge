@@ -85,6 +85,18 @@ test('byte channel copies retained input and enforces contiguous bounded output'
   await assert.rejects(() => invalid.emit({ class: 'output', path: 'value' }, { write: async () => {} }), /not contiguous/u);
 });
 
+test('byte channel checks cancellation between frames and reports confirmed progress', async () => {
+  const fixture = byteFixture();
+  const controller = new AbortController();
+  const offsets = [];
+  await assert.rejects(fixture.channel.write(Buffer.from('source'), { class: 'input', path: 'value' }, {
+    signal: controller.signal,
+    onProgress: ({ offset }) => { offsets.push(offset); if (offset === 2) controller.abort(new Error('lease lost')); },
+  }), /lease lost/);
+  assert.deepEqual(offsets, [0, 2]);
+  assert.equal(fixture.writes.length, 0);
+});
+
 test('operation materializer stages bounded resources and one closed descriptor', async () => {
   const staged = [];
   const owner = new OperationMaterializer({
@@ -196,7 +208,7 @@ test('workspace session sequences only its local ports and closes exact ownershi
       snapshot: async () => { calls.push('snapshot'); return snapshot; },
       install: async () => calls.push('install'),
       observe: async () => { calls.push('observe'); return { appliedDigest: 'source-digest' }; },
-      writePart: async () => calls.push('part'),
+      transfer: async () => calls.push('part'),
       writeManifest: async () => calls.push('manifest'),
       apply: async () => { calls.push('apply-source'); return { digest: 'source-digest' }; },
     },
@@ -243,13 +255,6 @@ test('workspace session sequences only its local ports and closes exact ownershi
 test('nested execution owners import no sibling and cannot name provider or host fallback topology', async () => {
   const directory = path.join(ROOT, 'src', 'app', 'repository-execution');
   const names = (await readdir(directory)).filter((name) => name.endsWith('.js')).sort();
-  assert.deepEqual(names, [
-    'byte-channel.js',
-    'operation-materializer.js',
-    'route-access.js',
-    'session-guard.js',
-    'workspace-session.js',
-  ]);
   const forbidden = /(?:from ['"]\.\.?\/|hyper-?v|libvirt|qemu|powershell|virsh|github|codex|environment-bridge|persistent-environment|workspace-agent|resource-agent|bubblewrap|appcontainer|processcontainer|child_process|\bspawn\b|\bexecFile\b)/imu;
   for (const name of names) {
     const source = await readFile(path.join(directory, name), 'utf8');

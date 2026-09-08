@@ -62,6 +62,15 @@ The guest receives only this admitted snapshot through input-transfer capabiliti
 
 `git reset --hard <saved-baseline>` plus `git clean -fd` removes prior proposal state before each operation while deliberately preserving ignored dependency/build caches within that repository workspace. The host snapshots again after synchronization and rejects host source drift.
 
+The workspace transport groups small source parts into bounded compressed
+`devbridge/source-part-pack-v1` artifacts. The delivered workspace helper checks
+the pack digest, decompression bound, member names and each member's bytes before
+staging them. The original v1 file-tree manifest still governs source application;
+large parts retain the existing streaming path. This changes neither the public
+bridge frames nor image identity. Source transfer reports bounded progress and
+checks cancellation before subsequent effects. Native qualification status is
+tracked separately from this transport contract.
+
 ## Candidate return and host authority
 
 After an observed non-timeout/non-abort completion, the guest compares its working state to the saved local baseline and emits a bounded delta. Guest commits do not change the comparison basis.

@@ -41,13 +41,7 @@ export class WorkspaceSession {
     await this.#sourcePort.install();
     const observed = await this.#sourcePort.observe(this.#source.manifest.digest, { signal, onActivity });
     if (observed.appliedDigest !== this.#source.manifest.digest) {
-      for (const entry of this.#source.manifest.entries) {
-        if (entry.type !== 'file') continue;
-        for (const part of entry.parts) {
-          ensureActive(signal);
-          await this.#sourcePort.writePart(part, (request) => this.#source.readPart(part.name, request));
-        }
-      }
+      await this.#sourcePort.transfer(this.#source, { signal, onActivity });
       await this.#sourcePort.writeManifest(this.#source.manifestBytes());
       const applied = await this.#sourcePort.apply({ signal, onActivity });
       if (applied.digest !== this.#source.manifest.digest) throw new Error(this.#messages.sourceApplyMismatch);
