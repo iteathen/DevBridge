@@ -27,7 +27,7 @@ export class RouteAccess {
   async resolve(scope) {
     const subject = stableSubject(await this.#identify(structuredClone(scope)), this.#messages.subjectName);
     const route = this.#select(this.#policy, subject);
-    const matches = (await this.#list()).filter((entry) => entry.record?.subject === subject && entry.record?.profile === route.profile);
+    const matches = (await this.#list({ subject, profile: route.profile })).filter((entry) => entry.record?.subject === subject && entry.record?.profile === route.profile);
     if (matches.length !== 1) throw new Error(matches.length === 0 ? this.#messages.absent : this.#messages.ambiguous);
     const selected = matches[0];
     if (!selected.observation?.exists || !selected.observation?.owned || !selected.observation?.compatible) {

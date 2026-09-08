@@ -26,6 +26,7 @@ import { RouteAccess } from './repository-execution/route-access.js';
 import { acquireSessionGuard } from './repository-execution/session-guard.js';
 import { WorkspaceSession } from './repository-execution/workspace-session.js';
 import { transferRepositorySource } from './repository-execution/source-transfer.js';
+import { executionWorkspaceTarget } from './execution-profile-routing.js';
 
 const BRIDGE_OUTPUT_LIMIT = 3 * 1024 * 1024;
 const TRANSFER_LIMIT = 16 * 1024 * 1024;
@@ -54,7 +55,9 @@ function activityComponents(raw) {
   return Object.freeze({
     state: Object.freeze({
       inspect: () => raw.inspect(),
-      listEnvironments: () => raw.list(),
+      listEnvironments: async (selection = null) => selection == null
+        ? raw.list()
+        : [await raw.observe(executionWorkspaceTarget(selection.subject, selection.profile))],
       observeEnvironment: (target) => raw.observe(target),
     }),
     preparation: Object.freeze({ ensure: (target) => raw.prepare(target) }),
@@ -133,7 +136,7 @@ export async function createRepositoryExecution({
     policy,
     identify: resolveSubject,
     select: environmentActivityRouteForSubject,
-    list: () => state.listEnvironments(),
+    list: (selection) => state.listEnvironments(selection),
     root: rootFor,
     canonicalize: (value) => realpath(path.resolve(value)),
     inspect: lstat,

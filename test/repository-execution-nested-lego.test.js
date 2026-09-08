@@ -178,6 +178,17 @@ test('route owner resolves exactly one compatible target and one admitted root',
   }).resolve({}), /invalid-root/u);
 });
 
+test('route owner requests only the selected subject and profile and rejects a foreign observation', async () => {
+  const selections = [];
+  const owner = routeOwner({ list: async selection => {
+    selections.push(selection);
+    return [{ record: { subject: '999', profile: selection.profile, identity: 'foreign' },
+      observation: { exists: true, owned: true, compatible: true } }];
+  } });
+  await assert.rejects(() => owner.resolve({}), /absent/u);
+  assert.deepEqual(selections, [{ subject: '123', profile: 'profile-a' }]);
+});
+
 function sessionMessages() {
   return {
     activityUnavailable: 'activity-unavailable',

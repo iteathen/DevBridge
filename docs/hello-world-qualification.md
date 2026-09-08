@@ -160,8 +160,8 @@ Focused provider, stream, state, routing and consumer tests pass, including a
 compiled Windows host serving 100 sequential requests from one worker, replacing
 it after cancellation and retaining it across read-only configuration access. Preflight's three fixed inventory-count
 assertions were replaced with actual invocation/inventory checks; their focused
-tests pass. Native connection timings and both installed workflow timings remain
-outstanding. This does not qualify native KVM or claim the latency milestone done.
+tests pass. Both native Hyper-V connection timings now pass; installed workflow
+timings remain outstanding. This does not qualify native KVM or claim the latency milestone done.
 
 The next native qualification uses the current accepted, running Linux and Windows
 guests to measure repeated exact bridge health exchanges, verify separate target
@@ -199,6 +199,20 @@ bounds, serialized effects, bounded caches, cancellation and shutdown cleanup
 remain enforced. The current qualification controller likewise retains its
 elevated task context; that tooling is outside the product and does not alter
 DevBridge's service authorization model.
+
+The installed `83600db` candidate passed its normal service probes and both guest
+consumer checks inside the existing activation/rollback transaction. Linux health
+requests took 4368 ms initially and 112–130 ms warm; Windows took 6335 ms initially
+and 88–114 ms warm. Windows resumed the same accepted lifecycle operation and
+reported healthy with the same physical generation and accepted image. Native
+evidence is retained in `activity-session-candidate-20260908d/result.json` under
+the local review evidence directory. No new image construction was necessary.
+
+The next ordinary execution repair selects only the requested subject/profile
+observation after startup inventory. Its contract tests prove a changed selected
+route still rejects admission without repeating global listing. The existing
+service and its native connection evidence remain applicable: this correction
+changes the ordinary consumer's calls through unchanged v1 activity operations.
 
 September 8 checkpoint: the supported Ubuntu and Windows construction and image
 qualification paths have completed. Reuse both accepted images. Linux recovery

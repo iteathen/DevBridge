@@ -12,6 +12,7 @@ import { REPOSITORY_EXECUTION_REQUEST_PROTOCOL } from '../src/runtime/repository
 import { WorkerExchange } from '../src/runtime/worker-exchange.js';
 import { lifecycleRoundtripDiagnosticProfile } from '../src/runtime/builtin-tool-profiles.js';
 import { LIFECYCLE_ROUNDTRIP_NONCE } from '../src/runtime/lifecycle-roundtrip-probe.js';
+import { executionWorkspaceTarget } from '../src/app/execution-profile-routing.js';
 
 async function command(program,args,{cwd,input=null,env=process.env}={}){return new Promise((resolve,reject)=>{const child=spawn(program,args,{cwd,env,shell:false,stdio:['pipe','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',c=>stdout+=c);child.stderr.on('data',c=>stderr+=c);child.once('error',reject);child.once('exit',(code,signal)=>resolve({exitCode:code,signal,stdout,stderr}));if(input==null)child.stdin.end();else child.stdin.end(input);});}
 async function initGit(root){await command('git',['init','-q'],{cwd:root});await command('git',['config','user.name','Host'],{cwd:root});await command('git',['config','user.email','host@localhost'],{cwd:root});await command('git',['add','-A'],{cwd:root});await command('git',['commit','-q','-m','base'],{cwd:root});}
@@ -25,6 +26,32 @@ function localChannel(root){const classes={};for(const name of ['input','work','
 };}
 
 function request(args,{tool='node',operation='test.operation',environment={CI:'1'}}={}){return{protocol:REPOSITORY_EXECUTION_REQUEST_PROTOCOL,operation,scope:{repository:'owner/repo',repositoryId:'123',runId:'run-1'},invocation:{tool,arguments:args,workingDirectory:'.'},environment,transfers:[],limits:{timeoutMs:120000,maxOutputBytes:1024*1024},stdin:null,signal:null,onActivity:null};}
+
+test('protected execution reobserves its exact route without repeating the global inventory', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-selected-route-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const target = executionWorkspaceTarget('123', 'linux-dev');
+  let lists = 0, observations = 0, preparations = 0, compatible = true;
+  const entry = () => ({ record: { identity: target, subject: '123', profile: 'linux-dev' },
+    observation: { exists: true, owned: true, compatible, reason: compatible ? null : 'selected route changed' } });
+  const execution = await createRepositoryExecution({
+    stateDirectory: path.join(root, 'state'),
+    routes: { protocol: ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL, routes: [{ subject: '123', profile: 'linux-dev' }] },
+    rootFor: async () => root, listPaths: async () => [], resolveSubject: async () => '123',
+    resolveTool: async () => ({ program: 'node', arguments: [] }),
+    activity: {
+      inspect: async () => ({ ready: true, identity: 'f'.repeat(32) }),
+      list: async () => { assert.equal(++lists, 1, 'global inventory is startup work'); return [entry()]; },
+      observe: async selected => { assert.equal(selected, target); observations++; return entry(); },
+      prepare: async selected => { assert.equal(selected, target); preparations++; throw new Error('selected preparation fixture'); },
+      exchange: async () => { throw new Error('unexpected guest effect'); },
+    },
+  });
+  await assert.rejects(() => execution.execute(request(['--version'])), /selected preparation fixture/u);
+  compatible = false;
+  await assert.rejects(() => execution.execute(request(['--version'])), /selected route changed/u);
+  assert.deepEqual({ lists, observations, preparations }, { lists: 1, observations: 2, preparations: 1 });
+});
 
 test('route policy accepts only stable numeric subjects and one validation environment',()=>{assert.throws(()=>normalizeEnvironmentActivityPolicy({protocol:ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL,routes:[{subject:'owner-repo',profile:'linux'}]}),/numeric stable identity/u);assert.throws(()=>normalizeEnvironmentActivityPolicy({protocol:ENVIRONMENT_ACTIVITY_POLICY_PROTOCOL,routes:[{subject:'1',profile:'left',validation:true},{subject:'2',profile:'right',validation:true}]}),/multiple validation routes/u);});
 

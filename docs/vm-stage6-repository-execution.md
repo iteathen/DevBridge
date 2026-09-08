@@ -38,6 +38,11 @@ connection to its exact physical guest. Connection loss, changed binding,
 cancellation and protected authority changes discard reusable resources.
 No cached observation substitutes for current task, lease/fence or result checks.
 
+Repository execution enumerates the environment inventory at composition. Each
+operation then requests only its selected subject/profile observation through the
+existing activity observation contract. Unrelated guest readiness is not rescanned
+for that operation; a changed or unavailable selected route still rejects admission.
+
 The Windows service retains one serialized activity worker for its own lifetime;
 it does not recycle a healthy worker or connection because a request count or idle
 timer elapsed. Message sizes, in-flight work and cached identities remain bounded.
