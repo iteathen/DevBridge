@@ -76,6 +76,20 @@ after its external effect, retaining durable intent for restart qualification.
 
 ### Earlier implementation and diagnostic evidence
 
+Full Windows and Linux smoke/regression CI passed at `93909ad`. Production Linux
+continuation then completed bootstrap in its existing generation and checkpointed
+preparation, exposing a workspace composition defect. The parent now passes the
+exact physical generation to the real preparation contract and resolves provider
+identity from protected foundation state. Consumer tests cover both guest families.
+The lifecycle owner also retains bounded failures in its existing state and serves
+them through the optional `diagnostics-v1` read operation. These changes still
+require installed production continuation; neither is a Hello World result.
+
+Normal setup also re-entered Ubuntu construction metadata downloads despite
+already accepted, locally verified images. That redundant read was stopped and
+accepted preparation continued through the installed lifecycle owner. Removing
+this setup dependency remains required operational-ownership work.
+
 The first implementation block consolidates native Hyper-V delivery, passes
 explicit lifecycle operation subjects into construction, replaces the persistent
 environment mutation token with process-held leases, and leaves committed status

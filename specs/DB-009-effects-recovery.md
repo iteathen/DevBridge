@@ -123,6 +123,27 @@ gaps identified above remain open until demonstrated through the production path
 
 ## Run recovery
 
+### Local environment failure inspection
+
+The environment lifecycle owner retains bounded failure evidence alongside its
+existing state, bound to environment identity, declaration revision, operation
+identity, stage, and observed generation. Diagnostic inspection must not repeat
+the operation or require guest access. Native exit, cancellation, timeout,
+classification, and truncation facts are retained when supplied by the effect
+owner; missing native or guest evidence is explicit. Text is sanitized before
+retention and remains bounded independently of output size.
+
+The optional `diagnostics-v1` read operation exposes this record through the
+existing lifecycle transport. Existing v1 operation payloads and result envelopes
+remain unchanged; unsupported diagnostic capability is rejected explicitly.
+Consumers distinguish retained historical failure from a failure associated with
+the current active operation. The diagnostic record does not grant authority to
+resume work, change declarations, or select a provider effect.
+
+The installed CLI exposes this capability as `environment diagnostics`. This
+implementation supplies owner/native failure evidence; it does not claim guest
+console or installer evidence that the diagnostic owner has not collected.
+
 On startup/daemon continuation the coordinator examines durable non-terminal runs before claiming or advancing work as appropriate.
 
 Recovery behavior is stage-aware:

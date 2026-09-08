@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createEnvironmentOperator } from '../src/app/environment-operator.js';
 import { ENVIRONMENT_DECLARATION_PROTOCOL } from '../src/runtime/environment-declaration.js';
+import { createEnvironmentLifecycleDiagnostics } from '../src/runtime/environment-lifecycle-diagnostics.js';
 
 function record() {
   return Object.freeze({
@@ -64,6 +65,25 @@ function runtimeFor({ current = null, diagnosis = null } = {}) {
   };
   return { runtime, calls, selected };
 }
+
+test('failed lifecycle continuation retains its subject and diagnostic evidence without another effect', async () => {
+  const current = { operation: 'rebuild', operationId: 'operation-a', declarationRevision: 3, entries: [{stage:'fenced-attempt'}] };
+  const { runtime } = runtimeFor({current});
+  let saved = null;
+  runtime.lifecycle.diagnostics = createEnvironmentLifecycleDiagnostics({port:{load:async()=>saved,save:async(_identity,value)=>{saved=structuredClone(value);}}});
+  let attempts = 0;
+  runtime.rebuild = async () => { attempts += 1; throw Object.assign(new Error('workspace generation is missing'),{code:'INVALID_SUBJECT'}); };
+  const operator = createEnvironmentOperator({runtime});
+  await assert.rejects(operator.resume('environment-test'), /workspace generation/u);
+  const restarted = createEnvironmentOperator({runtime});
+  const diagnostic = await restarted.diagnostics('environment-test');
+  assert.equal(diagnostic.current, true);
+  assert.equal(diagnostic.operationId, 'operation-a');
+  assert.equal(diagnostic.failure.code, 'INVALID_SUBJECT');
+  assert.equal(attempts, 1);
+  current.entries.push({stage:'terminal'});
+  assert.equal((await restarted.diagnostics('environment-test')).current, false);
+});
 
 test('operator reports rebuild as the next action for missing system storage without provider details', async () => {
   const { runtime } = runtimeFor();

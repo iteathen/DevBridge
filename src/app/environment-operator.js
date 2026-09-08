@@ -236,8 +236,20 @@ export function createEnvironmentOperator({ runtime } = {}) {
   };
 
   const invoke = async (operation, identity, approval = null) => {
-    if (operation === 'reset' || operation === 'recreate') return ownerMethod(runtime, operation)(identity, { approval });
-    return ownerMethod(runtime, operation)(identity);
+    const declaration = await declarations.get(identity);
+    try {
+      if (operation === 'reset' || operation === 'recreate') return await ownerMethod(runtime, operation)(identity, { approval });
+      return await ownerMethod(runtime, operation)(identity);
+    } catch (error) {
+      // Preserve the owner's failure before the public v1 boundary projects its
+      // generic error. Reading diagnostics never repeats the failed operation.
+      try {
+        const current = await journal.current(identity);
+        await runtime.lifecycle.diagnostics?.record({ environmentIdentity: identity, declarationRevision: declaration?.revision ?? null, operation,
+          journal: current?.declarationRevision === declaration?.revision && current.operation === operation ? current : null, error });
+      } catch { /* Failure to collect must not replace the original operation error. */ }
+      throw error;
+    }
   };
 
   const list = async () => {
@@ -338,6 +350,15 @@ export function createEnvironmentOperator({ runtime } = {}) {
       });
     },
     status,
+    async diagnostics(identity) {
+      if (typeof runtime.lifecycle.diagnostics?.inspect !== 'function') throw Object.assign(new Error('lifecycle diagnostics are unsupported'), { code: 'UNSUPPORTED_CAPABILITY' });
+      const selected = safeId(identity, 'environment identity');
+      const evidence = await runtime.lifecycle.diagnostics.inspect(selected);
+      const declaration = await declarations.get(selected);
+      const current = await journal.current(selected);
+      return Object.freeze({ ...evidence, current: evidence.available === true
+        && declaration?.revision === evidence.declarationRevision && current?.operationId === evidence.operationId && active(current) });
+    },
     plan,
     run,
     async resume(rawIdentity, { approval = null } = {}) {

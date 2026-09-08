@@ -28,7 +28,7 @@ function usage() {
   console.error('Usage: devbridge setup [--profiles <linux|windows|both|none|defer>] [--construct] [--windows-storage <directory>] [--windows-distribution <local-reconstruction>] [--windows-activation <later>] [--track-ref <branch>] [--retire-conflict <subject>] [--home <path>] [--repository owner/name|all]...');
   console.error('       devbridge setup [--windows-media <absolute-iso>] [--approve-windows-media <candidate> --windows-image-index <index> --windows-media-class <official-owned|evaluation>]');
   console.error('       devbridge <doctor|poll-once|run-once|daemon|status|pause|resume|stop|restart|handoff-status|handoff-seed|handoff-project|environment> --config <path> [options]');
-  console.error('       devbridge environment <list|show|plan|create|repair|rebuild|reset|recreate|resume|setup-reentry> --config <path> [--identity id|--profile name] [--operation op] [--confirm subject]');
+  console.error('       devbridge environment <list|show|diagnostics|plan|create|repair|rebuild|reset|recreate|resume|setup-reentry> --config <path> [--identity id|--profile name] [--operation op] [--confirm subject]');
   console.error('       devbridge construction-retention [inspect] [--home <path>]');
   console.error('       devbridge construction-retention retire --subject <subject> --confirm <plan-digest> [--home <path>]');
 }
@@ -73,6 +73,7 @@ async function runEnvironmentCommand(config, args) {
   if (action === 'setup-reentry') return operator.setupReentry(identity);
   if (!identity) throw new PolicyError(`environment ${action} requires --identity or --profile`);
   if (action === 'show') return operator.status(identity);
+  if (action === 'diagnostics') return operator.diagnostics(identity);
   if (action === 'resume') return operator.resume(identity, { approval: optionValue(args, '--confirm') });
   if (action === 'plan') {
     const operation = optionValue(args, '--operation');
