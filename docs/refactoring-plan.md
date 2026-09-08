@@ -92,6 +92,15 @@ the host's configured router. Full local Windows regression before this DNS repa
 passed 2,643 tests with 46 skips; its focused tests pass. Windows first access and
 both Hello World routes remain outstanding.
 
+The next fresh Linux attempt reached healthy network and bridge access, then
+revealed that its unprivileged bootstrap helper shared the network agent's
+privileged state directory. Host composition now selects a bootstrap subdirectory
+inside the bridge-owned guest cache through the agent's existing configuration
+contract. Windows preparation reached its storage preflight and stopped before
+VM creation because free space was just below the configured reserve. Diagnosed
+disposable Linux fixtures are retired through the environment owner to recover
+space; their native evidence and the accepted images remain retained.
+
 Remaining recovery and separation work includes bootstrap allocation's legacy
 token, lifecycle-owned retirement authorization, consolidated capability status,
 image-supply handoff, component-specific packaging, and bounded child transactions.
