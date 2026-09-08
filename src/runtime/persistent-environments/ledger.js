@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 function requireProtocol(value) {
@@ -16,14 +16,18 @@ export class EnvironmentLedger {
   #stateFile;
   #guardFile;
   #protocol;
+  #lease;
+  #held = null;
   #tail = Promise.resolve();
 
-  constructor({ directory, protocol }) {
+  constructor({ directory, protocol, lease }) {
     if (typeof directory !== 'string' || directory.length === 0) throw new TypeError('ledger directory is required');
     this.#directory = path.resolve(directory);
     this.#stateFile = path.join(this.#directory, 'catalog.json');
     this.#guardFile = path.join(this.#directory, 'lifecycle.lock');
     this.#protocol = requireProtocol(protocol);
+    if (!lease || typeof lease.acquire !== 'function') throw new TypeError('ledger mutation lease is required');
+    this.#lease = lease;
   }
 
   async #ensureDirectory() {
@@ -34,37 +38,59 @@ export class EnvironmentLedger {
 
   async #acquire() {
     await this.#ensureDirectory();
-    const token = randomUUID();
-    let handle;
-    try {
-      handle = await open(this.#guardFile, 'wx', 0o600);
-    } catch (error) {
-      if (error?.code === 'EEXIST') {
-        throw new Error('environment lifecycle mutation is already active; remove lifecycle.lock only after confirming no operation is running');
-      }
-      throw error;
+    const held = await this.#lease.acquire({ mode: 'exclusive' });
+    if (!held) throw new Error('environment lifecycle mutation is already active');
+    if (typeof held.assertHeld !== 'function' || typeof held.release !== 'function') {
+      await held.release?.();
+      throw new TypeError('ledger mutation lease contract is incomplete');
     }
     try {
-      await handle.writeFile(`${token}\n`, 'utf8');
-      await handle.sync();
+      let legacy = false;
+      try { await lstat(this.#guardFile); legacy = true; }
+      catch (error) { if (error?.code !== 'ENOENT') throw error; }
+      if (legacy) throw new Error('legacy lifecycle guard requires migration by the quiescent authority owner');
+      held.assertHeld();
+      this.#held = held;
+      return async () => {
+        this.#held = null;
+        await held.release();
+      };
     } catch (error) {
-      await handle.close().catch(() => {});
-      await rm(this.#guardFile, { force: true }).catch(() => {});
+      await held.release();
       throw error;
     }
-    await handle.close();
-    return async () => {
-      const observed = (await readFile(this.#guardFile, 'utf8')).trim();
-      if (observed !== token) throw new Error('environment lifecycle guard ownership changed');
-      await rm(this.#guardFile);
-    };
+  }
+
+  assertHeld() {
+    if (this.#held == null) throw new Error('ledger mutation requires an active lease');
+    this.#held.assertHeld();
+  }
+
+  mutationContext() {
+    this.assertHeld();
+    const held = this.#held;
+    return Object.freeze({ signal: held.signal, assertHeld: () => held.assertHeld() });
+  }
+
+  async snapshot(work) {
+    if (typeof work !== 'function') throw new TypeError('ledger snapshot work must be a function');
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const state = await this.read();
+      const result = await work(state);
+      if ((await this.read()).revision === state.revision) return result;
+    }
+    throw new Error('environment state changed during observation');
   }
 
   run(work) {
     if (typeof work !== 'function') throw new TypeError('ledger work must be a function');
     const guarded = async () => {
       const release = await this.#acquire();
-      try { return await work(); }
+      try {
+        const result = await work();
+        this.assertHeld();
+        return result;
+      }
       finally { await release(); }
     };
     const next = this.#tail.then(guarded, guarded);
@@ -87,9 +113,11 @@ export class EnvironmentLedger {
   }
 
   async commit(state) {
+    this.assertHeld();
     state.revision = Number(state.revision ?? 0) + 1;
     const temporary = path.join(this.#directory, `.catalog-${randomUUID()}.tmp`);
     await writeFile(temporary, `${JSON.stringify(state)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    this.assertHeld();
     await rename(temporary, this.#stateFile);
   }
 }

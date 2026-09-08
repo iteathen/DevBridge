@@ -56,12 +56,12 @@ export async function createEnvironmentConstructionRuntime({
   const localLifecycle = lifecycle ?? createEnvironmentLifecycle({ stateDirectory: authorityStateDirectory, ...(now ? { now } : {}) });
   const policy = createEnvironmentMaterializationPolicy();
   const materialization = createEnvironmentMaterialization({ state: localFoundation, subject: policy.subject, settings: policy.settings });
-  const rebuildMaterialization = createEnvironmentRebuildMaterialization({ state: localFoundation, subject: policy.subject, journal: localLifecycle.journal });
+  const rebuildMaterialization = createEnvironmentRebuildMaterialization({ state: localFoundation, subject: policy.subject });
   const resetAvailable = typeof localFoundation.replaceEnvironment === 'function' && typeof localFoundation.retireSupersededEnvironment === 'function';
-  const resetMaterialization = resetAvailable ? createEnvironmentResetMaterialization({ state: localFoundation, subject: policy.subject, journal: localLifecycle.journal }) : null;
+  const resetMaterialization = resetAvailable ? createEnvironmentResetMaterialization({ state: localFoundation, subject: policy.subject }) : null;
   const resetRetirement = resetAvailable ? createEnvironmentResetRetirement({ state: localFoundation, journal: localLifecycle.journal }) : null;
   const recreateAvailable = typeof localFoundation.recreateEnvironment === 'function' && typeof localFoundation.retireSupersededEnvironment === 'function';
-  const recreateMaterialization = recreateAvailable ? createEnvironmentRecreateMaterialization({ state: localFoundation, subject: policy.subject, journal: localLifecycle.journal }) : null;
+  const recreateMaterialization = recreateAvailable ? createEnvironmentRecreateMaterialization({ state: localFoundation, subject: policy.subject }) : null;
   const recreateRetirement = recreateAvailable ? createEnvironmentRecreateRetirement({ state: localFoundation, journal: localLifecycle.journal }) : null;
   const preparation = createEnvironmentConstructionPreparation({
     stateDirectory,

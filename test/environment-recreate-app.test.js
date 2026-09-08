@@ -12,7 +12,8 @@ function request() {
     environmentIdentity: 'logical-environment-a',
     operationId: 'lifecycle-recreate-1',
     declarationRevision: 1,
-    declaration: { profile: 'linux-development', image: { identity: IMAGE } },
+    declaration: { profile: 'linux-development', image: { identity: IMAGE, generation: 'image-v1' } },
+    operationSubject: { environmentIdentity: 'logical-environment-a', operationId: 'lifecycle-recreate-1', operation: 'recreate', declarationRevision: 1, previousImplementationGeneration: OLD, imageIdentity: IMAGE, imageGeneration: 'image-v1' },
   };
 }
 function activeJournal(stage = 'fenced-attempt') {
@@ -42,7 +43,6 @@ test('recreate materialization binds replacement to the active lifecycle and acc
       },
     },
     subject: { resolve: async () => 'profile-subject' },
-    journal: { current: async () => activeJournal() },
   });
   const result = await materialization.ensure(request());
   assert.deepEqual(result, { ready: true, implementationGeneration: NEXT, superseded: { identity: OLD, cleanup: 'absent' } });
@@ -57,9 +57,8 @@ test('recreate materialization refuses provider effects not bound to the exact r
       async recreateEnvironment() { calls += 1; throw new Error('unused'); },
     },
     subject: { resolve: async () => 'profile-subject' },
-    journal: { current: async () => ({ ...activeJournal(), operation: 'reset' }) },
   });
-  await assert.rejects(() => materialization.ensure(request()), /active recreate lifecycle/u);
+  await assert.rejects(() => materialization.ensure({ ...request(), operationSubject: { ...request().operationSubject, operation: 'reset' } }), /operation subject does not match/u);
   assert.equal(calls, 0);
 });
 

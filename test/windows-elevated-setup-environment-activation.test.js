@@ -22,7 +22,7 @@ function record(profiles = ['linux-development']) {
 test('elevated activation stays a small orchestration LEGO over accepted configuration and lifecycle ports', async () => {
   const source = await readFile(new URL('../src/app/windows-elevated-setup-environment-activation.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /node:(?:fs|child_process)|providers\//iu);
-  assert.doesNotMatch(source, /environment-lifecycle-authority-transport|createConfiguredLifecycleAuthorityClient/u);
+  assert.doesNotMatch(source, /environment-operator-runtime|createLocalEnvironmentOperator/u);
   assert.doesNotMatch(source, /\b(?:construct|delete|rebuild|replace|retire|acl|service)\b/iu);
 });
 
@@ -47,7 +47,7 @@ test('elevated activation derives every operation from accepted profiles and reu
         async reconcile() { calls.push(['configure']); return { ready: true, changed: false }; },
       });
     },
-    operatorFactory: async (request) => {
+    clientFactory: async (request) => {
       calls.push(['operator', request]);
       return client;
     },
@@ -69,9 +69,9 @@ test('elevated activation derives every operation from accepted profiles and reu
     ['configuration', { stateDirectory: STATE, platform: 'win32' }],
     ['configure'],
     ['record', { stateDirectory: STATE }],
-    ['operator', { stateDirectory: STATE, authorityDirectory: PLAN.authorityDirectory, platform: 'win32', invoke: INVOKE }],
-    ['activate', { client, profile: 'linux-development' }],
-    ['activate', { client, profile: 'windows-development' }],
+    ['operator', { stateDirectory: STATE, platform: 'win32' }],
+    ['activate', { client, profile: 'linux-development', expectedDeclaration: { profile: 'linux-development' } }],
+    ['activate', { client, profile: 'windows-development', expectedDeclaration: { profile: 'windows-development' } }],
   ]);
 });
 
@@ -83,7 +83,7 @@ test('elevated activation fails closed without an accepted non-empty configurati
       planFactory: () => PLAN,
       recordReader: async () => selected,
       configurationFactory: () => ({ reconcile: async () => ({ ready: true, changed: false }) }),
-      operatorFactory: () => { operatorCreated = true; },
+      clientFactory: () => { operatorCreated = true; },
     });
     assert.equal(result.ready, false);
     assert.equal(result.changed, false);
@@ -100,7 +100,7 @@ test('elevated activation stops at the first non-ready accepted profile', async 
     planFactory: () => PLAN,
     recordReader: async () => record(['linux-development', 'windows-development']),
     configurationFactory: () => ({ reconcile: async () => ({ ready: true, changed: false }) }),
-    operatorFactory: () => Object.freeze({}),
+    clientFactory: () => Object.freeze({}),
     activationReconciler: async ({ profile }) => {
       profiles.push(profile);
       return profile === 'linux-development'
@@ -123,7 +123,7 @@ test('elevated activation reconciles accepted configuration before lifecycle mut
     planFactory: () => PLAN,
     configurationFactory: () => ({ reconcile: async () => ({ ready: false, changed: true, blocker: 'configuration blocked' }) }),
     recordReader: async () => { recordRead = true; return record(); },
-    operatorFactory: () => { operatorCreated = true; },
+    clientFactory: () => { operatorCreated = true; },
   });
   assert.equal(result.ready, false);
   assert.equal(result.changed, true);
@@ -138,7 +138,7 @@ test('elevated activation refuses a non-elevated host before protected configura
   const result = await reconcileWindowsElevatedSetupEnvironmentActivation({ stateDirectory: STATE, platform: 'win32', invoke: INVOKE }, {
     hostInspector: async () => ({ ...HOST, elevated: false }),
     configurationFactory: () => { configured = true; },
-    operatorFactory: () => { operatorCreated = true; },
+    clientFactory: () => { operatorCreated = true; },
   });
   assert.equal(result.ready, false);
   assert.match(result.blocker, /bounded elevated setup child/u);

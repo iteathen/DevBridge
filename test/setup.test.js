@@ -654,7 +654,7 @@ test('widened activation-policy status fails closed before media or protected ef
   assert.equal(JSON.stringify(result).includes('must-not-project'), false);
 });
 
-test('multi-profile activation advances one changed environment and resumes in accepted order', async () => {
+test('multi-profile activation completes accepted ready changes in one invocation', async () => {
   const profileSelection = {
     protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 3, changed: false,
     profiles: ['linux-development', 'windows-development'], pendingProfiles: null, source: 'accepted',
@@ -675,18 +675,18 @@ test('multi-profile activation advances one changed environment and resumes in a
   const pending = await runDevBridgeSetup({
     home: path.join(os.tmpdir(), 'db-setup-activation-first'),
   }, first.deps);
-  assert.equal(pending.blocked, true);
-  assert.match(pending.blocker, /Additional accepted environment profile activation remains/u);
+  assert.equal(pending.blocked, false);
+  assert.equal(pending.blocker, null);
   assert.deepEqual(pending.environment, {
-    ready: false,
+    ready: true,
     changed: true,
-    state: 'pending',
-    profile: 'linux-development',
-    environmentCount: 1,
+    state: 'ready',
+    profile: 'windows-development',
+    environmentCount: 2,
     profileCount: 2,
   });
-  assert.deepEqual(first.calls.environmentActivationProfiles, ['linux-development']);
-  assert.equal(first.calls.operationalConfiguration, 0);
+  assert.deepEqual(first.calls.environmentActivationProfiles, ['linux-development', 'windows-development']);
+  assert.equal(first.calls.operationalConfiguration, 1);
 
   const second = dependencies({
     ...imageState,
@@ -712,7 +712,7 @@ test('multi-profile activation advances one changed environment and resumes in a
   assert.equal(second.calls.operationalConfiguration, 1);
 });
 
-test('multi-profile activation never skips a blocked earlier environment', async () => {
+test('a blocked profile is reported while an independent ready profile becomes operational', async () => {
   const fixture = dependencies({
     profileSelection: {
       protocol: 'devbridge/setup-profile-selection-status-v1', state: 'accepted', revision: 3, changed: false,
@@ -732,8 +732,10 @@ test('multi-profile activation never skips a blocked earlier environment', async
 
   assert.equal(result.blocked, true);
   assert.match(result.blocker, /requires review/u);
-  assert.deepEqual(fixture.calls.environmentActivationProfiles, ['linux-development']);
-  assert.equal(fixture.calls.operationalConfiguration, 0);
+  assert.deepEqual(fixture.calls.environmentActivationProfiles, ['linux-development', 'windows-development']);
+  assert.equal(fixture.calls.operationalConfiguration, 1);
+  assert.equal(result.environment.environmentCount, 1);
+  assert.equal(result.operational.executionEnabled, true);
 });
 
 test('setup rejects Windows media actions outside the selected profile before its adapter runs', async () => {

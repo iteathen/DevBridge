@@ -1,4 +1,5 @@
 import { ENVIRONMENT_OPERATOR_STATUS_PROTOCOL } from './environment-operator.js';
+import { environmentDeclarationDigest } from '../runtime/environment-declaration.js';
 
 export const SETUP_ENVIRONMENT_ACTIVATION_PROTOCOL = 'devbridge/setup-environment-activation-v1';
 
@@ -62,9 +63,10 @@ function result({ ready, changed = false, state, blocker = null, identity = null
   });
 }
 
-export async function reconcileSetupEnvironmentActivation({ client, profile } = {}) {
+export async function reconcileSetupEnvironmentActivation({ client, profile, expectedDeclaration = null } = {}) {
   const selectedClient = assertClient(client);
   const selectedProfile = safeId(profile, 'setup environment profile');
+  const expectedDigest = expectedDeclaration == null ? null : environmentDeclarationDigest(expectedDeclaration);
   const inventory = await selectedClient.list();
   if (!Array.isArray(inventory) || inventory.length > MAX_ENVIRONMENTS) {
     throw new Error('protected environment inventory is invalid');
@@ -75,16 +77,17 @@ export async function reconcileSetupEnvironmentActivation({ client, profile } = 
   }
 
   const before = normalizeStatus(matches[0], { profile: selectedProfile });
+  if (expectedDigest != null && before.declarationDigest !== expectedDigest) throw new Error('environment declaration differs from accepted setup authority');
   const identity = before.environmentIdentity;
   if (terminalReady(before)) return result({ ready: true, state: 'ready', identity });
 
   let changed = false;
   if (before.lifecycle.active === true) {
-    if (before.lifecycle.operation !== 'create' || before.lifecycle.resumable !== true) {
+    if (!['create', 'repair', 'rebuild', 'reset', 'recreate'].includes(before.lifecycle.operation) || before.lifecycle.resumable !== true || before.recommendedAction !== 'resume') {
       return result({
         ready: false,
         state: 'blocked',
-        blocker: 'accepted environment has a non-create lifecycle transition requiring operator review',
+        blocker: 'accepted environment transition requires its lifecycle owner to resolve authority',
         identity,
       });
     }
@@ -105,6 +108,7 @@ export async function reconcileSetupEnvironmentActivation({ client, profile } = 
   }
 
   const after = normalizeStatus(await selectedClient.status(identity), { profile: selectedProfile, identity });
+  if (after.declarationDigest !== before.declarationDigest || after.declarationRevision !== before.declarationRevision) throw new Error('environment declaration changed during activation');
   if (!terminalReady(after)) {
     return result({
       ready: false,

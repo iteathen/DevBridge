@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { createLocalFileLease } from './file-lease.js';
 import { BaseImageLibrary } from '../runtime/base-image-library.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
 import { EnvironmentFoundation, UnavailableEnvironmentControl } from '../runtime/environment-foundation.js';
@@ -59,6 +60,7 @@ export async function createEnvironmentFoundation({
   stateDirectory,
   platform = process.platform,
   invoke = invokeCommand,
+  leaseFactory = createLocalFileLease,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('stateDirectory is required');
   const root = path.join(path.resolve(stateDirectory), 'environment-foundation');
@@ -109,6 +111,7 @@ export async function createEnvironmentFoundation({
 
   const lifecycle = new PersistentEnvironments({
     directory: path.join(persistentRoot, 'registry'),
+    lease: leaseFactory({ subjectPath: path.join(persistentRoot, 'registry', 'lifecycle.lease'), platform }),
     source,
     operations,
   });

@@ -6,6 +6,8 @@ import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment
 import { createConfiguredEnvironmentActivityClient } from '../runtime/environment-activity-authority-transport.js';
 import { createConfiguredEnvironmentConfigurationClient } from '../runtime/environment-configuration-authority-transport.js';
 import { invokeCommand } from '../runtime/command-invocation.js';
+import { migrateLegacyFileGuard } from '../runtime/legacy-file-guard.js';
+import { createLinuxFileLease } from '../runtime/linux-file-lease.js';
 import { applyLinuxDirectoryDefinition } from './linux-directory-definition-applicator.js';
 import { bindLinuxLifecycleAuthorityIdentity } from './linux-lifecycle-authority-identity-binding.js';
 import { reconcileLinuxLifecycleAuthorityEndpointTopology } from './linux-lifecycle-authority-endpoint-topology.js';
@@ -548,6 +550,15 @@ export async function createLinuxLifecycleAuthorityRefreshComposition({
       if (subject == null) throw new Error('Linux lifecycle authority accepted definition subject is unavailable');
       accepted.push(subject.plan.service.unit);
     }
+    const guardDirectory = path.join(selected.authorityDirectory, 'environment-foundation', 'persistent', 'registry');
+    await migrateLegacyFileGuard({
+      guardFile: path.join(guardDirectory, 'lifecycle.lock'),
+      lease: { acquire: (request) => createLinuxFileLease({ subjectPath: path.join(guardDirectory, 'lifecycle.lease') }).acquire(request) },
+      async assertQuiescent() {
+        const observed = await activity.inspect({ generations: [...new Set([generation, ...value.acceptedGenerations])] });
+        if (observed.running || observed.processGeneration != null) throw new Error('legacy lifecycle guard migration requires the exact quiescent service');
+      },
+    });
     const result = await ensureDefinition({
       name: selected.service.name,
       path: selected.service.unitPath,

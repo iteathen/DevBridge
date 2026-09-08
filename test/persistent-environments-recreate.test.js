@@ -1,3 +1,4 @@
+import { mutationLease } from '../test-support/mutation-lease.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -53,7 +54,7 @@ test('recreate advances the generation when the registered provider object is al
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-recreate-missing-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     fake.instances.delete(created.record.identity);
     const recreated = await registry.recreate(created.record.identity, {
@@ -76,7 +77,7 @@ test('recreate tolerates incompatible owned state but retains it until explicit 
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-recreate-retain-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     fake.instances.get(created.record.identity).state = 'running';
     fake.instances.get(created.record.identity).compatible = false;
@@ -101,7 +102,7 @@ test('recreate refuses foreign provider ownership before provisioning or retirem
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-recreate-foreign-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     fake.instances.get(created.record.identity).owned = false;
     const beforeProvision = fake.provisionCalls();
@@ -118,7 +119,7 @@ test('interrupted recreate is not replayed by generic reconciliation and reuses 
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-recreate-resume-'));
   const fake = fixture();
   try {
-    let registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    let registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     fake.failNextProvision();
     await assert.rejects(() => registry.recreate(created.record.identity, {
@@ -127,7 +128,7 @@ test('interrupted recreate is not replayed by generic reconciliation and reuses 
     assert.equal(fake.instances.size, 2);
     assert.equal(fake.provisionCalls(), 2);
 
-    registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const generic = await registry.reconcile();
     assert.equal(generic[0].record.identity, created.record.identity);
     assert.equal(fake.provisionCalls(), 2);

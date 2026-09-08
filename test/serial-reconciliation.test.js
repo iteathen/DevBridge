@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { reconcileSerialSelection } from '../src/setup/serial-reconciliation.js';
 
-test('serial reconciliation returns after one changed item and resumes in fixed input order', async () => {
+test('serial reconciliation continues after ready changes in fixed input order', async () => {
   const calls = [];
   const result = await reconcileSerialSelection({
     items: ['profile-a', 'profile-b'],
@@ -14,9 +14,9 @@ test('serial reconciliation returns after one changed item and resumes in fixed 
         : { ready: true, changed: false, blocker: null };
     },
   });
-  assert.deepEqual(calls, ['profile-a']);
+  assert.deepEqual(calls, ['profile-a', 'profile-b']);
   assert.deepEqual(result, {
-    ready: false, changed: true, state: 'pending', item: 'profile-a', completedCount: 1, totalCount: 2, blocker: null,
+    ready: true, changed: true, state: 'ready', item: 'profile-a', completedCount: 2, totalCount: 2, blocker: null,
   });
 
   const resumed = await reconcileSerialSelection({

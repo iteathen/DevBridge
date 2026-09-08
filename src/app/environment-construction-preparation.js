@@ -59,6 +59,7 @@ export async function createLocalEnvironmentAccess({
     return Object.freeze({
       connection: async () => Object.freeze({ family: 'linux' }),
       prepare: null,
+      discard: async () => {},
     });
   }
   if (family === 'linux' && platform === 'win32') {
@@ -71,6 +72,7 @@ export async function createLocalEnvironmentAccess({
     return Object.freeze({
       connection: async (target) => preparation.connection(target),
       prepare: (request) => preparation.ensure(request),
+      discard: (target) => material.discard(target),
     });
   }
   if (family === 'windows' && platform === 'win32') {

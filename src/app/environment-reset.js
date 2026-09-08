@@ -1,3 +1,4 @@
+import { requireEnvironmentOperationSubject } from '../runtime/environment-operation-subject.js';
 function assertPort(value, methods, name) {
   if (!value || methods.some((method) => typeof value[method] !== 'function')) throw new TypeError(`environment reset ${name} contract is incomplete`);
   return value;
@@ -19,14 +20,14 @@ function requestIdentity(value) {
   return value;
 }
 
-export function createEnvironmentResetMaterialization({ state, subject, journal } = {}) {
+export function createEnvironmentResetMaterialization({ state, subject } = {}) {
   const localState = assertPort(state, ['listEnvironments', 'replaceEnvironment'], 'materialization state');
   const subjectResolver = assertResolver(subject);
-  const localJournal = assertPort(journal, ['current'], 'journal');
 
   return Object.freeze({
     async ensure(rawRequest) {
       const request = requireRequest(rawRequest);
+      const operation = requireEnvironmentOperationSubject(request, 'reset');
       const localSubject = await subjectResolver.resolve(Object.freeze({
         environmentIdentity: request.environmentIdentity,
         profile: request.declaration.profile,
@@ -36,11 +37,7 @@ export function createEnvironmentResetMaterialization({ state, subject, journal 
       if (matches.length !== 1) throw new Error('environment reset materialization is missing or ambiguous');
       const selected = matches[0];
       if (selected.record?.source?.identity !== request.declaration.image.identity) throw new Error('environment reset source no longer matches declaration authority');
-      const active = await localJournal.current(request.environmentIdentity);
-      if (!active || active.operation !== 'reset' || active.operationId !== request.operationId || active.declarationRevision !== request.declarationRevision) {
-        throw new Error('environment reset materialization is not bound to the active reset lifecycle');
-      }
-      const previous = active.entries.find((entry) => entry.stage === 'pre-observation')?.implementationGeneration;
+      const previous = operation.previousImplementationGeneration;
       implementation(previous, 'environment reset previous implementation generation');
       const result = await localState.replaceEnvironment(implementation(selected.record?.identity), {
         requestId: request.operationId,

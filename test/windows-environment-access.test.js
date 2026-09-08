@@ -35,7 +35,7 @@ test('Windows environment access composes replaceable local ports under protecte
   assert.equal(captured.material.user, 'devbridge');
   assert.equal(captured.seed.directory, path.join(root, 'access', 'windows', 'transient'));
   assert.equal(captured.seed.user, 'devbridge');
-  assert.deepEqual(captured.delivery, { identity, invoke: captured.material.invoke });
+  assert.deepEqual(captured.delivery, { identity, invoke: captured.material.invoke, family: 'windows' });
   assert.deepEqual(captured.probe, { identity, invoke: captured.material.invoke });
   assert.deepEqual(captured.preparation, { material, seed, delivery, probe });
 });

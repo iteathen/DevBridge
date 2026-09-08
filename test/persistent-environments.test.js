@@ -1,3 +1,4 @@
+import { mutationLease } from '../test-support/mutation-lease.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -54,7 +55,7 @@ test('stable identity excludes display topology and rejects foreign request prop
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-registry-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const first = await registry.ensure(request());
     const second = await registry.ensure(request());
     assert.equal(second.record.identity, first.record.identity);
@@ -69,7 +70,7 @@ test('nested composition preserves the exact durable v1 catalog shape', async ()
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-catalog-shape-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     const catalog = JSON.parse(await readFile(path.join(root, 'catalog.json'), 'utf8'));
     assert.deepEqual(Object.keys(catalog).sort(), ['entries', 'operations', 'protocol', 'revision']);
@@ -96,7 +97,7 @@ test('source drift is rejected until explicit reseed and stale generation identi
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-reseed-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const first = await registry.ensure(request());
     await assert.rejects(() => registry.ensure(request(SOURCE_B)), /explicit reseed is required/u);
     const reseeded = await registry.reseed(first.record.identity, { sourceIdentity: SOURCE_B });
@@ -116,7 +117,7 @@ test('registered source identity cannot be reused with changed lineage metadata'
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-source-metadata-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     await registry.ensure(request());
     fake.sources.get(SOURCE_A).revision = '2026.08.changed';
     await assert.rejects(() => registry.ensure(request()), /source lineage changed/u);
@@ -128,11 +129,11 @@ test('command completion and daemon restart preserve one owned environment', asy
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-restart-'));
   const fake = fixture();
   try {
-    let registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    let registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     await registry.start(created.record.identity);
     await registry.stop(created.record.identity);
-    registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const observed = await registry.observe(created.record.identity);
     assert.equal(observed.record.identity, created.record.identity);
     assert.equal(observed.observation.state, 'stopped');
@@ -146,11 +147,11 @@ test('restart reconciles an ambiguous provision effect instead of allocating ano
   const fake = fixture();
   try {
     fake.failNextProvision();
-    let registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    let registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     await assert.rejects(() => registry.ensure(request()), /simulated interruption/u);
     assert.equal(fake.instances.size, 1);
     const effectIdentity = [...fake.instances.keys()][0];
-    registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const reconciled = await registry.reconcile();
     assert.equal(reconciled.length, 1);
     assert.equal(reconciled[0].record.identity, effectIdentity);
@@ -163,7 +164,7 @@ test('restart reconciles an interrupted reseed without deleting the current gene
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-reseed-reconcile-'));
   const fake = fixture();
   try {
-    let registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    let registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     fake.failNextProvision();
     await assert.rejects(() => registry.reseed(created.record.identity, { sourceIdentity: SOURCE_B }), /simulated interruption/u);
@@ -172,7 +173,7 @@ test('restart reconciles an interrupted reseed without deleting the current gene
     assert.equal(identitiesAfterInterruption.includes(created.record.identity), true);
     assert.equal(identitiesAfterInterruption.length, 2);
 
-    registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const protectedWhilePending = await registry.protectedSourceIdentities();
     assert.deepEqual(protectedWhilePending, [SOURCE_A, SOURCE_B]);
     const reconciled = await registry.reconcile();
@@ -199,12 +200,12 @@ test('restart reconciles an ambiguous removal effect without retaining catalog a
     return result;
   };
   try {
-    let registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    let registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     await assert.rejects(() => registry.remove(created.record.identity), /simulated interruption/u);
     assert.equal(fake.instances.has(created.record.identity), false);
 
-    registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     assert.deepEqual(await registry.reconcile(), []);
     await assert.rejects(() => registry.observe(created.record.identity), /not registered/u);
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -214,7 +215,7 @@ test('lifecycle transitions reject a provider observation that reports the wrong
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-lineage-observe-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     fake.instances.get(created.record.identity).storage.sourceIdentity = SOURCE_B;
     await assert.rejects(() => registry.start(created.record.identity), /writable lineage does not match/u);
@@ -226,7 +227,7 @@ test('concurrent lifecycle mutations serialize and stale callers cannot rotate t
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-concurrent-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     const results = await Promise.allSettled([registry.reset(created.record.identity), registry.reset(created.record.identity)]);
     assert.equal(results.filter((entry) => entry.status === 'fulfilled').length, 1);
@@ -242,10 +243,10 @@ test('attachment identity drift never silently adopts an environment created by 
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-stage3-binding-'));
   const fake = fixture();
   try {
-    const first = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const first = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     await first.ensure(request());
     const foreignOperations = { ...fake.operations, async inspect() { return { identity: '22222222222222222222222222222222' }; } };
-    const second = new PersistentEnvironments({ directory: root, source: fake.source, operations: foreignOperations });
+    const second = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: foreignOperations });
     await assert.rejects(() => second.ensure(request()), /attachment identity changed/u);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -265,8 +266,8 @@ test('separate registry instances cannot overlap one directory lifecycle', async
     },
   };
   try {
-    const first = new PersistentEnvironments({ directory: root, source: delayedSource, operations: fake.operations });
-    const second = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const first = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: delayedSource, operations: fake.operations });
+    const second = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const ensuring = first.ensure(request());
     await entered;
     await assert.rejects(() => second.ensure(request()), /lifecycle mutation is already active/u);

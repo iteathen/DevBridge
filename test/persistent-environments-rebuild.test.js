@@ -1,3 +1,4 @@
+import { mutationLease } from '../test-support/mutation-lease.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -65,7 +66,7 @@ test('rebuild replaces a missing-storage generation without requiring the old di
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-rebuild-registry-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     loseSystemStorage(fake, created.record.identity, 'absent');
     const rebuilt = await registry.rebuild(created.record.identity, {
@@ -94,7 +95,7 @@ test('rebuild waits for the outer lifecycle owner after restart, then reconciles
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-rebuild-reconcile-'));
   const fake = fixture();
   try {
-    let registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    let registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     loseSystemStorage(fake, created.record.identity, 'invalid');
     fake.failNextProvision();
@@ -104,7 +105,7 @@ test('rebuild waits for the outer lifecycle owner after restart, then reconciles
     }), /simulated interruption/u);
     assert.equal(fake.instances.size, 2);
 
-    registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const generic = await registry.reconcile();
     assert.equal(generic.length, 1);
     assert.equal(generic[0].record.identity, created.record.identity);
@@ -125,7 +126,7 @@ test('rebuild rejects a healthy, foreign, running-unquiesceable, or stale previo
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-rebuild-guards-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     await assert.rejects(() => registry.rebuild(created.record.identity, {
       requestId: 'healthy-rebuild', expectedPreviousIdentity: created.record.identity,
@@ -154,7 +155,7 @@ test('definitive rebuild preflight rejection does not become latent reconciliati
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-rebuild-inert-rejection-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     await assert.rejects(() => registry.rebuild(created.record.identity, {
       requestId: 'rejected-while-healthy', expectedPreviousIdentity: created.record.identity,
@@ -172,7 +173,7 @@ test('rebuild re-proves provider existence and ownership after quiesce before re
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-rebuild-quiesce-proof-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     loseSystemStorage(fake, created.record.identity, 'absent');
     fake.instances.get(created.record.identity).state = 'running';
@@ -190,7 +191,7 @@ test('rebuild retains the superseded generation even if it later appears compati
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-rebuild-retention-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     loseSystemStorage(fake, created.record.identity, 'invalid');
     const provision = fake.operations.provision.bind(fake.operations);
@@ -217,7 +218,7 @@ test('declared-image rebuild resumes one replacement through materialization and
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-rebuild-declared-image-'));
   const fake = fixture();
   try {
-    let registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    let registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     const old = structuredClone(fake.instances.get(created.record.identity));
     const input = {
@@ -232,16 +233,14 @@ test('declared-image rebuild resumes one replacement through materialization and
     const subject = { resolve: async () => request().subject };
     const observe = createEnvironmentMaterialization({ state, subject, settings: { resolve: async () => request().settings } });
     assert.equal(environmentObservationCondition(await observe.observe(input)), 'system-storage-invalid');
-    const materialization = createEnvironmentRebuildMaterialization({ state, subject, journal: { current: async () => ({
-      operation: 'rebuild', operationId: input.operationId, declarationRevision: 2,
-      entries: [{ stage: 'pre-observation', implementationGeneration: created.record.identity }, { stage: 'fenced-attempt' }],
-    }) } });
+    input.operationSubject = { environmentIdentity: input.environmentIdentity, operationId: input.operationId, declarationRevision: 2, operation: 'rebuild', previousImplementationGeneration: created.record.identity, imageIdentity: TARGET, imageGeneration: input.declaration.image.generation };
+    const materialization = createEnvironmentRebuildMaterialization({ state, subject });
     // Reconstruction must depend on the desired image, even if the old base is no longer available.
     fake.sources.delete(SOURCE);
     fake.failNextProvision();
     await assert.rejects(() => materialization.ensure(input), /simulated interruption/u);
     assert.equal(fake.instances.size, 2);
-    registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     assert.equal((await registry.reconcile())[0].record.identity, created.record.identity);
     const result = await materialization.ensure(input);
     assert.equal(result.ready, true);
@@ -262,12 +261,12 @@ test('pending declared-image rebuild refuses retargeting and target lineage drif
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-rebuild-target-drift-'));
   const fake = fixture();
   try {
-    let registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    let registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     const options = { requestId: 'target-drift', expectedPreviousIdentity: created.record.identity, sourceIdentity: TARGET };
     fake.failNextProvision();
     await assert.rejects(() => registry.rebuild(created.record.identity, options), /simulated interruption/u);
-    registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     await assert.rejects(() => registry.rebuild(created.record.identity, { ...options, sourceIdentity: SOURCE }), /target source changed/u);
     const target = structuredClone(fake.sources.get(TARGET));
     for (const changed of [{ digest: 'c'.repeat(64) }, { revision: '2026.09.2' }, { profile: 'guest-b' }]) {
@@ -290,7 +289,7 @@ test('declared-image rebuild rejects unknown, foreign, missing, or unexplained e
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-rebuild-target-guards-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     const old = structuredClone(fake.instances.get(created.record.identity));
     const options = { requestId: 'target-guards', expectedPreviousIdentity: created.record.identity, sourceIdentity: TARGET };
@@ -320,7 +319,7 @@ test('declared-image rebuild rechecks old lineage after quiescing', async () => 
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-rebuild-target-quiesce-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     const old = fake.instances.get(created.record.identity);
     old.state = 'running';

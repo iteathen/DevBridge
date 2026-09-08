@@ -30,7 +30,7 @@ export async function createWindowsEnvironmentAccess({
   const identity = await identityLoader({ directory: foundationRoot });
   const material = materialFactory({ directory: path.join(root, 'material'), invoke, user: USER, platform });
   const seed = seedFactory({ directory: path.join(root, 'transient'), user: USER });
-  const delivery = deliveryFactory({ identity, invoke });
+  const delivery = deliveryFactory({ identity, invoke, family: 'windows' });
   const probe = probeFactory({ identity, invoke });
   const preparation = preparationFactory({ material, seed, delivery, probe });
   if (!preparation || typeof preparation.connection !== 'function' || typeof preparation.ensure !== 'function') {
@@ -39,5 +39,6 @@ export async function createWindowsEnvironmentAccess({
   return Object.freeze({
     connection: (target) => preparation.connection(target),
     prepare: (request) => preparation.ensure(request),
+    discard: (target) => material.discard(target),
   });
 }

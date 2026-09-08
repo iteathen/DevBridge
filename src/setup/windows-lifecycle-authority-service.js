@@ -12,6 +12,8 @@ import process from 'node:process';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { invokeCommand } from '../runtime/command-invocation.js';
+import { migrateLegacyFileGuard } from '../runtime/legacy-file-guard.js';
+import { createWindowsFileLease } from '../runtime/windows-file-lease.js';
 import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment-lifecycle-authority-transport.js';
 import { createConfiguredEnvironmentActivityClient } from '../runtime/environment-activity-authority-transport.js';
 import { createConfiguredEnvironmentConfigurationClient } from '../runtime/environment-configuration-authority-transport.js';
@@ -956,6 +958,20 @@ async function configureServiceGeneration({ generation, previousGeneration }, co
     throw new Error('Windows lifecycle authority previous service disappeared before promotion');
   }
 
+  // The service host owns its workers' lifetime. Only this installer transition,
+  // after exact service quiescence, may retire a legacy token guard.
+  const guardDirectory = path.join(target.plan.authorityDirectory, 'environment-foundation', 'persistent', 'registry');
+  await migrateLegacyFileGuard({
+    guardFile: path.join(guardDirectory, 'lifecycle.lock'),
+    lease: { acquire: (request) => createWindowsFileLease({ subjectPath: path.join(guardDirectory, 'lifecycle.lease'), holderExecutable: target.plan.runtime.serviceHostExecutable }).acquire(request) },
+    async assertQuiescent() {
+      const observed = await inspectService(context.candidatePlan, context.invoke, context.environment);
+      if (observed.exists !== service.exists || (observed.exists && (!sameWindowsText(observed.pathName, service.pathName)
+        || !sameWindowsText(observed.startName, service.startName) || observed.description !== service.description || !sameWindowsText(observed.state, 'Stopped')))) {
+        throw new Error('legacy lifecycle guard migration requires the exact quiescent service');
+      }
+    },
+  });
   const firstConfiguration = ownership.serviceConfigured !== true;
   await configureService(service, target.plan, context.invoke, context.environment);
   if (firstConfiguration) {

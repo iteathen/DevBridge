@@ -1,3 +1,4 @@
+import { normalizeEnvironmentOperationSubject } from './environment-operation-subject.js';
 import { createHash } from 'node:crypto';
 import { diagnoseEnvironment } from './environment-diagnosis.js';
 import { normalizeEnvironmentObservation } from './environment-observation.js';
@@ -228,6 +229,7 @@ export class EnvironmentReset {
           operationId: record.operationId,
           declarationRevision: declaration.revision,
           declaration: declaration.declaration,
+          operationSubject: normalizeEnvironmentOperationSubject({ environmentIdentity: identity, operationId: record.operationId, operation: 'reset', declarationRevision: declaration.revision, previousImplementationGeneration: previousGeneration, imageIdentity: declaration.declaration.image.identity, imageGeneration: declaration.declaration.image.generation }),
         });
         if (result.implementationGeneration === previousGeneration) throw new Error('environment reset did not create a new implementation generation');
         const after = await this.#observe(declaration);

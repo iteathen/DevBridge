@@ -12,7 +12,8 @@ function request() {
     environmentIdentity: 'logical-environment-a',
     operationId: 'lifecycle-reset-1',
     declarationRevision: 1,
-    declaration: { profile: 'linux-development', image: { identity: IMAGE } },
+    declaration: { profile: 'linux-development', image: { identity: IMAGE, generation: 'image-v1' } },
+    operationSubject: { environmentIdentity: 'logical-environment-a', operationId: 'lifecycle-reset-1', operation: 'reset', declarationRevision: 1, previousImplementationGeneration: OLD, imageIdentity: IMAGE, imageGeneration: 'image-v1' },
   };
 }
 
@@ -49,7 +50,6 @@ test('reset materialization binds staged replacement to the active outer lifecyc
   const materialization = createEnvironmentResetMaterialization({
     state,
     subject: { resolve: async () => 'profile-subject' },
-    journal: { current: async () => activeJournal() },
   });
   const result = await materialization.ensure(request());
   assert.equal(result.ready, true);
@@ -66,9 +66,8 @@ test('reset materialization refuses a replacement not bound to the exact reset l
       async replaceEnvironment() { calls += 1; throw new Error('unused'); },
     },
     subject: { resolve: async () => 'profile-subject' },
-    journal: { current: async () => ({ ...activeJournal(), operation: 'rebuild' }) },
   });
-  await assert.rejects(() => materialization.ensure(request()), /active reset lifecycle/u);
+  await assert.rejects(() => materialization.ensure({ ...request(), operationSubject: { ...request().operationSubject, operation: 'rebuild' } }), /operation subject does not match/u);
   assert.equal(calls, 0);
 });
 

@@ -1437,8 +1437,13 @@ export async function runDevBridgeSetup({
     const client = lifecycleClientFactory({ stateDirectory, platform, connectTimeoutMs: 3_000 });
     environmentActivation = await progress.run('environment-activation', () => serialReconciler({
       items: activationProfiles,
+      independent: true,
       reconcile: async (profile) => {
-        const observed = await environmentActivationReconciler({ client, profile });
+        const expectedDeclaration = profileConfigurationRecord.configuration.declarations.find((entry) => entry.profile === profile);
+        if (!expectedDeclaration) throw new Error('activation profile is outside accepted configuration');
+        let observed;
+        try { observed = await environmentActivationReconciler({ client, profile, expectedDeclaration }); }
+        catch (error) { observed = { ready: false, changed: error?.changed === true, blocker: String(error?.message ?? 'environment activation failed').slice(0, 512) }; }
         return Object.freeze({
           ready: observed?.ready === true,
           changed: observed?.changed === true,
@@ -1463,7 +1468,7 @@ export async function runDevBridgeSetup({
       blocker: `Protected environment activation failed: ${error.message}`,
     });
   }
-  if (environmentActivation?.ready !== true) {
+  if (environmentActivation?.ready !== true && !(environmentActivation?.completedCount > 0)) {
     return publicResult({
       home: root,
       pathStatus,
@@ -1576,6 +1581,7 @@ export async function runDevBridgeSetup({
     operationalConfiguration,
     constructionRequested: construct,
     constructionAttempted,
+    blocker: environmentActivation?.ready === true ? null : environmentActivation?.blocker ?? 'Some accepted environment profiles remain unavailable',
   });
 }
 

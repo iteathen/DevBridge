@@ -120,9 +120,9 @@ export class PersistentEnvironments {
   #generation;
   #retirement;
 
-  constructor({ directory, source, operations }) {
-    this.#ledger = new EnvironmentLedger({ directory, protocol: PROTOCOL });
-    this.#effects = new EnvironmentEffectChannel({ source, actions: operations });
+  constructor({ directory, source, operations, lease }) {
+    this.#ledger = new EnvironmentLedger({ directory, protocol: PROTOCOL, lease });
+    this.#effects = new EnvironmentEffectChannel({ source, actions: operations, assertMutation: () => this.#ledger.assertHeld(), mutationContext: () => this.#ledger.mutationContext() });
     const ports = {
       effects: this.#effects,
       commit: (state) => this.#ledger.commit(state),
@@ -143,16 +143,16 @@ export class PersistentEnvironments {
   }
 
   async list() {
-    return this.#ledger.run(async () => {
+    return this.#ledger.snapshot(async (state) => {
       const binding = await this.#effects.binding();
-      return this.#lifecycle.list(await this.#ledger.read(), binding);
+      return this.#lifecycle.list(state, binding);
     });
   }
 
   async observe(identity) {
-    return this.#ledger.run(async () => {
+    return this.#ledger.snapshot(async (state) => {
       const binding = await this.#effects.binding();
-      return this.#lifecycle.observe(await this.#ledger.read(), binding, identity);
+      return this.#lifecycle.observe(state, binding, identity);
     });
   }
 
@@ -251,8 +251,7 @@ export class PersistentEnvironments {
   }
 
   async protectedSourceIdentities() {
-    return this.#ledger.run(async () => {
-      const state = await this.#ledger.read();
+    return this.#ledger.snapshot(async (state) => {
       const identities = new Set();
       for (const entry of Object.values(state.entries)) identities.add(entry.current.source.identity);
       for (const operation of Object.values(state.operations)) {

@@ -1,3 +1,4 @@
+import { normalizeEnvironmentOperationSubject } from './environment-operation-subject.js';
 import { environmentObservationCondition, normalizeEnvironmentObservation } from './environment-observation.js';
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,159}$/u;
@@ -85,7 +86,7 @@ export class EnvironmentCreate {
       }
 
       if (lastStage(record) === 'fenced-attempt') {
-        const result = await this.#construction.run({ environmentIdentity: identity, operationId: record.operationId, declarationRevision: declaration.revision, declaration: declaration.declaration });
+        const result = await this.#construction.run({ environmentIdentity: identity, operationId: record.operationId, declarationRevision: declaration.revision, declaration: declaration.declaration, operationSubject: normalizeEnvironmentOperationSubject({ environmentIdentity: identity, operationId: record.operationId, operation: 'create', declarationRevision: declaration.revision, previousImplementationGeneration: null, imageIdentity: declaration.declaration.image.identity, imageGeneration: declaration.declaration.image.generation }) });
         const after = await this.#observe(declaration);
         if (after.implementationGeneration !== result.implementationGeneration) throw new Error('environment create post-observation generation changed');
         record = await this.#journal.advance(identity, record.operationId, { stage: 'post-observation', outcome: 'observed', implementationGeneration: result.implementationGeneration, observation: after });

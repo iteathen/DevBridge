@@ -1,5 +1,6 @@
 import { logicalEnvironmentIdentity, normalizeEnvironmentDeclaration } from './environment-declaration.js';
 import { environmentObservationCondition, normalizeEnvironmentObservation } from './environment-observation.js';
+import { requireEnvironmentOperationSubject } from './environment-operation-subject.js';
 
 export const ENVIRONMENT_CONSTRUCTION_PROTOCOL = 'devbridge/environment-construction-v1';
 export const ENVIRONMENT_CONSTRUCTION_STAGES = Object.freeze([
@@ -68,6 +69,7 @@ function requestFor(input, declaration) {
     operationId: input.operationId,
     declarationRevision: input.declarationRevision,
     declaration,
+    ...(input.operationSubject == null ? {} : { operationSubject: input.operationSubject }),
   });
 }
 
@@ -129,12 +131,13 @@ export class EnvironmentConstructionPipeline {
 
   async run(rawInput) {
     const input = requireObject(rawInput, 'environment construction request');
-    onlyKeys(input, new Set(['environmentIdentity', 'operationId', 'declarationRevision', 'declaration']), 'environment construction request');
+    onlyKeys(input, new Set(['environmentIdentity', 'operationId', 'declarationRevision', 'declaration', 'operationSubject']), 'environment construction request');
     const declaration = normalizeEnvironmentDeclaration(input.declaration);
     const normalized = {
       environmentIdentity: safeId(input.environmentIdentity, 'environment construction environmentIdentity'),
       operationId: safeId(input.operationId, 'environment construction operationId'),
       declarationRevision: positive(input.declarationRevision, 'environment construction declarationRevision'),
+      ...(input.operationSubject == null ? {} : { operationSubject: requireEnvironmentOperationSubject(input) }),
     };
     if (logicalEnvironmentIdentity(declaration.profile) !== normalized.environmentIdentity) throw new Error('environment construction declaration belongs to another logical environment');
     const request = requestFor(normalized, declaration);

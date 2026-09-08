@@ -699,10 +699,39 @@ namespace DevBridge.WindowsLifecycleAuthority
 
     internal static class Program
     {
+        private static int HoldFileLease(string target)
+        {
+            if (String.IsNullOrWhiteSpace(target) || target.IndexOf('\0') >= 0 || !Regex.IsMatch(target, @"^[A-Za-z]:\\") || !String.Equals(Path.GetFullPath(target), target, StringComparison.OrdinalIgnoreCase)) return 1;
+            if (File.Exists(target) && (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0) return 1;
+            FileStream held = null;
+            Stopwatch clock = Stopwatch.StartNew();
+            while (held == null)
+            {
+                try { held = new FileStream(target, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+                catch (IOException error)
+                {
+                    int code = error.HResult & 0xffff;
+                    if (code != 32 && code != 33) throw;
+                    if (clock.ElapsedMilliseconds >= 30000) return 75;
+                    Thread.Sleep(50);
+                }
+            }
+            using (held)
+            {
+                Console.OutputEncoding = new UTF8Encoding(false);
+                Console.Write("devbridge/file-lease-held-v1\n");
+                Console.Out.Flush();
+                // EOF releases ownership even when the requesting worker crashes.
+                if (Console.OpenStandardInput().ReadByte() != -1) return 1;
+            }
+            return 0;
+        }
+
         private static int Main(string[] args)
         {
             try
             {
+                if (args.Length == 2 && String.Equals(args[0], "--hold-file-lease", StringComparison.Ordinal)) return HoldFileLease(args[1]);
                 HostOptions options = HostOptions.Parse(args);
                 ServiceBase.Run(new LifecycleAuthorityService(options));
                 return 0;

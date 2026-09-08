@@ -1,3 +1,4 @@
+import { normalizeEnvironmentOperationSubject } from './environment-operation-subject.js';
 import { createHash } from 'node:crypto';
 import { environmentObservationCondition, normalizeEnvironmentObservation } from './environment-observation.js';
 
@@ -252,6 +253,7 @@ export class EnvironmentRecreate {
           operationId: record.operationId,
           declarationRevision: declaration.revision,
           declaration: declaration.declaration,
+          operationSubject: normalizeEnvironmentOperationSubject({ environmentIdentity: identity, operationId: record.operationId, operation: 'recreate', declarationRevision: declaration.revision, previousImplementationGeneration: previousGeneration, imageIdentity: declaration.declaration.image.identity, imageGeneration: declaration.declaration.image.generation }),
         });
         if (result.implementationGeneration === previousGeneration) throw new Error('environment recreate did not create a new implementation generation');
         const after = await this.#observe(declaration);
