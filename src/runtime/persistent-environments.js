@@ -181,11 +181,6 @@ export class PersistentEnvironments {
         && (identity == null || entry.current.identity === identity));
       for (const entry of entries) {
         if (entry.binding !== binding) throw new Error('environment attachment identity changed');
-        if (Object.values(state.operations).some(operation => operation.state !== 'reconciled'
-            && (operation.slot === entry.slot || operation.identity === entry.current.identity
-              || operation.oldIdentity === entry.current.identity || operation.newIdentity === entry.current.identity))) {
-          throw new Error('environment has an unreconciled lifecycle operation');
-        }
       }
       return Object.freeze({ revision: state.revision, records: entries.map(publicRecord) });
     });

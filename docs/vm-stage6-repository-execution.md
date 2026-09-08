@@ -30,8 +30,9 @@ Selecting a physical route queries the committed subject/profile selection befor
 native observation; unrelated profiles are not part of a selected data transfer.
 The activity owner reuses an observed attachment while committed generation and
 declaration records remain unchanged. Each request reloads its admitted route and
-reads a consistent committed identity snapshot. Unreconciled selected lifecycle
-operations block dispatch. Opening a Hyper-V connection reobserves native
+reads a consistent committed identity snapshot. The snapshot is an identity view;
+it does not infer current admission from historical operation rows. Lifecycle
+mutations change its revision, invalidating reused observations. Opening a Hyper-V connection reobserves native
 ownership and storage compatibility; the adapter authenticates and binds that
 connection to its exact physical guest. Connection loss, changed binding, idle
 expiry, cancellation and protected authority changes discard reusable resources.

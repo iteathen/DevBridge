@@ -76,7 +76,7 @@ test('selected environment observation does not inspect an unrelated unavailable
   await assert.rejects(registry.list(), /unrelated provider unavailable/);
 });
 
-test('committed record queries expose identity without native inspection and reject unfinished mutations', async t => {
+test('committed record queries stay available through native failure and invalidate observations by revision', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-environment-records-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const fake = fixture();
@@ -88,7 +88,9 @@ test('committed record queries expose identity without native inspection and rej
   snapshot.records[0].profile = 'tampered';
   assert.equal((await registry.records()).records[0].profile, 'guest-a');
   await assert.rejects(registry.stop(current.record.identity), /native observation unavailable/);
-  await assert.rejects(registry.records(), /unreconciled lifecycle/);
+  const interrupted = await registry.records();
+  assert.deepEqual(interrupted.records, [current.record]);
+  assert.ok(interrupted.revision > snapshot.revision);
   assert.deepEqual((await registry.records({ subject: 'unrelated' })).records, []);
 });
 
