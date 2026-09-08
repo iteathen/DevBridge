@@ -213,6 +213,17 @@ test('reserved addresses cannot silently adopt managed allocation ownership', as
   }
 });
 
+test('bootstrap refuses a host-local DNS resolver before native delivery', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-hv-dns-'));
+  try {
+    const adapter = new HyperVEnvironmentBootstrap({
+      directory: root, locate: async (value) => location(value), connection: async () => baseConnection,
+      dnsServers: async () => ['127.0.0.1'], invoke: async () => assert.fail('invalid DNS must not reach delivery'),
+    });
+    await assert.rejects(adapter.activate(target), /guest-reachable DNS/u);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('separate bootstrap instances cannot overlap allocation mutation', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-hv-address-exclusive-'));
   const options = {

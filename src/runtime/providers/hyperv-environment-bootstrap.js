@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import dns from 'node:dns';
 import { lstat, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { copyHyperVGuestFile } from './hyperv-file-copy.js';
+import { guestDnsServers, observeWindowsGuestDns } from './windows-guest-dns.js';
 
 const PROTOCOL = 'devbridge/hyperv-environment-bootstrap-state-v1';
 const TARGET = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
@@ -118,8 +118,6 @@ export class HyperVEnvironmentBootstrap {
   #directory;
   #stateFile;
   #guardFile;
-  #lease;
-  #held = null;
   #invoke;
   #locate;
   #connection;
@@ -128,7 +126,7 @@ export class HyperVEnvironmentBootstrap {
   #wait;
   #tail = Promise.resolve();
 
-  constructor({ directory, invoke, locate, connection, dnsServers = () => dns.getServers(), now = Date.now, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
+  constructor({ directory, invoke, locate, connection, dnsServers = () => observeWindowsGuestDns({ invoke }), now = Date.now, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
     if (typeof directory !== 'string' || directory.length === 0) throw new TypeError('bootstrap directory is required');
     if (typeof invoke !== 'function') throw new TypeError('bootstrap invoke must be a function');
     if (typeof locate !== 'function') throw new TypeError('bootstrap locate must be a function');
@@ -226,9 +224,9 @@ export class HyperVEnvironmentBootstrap {
     try { return JSON.parse(result.stdout); } catch { throw new Error('bootstrap management operation returned invalid structured output'); }
   }
 
-  #servers() {
-    const servers = [...new Set(this.#dnsServers().filter((entry) => IPV4.test(entry)))].slice(0, 4);
-    if (servers.length === 0) servers.push('1.1.1.1');
+  async #servers() {
+    const servers = guestDnsServers(await this.#dnsServers());
+    if (servers.length === 0) throw new Error('bootstrap requires guest-reachable DNS from local network policy');
     return servers;
   }
 
@@ -269,7 +267,7 @@ export class HyperVEnvironmentBootstrap {
     const target = targetId(rawTarget);
     const network = normalizeNetwork(rawNetwork);
     const address = await this.#allocation(target, { network }, 'reserved');
-    return Object.freeze({ address, prefixLength: 24, gateway: network.gateway, dns: Object.freeze(this.#servers()) });
+    return Object.freeze({ address, prefixLength: 24, gateway: network.gateway, dns: await this.#servers() });
   }
 
   async releaseAddress(rawTarget) {
@@ -308,7 +306,7 @@ export class HyperVEnvironmentBootstrap {
       address,
       prefixLength: 24,
       gateway: location.network.gateway,
-      dns: this.#servers(),
+      dns: await this.#servers(),
       revision: 1,
     };
     await this.#ensure();

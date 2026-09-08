@@ -83,8 +83,14 @@ guest passed strict SSH at 129 seconds with its existing delivered seed and keys
 the earlier 90-second first-access allowance was insufficient. Access preparation
 now allows at most three minutes, clips native probes and delivery to its remaining
 deadline, and accepts enclosing cancellation/deadline constraints. This is
-diagnostic evidence, not a successful bootstrap qualification. Windows first
-access and both Hello World routes remain outstanding.
+diagnostic evidence, not a successful bootstrap qualification. A subsequent fresh
+guest passed SSH and bridge access, then exposed a DNS translation defect: Node
+reported `127.0.0.1` and bootstrap supplied it to the guest. The provider now uses
+DNS configured on an active Windows route, excludes host-local addresses, and
+fails explicitly when no usable local policy exists. Native observation selects
+the host's configured router. Full local Windows regression before this DNS repair
+passed 2,643 tests with 46 skips; its focused tests pass. Windows first access and
+both Hello World routes remain outstanding.
 
 Remaining recovery and separation work includes bootstrap allocation's legacy
 token, lifecycle-owned retirement authorization, consolidated capability status,
