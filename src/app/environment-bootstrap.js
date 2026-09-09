@@ -151,7 +151,7 @@ export async function createEnvironmentBootstrap({
     };
   };
 
-  const exchange = async (target, frame) => {
+  const exchange = async (target, frame, { signal = null } = {}) => {
     const selected = await resolvedAccess(target);
     const program = selected.family === 'windows' ? 'node.exe' : 'node';
     const helper = selected.family === 'windows'
@@ -160,12 +160,16 @@ export async function createEnvironmentBootstrap({
     const outcome = await bridge.execute(target, {
       program,
       arguments: [helper, '--exchange-stdin'],
-      directory: { class: 'scratch', path: '.' },
-      environment: { DEVBRIDGE_GUEST_TARGET: target },
+      directory: { class: selected.family === 'linux' ? 'cache' : 'scratch', path: '.' },
+      // The bridge owns the guest user's cache location. Readiness state must
+      // not share the privileged network agent's seed/state directory.
+      environment: { DEVBRIDGE_GUEST_TARGET: target,
+        ...(selected.family === 'linux' ? { DEVBRIDGE_BOOTSTRAP_ROOT: 'environment-bootstrap' } : {}),
+      },
       input: JSON.stringify(frame),
       timeoutMs: 30_000,
       maxOutputBytes: 256 * 1024,
-    }, { pollIntervalMs: 500 });
+    }, { pollIntervalMs: 500, signal });
     return parseBootstrapOutput(outcome);
   };
 

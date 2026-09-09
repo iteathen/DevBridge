@@ -63,7 +63,9 @@ export async function createProtectedEnvironmentActivity({
 
   const requestFor = async (rawTarget) => {
     const target = exactEnvironment(rawTarget);
-    const observed = await selectedState.observeEnvironment(target);
+    const observed = typeof selectedState.readEnvironmentRecords === 'function'
+      ? { record: (await selectedState.readEnvironmentRecords({ identity: target })).records.find(record => record.identity === target) }
+      : await selectedState.observeEnvironment(target);
     if (observed?.record?.identity !== target || typeof observed?.record?.profile !== 'string') {
       throw new Error('protected activity target observation is invalid');
     }
@@ -78,13 +80,18 @@ export async function createProtectedEnvironmentActivity({
     });
   };
 
-  const identity = await selectedState.inspect();
-  if (typeof identity?.identity !== 'string') throw new Error('protected activity foundation identity is unavailable');
   const selectedExchange = bridgeExchange ?? await createEnvironmentBridgeExchange({
     stateDirectory: authority,
-    foundationIdentity: identity.identity,
     platform,
     invoke,
+    reuseConnections: true,
+    beforeConnect: async target => {
+      const current = await selectedState.observeEnvironment(target);
+      if (current.record?.identity !== target || current.observation?.exists !== true
+          || current.observation?.owned !== true || current.observation?.compatible !== true) {
+        throw new Error('protected activity connection requires an owned compatible current environment');
+      }
+    },
     access: async (target) => selectedPreparation.connection(await requestFor(target), target),
   });
 
@@ -101,5 +108,6 @@ export async function createProtectedEnvironmentActivity({
       },
     }),
     exchange: selectedExchange,
+    authorityBinding: async target => requestFor(target),
   });
 }

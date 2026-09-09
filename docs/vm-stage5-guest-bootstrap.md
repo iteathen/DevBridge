@@ -33,6 +33,17 @@ The guest records the generation only after all required observations are ready.
 
 Reset/reseed already replaces the Stage-3 writable layer and changes the exact environment identity/generation. Stage 5 binds its record to that exact basis; a replacement environment starts with no valid Stage-5 generation until it is prepared and observed again.
 
+DB-020 now explicitly requires a running guest to be reused between jobs and
+expensive preparation to follow startup, material change, or failure recovery.
+`ensure` first makes a bounded observation of the exact generation. A ready
+observation skips provider preparation and guest `apply`. An unavailable or
+degraded observation enters preparation once and rechecks basis/policy before
+application. A malformed or incorrectly bound response fails validation instead
+of authorizing preparation. This fast path has focused contract coverage; native
+performance qualification remains outstanding. A durable generation record alone
+does not prove that a guest has not rebooted or that a capability observation is
+still usable.
+
 ## Baseline development capability contract
 
 The default Stage-5 plan requests neutral capability identities rather than concrete upstream/downstream names:

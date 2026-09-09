@@ -1,7 +1,9 @@
-function sourceFrom(value) {
+function sourceFrom(value, { signal = null, onProgress = null } = {}) {
   const bytes = Buffer.from(value);
   return {
     async read({ offset, limit }) {
+      await onProgress?.({ offset, total: bytes.length });
+      if (signal?.aborted) throw signal.reason ?? new Error('byte transfer was cancelled');
       const end = Math.min(bytes.length, offset + limit);
       return { data: bytes.subarray(offset, end), eof: end === bytes.length };
     },
@@ -70,9 +72,9 @@ export class ByteChannel {
     };
   }
 
-  async write(bytes, destination) {
+  async write(bytes, destination, controls = {}) {
     const value = Buffer.from(bytes);
-    return this.#put(this.#target, sourceFrom(value), destination, { maxBytes: Math.max(1, value.length) });
+    return this.#put(this.#target, sourceFrom(value, controls), destination, { maxBytes: Math.max(1, value.length) });
   }
 
   async read(source, limit) {

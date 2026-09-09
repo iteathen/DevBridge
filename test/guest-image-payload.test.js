@@ -45,6 +45,18 @@ test('guest image payload generation changes when one owned helper changes', asy
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test('execution-owned source packing can change without invalidating the image payload', async () => {
+  const directory = await root();
+  try {
+    await writeFixture(directory);
+    const before = await createGuestImagePayload({ directory });
+    await writeFile(path.join(directory, 'source-pack-agent.mjs'), 'runtime-owned version one');
+    assert.deepEqual(await createGuestImagePayload({ directory }), before);
+    await writeFile(path.join(directory, 'source-pack-agent.mjs'), 'runtime-owned version two');
+    assert.deepEqual(await createGuestImagePayload({ directory }), before);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test('guest image payload canonicalizes LF and CRLF source delivery to identical bytes', async () => {
   const lfDirectory = await root();
   const crlfDirectory = await root();

@@ -25,12 +25,15 @@ import { OperationMaterializer } from './repository-execution/operation-material
 import { RouteAccess } from './repository-execution/route-access.js';
 import { acquireSessionGuard } from './repository-execution/session-guard.js';
 import { WorkspaceSession } from './repository-execution/workspace-session.js';
+import { transferRepositorySource } from './repository-execution/source-transfer.js';
+import { executionWorkspaceTarget } from './execution-profile-routing.js';
 
 const BRIDGE_OUTPUT_LIMIT = 3 * 1024 * 1024;
 const TRANSFER_LIMIT = 16 * 1024 * 1024;
 const MANIFEST_LIMIT = 24 * 1024 * 1024;
 const AGENT_FILE = fileURLToPath(new URL('../guest/workspace-agent.mjs', import.meta.url));
 const RESOURCE_AGENT_FILE = fileURLToPath(new URL('../guest/resource-agent.mjs', import.meta.url));
+const SOURCE_PACK_AGENT_FILE = fileURLToPath(new URL('../guest/source-pack-agent.mjs', import.meta.url));
 
 function hashIdentity(value) { return `execution-${createHash('sha256').update(JSON.stringify(value), 'utf8').digest('hex')}`; }
 function repositoryPathAllowed(relative) { const first = String(relative).replace(/\\/gu, '/').split('/')[0]; return first !== '.git' && first !== '.devbridge'; }
@@ -52,7 +55,9 @@ function activityComponents(raw) {
   return Object.freeze({
     state: Object.freeze({
       inspect: () => raw.inspect(),
-      listEnvironments: () => raw.list(),
+      listEnvironments: async (selection = null) => selection == null
+        ? raw.list()
+        : [await raw.observe(executionWorkspaceTarget(selection.subject, selection.profile))],
       observeEnvironment: (target) => raw.observe(target),
     }),
     preparation: Object.freeze({ ensure: (target) => raw.prepare(target) }),
@@ -124,13 +129,14 @@ export async function createRepositoryExecution({
   };
   const agentBytes = await readFile(AGENT_FILE);
   const resourceAgentBytes = await readFile(RESOURCE_AGENT_FILE);
+  const sourcePackAgentBytes = await readFile(SOURCE_PACK_AGENT_FILE);
   const stagingRoot = path.join(path.resolve(stateDirectory), 'repository-execution', 'staging');
   await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
   const access = new RouteAccess({
     policy,
     identify: resolveSubject,
     select: environmentActivityRouteForSubject,
-    list: () => state.listEnvironments(),
+    list: (selection) => state.listEnvironments(selection),
     root: rootFor,
     canonicalize: (value) => realpath(path.resolve(value)),
     inspect: lstat,
@@ -155,11 +161,16 @@ export async function createRepositoryExecution({
       });
       const agentLocation = { class: 'input', path: 'control/workspace-agent.mjs' };
       const resourceAgentLocation = { class: 'input', path: 'control/resource-agent.mjs' };
+      const sourcePackAgentLocation = { class: 'input', path: 'control/source-pack-agent.mjs' };
+      const sourcePackLocation = { class: 'input', path: 'source/parts.gz' };
+      let sourcePackAgentInstalled = false;
       const stateLocation = { class: 'cache', path: 'source-state.json' };
       const sourceManifestLocation = { class: 'input', path: 'source/manifest.json' };
       const candidateDirectory = { class: 'output', path: 'candidate' };
-      const scratchRoot = `subjects/${subject}/runs/${scope.runId}`;
-      const scratchRunLocation = { class: 'scratch', path: scratchRoot };
+      const legacyScratchRoot = `subjects/${subject}/runs/${scope.runId}`;
+      const compactScratchRoot = `r/${createHash('sha256').update(JSON.stringify([subject, scope.runId])).digest('hex').slice(0, 32)}`;
+      let selectedScratchRoot = null;
+      let resourceAgentInstalled = false;
       const bytes = new ByteChannel({
         target,
         put: (...args) => channel.put(...args),
@@ -170,6 +181,24 @@ export async function createRepositoryExecution({
           limit: 'execution output transfer exceeded its limit',
         },
       });
+      const installResourceAgent = async () => {
+        if (resourceAgentInstalled) return;
+        await bytes.write(resourceAgentBytes, resourceAgentLocation);
+        resourceAgentInstalled = true;
+      };
+      const scratchRoot = async () => {
+        if (selectedScratchRoot != null) return selectedScratchRoot;
+        await installResourceAgent();
+        const choice = parseAgentResult(await channel.execute(target, {
+          program: 'node', arguments: [resourceAgentLocation, 'select-directory',
+            { class: 'scratch', path: legacyScratchRoot }, { class: 'scratch', path: compactScratchRoot }],
+          directory: { class: 'work', path: '.' }, environment: {}, input: null,
+          timeoutMs: 30_000, maxOutputBytes: 4096,
+        }, { pollIntervalMs: 500 }), 'scratch layout observation');
+        if (!choice || Object.keys(choice).length !== 1 || !['legacy', 'compact'].includes(choice.selected)) throw new Error('scratch layout observation is invalid');
+        selectedScratchRoot = choice.selected === 'legacy' ? legacyScratchRoot : compactScratchRoot;
+        return selectedScratchRoot;
+      };
       const materializer = new OperationMaterializer({
         write: (value, location) => bytes.write(value, location),
         protectedValues: protectedEnvironmentValues,
@@ -217,7 +246,27 @@ export async function createRepositoryExecution({
           snapshot,
           install: () => bytes.write(agentBytes, agentLocation),
           observe: (digest, options) => runAgent('prepare', [stateLocation, digest], { timeoutMs: 60_000, ...options }),
-          writePart: (part, read) => bytes.stream({ read }, { class: 'input', path: `source/${part.name}` }, { maxBytes: Math.max(1, part.size) }),
+          transfer: async (snapshot, options) => {
+            if (!sourcePackAgentInstalled) {
+              await bytes.write(sourcePackAgentBytes, sourcePackAgentLocation, { signal: options.signal });
+              sourcePackAgentInstalled = true;
+            }
+            const needed = parseAgentResult(await channel.execute(target, {
+              program: 'node', arguments: [sourcePackAgentLocation, 'needed', sourceManifestLocation, createHash('sha256').update(snapshot.manifestBytes()).digest('hex')],
+              directory: { class: 'work', path: '.' }, environment: {}, input: null,
+              timeoutMs: 60_000, maxOutputBytes: BRIDGE_OUTPUT_LIMIT,
+            }, options), 'source part observation');
+            return transferRepositorySource({
+              snapshot, needed, ...options,
+              writePack: (value, controls) => bytes.write(value, sourcePackLocation, controls),
+              unpack: async (identity, controls) => parseAgentResult(await channel.execute(target, {
+                program: 'node', arguments: [sourcePackAgentLocation, sourcePackLocation, identity],
+                directory: { class: 'work', path: '.' }, environment: {}, input: null,
+                timeoutMs: 60_000, maxOutputBytes: 16 * 1024,
+              }, controls), 'source pack unpacking'),
+              writePart: (part, read) => bytes.stream({ read }, { class: 'input', path: `source/${part.name}` }, { maxBytes: Math.max(1, part.size) }),
+            });
+          },
           writeManifest: (value) => bytes.write(value, sourceManifestLocation),
           apply: (options) => runAgent('apply', [sourceManifestLocation, stateLocation], { timeoutMs: 10 * 60_000, ...options }),
         },
@@ -274,7 +323,8 @@ export async function createRepositoryExecution({
             if (resource !== 'scratch') throw new Error('repository execution cleanup resource is unsupported');
           },
           remove: async (resource, { signal }) => {
-            await bytes.write(resourceAgentBytes, resourceAgentLocation);
+            const scratchRunLocation = { class: 'scratch', path: await scratchRoot() };
+            await installResourceAgent();
             const outcome = await channel.execute(target, {
               program: 'node',
               arguments: [resourceAgentLocation, 'remove-directory', scratchRunLocation],

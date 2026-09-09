@@ -28,5 +28,6 @@ export function createEnvironmentLifecycleStateStore(filePath) {
   return Object.freeze({
     declarations: prefixedPort(store, 'declaration'),
     journal: prefixedPort(store, 'journal'),
+    diagnostics: prefixedPort(store, 'diagnostic'),
   });
 }

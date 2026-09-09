@@ -1,3 +1,4 @@
+import { bindInvocationToLease } from '../lease-bound-invocation.js';
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -50,7 +51,12 @@ export class LibvirtPersistentEnvironment {
     return new PersistentEnvironmentCore(this.#options).inspect();
   }
 
-  async #core() {
+  async #core(context = null) {
+    if (context != null) {
+      context.assertHeld();
+      const sourceRoot = await canonicalRoot(this.#options.sourceRoot);
+      return new PersistentEnvironmentCore({ ...this.#options, sourceRoot, invoke: bindInvocationToLease(this.#options.invoke, context) });
+    }
     if (!this.#delegate) {
       const sourceRoot = await canonicalRoot(this.#options.sourceRoot);
       this.#delegate = new PersistentEnvironmentCore({ ...this.#options, sourceRoot });
@@ -58,16 +64,16 @@ export class LibvirtPersistentEnvironment {
     return this.#delegate;
   }
 
-  async provision(input) {
+  async provision(input, context = null) {
     preflightExecutionProfileMemory(input?.settings);
     await preflightExecutionProfileStoragePaths({
       directory: this.#options.directory,
       sourceLocation: input?.source?.handle?.location,
     });
-    return observed(await (await this.#core()).provision(input));
+    return observed(await (await this.#core(context)).provision(input));
   }
   async observe(identity) { return observed(await (await this.#core()).observe(identity)); }
-  async start(identity) { return observed(await (await this.#core()).start(identity)); }
-  async stop(identity, options) { return observed(await (await this.#core()).stop(identity, options)); }
-  async drop(identity) { return (await this.#core()).drop(identity); }
+  async start(identity, context = null) { return observed(await (await this.#core(context)).start(identity)); }
+  async stop(identity, options, context = null) { return observed(await (await this.#core(context)).stop(identity, options)); }
+  async drop(identity, context = null) { return (await this.#core(context)).drop(identity); }
 }

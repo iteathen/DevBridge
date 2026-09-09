@@ -1,5 +1,5 @@
 import process from 'node:process';
-import { createLocalEnvironmentOperator } from './environment-operator-runtime.js';
+import { createConfiguredLifecycleAuthorityClient } from '../runtime/environment-lifecycle-authority-transport.js';
 import { readEnvironmentProfileConfigurationRecord } from '../setup/environment-profile-configuration-record.js';
 import { createWindowsEnvironmentProfileConfiguration } from '../setup/windows-environment-profile-configuration.js';
 import { createWindowsLifecycleAuthorityPlan } from '../setup/windows-lifecycle-authority.js';
@@ -28,7 +28,7 @@ export async function reconcileWindowsElevatedSetupEnvironmentActivation({
   configurationFactory = createWindowsEnvironmentProfileConfiguration,
   hostInspector = inspectWindowsLifecycleAuthorityReadinessHost,
   planFactory = createWindowsLifecycleAuthorityPlan,
-  operatorFactory = createLocalEnvironmentOperator,
+  clientFactory = createConfiguredLifecycleAuthorityClient,
   activationReconciler = reconcileSetupEnvironmentActivation,
 } = {}) {
   if (platform !== 'win32') throw new Error('elevated setup environment activation is only valid on Windows');
@@ -37,7 +37,7 @@ export async function reconcileWindowsElevatedSetupEnvironmentActivation({
   }
   if (typeof invoke !== 'function' || typeof recordReader !== 'function' || typeof configurationFactory !== 'function'
       || typeof hostInspector !== 'function' || typeof planFactory !== 'function'
-      || typeof operatorFactory !== 'function' || typeof activationReconciler !== 'function') {
+      || typeof clientFactory !== 'function' || typeof activationReconciler !== 'function') {
     throw new TypeError('elevated setup environment activation composition is invalid');
   }
 
@@ -69,26 +69,21 @@ export async function reconcileWindowsElevatedSetupEnvironmentActivation({
     return result({ ready: false, blocker: 'accepted environment profile configuration is unavailable' });
   }
 
-  const client = await operatorFactory({
+  const client = await clientFactory({
     stateDirectory,
-    authorityDirectory: plan.authorityDirectory,
     platform: 'win32',
-    invoke,
   });
   let changed = configured.changed === true;
   let environmentCount = 0;
+  let blocker = null;
   for (const declaration of declarations) {
-    const activation = await activationReconciler({ client, profile: declaration.profile });
+    const activation = await activationReconciler({ client, profile: declaration.profile, expectedDeclaration: declaration });
     changed ||= activation?.changed === true;
     if (activation?.ready !== true) {
-      return result({
-        ready: false,
-        changed,
-        blocker: activation?.blocker ?? 'accepted environment did not verify ready after protected activation',
-        environmentCount,
-      });
+      blocker ??= activation?.blocker ?? 'accepted environment did not verify ready after protected activation';
+      continue;
     }
     environmentCount += 1;
   }
-  return result({ ready: true, changed, environmentCount });
+  return result({ ready: blocker == null, changed, blocker, environmentCount });
 }

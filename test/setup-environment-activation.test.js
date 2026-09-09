@@ -109,14 +109,31 @@ test('setup activation fails closed on absent or ambiguous profile inventory', a
   }
 });
 
-test('setup activation does not broaden a foreign or destructive active transition', async () => {
+test('setup hands an existing resumable rebuild to its lifecycle owner without new destructive authority', async () => {
   const selected = client({
     before: status({ health: 'degraded', cause: 'system-storage-missing', action: 'resume', active: true, operation: 'rebuild', resumable: true }),
+    after: status(),
   });
   const result = await reconcileSetupEnvironmentActivation({ client: selected.value, profile: PROFILE });
-  assert.equal(result.ready, false);
-  assert.match(result.blocker, /non-create lifecycle transition/u);
-  assert.deepEqual(selected.calls, [['list']]);
+  assert.equal(result.ready, true);
+  assert.deepEqual(selected.calls, [['list'], ['resume', IDENTITY], ['status', IDENTITY]]);
+});
+
+test('setup cannot resume an unsupported or nonresumable operation', async () => {
+  for (const operation of ['foreign', 'rebuild']) {
+    const selected = client({ before: status({ health: 'degraded', action: 'resume', active: true, operation, resumable: false }) });
+    const result = await reconcileSetupEnvironmentActivation({ client: selected.value, profile: PROFILE });
+    assert.equal(result.ready, false);
+    assert.deepEqual(selected.calls, [['list']]);
+  }
+});
+
+test('declaration drift after activation cannot be reported ready', async () => {
+  const selected = client({
+    before: { ...status({ health: 'absent', cause: 'materialization-not-created', action: 'create' }), declarationDigest: 'a'.repeat(64), declarationRevision: 1 },
+    after: { ...status(), declarationDigest: 'b'.repeat(64), declarationRevision: 2 },
+  });
+  await assert.rejects(reconcileSetupEnvironmentActivation({ client: selected.value, profile: PROFILE }), /declaration changed/u);
 });
 
 test('setup activation refuses an ordinary degraded state instead of selecting a repair', async () => {

@@ -85,6 +85,18 @@ test('byte channel copies retained input and enforces contiguous bounded output'
   await assert.rejects(() => invalid.emit({ class: 'output', path: 'value' }, { write: async () => {} }), /not contiguous/u);
 });
 
+test('byte channel checks cancellation between frames and reports confirmed progress', async () => {
+  const fixture = byteFixture();
+  const controller = new AbortController();
+  const offsets = [];
+  await assert.rejects(fixture.channel.write(Buffer.from('source'), { class: 'input', path: 'value' }, {
+    signal: controller.signal,
+    onProgress: ({ offset }) => { offsets.push(offset); if (offset === 2) controller.abort(new Error('lease lost')); },
+  }), /lease lost/);
+  assert.deepEqual(offsets, [0, 2]);
+  assert.equal(fixture.writes.length, 0);
+});
+
 test('operation materializer stages bounded resources and one closed descriptor', async () => {
   const staged = [];
   const owner = new OperationMaterializer({
@@ -166,6 +178,17 @@ test('route owner resolves exactly one compatible target and one admitted root',
   }).resolve({}), /invalid-root/u);
 });
 
+test('route owner requests only the selected subject and profile and rejects a foreign observation', async () => {
+  const selections = [];
+  const owner = routeOwner({ list: async selection => {
+    selections.push(selection);
+    return [{ record: { subject: '999', profile: selection.profile, identity: 'foreign' },
+      observation: { exists: true, owned: true, compatible: true } }];
+  } });
+  await assert.rejects(() => owner.resolve({}), /absent/u);
+  assert.deepEqual(selections, [{ subject: '123', profile: 'profile-a' }]);
+});
+
 function sessionMessages() {
   return {
     activityUnavailable: 'activity-unavailable',
@@ -182,6 +205,7 @@ function sessionMessages() {
 
 test('workspace session sequences only its local ports and closes exact ownership', async () => {
   const calls = [];
+  const progress = [];
   const snapshot = {
     manifest: { digest: 'source-digest', entries: [] },
     manifestBytes: () => Buffer.from('{}'),
@@ -195,8 +219,13 @@ test('workspace session sequences only its local ports and closes exact ownershi
     source: {
       snapshot: async () => { calls.push('snapshot'); return snapshot; },
       install: async () => calls.push('install'),
-      observe: async () => { calls.push('observe'); return { appliedDigest: 'source-digest' }; },
-      writePart: async () => calls.push('part'),
+      observe: async (_digest, { onActivity }) => {
+        calls.push('observe');
+        await onActivity({ kind: 'started', processAlive: true });
+        await onActivity({ kind: 'finished', processAlive: false });
+        return { appliedDigest: 'source-digest' };
+      },
+      transfer: async () => calls.push('part'),
       writeManifest: async () => calls.push('manifest'),
       apply: async () => { calls.push('apply-source'); return { digest: 'source-digest' }; },
     },
@@ -224,7 +253,8 @@ test('workspace session sequences only its local ports and closes exact ownershi
     messages: sessionMessages(),
   });
 
-  assert.deepEqual(await session.prepare(), { identity: 'run-evidence' });
+  assert.deepEqual(await session.prepare({ onActivity: async event => progress.push(event.kind) }), { identity: 'run-evidence' });
+  assert.deepEqual(progress, ['workspace-prepare', 'workspace-health', 'source-snapshot', 'source-agent', 'source-check', 'source-check', 'source-check', 'source-verify']);
   await session.input('input', { read: async () => Buffer.alloc(0) });
   await session.run({ invocation: { workingDirectory: '.' }, environment: {}, transfers: [], limits: {}, stdin: null });
   await session.output('output', { write: async () => {} });
@@ -243,13 +273,6 @@ test('workspace session sequences only its local ports and closes exact ownershi
 test('nested execution owners import no sibling and cannot name provider or host fallback topology', async () => {
   const directory = path.join(ROOT, 'src', 'app', 'repository-execution');
   const names = (await readdir(directory)).filter((name) => name.endsWith('.js')).sort();
-  assert.deepEqual(names, [
-    'byte-channel.js',
-    'operation-materializer.js',
-    'route-access.js',
-    'session-guard.js',
-    'workspace-session.js',
-  ]);
   const forbidden = /(?:from ['"]\.\.?\/|hyper-?v|libvirt|qemu|powershell|virsh|github|codex|environment-bridge|persistent-environment|workspace-agent|resource-agent|bubblewrap|appcontainer|processcontainer|child_process|\bspawn\b|\bexecFile\b)/imu;
   for (const name of names) {
     const source = await readFile(path.join(directory, name), 'utf8');

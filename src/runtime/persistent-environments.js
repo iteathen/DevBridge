@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { normalizeBootProtection } from '../values/boot-protection.js';
 import { EnvironmentEffectChannel } from './persistent-environments/effect-channel.js';
 import { EnvironmentGenerationChange } from './persistent-environments/generation-change.js';
 import { EnvironmentLedger } from './persistent-environments/ledger.js';
@@ -45,7 +46,7 @@ function normalizeSubject(value) {
 
 function normalizeSettings(raw = {}) {
   const value = requireObject(raw, 'environment settings');
-  onlyKeys(value, new Set(['memoryBytes', 'processorCount', 'firmware']), 'environment settings');
+  onlyKeys(value, new Set(['memoryBytes', 'processorCount', 'firmware', 'bootProtection']), 'environment settings');
   const memoryBytes = value.memoryBytes ?? DEFAULT_MEMORY_BYTES;
   const processorCount = value.processorCount ?? 2;
   const firmware = value.firmware ?? 'efi';
@@ -56,7 +57,9 @@ function normalizeSettings(raw = {}) {
     throw new TypeError('environment settings.processorCount is outside the supported safety range');
   }
   if (!FIRMWARE.has(firmware)) throw new TypeError('environment settings.firmware is invalid');
-  return { memoryBytes, processorCount, firmware };
+  const bootProtection = normalizeBootProtection(value.bootProtection, { optional: true, name: 'environment settings.bootProtection' });
+  if (bootProtection && firmware !== 'efi') throw new TypeError('environment protected boot requires EFI firmware');
+  return { memoryBytes, processorCount, firmware, ...(bootProtection ? { bootProtection } : {}) };
 }
 
 function normalizeRequest(raw) {
@@ -71,7 +74,8 @@ function normalizeRequest(raw) {
 }
 
 function sameSettings(left, right) {
-  return left?.memoryBytes === right?.memoryBytes && left?.processorCount === right?.processorCount && left?.firmware === right?.firmware;
+  return left?.memoryBytes === right?.memoryBytes && left?.processorCount === right?.processorCount && left?.firmware === right?.firmware
+    && JSON.stringify(left?.bootProtection ?? null) === JSON.stringify(right?.bootProtection ?? null);
 }
 
 function slotIdentity(binding, subject, profile) {
@@ -120,9 +124,9 @@ export class PersistentEnvironments {
   #generation;
   #retirement;
 
-  constructor({ directory, source, operations }) {
-    this.#ledger = new EnvironmentLedger({ directory, protocol: PROTOCOL });
-    this.#effects = new EnvironmentEffectChannel({ source, actions: operations });
+  constructor({ directory, source, operations, lease }) {
+    this.#ledger = new EnvironmentLedger({ directory, protocol: PROTOCOL, lease });
+    this.#effects = new EnvironmentEffectChannel({ source, actions: operations, assertMutation: () => this.#ledger.assertHeld(), mutationContext: () => this.#ledger.mutationContext() });
     const ports = {
       effects: this.#effects,
       commit: (state) => this.#ledger.commit(state),
@@ -142,17 +146,43 @@ export class PersistentEnvironments {
     return this.#ledger.run(async () => this.#provisioning.ensure(await this.#ledger.read(), normalizeRequest(raw)));
   }
 
-  async list() {
-    return this.#ledger.run(async () => {
+  async list(rawSelection = {}) {
+    const value = requireObject(rawSelection, 'environment selection');
+    onlyKeys(value, new Set(['subject', 'profile']), 'environment selection');
+    const selection = {
+      subject: value.subject == null ? null : normalizeSubject(value.subject),
+      profile: value.profile == null ? null : requireId(value.profile, 'environment selection profile'),
+    };
+    return this.#ledger.snapshot(async (state) => {
       const binding = await this.#effects.binding();
-      return this.#lifecycle.list(await this.#ledger.read(), binding);
+      return this.#lifecycle.list(state, binding, selection);
     });
   }
 
   async observe(identity) {
-    return this.#ledger.run(async () => {
+    return this.#ledger.snapshot(async (state) => {
       const binding = await this.#effects.binding();
-      return this.#lifecycle.observe(await this.#ledger.read(), binding, identity);
+      return this.#lifecycle.observe(state, binding, identity);
+    });
+  }
+
+  // Committed identity is not native readiness. Consumers may use this bounded
+  // view to invalidate an already observed attachment, never to invent one.
+  async records(rawSelection = {}) {
+    const value = requireObject(rawSelection, 'environment selection');
+    onlyKeys(value, new Set(['subject', 'profile', 'identity']), 'environment selection');
+    const subject = value.subject == null ? null : normalizeSubject(value.subject);
+    const profile = value.profile == null ? null : requireId(value.profile, 'environment selection profile');
+    const identity = value.identity == null ? null : requireEnvironmentId(value.identity);
+    return this.#ledger.snapshot(async (state) => {
+      const binding = await this.#effects.binding();
+      const entries = Object.values(state.entries).filter(entry =>
+        (subject == null || entry.subject === subject) && (profile == null || entry.profile === profile)
+        && (identity == null || entry.current.identity === identity));
+      for (const entry of entries) {
+        if (entry.binding !== binding) throw new Error('environment attachment identity changed');
+      }
+      return Object.freeze({ revision: state.revision, records: entries.map(publicRecord) });
     });
   }
 
@@ -251,8 +281,7 @@ export class PersistentEnvironments {
   }
 
   async protectedSourceIdentities() {
-    return this.#ledger.run(async () => {
-      const state = await this.#ledger.read();
+    return this.#ledger.snapshot(async (state) => {
       const identities = new Set();
       for (const entry of Object.values(state.entries)) identities.add(entry.current.source.identity);
       for (const operation of Object.values(state.operations)) {

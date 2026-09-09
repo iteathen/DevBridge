@@ -56,6 +56,45 @@ test('generation is deterministic and binds basis plus local plan', () => {
   assert.notEqual(first, environmentBootstrapGeneration({ basis, plan: { ...plan, revision: 'base-v3' } }));
 });
 
+test('an already ready exact generation does not repeat provider preparation or apply', async () => {
+  let inspections = 0;
+  const instance = bootstrapWith(async (_target, frame, options) => {
+    assert.equal(frame.action, 'inspect');
+    assert.ok(options.signal instanceof AbortSignal);
+    inspections += 1;
+    return makeResponse(frame, readyBody(frame.body.generation, { basisDigest: frame.body.basisDigest }));
+  }, { prepare: () => assert.fail('warm readiness must not repeat startup preparation') });
+  assert.equal((await instance.ensure(target)).ready, true);
+  assert.equal((await instance.ensure(target)).ready, true);
+  assert.equal(inspections, 2);
+});
+
+test('unavailable first observation prepares once, but forged identity never triggers repair', async () => {
+  let prepared = 0;
+  const instance = bootstrapWith(async (_target, frame) => {
+    if (!prepared) throw new Error('guest connection is unavailable');
+    return makeResponse(frame, readyBody(frame.body.generation, { basisDigest: frame.body.basisDigest }));
+  }, { prepare: async () => { prepared += 1; } });
+  assert.equal((await instance.ensure(target)).ready, true);
+  assert.equal(prepared, 1);
+  const forged = bootstrapWith(async (_target, frame) => ({
+    ...makeResponse(frame, readyBody(frame.body.generation, { basisDigest: frame.body.basisDigest })), target: 'env-foreign',
+  }), { prepare: () => assert.fail('identity failure cannot authorize preparation') });
+  await assert.rejects(forged.ensure(target), /identity does not match/);
+});
+
+test('preparation cannot apply an old intent after basis or policy changes', async () => {
+  let currentBasis = structuredClone(basis);
+  const instance = bootstrapWith(async (_target, frame) => {
+    assert.equal(frame.action, 'inspect');
+    return makeResponse(frame, readyBody(null, { basisDigest: null, revision: null }));
+  }, {
+    basis: async () => currentBasis,
+    prepare: async () => { currentBasis = { ...basis, generation: basis.generation + 1 }; },
+  });
+  await assert.rejects(instance.ensure(target), /basis or policy changed/);
+});
+
 test('ensure prepares then applies an exact generation when observation is stale', async () => {
   let prepared = 0;
   let applied = 0;

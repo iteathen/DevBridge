@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { mutationLease } from '../test-support/mutation-lease.js';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -24,6 +25,44 @@ function location(value) {
 
 const baseConnection = { family: 'linux', user: 'guest', identityFile: '/keys/id', knownHostsFile: '/keys/known' };
 
+test('bootstrap retries only a confirmed pre-copy transient failure within its deadline', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-hv-bootstrap-retry-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let now = 0;
+  let calls = 0;
+  const adapter = new HyperVEnvironmentBootstrap({
+    directory: root, locate: async () => location(target), connection: async () => baseConnection,
+    dnsServers: () => ['10.0.0.53'], now: () => now, wait: async (ms) => { now += ms; },
+    invoke: async (request) => {
+      assert.ok(request.timeoutMs <= 90_000 - now);
+      calls += 1;
+      if (calls === 1) return success(JSON.stringify({ delivered: false, failure: { code: 'service-not-ready', attempted: false, message: 'starting' } }));
+      return success(JSON.stringify({ delivered: true }));
+    },
+  });
+  assert.equal((await adapter.activate(target)).ready, true);
+  assert.equal(calls, 2);
+  assert.equal(now, 1000);
+});
+
+test('bootstrap preserves an uncertain copy outcome without a blind retry', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-hv-bootstrap-uncertain-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let calls = 0;
+  const adapter = new HyperVEnvironmentBootstrap({
+    directory: root, locate: async () => location(target), connection: async () => baseConnection,
+    dnsServers: () => ['10.0.0.53'], wait: async () => assert.fail('must not retry an uncertain copy'),
+    invoke: async () => { calls += 1; return { ...success(''), exitCode: null, timedOut: true, stderr: 'native timeout' }; },
+  });
+  await assert.rejects(adapter.activate(target), (error) => {
+    assert.equal(error.effect, 'uncertain');
+    assert.equal(error.evidence.timedOut, true);
+    assert.match(error.message, /native timeout/u);
+    return true;
+  });
+  assert.equal(calls, 1);
+});
+
 test('Hyper-V preparation uses only located ownership/network state and activation copies a bounded seed', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-hv-bootstrap-'));
   let copies = 0;
@@ -40,8 +79,9 @@ test('Hyper-V preparation uses only located ownership/network state and activati
     if (payload.source) {
       copies += 1;
       copiedSeed = JSON.parse(await readFile(payload.source, 'utf8'));
-      assert.equal(payload.destination, '/var/lib/devbridge/bootstrap/network-seed.json');
-      return success(JSON.stringify({ copied: true }));
+      // Linux fcopy appends the source basename to the supplied directory.
+      assert.equal(path.posix.join(payload.destination, path.basename(payload.source)), '/var/lib/devbridge/bootstrap/network-seed.json');
+      return success(JSON.stringify({ delivered: true }));
     }
     throw new Error('unexpected management request');
   };
@@ -171,6 +211,17 @@ test('reserved addresses cannot silently adopt managed allocation ownership', as
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('bootstrap refuses a host-local DNS resolver before native delivery', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-hv-dns-'));
+  try {
+    const adapter = new HyperVEnvironmentBootstrap({
+      directory: root, locate: async (value) => location(value), connection: async () => baseConnection,
+      dnsServers: async () => ['127.0.0.1'], invoke: async () => assert.fail('invalid DNS must not reach delivery'),
+    });
+    await assert.rejects(adapter.activate(target), /guest-reachable DNS/u);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('separate bootstrap instances cannot overlap allocation mutation', async () => {

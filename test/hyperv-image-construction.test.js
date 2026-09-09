@@ -678,7 +678,7 @@ test('Hyper-V image construction rejects malformed console transport variants be
     await assert.rejects(() => construction.captureInstallConsole(data.request.identity), /evidence size is invalid/u);
 
     host.state.consoleResult = { available: true, width: 321, height: 240, imageData: 'AAAA' };
-    await assert.rejects(() => construction.captureInstallConsole(data.request.identity), /evidence contract is invalid/u);
+    await assert.rejects(() => construction.captureInstallConsole(data.request.identity), /console dimensions are unsupported/u);
 
     const location = path.join(data.stateRoot, `${data.request.identity}-install-console.bmp`);
     await assert.rejects(() => readFile(location), /ENOENT/u);

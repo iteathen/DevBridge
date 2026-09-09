@@ -34,19 +34,14 @@ jobs:
       - name: Cheap preflight (non-Windows default)
         if: runner.os != 'Windows'
         timeout-minutes: 7
-        run: npm run preflight -- --ci-qualification
+        run: npm run preflight -- --ci-qualification --static-only
       - name: Cheap preflight (Windows bounded)
         if: runner.os == 'Windows'
         timeout-minutes: 7
-        run: npm.cmd run preflight -- --ci-qualification --bound-targeted-test-concurrency
-      - name: DevBridge identity audit
-        timeout-minutes: 1
-        run: node --test test/product-identity.test.js
-      - name: Standalone installer regression
-        timeout-minutes: 1
-        run: node --test test/standalone-launcher.test.js
+        run: npm.cmd run preflight -- --ci-qualification --static-only
 
   test:
+    needs: smoke
     timeout-minutes: 14
     strategy:
       fail-fast: false
@@ -63,9 +58,6 @@ jobs:
         with:
           node-version: 22.16.0
           package-manager-cache: false
-      - name: Repository-execution architecture gates
-        timeout-minutes: 1
-        run: node --test test/repository-execution.test.js test/repository-execution-boundary-absence.test.js test/deterministic-execution-boundary.test.js test/process-runner.test.js test/worker-exchange.test.js test/local-operation-manifest.test.js test/tool-onboarding.test.js
       - name: Tests (non-Windows default)
         if: runner.os != 'Windows'
         timeout-minutes: 6

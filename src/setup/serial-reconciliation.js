@@ -33,16 +33,24 @@ function result({ ready, changed, state, item = null, completedCount, totalCount
   return Object.freeze({ ready, changed, state, item, completedCount, totalCount, blocker });
 }
 
-export async function reconcileSerialSelection({ items: rawItems, reconcile } = {}) {
+export async function reconcileSerialSelection({ items: rawItems, reconcile, independent = false } = {}) {
   const selected = items(rawItems);
   if (typeof reconcile !== 'function') throw new TypeError('serial reconciliation contract is incomplete');
+  if (typeof independent !== 'boolean') throw new TypeError('serial reconciliation independence must be boolean');
   let completedCount = 0;
+  let changed = false;
+  let lastChanged = null;
+  let blocked = null;
   for (const item of selected) {
     const observed = observation(await reconcile(item));
+    changed ||= observed.changed;
+    if (observed.changed) lastChanged = item;
     if (!observed.ready) {
+      blocked ??= { item, blocker: observed.blocker };
+      if (independent) continue;
       return result({
         ready: false,
-        changed: observed.changed,
+        changed,
         state: 'blocked',
         item,
         completedCount,
@@ -51,17 +59,6 @@ export async function reconcileSerialSelection({ items: rawItems, reconcile } = 
       });
     }
     completedCount += 1;
-    if (observed.changed) {
-      const ready = completedCount === selected.length;
-      return result({
-        ready,
-        changed: true,
-        state: ready ? 'ready' : 'pending',
-        item,
-        completedCount,
-        totalCount: selected.length,
-      });
-    }
   }
-  return result({ ready: true, changed: false, state: 'ready', completedCount, totalCount: selected.length });
+  return result({ ready: blocked == null, changed, state: blocked == null ? 'ready' : 'blocked', item: blocked?.item ?? lastChanged, completedCount, totalCount: selected.length, blocker: blocked?.blocker ?? null });
 }

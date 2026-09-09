@@ -77,6 +77,23 @@ test('multiple repository workspaces resolve to one physical profile environment
   assert.equal(await routing.representativeTarget(PHYSICAL), environments[0].record.identity);
 });
 
+test('physical route requests only its subject and profile and rejects stale compatibility', async () => {
+  const state = physicalState();
+  const original = state.listEnvironments;
+  let incompatible = false;
+  state.listEnvironments = async selection => {
+    assert.deepEqual(selection, { subject: executionProfileSubject(PROFILE), profile: PROFILE });
+    const entries = await original();
+    if (incompatible) entries[0].observation.compatible = false;
+    return entries;
+  };
+  const routing = createExecutionProfileRouting({ state, policy: policy([{ subject: '101' }]) });
+  const target = executionWorkspaceTarget('101', PROFILE);
+  assert.equal(await routing.physicalTarget(target), PHYSICAL);
+  incompatible = true;
+  await assert.rejects(routing.physicalTarget(target), /not compatible/);
+});
+
 test('profile routing rejects credential-bearing topology in admission policy', () => {
   assert.throws(() => createExecutionProfileRouting({
     state: physicalState(),

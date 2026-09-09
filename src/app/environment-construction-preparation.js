@@ -59,6 +59,7 @@ export async function createLocalEnvironmentAccess({
     return Object.freeze({
       connection: async () => Object.freeze({ family: 'linux' }),
       prepare: null,
+      discard: async () => {},
     });
   }
   if (family === 'linux' && platform === 'win32') {
@@ -71,6 +72,7 @@ export async function createLocalEnvironmentAccess({
     return Object.freeze({
       connection: async (target) => preparation.connection(target),
       prepare: (request) => preparation.ensure(request),
+      discard: (target) => material.discard(target),
     });
   }
   if (family === 'windows' && platform === 'win32') {
@@ -118,6 +120,7 @@ export function createEnvironmentConstructionPreparation({
         revision: declaration.bootstrap.generation,
       });
       if (!bootstrap || typeof bootstrap.ensure !== 'function' || typeof bootstrap.inspect !== 'function' || typeof bootstrap.connection !== 'function') throw new TypeError('environment bootstrap composition contract is incomplete');
+      if (values.size >= 64) values.delete(values.keys().next().value);
       values.set(key, Object.freeze({ target, access, bootstrap }));
     }
     return { request, declaration, selected: values.get(key) };

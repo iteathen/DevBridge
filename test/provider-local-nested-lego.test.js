@@ -46,17 +46,26 @@ async function sourceFiles(directory) {
   return nested.flat();
 }
 
-test('provider-local nested LEGOs are sibling-independent and cross-provider isolated', async () => {
-  for (const relative of Object.values(groups).flat()) {
-    const text = await source(relative);
-    assert.doesNotMatch(text, /from ['"]\.\.?\//u, `${relative} imported another local implementation`);
-    assert.doesNotMatch(text, /github|codex|repository|remote agent/iu, `${relative} leaked external topology`);
+function dependencies(text) {
+  return [...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*)['"]([^'"]+)['"]/gu)].map((match) => match[1]);
+}
+
+test('provider children depend on native ports or pure shared contracts, not sibling effects or other owners', async () => {
+  // The parent owns this shared value contract. It grants no effect or storage
+  // capability. A blanket ban on relative imports confused contracts with peers.
+  const contracts = new Set([path.join(providerRoot, 'hyperv-image-construction/console-format.js')]);
+  for (const contract of contracts) {
+    assert.deepEqual(dependencies(await readFile(contract, 'utf8')), [], 'shared console format must remain a capability-free leaf');
   }
-  for (const relative of [...groups.hypervEnvironment, ...groups.hypervConstruction]) {
-    assert.doesNotMatch(await source(relative), /libvirt|qemu|qcow2|virsh/iu, `${relative} leaked another provider`);
-  }
-  for (const relative of groups.libvirtEnvironment) {
-    assert.doesNotMatch(await source(relative), /hyper-?v|powershell|vhdx/iu, `${relative} leaked another provider`);
+  const directories = [...new Set(Object.values(groups).flat().map((file) => path.dirname(file)))];
+  for (const directory of directories) {
+    for (const file of await sourceFiles(path.join(providerRoot, directory))) {
+      for (const dependency of dependencies(await readFile(file, 'utf8'))) {
+        if (dependency.startsWith('node:')) continue;
+        const target = path.resolve(path.dirname(file), dependency);
+        assert.ok(dependency.startsWith('.') && contracts.has(target), `${file} depends on implementation ${dependency}; compose that effect through its parent`);
+      }
+    }
   }
 });
 

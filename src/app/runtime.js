@@ -94,6 +94,7 @@ export async function createRuntime(config, {
   const feedbackSource = new IssueFeedbackSource({ client, queueRepository: selectedQueue, trustedActorIds: config.github.trustedActorIds });
   const decisionSource = new IssueDecisionSource({ client, queueRepository: selectedQueue });
   let toolInventory = null;
+  const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
   const statusReporter = new IssueStatusReporter({
     client,
     stateStore,
@@ -102,6 +103,7 @@ export async function createRuntime(config, {
     maxCommentBytes: config.status.maxCommentBytes,
     secretValues,
     inventoryRefProvider: () => toolInventory?.reference() ?? null,
+    faultInjector,
   });
   const chatHandoffProjector = new ChatHandoffProjector({
     client,
@@ -189,7 +191,6 @@ export async function createRuntime(config, {
   const deterministicProfileNames = Object.keys(builtIns);
   const tools = { ...config.tools, ...builtIns };
 
-  const faultInjector = new DeterministicFaultInjector(config.execution.faultInjection);
   const runtimeExecution = await createRuntimeExecutionContext({
     config,
     workspaceManager,

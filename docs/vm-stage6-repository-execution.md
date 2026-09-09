@@ -24,6 +24,54 @@ There is no direct-host or legacy sandbox fallback. Missing routes, an unavailab
 
 Connections are transient. A session is opened for one exact source/operation/candidate exchange and owns the selected workspace target for that session. It does not imply ownership of the entire shared physical profile VM. No consumer retains a provider, transport, guest path, or physical environment object.
 
+Composing a protected activity request reads the foundation identity independently
+of aggregate installation/image health. Explicit status still reports that health.
+Selecting a physical route queries the committed subject/profile selection before
+native observation; unrelated profiles are not part of a selected data transfer.
+The activity owner reuses an observed attachment while committed generation and
+declaration records remain unchanged. Each request reloads its admitted route and
+reads a consistent committed identity snapshot. The snapshot is an identity view;
+it does not infer current admission from historical operation rows. Lifecycle
+mutations change its revision, invalidating reused observations. Opening a Hyper-V connection reobserves native
+ownership and storage compatibility; the adapter authenticates and binds that
+connection to its exact physical guest. Connection loss, changed binding,
+cancellation and protected authority changes discard reusable resources.
+No cached observation substitutes for current task, lease/fence or result checks.
+
+Repository execution enumerates the environment inventory at composition. Each
+operation then requests only its selected subject/profile observation through the
+existing activity observation contract. Unrelated guest readiness is not rescanned
+for that operation; a changed or unavailable selected route still rejects admission.
+
+The execution owner uses a bounded, digest-derived run scratch name beneath the
+already isolated workspace. It observes the legacy and compact locations through
+the guest resource contract: existing legacy work keeps its location, new work
+uses the compact location, and conflicting or symlinked layouts are rejected.
+Logical run IDs, source identity and cleanup evidence retain their v1 meanings.
+This leaves space for native build-tool paths without requiring every tool to
+support extended Windows paths.
+
+The Windows service retains one serialized activity worker for its own lifetime;
+it does not recycle a healthy worker or connection because a request count or idle
+timer elapsed. Message sizes, in-flight work and cached identities remain bounded.
+It releases the service gate between
+requests. Its existing v1 pipe, response acknowledgement, byte bounds and client
+cancellation remain unchanged. Read-only lifecycle inspection can proceed between
+frames; privileged lifecycle mutation invalidates retained activity resources.
+Read-only configuration inspection preserves them; configuration changes are
+detected through the current route/declaration/record bindings before dispatch.
+The service job closes worker descendants on cancellation and shutdown. Hyper-V
+uses a reusable authenticated SSH or PowerShell Direct connection; the existing
+installed guest agent still journals each detached operation independently.
+Libvirt retains its QGA transport. Hyper-V tests do not qualify native KVM behavior.
+
+Current preparation gap: each registered operation and scratch-cleanup session
+calls activity preparation and health again. Bootstrap `ensure` now skips provider
+preparation for a ready exact generation. Repeated readiness probes remain to be
+measured after transport reuse is natively qualified. Normal session close does
+not stop the VM. A passing transport contract alone does not establish an
+efficient warm workflow; both installed guest routes must demonstrate it.
+
 ## Local route policy
 
 Routes are stored under the control-owned state directory at:
@@ -61,6 +109,26 @@ The trusted host enumerates tracked plus untracked/non-ignored paths with NUL-de
 The guest receives only this admitted snapshot through input-transfer capabilities scoped to the active workspace. An identical manifest digest takes the fast path and transfers no source parts. A changed snapshot is materialized exactly, then committed to credential-free guest-local Git with no remotes and an empty credential helper. Guest Git is convenience state only.
 
 `git reset --hard <saved-baseline>` plus `git clean -fd` removes prior proposal state before each operation while deliberately preserving ignored dependency/build caches within that repository workspace. The host snapshots again after synchronization and rejects host source drift.
+
+The workspace transport groups small source parts into bounded compressed
+`devbridge/source-part-pack-v1` artifacts. The delivered workspace helper checks
+the pack digest, decompression bound, member names and each member's bytes before
+staging them. The original v1 file-tree manifest still governs source application;
+large parts retain the existing streaming path. This changes neither the public
+bridge frames nor image identity. Source transfer reports bounded progress and
+checks cancellation before subsequent effects. Native qualification status is
+tracked separately from this transport contract.
+
+For a changed manifest, the delivered source helper observes which staged parts
+still match their expected size and digest. The host accepts only a bounded part
+selection bound to its exact manifest bytes and sends missing/corrupt parts.
+Guest source application still validates every part and complete file; a stale or
+forged omission cannot turn altered bytes into an accepted source tree. Unchanged
+staged data therefore avoids retransmission without becoming trusted authority.
+
+Workspace preparation and source transfer project their phases through the existing
+run liveness channel. They must not imply that the registered compiler or test has
+started. Progress checkpoint failures are awaited before subsequent transfer effects.
 
 ## Candidate return and host authority
 

@@ -7,6 +7,8 @@ const POINTS = new Set([
   'process.after-exit',
   'cleanup.before-remove',
   'scratch.cleanup.before-remove',
+  'status.before-delivery',
+  'status.after-effect',
 ]);
 const ACTIONS = new Set(['error', 'crash', 'interrupt', 'timeout', 'truncate-output']);
 

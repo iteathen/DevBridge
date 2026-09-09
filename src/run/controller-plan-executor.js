@@ -6,6 +6,7 @@ import { isWithin } from '../security/workspace-policy.js';
 import { ManagedScratchTransaction } from '../runtime/managed-scratch.js';
 import { guardActiveTaskLease } from './lease-execution-context.js';
 import { captureFailureDiagnostics } from './failure-diagnostics.js';
+import { controllerPlanDigest } from './controller-plan.js';
 
 const ASSERTION_MARKER_DIAGNOSTIC_CHARACTERS = 160;
 
@@ -344,8 +345,10 @@ export class ControllerPlanExecutor {
   }
 
   async execute({ plan, state, workspace, persist, onLiveness = null }) {
+    const digest = controllerPlanDigest(plan);
     state.controllerPlan ??= {
       protocol: plan.protocol,
+      planDigest: digest,
       phase: 'materializing',
       files: [],
       operations: [],
@@ -356,6 +359,12 @@ export class ControllerPlanExecutor {
     };
     state.controllerPlan.scratchLedger ??= [];
     const planState = state.controllerPlan;
+    const previousDigest = planState.planDigest ?? state.prior?.receipt?.controllerPlanSha256;
+    if ((previousDigest != null && previousDigest !== digest)
+        || (planState.operations.some(record => record.state === 'observed') && previousDigest !== digest)) {
+      throw new PolicyError('retained controller work is not bound to the accepted plan');
+    }
+    planState.planDigest = digest;
     const results = new Map();
     let diagnosticOperation = null;
     let diagnosticResult = null;
@@ -428,6 +437,20 @@ export class ControllerPlanExecutor {
         if (!record) {
           record = { id: operation.id, operation: operation.operation, state: 'planned', attempts: 0 };
           planState.operations.push(record);
+        }
+        if (record.state === 'observed') {
+          const retained = record.result;
+          if (record.operation !== operation.operation || retained?.id !== operation.id || retained?.operation !== operation.operation
+              || !Number.isSafeInteger(record.attempts) || record.attempts < 1
+              || (retained.exitCode !== null && !Number.isInteger(retained.exitCode))
+              || ['timedOut', 'aborted', 'outputTruncated'].some(key => typeof retained[key] !== 'boolean')
+              || typeof retained.stdout !== 'string' || typeof retained.stderr !== 'string') {
+            throw new PolicyError('retained controller operation evidence is invalid');
+          }
+          diagnosticResult = retained;
+          results.set(operation.id, retained);
+          if (retained.timedOut) throw new PolicyError(`deterministic operation ${operation.id} timed out`);
+          continue;
         }
         record.state = 'attempted';
         record.attempts = (record.attempts ?? 0) + 1;

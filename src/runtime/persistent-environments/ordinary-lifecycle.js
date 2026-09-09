@@ -48,9 +48,10 @@ export class EnvironmentOrdinaryLifecycle {
     return { record: this.#present(entry), observation };
   }
 
-  async list(state, binding) {
+  async list(state, binding, { subject = null, profile = null } = {}) {
     const values = [];
     for (const entry of Object.values(state.entries)) {
+      if ((subject != null && entry.subject !== subject) || (profile != null && entry.profile !== profile)) continue;
       if (entry.binding !== binding) {
         const value = unavailable(entry);
         value.record = this.#present(entry);

@@ -101,6 +101,7 @@ export class WindowsProtectedAccessMaterial {
   #platform;
   #entropy;
   #user;
+  #resolved = new Map();
 
   constructor({ directory, invoke, user, platform = process.platform, entropy = () => randomBytes(32) } = {}) {
     if (typeof directory !== 'string' || directory.length === 0 || directory.includes('\0') || !path.isAbsolute(directory)) throw new TypeError('protected access directory is invalid');
@@ -184,17 +185,27 @@ export class WindowsProtectedAccessMaterial {
     const selectedIdentity = identity(rawIdentity);
     await this.#ensureRoot();
     const record = await this.#load(selectedIdentity);
-    if (!record) throw new Error('protected access material is unavailable');
+    if (!record) { this.#resolved.delete(selectedIdentity); throw new Error('protected access material is unavailable'); }
+    // The protected record remains the authority on every lookup. Only its
+    // unchanged decrypted value is reused inside this account's process.
+    const key = JSON.stringify(record);
+    const cached = this.#resolved.get(selectedIdentity);
+    if (cached?.key === key) return cached.value;
+    this.#resolved.delete(selectedIdentity);
     const encoded = await this.#invokeProtection(UNPROTECT_SCRIPT, { identity: selectedIdentity, protected: record.protectedSecret }, 'value');
     let secret;
     try { secret = Buffer.from(encoded, 'base64').toString('utf8'); } catch { throw new Error('protected access operation returned invalid output'); }
     normalizeSecret(secret);
     if (digest(secret) !== record.secretDigest) throw new Error('protected access material integrity changed');
-    return Object.freeze({ user: record.user, secret });
+    const value = Object.freeze({ user: record.user, secret });
+    if (this.#resolved.size >= 64) this.#resolved.delete(this.#resolved.keys().next().value);
+    this.#resolved.set(selectedIdentity, { key, value });
+    return value;
   }
 
   async discard(rawIdentity) {
     const selectedIdentity = identity(rawIdentity);
+    this.#resolved.delete(selectedIdentity);
     await this.#ensureRoot();
     const location = this.#location(selectedIdentity);
     let info;

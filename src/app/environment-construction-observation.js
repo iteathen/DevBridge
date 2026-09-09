@@ -23,13 +23,13 @@ export function createEnvironmentConstructionObservation({ materialization, prep
   const preparationPort = assertPort(preparation, 'inspect', 'preparation observation');
   const workspacePort = assertPort(workspaces, 'inspect', 'workspace observation');
 
-  const observe = async (request) => {
+  const assess = async (request) => {
     const base = normalizeEnvironmentObservation(await materializationPort.observe(request));
     if (base.materialization !== 'present'
         || base.systemStorage !== 'present'
         || base.attachment !== 'ready'
         || base.implementationGeneration == null) {
-      return base;
+      return { observation: base, reason: null };
     }
 
     const selected = requestWithGeneration(request, base.implementationGeneration);
@@ -39,21 +39,26 @@ export function createEnvironmentConstructionObservation({ materialization, prep
     const bootstrap = ['ready', 'degraded'].includes(prepared?.bootstrap) ? prepared.bootstrap : 'unknown';
     const guest = prepared?.ready === true && workspace?.ready === true ? 'healthy' : 'degraded';
 
-    return normalizeEnvironmentObservation({
+    const observation = normalizeEnvironmentObservation({
       ...base,
       enrollment,
       bootstrap,
       guest,
     });
+    const blocker = prepared?.ready !== true ? prepared : workspace?.ready !== true ? workspace : null;
+    const reason = typeof blocker?.reason === 'string'
+      ? blocker.reason.replace(/[\u0000-\u001f\u007f]/gu, ' ').slice(0, 1024)
+      : null;
+    return { observation, reason };
   };
 
   return Object.freeze({
-    observe,
+    observe: async (request) => (await assess(request)).observation,
     readiness: Object.freeze({
       async verify(request) {
-        const observation = await observe(request);
+        const { observation, reason } = await assess(request);
         const condition = environmentObservationCondition(observation);
-        if (condition !== 'healthy') throw new Error(`environment construction readiness is not healthy: ${condition}`);
+        if (condition !== 'healthy') throw new Error(`environment construction readiness is not healthy: ${condition}${reason ? `; ${reason}` : ''}`);
         return Object.freeze({
           ready: true,
           implementationGeneration: observation.implementationGeneration,

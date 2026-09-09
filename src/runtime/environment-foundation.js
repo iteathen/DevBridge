@@ -228,7 +228,8 @@ export class EnvironmentFoundation {
   }
 
   async ensureEnvironment(input) { return this.#lifecycle.ensure(input); }
-  async listEnvironments() { return this.#lifecycle.list(); }
+  async listEnvironments(selection = {}) { return this.#lifecycle.list(selection); }
+  async readEnvironmentRecords(selection = {}) { return this.#lifecycle.records(selection); }
   async observeEnvironment(identity) { return this.#lifecycle.observe(requireEnvironmentIdentity(identity)); }
   async startEnvironment(identity) { return this.#lifecycle.start(requireEnvironmentIdentity(identity)); }
   async stopEnvironment(identity, options = {}) { return this.#lifecycle.stop(requireEnvironmentIdentity(identity), options); }

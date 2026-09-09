@@ -1,5 +1,6 @@
 import { diagnoseEnvironment } from './environment-diagnosis.js';
 import { normalizeEnvironmentObservation } from './environment-observation.js';
+import { normalizeEnvironmentOperationSubject } from './environment-operation-subject.js';
 
 export const ENVIRONMENT_REBUILD_IMPACT_PROTOCOL = 'devbridge/environment-rebuild-impact-v1';
 
@@ -156,6 +157,7 @@ export class EnvironmentRebuild {
           operationId: record.operationId,
           declarationRevision: declaration.revision,
           declaration: declaration.declaration,
+          operationSubject: normalizeEnvironmentOperationSubject({ environmentIdentity: identity, operationId: record.operationId, operation: 'rebuild', declarationRevision: declaration.revision, previousImplementationGeneration: previousGeneration, imageIdentity: declaration.declaration.image.identity, imageGeneration: declaration.declaration.image.generation }),
         });
         if (result.implementationGeneration === previousGeneration) throw new Error('environment rebuild did not create a new implementation generation');
         const after = await this.#observe(declaration);

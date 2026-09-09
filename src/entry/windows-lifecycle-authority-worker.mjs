@@ -49,18 +49,21 @@ export function parseWindowsLifecycleAuthorityWorkerArguments(argv) {
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
     const value = argv[index + 1];
-    if (!ARGUMENTS.has(flag) || typeof value !== 'string' || values.has(flag)) {
+    if ((!ARGUMENTS.has(flag) && flag !== '--activity-stream') || typeof value !== 'string' || values.has(flag)) {
       throw new TypeError('Windows lifecycle authority worker arguments are invalid');
     }
     values.set(flag, value);
   }
-  if (values.size !== ARGUMENTS.size) throw new TypeError('Windows lifecycle authority worker arguments are incomplete');
+  if ([...ARGUMENTS].some(flag => !values.has(flag))) throw new TypeError('Windows lifecycle authority worker arguments are incomplete');
   const access = values.get('--access');
   if (!ACCESS.has(access)) throw new TypeError('Windows lifecycle authority worker access class is invalid');
+  const stream = values.get('--activity-stream');
+  if (stream != null && (stream !== 'v1' || access !== 'activity')) throw new TypeError('Windows activity stream mode is invalid');
   return Object.freeze({
     access,
     stateDirectory: absoluteWindowsPath(values.get('--state-directory'), 'Windows lifecycle authority worker stateDirectory'),
     authorityDirectory: absoluteWindowsPath(values.get('--authority-directory'), 'Windows lifecycle authority worker authorityDirectory'),
+    ...(stream == null ? {} : { activityStream: true }),
   });
 }
 
@@ -124,6 +127,37 @@ async function readSingleRequest(input, maxWireBytes) {
   return JSON.parse(text.slice(0, newline));
 }
 
+export async function runWindowsActivityAuthorityStream({ input, output, activityFactory,
+  idleMs = 0, maxRequests = 0 } = {}) {
+  let buffer = Buffer.alloc(0), timer = null, activity = null, count = 0;
+  const arm = () => { clearTimeout(timer); if (idleMs > 0) timer = setTimeout(() => input.destroy(new Error('activity worker idle lifetime ended')), idleMs); };
+  arm();
+  try {
+    for await (const chunk of input) {
+      buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
+      if (buffer.length > ACTIVITY_MAX_REQUEST_WIRE_BYTES) throw new Error('activity worker request exceeded its bound');
+      const newline = buffer.indexOf(10);
+      if (newline < 0) continue;
+      if (newline !== buffer.length - 1) throw new Error('activity worker request framing is invalid');
+      clearTimeout(timer);
+      const request = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, newline)));
+      buffer = Buffer.alloc(0);
+      let response;
+      try {
+        activity ??= await activityFactory();
+        response = await handleWindowsLifecycleAuthorityWorkerRequest({ access: 'activity', activity, request });
+      } catch (error) { response = workerInitializationFailure(request, error, 'activity'); }
+      const wire = `${JSON.stringify(response)}\n`;
+      if (Buffer.byteLength(wire) > ACTIVITY_MAX_RESULT_WIRE_BYTES) throw new Error('activity worker response exceeded its bound');
+      output.write(wire);
+      count += 1;
+      if (maxRequests > 0 && count >= maxRequests) return;
+      arm();
+    }
+    if (buffer.length) throw new Error('activity worker request was interrupted');
+  } finally { clearTimeout(timer); activity?.close?.(); }
+}
+
 export async function runWindowsLifecycleAuthorityWorker({
   argv = process.argv.slice(2),
   input = process.stdin,
@@ -134,6 +168,12 @@ export async function runWindowsLifecycleAuthorityWorker({
   acceptanceHandler = null,
 } = {}) {
   const options = parseWindowsLifecycleAuthorityWorkerArguments(argv);
+  if (options.activityStream) {
+    const selectedActivityFactory = activityFactory ?? (await import('../app/environment-activity-host.js')).createProtectedEnvironmentActivity;
+    return runWindowsActivityAuthorityStream({ input, output, activityFactory: () => selectedActivityFactory({
+      stateDirectory: options.stateDirectory, authorityDirectory: options.authorityDirectory, platform: 'win32',
+    }) });
+  }
   const requestLimit = options.access === 'activity'
     ? ACTIVITY_MAX_REQUEST_WIRE_BYTES
     : options.access === 'configuration'

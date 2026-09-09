@@ -5,7 +5,7 @@ const RESULT_PROTOCOL = 'devbridge/environment-lifecycle-authority-result-v1';
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,159}$/u;
 const MAX_SUBJECT_BYTES = 512;
 const MAX_ENVELOPE_BYTES = 16 * 1024;
-const READ_AUTHORITY_OPERATIONS = new Set(['inspect', 'list', 'status', 'plan', 'setup-reentry']);
+const READ_AUTHORITY_OPERATIONS = new Set(['inspect', 'list', 'status', 'plan', 'setup-reentry', 'diagnostics-v1']);
 const MUTATION_AUTHORITY_OPERATIONS = new Set(['run', 'resume']);
 const AUTHORITY_OPERATIONS = new Set([...READ_AUTHORITY_OPERATIONS, ...MUTATION_AUTHORITY_OPERATIONS]);
 const LIFECYCLE_OPERATIONS = new Set(['create', 'repair', 'rebuild', 'reset', 'recreate']);
@@ -57,7 +57,7 @@ function normalizePayload(operation, raw) {
     onlyKeys(value, new Set(), 'lifecycle authority payload');
     return {};
   }
-  if (operation === 'status') {
+  if (operation === 'status' || operation === 'diagnostics-v1') {
     onlyKeys(value, new Set(['identity']), 'lifecycle authority payload');
     return { identity: requireSafeId(value.identity, 'environment identity') };
   }
@@ -167,6 +167,10 @@ async function invokeOperator(operator, request) {
     case 'inspect': return operator.inspect();
     case 'list': return operator.list();
     case 'status': return operator.status(p.identity);
+    case 'diagnostics-v1': {
+      if (typeof operator.diagnostics !== 'function') throw Object.assign(new Error('lifecycle diagnostics are unsupported'), { code: 'UNSUPPORTED_CAPABILITY' });
+      return operator.diagnostics(p.identity);
+    }
     case 'plan': return operator.plan(p.operation, p.identity);
     case 'setup-reentry': return operator.setupReentry(p.identity);
     case 'run': return operator.run(p.operation, p.identity, { approval: p.approval });
@@ -204,12 +208,14 @@ function createAuthorityHandler({ operator, allowedOperations }) {
       const response = Object.freeze({ protocol: RESULT_PROTOCOL, requestId: request.requestId, ok: true, value: result });
       if (encodedBytes(response) > MAX_ENVELOPE_BYTES) throw new TypeError('lifecycle authority result is too large');
       return response;
-    } catch {
+    } catch (error) {
       return Object.freeze({
         protocol: RESULT_PROTOCOL,
         requestId: request.requestId,
         ok: false,
-        error: Object.freeze({ code: 'OPERATION_FAILED', message: 'environment lifecycle authority operation failed' }),
+        error: Object.freeze(error?.code === 'UNSUPPORTED_CAPABILITY'
+          ? { code: 'UNSUPPORTED_CAPABILITY', message: 'environment lifecycle capability is unsupported' }
+          : { code: 'OPERATION_FAILED', message: 'environment lifecycle authority operation failed' }),
       });
     }
   };
@@ -250,7 +256,7 @@ export class LifecycleAuthorityClient {
     const result = normalizeLifecycleAuthorityResult(raw, request.requestId);
     if (!result.ok) {
       const error = new Error(result.error.message);
-      error.code = result.error.code;
+      error.code = operation === 'diagnostics-v1' && result.error.code === 'INVALID_REQUEST' ? 'UNSUPPORTED_CAPABILITY' : result.error.code;
       throw error;
     }
     return structuredClone(result.value);
@@ -259,6 +265,7 @@ export class LifecycleAuthorityClient {
   inspect() { return this.#request('inspect'); }
   list() { return this.#request('list'); }
   status(identity) { return this.#request('status', { identity }); }
+  diagnostics(identity) { return this.#request('diagnostics-v1', { identity }); }
   plan(operation, identity) { return this.#request('plan', { operation, identity }); }
   setupReentry(identity = null) { return this.#request('setup-reentry', { identity }); }
   run(operation, identity, { approval = null } = {}) { return this.#request('run', { operation, identity, approval }); }

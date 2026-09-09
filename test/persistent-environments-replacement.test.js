@@ -1,3 +1,4 @@
+import { mutationLease } from '../test-support/mutation-lease.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -52,7 +53,7 @@ test('request-bound replacement retains the exact superseded generation until ex
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-replacement-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     const replaced = await registry.replace(created.record.identity, {
       requestId: 'lifecycle-reset-1',
@@ -90,7 +91,7 @@ test('interrupted replacement waits for the outer lifecycle owner, then reconcil
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-replacement-reconcile-'));
   const fake = fixture();
   try {
-    let registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    let registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     fake.failNextProvision();
     await assert.rejects(() => registry.replace(created.record.identity, {
@@ -99,7 +100,7 @@ test('interrupted replacement waits for the outer lifecycle owner, then reconcil
     }), /simulated interruption/u);
     assert.equal(fake.instances.size, 2);
 
-    registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const generic = await registry.reconcile();
     assert.equal(generic.length, 1);
     assert.equal(generic[0].record.generation, 1);
@@ -123,7 +124,7 @@ test('retirement rejects foreign or non-history subjects and never broadens dele
   const root = await mkdtemp(path.join(os.tmpdir(), 'db-replacement-retire-guards-'));
   const fake = fixture();
   try {
-    const registry = new PersistentEnvironments({ directory: root, source: fake.source, operations: fake.operations });
+    const registry = new PersistentEnvironments({ directory: root, lease: mutationLease(root), source: fake.source, operations: fake.operations });
     const created = await registry.ensure(request());
     const replaced = await registry.replace(created.record.identity, {
       requestId: 'lifecycle-reset-3',

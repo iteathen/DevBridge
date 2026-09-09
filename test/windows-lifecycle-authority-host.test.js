@@ -142,9 +142,7 @@ test('Windows protected activity workers are bounded by client lifetime without 
   assert.match(source, /Task<int> clientMonitor = clientPipe\.ReadAsync\(clientProbe, 0, clientProbe\.Length\);/u);
   assert.match(source, /Task\.WaitAny\(new Task\[\] \{ read, clientMonitor \}, remaining\)/u);
   assert.match(source, /CancelPendingPipeRead\(clientPipe, clientMonitor\);/u);
-  assert.match(source, /if \(String\.Equals\(access, "activity", StringComparison\.Ordinal\)\)\s*return ReadActivityWorkerResponse\(worker, clientPipe, maxResponseBytes\);/su);
   assert.match(source, /if \(!monitorTransferred\)\s*\{\s*CancelPendingPipeRead\(clientPipe, clientMonitor\);/su);
-  assert.match(source, /catch \(IOException\)\s*\{\s*continue;\s*\}/su);
 });
 
 test('Windows lifecycle worker cannot inherit common operator credential channels', async () => {
@@ -248,14 +246,24 @@ test('compiled Windows host serves configuration through its distinct five-endpo
     const node = path.join(plan.protectedRoot, 'node.exe');
     const worker = path.join(plan.protectedRoot, 'worker.mjs');
     await writeFile(worker, [
+      "import { appendFileSync } from 'node:fs';",
+      "import readline from 'node:readline';",
+      "const access = process.argv[process.argv.indexOf('--access') + 1];",
+      "if (access === 'activity') {",
+      "  appendFileSync(new URL('./activity-pids.txt', import.meta.url), String(process.pid) + '\\n');",
+      "  for await (const line of readline.createInterface({ input: process.stdin })) {",
+      "    const request = JSON.parse(line);",
+      "    if (request.operation === 'inspect') { await new Promise(() => { setInterval(() => {}, 1000); }); }",
+      "    process.stdout.write(JSON.stringify({ protocol: 'devbridge/environment-activity-authority-result-v1', requestId: request.requestId, ok: true, value: [] }) + '\\n');",
+      "  }",
+      "  process.exit(0);",
+      "}",
       "let input = '';",
       "process.stdin.setEncoding('utf8');",
       "for await (const chunk of process.stdin) input += chunk;",
       "const request = JSON.parse(input.trim());",
-      "const access = process.argv[process.argv.indexOf('--access') + 1];",
       "if (access === 'configuration') process.stdout.write(JSON.stringify({ protocol: 'devbridge/environment-configuration-authority-result-v1', requestId: request.requestId, ok: true, value: { ready: true } }) + '\\n');",
       "else if (access === 'read') process.stdout.write(JSON.stringify({ protocol: 'devbridge/environment-lifecycle-authority-result-v1', requestId: request.requestId, ok: true, value: request.operation === 'fixture-large' ? { payload: 'x'.repeat(8000) } : [] }) + '\\n');",
-      "else if (access === 'activity') process.stdout.write(JSON.stringify({ protocol: 'devbridge/environment-activity-authority-result-v1', requestId: request.requestId, ok: true, value: [] }) + '\\n');",
       "else process.exit(2);",
     ].join('\n'));
     await writeFile(harnessSource, String.raw`using System;
@@ -398,14 +406,34 @@ internal static class IntegrationHarness
       }
       assert.deepEqual(result, []);
     }
+    const workerPids = async () => (await readFile(path.join(plan.protectedRoot, 'activity-pids.txt'), 'utf8')).trim().split('\n');
+    assert.equal((await workerPids()).length, 1, '100 sequential activity requests must reuse one worker');
+    const activityClient = createConfiguredEnvironmentActivityClient({ stateDirectory, platform: 'win32', connectTimeoutMs: 3000 });
+    const cancellation = new AbortController();
+    const stalled = activityClient.inspect({ signal: cancellation.signal });
+    setTimeout(() => cancellation.abort(), 100);
+    await assert.rejects(stalled, /interrupted|unavailable/);
+    assert.deepEqual(await activityClient.list(), []);
+    assert.equal((await workerPids()).length, 2, 'cancelled worker must be replaced before another request');
+    assert.deepEqual(await createConfiguredEnvironmentConfigurationClient({ stateDirectory, platform: 'win32' }).inspect(), { ready: true });
+    assert.deepEqual(await activityClient.list(), []);
+    assert.equal((await workerPids()).length, 2, 'read-only configuration inspection must preserve healthy activity resources');
     child.stdin.end('\n');
     assert.equal(await waitForExit(child), 0);
     child = null;
   } finally {
     if (child && child.exitCode == null) {
       child.stdin.end('\n');
-      try { await waitForExit(child, 10_000); } catch { child.kill(); }
+      try { await waitForExit(child, 10_000); } catch {
+        if (child.exitCode == null && child.signalCode == null) {
+          const exited = new Promise((resolve) => child.once('exit', resolve));
+          child.kill();
+          await exited;
+        }
+      }
     }
-    await rm(temp, { recursive: true, force: true });
+    // Closing the host's Windows job terminates its children asynchronously.
+    // Wait for those owned executable handles to close before removing the fixture.
+    await rm(temp, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });

@@ -1,4 +1,5 @@
 import { normalizeEnvironmentObservation, ENVIRONMENT_OBSERVATION_PROTOCOL } from '../runtime/environment-observation.js';
+import { requireEnvironmentOperationSubject } from '../runtime/environment-operation-subject.js';
 
 function assertState(value) {
   const methods = ['listEnvironments', 'ensureEnvironment'];
@@ -134,13 +135,13 @@ export function createEnvironmentMaterialization({ state, subject, settings } = 
   });
 }
 
-export function createEnvironmentRebuildMaterialization({ state, subject, journal } = {}) {
+export function createEnvironmentRebuildMaterialization({ state, subject } = {}) {
   const localState = assertRebuildState(state);
   const subjectResolver = assertResolver(subject, 'rebuild subject');
-  if (!journal || typeof journal.current !== 'function') throw new TypeError('environment rebuild materialization journal contract is incomplete');
   return Object.freeze({
     async ensure(rawRequest) {
       const request = requireRequest(rawRequest);
+      const operation = requireEnvironmentOperationSubject(request, 'rebuild');
       const localSubject = await subjectResolver.resolve(Object.freeze({
         environmentIdentity: request.environmentIdentity,
         profile: request.declaration.profile,
@@ -148,11 +149,7 @@ export function createEnvironmentRebuildMaterialization({ state, subject, journa
       const matches = (await localState.listEnvironments()).filter((entry) => entry?.record?.subject === localSubject && entry?.record?.profile === request.declaration.profile);
       if (matches.length !== 1) throw new Error('environment rebuild materialization is missing or ambiguous');
       const selected = matches[0];
-      const active = await journal.current(request.environmentIdentity);
-      if (!active || active.operation !== 'rebuild' || active.operationId !== request.operationId || active.declarationRevision !== request.declarationRevision) {
-        throw new Error('environment rebuild materialization is not bound to the active rebuild lifecycle');
-      }
-      const previous = active.entries.find((entry) => entry.stage === 'pre-observation')?.implementationGeneration;
+      const previous = operation.previousImplementationGeneration;
       if (typeof previous !== 'string' || !/^env-[a-f0-9]{32}$/u.test(previous)) throw new Error('environment rebuild previous implementation generation is unavailable');
       const result = await localState.rebuildEnvironment(implementation(selected.record), {
         requestId: request.operationId,

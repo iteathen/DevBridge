@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import dns from 'node:dns';
 import { lstat, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { copyHyperVGuestFile } from './hyperv-file-copy.js';
+import { guestDnsServers, observeWindowsGuestDns } from './windows-guest-dns.js';
 
 const PROTOCOL = 'devbridge/hyperv-environment-bootstrap-state-v1';
 const TARGET = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
@@ -113,19 +114,6 @@ $contact = [string]$copy.PrimaryOperationalStatus -eq 'Ok'
 @{ ready = $true; state = ([string]$item.State).ToLowerInvariant(); cycleRequired = ($running -and -not $contact) } | ConvertTo-Json -Compress
 `;
 
-const COPY_SCRIPT = String.raw`
-$ErrorActionPreference = 'Stop'
-$data = [Console]::In.ReadToEnd() | ConvertFrom-Json
-Import-Module Hyper-V -ErrorAction Stop
-$item = Get-VM -Name ([string]$data.reference) -ErrorAction Stop
-if ([string]$item.Notes -ne [string]$data.proof) { throw 'environment ownership proof does not match' }
-if ([string]$item.State -ne 'Running') { throw 'environment is not running' }
-$service = Get-VMIntegrationService -VMName ([string]$data.reference) -ErrorAction Stop | Where-Object { $_.Name -eq 'Guest Service Interface' } | Select-Object -First 1
-if ($null -eq $service -or -not $service.Enabled) { throw 'guest file service is not enabled' }
-Copy-VMFile -VMName ([string]$data.reference) -SourcePath ([string]$data.source) -DestinationPath ([string]$data.destination) -FileSource Host -CreateFullPath -Force -ErrorAction Stop
-@{ copied = $true } | ConvertTo-Json -Compress
-`;
-
 export class HyperVEnvironmentBootstrap {
   #directory;
   #stateFile;
@@ -134,14 +122,17 @@ export class HyperVEnvironmentBootstrap {
   #locate;
   #connection;
   #dnsServers;
+  #now;
+  #wait;
   #tail = Promise.resolve();
 
-  constructor({ directory, invoke, locate, connection, dnsServers = () => dns.getServers() }) {
+  constructor({ directory, invoke, locate, connection, dnsServers = () => observeWindowsGuestDns({ invoke }), now = Date.now, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
     if (typeof directory !== 'string' || directory.length === 0) throw new TypeError('bootstrap directory is required');
     if (typeof invoke !== 'function') throw new TypeError('bootstrap invoke must be a function');
     if (typeof locate !== 'function') throw new TypeError('bootstrap locate must be a function');
     if (typeof connection !== 'function') throw new TypeError('bootstrap connection must be a function');
     if (typeof dnsServers !== 'function') throw new TypeError('bootstrap dnsServers must be a function');
+    if (typeof now !== 'function' || typeof wait !== 'function') throw new TypeError('bootstrap timing contract is invalid');
     this.#directory = path.resolve(directory);
     this.#stateFile = path.join(this.#directory, 'state.json');
     this.#guardFile = path.join(this.#directory, 'allocation.lock');
@@ -149,6 +140,8 @@ export class HyperVEnvironmentBootstrap {
     this.#locate = locate;
     this.#connection = connection;
     this.#dnsServers = dnsServers;
+    this.#now = now;
+    this.#wait = wait;
   }
 
   async #acquire() {
@@ -231,9 +224,9 @@ export class HyperVEnvironmentBootstrap {
     try { return JSON.parse(result.stdout); } catch { throw new Error('bootstrap management operation returned invalid structured output'); }
   }
 
-  #servers() {
-    const servers = [...new Set(this.#dnsServers().filter((entry) => IPV4.test(entry)))].slice(0, 4);
-    if (servers.length === 0) servers.push('1.1.1.1');
+  async #servers() {
+    const servers = guestDnsServers(await this.#dnsServers());
+    if (servers.length === 0) throw new Error('bootstrap requires guest-reachable DNS from local network policy');
     return servers;
   }
 
@@ -274,7 +267,7 @@ export class HyperVEnvironmentBootstrap {
     const target = targetId(rawTarget);
     const network = normalizeNetwork(rawNetwork);
     const address = await this.#allocation(target, { network }, 'reserved');
-    return Object.freeze({ address, prefixLength: 24, gateway: network.gateway, dns: Object.freeze(this.#servers()) });
+    return Object.freeze({ address, prefixLength: 24, gateway: network.gateway, dns: await this.#servers() });
   }
 
   async releaseAddress(rawTarget) {
@@ -313,7 +306,7 @@ export class HyperVEnvironmentBootstrap {
       address,
       prefixLength: 24,
       gateway: location.network.gateway,
-      dns: this.#servers(),
+      dns: await this.#servers(),
       revision: 1,
     };
     await this.#ensure();
@@ -323,19 +316,21 @@ export class HyperVEnvironmentBootstrap {
       const destination = location.family === 'windows'
         ? 'C:\\ProgramData\\DevBridge\\bootstrap\\network-seed.json'
         : '/var/lib/devbridge/bootstrap/network-seed.json';
-      const deadline = Date.now() + 90_000;
+      const deadline = this.#now() + 90_000;
       let last = null;
       do {
         try {
-          const result = await this.#powerShell(COPY_SCRIPT, { reference: location.reference, proof: location.proof, source: temporary, destination }, 20_000);
-          if (result.copied === true) return { ready: true, address };
-          last = new Error('guest seed copy did not report completion');
+          const remaining = deadline - this.#now();
+          if (remaining < 100) break;
+          await copyHyperVGuestFile({ invoke: this.#invoke, location, family: location.family, source: temporary, destination, timeoutMs: Math.min(20_000, remaining) });
+          return { ready: true, address };
         } catch (error) {
+          if (error.retryable !== true) throw error;
           last = error;
         }
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
-      } while (Date.now() < deadline);
-      throw new Error(`guest seed copy did not become ready: ${last?.message ?? 'unknown failure'}`);
+        await this.#wait(Math.min(1_000, Math.max(0, deadline - this.#now())));
+      } while (this.#now() < deadline);
+      throw last ?? new Error('guest seed copy did not become ready');
     } finally {
       await rm(temporary, { force: true });
     }

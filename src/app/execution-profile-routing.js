@@ -91,7 +91,7 @@ export function createExecutionProfileRouting({ state, policy }) {
   const index = routeIndex(normalized);
 
   const physicalForRoute = async (route) => {
-    const matches = profileMatches(await state.listEnvironments(), route.profile);
+    const matches = profileMatches(await state.listEnvironments({ subject: executionProfileSubject(route.profile), profile: route.profile }), route.profile);
     if (matches.length > 1) throw new Error(`execution profile ${route.profile} has multiple persistent environments`);
     return matches[0] ?? null;
   };
@@ -106,6 +106,9 @@ export function createExecutionProfileRouting({ state, policy }) {
     const route = routeForTarget(target);
     const physical = await physicalForRoute(route);
     if (!physical) throw new Error(`execution profile ${route.profile} has no persistent environment`);
+    if (physical.observation?.exists !== true || physical.observation?.owned !== true || physical.observation?.compatible !== true) {
+      throw new Error(`execution profile ${route.profile} is unavailable: ${physical.observation?.reason ?? 'current environment is not compatible'}`);
+    }
     return physical.record.identity;
   };
 
@@ -139,6 +142,14 @@ export function createExecutionProfileRouting({ state, policy }) {
       return syntheticEntry(route, target, observed);
     },
     physicalTarget,
+    async attachmentBinding(target) {
+      const route = routeForTarget(target);
+      if (typeof state.readEnvironmentRecords !== 'function') return null;
+      const snapshot = await state.readEnvironmentRecords({ subject: executionProfileSubject(route.profile), profile: route.profile });
+      if (snapshot.records.length !== 1) throw new Error('execution profile has no unique committed environment');
+      return { record: snapshot.records[0], revision: snapshot.revision,
+        workspace: executionWorkspaceIdentity(route.subject, route.profile) };
+    },
     representativeTarget,
     targetForSubject(subject) {
       return preferredSubjectRoute(index, subject).target;

@@ -17,8 +17,8 @@ function successfulRunner(calls) {
 }
 
 test('preflight arguments expose only closed scheduling and qualification selections', () => {
-  assert.deepEqual(parseRepositoryPreflightArguments([]), { boundTargetedTestConcurrency: false, ciQualification: false });
-  assert.deepEqual(parseRepositoryPreflightArguments(['--bound-targeted-test-concurrency']), { boundTargetedTestConcurrency: true, ciQualification: false });
+  assert.deepEqual(parseRepositoryPreflightArguments([]), { boundTargetedTestConcurrency: false, ciQualification: false, staticOnly: false });
+  assert.deepEqual(parseRepositoryPreflightArguments(['--bound-targeted-test-concurrency']), { boundTargetedTestConcurrency: true, ciQualification: false, staticOnly: false });
   assert.throws(() => parseRepositoryPreflightArguments('--bound-targeted-test-concurrency'), /must be an array/u);
   assert.throws(() => parseRepositoryPreflightArguments(['--bound-targeted-test-concurrency=1']), /accepts only/u);
   assert.throws(() => parseRepositoryPreflightArguments(['--bound-targeted-test-concurrency', '--bound-targeted-test-concurrency']), /accepts only/u);
@@ -62,7 +62,22 @@ test('programmatic preflight scheduling rejects open or malformed options before
   );
 });
 
+test('static preflight retains artifact, syntax and inventory checks without repeating behavioral suites', () => {
+  const fullCalls = [], staticCalls = [];
+  const full = runRepositoryPreflight(root, successfulRunner(fullCalls), {}, {});
+  const selected = parseRepositoryPreflightArguments(['--static-only']);
+  const observed = runRepositoryPreflight(root, successfulRunner(staticCalls), {}, selected);
+  assert.deepEqual(staticCalls.map(call => call.args), fullCalls.filter(call => call.args[0] !== '--test').map(call => call.args));
+  assert.equal(observed.staticOnly, true);
+  assert.equal(observed.targetedTests, 0);
+  assert.equal(observed.syntaxFiles, full.syntaxFiles);
+  assert.ok(full.targetedTests > 0);
+  assert.throws(() => runRepositoryPreflight(root, successfulRunner([]), {}, { staticOnly: 'yes' }), /must be boolean/);
+});
+
 test('CI qualification is explicit, finite, independent of scheduling and does not alter inventory', () => {
+  const ordinaryCalls = [];
+  const ordinary = runRepositoryPreflight(root, successfulRunner(ordinaryCalls), {}, {});
   for (const args of [['--ci-qualification'], ['--ci-qualification', '--bound-targeted-test-concurrency'],
     ['--bound-targeted-test-concurrency', '--ci-qualification']]) {
     const options = parseRepositoryPreflightArguments(args);
@@ -71,7 +86,8 @@ test('CI qualification is explicit, finite, independent of scheduling and does n
     const result = runRepositoryPreflight(root, successfulRunner(calls), {}, options, {
       now: () => 0, onProgress: (event) => events.push(event),
     });
-    assert.equal(result.targetedTests, 244);
+    assert.equal(result.targetedTests, ordinary.targetedTests);
+    assert.deepEqual(calls.at(-1).args.filter(arg => arg.endsWith('.test.js')), ordinaryCalls.at(-1).args.filter(arg => arg.endsWith('.test.js')));
     assert.equal(events[0].remainingMs, 360_000);
     assert.equal(calls.at(-1).options.timeout, 300_000);
     assert.equal(calls.at(-1).args.includes('--test-concurrency=2'), args.length === 2);
@@ -94,7 +110,9 @@ test('preflight emits operation evidence before work and does not renew its aggr
   const result = runRepositoryPreflight(root, runner, {}, {}, {
     now: () => time, onProgress: (event) => events.push(event),
   });
-  assert.equal(result.targetedTests, 244);
+  const selectedTests = calls.at(-1).args.filter(arg => arg.endsWith('.test.js'));
+  assert.equal(result.targetedTests, selectedTests.length);
+  assert.equal(new Set(selectedTests).size, selectedTests.length);
   assert.equal(events[0].remainingMs, 210_000);
   assert.equal(events.at(-1).status, 'passed');
   assert.ok(events.at(-1).remainingMs < 20_000);
@@ -177,7 +195,9 @@ test('invalid clocks fail closed and rejected invocations do not poison later qu
   assert.throws(() => runRepositoryPreflight(root, () => { time = 0; return { status: 0 }; }, {}, {}, {
     now: () => time,
   }), /clock is invalid/u);
-  assert.equal(runRepositoryPreflight(root, successfulRunner([]), {}, {}, {
+  const recoveredCalls = [];
+  const recovered = runRepositoryPreflight(root, successfulRunner(recoveredCalls), {}, {}, {
     now: () => 0,
-  }).targetedTests, 244);
+  });
+  assert.equal(recovered.targetedTests, recoveredCalls.at(-1).args.filter(arg => arg.endsWith('.test.js')).length);
 });

@@ -40,6 +40,9 @@ export async function createEnvironmentConstructionRuntime({
   resetAuthorization = null,
   recreateAuthorization = null,
   now,
+} = {}, {
+  preparationFactory = createEnvironmentConstructionPreparation,
+  bridgeFactory = createEnvironmentBridge,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('environment construction runtime stateDirectory is required');
   if (authorityDirectory != null && (typeof authorityDirectory !== 'string' || authorityDirectory.length === 0)) {
@@ -47,6 +50,7 @@ export async function createEnvironmentConstructionRuntime({
   }
   if (typeof resolveAuthority !== 'function') throw new TypeError('environment construction runtime authority resolver is required');
   if (typeof invoke !== 'function') throw new TypeError('environment construction runtime invocation contract is invalid');
+  if (typeof preparationFactory !== 'function' || typeof bridgeFactory !== 'function') throw new TypeError('environment construction runtime preparation composition is invalid');
 
   const authorityStateDirectory = authorityDirectory ?? stateDirectory;
   const localFoundation = foundation ?? await createEnvironmentFoundation({ stateDirectory: authorityStateDirectory, platform, invoke });
@@ -56,14 +60,14 @@ export async function createEnvironmentConstructionRuntime({
   const localLifecycle = lifecycle ?? createEnvironmentLifecycle({ stateDirectory: authorityStateDirectory, ...(now ? { now } : {}) });
   const policy = createEnvironmentMaterializationPolicy();
   const materialization = createEnvironmentMaterialization({ state: localFoundation, subject: policy.subject, settings: policy.settings });
-  const rebuildMaterialization = createEnvironmentRebuildMaterialization({ state: localFoundation, subject: policy.subject, journal: localLifecycle.journal });
+  const rebuildMaterialization = createEnvironmentRebuildMaterialization({ state: localFoundation, subject: policy.subject });
   const resetAvailable = typeof localFoundation.replaceEnvironment === 'function' && typeof localFoundation.retireSupersededEnvironment === 'function';
-  const resetMaterialization = resetAvailable ? createEnvironmentResetMaterialization({ state: localFoundation, subject: policy.subject, journal: localLifecycle.journal }) : null;
+  const resetMaterialization = resetAvailable ? createEnvironmentResetMaterialization({ state: localFoundation, subject: policy.subject }) : null;
   const resetRetirement = resetAvailable ? createEnvironmentResetRetirement({ state: localFoundation, journal: localLifecycle.journal }) : null;
   const recreateAvailable = typeof localFoundation.recreateEnvironment === 'function' && typeof localFoundation.retireSupersededEnvironment === 'function';
-  const recreateMaterialization = recreateAvailable ? createEnvironmentRecreateMaterialization({ state: localFoundation, subject: policy.subject, journal: localLifecycle.journal }) : null;
+  const recreateMaterialization = recreateAvailable ? createEnvironmentRecreateMaterialization({ state: localFoundation, subject: policy.subject }) : null;
   const recreateRetirement = recreateAvailable ? createEnvironmentRecreateRetirement({ state: localFoundation, journal: localLifecycle.journal }) : null;
-  const preparation = createEnvironmentConstructionPreparation({
+  const preparation = preparationFactory({
     stateDirectory,
     authorityDirectory: authorityStateDirectory,
     platform,
@@ -74,11 +78,11 @@ export async function createEnvironmentConstructionRuntime({
     state: localFoundation,
     routeState: localRouteState,
     resolveAuthority,
-    resolveChannel: async ({ declaration }) => createEnvironmentBridge({
-      stateDirectory,
+    resolveChannel: async ({ declaration }) => bridgeFactory({
+      stateDirectory: authorityStateDirectory,
       platform,
       invoke,
-      access: (target) => preparation.connection({ declaration }, target),
+      access: (target) => preparation.connection({ declaration, implementationGeneration: target }, target),
     }),
   });
   const observation = createEnvironmentConstructionObservation({ materialization, preparation, workspaces });

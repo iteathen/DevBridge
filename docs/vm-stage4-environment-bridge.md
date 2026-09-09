@@ -92,7 +92,12 @@ The provider attachment selects every host management executable, provider argum
 
 ### Asynchronous execution and durable observation
 
-The bridge does not hold one provider session open for the lifetime of a build or test.
+The bridge may reuse a bounded provider connection across requests. Guest work
+must not depend on that connection staying open: connection loss discards the
+transport, and recovery observes the same durable operation before any repeat.
+The provider owns connection authentication, exact physical target binding,
+idle lifetime and failure. Current route, declaration and generation authority
+are checked by their owners before dispatch; connection reuse cannot grant them.
 
 `execute` starts one exact request and returns a state such as `planned`/`running`. The guest helper durably journals the request before launching a detached local monitor process. The host then polls `observe` using the same request identity.
 

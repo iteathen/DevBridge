@@ -31,27 +31,41 @@ export class WorkspaceSession {
   }
 
   async prepare({ signal = null, onActivity = null } = {}) {
+    const started = Date.now();
+    let phase;
+    const report = async (kind) => {
+      ensureActive(signal);
+      phase = kind;
+      await onActivity?.({ kind, elapsedMs: Date.now() - started, at: new Date().toISOString() });
+      ensureActive(signal);
+    };
+    const preparationActivity = (event) => onActivity?.({ ...event,
+      kind: /^(workspace-|source-)/u.test(event.kind ?? '') ? event.kind : phase,
+    });
+    await report('workspace-prepare');
     ensureActive(signal);
     const ready = await this.#activity.prepare();
+    await report('workspace-health');
     ensureActive(signal);
     const health = await this.#activity.health();
     if (!health.ready) throw new Error(health.reason ?? this.#messages.activityUnavailable);
+    await report('source-snapshot');
     this.#source = await this.#sourcePort.snapshot();
     ensureActive(signal);
+    await report('source-agent');
     await this.#sourcePort.install();
-    const observed = await this.#sourcePort.observe(this.#source.manifest.digest, { signal, onActivity });
+    await report('source-check');
+    const observed = await this.#sourcePort.observe(this.#source.manifest.digest, { signal, onActivity: preparationActivity });
     if (observed.appliedDigest !== this.#source.manifest.digest) {
-      for (const entry of this.#source.manifest.entries) {
-        if (entry.type !== 'file') continue;
-        for (const part of entry.parts) {
-          ensureActive(signal);
-          await this.#sourcePort.writePart(part, (request) => this.#source.readPart(part.name, request));
-        }
-      }
+      await report('source-manifest');
       await this.#sourcePort.writeManifest(this.#source.manifestBytes());
-      const applied = await this.#sourcePort.apply({ signal, onActivity });
+      await report('source-transfer');
+      await this.#sourcePort.transfer(this.#source, { signal, onActivity: preparationActivity });
+      await report('source-apply');
+      const applied = await this.#sourcePort.apply({ signal, onActivity: preparationActivity });
       if (applied.digest !== this.#source.manifest.digest) throw new Error(this.#messages.sourceApplyMismatch);
     }
+    await report('source-verify');
     const current = await this.#sourcePort.snapshot();
     if (current.manifest.digest !== this.#source.manifest.digest) throw new Error(this.#messages.sourceChangedDuringSync);
     this.#evidence = this.#identify({ generation: ready.generation, version: health.version, source: this.#source.manifest.digest });

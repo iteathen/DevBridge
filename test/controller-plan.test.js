@@ -18,6 +18,40 @@ function basePlan(overrides = {}) {
   };
 }
 
+test('restart preserves an observed operation and rejects conflicting plan identity before effects', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'db-controller-reuse-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const calls = [];
+  const create = () => new ControllerPlanExecutor({
+    operationRegistry: { validate() {}, execute: async operation => {
+      calls.push(operation); return { exitCode: 0, stdout: operation, stderr: '' };
+    } }, processRunner: {}, workspaceManager: { validate: async () => ({ changedFiles: [] }) },
+  });
+  const plan = normalizeControllerPlan(basePlan({ operations: [
+    { id: 'first', operation: 'fixture.first', params: {} },
+    { id: 'second', operation: 'fixture.second', params: {} },
+  ], assertions: [{ kind: 'stdout-contains', operation: 'first', value: 'fixture.first' }] }));
+  const workspace = { worktreeDir: root };
+  let committed, crashed = false;
+  const state = {};
+  await assert.rejects(create().execute({ plan, state, workspace, persist: async () => {
+    if (crashed) throw new Error('process lost');
+    committed = structuredClone(state);
+    if (committed.controllerPlan.operations[0]?.state === 'observed') { crashed = true; throw new Error('process lost'); }
+  } }), /process lost/);
+  const previous = structuredClone(committed.controllerPlan.operations[0]);
+  const conflicting = normalizeControllerPlan(basePlan({ operations: [{ id: 'first', operation: 'fixture.changed', params: {} }] }));
+  await assert.rejects(create().execute({ plan: conflicting, state: structuredClone(committed), workspace, persist: async () => {} }), /not bound to the accepted plan/);
+  assert.deepEqual(calls, ['fixture.first']);
+  // Existing v1 runs can use their accepted plan receipt without rekeying state.
+  delete committed.controllerPlan.planDigest;
+  committed.prior = { receipt: { controllerPlanSha256: controllerPlanDigest(plan) } };
+  await create().execute({ plan, state: committed, workspace, persist: async () => {} });
+  assert.deepEqual(calls, ['fixture.first', 'fixture.second']);
+  assert.deepEqual(committed.controllerPlan.operations[0], previous);
+  assert.equal(committed.controllerPlan.operations[1].attempts, 1);
+});
+
 test('normalizes a bounded controller plan and produces a stable digest', () => {
   const plan = normalizeControllerPlan(basePlan({
     baselineChannel: 'testing',

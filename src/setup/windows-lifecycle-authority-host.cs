@@ -241,6 +241,8 @@ namespace DevBridge.WindowsLifecycleAuthority
         private Thread configurationThread;
         private Process activeWorker;
         private WorkerJob activeWorkerJob;
+        private Process activityWorker;
+        private WorkerJob activityWorkerJob;
 
         private sealed class WorkerResponse
         {
@@ -314,6 +316,7 @@ namespace DevBridge.WindowsLifecycleAuthority
             }
             lock (workerLock)
             {
+                StopActivityWorker();
                 if (activeWorkerJob != null)
                 {
                     activeWorkerJob.Dispose();
@@ -391,10 +394,15 @@ namespace DevBridge.WindowsLifecycleAuthority
                         {
                             pipe.Write(response.Bytes, 0, response.Bytes.Length);
                             pipe.Flush();
-                            if (!ReadResponseAcknowledgement(pipe, response.ClientMonitor, response.ClientProbe)) continue;
+                            if (!ReadResponseAcknowledgement(pipe, response.ClientMonitor, response.ClientProbe))
+                            {
+                                if (String.Equals(access, "activity", StringComparison.Ordinal)) StopActivityWorker();
+                                continue;
+                            }
                         }
                         catch (IOException)
                         {
+                            if (String.Equals(access, "activity", StringComparison.Ordinal)) StopActivityWorker();
                             continue;
                         }
                         finally
@@ -610,10 +618,9 @@ namespace DevBridge.WindowsLifecycleAuthority
                         if (count <= 0) break;
                         stdout.Write(buffer, 0, count);
                         if (stdout.Length > maxResponseBytes) return null;
+                        if (Array.IndexOf(buffer, (byte)10, 0, count) >= 0) break;
                     }
-                    int exitRemaining = ActivityWorkerTimeoutMs - (int)elapsed.ElapsedMilliseconds;
-                    if (exitRemaining <= 0 || clientMonitor.IsCompleted || !worker.WaitForExit(exitRemaining) || clientMonitor.IsCompleted) return null;
-                    if (worker.ExitCode != 0) return null;
+                    if (clientMonitor.IsCompleted) return null;
                     byte[] response = ExactWorkerResponse(stdout.ToArray());
                     if (response == null) return null;
                     WorkerResponse result = new WorkerResponse(response, clientMonitor, clientProbe);
@@ -631,12 +638,33 @@ namespace DevBridge.WindowsLifecycleAuthority
             }
         }
 
+        private void StopActivityWorker()
+        {
+            lock (workerLock)
+            {
+                if (activityWorkerJob != null) { activityWorkerJob.Dispose(); activityWorkerJob = null; }
+                if (activityWorker != null)
+                {
+                    try { if (!activityWorker.HasExited) activityWorker.Kill(); } catch { }
+                    activityWorker.Dispose();
+                    activityWorker = null;
+                }
+            }
+        }
+
         private WorkerResponse InvokeWorker(string access, byte[] request, int maxResponseBytes, NamedPipeServerStream clientPipe)
         {
             workerGate.Wait();
             try
             {
                 if (stopping) return null;
+                bool reusable = String.Equals(access, "activity", StringComparison.Ordinal);
+                if (String.Equals(access, "mutation", StringComparison.Ordinal)) StopActivityWorker();
+                if (reusable && activityWorker != null)
+                {
+                    if (activityWorker.HasExited) StopActivityWorker();
+                    else return ExchangeActivityWorker(request, clientPipe, maxResponseBytes);
+                }
                 ProcessStartInfo start = new ProcessStartInfo();
                 start.FileName = options.NodeExecutable;
                 start.Arguments = String.Join(" ", new string[] {
@@ -645,6 +673,7 @@ namespace DevBridge.WindowsLifecycleAuthority
                     "--state-directory", QuoteArgument(options.StateDirectory),
                     "--authority-directory", QuoteArgument(options.AuthorityDirectory)
                 });
+                if (reusable) start.Arguments += " --activity-stream v1";
                 start.WorkingDirectory = options.ProtectedRoot;
                 start.UseShellExecute = false;
                 start.CreateNoWindow = true;
@@ -673,12 +702,21 @@ namespace DevBridge.WindowsLifecycleAuthority
                         activeWorker = worker;
                         activeWorkerJob = job;
                     }
+                    if (reusable)
+                    {
+                        lock (workerLock)
+                        {
+                            activityWorker = worker;
+                            activityWorkerJob = job;
+                            activeWorker = null;
+                            activeWorkerJob = null;
+                        }
+                        return ExchangeActivityWorker(request, clientPipe, maxResponseBytes);
+                    }
                     worker.StandardInput.BaseStream.Write(request, 0, request.Length);
                     worker.StandardInput.BaseStream.Flush();
                     worker.StandardInput.Close();
 
-                    if (String.Equals(access, "activity", StringComparison.Ordinal))
-                        return ReadActivityWorkerResponse(worker, clientPipe, maxResponseBytes);
                     byte[] response = ReadWorkerResponse(worker, maxResponseBytes);
                     return response == null ? null : new WorkerResponse(response);
                 }
@@ -689,20 +727,71 @@ namespace DevBridge.WindowsLifecycleAuthority
                         if (Object.ReferenceEquals(activeWorker, worker)) activeWorker = null;
                         if (Object.ReferenceEquals(activeWorkerJob, job)) activeWorkerJob = null;
                     }
-                    if (job != null) job.Dispose();
-                    worker.Dispose();
+                    if (!reusable || !Object.ReferenceEquals(activityWorker, worker))
+                    {
+                        if (job != null) job.Dispose();
+                        worker.Dispose();
+                    }
                 }
             }
             finally { workerGate.Release(); }
+        }
+
+        private WorkerResponse ExchangeActivityWorker(byte[] request, NamedPipeServerStream clientPipe, int maxResponseBytes)
+        {
+            WorkerResponse response = null;
+            try
+            {
+                Process worker = activityWorker;
+                worker.StandardInput.BaseStream.Write(request, 0, request.Length);
+                worker.StandardInput.BaseStream.Flush();
+                response = ReadActivityWorkerResponse(worker, clientPipe, maxResponseBytes);
+                return response;
+            }
+            catch (IOException) { return null; }
+            finally { if (response == null) StopActivityWorker(); }
         }
     }
 
     internal static class Program
     {
+        private static int HoldFileLease(string target)
+        {
+            if (String.IsNullOrWhiteSpace(target) || target.IndexOf('\0') >= 0 || !Regex.IsMatch(target, @"^[A-Za-z]:\\")) return 1;
+            foreach (string part in target.Split('\\')) if (part == "." || part == "..") return 1;
+            // .NET expands existing 8.3 components. They name the same local
+            // subject and must not be mistaken for an unnormalized request.
+            target = Path.GetFullPath(target);
+            if (File.Exists(target) && (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0) return 1;
+            FileStream held = null;
+            Stopwatch clock = Stopwatch.StartNew();
+            while (held == null)
+            {
+                try { held = new FileStream(target, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+                catch (IOException error)
+                {
+                    int code = error.HResult & 0xffff;
+                    if (code != 32 && code != 33) throw;
+                    if (clock.ElapsedMilliseconds >= 30000) return 75;
+                    Thread.Sleep(50);
+                }
+            }
+            using (held)
+            {
+                Console.OutputEncoding = new UTF8Encoding(false);
+                Console.Write("devbridge/file-lease-held-v1\n");
+                Console.Out.Flush();
+                // EOF releases ownership even when the requesting worker crashes.
+                if (Console.OpenStandardInput().ReadByte() != -1) return 1;
+            }
+            return 0;
+        }
+
         private static int Main(string[] args)
         {
             try
             {
+                if (args.Length == 2 && String.Equals(args[0], "--hold-file-lease", StringComparison.Ordinal)) return HoldFileLease(args[1]);
                 HostOptions options = HostOptions.Parse(args);
                 ServiceBase.Run(new LifecycleAuthorityService(options));
                 return 0;

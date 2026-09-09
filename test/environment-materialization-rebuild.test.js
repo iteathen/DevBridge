@@ -12,7 +12,8 @@ const declaration = {
   boot: { requirement: 'efi-v1' },
 };
 function request() {
-  return { environmentIdentity: 'environment-0123456789abcdef0123456789abcdef', operationId: 'lifecycle-rebuild-1', declarationRevision: 1, declaration };
+  const input = { environmentIdentity: 'environment-0123456789abcdef0123456789abcdef', operationId: 'lifecycle-rebuild-1', declarationRevision: 1, declaration };
+  return { ...input, operationSubject: { environmentIdentity: input.environmentIdentity, operationId: input.operationId, declarationRevision: 1, operation: 'rebuild', previousImplementationGeneration: CURRENT, imageIdentity: declaration.image.identity, imageGeneration: declaration.image.generation } };
 }
 function subject() { return { resolve: async () => 'profile-subject-1' }; }
 function settings() { return { resolve: async () => ({ memoryBytes: 4096, processorCount: 4, firmware: 'efi' }) }; }
@@ -37,7 +38,7 @@ test('materialization projects neutral missing and invalid storage evidence into
   assert.equal(environmentObservationCondition(invalid), 'system-storage-invalid');
 });
 
-test('rebuild materialization binds replacement to active outer lifecycle and previous generation', async () => {
+test('rebuild materialization binds replacement to the supplied operation without reading a journal', async () => {
   let supplied = null;
   const state = {
     listEnvironments: async () => [{ record: { identity: CURRENT, subject: 'profile-subject-1', profile: declaration.profile, source: { identity: declaration.image.identity } }, observation: {} }],
@@ -50,13 +51,7 @@ test('rebuild materialization binds replacement to active outer lifecycle and pr
       };
     },
   };
-  const journal = {
-    current: async () => ({
-      operation: 'rebuild', operationId: 'lifecycle-rebuild-1', declarationRevision: 1,
-      entries: [{ stage: 'intent' }, { stage: 'pre-observation', implementationGeneration: CURRENT }],
-    }),
-  };
-  const materialization = createEnvironmentRebuildMaterialization({ state, subject: subject(), journal });
+  const materialization = createEnvironmentRebuildMaterialization({ state, subject: subject() });
   const result = await materialization.ensure(request());
   assert.equal(result.ready, true);
   assert.equal(result.implementationGeneration, NEXT);
@@ -73,9 +68,11 @@ test('rebuild materialization refuses lifecycle authority drift even when the de
     rebuildEnvironment: async () => { throw new Error('unused'); },
   };
   const materialization = createEnvironmentRebuildMaterialization({
-    state, subject: subject(), journal: { current: async () => null },
+    state, subject: subject(),
   });
-  await assert.rejects(() => materialization.ensure(request()), /not bound to the active rebuild lifecycle/u);
+  const input = request();
+  input.operationSubject = { ...input.operationSubject, declarationRevision: 2 };
+  await assert.rejects(() => materialization.ensure(input), /does not match request authority/u);
 });
 
 test('rebuild materialization refuses a replacement from an undeclared source', async () => {
@@ -84,10 +81,7 @@ test('rebuild materialization refuses a replacement from an undeclared source', 
       listEnvironments: async () => [{ record: { identity: CURRENT, subject: 'profile-subject-1', profile: declaration.profile } }],
       rebuildEnvironment: async () => ({ record: { identity: NEXT, source: { identity: 'img-other' } }, observation: { exists: true, owned: true, compatible: true } }),
     },
-    subject: subject(), journal: { current: async () => ({
-      operation: 'rebuild', operationId: request().operationId, declarationRevision: 1,
-      entries: [{ stage: 'pre-observation', implementationGeneration: CURRENT }],
-    }) },
+    subject: subject(),
   });
   await assert.rejects(() => materialization.ensure(request()), /rebuilt source does not match declaration/u);
 });

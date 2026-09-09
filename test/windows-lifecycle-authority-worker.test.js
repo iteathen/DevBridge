@@ -1,11 +1,49 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Readable } from 'node:stream';
+import { Readable, PassThrough } from 'node:stream';
 import {
   handleWindowsLifecycleAuthorityWorkerRequest,
   parseWindowsLifecycleAuthorityWorkerArguments,
   runWindowsLifecycleAuthorityWorker,
+  runWindowsActivityAuthorityStream,
 } from '../src/entry/windows-lifecycle-authority-worker.mjs';
+
+test('activity stream composes once, preserves request identities and closes its resources on EOF', async () => {
+  const input = new PassThrough();
+  let factoryCalls = 0, closes = 0;
+  const responses = [];
+  let delivered;
+  const task = runWindowsActivityAuthorityStream({ input,
+    output: { write(value) { responses.push(JSON.parse(value)); delivered?.(); } },
+    activityFactory: async () => { factoryCalls++; return {
+      inspect: async () => ({ ready: true, identity: 'a'.repeat(32), reason: null }),
+      list: async () => [], observe: async () => {}, prepare: async () => {}, exchange: async () => {},
+      close() { closes++; },
+    }; },
+  });
+  for (let i = 1; i <= 2; i++) {
+    const response = new Promise(resolve => { delivered = resolve; });
+    input.write(JSON.stringify({ protocol: 'devbridge/environment-activity-authority-request-v1',
+      requestId: `00000000-0000-4000-8000-00000000000${i}`, operation: 'inspect', payload: {} }) + '\n');
+    await response;
+  }
+  input.end(); await task;
+  assert.equal(factoryCalls, 1); assert.equal(closes, 1);
+  assert.equal(responses.length, 2); assert.notEqual(responses[0].requestId, responses[1].requestId);
+  assert.equal(responses.every(value => value.ok), true);
+});
+
+test('activity stream rejects oversized and unsolicited framing before composing authority', async () => {
+  for (const wire of ['{}\n{}\n', 'x'.repeat(70 * 1024), '{"truncated":']) {
+    let calls = 0;
+    await assert.rejects(runWindowsActivityAuthorityStream({ input: Readable.from([wire]), output: { write() {} },
+      activityFactory: async () => { calls++; },
+    }), /framing|bound|interrupted/);
+    assert.equal(calls, 0);
+  }
+  const input = new PassThrough();
+  await assert.rejects(runWindowsActivityAuthorityStream({ input, output: { write() {} }, activityFactory: async () => {}, idleMs: 10 }), /idle lifetime/);
+});
 import {
   ENVIRONMENT_LIFECYCLE_AUTHORITY_REQUEST_PROTOCOL,
   ENVIRONMENT_LIFECYCLE_AUTHORITY_RESULT_PROTOCOL,

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { invokeCommand } from '../runtime/command-invocation.js';
+import { openJsonCommandChannel } from '../runtime/command-channel.js';
 import { EnvironmentBridge } from '../runtime/environment-bridge.js';
 import { loadOrCreateLocalIdentity } from '../runtime/local-identity.js';
 import { HyperVEnvironmentBridge } from '../runtime/providers/hyperv-environment-bridge.js';
@@ -45,6 +46,9 @@ export async function createEnvironmentBridgeExchange({
   platform = process.platform,
   invoke = invokeCommand,
   access,
+  reuseConnections = false,
+  openChannel = openJsonCommandChannel,
+  beforeConnect,
 } = {}) {
   if (typeof stateDirectory !== 'string' || stateDirectory.length === 0) throw new TypeError('stateDirectory is required');
   if (typeof access !== 'function') throw new TypeError('bridge access must be a function');
@@ -53,10 +57,12 @@ export async function createEnvironmentBridgeExchange({
     : foundationIdentity(injectedFoundationIdentity);
   const locate = currentLocation(identity, platform);
   let attachment;
-  if (platform === 'win32') attachment = new HyperVEnvironmentBridge({ invoke, access, locate });
+  if (platform === 'win32') attachment = new HyperVEnvironmentBridge({ invoke, access, locate, beforeConnect, openChannel: reuseConnections ? openChannel : null });
   else if (platform === 'linux') attachment = new LibvirtEnvironmentBridge({ invoke, access, locate });
   else throw new Error('no environment bridge attachment is available for this host platform');
-  return attachment.exchange.bind(attachment);
+  const exchange = attachment.exchange.bind(attachment);
+  exchange.close = () => attachment.close?.();
+  return exchange;
 }
 
 export async function createEnvironmentBridge(options = {}) {

@@ -70,10 +70,16 @@ function assertActions(value) {
 export class EnvironmentEffectChannel {
   #source;
   #actions;
+  #assertMutation;
+  #mutationContext;
 
-  constructor({ source, actions }) {
+  constructor({ source, actions, assertMutation = () => {}, mutationContext = () => null }) {
     this.#source = assertSource(source);
     this.#actions = assertActions(actions);
+    if (typeof assertMutation !== 'function') throw new TypeError('environment mutation assertion contract is invalid');
+    this.#assertMutation = assertMutation;
+    if (typeof mutationContext !== 'function') throw new TypeError('environment mutation context contract is invalid');
+    this.#mutationContext = mutationContext;
   }
 
   async binding() {
@@ -102,19 +108,22 @@ export class EnvironmentEffectChannel {
   }
 
   async provision({ identity, source, settings }) {
+    this.#assertMutation();
     return normalizeObservation(await this.#actions.provision({
       identity,
       source: { identity: source.identity, revision: source.revision, digest: source.digest, handle: source.handle },
       settings,
-    }), identity);
+    }, this.#mutationContext()), identity);
   }
 
   async start(identity) {
-    return normalizeObservation(await this.#actions.start(identity), identity);
+    this.#assertMutation();
+    return normalizeObservation(await this.#actions.start(identity, this.#mutationContext()), identity);
   }
 
   async stop(identity, options) {
-    return normalizeObservation(await this.#actions.stop(identity, options), identity);
+    this.#assertMutation();
+    return normalizeObservation(await this.#actions.stop(identity, options, this.#mutationContext()), identity);
   }
 
   canQuiesce() {
@@ -122,12 +131,14 @@ export class EnvironmentEffectChannel {
   }
 
   async quiesce(identity) {
+    this.#assertMutation();
     if (!this.canQuiesce()) throw new Error('environment cannot be quiesced');
-    return normalizeObservation(await this.#actions.quiesce(identity), identity);
+    return normalizeObservation(await this.#actions.quiesce(identity, this.#mutationContext()), identity);
   }
 
   async drop(identity) {
-    return this.#actions.drop(identity);
+    this.#assertMutation();
+    return this.#actions.drop(identity, this.#mutationContext());
   }
 
   requireSource(observation, sourceIdentity) {

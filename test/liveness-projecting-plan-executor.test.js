@@ -36,6 +36,20 @@ function stateFixture() {
   };
 }
 
+test('workspace transfer progress is persisted and reported separately from compiler execution', async () => {
+  const state = stateFixture();
+  const published = [];
+  const executor = new LivenessProjectingPlanExecutor({
+    delegate: { execute: async ({ onLiveness }) => onLiveness({ operationId: 'test-op', operation: 'node.test', kind: 'source-transfer 3/9 parts', elapsedMs: 30000 }) },
+    statusReporter: { publish: async result => published.push(result) },
+  });
+  await executor.execute({ state, persist: async () => {} });
+  assert.equal(state.prior.liveness.activity, 'source-transfer 3/9 parts');
+  assert.match(published[0].summary, /Preparing the workspace/);
+  assert.match(published[0].summary, /has not started/);
+  assert.equal(state.prior.liveness.processAlive, null);
+});
+
 test('plan executor decorator durably persists and projects bounded liveness', async () => {
   const state = stateFixture();
   const persisted = [];

@@ -4,6 +4,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createEnvironmentConstructionRuntime } from '../src/app/environment-construction-runtime.js';
+import { createEnvironmentConstructionPreparation } from '../src/app/environment-construction-preparation.js';
+import { executionProfileSubject, executionWorkspaceIdentity } from '../src/app/execution-profile-routing.js';
+import { logicalEnvironmentIdentity } from '../src/runtime/environment-declaration.js';
 
 function foundation() {
   return {
@@ -45,4 +48,58 @@ test('production construction composition exposes shared create, diagnosis, repa
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+for (const family of ['ubuntu', 'windows-11']) test(`workspace composition uses the protected foundation and real ${family} preparation contract`, async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'devbridge-workspace-composition-'));
+  try {
+    const ordinary = path.join(directory, 'ordinary');
+    const authority = path.join(directory, 'protected');
+    const profile = family === 'ubuntu' ? 'linux-development' : 'windows-development';
+    const target = 'env-0123456789abcdef0123456789abcdef';
+    const declaration = {
+      profile, guest: { family, generation: 'guest-v1' },
+      image: { identity: 'image-v1', generation: 'image-v1' },
+      bootstrap: { generation: 'tooling-v1', requirements: ['runtime-js'] },
+      enrollment: { requirement: 'unique-guest-trust-v1' },
+      workspaces: [{ identity: executionWorkspaceIdentity('42', profile), authority: '42' }],
+    };
+    const state = foundation();
+    const physical = {
+      record: { identity: target, profile, subject: executionProfileSubject(profile) },
+      observation: { owned: true, exists: true, compatible: true, storageState: 'present', storage: { sourceIdentity: 'image-v1' } },
+    };
+    state.listEnvironments = async () => [physical];
+    state.observeEnvironment = async () => physical;
+    const connections = [];
+    const runtime = await createEnvironmentConstructionRuntime({
+      stateDirectory: ordinary, authorityDirectory: authority,
+      foundation: state, availability: { ensure: async () => ({ state: 'local' }) },
+      routeState: { load: async () => null, publish: async () => { throw new Error('observation cannot publish routes'); } },
+      resolveAuthority: async value => value,
+      fence: { acquire: async ({ subject }) => ({ subject, release: async () => {} }) },
+      invoke: async () => { throw new Error('observation cannot perform native mutations'); },
+    }, {
+      preparationFactory: options => createEnvironmentConstructionPreparation({
+        ...options,
+        createAccess: async () => ({ connection: async selected => ({ target: selected }) }),
+        createBootstrap: async () => ({
+          ensure: async () => { throw new Error('observation cannot bootstrap'); },
+          inspect: async () => ({ ready: true, network: { nameResolution: true, secureWeb: true } }),
+          connection: async selected => { connections.push(selected); return { target: selected }; },
+        }),
+      }),
+      bridgeFactory: async options => {
+        assert.equal(options.stateDirectory, authority, 'provider identity must come from the effect-owning foundation');
+        return {
+          health: async selected => { assert.deepEqual(await options.access(selected), { target }); return { ready: true }; },
+          execute() {}, put() {}, get() {},
+        };
+      },
+    });
+    const observed = await runtime.observer.observe({ environmentIdentity: logicalEnvironmentIdentity(profile), declarationRevision: 1, declaration });
+    assert.equal(observed.guest, 'healthy');
+    assert.equal(observed.implementationGeneration, target);
+    assert.deepEqual(connections, [target]);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

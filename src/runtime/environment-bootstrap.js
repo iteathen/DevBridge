@@ -244,7 +244,7 @@ export class EnvironmentBootstrap {
     return expectedState(basis, plan);
   }
 
-  async #send(target, action, expected, { request = null } = {}) {
+  async #send(target, action, expected, { request = null, probe = false } = {}) {
     const identity = requestId(request);
     const frame = {
       protocol: ENVIRONMENT_BOOTSTRAP_PROTOCOL,
@@ -260,7 +260,15 @@ export class EnvironmentBootstrap {
         networkRequired: expected.plan.networkRequired,
       },
     };
-    const response = await this.#exchange(target, structuredClone(frame));
+    let response;
+    try {
+      response = await this.#exchange(target, structuredClone(frame), probe ? { signal: AbortSignal.timeout(30_000) } : {});
+    } catch (error) {
+      // Only an unavailable read may enter preparation. A received response
+      // still has to pass identity/schema validation outside this catch.
+      if (!probe || error instanceof TypeError) throw error;
+      return null;
+    }
     return normalizeObservation(response, frame);
   }
 
@@ -274,7 +282,13 @@ export class EnvironmentBootstrap {
   async ensure(rawTarget) {
     const target = targetId(rawTarget);
     const expected = await this.#expected(target);
+    const existing = await this.#send(target, 'inspect', expected, { probe: true });
+    if (existing != null) {
+      const current = statusFrom(existing, expected);
+      if (current.ready) return current;
+    }
     await this.#prepare(target, structuredClone(expected.basis));
+    if ((await this.#expected(target)).generation !== expected.generation) throw new Error('bootstrap basis or policy changed during preparation');
     let observation = await this.#send(target, 'inspect', expected);
     let status = statusFrom(observation, expected);
     if (status.ready) return status;

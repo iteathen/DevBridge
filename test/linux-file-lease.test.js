@@ -100,7 +100,7 @@ test('contention and cancellation return no lease only after process closure', a
 test('malformed, stderr, and oversized readiness evidence fail closed and terminate', async () => {
   for (const outcome of ['malformed', 'stderr']) {
     const values = fixture({ outcome });
-    await assert.rejects(() => values.lease.acquire({ mode: 'shared', signal: null }), /Linux file lease process/u);
+    await assert.rejects(() => values.lease.acquire({ mode: 'shared', signal: null }), /file lease process/u);
     assert.deepEqual(values.created[0].child.kills, ['SIGTERM']);
   }
   const values = fixture({ outcome: 'pending' });
