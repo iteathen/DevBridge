@@ -214,6 +214,31 @@ route still rejects admission without repeating global listing. The existing
 service and its native connection evidence remain applicable: this correction
 changes the ordinary consumer's calls through unchanged v1 activity operations.
 
+The first Windows workflow (#526) reached CMake configure in about 51 seconds
+after run creation. Configure itself took 3369 ms and reported MSBuild's 260-character
+path limit: DevBridge's generated scratch prefix made the diagnostic file path
+261 characters. Microsoft documents that long-path opt-in is application-specific:
+[maximum path length](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation).
+The execution owner now chooses a compact run scratch root while retaining existing
+legacy roots for interrupted work. Native workflow qualification is still pending.
+
+The same run exposed an interrupted host-state replacement (`EPERM`). The prior
+JSON store kept uncommitted mutations in memory and left its write chain rejected,
+so subsequent failure and cleanup saves could not proceed. It now uses the existing
+record-file owner, commits memory after observed replacement, and keeps later writes
+usable after failure. Replacement observes ambiguous success, rejects intervening
+changes, and bounds Windows sharing retries. Twenty focused tests pass, including
+a real Windows file handle that temporarily denies delete sharing.
+
+Controller continuation now retains observed operations bound to the accepted plan
+instead of executing them again. Legacy v1 work uses its existing accepted receipt;
+conflicting plan identity or invalid retained result evidence rejects reuse. Sixteen
+focused controller tests pass, including restart after a saved first result.
+
+Operator follow-up after the current test/fix pass: discuss the firm requirement
+that unattended DevBridge operation must never wait for permission prompts. Keep
+this product discussion separate from completing the current workflow repairs.
+
 September 8 checkpoint: the supported Ubuntu and Windows construction and image
 qualification paths have completed. Reuse both accepted images. Linux recovery
 and all three workflow cases have completed, including terminal-delivery restart

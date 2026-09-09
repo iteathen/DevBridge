@@ -1,27 +1,19 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import { createJsonRecordFile } from './json-record-file.js';
 
 export class JsonStateStore {
-  #filePath;
-  #loaded = false;
+  #file;
+  #loading = null;
   #data = {};
   #writeChain = Promise.resolve();
 
-  constructor(filePath) {
-    this.#filePath = filePath;
+  constructor(filePath, { file = createJsonRecordFile(filePath) } = {}) {
+    if (!file || typeof file.read !== 'function' || typeof file.replace !== 'function') throw new TypeError('JSON state file contract is incomplete');
+    this.#file = file;
   }
 
   async #load() {
-    if (this.#loaded) return;
-    try {
-      const text = await readFile(this.#filePath, 'utf8');
-      const parsed = JSON.parse(text);
-      this.#data = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-    } catch (error) {
-      if (error?.code !== 'ENOENT') throw error;
-      this.#data = {};
-    }
-    this.#loaded = true;
+    if (!this.#loading) this.#loading = this.#file.read().then(value => { this.#data = value; }).catch(error => { this.#loading = null; throw error; });
+    await this.#loading;
   }
 
   async get(key) {
@@ -38,23 +30,23 @@ export class JsonStateStore {
 
   async set(key, value) {
     await this.#load();
-    this.#data[key] = structuredClone(value);
-    return this.#queueWrite();
+    const selected = structuredClone(value);
+    return this.#queueWrite(data => { data[key] = selected; });
   }
 
   async delete(key) {
     await this.#load();
-    delete this.#data[key];
-    return this.#queueWrite();
+    return this.#queueWrite(data => { delete data[key]; });
   }
 
-  async #queueWrite() {
-    this.#writeChain = this.#writeChain.then(async () => {
-      await mkdir(path.dirname(this.#filePath), { recursive: true });
-      const temp = `${this.#filePath}.${process.pid}.${Date.now()}.tmp`;
-      await writeFile(temp, `${JSON.stringify(this.#data, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-      await rename(temp, this.#filePath);
+  async #queueWrite(change) {
+    const operation = this.#writeChain.then(async () => {
+      const next = structuredClone(this.#data);
+      change(next);
+      await this.#file.replace(next);
+      this.#data = next;
     });
-    return this.#writeChain;
+    this.#writeChain = operation.catch(() => {});
+    return operation;
   }
 }

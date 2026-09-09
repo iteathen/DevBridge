@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 function normalizeDocument(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -27,9 +28,11 @@ async function readExact(target) {
   }
 }
 
-export function createJsonRecordFile(target, { identifier = randomUUID } = {}) {
+export function createJsonRecordFile(target, { identifier = randomUUID, renameFile = rename,
+  wait = delay, platform = process.platform } = {}) {
   if (typeof target !== 'string' || target.length === 0 || target.includes('\0')) throw new TypeError('record file target is invalid');
   if (typeof identifier !== 'function') throw new TypeError('record file identity dependency is invalid');
+  if (typeof renameFile !== 'function' || typeof wait !== 'function') throw new TypeError('record file replacement dependencies are invalid');
   const resolved = path.resolve(target);
 
   return Object.freeze({
@@ -41,6 +44,7 @@ export function createJsonRecordFile(target, { identifier = randomUUID } = {}) {
       await mkdir(path.dirname(resolved), { recursive: true });
       const temporary = `${resolved}.${suffix}.tmp`;
       const expected = `${JSON.stringify(document, null, 2)}\n`;
+      const previous = await readExact(resolved);
       let handle = null;
       try {
         handle = await open(temporary, 'wx', 0o600);
@@ -48,10 +52,21 @@ export function createJsonRecordFile(target, { identifier = randomUUID } = {}) {
         await handle.sync();
         await handle.close();
         handle = null;
-        try {
-          await rename(temporary, resolved);
-        } catch (error) {
-          if (await readExact(resolved) !== expected) throw error;
+        const retryDelays = [25, 75, 150, 300];
+        for (let attempt = 0; ; attempt++) {
+          try {
+            await renameFile(temporary, resolved);
+            break;
+          } catch (error) {
+            const current = await readExact(resolved);
+            if (current === expected) break;
+            if (current !== previous) throw new Error('record file changed during interrupted replacement', { cause: error });
+            if (platform !== 'win32' || !['EPERM', 'EACCES', 'EBUSY'].includes(error?.code) || attempt >= retryDelays.length) throw error;
+            await wait(retryDelays[attempt]);
+            const observed = await readExact(resolved);
+            if (observed === expected) break;
+            if (observed !== previous) throw new Error('record file changed before replacement retry', { cause: error });
+          }
         }
         if (await readExact(resolved) !== expected) throw new Error('record file replacement did not re-observe exactly');
       } finally {

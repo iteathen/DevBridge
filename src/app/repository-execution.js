@@ -167,8 +167,10 @@ export async function createRepositoryExecution({
       const stateLocation = { class: 'cache', path: 'source-state.json' };
       const sourceManifestLocation = { class: 'input', path: 'source/manifest.json' };
       const candidateDirectory = { class: 'output', path: 'candidate' };
-      const scratchRoot = `subjects/${subject}/runs/${scope.runId}`;
-      const scratchRunLocation = { class: 'scratch', path: scratchRoot };
+      const legacyScratchRoot = `subjects/${subject}/runs/${scope.runId}`;
+      const compactScratchRoot = `r/${createHash('sha256').update(JSON.stringify([subject, scope.runId])).digest('hex').slice(0, 32)}`;
+      let selectedScratchRoot = null;
+      let resourceAgentInstalled = false;
       const bytes = new ByteChannel({
         target,
         put: (...args) => channel.put(...args),
@@ -179,6 +181,24 @@ export async function createRepositoryExecution({
           limit: 'execution output transfer exceeded its limit',
         },
       });
+      const installResourceAgent = async () => {
+        if (resourceAgentInstalled) return;
+        await bytes.write(resourceAgentBytes, resourceAgentLocation);
+        resourceAgentInstalled = true;
+      };
+      const scratchRoot = async () => {
+        if (selectedScratchRoot != null) return selectedScratchRoot;
+        await installResourceAgent();
+        const choice = parseAgentResult(await channel.execute(target, {
+          program: 'node', arguments: [resourceAgentLocation, 'select-directory',
+            { class: 'scratch', path: legacyScratchRoot }, { class: 'scratch', path: compactScratchRoot }],
+          directory: { class: 'work', path: '.' }, environment: {}, input: null,
+          timeoutMs: 30_000, maxOutputBytes: 4096,
+        }, { pollIntervalMs: 500 }), 'scratch layout observation');
+        if (!choice || Object.keys(choice).length !== 1 || !['legacy', 'compact'].includes(choice.selected)) throw new Error('scratch layout observation is invalid');
+        selectedScratchRoot = choice.selected === 'legacy' ? legacyScratchRoot : compactScratchRoot;
+        return selectedScratchRoot;
+      };
       const materializer = new OperationMaterializer({
         write: (value, location) => bytes.write(value, location),
         protectedValues: protectedEnvironmentValues,
@@ -303,7 +323,8 @@ export async function createRepositoryExecution({
             if (resource !== 'scratch') throw new Error('repository execution cleanup resource is unsupported');
           },
           remove: async (resource, { signal }) => {
-            await bytes.write(resourceAgentBytes, resourceAgentLocation);
+            const scratchRunLocation = { class: 'scratch', path: await scratchRoot() };
+            await installResourceAgent();
             const outcome = await channel.execute(target, {
               program: 'node',
               arguments: [resourceAgentLocation, 'remove-directory', scratchRunLocation],

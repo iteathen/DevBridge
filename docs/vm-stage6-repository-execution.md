@@ -43,6 +43,14 @@ operation then requests only its selected subject/profile observation through th
 existing activity observation contract. Unrelated guest readiness is not rescanned
 for that operation; a changed or unavailable selected route still rejects admission.
 
+The execution owner uses a bounded, digest-derived run scratch name beneath the
+already isolated workspace. It observes the legacy and compact locations through
+the guest resource contract: existing legacy work keeps its location, new work
+uses the compact location, and conflicting or symlinked layouts are rejected.
+Logical run IDs, source identity and cleanup evidence retain their v1 meanings.
+This leaves space for native build-tool paths without requiring every tool to
+support extended Windows paths.
+
 The Windows service retains one serialized activity worker for its own lifetime;
 it does not recycle a healthy worker or connection because a request count or idle
 timer elapsed. Message sizes, in-flight work and cached identities remain bounded.

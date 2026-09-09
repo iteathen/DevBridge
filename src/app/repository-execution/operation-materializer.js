@@ -135,7 +135,9 @@ export class OperationMaterializer {
       protectedValues: this.#protectedValues,
       messages: this.#messages,
       entryLocation,
-      scratchRoot: this.#scratchRoot,
+      scratchRoot: typeof this.#scratchRoot === 'function'
+        ? (invocation.arguments.some(argument => argument.kind === 'scratch') ? await this.#scratchRoot() : null)
+        : this.#scratchRoot,
     });
     const bytes = Buffer.from(`${JSON.stringify(materialized.descriptor)}\n`, 'utf8');
     if (bytes.length > DESCRIPTOR_LIMIT) throw new Error(this.#messages.descriptorLimit);
