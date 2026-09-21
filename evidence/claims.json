@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "repository": "iteathen/DevBridge",
+  "claims": [
+    {
+      "id": "DEVBRIDGE-INT-001",
+      "claim": "The maintained source passes its repository preflight and regression suite under the documented development environment.",
+      "evidence_class": "INTERNAL-QUALIFICATION",
+      "status": "maintained internal qualification",
+      "oracle": "Repository-controlled preflight and Node test suite",
+      "revision": "main",
+      "falsifier": "The documented preflight or regression suite fails for the tested revision/environment.",
+      "evidence": [
+        "README.md",
+        ".github/workflows/ci.yml",
+        "test"
+      ],
+      "limitations": [
+        "Repository-controlled tests are not an independent security review or production qualification."
+      ],
+      "external_reproduction": false
+    },
+    {
+      "id": "DEVBRIDGE-SEC-001",
+      "claim": "Real-provider security, resource, and recovery behavior is sufficient for production deployment.",
+      "evidence_class": "UNVALIDATED",
+      "status": "not claimed / open",
+      "oracle": null,
+      "revision": "main",
+      "falsifier": "Any unresolved provider, isolation, resource, recovery, or threat-model failure rejects the claim.",
+      "evidence": [
+        "README.md",
+        "docs/portfolio-readiness.md"
+      ],
+      "limitations": [
+        "Independent security review and complete real-provider qualification are not registered."
+      ],
+      "external_reproduction": false
+    }
+  ]
+}
