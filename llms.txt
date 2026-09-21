@@ -5,6 +5,7 @@
 ## Primary entry points
 
 - [README.md](https://raw.githubusercontent.com/iteathen/DevBridge/main/README.md): project overview and documentation entry point.
+- [EVIDENCE.md](https://raw.githubusercontent.com/iteathen/DevBridge/main/EVIDENCE.md): evidence classes, claim scope, validation limits, and external-validation path.
 - [AGENTS.md](https://raw.githubusercontent.com/iteathen/DevBridge/main/AGENTS.md): repository-specific agent instructions and authority rules.
 - [Agent access](https://raw.githubusercontent.com/iteathen/DevBridge/main/.agent/ACCESS.md): anonymous access routes and precedence notes.
 - [LICENSE](https://raw.githubusercontent.com/iteathen/DevBridge/main/LICENSE): license terms.
