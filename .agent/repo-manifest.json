@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "repository": "iteathen/DevBridge",
+  "visibility": "public",
+  "default_branch": "main",
+  "canonical": "https://github.com/iteathen/DevBridge",
+  "anonymous_access": {
+    "git": "https://github.com/iteathen/DevBridge.git",
+    "raw_base": "https://raw.githubusercontent.com/iteathen/DevBridge/main/",
+    "zip": "https://codeload.github.com/iteathen/DevBridge/zip/refs/heads/main",
+    "tar_gz": "https://codeload.github.com/iteathen/DevBridge/tar.gz/refs/heads/main"
+  },
+  "entrypoints": {
+    "readme": "README.md",
+    "agents": "AGENTS.md",
+    "llm_index": "llms.txt",
+    "access": ".agent/ACCESS.md"
+  },
+  "authentication_required_for_read": false,
+  "api_required_for_read": false
+}
